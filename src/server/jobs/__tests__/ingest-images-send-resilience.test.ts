@@ -29,7 +29,10 @@ const { mockDbRead, mockDbWrite, mockIngestImage, mockDeleteImages, mockLimitCon
             height: 100,
             prompt: null,
             scanRequestedAt: null,
-            createdAt: new Date(),
+            // Past SUBMIT_IN_FLIGHT_GRACE: a just-created row is deferred as
+            // "upload-path submit still in flight" and never reaches the send loop
+            // this test is about.
+            createdAt: new Date(Date.now() - 10 * 60 * 1000),
             ingestion: 'Pending',
             retryCount: 0,
             failureClass: null,

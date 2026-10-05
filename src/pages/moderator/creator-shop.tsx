@@ -14,6 +14,7 @@ import {
   Select,
   SimpleGrid,
   Stack,
+  Switch,
   Text,
   TextInput,
   ThemeIcon,
@@ -87,6 +88,8 @@ import {
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
+import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
+import { Flags } from '~/shared/utils/flags';
 import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -462,6 +465,20 @@ function CreatorShopReviewPage() {
     onError: (error) =>
       showErrorNotification({ title: 'Failed to save fit', error: new Error(error.message) }),
   });
+  const setCosmeticFlag = trpc.cosmetic.setFlag.useMutation({
+    async onSuccess() {
+      await queryUtils.creatorShop.getReviewQueue.invalidate();
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: 'Failed to update placements',
+        error: new Error(error.message),
+      }),
+  });
+  const sfwPlacementsOnly = Flags.hasFlag(
+    selected?.cosmetic?.flags ?? 0,
+    CosmeticFlag.SfwPlacementsOnly
+  );
 
   if (currentUser && !currentUser.isModerator) return <NotFound />;
 
@@ -847,6 +864,7 @@ function CreatorShopReviewPage() {
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
+                          optimized
                         />
                       ) : selectedMeta.coverUrl ? (
                         <EdgeMedia
@@ -854,6 +872,7 @@ function CreatorShopReviewPage() {
                           width={340}
                           alt={selected.title}
                           className="max-h-[300px] max-w-[85%] object-contain"
+                          optimized
                         />
                       ) : isPack ? (
                         <PackCoverTiles
@@ -1074,6 +1093,27 @@ function CreatorShopReviewPage() {
                               <Text size="sm" fw={500}>
                                 :{stickerSlug}:
                               </Text>
+                            }
+                          />
+                        )}
+                        {isSticker && selected.cosmetic && (
+                          <DetailRow
+                            label="Placements"
+                            value={
+                              <Switch
+                                size="sm"
+                                label="SFW placements only"
+                                description="Blocks placing it on R, X or XXX images, and hides it where it is already placed on one."
+                                checked={sfwPlacementsOnly}
+                                disabled={setCosmeticFlag.isPending}
+                                onChange={(event) =>
+                                  setCosmeticFlag.mutate({
+                                    id: selected.cosmetic!.id,
+                                    flag: CosmeticFlag.SfwPlacementsOnly,
+                                    enabled: event.currentTarget.checked,
+                                  })
+                                }
+                              />
                             }
                           />
                         )}

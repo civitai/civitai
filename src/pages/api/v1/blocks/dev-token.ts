@@ -86,15 +86,51 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    app), reach this pending branch, and mint a token whose `appId` resolves —
  *    in `recordSpendAttribution` — to the VICTIM's real OauthClient, writing a
  *    forged `blockSpendAttribution` row (status='tracked', appOwnerUserId=victim,
- *    real grossValueCents). That row is exactly what the deferred payout rail
- *    (#2605 Slice-4 backpay) reads to pay `gross × spendSharePct`. Dormant today
- *    (spendSharePct=0, no money moves) but a forged accrual ledger would persist
- *    into the payout window. The synthetic `pending-pubreq_<ULID>` can never match
+ *    real grossValueCents). The synthetic `pending-pubreq_<ULID>` can never match
  *    an `appblk-*` id nor a real `OauthClient.id`, so the attribution lookup MISSES
  *    → the inert `if (!app)` skip-write path → no row written (correct: a pending
- *    dev-test spend has no approved app to attribute to). GATE: before #2605 turns
- *    on a non-zero `spendSharePct`, re-confirm no pending-path mint can ever land a
- *    real `OauthClient.id` in `appId`.
+ *    dev-test spend has no approved app to attribute to).
+ *
+ *    ⚠️ WHAT A FORGED ROW WOULD REACH — RESTATED, because the old rail is gone
+ *    and this paragraph used to name it. The platform-funded percentage bounty
+ *    (`gross × <card spend rate>`) was removed, and a rate card no longer carries
+ *    a spend rate at all, so the old "before #2605 turns on a non-zero spend
+ *    rate" gate could never be triggered and was NOT closable. The
+ *    hazard did not go away — it moved, onto two surfaces that are CLOSER than
+ *    the dormant ledger it replaced:
+ *
+ *      1. A LIVE READER, TODAY. `app-analytics.service.ts` aggregates
+ *         `block_spend_attribution` by `app_block_id` for the app-owner
+ *         dashboard. A forged row is therefore immediately visible in a third
+ *         party's own analytics — misattribution with no payout involved and no
+ *         flag in front of it.
+ *      2. THE AUTHOR FEE, AND IT NOW CARRIES A RECIPIENT. ⚠️ An earlier revision
+ *         of this paragraph said the fee was "OBSERVE-ONLY" and carried no
+ *         recipient, so `appId` was not load-bearing and a forged row could not
+ *         misdirect a fee "today, flag on or off". That has been false since
+ *         2026-09-25. `recordSpendAttribution` still drives the observe-only
+ *         `observeBlockAuthorFee` (`author-fee.ts`), but the fee also CHARGES on
+ *         the submit path, and `resolveBlockAuthorFeePayee`
+ *         (`author-fee-accrual.service.ts`) resolves the payee by
+ *         `OauthClient.id` — exactly this app resolution. A mis-resolved `appId`
+ *         is therefore a misdirected payee, not just a polluted dashboard.
+ *
+ *    GATE: the condition this gate was waiting on HAS OCCURRED — settlement
+ *    shipped and a recipient is derived from this resolution — so it is no longer
+ *    a future trigger. WHAT DISCHARGES IT, and the only thing that does: the S1
+ *    case in `src/tests/api/v1/blocks/dev-token.test.ts` — "a foreign-owned
+ *    APPROVED app for the same slug does NOT pin the token appId to
+ *    appblk-<slug>" — must exist and pass, which it does as of this commit. It is
+ *    now a STANDING invariant rather than a one-off review step: if that
+ *    assertion is deleted or weakened, a pending-path mint can land a real
+ *    `OauthClient.id` in `appId` and money follows it. Do not relax it without
+ *    replacing it.
+ *
+ *    ⚠️ The flag's state is NOT what makes this live, and tying the gate to the
+ *    flag would still be wrong. The hazard is realised by the payee derivation
+ *    existing at all, which is a code property; the flag is one toggle with no
+ *    deploy and no review, so keying on it would fire on changes that cannot
+ *    realise the hazard and stay silent on the one that can.
  *
  *    PENDING-PATH AUDIT GATE (FIX 🟡-1): a pending-app dev mint has NO
  *    AppBlock-backed audit rows — recordSpendAttribution throws+swallows on the
@@ -649,10 +685,19 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // let recordSpendAttribution's `oauthClient.findUnique({ where: { id } })`
         // (buzz-attribution.service.ts) RESOLVE the victim's real client and write
         // a foreign `blockSpendAttribution` row (status='tracked',
-        // appOwnerUserId=<victim>, real grossValueCents) — the exact row the
-        // deferred payout rail (#2605 Slice-4 backpay) reads to pay
-        // `gross × spendSharePct`. Dormant today (spendSharePct=0) but a forged
-        // accrual ledger would persist into the payout window.
+        // appOwnerUserId=<victim>, real grossValueCents).
+        //
+        // ⚠️ WHAT THAT ROW REACHES — the platform-funded `gross × <card spend
+        // rate>` bounty this comment used to name is REMOVED, and a rate card no
+        // longer carries a spend rate. Today a forged row lands in a surface
+        // that is LIVE rather than dormant: `app-analytics.service.ts` aggregates
+        // `block_spend_attribution` for the app-owner dashboard. And this same
+        // call drives `observeBlockAuthorFee` (#4922 slice 1) — observe-only,
+        // keyed on `baseGenerationBuzz`/`generationType` and carrying NO
+        // recipient, so `appId` is not load-bearing for it until the settlement
+        // slice. See the re-pointed GATE in the APPID MISATTRIBUTION block at the
+        // top of this file; the S1 assertion in
+        // `src/tests/api/v1/blocks/dev-token.test.ts` is what re-confirms it.
         //
         // Instead use `pending-<publishRequestId>` — `pubreq_<ULID>` ids make this
         // `pending-pubreq_<ULID>`, which can NEVER match an `appblk-*` id NOR a
@@ -960,6 +1005,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: 'block',
     scopes: granted,
     buzzBudget,
     maxBrowsingLevel: FORCED_SFW_CEILING,

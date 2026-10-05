@@ -32,6 +32,7 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -51,6 +52,11 @@ import {
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
 import {
+  canViewModelVersion,
+  MODEL_VERSION_NOT_FOUND,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
+import {
   createImage,
   createImageResources,
   deleteImageFromS3,
@@ -65,7 +71,7 @@ import {
 } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
-import { getTechniqueByName } from '~/server/services/technique.service';
+import { getTechniqueForWorkflow } from '~/server/services/technique.service';
 import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import type {
   getCosmeticsForUsers,
@@ -83,7 +89,6 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   Availability,
-  CollectionContributorPermission,
   CollectionMode,
   CollectionType,
   MediaType,
@@ -102,8 +107,9 @@ import {
 } from '~/server/services/orchestrator/remix-provenance';
 import { getMetadata } from '~/utils/metadata';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { getManualResourceLimitError } from '~/utils/manual-image-resources';
 import { isDefined } from '~/utils/type-guards';
-import { CacheTTL, MAX_RESOURCES_PER_IMAGE } from '../common/constants';
+import { CacheTTL } from '../common/constants';
 import type {
   AddPostTagInput,
   AddResourceToPostImageInput,
@@ -372,7 +378,7 @@ export const getPostsInfinite = async ({
     }
   }
 
-  if (sort === PostSort.RecentlyAdded && !collectionId) {
+  if (sort === PostSort.RecentlyAdded && !collectionId && !draftOnly) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
 
@@ -647,32 +653,7 @@ export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const db = await getDbWithoutLag('post', id);
   const post = await db.post.findFirst({
-    where: {
-      id,
-      OR: user?.isModerator
-        ? undefined
-        : [
-            { userId: user?.id },
-            { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } },
-            // Support judges of a collection to view any post in the collection
-            // regardless of NSFW level and published status.
-            {
-              collectionId: {
-                not: null,
-              },
-              collection: {
-                contributors: {
-                  some: {
-                    userId: user?.id,
-                    permissions: {
-                      has: CollectionContributorPermission.MANAGE,
-                    },
-                  },
-                },
-              },
-            },
-          ],
-    },
+    where: { id, ...getPostDetailVisibility(user) },
     select: postSelect,
   });
 
@@ -825,13 +806,29 @@ export const getPostImageIds = async ({ id, user }: GetByIdInput & { user: Sessi
 
 export const createPost = async ({
   userId,
+  isModerator,
   tag,
   tags,
   ...data
 }: PostCreateInput & {
   userId: number;
+  isModerator?: boolean;
+  metadata?: Prisma.InputJsonObject;
 }): Promise<PostDetailEditable> => {
   await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
+
+  let availability: Availability = Availability.Public;
+
+  if (data.modelVersionId) {
+    const modelVersion = await dbWrite.modelVersion.findUnique({
+      where: { id: data.modelVersionId },
+      select: modelVersionVisibilitySelect,
+    });
+    if (!modelVersion || !(await canViewModelVersion(modelVersion, { id: userId, isModerator })))
+      throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
+
+    availability = modelVersion.model.availability;
+  }
 
   const tagsToAdd: number[] = [];
   if (tags && tags.length > 0) {
@@ -844,17 +841,6 @@ export const createPost = async ({
     tagsToAdd.push(tag);
   }
   const tagData = tagsToAdd.map((t) => ({ tagId: t }));
-
-  let availability: Availability = Availability.Public;
-
-  if (data.modelVersionId) {
-    const modelVersion = await dbWrite.modelVersion.findUnique({
-      where: { id: data.modelVersionId },
-      select: { model: { select: { availability: true } } },
-    });
-
-    availability = modelVersion?.model.availability ?? Availability.Public;
-  }
 
   // Anyone can post to any published 3D model (mirrors Models). Non-owners are
   // still blocked from attaching to a draft/unpublished/deleted 3D model so a
@@ -992,40 +978,50 @@ export const updatePost = async ({
   });
 
   await preventReplicationLag('post', post.id);
-  await userPostCountCache.refresh(post.userId);
-
-  // A publishedAt change moves the images' feed sort position
-  // (GREATEST(publishedAt, scannedAt, createdAt)), but the DB-trigger-driven
-  // updatedAt bump isn't reliably picked up by the metrics_images index — so
-  // a reschedule would otherwise leave the index frozen at the original time.
-  // Enqueue an explicit reindex so sortAt/publishedAtUnix get recomputed.
-  if (publishedAtWritten) {
-    const images = await dbWrite.image.findMany({
-      where: { postId: post.id },
-      select: { id: true },
-    });
-    if (images.length) {
-      await queueImageSearchIndexUpdate({
-        ids: images.map((i) => i.id),
-        action: SearchIndexUpdateQueueAction.Update,
-      });
-    }
-    await userImageVideoCountCaches.refresh(post.userId);
-  }
+  if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
+  else await userPostCountCache.refresh(post.userId);
 
   return post;
 };
+
+/**
+ * Everything a publish needs besides the write. The reindex is explicit because the trigger-driven
+ * updatedAt bump isn't reliably picked up by metrics_images, so a new publishedAt would leave
+ * sortAt/publishedAtUnix stale.
+ */
+export async function afterPostPublish(post: { postId: number; userId: number }) {
+  await afterPostsPublish([post]);
+}
+
+export async function afterPostsPublish(posts: { postId: number; userId: number }[]) {
+  if (!posts.length) return;
+  const userIds = uniq(posts.map((post) => post.userId));
+  await userPostCountCache.refresh(userIds);
+  const images = await dbWrite.image.findMany({
+    where: { postId: { in: posts.map((post) => post.postId) } },
+    select: { id: true },
+  });
+  if (images.length) {
+    await queueImageSearchIndexUpdate({
+      ids: images.map((i) => i.id),
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  }
+  await userImageVideoCountCaches.refresh(userIds);
+}
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
 
-  const { post, deletedImages, orphanedImageIds } = await dbWrite.$transaction(
+  const { post, deletedImages, orphanedImageIds, imageOwnerIds } = await dbWrite.$transaction(
     async (tx) => {
       // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
-      const images = await tx.$queryRaw<{ id: number; url: string; deletable: boolean }[]>`
-        SELECT i.id, i.url, ${Prisma.raw(
+      const images = await tx.$queryRaw<
+        { id: number; url: string; userId: number; deletable: boolean }[]
+      >`
+        SELECT i.id, i.url, i."userId", ${Prisma.raw(
           isModerator ? 'TRUE' : 'i."userId" = p."userId"'
         )} AS deletable
         FROM "Image" i
@@ -1054,7 +1050,9 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
       // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
       const orphanedImageIds = images.filter((image) => !image.deletable).map(({ id }) => id);
 
-      return { post, deletedImages, orphanedImageIds };
+      const imageOwnerIds = uniq(images.map((image) => image.userId));
+
+      return { post, deletedImages, orphanedImageIds, imageOwnerIds };
     },
     // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
     // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
@@ -1102,6 +1100,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   }
 
   await bustCachesForPosts(id);
+  await userImageVideoCountCaches.bust(imageOwnerIds);
 
   return post;
 };
@@ -1280,12 +1279,9 @@ export const addPostImage = async ({
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
     // older meta has type: string, but the updated meta has process: string
-    const rawProcess = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
-    // Graph workflow keys carry a variant suffix (e.g. 'img2img:hires-fix'); techniques are
-    // keyed on the base ('img2img'), so match on the segment before the colon.
-    const process = rawProcess?.split(':')[0];
+    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
     if (process) {
-      techniqueId = (await getTechniqueByName(process))?.id;
+      techniqueId = (await getTechniqueForWorkflow(process))?.id;
     }
   }
 
@@ -1555,7 +1551,10 @@ export const addResourceToPostImage = async ({
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
-      model: { select: { name: true, id: true } },
+      ...modelVersionVisibilitySelect,
+      model: {
+        select: { ...modelVersionVisibilitySelect.model.select, name: true, id: true, type: true },
+      },
       name: true,
       files: {
         select: {
@@ -1572,14 +1571,15 @@ export const addResourceToPostImage = async ({
     },
   });
 
-  if (!modelVersion) throw throwNotFoundError('Model version not found.');
+  if (!modelVersion || !(await canViewModelVersion(modelVersion, user)))
+    throw throwNotFoundError(MODEL_VERSION_NOT_FOUND);
 
   // Read from primary — users can attach a resource within seconds of posting
   // the image, so the replica (5-10s lag) would return fewer rows and throw
   // a spurious "Image not found".
   const images = await dbWrite.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true, resourceHelper: true, type: true },
+    select: { postId: true, meta: true, type: true },
   });
 
   if (images.length !== imageIds.length) {
@@ -1592,32 +1592,32 @@ export const addResourceToPostImage = async ({
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
-  // Manually crediting resources on an uploaded/external image is an attribution
-  // action with no GPU cost, so it uses a fixed cap rather than the per-tier
-  // generation limits (those are throttled during GPU crunches — see the
-  // MAX_RESOURCES_PER_IMAGE comment in server/common/constants).
-  const resourceLimit = MAX_RESOURCES_PER_IMAGE;
-
-  images.forEach((img) => {
-    const numExistingResources = img.resourceHelper.length;
-    if (numExistingResources >= resourceLimit) {
-      throw throwBadRequestError(`Maximum resources reached (${resourceLimit})`);
+  const createdResources = await dbWrite.$transaction(async (tx) => {
+    // Serialises concurrent adds to the same image, so two requests cannot both pass the limit check.
+    await tx.$queryRaw`SELECT id FROM "Image" WHERE id IN (${Prisma.join(
+      imageIds
+    )}) ORDER BY id FOR UPDATE`;
+    const existing = await tx.imageResourceHelper.findMany({
+      where: { imageId: { in: imageIds } },
+      select: { imageId: true, modelVersionId: true, modelType: true, detected: true },
+    });
+    for (const imageId of imageIds) {
+      const error = getManualResourceLimitError(
+        existing.filter((r) => r.imageId === imageId),
+        [{ modelVersionId, modelType: modelVersion.model.type }]
+      );
+      if (error) throw throwBadRequestError(error);
     }
-  });
 
-  // TODO restrictions on allowedTypes
-
-  // noinspection JSPotentiallyInvalidTargetOfIndexedPropertyAccess
-  // const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
-
-  const createdResources = await dbWrite.imageResourceNew.createManyAndReturn({
-    data: imageIds.map((imageId) => ({
-      modelVersionId,
-      imageId,
-      detected: false,
-    })),
-    skipDuplicates: true,
-    select: { modelVersionId: true, imageId: true },
+    return tx.imageResourceNew.createManyAndReturn({
+      data: imageIds.map((imageId) => ({
+        modelVersionId,
+        imageId,
+        detected: false,
+      })),
+      skipDuplicates: true,
+      select: { modelVersionId: true, imageId: true },
+    });
   });
 
   if (createdResources.length > 0) {

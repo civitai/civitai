@@ -84,7 +84,7 @@ const booguVersionIds = {
 ```
 
 - Declare slider defaults **on each subgraph** — do NOT use `.effect()` to reset across variants (clobbers stored values + fires server-side; see skill gotcha).
-- Aspect ratios: use `sdxlAspectRatioBuckets` (FLUX-based), default `1:1`, 1024-centric. Add `priorityOptions: ['16:9','4:3','1:1','3:4','9:16']` if >5 ratios.
+- Aspect ratios: use `sdxlFullAspectRatioNode()` (FLUX-based, 1024-centric: the nine SDXL buckets, default `1:1`, 3:2 / 1:1 / 2:3 first). It replaced the three-bucket `sdxlAspectRatioBuckets` this line originally named.
 - Resources/LoRA: Boogu is FLUX.1-dev-based → **could** support community LoRAs. Default to `createResourcesGraph` merge (like ZImage) but confirm orchestrator accepts them; if not, drop.
 - Export `booguVersionIds` for the handler.
 

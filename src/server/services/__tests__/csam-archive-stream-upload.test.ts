@@ -184,9 +184,21 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   isFlipt: (...args: unknown[]) => mockIsFlipt(...args),
 }));
 
+// 🔴 SPY ONLY ON THE EMITTER, keeping `csamArchivePathFor` REAL. Replacing the whole module
+// would make the seam tests below assert against a mapping this file invented, which is the
+// one thing they must not do — the service and the counter have to agree about the REAL
+// mapping or the guard is vacuous.
+vi.mock('~/server/metrics/csam-archive.metrics', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  recordCsamArchive: (...args: unknown[]) => {
+    recordedArchiveCalls.push(args as [string, string, string]);
+  },
+}));
+
 let mockFetchBlob: (...args: unknown[]) => unknown = () => null;
 let mockGetConsumerStrikes: (...args: unknown[]) => unknown = async () => [];
 let mockIsFlipt: (...args: unknown[]) => unknown = async () => false;
+let recordedArchiveCalls: Array<[string, string, string]> = [];
 
 import { archiveCsamDataForReport } from '~/server/services/csam.service-new';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -400,6 +412,7 @@ async function settleOrHang(reportArg: unknown) {
 beforeEach(() => {
   storedObjects.clear();
   pendingUploads.clear();
+  recordedArchiveCalls = [];
   mockFetchBlob = async (url: unknown) => {
     const match = /image-uuid-(\d+)/.exec(String(url));
     if (!match) return null;
@@ -752,5 +765,91 @@ describe('csam archive streaming upload', () => {
     ).toBeDefined();
     expect((rejection as Error).message).toBe(failure.message);
     expect((rejection as Error).message).not.toMatch(/failed to upload/);
+  }, 20_000);
+});
+
+// ===============================================================================================
+// THE SEAM: does the service actually CALL the counter?
+//
+// 🔴 WHY THIS BLOCK EXISTS. `csam-archive.metrics.test.ts` drives the counter module directly and
+// pins its cardinality, seeding and fail-soft behaviour — all real, and all blind to the only
+// question that decides whether any of it reaches production: whether `archiveCsamDataForReport`
+// invokes it at all — because every test that loads the service asserted on archives and blobs,
+// and every test that loads the counter called it itself. Two surfaces, each hermetically tested,
+// with the defect living in the seam neither one owns.
+//
+// MEASURED, and stated with its exact scope because a bare pass count here is unreproducible:
+// with both `recordCsamArchive(...)` lines deleted from the service, running
+// `csam-archive.metrics.test.ts` + `csam-archive-stream-upload.test.ts` +
+// `csam-archive-backpressure.test.ts` leaves all 37 NON-SEAM tests in those three files
+// green, and ONLY the four cases below go red. (A wider file set gives a different total; the
+// number that means anything is "every pre-existing test stayed green", not the total.)
+//
+// So these cases assert a RELATIONSHIP — service → emitter — not a component. They would also
+// catch the two call sites having their `success`/`error` arguments swapped, which no
+// module-level test can see.
+// ===============================================================================================
+describe('the service→counter seam', () => {
+  it('🔴 records the STREAM path on a successful flag-ON archive', async () => {
+    mockIsFlipt = async (flag: unknown) => flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;
+
+    await archiveCsamDataForReport(report as never);
+
+    // Positive control: the archive must actually have completed, or the assertion below is
+    // about a run that never reached the success arm.
+    expect(
+      storedObjects.get('images.zip'),
+      'the archive stored no images.zip — this run never reached the success arm'
+    ).toBeDefined();
+    expect(recordedArchiveCalls).toEqual([['stream', 'Image', 'success']]);
+  }, 20_000);
+
+  it('🔴 records the DISK path when the flag is OFF — the two arms are not interchangeable', async () => {
+    mockIsFlipt = async () => false;
+
+    await archiveCsamDataForReport(report as never);
+
+    expect(
+      storedObjects.get('images.zip'),
+      'the archive stored no images.zip — this run never reached the success arm'
+    ).toBeDefined();
+    expect(recordedArchiveCalls).toEqual([['disk', 'Image', 'success']]);
+  }, 20_000);
+
+  it('🔴 records outcome=error when the archive throws, and does NOT record success', async () => {
+    const failure = new Error('blob fetch exploded');
+    mockFetchBlob = async (url: unknown) => {
+      const match = /image-uuid-(\d+)/.exec(String(url));
+      if (!match) return null;
+      if (Number(match[1]) === 11) throw failure;
+      return fakeBlob(Number(match[1]));
+    };
+    mockIsFlipt = async (flag: unknown) => flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;
+
+    const rejection = await archiveCsamDataForReport(report as never).then(
+      () => undefined,
+      (e: unknown) => e
+    );
+
+    // Positive control, same reasoning as the rejection test above: if nothing failed, the
+    // outcome assertion is trivially satisfiable by a run that simply succeeded.
+    expect(
+      rejection,
+      'the archive did not fail — the fault injection is wired to nothing'
+    ).toBeDefined();
+    expect(recordedArchiveCalls).toEqual([['stream', 'Image', 'error']]);
+    // Explicit, because a swapped pair at the two call sites would still produce ONE call.
+    expect(recordedArchiveCalls.some(([, , outcome]) => outcome === 'success')).toBe(false);
+  }, 20_000);
+
+  it('🔴 records path=none for a type the flag does not govern', async () => {
+    // ExternalLink archives only base user data, so the flag selects nothing. Flag deliberately
+    // ON: if the service passed the flag straight through instead of the resolved path, this
+    // would read "stream".
+    mockIsFlipt = async (flag: unknown) => flag === FLIPT_FEATURE_FLAGS.CSAM_ARCHIVE_STREAM_UPLOAD;
+
+    await archiveCsamDataForReport({ ...report, type: 'ExternalLink' } as never);
+
+    expect(recordedArchiveCalls).toEqual([['none', 'ExternalLink', 'success']]);
   }, 20_000);
 });

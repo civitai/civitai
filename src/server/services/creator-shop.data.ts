@@ -43,6 +43,24 @@ export const buildCosmeticData = (
   return { url: imageUrl };
 };
 
+// A pack's card art and size live in meta rather than on a cosmetic, so every
+// meta whitelist has to carry them or the card renders empty and "Pack of 0".
+export const packDisplayMeta = (meta: CosmeticShopItemMeta | null) => ({
+  ...(meta?.coverUrl ? { coverUrl: meta.coverUrl } : {}),
+  ...(meta?.coverTiles?.length ? { coverTiles: meta.coverTiles } : {}),
+  ...(meta?.packMemberCount ? { packMemberCount: meta.packMemberCount } : {}),
+});
+
+// The item meta a shop card and its checkout read. Every surface that publishes
+// an item to a buyer goes through this one list. An item's editors (its owner
+// and moderators) read the column itself; the moderator form writes it back.
+// `soldCount` is the purchase-row count, never the stored `meta.purchases`.
+export const shopItemDisplayMeta = (meta: CosmeticShopItemMeta | null, soldCount: number) => ({
+  purchases: soldCount,
+  acceptsBlueBuzz: meta?.acceptsBlueBuzz ?? false,
+  ...packDisplayMeta(meta),
+});
+
 // Oldest entries are dropped first: a long-lived item's recent edits are what a
 // re-review needs, and meta is a JSON column we don't want growing unbounded.
 export const CREATOR_SHOP_HISTORY_LIMIT = 25;

@@ -5,6 +5,7 @@ import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { deleteImages } from '~/server/services/image.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
+import { REPLACED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 
 /**
@@ -17,7 +18,7 @@ import { decreaseDate } from '~/utils/date-helpers';
  * so the right order of magnitude is days, not hours. 30 days is also what the repo already
  * uses for the same replaced-then-purge problem on model files (`purge-replaced-files`).
  */
-export const REPLACED_IMAGE_RETENTION_DAYS = 30;
+export { REPLACED_IMAGE_RETENTION_DAYS };
 
 /** Bounds how much of a backlog one run pulls in. Oldest-first, so the remainder drains later. */
 const BATCH_SIZE = 5000;

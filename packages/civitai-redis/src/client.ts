@@ -1799,6 +1799,10 @@ export const REDIS_SYS_KEYS = {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
   },
+  COLLECTION_AI_REVIEW: {
+    // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
+    ATTEMPTS: 'system:collection-ai-review:attempts',
+  },
   BLOCKS: {
     // Emergency kill list — Redis SET of `block_id` strings BlockRegistry excludes from every
     // listForModel response (disable a runaway block without a deploy).
@@ -1847,24 +1851,29 @@ export const REDIS_SYS_KEYS = {
      */
     GEN_IDEM: 'system:blocks:gen-idem',
     /**
-     * Per-APP cumulative spend-BOUNTY accrual cap counter (audit 🟡-2 / the
-     * App-Blocks Sybil-economics review). DISTINCT from BUZZ_CAP: that one
-     * bounds a single USER's daily Buzz SPEND; this one bounds the daily
-     * platform-funded BOUNTY (in USD cents) accrued toward a single APP across
-     * ALL viewers, so a Sybil ring of many accounts can't funnel unbounded
-     * bounty at one author. Integer counter (cents), keyed
-     * `system:blocks:bounty-cap:${appBlockId}:${UTC-day}`, INCRBY'd by each
-     * row's accrued `app_owner_share_cents` at spend-attribution write time.
-     * TTL is set on first write so the per-window key self-expires. DORMANT
-     * today: the share is 0 until the payout rail (#2605) flips spendSharePct>0,
-     * so the counter never moves and the cap never clamps.
+     * Cumulative DIGITAL-GOODS spend cap counter for the block goods purchase
+     * endpoint (`POST /api/v1/blocks/goods/purchase`), keyed
+     * `system:blocks:goods-cap:${userId}:${UTC-day}`. DISTINCT from BUZZ_CAP
+     * (daily generation spend) and TIP_CAP (daily Buzz tipped out): this bounds
+     * a user's daily Buzz spent BUYING app goods. Per-USER aggregate (no
+     * appBlockId) so N installed apps share ONE daily ceiling and a publisher
+     * cannot multiply it by shipping more apps. INCRBY'd by the price
+     * pre-transaction (reserve-and-refund), TTL set on first write.
      */
-    BOUNTY_CAP: 'system:blocks:bounty-cap',
+    GOODS_CAP: 'system:blocks:goods-cap',
+    /**
+     * Idempotency record for the block goods purchase endpoint, keyed
+     * `system:blocks:goods-idem:${userId}:${appBlockId}:${clientIdempotencyKey}`.
+     * Same `SET NX` claim → replay / 409 / 422-on-fingerprint-mismatch state
+     * machine as TIP_IDEM, and fail-CLOSED on a redis error at claim time for
+     * the same reason (a money endpoint must not dedupe blind). DISTINCT from
+     * TIP_IDEM so a key value reused across the two surfaces cannot collide.
+     */
+    GOODS_IDEM: 'system:blocks:goods-idem',
     /**
      * Per-APP aggregate generation-SPEND + velocity cap counters (G8 — generic
      * per-app safety). DISTINCT from BUZZ_CAP (which bounds a single USER's daily
-     * Buzz spend) and from BOUNTY_CAP (which bounds a single APP's daily accrued
-     * BOUNTY): this bounds the daily block-initiated generation SPEND (in Buzz)
+     * Buzz spend): this bounds the daily block-initiated generation SPEND (in Buzz)
      * AND the short-window generation VELOCITY funnelled through ONE app across
      * ALL viewers — the hard prerequisite before shareable, spend-driving block
      * apps open to non-mods (a Sybil ring of many accounts each under the per-user
@@ -1966,6 +1975,24 @@ export const REDIS_SYS_KEYS = {
      */
     REVIEW_RUN_FOR_REAL_BUZZ_CAP: 'system:blocks:review-run-for-real-buzz-cap',
     /**
+     * PRIVATE RUN — AGGREGATE Buzz-spend ceiling for a private run of a DELISTED /
+     * SUSPENDED app by its owner, an accepted listing collaborator, or a moderator.
+     * Keyed `${PRIVATE_RUN_BUZZ_CAP}:<viewerUserId>:<appBlockId>` so every private-run
+     * generation by one viewer against one app accumulates against a SINGLE ceiling
+     * (`PRIVATE_RUN_BUZZ_CAP`) — a per-call budget alone cannot bound an app looping
+     * sub-budget calls, which is the same hole the sibling caps exist for.
+     *
+     * 🔴 A SEPARATE KEY FROM `REVIEW_RUN_FOR_REAL_BUZZ_CAP`, DELIBERATELY, AND NOT A
+     * TIDINESS CHOICE. That key's reservation id is a `pubreq_<ULID>` PUBLISH-REQUEST
+     * id; this one's is a real `apb_<…>` AppBlock id. Sharing one prefix would let a
+     * moderator's review-sandbox session and their private run of the same app draw
+     * down one another's ceiling, and the two ceilings answer different questions
+     * ("how much may a mod spend vetting this SUBMISSION" vs "…diagnosing this
+     * TAKEN-DOWN APP"). Same atomic INCRBY reserve-and-refund + hard-TTL EX shape as
+     * the sibling BLOCKS caps, on `sysRedis`, fail-CLOSED on a redis error.
+     */
+    PRIVATE_RUN_BUZZ_CAP: 'system:blocks:private-run-buzz-cap',
+    /**
      * CONSENT BUDGET — the per-(USER, APP BLOCK, UTC-day) Buzz ceiling the VIEWER
      * themselves set at consent time (`app_user_scope_grants.buzz_budget_per_day`).
      * Keyed `${CONSENT_BUDGET}:<userId>:<appBlockId>:<UTC-day>`.
@@ -2065,15 +2092,6 @@ export const REDIS_SYS_KEYS = {
     LIVE_FEATURE_FLAGS: 'system:live-feature-flags',
     SUSPICIOUS_AUDIT_MATCHES: 'system:suspicious-audit-matches',
     /*
-      Runtime toggle for the new image ingestion path (createImageIngestionRequest
-      with the expanded mediaRating step). Read by image.service.ts before
-      routing to the new vs legacy scanner. Accepts '1'/'true' to enable,
-      '0'/'false' to disable. If the key is missing, the first call seeds it to
-      'false' so the toggle is discoverable in Redis. Lets ops flip without a
-      deploy.
-     */
-    IMAGE_SCANNER_NEW: 'system:image-scanner-new',
-    /*
       Per-run image cap for the remove-deleted-user-images job. Set to '0' to
       pause the drain without a deploy. Missing key means the job's compiled
       default applies.
@@ -2094,6 +2112,9 @@ export const REDIS_SYS_KEYS = {
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
     // searches to the candidate feed service and record the comparison. Off when missing.
     FEED_SHADOW: 'system:feed-shadow',
+    // Hash { repeatViewSeconds, sessionIdleSeconds }: the watch a judge owes a clip they already
+    // voted on this judging session, and how long idle ends that session. Missing = defaults.
+    CRUCIBLE_JUDGING: 'system:crucible-judging',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -2128,6 +2149,9 @@ export const REDIS_SYS_KEYS = {
   },
   DAILY_CHALLENGE: {
     CONFIG: 'daily-challenge:config',
+  },
+  HUGGING_FACE_IMPORT: {
+    CONFIG: 'hugging-face-import:config',
   },
   COLLECTION: {
     RANDOM_SEED: 'collection:random-seed',
@@ -2308,6 +2332,15 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  CRUCIBLE: {
+    ELO: 'crucible:elo',
+    VOTED_PAIRS: 'crucible:voted',
+    SERVED_PAIR: 'crucible:served-pair',
+    JUDGE_ENTRY_VOTES: 'crucible:judge-entry-votes',
+    JUDGES: 'crucible:judges',
+    USER_VOTES: 'crucible:user-votes',
+    JUDGING_SESSION: 'crucible:judging-session',
+  },
 } as const;
 
 // Cached data.
@@ -2321,8 +2354,49 @@ const REDIS_KEYS_UNPREFIXED = {
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
-    // Per-blockInstanceId revocation marker (15-min TTL); block-scope middleware 403s when present.
+    // Per-blockInstanceId revocation marker; block-scope middleware 403s when present.
+    // TTL is MAX_BLOCK_TOKEN_LIFETIME_SECONDS — the longest token it must outlive
+    // (the dev token), NOT 15 minutes as this line said until 2026-09-16.
+    // 🔴 Deliberately NOT restated as a number here: per
+    // src/server/services/block-token-lifetimes.ts (the Next app — a different
+    // workspace package, so it cannot be imported from here), a hardcoded figure
+    // is exactly what let this line claim 15min while dev tokens lived hours.
+    // Read the constant there rather than trusting a number written here.
     REVOKED_INSTANCE: 'blocks:revoked-instance',
+    // 🔴 BAN REVOCATIONS LIVE IN THEIR OWN KEYSPACE, AND THAT SEPARATION IS THE
+    // SECURITY CONTROL — not a tidiness choice. When both causes shared one key,
+    // `toggleEnabled(false)` (an ordinary model owner, reachable over tRPC) wrote
+    // that key with no cause and DOWNGRADED a ban marker to an install marker;
+    // `toggleEnabled(true)` then cleared it, and the banned publisher's pre-ban
+    // token was accepted again. A value-guarded write would have been a
+    // read-modify-write with a race in it; separate keys make the downgrade
+    // unrepresentable — the install path cannot address this key at all.
+    // Same TTL, same semantics, checked together by BlockRevocation.isRevoked.
+    REVOKED_INSTANCE_BAN: 'blocks:revoked-instance-ban',
+    // 🔴 A THIRD KEYSPACE, FOR PER-SCOPE CONSENT REVOCATION, AND IT IS KEYED ON A
+    // DIFFERENT THING ENTIRELY: `<prefix>:<userId>:<appBlockId>`, not a blockInstanceId.
+    // The value is a JSON array of the scopes that (user, app) pair has revoked, so the
+    // guard can refuse the ONE route whose required scope was withdrawn instead of the
+    // app's whole surface.
+    //
+    // WHY NOT REUSE EITHER KEY ABOVE. Same argument as the install/ban split, one step
+    // out: those two are per-INSTANCE and are written by an owner/moderator action, this
+    // one is per-(user, app) and is written by the VIEWER. A shared key would let one
+    // population's write clear another's marker, which is exactly the downgrade the
+    // install/ban split was introduced to make unrepresentable.
+    //
+    // 🔴 AND ITS READ FAILS **CLOSED**, unlike `BlockRevocation.isRevoked`, which
+    // deliberately fails open. That asymmetry is why the two cannot share one `mGet`
+    // either: one call has one catch, and these two need opposite ones. See
+    // `src/server/services/blocks/consent-revocation.service.ts`.
+    //
+    // Same TTL relationship as the two above: it must OUTLIVE the longest token it
+    // refuses. Deliberately NOT restated as a number — the constant lives in the Next
+    // app's `src/server/services/block-token-lifetimes.ts`
+    // (`MAX_BLOCK_TOKEN_LIFETIME_SECONDS`), a different workspace package that cannot be
+    // imported from here, and a hardcoded figure is exactly what let `REVOKED_INSTANCE`'s
+    // comment claim 15min while dev tokens lived 4h.
+    CONSENT_REVOKED_SCOPES: 'blocks:consent-revoked-scopes',
     // Per-ecosystem-key most-popular-Checkpoint cache (JSON ValidatedCheckpoint, 1h TTL).
     POPULAR_CHECKPOINT: 'blocks:popular-checkpoint',
   },
@@ -2341,7 +2415,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
-    RESOURCE_DATA: 'packed:generation:resource-data-3',
+    RESOURCE_DATA: 'packed:generation:resource-data-5',
     /** @deprecated Bare-token orchestrator bearers. Superseded by TOKENS_OWNED; drains by TTL (~1h). */
     TOKENS: 'generation:tokens',
     /**
@@ -2373,11 +2447,20 @@ const REDIS_KEYS_UNPREFIXED = {
     BLOCKLIST: 'system:blocklist',
     PROMPT_ALLOWLIST: 'packed:system:prompt-allowlist',
     NOTIFICATION_COUNTS: 'system:notification-counts',
+    /** Per-user daily web-push quota counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    PUSH_QUOTA: 'system:push-quota',
     CATEGORIES: 'system:categories',
     BLOCKED_BROWSING_TAGS: 'system:blocked-browsing-tags',
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
+    RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
+    // Full resource-intent responses (degraded ones under a short TTL). The v1
+    // segment pins the response shape; see resource-intent.service.ts for the
+    // rest of the key (…:<sha256> of prompt|baseModel|browsingLevel|cap|specVersion).
+    // `cap` is in there because it bounds the shortlist and so bounds the cached
+    // suggestions — omitting it let one prompt's entry be reused across limits.
+    JEV_RESOURCE_INTENT: 'packed:caches:jev-resource-intent:v1',
     METRIC_EXCLUDED_USERS: 'packed:caches:metric-excluded-users',
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version-2',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
@@ -2392,7 +2475,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
     TAGGED_CACHE: 'packed:caches:tagged-cache',
-    DATA_FOR_MODEL: 'packed:caches:data-for-model',
+    DATA_FOR_MODEL: 'packed:caches:data-for-model-2',
     PUBLIC_MODEL_RESPONSE: 'packed:caches:public-model-response',
     BLOCKED_USERS: 'packed:caches:blocked-users',
     BLOCKED_BY_USERS: 'packed:caches:blocked-by-users',
@@ -2420,7 +2503,6 @@ const REDIS_KEYS_UNPREFIXED = {
     MODEL_VOTABLE_TAGS: 'packed:caches:model-votable-tags',
     MODEL_VERSION_PUBLIC_DONATION_GOALS: 'packed:caches:model-version-public-donation-goals',
     IMAGE_TAGS: 'packed:caches:image-tags',
-    MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
     TENSOR_METADATA: 'packed:caches:tensor-metadata',
     TENSOR_METADATA_SUMMARY: 'packed:caches:tensor-metadata-summary',
     IMAGE_RESOURCES: 'packed:caches:image-resources',
@@ -2498,6 +2580,15 @@ const REDIS_KEYS_UNPREFIXED = {
     // most recent run, and the scored result each run produces. Every key carries a
     // TTL, so the whole namespace self-cleans and no table backs it.
     CONTEST_SCORE_RUN: 'packed:caches:contest-score-run',
+    // Per-user derived view of a TRAINING workflow for raw-AIR (epoch blob)
+    // generation: the workflow's epoch blob keys + the training step's completion
+    // date. Keyed `<userId>:<workflowId>` — the fetch behind it is scoped to the
+    // caller's orchestrator token, so the userId segment keeps one user's cached
+    // ownership proof from ever serving another's request. Short TTL, no bust:
+    // epochs only accumulate while training runs, and a stale-by-minutes view
+    // only delays a brand-new epoch becoming generatable. See
+    // `validateRawAirResources` in orchestration-new.service.
+    TRAINING_EPOCH_BLOBS: 'packed:caches:training-epoch-blobs',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
@@ -2589,6 +2680,9 @@ const REDIS_KEYS_UNPREFIXED = {
       Read by: the moderator app's dashboard, which filters its most-reported list through it.
      */
     RESOLVED_RECENT: 'report:resolved-recent',
+  },
+  CRUCIBLE: {
+    USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
   },
 } as const;
 

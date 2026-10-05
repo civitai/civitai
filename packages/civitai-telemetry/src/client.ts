@@ -313,6 +313,134 @@ export const blockSpendAttributionWriteCounter = registerCounterWithLabels({
   labelNames: ['status'] as const,
 });
 
+// App Blocks PER-GENERATION AUTHOR FEE — DARK. These three count what the fee
+// WOULD be; slice 1 charges nobody and stores nothing, so this counter trio is
+// the only record that the computation ran, and the only way to size the
+// settlement slice from real traffic before anyone is billed.
+//
+// `coarse_type` is the COARSE generation key (`blockGenerationCoarseType`) or
+// the literal `unknown` — bounded by the step/recipe registries, so the label is
+// low-cardinality by construction and cannot be widened by traffic.
+// `outcome` is which leg governed (`flat` / `pct` / `none`), or one of two
+// counted SKIPS:
+//   `base-unavailable`  the orchestrator surfaced no `WorkflowCost.base` to
+//                       compute against — the RECOVERABLE blind spot.
+//   `price-is-cap`      `WorkflowCost.variable` was true, i.e. the price is a
+//                       CAP that may settle lower (a post-billed step charged
+//                       up front at its maximum and refunded down). No fee is
+//                       computed on one: a percentage of a number the viewer is
+//                       partly refunded is a fee on money they did not spend.
+//                       Kept SEPARATE from `base-unavailable` on purpose — that
+//                       one is a denominator the slice-2 sizing read divides by,
+//                       and a cap-priced generation would not have charged even
+//                       with a base in hand.
+// The `flag-disabled` skip is NOT here: it emits no counter at all by design and
+// is visible only as the Axiom `authorFeeSkipped` field.
+// 🔴 HYPHEN, not underscore, and this is the ONLY place in the repo that
+// enumerates the value set — so it is what an operator writing the slice-2
+// sizing join reads. Each skip is deliberately the SAME string as the Axiom
+// `authorFeeSkipped` field (`BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE` /
+// `BLOCK_AUTHOR_FEE_PRICE_IS_CAP` in
+// `~/server/services/blocks/author-fee`), because that join is the whole point:
+// querying `outcome="base_unavailable"` returns an empty series, which reads as
+// "no generation lacked a base" rather than "you spelled the label wrong".
+export const blockAuthorFeeObservedCounter = registerCounterWithLabels({
+  name: 'block_author_fee_observed_total',
+  // 🔴 "dark — no money moves" until 2026-09-25, when `app-blocks-author-fee-enabled`
+  // was flipped to true. This counter still sits on the SIZING path
+  // (`observeBlockAuthorFee`, spend attribution) and still moves no money itself —
+  // but it is no longer observing a feature that charges nobody, so the old
+  // wording now reads as an assurance about the FEE rather than about this
+  // counter's own position. The charge rail's own counters are below.
+  help: 'App Blocks per-generation author-fee computations observed on the sizing path, by coarse generation type and governing leg',
+  labelNames: ['coarse_type', 'outcome'] as const,
+});
+
+// Sum of the fee that WOULD have been charged. Divide by the base counter below
+// for the realized effective rate per coarse type; on its own it is the Buzz
+// volume slice 2 would have to settle.
+export const blockAuthorFeeBuzzCounter = registerCounterWithLabels({
+  name: 'block_author_fee_buzz_total',
+  // 🔴 "would have charged (dark)" until 2026-09-25. This is still the SIZING
+  // figure — what the fee computes to on the attribution path — and is NOT what
+  // viewers were debited.
+  //
+  // 🔴 THERE IS NO PROMETHEUS SERIES FOR BUZZ ACTUALLY DEBITED, and an earlier
+  // revision of this comment pointed at `block_author_fee_charged_buzz_total`,
+  // which does not exist: it was proposed in this same change and then deleted
+  // for duplicating an authoritative record. The authorities for money are the
+  // Buzz ledger (`TransactionType.AppAuthorFee`, keyed by `blockAuthorFeeChargeKey`
+  // — plus `Fee` + `description LIKE 'App author fee%'` for rows written before
+  // that member existed, which are NOT back-filled, so a type-only ledger query
+  // under-counts the rail's history) and the `block_author_fee_accrual` table. This
+  // series differs from both by every skip arm and by the reserve clamp, so quoting
+  // it as revenue overstates it.
+  help: 'Buzz the App Blocks per-generation author fee computes to on the sizing path (NOT what was debited), by coarse generation type',
+  labelNames: ['coarse_type'] as const,
+});
+
+// The denominator: sum of `WorkflowCost.base` the fee was computed against.
+// NOT the workflow total — that already carries licensing fees and tips.
+export const blockAuthorFeeBaseBuzzCounter = registerCounterWithLabels({
+  name: 'block_author_fee_base_buzz_total',
+  help: 'Base generation Buzz the App Blocks author fee was computed against, by coarse generation type',
+  labelNames: ['coarse_type'] as const,
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The CHARGE rail. The three counters above are a SIZING instrument on the spend
+// -attribution path (`observeBlockAuthorFee`); none of them sits on the path that
+// actually debits a viewer, so before these existed the live fee was unmeasured
+// in Prometheus on BOTH sides — quoted and charged alike.
+//
+// 🔴 WHY A COUNTER AND NOT A LOG, on the quote side specifically. The estimate
+// surface is UNBOUNDED — `estimateWorkflow` is a bare `publicProcedure` with no
+// rate limit, driven per-keystroke by third-party block code — which is why
+// `suppressQuoteLogs` exists and why every per-call log write on that path is
+// deliberately off. A counter is O(1) per call whatever the volume, so it buys
+// the visibility back without re-creating the write amplification the
+// suppression removed.
+
+/**
+ * Every `quoteBlockAuthorFee` outcome, including the DISCLOSURE-ONLY calls whose
+ * logs are suppressed. `surface` separates the unbounded estimate path from the
+ * submit-time quote that actually gates and reserves, because their call volumes
+ * differ by an unknown factor and summing them hides that.
+ *
+ * 🔴 `coarse_type` HERE MEANS "NOT DERIVABLE", AND ON `blockAuthorFeeObservedCounter`
+ * IT MEANS "NOT YET COMPUTED". THE TWO COUNTERS DISAGREE — DO NOT JOIN THEM ON IT.
+ *
+ * This counter derives the label from the generation type ARGUMENT, so every arm
+ * carries the real type whenever one can be resolved — `flag-disabled`,
+ * `price-is-cap` and `base-unavailable` included. `unknown` here means the type
+ * itself did not resolve. `blockAuthorFeeObservedCounter` still reads its label
+ * off the COMPUTATION, so it emits `unknown` on its pre-computation arms even
+ * when the type was perfectly well known.
+ *
+ * ⚠️ An earlier revision of this paragraph asserted the opposite — that the two
+ * followed the same convention — and added "it is not a spelling to fix", which
+ * would have steered the next reader away from exactly this divergence. It was
+ * true when written and falsified by a later commit of the same PR, which is the
+ * one shape no delta round can see.
+ *
+ * THE CONCRETE HAZARD: joining the two series on `coarse_type` silently drops
+ * cap-priced and base-unavailable traffic, because the observed side buckets it
+ * under `unknown` while this side buckets it under the real type. Nothing errors.
+ * Reconcile on `outcome` instead, or widen the observed counter to match.
+ */
+export const blockAuthorFeeQuotedCounter = registerCounterWithLabels({
+  name: 'block_author_fee_quoted_total',
+  help: 'App Blocks author-fee quotes, by coarse generation type (unknown = the type did not resolve), outcome and surface (disclosure = the unbounded estimate path, gating = the submit-time quote)',
+  labelNames: ['coarse_type', 'outcome', 'surface'] as const,
+});
+
+/** Every `chargeBlockAuthorFee` outcome — `charged`, or the skip/failure reason. */
+export const blockAuthorFeeChargedCounter = registerCounterWithLabels({
+  name: 'block_author_fee_charged_total',
+  help: 'App Blocks author-fee charge attempts, by coarse generation type and outcome (charged, or the skip/failure reason)',
+  labelNames: ['coarse_type', 'outcome'] as const,
+});
+
 // App Blocks MEMBERSHIP / subscription attribution (one row per paid invoice of a
 // block-initiated membership purchase).
 export const blockSubscriptionAttributionWriteCounter = registerCounterWithLabels({
@@ -333,15 +461,30 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   labelNames: ['cache_name'] as const,
 });
 
-// ClickHouse TRANSPORT-error fail-soft counter. Incremented each time a path swallows a TRANSIENT
-// ClickHouse connection/transport failure (socket hang up / Code 279 / Code 210 — see
-// isClickHouseConnectionError) instead of 500-ing the request. The `path` label names where it
-// happened. A query/schema error (UNKNOWN_TABLE etc.) is NEVER counted here — it still throws. A
-// SUSTAINED nonzero rate is the alert signal that ClickHouse Cloud is in a real outage that fail-soft
-// is now masking.
+// ClickHouse TRANSPORT-error fail-soft counter. Incremented when an INSTRUMENTED call site
+// degrades on a TRANSIENT ClickHouse connection/transport failure (socket hang up / Code 279 /
+// Code 210 — see isClickHouseConnectionError) instead of 500-ing the request. The `path` label
+// names where it happened.
+//
+// 🔴 OPT-IN PER CALL SITE, NOT A PROPERTY OF THE PREDICATE. A site that swallows or re-maps a
+// CH transient off isClickHouseConnectionError WITHOUT incrementing this is invisible here —
+// `src/server/games/new-order/utils.ts` is one such site today — so the total UNDER-reports
+// CH-transient degradation. Read a rate as "at least this much", and add the increment when
+// you instrument a site.
+//
+// A query/schema error (UNKNOWN_TABLE etc.) is never counted, because every increment sits behind
+// isClickHouseConnectionError, which excludes query/schema faults — those still throw and 500.
+// A SUSTAINED nonzero rate is a ClickHouse transport problem at those sites that no longer shows
+// up as a 500. It does not on its own localise the fault to ClickHouse Cloud: the predicate keys
+// on the syscall code, not on which dependency raised it, and the `image-feed` site catches
+// around a call that also reaches Meilisearch — a Meili transport error that the preceding
+// `isTransientMeiliError` branch did not already claim would land here. Confirm against
+// ClickHouse-side signals before calling a spike a ClickHouse outage.
 export const clickhouseFailSoftCounter = registerCounterWithLabels({
-  name: 'civitai_app_clickhouse_failsoft_total',
-  help: 'Transient ClickHouse transport errors swallowed (failed soft) instead of 500-ing, by path',
+  // registerCounterWithLabels prepends PROM_PREFIX — a name carrying it emits
+  // `civitai_app_civitai_app_…`.
+  name: 'clickhouse_failsoft_total',
+  help: 'Transient transport errors degraded (swallowed or re-mapped to 503) instead of 500-ing, by INSTRUMENTED path — opt-in, so an undercount. An error object carrying a transport syscall code counts here whatever raised it (image-feed also reaches Meilisearch), so confirm against ClickHouse-side signals before calling a spike a ClickHouse outage.',
   labelNames: ['path'] as const,
 });
 
@@ -515,8 +658,15 @@ export const sysredisSentinelClientErrorsCounter = registerSysredisCounter({
 });
 
 // App Blocks KV datastore (op ∈ get|set|delete|list|getQuota; outcome ∈ ok|unauthorized|…).
+//
+// 🔴 These four names are PREFIX-RELATIVE — do NOT re-add `app_blocks_`. The helpers prepend
+// PROM_PREFIX, so a declared `app_blocks_*` stutters into `civitai_app_app_blocks_*`, which is
+// what shipped. Exposed: `civitai_app_block_storage_{ops_total,quota_exceeded_total,
+// user_quota_untracked_total,latency_seconds}`, in the `civitai_app_block_*` family the rest of
+// App Blocks already uses. Pinned by `__tests__/app-block-storage-metric-names.test.ts`.
+// Seeded to 0 by `src/server/prom/app-block-storage.metrics.ts`.
 export const appStorageOpsCounter = registerCounterWithLabels({
-  name: 'app_blocks_storage_ops_total',
+  name: 'block_storage_ops_total',
   help: 'App Blocks KV datastore tRPC operations',
   labelNames: ['op', 'outcome'] as const,
 });
@@ -539,7 +689,7 @@ export const appStorageOpsCounter = registerCounterWithLabels({
 // the `scope: '…'` tail inside it. `ceiling` is both collision-free and the more
 // accurate word for what the label distinguishes.
 export const appStorageQuotaExceededCounter = registerCounterWithLabels({
-  name: 'app_blocks_storage_quota_exceeded_total',
+  name: 'block_storage_quota_exceeded_total',
   help: 'App Blocks KV writes rejected by a storage ceiling (ceiling=app: the per-app budget; ceiling=user: the per-user sub-budget)',
   labelNames: ['app_block_id', 'ceiling'] as const,
 });
@@ -556,19 +706,24 @@ export const appStorageQuotaExceededCounter = registerCounterWithLabels({
 // inert state is silent by construction unless something counts it.
 //
 // 🔴 It is deliberately its OWN series and not an `outcome` on
-// app_blocks_storage_ops_total. A state visible only as some other series
+// civitai_app_block_storage_ops_total. A state visible only as some other series
 // changing shape is not alertable — the same argument countStorageFault makes
 // about faults being visible solely as the `ok` series falling to zero. This is
-// the series to alert on ("some app has been running unmetered for N days") and
-// the series that goes to zero when the backfill has actually reached everything.
+// the series to read for "some app has been running unmetered for N days".
+//
+// 🔴 It is a COUNTER, so it never "goes back to zero" once the backfill lands —
+// this comment claimed that and it was false. prom-client counters are monotonic
+// for the process lifetime and accumulated children keep their values; what
+// stops moving is `increase()`/`rate()` over a window with no new writes. Read
+// the window, not the series total.
 export const appStorageUserQuotaUntrackedCounter = registerCounterWithLabels({
-  name: 'app_blocks_storage_user_quota_untracked_total',
+  name: 'block_storage_user_quota_untracked_total',
   help: 'App Blocks KV writes served without a per-user quota relation (sub-budget not enforced; app needs the storage backfill)',
   labelNames: ['app_block_id'] as const,
 });
 
 export const appStorageLatencyHistogram = registerHistogram({
-  name: 'app_blocks_storage_latency_seconds',
+  name: 'block_storage_latency_seconds',
   help: 'App Blocks KV procedure latency',
   labelNames: ['op'] as const,
   buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5],
@@ -586,7 +741,7 @@ export const imageScanWebhookCounter = registerCounterWithLabels({
 
 export const imageScanSubmittedCounter = registerCounterWithLabels({
   name: 'image_scan_submitted_total',
-  help: 'ingestImage() scan submissions by lane (new|legacy) and result (success|failed)',
+  help: 'ingestImage() scan submissions by lane (new = wdTagging+mediaRating | imageScanning | unknown = rejected before the lane was resolved) and result (success|failed|rejected = url off the ingestion allowlist, never submitted)',
   labelNames: ['lane', 'result'] as const,
 });
 

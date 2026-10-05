@@ -1,8 +1,8 @@
 /**
  * Qwen Family Graph
  *
- * Controls for Qwen and Qwen 2 ecosystems.
- * Uses ecosystem discriminator to select between Qwen and Qwen 2 subgraphs.
+ * Controls for the Qwen, Qwen 2, Qwen 2.1 and Qwen 3 ecosystems.
+ * Uses the ecosystem discriminator to select each release's controls.
  *
  * Qwen (comfy engine):
  * - Supports txt2img and img2img:edit workflows with model version selection
@@ -19,11 +19,13 @@
  */
 
 import z from 'zod';
+import { qwen21AspectRatios, qwen21ResolutionOptions } from '~/shared/constants/qwen21.constants';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
   createCheckpointGraph,
+  createResourcesGraph,
   imagesNode,
   negativePromptGraph,
   promptGraph,
@@ -147,9 +149,31 @@ const qwen2SubGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .merge(negativePromptGraph);
 
 // =============================================================================
-// Qwen 3 Subgraph (qwen engine — DashScope)
+// Qwen 2.1 Subgraph (comfy engine, unified generation and editing)
 // =============================================================================
 
+const qwen21SubGraph = new DataGraph<QwenCtx, GenerationCtx>()
+  .merge(() => createCheckpointGraph(), [])
+  .merge(createResourcesGraph())
+  .node('resolution', {
+    input: z.enum(qwen21ResolutionOptions).optional(),
+    output: z.enum(qwen21ResolutionOptions),
+    defaultValue: '1K',
+    meta: { options: qwen21ResolutionOptions.map((value) => ({ label: value, value })) },
+  })
+  .node(
+    'aspectRatio',
+    (ctx) => ({
+      ...aspectRatioNode({ options: qwen21AspectRatios[ctx.resolution], defaultValue: '1:1' }),
+      when: ctx.workflow.startsWith('txt'),
+    }),
+    ['resolution', 'workflow']
+  )
+  .node('cfgScale', sliderNode({ min: 0, max: 30, defaultValue: 1, step: 0.5 }))
+  .node('steps', sliderNode({ min: 1, max: 150, defaultValue: 25 }))
+  .merge(negativePromptGraph);
+
+// Qwen 3 (Alibaba DashScope)
 const qwen3SubGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .merge(() => createCheckpointGraph(), [])
   .node(
@@ -186,22 +210,23 @@ export const qwenGraph = new DataGraph<QwenCtx, GenerationCtx>()
   .node(
     'images',
     (ctx) => ({
-      ...imagesNode({ max: 3 }),
+      ...imagesNode({ max: ctx.ecosystem === 'Qwen21' ? 10 : 3 }),
       when: !ctx.workflow.startsWith('txt'),
     }),
-    ['workflow']
+    ['workflow', 'ecosystem']
   )
 
-  // Seed - shared across both ecosystems
+  // Seed is shared across the family.
   .node('seed', seedNode())
 
-  // Discriminate between Qwen and Qwen 2
+  // Select the controls for each Qwen release
   .discriminator('ecosystem', {
     Qwen: qwenSubGraph,
     Qwen2: qwen2SubGraph,
+    Qwen21: qwen21SubGraph,
     Qwen3: qwen3SubGraph,
   })
-  // Prompt + triggerWords are common to both Qwen and Qwen 2. negativePrompt
+  // Prompt + triggerWords are common to the family. negativePrompt
   // is merged only inside the Qwen2 branch; its registration effect adds
   // itself to the snippets target map when that branch is active.
   .merge(triggerWordsGraph)

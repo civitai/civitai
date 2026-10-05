@@ -82,3 +82,154 @@ export function mediaFromBlobs(
   }
   return media;
 }
+
+/**
+ * True when `value` has the orchestrator `Blob` SHAPE.
+ *
+ * A SHAPE test, not a key-name list and not a "does this string look like a
+ * url?" sniff. The first draft of this module enumerated four key names
+ * (`blob`/`blobs`/`image`/`images`); measured against the live spec on
+ * 2026-09-17 those covered 4 of the 18 property names that carry a blob across
+ * the step types this bridge admits, so `video`, `audioBlob`, `svg`, `frames`,
+ * `tempBlobs`, `draftCache`, `additionalVideos` and seven on `polyGen` alone
+ * would each have ridden out as a raw url inside the forwarded output.
+ *
+ * 🔴 KEYED ON `available` PLUS AN IDENTITY FIELD, NOT ON `available` PLUS `url`.
+ * `Blob.available` and `Blob.id` are REQUIRED upstream; `url` is
+ * `url?: null | string` — which is the whole premise the array rule below rests
+ * on. Requiring `url` meant a BLOCKED blob, whose `url` key is simply absent,
+ * failed the test and was forwarded whole: no url escaped (there is none), but
+ * its `blockedReason` and raw orchestrator `nsfwLevel` did, and the module's own
+ * "a blob that the filter DROPPED cannot ride out through `rest`" claim was
+ * false. Measured.
+ *
+ * It still cannot strip prose: a string is not an object with an `available`
+ * field.
+ */
+function isOrchestratorBlobLike(value: unknown): boolean {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const v = value as Record<string, unknown>;
+  return 'available' in v && ('url' in v || 'id' in v);
+}
+
+/**
+ * How deep the walk below descends before it stops looking.
+ *
+ * 🔴 NOT 1, AND THE REASON IS A MEASUREMENT. A depth-1 walk was shipped and then
+ * measured against the live spec: of the 50 step types, three carry blobs deeper
+ * than the top level, and two of them are ALLOWED on this arm.
+ * `polyGen.basicAnimations` is a plain object holding SIX `Model3DBlob`s
+ * (walking/running × three model formats) and `training.epochs[]` carries
+ * `model` plus a `samples[]` of images/videos/audio. Every one of those urls was
+ * forwarded raw — reachable by the app, invisible to both the publish path and
+ * the per-viewer gated read.
+ *
+ * 🔴 THE MARGIN IS ONE LEVEL, NOT "room". The deepest strip the catalog requires
+ * today is `training.epochs`(1) → an epoch(2) → `samples`(3) → its members(4). A
+ * new upstream `$type` is ALLOWED by construction, so one extra wrapper level in
+ * a future output reopens exactly this leak with no detector. Say the CATALOG
+ * DEPTH when you re-measure; do not say "with room". (Re-derivable from the
+ * orchestrator spec; the overflow threshold below is not.)
+ *
+ * 🔴 IT IS A STACK BOUND, NOT ONLY A COST BOUND — AND NOT CYCLE PROTECTION. The
+ * walked value is the orchestrator's JSON-parsed `step.output`, not the app's
+ * `input`, so it is acyclic and no declared output type echoes the request back.
+ * What it is NOT is depth-limited: V8 parses JSON iteratively (ten million
+ * nested levels parse fine) while this walk is recursive and overflows the stack
+ * a few thousand levels in. 🔴 THE ORDER IS THE FACT, NOT THE FIGURE — that
+ * threshold moves with stack size, frame shape and caller depth, and repeated
+ * measurements of it have disagreed by more than 2×. Do not write an overflow
+ * depth here again. Nothing upstream bounds the depth; this cap does.
+ *
+ * 🔴 SO DO NOT "CLOSE THE RESIDUE" BY DELETING THE CAP. This runs inside
+ * `snapshotFromWorkflow` on `submitPassThroughStepWorkflow`'s post-submit path,
+ * where a throw is caught by a handler that refunds every cap leg it reserved and
+ * rethrows — on a generation the orchestrator has already created and will bill,
+ * so the caps understate real spend permanently. Closing the residue means an
+ * ITERATIVE walk.
+ */
+const PASS_THROUGH_OUTPUT_WALK_DEPTH = 4;
+
+/**
+ * Strip every blob-shaped value out of an orchestrator step output, returning
+ * the media found and the remainder — the pass-through arm's one output rule.
+ *
+ * 🔴 THE STRIP IS UNCONDITIONAL, NOT "strip what produced media". A blob-shaped
+ * value is removed whether or not `mediaFromBlobs` kept it, so a blob the
+ * availability filter DROPPED — unavailable, blocked, empty or absent url —
+ * cannot ride out through the remainder instead. Filtering and stripping on the
+ * same predicate is how a dead or blocked url reaches a block through the back
+ * door. 🔴 THE PREDICATE ALONE DECIDES THE STRIP — what `mediaFromBlobs` returns
+ * is spread and never inspected. Do NOT gate the `continue`/`return {}` on a
+ * `.length`: that is the same door, reopened.
+ *
+ * ⚠️ An earlier revision of this paragraph explained the rule through the
+ * truthiness of a `liftOrchestratorBlobs` return value. That helper was deleted
+ * in the same commit that left the sentence behind, so it sent a maintainer
+ * looking for a mechanism that is not there.
+ *
+ * 🔴 SOME STEP TYPES *ARE* A BLOB. `transcode` returns the blob itself as its
+ * whole output, so the whole-value case is checked before descending.
+ *
+ * 🔴 THE RESIDUE IS A SHAPE RESIDUE AS WELL AS A DEPTH ONE, AND THE SECOND HALF
+ * IS EASY TO MISS BECAUSE THE MEASUREMENT ABOVE ENUMERATED BLOB-*TYPED* FIELDS,
+ * NOT URL-*CARRYING* ONES. Two ALLOWED types carry a url as a PLAIN STRING and
+ * are therefore invisible to a shape test: `blobArchive`, whose entire output is
+ * `{ url, entryCount, format, expiresAt }`, and
+ * `imageResourceTraining.epochs[].blobUrl`. Those urls reach the app through
+ * `stepOutputs` and are never seen by the publish path or the per-viewer gated
+ * read. Sniffing every string for something url-shaped is NOT the fix — it would
+ * strip prose that merely contains a link. Lifting a named string field, or
+ * refusing those `$type`s, is; both are decisions, not cleanups.
+ *
+ * 🔴 IT REBUILDS RATHER THAN FORWARDS. Every object and array it descends into
+ * is reconstructed, so "forward verbatim" is true of VALUES and not of identity:
+ * a non-JSON value below the root (a `Date`, a `Map`, a class instance) would
+ * come out as `{}`, and a `__proto__` key vanishes at every level. Inert today —
+ * the orchestrator client `JSON.parse`s the response, so every value here is
+ * plain JSON — and the thing to re-check if a response transformer is ever added.
+ */
+export function splitPassThroughStepOutput(output: unknown): {
+  media: StepOutputMedia[];
+  rest: unknown;
+} {
+  const media: StepOutputMedia[] = [];
+  const rest = walkPassThroughOutput(output, media, 0);
+  return { media, rest };
+}
+
+function walkPassThroughOutput(value: unknown, media: StepOutputMedia[], depth: number): unknown {
+  if (value === null || typeof value !== 'object') return value;
+  if (isOrchestratorBlobLike(value)) {
+    media.push(...mediaFromBlobs(value as OrchestratorBlobLike));
+    return {};
+  }
+  // Past the cap the value is forwarded as-is. See PASS_THROUGH_OUTPUT_WALK_DEPTH
+  // for the measured margin this leaves.
+  if (depth >= PASS_THROUGH_OUTPUT_WALK_DEPTH) return value;
+  if (Array.isArray(value)) {
+    // 🔴 PER ELEMENT, NOT ALL-OR-NOTHING. An earlier rule qualified the whole
+    // array on `some(isBlobLike)` and replaced it wholesale, which lost a blob
+    // NESTED inside a non-blob sibling: `[blob, { nested: blob }]` lifted the
+    // first and discarded the second from BOTH sides — never published, never
+    // forwarded. Lifting per element and walking the rest keeps both.
+    const out: unknown[] = [];
+    for (const entry of value) {
+      if (isOrchestratorBlobLike(entry)) {
+        media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
+        continue;
+      }
+      out.push(walkPassThroughOutput(entry, media, depth + 1));
+    }
+    return out;
+  }
+  const rest: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (isOrchestratorBlobLike(entry)) {
+      media.push(...mediaFromBlobs(entry as OrchestratorBlobLike));
+      continue;
+    }
+    rest[key] = walkPassThroughOutput(entry, media, depth + 1);
+  }
+  return rest;
+}

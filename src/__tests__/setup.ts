@@ -102,19 +102,15 @@ vi.mock('@civitai/client', () => ({
   Air: class Air {
     static parse = vi.fn(() => ({ id: '0', version: '0', type: 'model', source: 'civitai' }));
     static stringify = vi.fn(() => '');
-    // Faithful-enough parse of `urn:air:<ecosystem>:<type>:<source>:<id>[@<version>]`
-    // so link builders can tell a civitai AIR (numeric id/version) from a
-    // HuggingFace one (string segments) without the real ESM-only module. This
-    // must track the real id/version splitting in
-    // node_modules/@civitai/client/dist/utils/Air.js — if that changes, the AIR
-    // link tests keep passing against behaviour production no longer has.
-    static parseSafe = vi.fn((identifier: string) => {
-      const match = /^urn:air:([^:]+):([^:]+):([^:]+):(.+)$/.exec(identifier);
-      if (!match) return undefined;
-      const [, ecosystem, type, source, rest] = match;
-      const [id, version] = rest.split('@');
-      return { ecosystem, type, source, id, version };
-    });
+    // Copied VERBATIM from node_modules/@civitai/client/dist/utils/Air.js (ESM-only,
+    // so not importable here). An approximation lets AIR tests pass against a parser
+    // production does not run.
+    static parseSafe = vi.fn(
+      (identifier: string) =>
+        identifier.match(
+          /^(?:urn:)?(?:air:)?(?:(?<ecosystem>[a-zA-Z0-9_\-\/]+):)?(?:(?<type>[a-zA-Z0-9_\-\/]+):)?(?<source>[a-zA-Z0-9_\-\/]+):(?<id>[a-zA-Z0-9_\-\/\.]+)(?:@(?<version>[a-zA-Z0-9_\-\/.]+))?(?:\+(?<modelFileId>\d+))?(?:\.(?<format>[a-zA-Z0-9_\-]+))?$/i
+        )?.groups
+    );
   },
 }));
 
@@ -198,6 +194,26 @@ vi.mock('~/server/prom/client', () => ({
   registerHistogram: vi.fn(promMetricStub),
   registerInstrumentationMetric: vi.fn(promMetricStub),
   // Named metric exports the real module ships.
+  // App Blocks author-fee CHARGE rail. Reached from `blocks.router.ts` via
+  // `quoteBlockAuthorFee`/`chargeBlockAuthorFee`, so ANY suite exercising an
+  // estimate or a submit touches them — not only the fee's own tests.
+  //
+  // 🔴 OMITTING ONE NOW FAILS **SILENTLY**, AND AN EARLIER REVISION OF THIS
+  // COMMENT CLAIMED THE OPPOSITE. Vitest implements a missing mock export as a
+  // Proxy `get` trap, so the throw fires at PROPERTY ACCESS — and both accesses
+  // sit inside the `try { … } catch { /* swallow */ }` the fee service wraps its
+  // incs in. The counter would simply never fire and every suite would stay
+  // green. The corroboration is in this same tree: `blockAuthorFeeObservedCounter`,
+  // `blockAuthorFeeBuzzCounter` and `blockAuthorFeeBaseBuzzCounter` are ALREADY
+  // absent here, are read the same way inside try/catch in `author-fee.ts`, and
+  // nothing is red.
+  //
+  // So this list is load-bearing and unguarded. That is a real gap, not a
+  // reassurance — it is recorded rather than fixed because closing it means a
+  // completeness guard over a module on `PENDING_SPECIFIERS`, which is its own
+  // change.
+  blockAuthorFeeQuotedCounter: promMetricStub(),
+  blockAuthorFeeChargedCounter: promMetricStub(),
   placementExhaustedLegsGauge: promMetricStub(),
   placementUnfundedSettlementsGauge: promMetricStub(),
   restrictedImageDriftGauge: promMetricStub(),
@@ -227,11 +243,19 @@ vi.mock('~/server/prom/client', () => ({
   // against a registry that never held anything.
   instrumentationRegistry: new promClient.Registry(),
   // Re-exported from '@civitai/telemetry/client' rather than declared in
-  // prom/client, so this module-replacing mock drops it. `base.reward` and
-  // `image.service` both call `.inc()` on it WITHOUT the `?.inc?.()` guard their
-  // neighbours use, so the first test to drive either fail-soft path dies here
-  // rather than on whatever it was written to check.
+  // prom/client, so this module-replacing mock drops it. Every fail-soft call site
+  // (`base.reward`, `image.service`, `runClickHouseRead`) calls `.inc()` on it WITHOUT
+  // the `?.inc?.()` guard their neighbours use, so the first test to drive one of those
+  // paths dies here rather than on whatever it was written to check.
   clickhouseFailSoftCounter: promMetricStub(),
+  // Also a '@civitai/telemetry/client' re-export this module-replacing factory drops,
+  // but NOT for the reason above: its call site (`reward-config.ts`) DOES use the
+  // `?.inc?.()` guard. Do not read that chaining as making this entry optional. `?.`
+  // guards the RESULT of the property access, not the module-namespace access that
+  // produces it, so the throw lands either way. Measured by deleting this line: four
+  // cases in `src/server/rewards/__tests__/reward-config.test.ts` go red with
+  // `[vitest] No "rewardConfigReadFailedCounter" export is defined on the
+  // "~/server/prom/client" mock`, pointing at the optional-chained call itself.
   rewardConfigReadFailedCounter: promMetricStub(),
   clavataCounter: promMetricStub(),
   cacheHitCounter: promMetricStub(),
@@ -265,6 +289,9 @@ vi.mock('~/server/prom/client', () => ({
   imageIngestCronCounter: promMetricStub(),
   imageIngestCronQueueDepth: promMetricStub(),
   imageScanWebhookCounter: promMetricStub(),
+  // ingestImage() submit outcome — reached by the ingestion URL-allowlist suites and any
+  // future suite that drives a scan submit through the service.
+  imageScanSubmittedCounter: promMetricStub(),
 }));
 
 // Mock logging.

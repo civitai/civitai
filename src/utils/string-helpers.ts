@@ -246,6 +246,12 @@ export function getModel3DUrl({ id, name }: { id: number; name?: string | null }
   return slug ? `/3d-models/${id}/${slug}` : `/3d-models/${id}`;
 }
 
+/** Canonical article URL. A title with no slug-able characters gets the bare id path. */
+export function getArticleUrl({ id, title }: { id: number; title?: string | null }): string {
+  const slug = title ? slugit(title) : null;
+  return slug ? `/articles/${id}/${slug}` : `/articles/${id}`;
+}
+
 /**
  * One HTML tag. `[^<>]` (not `[^>]`) so an unterminated run of `<` can't force quadratic
  * backtracking (ReDoS) — a `<` always starts a fresh potential tag.

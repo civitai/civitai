@@ -23,7 +23,6 @@ export interface SessionUser {
   showNsfw: boolean;
   blurNsfw: boolean;
   browsingLevel: number;
-  redBrowsingLevel?: number;
   onboarding: number;
   permissions?: string[];
   /** App-namespaced role grants (`app:role`), e.g. `["moderator:volunteer", "tester"]`. Read via `appRoles`. */

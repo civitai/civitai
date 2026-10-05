@@ -9,14 +9,24 @@ export enum FLIPT_FEATURE_FLAGS {
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
-  // Answers getImagesFromSearch from the PostgreSQL feed service instead of Meilisearch
-  // for matching users; everyone else keeps Meilisearch with the feed service in shadow.
+  // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
+  // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
   GIFT_CARD_VENDOR_LEWT_DROP = 'gift-card-vendor-lewt-drop',
   GIFT_CARD_VENDOR_CRYPTO = 'gift-card-vendor-crypto',
+  // The stop button for `delete-old-training-data`'s S3 deletes. Default-OFF by
+  // construction: isFlipt returns false for an unknown flag or an unreachable Flipt,
+  // so the purge stays dormant until someone turns it on deliberately.
+  TRAINING_DATA_PURGE = 'training-data-purge',
+  // Resolve every row and log what WOULD be deleted, without deleting it. Also default-off, which
+  // means it cannot make the purge safer on its own — the operator procedure is to turn this ON
+  // FIRST, then the purge, read a night's output, and only then turn this off. Written down on
+  // DELETE_OLD_TRAINING_DATA_MAX_ROWS_PER_PASS because a two-flag order that nobody records is a
+  // trap rather than a safeguard.
+  TRAINING_DATA_PURGE_DRY_RUN = 'training-data-purge-dry-run',
   IMAGE_TRAINING = 'image-training',
   VIDEO_TRAINING = 'video-training',
   AI_TOOLKIT_SD15 = 'ai-toolkit-sd15',
@@ -52,7 +62,6 @@ export enum FLIPT_FEATURE_FLAGS {
   GENERATION_TESTING = 'generation-testing',
   GENERATION_EXPERIMENTAL = 'generation-experimental',
   AI_TOOLKIT_DEFAULT_SD = 'ai-toolkit-default-sd',
-  WAN22_MULTI_STEP = 'wan22-multi-step',
   ENHANCED_COMPATIBILITY_SDCPP = 'enhanced-compatibility-sdcpp',
   IMAGE_INDEX_FEED = 'image-index-feed',
   // Routes ImageResourceNew reads to the writer (primary) instead of the read
@@ -138,6 +147,35 @@ export enum FLIPT_FEATURE_FLAGS {
   // OFF is the shipped default and means the pattern list is recorded but not enforced on these
   // surfaces. The link-domain half throws either way — this flag has never governed it.
   USER_CONTENT_PATTERN_ENFORCE = 'user-content-pattern-enforce',
+
+  // Submits image ingestion as one imageScanning step instead of wdTagging + mediaRating.
+  // DEFAULT-OFF — an unknown flag or unreachable Flipt keeps the two-step path. Evaluated
+  // with the imageId and no context, so ramp by percentage or boolean; a segment matches nothing.
+  IMAGE_INGESTION_IMAGE_SCANNING = 'image-ingestion-image-scanning',
+
+  // Runs sync-generator-loaded-resources. DEFAULT-OFF: while off, ModelVersion.generatorLoaded
+  // freezes at its last value — once a UI reads it, clear it if this stays off. Boolean only.
+  SYNC_GENERATOR_LOADED_RESOURCES = 'sync-generator-loaded-resources',
+
+  // Which of GenerationCoverage's two columns answers "can this generate": ON = `coveredNext`
+  // (community checkpoints, downloaded on demand); OFF = `covered` (the weekly auction's list only).
+  //
+  // 🔴 BOOLEAN ONLY, and global. The orchestrator reads /api/v1/model-versions/mini/[id] with no
+  // user to decide what it may load, and the coverage answer is cached and indexed for everyone —
+  // so a percentage or segment rollout would have the orchestrator, the cache and the viewer
+  // disagreeing about the same model.
+  //
+  // DEFAULT-OFF is the safe failure: an unreachable Flipt narrows generation to what the cluster
+  // already holds rather than opening on-demand loading nobody is watching.
+  GENERATION_COVERAGE_NEXT = 'generation-coverage-next',
+
+  // Who may START a download by generating with a checkpoint only the EXPANSION covers. Named for
+  // the OPEN state: `isFlipt` answers false for an unknown flag or an unreachable Flipt, so the
+  // default and the failure both land on the narrower audience. Evaluate with the user id as
+  // entity, or a percentage hashes the literal 'global' and answers the same for everyone. Read it
+  // through `coverageAudience`, which is where it meets the tier.
+  // docs/features/paid-model-loading-members-gate.md
+  GENERATION_LOADING_OPEN_TO_ALL = 'generation-loading-open-to-all',
 }
 
 // Flags exempt from caching: incident kill-switches where an operator expects a
@@ -161,6 +199,25 @@ export enum FLIPT_FEATURE_FLAGS {
 // per-request wasm eval on the hot path. If its propagation latency ever
 // matters during an incident, lower FLIPT_EVAL_CACHE_TTL_MS globally rather
 // than bypassing this one flag.
+// ⚠ DELIBERATELY NOT HERE: TRAINING_DATA_PURGE. It is a stop button for irreversible deletes, so
+// it looks like it belongs — a draft of it was added on exactly that reasoning and then removed.
+// The entry would be INERT: that flag is evaluated exactly once per NIGHTLY run against a
+// ten-second TTL, so a cached entry has always expired before the next evaluation and bypassing
+// can never change what that job sees.
+//
+// 🔴 NO GENERAL CRITERION IS STATED HERE, AND THAT IS DELIBERATE — THREE DRAFTS OF ONE HAVE NOW
+// BEEN WRONG. The first said the entries below are each "evaluated far more often than the TTL";
+// at least three of them say otherwise in their own comments. The second offered "caching buys
+// nothing AND staleness costs something", which is satisfied by the purge flag it was written to
+// exclude — that flag is the clearest case of caching buying nothing. Each attempt was a rule
+// invented to justify a membership list that was decided case by case.
+//
+// So: the list is case by case, and the only thing recorded here is the one case that was
+// examined and rejected. TRAINING_DATA_PURGE is read exactly ONCE per nightly run, so a cached
+// entry has always expired before the next read and bypassing cannot change what that job sees —
+// inert, whatever the rule would have been. If the job is ever changed to re-read it inside its
+// loop, that fact stops holding and the question is open again. Do not derive a fourth rule from
+// this paragraph; read the entries' own comments.
 const FLIPT_EVAL_CACHE_BYPASS = new Set<string>([
   FLIPT_FEATURE_FLAGS.REDIS_CLUSTER_ENHANCED_FAILOVER,
   FLIPT_FEATURE_FLAGS.HIGH_REPLICATION_LAG_MODE,

@@ -82,6 +82,33 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   }, [user, overview, pathname]);
   // const { classes } = useStyles();
 
+  // What this creator actually has, biggest two kinds first — a profile with only images should
+  // not advertise models.
+  const metaDescription = useMemo(() => {
+    if (!user?.username) return undefined;
+    const counts: [number, string][] = [
+      [overview?.modelCount ?? 0, 'AI models'],
+      [overview?.imageCount ?? 0, 'images'],
+      [overview?.videoCount ?? 0, 'videos'],
+      [overview?.articleCount ?? 0, 'articles'],
+      [overview?.comicCount ?? 0, 'comics'],
+    ];
+    const has = counts
+      .filter(([count]) => count > 0)
+      .sort((a, b) => b[0] - a[0])
+      .slice(0, 2)
+      .map(([count, noun]) => `${abbreviateNumber(count)} ${noun}`);
+
+    if (!has.length)
+      return `Browse ${user.username}'s AI models, images and articles on Civitai. Download or generate online.`;
+
+    const followers = user.stats?.followerCountAllTime ?? 0;
+    const following = followers > 0 ? `, followed by ${abbreviateNumber(followers)} people` : '';
+    return `${user.username} on Civitai: ${has.join(
+      ' and '
+    )}${following}. Download or generate online.`;
+  }, [user?.username, user?.stats?.followerCountAllTime, overview]);
+
   const userMetaImage =
     user?.profilePicture && !isBlobUrl(user.profilePicture.url)
       ? getEdgeUrl(user.profilePicture.url, { width: 1200 })
@@ -132,11 +159,7 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
       {user && user.username && stats && !blockedByThem ? (
         <Meta
           title={`${user.username} Creator Profile | Civitai`}
-          description={`Models Uploaded: ${abbreviateNumber(0)}, Followers: ${abbreviateNumber(
-            stats.followerCountAllTime
-          )}, Total Likes Received: ${abbreviateNumber(
-            stats.thumbsUpCountAllTime
-          )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
+          description={metaDescription}
           images={user.profilePicture}
           canonical={pathname}
           schema={metaSchema}

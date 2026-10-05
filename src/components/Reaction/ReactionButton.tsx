@@ -50,15 +50,18 @@ export const useReactionsStore = ({
 export type ReactionButtonProps = ToggleReactionInput & {
   userReaction?: { userId: number; reaction: ReviewReactions };
   count?: number;
+  countUnknown?: boolean;
   noEmpty?: boolean;
   children: ({
     hasReacted,
     count,
+    countUnknown,
     reaction,
     canClick,
   }: {
     hasReacted: boolean;
     count: number;
+    countUnknown: boolean;
     reaction: ReviewReactions;
     canClick: boolean;
   }) => React.ReactElement;
@@ -69,6 +72,7 @@ export type ReactionButtonProps = ToggleReactionInput & {
 export function ReactionButton({
   userReaction,
   count: initialCount = 0,
+  countUnknown = false,
   entityType,
   entityId,
   reaction,
@@ -112,7 +116,7 @@ export function ReactionButton({
   };
 
   const canClick = !!currentUser && !readonly && !isLoading;
-  const child = children({ hasReacted, count, reaction, canClick });
+  const child = children({ hasReacted, count, countUnknown, reaction, canClick });
 
   if (noEmpty && count < 1)
     return invisibleEmpty ? cloneElement(child, { className: 'invisible' }) : null;

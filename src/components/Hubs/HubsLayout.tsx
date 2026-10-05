@@ -21,7 +21,6 @@ import {
   IconPlus,
   IconSearch,
 } from '@tabler/icons-react';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
@@ -32,15 +31,35 @@ import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import HubUpsertModal from '~/components/Hubs/HubUpsertModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { hubLimits } from '~/server/schema/user-hub.schema';
 import { FollowedHubsSection } from '~/components/Hubs/FollowedHubsSection';
-import { hubUrl, toPanelHub } from '~/components/Hubs/hub.utils';
-const HubSourcePanel = dynamic(
-  () => import('~/components/Hubs/HubSourcePanel').then((m) => m.HubSourcePanel),
-  { ssr: false }
-);
+import { describeHubSources, hubUrl } from '~/components/Hubs/hub.utils';
+import { HubSourcesSection } from '~/components/Hubs/HubSourcesSection';
 import { trpc } from '~/utils/trpc';
 import classes from './HubsLayout.module.scss';
+
+/**
+ * What the hub nav shows, for the rail and for the small-screen picker that stands in
+ * for it. One hook so the two cannot disagree about which hubs exist or whether there
+ * is anything to navigate.
+ */
+export function useHubNav() {
+  const router = useRouter();
+  const currentUser = useCurrentUser();
+  const activeHubKey = typeof router.query.id === 'string' ? router.query.id : undefined;
+
+  const { data: hubs = [] } = trpc.userHub.getAll.useQuery(undefined, { enabled: !!currentUser });
+  const { data: followed = [] } = trpc.userHub.getFollowed.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  return {
+    activeHubKey,
+    hubs,
+    followed,
+    showNav: !!activeHubKey || hubs.length > 0 || followed.length > 0,
+    openCreate: () => dialogStore.trigger({ component: HubUpsertModal }),
+  };
+}
 
 function SectionHeader({
   label,
@@ -140,22 +159,13 @@ function HubsSidebarContent({
             onClick={() => setSourcesOpenOverride(!sourcesOpen)}
             right={
               <Text size="xs" c="dimmed" className="shrink-0">
-                {activeHub.isOwner
-                  ? `${activeHub.sources.length} / ${hubLimits.sourcesPerHub}`
-                  : `${activeHub.sources.filter((source) => source.enabled).length}`}
+                {activeHub.sources.filter((source) => !source.exclude).length}
               </Text>
             }
           />
 
-          {/* Mounted only once opened, which is also what defers the panel's chunk:
-              `dynamic` starts fetching as soon as the component renders, so
-              rendering it collapsed would pull it on every hub load. */}
           <Collapse in={sourcesOpen}>
-            {sourcesOpen && (
-              <div className="px-3 pb-3">
-                <HubSourcePanel hub={toPanelHub(activeHub)} />
-              </div>
-            )}
+            {sourcesOpen && <HubSourcesSection hubKey={activeHubKey} />}
           </Collapse>
           <Divider />
         </>
@@ -221,9 +231,7 @@ function HubsSidebarContent({
                       {hub.name}
                     </Text>
                     <Text size="xs" c="dimmed">
-                      {hub.sources.length === 0
-                        ? 'No sources'
-                        : `${hub.sources.length} source${hub.sources.length === 1 ? '' : 's'}`}
+                      {describeHubSources(hub.sourceCounts)}
                     </Text>
                   </Link>
                 ))}
@@ -243,6 +251,12 @@ function HubsSidebarContent({
 export function HubsLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const { data: ownHubs = [] } = trpc.userHub.getAll.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+  const { data: followed = [] } = trpc.userHub.getFollowed.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
   const isMobile = useContainerSmallerThan('sm');
   const [showSidebar, setShowSidebar] = useState(true);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -256,9 +270,13 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
     dialogStore.trigger({ component: HubUpsertModal });
   };
 
+  // A nav with nothing to navigate is the confusing state the landing page exists to
+  // fix: on /hubs, someone who has made no hubs gets the explainer alone.
+  const showNav = !!activeHubKey || ownHubs.length > 0 || followed.length > 0;
+
   return (
     <Container fluid className={classes.container}>
-      {(!!currentUser || !!activeHubKey) && !isMobile && (
+      {showNav && !isMobile && (
         <Card
           className={classes.sidebar}
           w={300}
@@ -286,7 +304,7 @@ export function HubsLayout({ children }: { children: React.ReactNode }) {
       )}
 
       <div className={classes.content}>
-        {(!!currentUser || !!activeHubKey) && isMobile && (
+        {showNav && isMobile && (
           <>
             <Button
               className={classes.drawerButton}

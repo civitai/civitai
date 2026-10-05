@@ -29,6 +29,13 @@ export const ltxVersionIds = {
   sulphur2Dev: 2921800,
 } as const;
 
+export const minimaxVersionIds = {
+  /** MiniMax's hosted API. */
+  'v1.0': 3183239,
+  /** Our own weights. The `MiniMaxH3` ecosystem default, and the only one taking LoRAs. */
+  comfy: 3216500,
+} as const;
+
 export const qwenVersionIds = {
   imageEdit2511: 2558804,
 } as const;

@@ -29,7 +29,7 @@ import {
   getEcosystemGroup,
   MODEL3D_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
-import { VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
+import { DRAFT_WORKFLOW, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import {
   workflowConfigByKey,
   isWorkflowAvailable,
@@ -38,6 +38,7 @@ import {
   getStoredOutputScope,
 } from '~/shared/data-graph/generation/config/workflows';
 import { splitResourcesByType } from '~/shared/utils/resource.utils';
+import { isRawAirResource } from '~/shared/utils/air';
 import {
   useGenerationGraphStore,
   generationGraphStore,
@@ -193,12 +194,6 @@ const storageAdapter = createLocalStorageAdapter({
     { name: 'output', keys: ['ecosystem'], scope: 'output' },
     // ecosystem is scoped to workflow (different workflows may use different ecosystems)
     // { name: 'workflow', keys: ['ecosystem'], scope: 'workflow' },
-    {
-      name: 'workflow',
-      keys: ['quantity'],
-      scope: 'workflow',
-      condition: (ctx) => ctx.workflow === 'txt2img:draft',
-    },
     { name: 'workflow', keys: ['images', 'video'], scope: 'workflow' },
     // Ecosystem groups - settings scoped by group ID for grouped ecosystems
     // This allows settings to persist when switching between variants (e.g., Wan 2.5 <-> Wan 2.2)
@@ -241,6 +236,14 @@ const storageAdapter = createLocalStorageAdapter({
         if (model?.id == null) return false;
         return TURBO_VARIANT_ECOSYSTEMS.has(ctx.ecosystem as string);
       },
+    },
+    // Draft's narrow ranges would clamp the stored values one-way (steps 30 → 12, back on txt2img
+    // still 12), so draft keeps its own — per ecosystem, since SD1's and SDXL's ranges differ.
+    {
+      name: 'workflow',
+      keys: ['cfgScale', 'steps', 'sampler'],
+      scope: ['workflow', 'ecosystem'],
+      condition: (ctx) => ctx.workflow === DRAFT_WORKFLOW,
     },
     // Model-family specific settings scoped to individual ecosystem (for standalone ecosystems)
     // Values for inactive nodes are automatically retained in storage
@@ -952,6 +955,7 @@ export function GenerationFormProvider({
  * hydrated — `trainedWords` and `model.type` can be missing — so guard both. */
 export function toResourceData(r: GenerationResource): ResourceData {
   if (r.epochDetails) return r; // Shouldn't need to get fresh data for resources with epochDetails since they have all necessary info for compatibility checks (type, baseModel, epochNumber) and aren't selectable in the UI
+  if (isRawAirResource(r)) return r; // Raw-AIR resources are self-contained (no ModelVersion row) — pass through whole so air/workflowId survive to submission
   return {
     id: r.id,
     baseModel: r.baseModel,

@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -11,19 +10,26 @@ import {
   type BlockAttributionScope,
 } from '~/server/schema/blocks/attribution.schema';
 import {
-  newBlockAttributionPayoutId,
   newBlockBuzzAttributionId,
   newBlockSpendAttributionId,
   newBlockSubscriptionAttributionId,
 } from '~/server/utils/app-block-ids';
+// Browser-safe leaf module, imported for the `block_good_purchase.status` domain
+// so the goods READ path spells it exactly as the write path does. Deliberately
+// not an import of `block-goods.service` — that would make the two services
+// mutually aware and pull the Buzz-transaction graph into the reporting layer.
+import { BLOCK_GOOD_PURCHASE_STATUS } from '~/shared/constants/block-goods.constants';
+// The missing-table predicate, imported rather than re-spelled. See
+// `isMissingGoodsTableError` below for why a local copy of it was a live outage.
+import { isMissingTableError } from '~/server/services/blocks/app-access.service';
+import { observeBlockAuthorFee } from './author-fee';
+import { isBlockGenerationType, type BlockGenerationType } from './generation-type';
 import {
   computeRateCardSplit,
-  // NOTE: neither computeSpendShare nor computeSubscriptionShare is imported
-  // here. Both the buzz-SPEND (flow A) and membership (flow C) attributions
-  // are TRACK-ONLY — no rate is applied at write time. The share is computed
-  // at payout time (Slice 4) as a backpay against the signed-off rate over
-  // status='tracked' rows. The compute* helpers stay in rate-card.ts for that
-  // payout-time backpay to call.
+  // NOTE: `computeSubscriptionShare` is deliberately not imported here. The
+  // membership attribution (flow C) is TRACK-ONLY — no rate is applied at write
+  // time. Its share is computed at payout time as a backpay against the
+  // signed-off rate over status='tracked' rows.
   ACTIVE_RATE_CARD,
 } from './rate-card';
 
@@ -258,11 +264,16 @@ export class AttributionAppMissingError extends Error {
  * (Slice 4) as a backpay. A row carrying this sentinel + status='tracked' is
  * "share-pending": the payout rail re-stamps the signed-off version when it
  * computes the share.
+ *
+ * ⚠️ TRUE FOR MEMBERSHIP ROWS ONLY. A `block_spend_attribution` row also carries
+ * this sentinel, but it is NOT share-pending — the spend bounty was removed, no
+ * backpay reads that table, and nothing will ever re-stamp those rows.
  */
 export const UNRATED_RATE_CARD_VERSION = 'unrated' as const;
 
 // ---------------------------------------------------------------
-// W3 flow A — buzz SPEND attribution (author bounty)
+// W3 flow A — buzz SPEND attribution (TRACK-ONLY audit trail; the author
+// bounty it was built for is removed — see `recordSpendAttribution`)
 // ---------------------------------------------------------------
 
 const SPEND_ATTRIBUTION_LOG_NAME = 'block-spend-attribution';
@@ -307,11 +318,164 @@ export type RecordSpendAttributionInput = {
    * for any app that publishes cross-user content, not tied to any one app kind.
    */
   sharedContentKey?: string | null;
+  /**
+   * Optional APP-FACING generation type for this spend, as
+   * `<coarse>` or `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
+   * `customComfy:seamless-pano-360`, `customComfy:inline`, a bare registered
+   * STEP ID (`convert-image`, `chat-completion`), or `step:<orchestrator $type>`
+   * on the PASS-THROUGH step arm. The COARSE key is everything before the FIRST
+   * colon and is what a per-generation-type fee keys on;
+   * `blockGenerationCoarseType` is the one place that decomposition lives.
+   * Resolved by the caller from the submitted workflow body via
+   * `resolveBlockGenerationType`; omit (or pass null) when it cannot be
+   * resolved, which persists NULL. Typed as the union rather than `string` so a
+   * future caller cannot stamp an arbitrary value on a money/audit row.
+   *
+   * 🔴 ONE ARM'S SUBTYPE IS CALLER-SUPPLIED, AND A FEE MUST KEY ON THE COARSE KEY
+   * FOR EXACTLY THAT REASON. This doc used to say "NEVER the orchestrator's
+   * internal `$type`", and that is now true of every arm EXCEPT the pass-through
+   * one, which has no app-facing id at all — the `$type` is what the app wrote,
+   * bounded by SHAPE only (see `generation-type.ts`'s THE ONE OPEN AXIS). So for
+   * a `step:` value the segment after the colon is app-chosen, while the coarse
+   * key is always the literal `step`. Keying anything on the FULL value would let
+   * a caller choose its own group; `blockGenerationCoarseType` is the bound.
+   */
+  generationType?: BlockGenerationType | null;
+  /**
+   * Optional BASE generation cost in Buzz — the orchestrator's
+   * `WorkflowCost.base` for this workflow.
+   *
+   * 🔴 THIS IS NOT `buzzAmount`, AND THE DIFFERENCE IS THE WHOLE POINT OF THE
+   * FIELD. `buzzAmount` above is the realized PAID DEBIT, a gross that already
+   * carries the per-resource model LICENSING fees (`WorkflowCost.fees`), the
+   * lineage fee and the viewer's tips — the orchestrator charges the sum and
+   * settles each component to its own recipient. The per-generation AUTHOR FEE
+   * is additive on top of the BASE and stacks alongside those components, so a
+   * percentage of `buzzAmount` would take a cut of another creator's licensing
+   * fee and of the viewer's tip, and would compound as more fee-charging
+   * resources are stacked onto one generation.
+   *
+   * Nothing downstream can tell the two apart — both are plain positive Buzz
+   * numbers — so the distinction has to be made by the CALLER, which reads
+   * `cost.base` off the raw orchestrator submit response. It is not reachable
+   * from the block-facing snapshot: `BlockWorkflowSnapshot.cost` is
+   * deliberately `{ total }` only, and widening that wire shape would publish
+   * the platform's cost breakdown to every third-party app.
+   *
+   * Used ONLY by the dark author-fee OBSERVATION below. It is never persisted:
+   * omit it, or pass null, and the observation records a `base-unavailable` skip
+   * instead of computing against a number that means something else.
+   */
+  baseGenerationBuzz?: number | null;
+  /**
+   * Optional: the orchestrator's `WorkflowCost.variable` for this workflow —
+   * TRUE when the quoted price is a CAP that may settle lower (at least one step
+   * is post-billed and charged up front at its maximum, with the difference
+   * refunded once the provider reports the actual work delivered).
+   *
+   * 🔴 A CAP-PRICED GENERATION IS OBSERVED AS A SKIP, NOT AS A FEE. A percentage
+   * of a number the viewer will be partly refunded is a fee on money they did
+   * not spend. It gets its OWN skip reason (`price-is-cap`) rather than being
+   * folded into `base-unavailable` — see `BLOCK_AUTHOR_FEE_PRICE_IS_CAP`.
+   *
+   * Like `baseGenerationBuzz` this is read off the RAW orchestrator submit
+   * response, never off `BlockWorkflowSnapshot` (whose `cost` is deliberately
+   * `{ total }` only). Omit it, or pass null/false, and the price is treated as
+   * final. Never persisted.
+   */
+  generationPriceIsCap?: boolean | null;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. 🔴 When true, **NO ROW IS WRITTEN AT ALL**: the function
+   * returns `{ written: false, row: null }` before the row is built.
+   *
+   * ⚠️ THIS DOCBLOCK DESCRIBED THE OPPOSITE UNTIL THE WRITE-SIDE CHANGE, AND IT IS
+   * THE ONE A CALLER READS WHEN DECIDING WHETHER TO PASS `privateRun` — so the four
+   * claims it made are recorded here rather than silently dropped. It said: "the row
+   * is written `voided` instead of `tracked`"; "🔴 THE ROW IS STILL WRITTEN, AND THAT
+   * IS DELIBERATE"; "a voided row preserves the audit trail at zero money cost"; and
+   * "✅ THE VOID NOW DELIVERS THE PROTECTION". All four are now false. They were
+   * missed by the commit that corrected four sibling claims in other files — the
+   * stale text was three lines above the code that falsified it, which is exactly
+   * where a sweep keyed on the changed hunk does not look.
+   *
+   * WHAT SURVIVES FROM IT, because it is still true and still load-bearing: the mod
+   * review sandbox's alternative — a non-resolving synthetic `appId` — is deliberately
+   * NOT copied here, because it would also break per-app storage namespacing, the
+   * `page_<appBlockId>` ban-revocation instance id, and every runtime metric label.
+   * The real ids are resolved and the rail is closed by an explicit branch instead.
+   *
+   * NO MONEY MOVES EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded
+   * 0 below, so this was never a payout decision. What it protects is the RUN COUNT
+   * and BUZZ SUM a suspended app's owner can see.
+   *
+   * ⚠️ ONE OBSERVABILITY CONSEQUENCE, NOT PREVIOUSLY NAMED: the early return precedes
+   * `blockSpendAttributionWriteCounter.inc({ status })`, so a private-run generation
+   * now increments NOTHING on that counter, where it previously landed in
+   * `status="voided"`. Per-generation coverage survives via `block_scope_invocations`
+   * rows carrying `source: 'private-run'`.
+   *
+   * 🔴 THE FILTER WAS HELD FOR TWO STATED REASONS AND BOTH WERE SETTLED BY
+   * MEASUREMENT, NOT BY DECISION — recorded because the reasons read as permanent
+   * and were not.
+   *   · "It drops the large majority of existing rows and Buzz." TRUE, and it
+   *     shipped anyway: 639 rows to 57 (91.08%), 4,738 Buzz to 268 (94.34%). What
+   *     made that acceptable is a partition nobody had measured — EVERY voided row
+   *     is `self_spend` with `app_owner_user_id = user_id`, i.e. an owner spending
+   *     on their own app, and no row of real third-party usage is voided at all.
+   *     The filter removes self-testing, not usage.
+   *   · "A second consumer of this table lives outside this repo." REAL and still
+   *     live, and it was never IDENTIFIED, which is most of why it blocked
+   *     anything. It is an OPERATOR-facing analytics digest job outside this repo,
+   *     which queries this table directly for a periodic internal summary. Its
+   *     Buzz sums already excluded voided rows while its run counts did not; that
+   *     half was fixed in the same sweep, as an independent change in that repo.
+   *     It is not owner-facing, so it never gated the disclosure this arm is
+   *     about. (Kept deliberately unspecific — this repo is public, so the
+   *     infrastructure detail belongs in that repo's own commit, not here.)
+   *
+   * The ordering requirement that used to live here is DISCHARGED: the filter had
+   * to land before `app-blocks-private-run-enabled` became anything other than
+   * `false`, and it has. The flag's own precondition block in `app-blocks-flag.ts`
+   * is the authoritative, kept-current record of what remains — read it there
+   * rather than here, because this docblock cannot be kept current and has twice
+   * been caught asserting a state that had already changed.
+   *
+   * ✅ AND THE WIDER LEAK IS ALSO CLOSED, which is a correction to what this
+   * paragraph used to claim. `block_scope_invocations` rows are written by
+   * `withBlockScope` for EVERY scoped call, carrying the real `app_block_id` and
+   * the VIEWER's `user_id`, and `app-analytics.service.ts` reads them into the
+   * owner-visible panel through FIVE queries: the engagement count, a raw
+   * `count(DISTINCT user_id)`, the error count, and the two top-5 groupings. This
+   * text used to say there was "no marker on those rows to filter ON" and that
+   * closing it "needs a migration" — BOTH WERE WRONG. The rows carry a `source`
+   * marker on an EXISTING nullable-free column (`TEXT NOT NULL DEFAULT
+   * 'app-block'`, no CHECK constraint), so no DDL and no per-environment
+   * hand-apply was needed, and all five reads exclude it. The canonical reasoning
+   * is at `blocks/scope-activity-predicate.ts`.
+   *
+   * Absent/false → byte-identical to the pre-feature behaviour.
+   */
+  privateRun?: boolean | null;
 };
 
 export type RecordSpendAttributionResult = {
-  /** False when the (workflow, app) UNIQUE blocked a duplicate write. */
+  /**
+   * False when the (workflow, app) UNIQUE blocked a duplicate write, AND when the call
+   * was a PRIVATE RUN, for which no row is written at all.
+   */
   written: boolean;
+  /**
+   * 🔴 `null` ONLY for a private run, where the write is skipped entirely (see the
+   * write-side exclusion in `recordSpendAttribution`). Every other path — including the
+   * duplicate branch — still returns the row it found or created.
+   *
+   * Nullable rather than synthesised: inventing a zeroed row to keep the type simple
+   * would make "no attribution exists" indistinguishable from "an attribution of zero",
+   * which is exactly the conflation the write-side exclusion is meant to remove. All four
+   * production callers `await` this and discard the result, so the nullability costs them
+   * nothing today and forces a decision on any future reader.
+   */
   row: {
     id: string;
     status: string;
@@ -320,7 +484,7 @@ export type RecordSpendAttributionResult = {
     grossValueCents: number;
     rateCardVersion: string;
     voidedReason: string | null;
-  };
+  } | null;
 };
 
 /**
@@ -396,8 +560,10 @@ export async function resolvePublishedContentAuthorUserId(args: {
 }
 
 /**
- * Record an author bounty for a block-initiated generation that SPENT the
- * viewer's own Buzz. Idempotent on `(workflow_id, app_block_id)` — a
+ * Record a TRACK-ONLY attribution row for a block-initiated generation that
+ * SPENT the viewer's own Buzz. It accrues nothing and pays nobody — the
+ * percentage author bounty it was named for is GONE (see the ⚠️ TRACK-ONLY
+ * paragraph below). Idempotent on `(workflow_id, app_block_id)` — a
  * re-poll / retry / re-submit of the same workflow is a no-op.
  *
  * EVERYTHING is server-derived from the verified block-token claims by
@@ -408,35 +574,27 @@ export async function resolvePublishedContentAuthorUserId(args: {
  * inherently forge-safe (unlike the purchase/Paddle path, which must
  * re-derive client metadata via validateBuzzPurchaseAttribution).
  *
- * ACCOUNTING: the bounty is platform-funded (paid ON TOP of the spend),
- * not a cut of the viewer's Buzz. See rate-card.ts RATE_CARD_V4 and the
- * migration. This function moves NO money and touches NO BuzzTransaction
- * — it writes a derived audit/payout row. A failed write never affects
- * the generation (the caller fires it best-effort / fire-and-forget).
+ * This function moves NO money and touches NO BuzzTransaction — it writes a
+ * derived audit row. A failed write never affects the generation (the caller
+ * fires it best-effort / fire-and-forget).
  *
  * ⚠️ TRACK-ONLY (mirrors #2629's membership rework). This write records the
  * ATTRIBUTION EVENT + the MONEY BASIS (gross_value_cents = USD value of the
- * Buzz burned) only. It does NOT apply the spend rate card and does NOT bake
- * an author bounty. The row is written:
- *   - status                = 'tracked'  (share-pending, not yet computed)
+ * Buzz burned) only. The row is written:
+ *   - status                = 'tracked'
  *   - app_owner_share_cents  = 0
  *   - spend_share_pct        = 0         (no rate applied)
  *   - rate_card_version      = 'unrated' (no version stamped)
- * The author bounty is DEFERRED to PAYOUT time: the future payout rail
- * (Slice 4) reads status='tracked' rows and computes
- * bounty = gross × <signed-off spendSharePct> as a clean retroactive BACKPAY
- * (via the retained `computeSpendShare`), then transitions them to a
- * computed/confirmed state. Because the tracked row carries the gross, that
- * computation is exact.
  *
- * WHY: committing a bounty at the placeholder spend rate before monetization
- * sign-off would lock these immutable rows to the placeholder (each row pays
- * out under its STAMPED snapshot forever). Recording the basis now and
- * applying the signed-off rate later removes the placeholder-rate liability.
+ * The percentage author bounty these columns were the basis for is GONE: it was
+ * superseded by the additive, author-set, viewer-paid per-generation author fee
+ * (observed dark below), and its compute + backpay rails were removed. The
+ * columns stay at 0 / 'unrated' so the row shape and its CHECK constraints are
+ * unchanged, and the event/gross trail keeps its full history.
  *
  * Self-spend (spender == app owner) and internal-owner apps write a
- * voided, zero-share row so the audit trail exists but nothing is ever
- * backpaid (mirrors recordAttribution's self-purchase wash).
+ * voided, zero-share row so the audit trail exists but the row is never
+ * payable (mirrors recordAttribution's self-purchase wash).
  */
 export async function recordSpendAttribution(
   input: RecordSpendAttributionInput
@@ -451,7 +609,35 @@ export async function recordSpendAttribution(
     blockInstanceId,
     modelId = null,
     sharedContentKey = null,
+    privateRun = false,
   } = input;
+
+  // APP-FACING generation type (`textToImage:txt2img`, `customComfy:inline`, a
+  // registered step id, …). The caller resolves it from the submitted body;
+  // re-checked here so an unknown value can never reach the column — a
+  // money/audit row is the wrong place to discover a typo, and a wrong type is
+  // worse than a missing one. Anything unrecognised (including undefined)
+  // degrades to NULL rather than throwing: this write is fire-and-forget off an
+  // already-billed submit.
+  //
+  // 🔴 THIS RE-CHECK GOT MORE VALUABLE WHEN THE VALUE SPACE WIDENED, NOT LESS.
+  // An earlier review called it redundant given the parameter's type, which was
+  // arguable while the value set was a handful of literals a `tsc` error could
+  // enumerate. It no longer is: the value now INTERPOLATES registry ids, so the
+  // only complete statement of what is legal is `isBlockGenerationType`'s shape
+  // test — coarse key in the closed set, and the segment after the first colon
+  // in the closed set that key allows, EXCEPT under the `step` coarse key, whose
+  // subtype axis is open and bounded by shape (a caller-supplied orchestrator
+  // `$type`; see `generation-type.ts`'s THE ONE OPEN AXIS). A caller assembling a
+  // value by hand (a cast, a future writer, a string built from a registry
+  // lookup) type-checks and is still refused here.
+  //
+  // 🔴 AND THE TYPE IS NOW STRICTLY WIDER THAN THE RUNTIME BOUND, which makes
+  // this line load-bearing rather than belt-and-braces: `BlockGenerationType`
+  // includes the template literal `step:${string}`, because no type can express
+  // "matches this regex". So `'step:a b'` and a 200-char subtype both TYPE-CHECK
+  // at every call site and are refused only here and in the producer.
+  const generationType = isBlockGenerationType(input.generationType) ? input.generationType : null;
 
   // Resolve + snapshot the app owner (mirrors recordAttribution). The
   // OauthClient is the source of truth for "who owns this app"; we
@@ -496,36 +682,85 @@ export async function recordSpendAttribution(
       })
     : null;
 
-  // TRACK-ONLY money basis: record the gross (USD value of the Buzz burned),
-  // defer the bounty. NO rate card is applied here (no computeSpendShare
-  // call). The backpay (Slice 4) computes bounty = gross × <signed-off
-  // spendSharePct> over status='tracked' rows. Today: share 0, no rate
-  // stamped.
+  // TRACK-ONLY money basis: record the gross (USD value of the Buzz burned).
+  // NO rate card is applied here, and the percentage author bounty this row was
+  // once the basis for no longer exists — it was superseded by the additive,
+  // author-set, viewer-paid per-generation author fee. The columns are kept at
+  // 0 / 'unrated' so the row shape and its CHECK constraints are unchanged.
   const rateCardVersion = UNRATED_RATE_CARD_VERSION;
   const spendSharePct = 0;
-  // The accrued bounty for THIS row. Track-only today: identically 0 until the
-  // payout rail (#2605) starts stamping a non-zero share here. `let` so the
-  // per-APP daily cap below can CLAMP it (a Sybil ring pointed at one app must
-  // not mint unbounded platform-funded bounty — audit note 🟡-2).
-  let appOwnerShareCents = 0;
+  const appOwnerShareCents = 0;
 
-  // PER-APP daily spend-BOUNTY accrual cap (audit 🟡-2 / Sybil-economics
-  // review). The per-user `BLOCK_BUZZ_CAP_PER_DAY` bounds one viewer's daily
-  // SPEND but is blind to MANY viewers funnelling bounty at ONE app. Reserve
-  // this row's accrued share against the app's cumulative UTC-day BOUNTY
-  // counter and clamp the accrual to whatever headroom remains. Same atomic
-  // INCRBY-with-TTL TOCTOU-safe mechanism as the per-user cap. DORMANT today:
-  // `appOwnerShareCents` is 0, so `reserveAppBountyAccrual` short-circuits
-  // without touching Redis and grants 0 — the cap never clamps and behaviour
-  // is byte-identical to before. When #2605 flips spendSharePct>0 the cap is
-  // already enforcing. Void rows (self/internal) also carry 0 → no-op.
-  const { reserveAppBountyAccrual } = await import('./app-bounty-cap.service');
-  const bountyReservation = await reserveAppBountyAccrual(appBlockId, appOwnerShareCents);
-  appOwnerShareCents = bountyReservation.grantedCents;
+  // Void rows that are zero because of WHO spent/owns. Otherwise the row is
+  // 'tracked'. ⚠️ NOT "share-pending awaiting a payout-time backpay" — that was the
+  // removed spend bounty. No backpay reads this table; 'tracked' is where a spend row
+  // stays. The void/track distinction is kept because it is the self-spend /
+  // internal-owner marker the analytics reader and any future rail would both need,
+  // and voiding costs nothing.
+  //
+  // ⚠️ TWO PARAGRAPHS THAT STOOD HERE WERE DELETED RATHER THAN REWORDED, AND WHAT THEY
+  // CLAIMED IS WORTH KNOWING BECAUSE IT READS AS STILL-TRUE ELSEWHERE IN THE TREE.
+  // They explained (a) that the private-run arm was TESTED FIRST, as a
+  // "discriminability choice" deciding the LABEL on an owner's own private run where
+  // both that arm and `isSelfSpend` are true, and (b) that `'manual_review'` was REUSED
+  // rather than adding a `'private_run'` value, so the change shipped with no migration.
+  //
+  // Both described the VOIDED-ROW design. A private run now writes NO ROW (see the
+  // exclusion below), so there is no arm to order and no column to carry a value: (a)
+  // describes an ordering that no longer exists and (b) a write that no longer happens.
+  // Neither is reworded here, because a reworded version would be a fresh rationale for
+  // a decision that has been superseded rather than revised.
+  //
+  // ⚠️ RETRACTED CLAIM, KEPT SO IT IS NOT RE-DERIVED. This said: "`'manual_review'` IS
+  // STILL WRITTEN TO THIS COLUMN BY ANOTHER PRODUCER — `backpay.service.ts` writes
+  // `status: 'held', voidedReason: 'manual_review'`", offered as a second reason the
+  // read-side filters stay necessary. 🔴 IT IS FALSE ON BOTH HALVES. `backpay.service.ts`
+  // writes to `blockSubscriptionAttribution` — a DIFFERENT TABLE — and with
+  // `status: 'held'`, not `voided`; the owner-visible filter keys on `status`, so such a
+  // row would not be excluded by it in any case. The sentence refuted itself: a
+  // `status: 'held'` write cannot produce a voided row.
+  //
+  // 🔴 THE HONEST POSITION, which is simpler than the one I reached for: the filters stay
+  // because of `self_spend` and `internal_owner`, which are written HERE, below, and are
+  // the whole live voided population — the ledger's own measurement is 582 of 639 rows,
+  // "every voided row is `self_spend`". A historical private-run population is NOT a
+  // reason either: the flag has been base-off with no rollout for its whole life, so no
+  // private run ever wrote a row. There is one real reason, not three, and reaching for
+  // extra ones is what produced a false claim while correcting other false claims.
+  // ── PRIVATE RUN — NOT WRITTEN AT ALL ────────────────────────────────────────────
+  // 🔴 WRITE-SIDE EXCLUSION, NOT A VOIDED ROW. This used to write the row with
+  // `voidedReason: 'manual_review'` and rely on EVERY reader filtering voided rows back
+  // out. That is the design that generated this rail's worst defects: the nullability
+  // trap (`NOT (voided_reason IN (…))` retains 0 of 639 rows, because `voided_reason` is
+  // nullable and NULL *is* the ordinary tracked population), the latent
+  // `internalAppOwnerUserIds` trap in `rate-card.ts`, and a cross-repo coupling to
+  // talos-infra's `civitai-app-blocks-digest/digest.py`. Read-side exclusion has to be
+  // got right in every reader, in two repos, forever; write-side is got right once.
+  //
+  // 🔴 EQUIVALENT FOR EVERY FILTERED READER, STRICTLY BETTER FOR AN UNFILTERED ONE. A
+  // voided row and an absent row are indistinguishable to any reader that excludes
+  // voided — which is all of the owner-visible ones. For a reader that forgets the
+  // filter, an absent row is the SAFE failure and a voided row is the leak. That
+  // asymmetry is the whole argument.
+  //
+  // ⚠️ WHAT IS GIVEN UP, NAMED RATHER THAN GLOSSED: the voided row was a durable,
+  // queryable record that a private run happened. That record now exists ONLY in the
+  // `app-blocks.private-run.mint` audit line (dual-sinked to Axiom and stdout), which was
+  // already the discriminating record — the operator decision to reuse `'manual_review'`
+  // said so in its own words, because the column could not distinguish a private run from
+  // an operator-voided row anyway. So the queryable-by-SQL property is lost; the audit
+  // property is not.
+  //
+  // NOTHING IS PAID EITHER WAY: `spendSharePct` and `appOwnerShareCents` are hardcoded 0
+  // above, and the AUTHOR FEE — the rail that does move Buzz — is excluded separately and
+  // earlier, by `resolveBlockAuthorFeePayee` refusing with reason `private-run`.
+  //
+  // IDEMPOTENCY IS UNAFFECTED: the dedupe is the `(workflowId, appBlockId)` UNIQUE
+  // constraint, i.e. the row IS the dedupe record. Writing zero rows cannot double-count.
+  if (privateRun === true) {
+    return { written: false, row: null };
+  }
 
-  // Void rows that are zero because of WHO spent/owns so they are never
-  // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
-  // payout-time backpay at the signed-off rate.
   const voidedReason = isSelfSpend ? 'self_spend' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
@@ -555,6 +790,10 @@ export async function recordSpendAttribution(
         // is the forge-safe server-resolved credit.
         contentAuthorUserId,
         sharedContentKey,
+        // The app-facing generation type (NULL when unresolvable). Additive and
+        // nullable — nothing reads it yet; it exists so the per-generation-type
+        // author fee has data to reason about when it lands.
+        generationType,
         status,
         voidedReason,
         voidedAt,
@@ -568,6 +807,96 @@ export async function recordSpendAttribution(
         rateCardVersion: true,
         voidedReason: true,
       },
+    });
+
+    // PER-GENERATION AUTHOR FEE — OBSERVATION ONLY, BUT NOT OF A DARK RAIL.
+    // Computes what the additive, author-set, viewer-paid fee WOULD be for this
+    // generation and reports it to the counters + the log line below. THIS CALL
+    // moves no money, writes no column, and is unreachable unless
+    // `app-blocks-author-fee-enabled` is on. ⚠️ An earlier revision added
+    // "settlement onto the licensing-fee rail is a later slice; this exists so
+    // that slice can be sized from real traffic before anyone is charged".
+    // Settlement has shipped and viewers ARE charged, on the submit path via
+    // `quoteBlockAuthorFee`; what this call buys now is sizing of a LIVE fee.
+    //
+    // 🔴 OBSERVED AFTER THE SUCCESSFUL WRITE, NOT BEFORE IT. This row is
+    // idempotent on (workflowId, appBlockId); a re-poll / retry lands in the
+    // P2002 branch below and must NOT observe a second fee for one generation,
+    // or the sizing number is inflated by exactly the retry rate.
+    //
+    // 🔴 SELF-SPEND IS OBSERVED LIKE ANY OTHER GENERATION — deliberately, and
+    // this is a DIVERGENCE from how attribution behaves two lines up, where
+    // `isSelfSpend` voids the row. The author fee is the VIEWER paying the
+    // author, and an author using their own app is a viewer like any other.
+    // ⚠️ AT SETTLEMENT a self-spend would be a Buzz transaction from an account
+    // to ITSELF, at best a no-op and possibly rejected. That is no longer a
+    // flag-for-later: the charge path handles it, and
+    // `resolveBlockAuthorFeePayee` is where a self-dealing author is excluded.
+    // This observation is unaffected — it carries no recipient, and `isSelfSpend`
+    // is already on the log line beside the fee.
+    //
+    // 🔴 NO `.catch` HERE, DELIBERATELY. `observeBlockAuthorFee` is TOTAL by
+    // contract — every throwing surface inside it (the flag read, each counter
+    // `inc`) is caught at its own site and degrades to a named skip. A
+    // belt-and-braces `.catch(() => ({ reason: 'flag-disabled' }))` was written
+    // here and REMOVED: it is unreachable given that contract, and were it ever
+    // reachable it would file a THROW into the `flag-disabled` population —
+    // which is one of the two denominators the slice-2 sizing read depends on.
+    // A rejection here is a contract violation and must surface as one rather
+    // than be laundered into a gate-is-off count.
+    //
+    // ⚠️ WHERE IT WOULD SURFACE — stated precisely, because an earlier revision
+    // of this comment called the enclosing `catch` merely "loud" and that
+    // UNDERSTATES IT. A rejection here unwinds past everything between this
+    // line and the `catch` below, for a row that WAS persisted:
+    //   1. the success Axiom line is never written — the row exists with no
+    //      `block-spend-attribution` record of it;
+    //   2. `blockSpendAttributionWriteCounter.inc({ status })` never fires, so
+    //      the written-row counter undercounts;
+    // Then it rethrows (not a P2002) and reaches the caller's fire-and-forget
+    // `.catch`. That is still the correct destination for a broken contract —
+    // `authorFee.reason` is not — but it is not a free "loud" either, so the
+    // unreachability argument above is what carries this, and it holds for
+    // today's one caller.
+    //
+    // 🔴 IF A `.catch` IS EVER REINSTATED it needs a NEW skip reason of its own
+    // (`observe-failed`, say) — never ANY existing member of
+    // `BlockAuthorFeeSkipReason`. Every reason in that union is a live
+    // population the slice-2 sizing read divides by or reasons about, and
+    // folding a contract violation into any of them is how a denominator
+    // acquires a silent bias. Stated against the union rather than a list of
+    // names on purpose: this comment previously said "a THIRD reason … never
+    // `flag-disabled` and never `base-unavailable`", and went stale the moment
+    // `price-is-cap` was added — it would now be the FOURTH, and the "never"
+    // list had a hole in it exactly where the newest reason sat.
+    // 🔴 `privateRun` IS DELIBERATELY *NOT* THREADED INTO THE OBSERVATION, AND THIS
+    // IS THE ONLY REMAINING ASYMMETRY IN THE FEE FAMILY. A review lane raised it;
+    // the decision is to leave it and record why, because both the size and the
+    // shape of the right fix depend on something that cannot exist yet.
+    //
+    // WHAT THE ASYMMETRY IS: the CHARGE and QUOTE counters exclude a private run
+    // (their payee resolve refuses with `private-run`), so this observation would
+    // count private-run volume that they do not — biasing the observed-vs-quoted
+    // ratio a later pricing decision reads.
+    //
+    // WHY NOT NOW: the bias is EXACTLY ZERO today, not merely small. No mint can
+    // produce the claim, so no private run can reach this line. And the fix is not
+    // free to do correctly — the note above is explicit that a new case here needs a
+    // NEW skip reason of its own and must never be folded into an existing member of
+    // `BlockAuthorFeeSkipReason`, because every reason in that union is a live
+    // population the sizing read divides by. Adding a reason for a population of
+    // zero is how a denominator acquires an empty category nobody can interpret.
+    //
+    // WHEN: with the mint, in the PR that makes a private run possible — at which
+    // point the volume is measurable and the new reason has something to count.
+    const authorFee = await observeBlockAuthorFee({
+      // 🔴 NOT `buzzAmount` — see the field docs on RecordSpendAttributionInput.
+      baseGenerationBuzz: input.baseGenerationBuzz ?? null,
+      // 🔴 A CAP PRICE SUPPRESSES THE FEE, under its own skip reason. Threaded
+      // rather than inferred: nothing downstream of the orchestrator response
+      // can tell a cap apart from a final price.
+      priceIsCap: input.generationPriceIsCap ?? null,
+      generationType,
     });
 
     logToAxiom(
@@ -588,13 +917,73 @@ export async function recordSpendAttribution(
         // whether it resolved to a creditable author. Both are opaque/ids only.
         sharedContentKeyPresent: sharedContentKey != null,
         contentAuthorUserId,
+        // 🔴 SHAPE-bounded or null — NOT "registry-derived", which is what this
+        // line used to claim and is no longer true of one arm. A `step:` value's
+        // subtype is a caller-supplied orchestrator `$type`, bounded by
+        // `isBlockGenerationType` to ≤64 chars of `[A-Za-z0-9._-]` and nothing
+        // else.
+        //
+        // ⚠️ THE SHAPE BOUND IS NOT WHAT MAKES IT SAFE HERE, and a draft of this
+        // comment said it was. `logToAxiom` builds the line with a single
+        // `JSON.stringify` (`@civitai/axiom`'s client, measured), so this value is
+        // an escaped JSON string VALUE and a newline or a quote in it could not
+        // break the line whatever the class admitted. What the bound actually buys
+        // downstream is bounded WIDTH and no unicode/control junk in a column
+        // future consumers will group and display.
+        //
+        // What does NOT follow, and is the reason this note exists: do not make it
+        // a metric LABEL or an object KEY. The subtype is app-chosen and
+        // open-ended, so it has no cardinality budget, and it admits prototype key
+        // names (`step:__proto__` is an accepted value).
+        generationType,
         status,
         voidedReason,
         isSelfSpend,
-        // Per-app bounty cap observability (dormant today: clamped=false,
-        // appBountyDailyTotal=0). Surfaces a clamp the moment the cap bites.
-        appBountyClamped: bountyReservation.clamped,
-        appBountyDailyTotal: bountyReservation.total,
+        // DARK author-fee observability — FOUR fields, and the set is chosen by
+        // ONE rule: a property gets exactly one instrument, and this row is the
+        // instrument only where the counters cannot reach. The counters carry a
+        // single `coarse_type` label (deliberately — `appBlockId` would be
+        // unbounded cardinality), so anything needing a per-APP, per-`isSelfSpend`
+        // or per-full-`generationType` cut has to live here, beside those three
+        // fields, which are already on this line.
+        //
+        //   `authorFeeSkipped`   the ONLY instrument for the flag-disabled
+        //                        population — `observeBlockAuthorFee` emits no
+        //                        counter at all on that path, by design, and it
+        //                        is one of the two denominators the slice-2
+        //                        sizing read divides by. Also encodes "observed":
+        //                        null ⇔ the fee was computed.
+        //   `authorFeeBuzz`      the fee, per row. The counter gives the total
+        //                        by coarse type; only this gives "which apps
+        //                        would earn what, and how much is self-spend".
+        //   `authorFeeBaseBuzz`  its denominator, for the same per-app cut. Not
+        //                        recoverable from `buzzAmount` above — that is
+        //                        the gross, which already carries licensing
+        //                        fees, the lineage fee and tips.
+        //   `authorFeeParamsSource`  which level of the config answered. NO
+        //                        counter carries it, and it is genuinely
+        //                        variable in production now that
+        //                        `BLOCK_AUTHOR_FEE_PLATFORM_CONFIG.byType` is
+        //                        seeded (`chat-completion` → 'type', everything
+        //                        else → 'default').
+        //
+        // DROPPED, and why — a field that cannot vary is not observability:
+        //   `authorFeeObserved`       derivable: `authorFeeSkipped === null`.
+        //   `authorFeeLeg`            exactly the `outcome` label of
+        //                             `block_author_fee_observed_total`, and
+        //                             re-derivable from fee + base + source.
+        //   `authorFeeParamsClamped`  a COMPILE-TIME CONSTANT `false` in slice
+        //                             1 — re-derived after seeding `byType`, and
+        //                             it is still constant: the only production
+        //                             config is a module constant whose every
+        //                             leg is inside the ceiling, and no caller
+        //                             passes `config`. It becomes worth logging
+        //                             in slice 3, when an author can type a
+        //                             number; add it back then.
+        authorFeeSkipped: authorFee.observed ? null : authorFee.reason,
+        authorFeeBuzz: authorFee.observed ? authorFee.computation.feeBuzz : null,
+        authorFeeBaseBuzz: authorFee.observed ? authorFee.computation.baseGenerationBuzz : null,
+        authorFeeParamsSource: authorFee.observed ? authorFee.computation.source : null,
       },
       'webhooks'
     ).catch(() => null);
@@ -607,17 +996,6 @@ export async function recordSpendAttribution(
 
     return { written: true, row: created };
   } catch (err) {
-    // This call's row was NOT persisted (either a duplicate that the ORIGINAL
-    // row already accounts for, or a hard write failure). Release the bounty we
-    // reserved for it so the per-app daily counter reflects only persisted
-    // accrual — otherwise a retry storm would double-count toward the cap.
-    // Best-effort + DORMANT today (granted 0 → no-op). Refund against the
-    // PINNED key from the reservation (never a re-derived one — midnight-UTC
-    // race, same reasoning as the per-user refund).
-    if (bountyReservation.grantedCents > 0) {
-      const { refundAppBountyAccrual } = await import('./app-bounty-cap.service');
-      await refundAppBountyAccrual(bountyReservation.key, bountyReservation.grantedCents);
-    }
     // Idempotency: a re-poll / retry / re-submit that races the original
     // write lands on the (workflow_id, app_block_id) UNIQUE -> P2002.
     // Return the pre-existing row so callers treat first-write and retry
@@ -813,11 +1191,7 @@ export async function recordSubscriptionAttribution(
   // Void rows that are zero because of WHO bought/owns so they are never
   // backpaid. Otherwise the row is 'tracked' — share-pending, awaiting the
   // payout-time backpay at the signed-off rate.
-  const voidedReason = isSelfPurchase
-    ? 'self_purchase'
-    : isInternal
-    ? 'internal_owner'
-    : null;
+  const voidedReason = isSelfPurchase ? 'self_purchase' : isInternal ? 'internal_owner' : null;
   const status = voidedReason ? 'voided' : 'tracked';
   const voidedAt = voidedReason ? new Date() : null;
 
@@ -1158,110 +1532,6 @@ export async function voidAttributionsForPayment({
   return result.count;
 }
 
-export type MintPayoutResult =
-  | { minted: true; payoutId: string; totalCents: number; rowCount: number }
-  | { minted: false; alreadyPaid: true }
-  | { minted: false; carriedForwardCents: number; rowCount: number };
-
-/**
- * Idempotently MINT a payout ledger entry for one publisher for one
- * period, and flip the contributing confirmed rows to paid_out — all in
- * a single transaction.
- *
- * IMPORTANT: this function moves NO money. It only writes the
- * block_attribution_payout ledger row and updates row state. Actual
- * disbursement (creator-program cash bank / Tipalti) is a separate,
- * leadership-gated step that reads these ledger rows. The bulk-payout
- * cron deliberately does NOT call this yet — see
- * bulk-payout-block-attributions.ts. Do not add withdrawCash / Tipalti
- * calls here.
- *
- * Idempotency: the (app_owner_user_id, period_key) UNIQUE on
- * block_attribution_payout means a racing or retried mint hits P2002 and
- * no-ops without re-flipping any rows.
- *
- * Carry-forward debt: clawback rows (entry_type='clawback',
- * status='confirmed') carry a NEGATIVE app_owner_share_cents, so the
- * aggregate net naturally subtracts them. If the net is <= 0 we mint
- * nothing and flip nothing — the (negative) debt stays as confirmed rows
- * and carries forward into the next period's aggregate.
- */
-export async function mintPayoutForOwner({
-  appOwnerUserId,
-  periodKey,
-}: {
-  appOwnerUserId: number;
-  periodKey: string;
-}): Promise<MintPayoutResult> {
-  return dbWrite.$transaction(async (tx: Prisma.TransactionClient): Promise<MintPayoutResult> => {
-    // 1. Aggregate this owner's payable rows. status='confirmed'
-    // naturally includes negative entry_type='clawback' rows, so the net
-    // already accounts for carry-forward debt.
-    const agg = await tx.blockBuzzAttribution.aggregate({
-      where: { appOwnerUserId, status: 'confirmed' },
-      _sum: { appOwnerShareCents: true },
-      _count: true,
-    });
-    const netCents = agg._sum.appOwnerShareCents ?? 0;
-    const rowCount = agg._count ?? 0;
-
-    // 2. Non-positive net → don't mint, don't flip. Debt carries forward.
-    if (netCents <= 0) {
-      return { minted: false, carriedForwardCents: netCents, rowCount };
-    }
-
-    // 3. Mint the ledger row. The (owner, period) UNIQUE guards against
-    // a double-pay; P2002 → idempotent no-op (do NOT flip rows again).
-    const payoutId = newBlockAttributionPayoutId();
-    try {
-      await tx.blockAttributionPayout.create({
-        data: {
-          id: payoutId,
-          appOwnerUserId,
-          periodKey,
-          totalCents: netCents,
-          rowCount,
-        },
-      });
-    } catch (err) {
-      const code = (err as { code?: unknown })?.code;
-      if (code === 'P2002') {
-        return { minted: false, alreadyPaid: true };
-      }
-      throw err;
-    }
-
-    // 4. Flip the contributing confirmed rows → paid_out, stamping the
-    // minted payout id. This also flips the negative clawback rows; their
-    // debt is now realized in this period's total and won't re-net next
-    // period.
-    const flipped = await tx.blockBuzzAttribution.updateMany({
-      where: { appOwnerUserId, status: 'confirmed' },
-      data: {
-        status: 'paid_out',
-        paidOutAt: new Date(),
-        payoutId,
-      },
-    });
-
-    logToAxiom(
-      {
-        name: ATTRIBUTION_LOG_NAME,
-        type: 'info',
-        message: `minted payout ${payoutId} for owner ${appOwnerUserId} (${periodKey})`,
-        payoutId,
-        appOwnerUserId,
-        periodKey,
-        totalCents: netCents,
-        rowCount: flipped.count,
-      },
-      'webhooks'
-    ).catch(() => null);
-
-    return { minted: true, payoutId, totalCents: netCents, rowCount: flipped.count };
-  });
-}
-
 /**
  * Refund window per provider. Used by the confirm-pending cron to
  * promote pending → confirmed only once the buyer can no longer
@@ -1313,7 +1583,10 @@ export async function getRevenueForOwner({
   appBlockId?: string;
   from?: Date;
   to?: Date;
-}): Promise<{ summary: RevenueSummary; topApps: Array<{ appBlockId: string; shareCents: number; count: number }> }> {
+}): Promise<{
+  summary: RevenueSummary;
+  topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
+}> {
   const where = {
     appOwnerUserId: ownerUserId,
     ...(appBlockId ? { appBlockId } : {}),
@@ -1384,11 +1657,315 @@ export async function getRevenueForOwner({
         grossCents: voided._sum.usdAmountCents ?? 0,
       },
     },
-    topApps: (topApps as Array<{ appBlockId: string; _sum: { appOwnerShareCents: number | null }; _count: number }>).map((r) => ({
+    topApps: (
+      topApps as Array<{
+        appBlockId: string;
+        _sum: { appOwnerShareCents: number | null };
+        _count: number;
+      }>
+    ).map((r) => ({
       appBlockId: r.appBlockId,
       shareCents: r._sum.appOwnerShareCents ?? 0,
       count: r._count,
     })),
+  };
+}
+
+// ---------------------------------------------------------------
+// DIGITAL GOODS sales — the read-side bridge onto the owner's revenue page
+// ---------------------------------------------------------------
+
+/**
+ * One bucket of an owner's digital-goods sales.
+ *
+ * 🔴 BUZZ IS THE PRIMARY UNIT HERE AND USD IS DERIVED, which is the opposite of
+ * every bucket above. It is not a style choice — cents CANNOT REPRESENT a small
+ * sale. 1,000 Buzz = $1, so one cent is 10 Buzz, and the minimum priced good
+ * (`BLOCK_GOOD_MIN_PRICE_BUZZ`) is 2 Buzz. A 10-Buzz good pays its owner 7 Buzz,
+ * and `buzzSpendToUsdCents(7)` is **0** — so a cents-only line renders `$0.00`
+ * beside a sale that happened, which is the same invisible-revenue bug this
+ * bridge exists to fix, one layer down. The renderer therefore shows Buzz and
+ * treats the cents figure as an approximation (see `RevenuePanel`).
+ */
+export type GoodsSalesBucket = {
+  count: number;
+  /** What buyers paid, in whole Buzz. */
+  grossBuzz: number;
+  /** The owner's recorded share of that, in whole Buzz. */
+  shareBuzz: number;
+};
+
+/**
+ * Why the goods bucket carries its OWN unavailable reason instead of reusing the
+ * payload-level `RevenueUnavailableReason`.
+ *
+ * `block_good_purchase` is applied by hand per environment (the migration says so
+ * in its own header), so an environment can legitimately be running this code
+ * against a database that has no such table. Before this value existed, that made
+ * the whole of `getMyRevenue` throw and took BOTH revenue pages down — including
+ * the card-purchase figures, which were fine.
+ *
+ * 🔴 AND THE OBVIOUS FIX IS THE BUG: catching the error and returning
+ * `emptyGoodsSales()` would report "no sales" for a rail that was never read,
+ * which is exactly the fabricated zero the payload-level discriminator above
+ * exists to prevent. So the failure is REPORTED, not zeroed, and the renderer has
+ * a branch for it.
+ *
+ * Deliberately NOT a new value on `RevenueUnavailableReason`: that union
+ * describes the whole payload being a placeholder, and this is one bucket of a
+ * payload whose other buckets are real measurements.
+ */
+export type GoodsUnavailableReason = 'unreadable';
+
+export type GoodsSalesSummary = {
+  /**
+   * `status = 'paid'` ONLY. `pending` and `refunded` are both excluded, and both
+   * exclusions are load-bearing rather than tidy-up:
+   *   - `refunded` — the debit was reversed, so counting it reports money the
+   *     buyer got back as the owner's earnings.
+   *   - `pending` — the charge outcome is unknown; it is a reconciliation record,
+   *     not a sale. Counting it inflates earnings off a charge that may never
+   *     have landed.
+   */
+  sales: GoodsSalesBucket & {
+    /**
+     * `shareBuzz` converted ONCE, at the aggregate. Converting per row and then
+     * summing floors N times instead of once and can lose up to 9 Buzz per sale
+     * — on a rail whose typical sale is worth well under a dollar, that is most
+     * of the number. Floored, so it never over-states.
+     */
+    shareUsdCents: number;
+    /** `grossBuzz` converted once, at the aggregate. Same reasoning. */
+    grossUsdCents: number;
+    /**
+     * How much of `grossBuzz` the buyers paid from their BLUE (granted) balance.
+     *
+     * 🔴 THIS IS WHY "Your share" CANNOT BE PRESENTED AS CASH. `blue_paid_buzz`
+     * exists precisely so a viewer paying blue cannot turn non-withdrawable Buzz
+     * into withdrawable earnings — `blueLegOfPayout` pays the owner's share
+     * proportionally in blue, and blue is Generation Buzz, which cannot be banked.
+     * The owner's share is therefore partly non-bankable exactly when this is
+     * non-zero, and the USD figures above are then an upper bound on what could
+     * ever be cashed, not a value.
+     *
+     * It is the GROSS blue total rather than the share's blue leg, and that is a
+     * deliberate limitation: `blueLegOfPayout` floors per row, so
+     * `sum(floor(...)) != floor(sum(...))` and the exact per-share blue split is
+     * not expressible as a column sum. This answers the only question the
+     * renderer asks of it — "does a colour caveat apply at all" — and must not be
+     * displayed as if it were the owner's blue earnings.
+     */
+    blueGrossBuzz: number;
+  };
+  /**
+   * Reversed rows, shown so the EXCLUSION is visible rather than silent — the
+   * same job the `voided` bucket does for the card-purchase rail.
+   *
+   * 🔴 THIS IS NOT "REFUNDS". `status='refunded'` covers two shapes and the
+   * column cannot tell them apart: a sale that was owned and then refunded, and a
+   * charge that was REVERSED BEFORE ANY ENTITLEMENT WAS GRANTED (`voidReversedClaim`
+   * stamps it onto a `pending` row whose debit failed or could not be confirmed —
+   * no sale ever happened). The migration names the discriminator: whether a
+   * `block_good_entitlement` points at the row. This aggregate does not join it,
+   * so the copy must say "reversed or refunded" and must NOT call these sales.
+   *
+   * No share figure, and the reason is narrower than it looks: a refund normally
+   * claws the owner's payout back, but `refundBlockGoodPurchase` records failed
+   * clawback legs in `failures` and marks the row `refunded` anyway — so in that
+   * case the owner did keep some of it. Quoting a share here would be a claim this
+   * aggregate cannot support in either direction.
+   */
+  refunded: { count: number; grossBuzz: number };
+  /**
+   * Present ONLY when the bucket could not be read. Absent on every real
+   * measurement, including a genuine all-zero one — same contract as the
+   * payload-level `unavailable`.
+   */
+  unavailable?: GoodsUnavailableReason;
+};
+
+/**
+ * The zeroed goods shape. Used by `emptyRevenue()` for the dark-flag
+ * short-circuit, and by nothing else — it carries no `unavailable` of its own
+ * because there the discriminator lives once, on the payload.
+ */
+export function emptyGoodsSales(): GoodsSalesSummary {
+  return {
+    sales: {
+      count: 0,
+      grossBuzz: 0,
+      shareBuzz: 0,
+      shareUsdCents: 0,
+      grossUsdCents: 0,
+      blueGrossBuzz: 0,
+    },
+    refunded: { count: 0, grossBuzz: 0 },
+  };
+}
+
+/**
+ * The bucket for "this rail could not be read". Zeros PLUS the discriminator, so
+ * a consumer that forgets to branch shows zeros rather than crashing, and one
+ * that does branch can say so honestly.
+ */
+export function unreadableGoodsSales(): GoodsSalesSummary {
+  return { ...emptyGoodsSales(), unavailable: 'unreadable' };
+}
+
+/**
+ * Is this error "the `block_good_purchase` table is not in this database"?
+ *
+ * 🔴 NARROW ON PURPOSE, AND THE WIDE VERSION WAS A REAL BUG. The caller catches
+ * this to degrade the goods rail instead of failing the whole revenue page — but
+ * the first version of that catch took EVERY rejection, which means a column
+ * rename, a bad argument or a `TypeError` inside the aggregate would all have
+ * been reported to the owner as "sales could not be loaded", politely, in
+ * production, forever. That is the invisible-revenue bug this whole change exists
+ * to fix, re-entering through the error path: a defect that hides itself behind a
+ * message the owner has no reason to question.
+ *
+ * So only the ONE condition the degradation is justified for is caught. The
+ * justification is specific — the migration's header says the table is applied by
+ * hand per environment — and it does not generalise to anything else that can go
+ * wrong in there.
+ *
+ * Matched by CODE OR MESSAGE, not `instanceof`: the branch has to stay reachable
+ * under a mocked Prisma client, which does not construct the real error class.
+ *   - `P2021` — Prisma's "table does not exist in the current database".
+ *   - `42P01` — Postgres `undefined_table`, which is what surfaces if the read
+ *     ever goes through a raw query instead.
+ *   - the same SQLSTATE in the MESSAGE, because Prisma wraps the driver error and
+ *     leaves the code unclassified on some paths.
+ *
+ * 🔴 DELEGATES, AND THE OPEN-CODED COPY THAT USED TO LIVE HERE WAS THE NARROWER
+ * SPELLING OF THE TWO. It required `'code' in error` before anything else, so an
+ * error carrying the SQLSTATE only in its message was rejected on the first line.
+ * On such a path this returned false, the caller's `.catch` rethrew, `Promise.all`
+ * rejected and `getMyRevenue` 500'd — taking BOTH owner revenue pages down,
+ * including the card-purchase figures that were perfectly readable. Precisely the
+ * outage the bounded catch exists to prevent, reached through the bound itself.
+ *
+ * {@link isMissingTableError} is the MEASURED version: its docblock records that
+ * "a check on P2021 alone let a raw-path failure through in local testing", and its
+ * message branch is deliberately narrower than "does not exist" — it requires the
+ * missing object to be named as a RELATION or TABLE and refuses anything mentioning
+ * a column, because a column error is a HALF-APPLIED manual migration and must
+ * surface rather than degrade to a silent zero. That nuance is the reason to reuse
+ * it rather than re-derive it; do not re-widen it here.
+ */
+export function isMissingGoodsTableError(error: unknown): boolean {
+  return isMissingTableError(error);
+}
+
+/**
+ * An owner's digital-goods sales, for the publisher revenue pages.
+ *
+ * 🔴 READ-SIDE ONLY, DELIBERATELY. The goods rail records into
+ * `block_good_purchase` and writes no `BlockBuzzAttribution` row; this function
+ * is the bridge, and it bridges by QUERYING rather than by back-filling
+ * attribution rows. That choice is the point: writing an attribution row per
+ * sale would require deciding whether a sale "is an attribution", risks
+ * double-counting against this table, and is a write-path change on a money
+ * rail that cannot be undone once rows exist. A second read commits to nothing
+ * and can be removed by deleting this function.
+ *
+ * 🔴 OWNERSHIP IS THE WHERE CLAUSE, exactly as in `getRevenueForOwner`:
+ * `appOwnerUserId: ownerUserId` scopes every bucket, so a caller asking about an
+ * app they do not own gets a truthful zero rather than someone else's revenue.
+ * `app_owner_user_id` is snapshotted at purchase time, so an ex-owner keeps
+ * seeing what they earned before transferring the app away — the same property
+ * the write path chose it for.
+ *
+ * ⚠️ WHAT THIS DOES NOT MEASURE: whether the owner's Buzz actually LANDED.
+ * `shareBuzz` sums `app_owner_share_buzz`, the recorded obligation, which is
+ * what the conservation CHECK guarantees and what a refund reverses. A payout
+ * whose ledger leg failed leaves the row `paid` with `payouts` short of that
+ * figure (`owesOwnerPayout`), and this aggregate cannot see the shortfall — a
+ * JSONB sum is not expressible in a Prisma aggregate, and there is no re-runner
+ * for those rows anyway. So `shareBuzz` is "earned", on the same reading as the
+ * `confirmed` bucket above, which is also an accrual rather than a delivery. Do
+ * not relabel it as "received" without measuring `payouts`.
+ *
+ * The date range filters `created_at` — the sale's own timestamp. There is no
+ * `attributed_at` on this table because there is no attribution row.
+ */
+export async function getGoodsSalesForOwner({
+  ownerUserId,
+  appBlockId,
+  from,
+  to,
+}: {
+  ownerUserId: number;
+  appBlockId?: string;
+  from?: Date;
+  to?: Date;
+}): Promise<GoodsSalesSummary> {
+  const rows = await dbRead.blockGoodPurchase.groupBy({
+    by: ['status'],
+    where: {
+      appOwnerUserId: ownerUserId,
+      ...(appBlockId ? { appBlockId } : {}),
+      ...(from || to
+        ? {
+            createdAt: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {}),
+            },
+          }
+        : {}),
+    },
+    _sum: { priceBuzz: true, appOwnerShareBuzz: true, bluePaidBuzz: true },
+    _count: true,
+  });
+
+  // ONE round trip for every status bucket — one pass bucketed by the database,
+  // rather than `getRevenueForOwner`'s five single-status aggregates over the same
+  // rows.
+  //
+  // ⚠️ ON THE INDEX, stated precisely because the migration's own comment is
+  // easy to over-read: `bgp_owner_idx` (`app_owner_user_id`, `created_at` DESC)
+  // IS used — `GROUP BY status` does not defeat it, since the owner id is an
+  // index condition and the grouping happens above — but it makes this read
+  // INDEX-DRIVEN, not CHEAP. The index supplies only TIDs, so `status` and both
+  // summed columns need a heap visit per row, and on an append-only ledger the
+  // owner's rows are scattered. Measured on a 2M-row fixture: ~1 buffer per sale
+  // the owner has ever made, so an owner with ~50k lifetime sales touches most of
+  // the table. A covering index fixes it (~100x fewer buffers) and is NOT applied
+  // — at single-digit rows it would be disk spent on nothing. The trigger to
+  // revisit is a single owner crossing ~1,000 lifetime sales.
+  //
+  // NO `as` CAST, deliberately, unlike `getRevenueForOwner` above. An assertion on
+  // a money aggregate hides exactly the mistake that matters: `_count` is a
+  // COUNT-OBJECT when you select fields and a plain `number` only when you pass
+  // `true`, so a cast that guessed wrong would read an object as a sale count and
+  // render it as such. The generated client already types this precisely — the
+  // groupBy payload maps `_count` to `number` when the argument is a boolean — so
+  // letting inference do the work is what makes the `number` below checked rather
+  // than asserted.
+  const byStatus = new Map(rows.map((r) => [r.status, r] as const));
+
+  const paid = byStatus.get(BLOCK_GOOD_PURCHASE_STATUS.paid);
+  const refunded = byStatus.get(BLOCK_GOOD_PURCHASE_STATUS.refunded);
+  // `BLOCK_GOOD_PURCHASE_STATUS.pending` is read by nothing here, on purpose —
+  // see the `sales` docblock. It is left in `byStatus` rather than filtered out
+  // of the query so that a future bucket is a lookup, not a second round trip.
+
+  const grossBuzz = paid?._sum.priceBuzz ?? 0;
+  const shareBuzz = paid?._sum.appOwnerShareBuzz ?? 0;
+
+  return {
+    sales: {
+      count: paid?._count ?? 0,
+      grossBuzz,
+      shareBuzz,
+      shareUsdCents: buzzSpendToUsdCents(shareBuzz),
+      grossUsdCents: buzzSpendToUsdCents(grossBuzz),
+      blueGrossBuzz: paid?._sum.bluePaidBuzz ?? 0,
+    },
+    refunded: {
+      count: refunded?._count ?? 0,
+      grossBuzz: refunded?._sum.priceBuzz ?? 0,
+    },
   };
 }
 
@@ -1423,6 +2000,13 @@ export type EmptyRevenuePayload = {
   topApps: Array<{ appBlockId: string; shareCents: number; count: number }>;
   recentAttributions: [];
   /**
+   * Zeroed like every other bucket, and for the same reason: on THIS type the
+   * zeros are a placeholder, and `unavailable` is what says so. A missing key
+   * here would be worse than a zero — the panel would have no goods figure to
+   * suppress and could render the dark-flag case as "no sales".
+   */
+  goods: GoodsSalesSummary;
+  /**
    * REQUIRED here, because on this type the zeroed buckets are always a placeholder.
    * The contract as seen by a CALLER is "present only when the zeros are a placeholder,
    * absent on a genuine measurement" — a measured result comes back from
@@ -1453,6 +2037,7 @@ export function emptyRevenue(): EmptyRevenuePayload {
     },
     topApps: [],
     recentAttributions: [],
+    goods: emptyGoodsSales(),
     unavailable: 'notEntitled',
   };
 }

@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { imageSelectTrainingFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
+import { colorDomainNames } from '~/shared/constants/domain.constants';
 import { ModelFileVisibility, TrainingStatus } from '~/shared/utils/prisma/enums';
 
 export type TrainingResultsV1 = z.infer<typeof trainingResultsV1Schema>;
@@ -70,7 +71,8 @@ export const trainingResultsV2Schema = z.object({
       epochNumber: z.number(),
       modelUrl: z.string(),
       modelSize: z.number(),
-      sampleImages: z.array(z.url()),
+      // '' holds the slot of a sample that failed, keeping indices aligned with the prompts.
+      sampleImages: z.array(z.union([z.url(), z.literal('')])),
     })
   ),
   sampleImagesPrompts: z.array(z.string()),
@@ -104,6 +106,9 @@ export const modelFileMetadataSchema = z.object({
   shareDataset: z.boolean().nullish(),
   numImages: z.number().nullish(),
   numCaptions: z.number().nullish(), // this should be named numLabels, but it's too late now
+  // The domain color the training data was last uploaded under. Set server-side (never trusted from
+  // the client) so the paid submit can refuse an NSFW dataset prepared on red being paid for on green.
+  uploadDomain: z.enum(colorDomainNames).nullish(),
   selectedEpochUrl: z.url().nullish(),
   trainingResults: trainingResultsSchema.nullish(),
   bountyId: z.number().nullish(),

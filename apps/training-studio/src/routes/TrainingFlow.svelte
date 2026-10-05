@@ -2,23 +2,35 @@
   import { onMount } from 'svelte';
   import { IconCheck, IconArrowLeft } from '@tabler/icons-svelte';
   import { backend, navigate } from '$lib/host';
+  import { isMatureNsfwLevel } from '$lib/buzz-balance.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import SelectStep from './SelectStep.svelte';
   import DataStep from './DataStep.svelte';
   import ReviewStep from './ReviewStep.svelte';
   import {
     buildTrainingRuns,
+    defaultRunParams,
     isTrainable,
     labelOptions,
     labelString,
     runCard,
+    runParamsKey,
+    seedPrompts,
+    type DatasetFilter,
     type Img,
     type LaunchedRun,
+    type RunParams,
+    type SamplePrompt,
     type Selection,
   } from './trainingFlow';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
+  import type { ReuseItem } from '$lib/reuse';
 
-  let { prices, onExit }: { prices: FromPrices; onExit: () => void } = $props();
+  let {
+    prices,
+    enabledModelFlags = [],
+    onExit,
+  }: { prices: FromPrices; enabledModelFlags?: string[]; onExit: () => void } = $props();
 
   const STEPS = [
     { n: 1, label: 'Select' },
@@ -27,17 +39,32 @@
   ] as const;
 
   let step = $state(1);
+  let dataFilter = $state<DatasetFilter>('all');
   let selection = $state<Selection | null>(null);
   // Dataset + trigger + label mode are owned here so they survive Back/Continue between steps. `labelMode`
   // defaults to the chosen model's default label and is only user-changeable for a `bothLabels` model.
   let images = $state<Img[]>([]);
   let trigger = $state('');
   let labelMode = $state<LabelType>('tag');
+  // Auto-label behavior, owned here like labelMode/trigger so it survives Back/Continue:
+  // 'auto' labels each upload batch as it settles (the historical behavior); 'manual' waits for the
+  // explicit Auto-label button. `excludeTags` are never applied by auto-label results (tag mode).
+  let autoLabel = $state<'auto' | 'manual'>('auto');
+  let excludeTags = $state<string[]>([]);
+  // Review-step fields, owned here for the same reason. Name and prompts remember what they were seeded
+  // from: while unedited they follow a changed trigger / dataset, once edited they're kept. Empty
+  // `samplePrompts` means unseeded — Review never lets the list reach zero.
+  let reviewName = $state('');
+  let reviewNameSeed: string | null = null;
+  let samplePrompts = $state<SamplePrompt[]>([]);
+  let promptsSeed: { labels: string; prompts: string } | null = null;
+  let runParams = $state<Record<string, RunParams>>({});
+  let presetType = $state('');
 
   // A "Train again with this data" hand-off from a run's detail page: reuse its blob airs (already
   // uploaded + scanned) rather than re-uploading. Read once, then cleared so a refresh doesn't re-import.
   // DataStep materializes these once a model is picked (the label type depends on the selection).
-  let reuseItems = $state<{ air: string; caption: string; name: string; previewUrl: string }[]>([]);
+  let reuseItems = $state<ReuseItem[]>([]);
   onMount(() => {
     try {
       const raw = sessionStorage.getItem('ts:reuse-dataset');
@@ -51,6 +78,9 @@
   });
   // Only successfully uploaded + scanned images train — blocked / in-flight tiles don't count.
   const trainableCount = $derived(images.filter(isTrainable).length);
+  const matureCount = $derived(
+    images.filter((i) => isTrainable(i) && isMatureNsfwLevel(i.nsfwLevel)).length
+  );
 
   // The dataset's own labels (joined tags or captions) — Review seeds its sample prompts from these.
   const datasetLabels = $derived.by(() => {
@@ -63,13 +93,48 @@
 
   // Free the dataset preview object URLs when the flow unmounts (leaving to My-trainings). Reads
   // nothing reactive, so it's mount-only — not per-step; images and their previews live here and must
-  // survive Back/Continue, so DataStep must not do this on its own unmount.
+  // survive Back/Continue, so DataStep must not do this on its own unmount. Emptying the array is
+  // load-bearing: a preview hydration resolving after teardown checks membership and revokes its
+  // fresh URL instead of leaking it.
   $effect(() => () => {
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
+    images = [];
   });
 
+  // Leaving Data drops its filter; only Review's "see which" hands one across a step change.
+  function leaveData() {
+    dataFilter = 'all';
+  }
+
   function jump(n: number) {
-    if (n <= step) step = n;
+    if (n > step) return;
+    if (step === 2) leaveData();
+    step = n;
+  }
+
+  function enterReview() {
+    if (!selection) return;
+    const t = trigger.trim();
+    if (reviewNameSeed === null || reviewName === reviewNameSeed) {
+      reviewName = t;
+      reviewNameSeed = t;
+    }
+    // The seed key covers the trigger too: an unedited prompt list follows a trigger change, so the
+    // samples always carry the word the run is being taught.
+    const labels = JSON.stringify([t, ...datasetLabels]);
+    const untouched = promptsSeed !== null && JSON.stringify(samplePrompts) === promptsSeed.prompts;
+    if (samplePrompts.length === 0 || (untouched && labels !== promptsSeed!.labels)) {
+      samplePrompts = seedPrompts(datasetLabels, t);
+      promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
+    }
+    runParams = Object.fromEntries(
+      selection.runs.map((run) => {
+        const key = runParamsKey(run);
+        return [key, runParams[key] ?? defaultRunParams(run)];
+      })
+    );
+    leaveData();
+    step = 3;
   }
 
   // The one write in the whole flow: assemble each run and submit real workflow(s), then land on the run
@@ -141,8 +206,11 @@
   {#if step === 1}
     <SelectStep
       {prices}
+      {enabledModelFlags}
       initial={selection}
       onContinue={(sel) => {
+        if (sel.loraType !== selection?.loraType || sel.media !== selection?.media)
+          presetType = sel.loraType;
         selection = sel;
         // Reset the label mode to the model's default only when the current choice isn't valid for it —
         // so Back/Continue on the same model keeps a user's tags↔captions choice, but switching to a
@@ -160,18 +228,32 @@
       bind:images
       bind:trigger
       bind:labelMode
-      onContinue={() => (step = 3)}
-      onBack={() => (step = 1)}
+      bind:autoLabel
+      bind:filter={dataFilter}
+      bind:excludeTags
+      onContinue={enterReview}
+      onBack={() => {
+        leaveData();
+        step = 1;
+      }}
     />
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
-      {prices}
       {trigger}
+      {labelMode}
+      bind:name={reviewName}
+      bind:prompts={samplePrompts}
+      bind:params={runParams}
+      bind:presetType
       imageCount={trainableCount}
-      labels={datasetLabels}
+      {matureCount}
       onStart={start}
       onBack={() => (step = 2)}
+      onShowMature={() => {
+        dataFilter = 'mature';
+        step = 2;
+      }}
     />
   {/if}
 </section>

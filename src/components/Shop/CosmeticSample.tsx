@@ -53,6 +53,7 @@ export const CosmeticSample = ({
             alt={cosmetic.name}
             width={values.badgeSize}
             loading={loading}
+            optimized
           />
         </div>
       );
@@ -82,6 +83,7 @@ export const CosmeticSample = ({
           width={values.badgeSize}
           anim={stickerData.animated}
           loading={loading}
+          optimized
           style={{ width: values.badgeSize, height: values.badgeSize, objectFit: 'contain' }}
         />
       );
@@ -111,6 +113,7 @@ export const CosmeticSample = ({
             type={backgroundData.type}
             anim={true}
             width={450}
+            optimized
             // Inert when `type` is video: EdgeMedia spreads imgProps into EdgeImage only,
             // so EdgeVideo never sees this. Its poster is eager regardless, and the video is
             // preload="none" except on Safari, which forces 'auto'.

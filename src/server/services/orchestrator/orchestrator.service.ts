@@ -14,10 +14,11 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isProd } from '~/env/other';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
 import { hashContent } from '~/server/services/entity-moderation.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/shared/utils/air';
@@ -27,6 +28,11 @@ import {
   isDefiniteNotFound,
   resolveDownloadUrl,
 } from '~/utils/delivery-worker';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+  normalizeImageScanUrl,
+} from '~/server/utils/image-scan-url';
 
 // Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
 // this returns a workflow id immediately, it does NOT wait for the scan to finish).
@@ -43,9 +49,68 @@ import {
 // explicitly wants to block for the workflow, so we must not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 
+/**
+ * The scan submit passes no `wait`, so this is an enqueue: the orchestrator accepts the workflow and
+ * returns. Without a signal it inherits undici's 300s default, and every caller awaits it — the
+ * upload response, and the import job inside its own lock. Sized like its sibling above rather than
+ * to a measured P99, which nothing records for this call.
+ *
+ * A fired timeout throws, which every caller already treats as a transient failure: `scanRequestedAt`
+ * stays null and `scanFilesFallbackJob` re-submits within five minutes.
+ */
+const MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS = 15_000;
+
 const IMAGE_TAGGING_MODEL =
   'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar';
 const IMAGE_TAGGING_THRESHOLD = 0.55;
+
+/** Axiom `name` for a failed ingestion submit, per scan pipeline. */
+export function imageIngestionLogName(useImageScanning: boolean) {
+  return useImageScanning ? 'image-scanning-ingestion' : 'image-ingestion';
+}
+
+type MediaUrlRef = { $ref: string; path: string };
+
+function imageScanSteps({
+  mediaUrl,
+  metadata,
+  priority,
+  useImageScanning,
+}: {
+  mediaUrl: MediaUrlRef;
+  metadata: Record<string, unknown>;
+  priority: Priority;
+  useImageScanning: boolean;
+}) {
+  if (useImageScanning)
+    return [
+      { $type: 'imageScanning', name: 'scan', metadata, priority, input: { image: mediaUrl } },
+    ];
+
+  return [
+    {
+      $type: 'wdTagging',
+      name: 'tags',
+      metadata,
+      priority,
+      input: { mediaUrl, model: IMAGE_TAGGING_MODEL, threshold: IMAGE_TAGGING_THRESHOLD },
+    },
+    {
+      $type: 'mediaRating',
+      name: 'rating',
+      metadata,
+      priority,
+      input: {
+        mediaUrl,
+        engine: 'civitai',
+        includeAgeClassification: true,
+        includeAIRecognition: false,
+        includeFaceRecognition: false,
+        includeAnimeRecognition: false,
+      },
+    },
+  ];
+}
 
 export async function createImageIngestionRequest({
   imageId,
@@ -62,12 +127,68 @@ export async function createImageIngestionRequest({
   priority?: Priority;
   type?: MediaType;
 }) {
+  // 🔴 This is the funnel for the image-scan INGESTION path. `getEdgeUrl` forwards
+  // absolute http(s)/blob: URLs through unmodified, so without this guard every path that
+  // reaches `Image.url` from caller input (comics procs, article content media nodes, …)
+  // is an SSRF primitive. `ingestImage` pre-checks the same predicate so it can route the
+  // rejection through the submit-failure machinery; this throw is the backstop for direct
+  // callers.
+  //
+  // It is not the only place a caller-supplied URL reaches a fetcher, and the others are
+  // now on this same predicate rather than left ungated: `getPerceptualHash` below,
+  // `resizeBadgeImage` (product-badge.service.ts) and `validateArtwork`
+  // (creator-shop.service.ts — a fetch from the WEB pod, not the orchestrator). The full
+  // ledger is asserted by `media-fetch-funnel-ledger.test.ts`, which fails when a new
+  // funnel appears un-gated, so do not maintain that list by hand here.
+  if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+
   const metadata = { imageId };
-  const edgeUrl = getEdgeUrl(url, { type });
+  // Submit the NORMALIZED form: an absolute url goes out as its parsed `href`, so the host
+  // this guard validated is the host a downstream RFC-3986 client resolves.
+  const edgeUrl = getEdgeUrl(normalizeImageScanUrl(url), { type });
   // Idempotency key: if a submit returns 500 but actually created the workflow
   // server-side, re-submitting with the same `externalId` returns the existing
   // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
   const externalId = randomUUID();
+  const useImageScanning = await isFlipt(
+    FLIPT_FEATURE_FLAGS.IMAGE_INGESTION_IMAGE_SCANNING,
+    String(imageId)
+  );
+  const mediaUrl = { $ref: '$arguments', path: 'mediaUrl' };
+
+  const steps =
+    type === 'image'
+      ? [
+          ...imageScanSteps({ mediaUrl, metadata, priority, useImageScanning }),
+          {
+            $type: 'mediaHash',
+            name: 'hash',
+            metadata,
+            priority,
+            input: { mediaUrl, hashTypes: ['perceptual'] },
+          },
+        ]
+      : [
+          {
+            $type: 'videoFrameExtraction',
+            name: 'videoFrames',
+            metadata,
+            priority,
+            input: { videoUrl: mediaUrl, frameRate: 1, uniqueThreshold: 0.9, maxFrames: 50 },
+          },
+          ...imageScanSteps({
+            mediaUrl: { $ref: 'frame', path: 'url' },
+            metadata,
+            priority,
+            useImageScanning,
+          }).map((template) => ({
+            $type: 'repeat',
+            input: {
+              for: { $ref: 'videoFrames', path: 'output.frames', as: 'frame' },
+              template,
+            },
+          })),
+        ];
 
   const body: WorkflowTemplate = {
     externalId,
@@ -76,110 +197,8 @@ export async function createImageIngestionRequest({
       mediaUrl: edgeUrl,
     },
     currencies: [],
-    steps:
-      type === 'image'
-        ? [
-            {
-              $type: 'wdTagging',
-              name: 'tags',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                model: IMAGE_TAGGING_MODEL,
-                threshold: IMAGE_TAGGING_THRESHOLD,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'mediaRating',
-              name: 'rating',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                engine: 'civitai',
-                includeAgeClassification: true,
-                includeAIRecognition: false,
-                includeFaceRecognition: false,
-                includeAnimeRecognition: false,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'mediaHash',
-              name: 'hash',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                hashTypes: ['perceptual'],
-              },
-            } as WorkflowStepTemplate,
-          ]
-        : [
-            {
-              $type: 'videoFrameExtraction',
-              name: 'videoFrames',
-              metadata,
-              priority,
-              input: {
-                videoUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                frameRate: 1,
-                uniqueThreshold: 0.9,
-                maxFrames: 50,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'repeat',
-              input: {
-                for: {
-                  $ref: 'videoFrames',
-                  path: 'output.frames',
-                  as: 'frame',
-                },
-                template: {
-                  $type: 'wdTagging',
-                  name: 'tags',
-                  metadata,
-                  priority,
-                  input: {
-                    mediaUrl: {
-                      $ref: 'frame',
-                      path: 'url',
-                    },
-                    model: IMAGE_TAGGING_MODEL,
-                    threshold: IMAGE_TAGGING_THRESHOLD,
-                  },
-                },
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'repeat',
-              input: {
-                for: {
-                  $ref: 'videoFrames',
-                  path: 'output.frames',
-                  as: 'frame',
-                },
-                template: {
-                  $type: 'mediaRating',
-                  name: 'rating',
-                  metadata,
-                  priority,
-                  input: {
-                    mediaUrl: {
-                      $ref: 'frame',
-                      path: 'url',
-                    },
-                    engine: 'civitai',
-                    includeAgeClassification: true,
-                    includeAIRecognition: false,
-                    includeFaceRecognition: false,
-                    includeAnimeRecognition: false,
-                  },
-                },
-              },
-            } as WorkflowStepTemplate,
-          ],
+    // WorkflowTemplate is @civitai/client's, which predates the imageScanning step.
+    steps: steps as unknown as WorkflowStepTemplate[],
     callbacks: callbackUrl
       ? [
           {
@@ -205,6 +224,7 @@ export async function createImageIngestionRequest({
 
   // Re-submit transient infra failures (5xx / no-response), reusing the same
   // `externalId` so a 500 that actually created the workflow isn't duplicated.
+  const submitStartedAt = Date.now();
   const result = await submitWorkflowWithRetry(
     {
       client: internalOrchestratorClient,
@@ -229,18 +249,25 @@ export async function createImageIngestionRequest({
   if (!data) {
     logToAxiom({
       type: 'error',
-      name: 'image-ingestion',
+      name: imageIngestionLogName(useImageScanning),
       imageId,
       url,
       externalId,
       attempts,
       responseStatus: response?.status,
       serverTiming,
-      error,
+      // JSON.stringify(new Error()) is `{}` — Error carries no enumerable own
+      // properties — so logging the error directly recorded nothing at all, and
+      // a no-response submit is exactly the case where its name is the whole
+      // diagnosis (an abort is not a connection reset).
+      error: safeError(error),
+      // Wall time across every attempt. Distinguishes three per-attempt aborts
+      // (~45s) from a fast rejection, which the attempt count alone does not.
+      elapsedMs: Date.now() - submitStartedAt,
     });
   }
 
-  return { data, body, error, status: response?.status };
+  return { data, body, error, status: response?.status, useImageScanning };
 }
 
 const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
@@ -279,7 +306,33 @@ export async function getPerceptualHash(
   url: string,
   hashType: MediaHashType = 'perceptual'
 ): Promise<string | undefined> {
-  const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
+  // 🔴 Same SSRF boundary as `createImageIngestionRequest` above, and it is reached from a
+  // LOWER rung than that one: `queueCosmeticPerceptualHash` is called from
+  // creator-shop's submit path (any signed-in user with the `creatorShop` flag), and the
+  // `cosmetic-phash-sweep` cron replays whatever was stored in `Cosmetic.data.url`, so an
+  // off-allowlist URL that got persisted once is re-submitted on a schedule.
+  //
+  // Unlike the ingestion funnel this returns `undefined` rather than throwing: every other
+  // failure here is already soft ("a hash is a signal, not a gate" — see the docblock), and
+  // the sweep counts a thrown error as a dead row it will retry forever. A refusal is
+  // logged so it is not a silent zero.
+  if (!isAllowedImageScanUrl(url)) {
+    logToAxiom({
+      type: 'error',
+      name: 'perceptual-hash',
+      message: 'Refusing to hash an off-allowlist media url',
+      reason: 'url-not-allowed',
+      url,
+    }).catch(() => null);
+    return undefined;
+  }
+
+  // The old `url.startsWith('http') ? url : getEdgeUrl(url, …)` ternary was a no-op —
+  // `getEdgeUrl` forwards a passthrough src unmodified on exactly that predicate — and it
+  // was a fourth open-coded spelling of it. Submit the NORMALIZED form for the same reason
+  // `createImageIngestionRequest` does: the host this guard validated is then the host a
+  // downstream RFC-3986 client resolves.
+  const mediaUrl = getEdgeUrl(normalizeImageScanUrl(url), { type: 'image' });
 
   // getEdgeUrl drops a missing NEXT_PUBLIC_IMAGE_LOCATION from the join instead
   // of failing, yielding a relative path the orchestrator can't fetch. Outside
@@ -787,6 +840,7 @@ export async function createModelFileScanRequest({
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
+    signal: AbortSignal.timeout(MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS),
     body: {
       metadata,
       currencies: [],

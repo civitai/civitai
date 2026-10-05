@@ -21,6 +21,7 @@ import { ITEMS_PER_ROW } from '~/components/HomeBlocks/homeBlockItems';
 import { dedupeOrder, useDedupedCappedItems } from '~/components/HomeBlocks/homeBlockDedupe';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
@@ -195,7 +196,16 @@ function ImageFeedGrid({
     type: 'images',
     data: rotated,
   });
-  const visible = useDedupedCappedItems(filtered, {
+  // The block's payload is shared between viewers, so it arrives with `reactions: []` for
+  // everyone. Passed straight into the cap rather than held in a binding of its own, which
+  // removes the INVITED mistake of rendering the un-hydrated list — not every one: `filtered` is
+  // still in scope, and so is what `ImagesProvider` is handed below.
+  //
+  // BEFORE the cap because the cap depends on what earlier blocks claimed through a shared store,
+  // so it changes as they resolve — hydrating after it re-keyed the query and stranded the answer.
+  // It does NOT buy the detail dialog anything: the dialog browses the capped list, which is
+  // hydrated wherever this sits.
+  const visible = useDedupedCappedItems(useHydratedImageReactions(filtered, { entity: 'image' }), {
     order,
     entity: 'image',
     rows,

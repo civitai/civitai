@@ -130,7 +130,9 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
   // Per-connection statement_timeout for PgBouncer-fronted pools (which ignore the startup param).
   if (perConnectionStatementTimeout) {
     pool.on('connect', (client) => {
-      client.query(`SET statement_timeout = ${Number(perConnectionStatementTimeout)}`).catch(() => {});
+      client
+        .query(`SET statement_timeout = ${Number(perConnectionStatementTimeout)}`)
+        .catch(() => {});
     });
   }
 
@@ -154,7 +156,10 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       const cb = args[0] as (err: Error | undefined, client: any, done: any) => void;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return (originalConnect as any)((err: Error | undefined, client: any, done: any) => {
-        pgPoolAcquireHistogram.observe({ pool: label, result: err ? 'err' : 'ok' }, elapsedSeconds());
+        pgPoolAcquireHistogram.observe(
+          { pool: label, result: err ? 'err' : 'ok' },
+          elapsedSeconds()
+        );
         cb(err, client, done);
       });
     }
@@ -209,10 +214,27 @@ export function createPool(options: CreatePoolOptions): AugmentedPool {
       queryParams !== undefined
         ? connection.query<R>(queryText, queryParams)
         : connection.query<R>(queryText);
-    query.finally(() => {
-      done = true;
-      connection.release();
-    });
+    // 🔴 The trailing `.catch` keeps this cleanup chain's copy of a rejection from going unhandled.
+    // The rejection callers care about still reaches whoever awaits `query` or `result()`. Without
+    // it the promise `.finally()` DERIVES has no handler on any path, so a failing statement raises
+    // `unhandledRejection` and Node >=15 exits the process by default. Awaiting `result()` does not
+    // prevent that: it handles `query`, while the derived promise is a separate object nothing
+    // holds. Measured on node 24 — a failing write took the notifications fan-out worker down after
+    // its caller's `.catch` had been ENTERED but before it finished and before dispatch resumed, so
+    // the symptom is a worker that vanishes mid-notification, not a logged error.
+    //
+    // It also swallows anything the cleanup callback itself throws. Not reachable today —
+    // `connection.release()` is called once per `cancellableQuery` and `done` is already set before
+    // it, so `cancel()`'s `if (done) return` is unaffected — but if that ever changes the failure
+    // becomes a silently leaked pool connection where this code used to crash loudly. Pinned by
+    // db-helpers.rejection.test.ts. Same fix and reasoning as the `inFlight` chain in
+    // `apps/notifications/src/lib/server/operations.ts`.
+    query
+      .finally(() => {
+        done = true;
+        connection.release();
+      })
+      .catch(() => {});
 
     const cancel = async () => {
       if (done) return;

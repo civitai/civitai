@@ -1,14 +1,16 @@
+import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, markServerFaultLogged } from '~/server/logging/client';
 import {
   __resetTrpcBatchMetricsForTest,
   isTrpcBatchOverCap,
 } from '~/server/prom/trpc-batch.metrics';
 import { getTrpcMaxBatchSize } from '~/server/trpc/batch-cap';
+import { getClientSafeError } from '~/server/trpc/client-safe-error';
 import { TRPC_MAX_BATCH_SIZE } from '~/shared/constants/trpc.constants';
 
 /**
@@ -186,5 +188,47 @@ describe('src/pages/api/trpc/[trpc].ts wiring', () => {
 
     await callOnError(req, new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'boom' }));
     expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+  });
+
+  // -------------------------------------------------------------------------
+  // A masked error's ref reaches the log line
+  // -------------------------------------------------------------------------
+
+  const driverError = () =>
+    new TRPCError({
+      code: 'INTERNAL_SERVER_ERROR',
+      cause: new Prisma.PrismaClientUnknownRequestError(
+        'Invalid `prisma.apiKey.create()` invocation: cannot execute INSERT in a read-only transaction',
+        { clientVersion: '6.13.0' }
+      ),
+    });
+
+  it('logs a masked error with the errorRef the user was shown', async () => {
+    const error = driverError();
+    await callOnError(request(2), error);
+
+    const errorRef = getClientSafeError(error)?.errorRef;
+    expect(errorRef).toMatch(/^[0-9a-f]{12}$/);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledWith(
+      expect.objectContaining({ errorRef }),
+      'civitai-prod'
+    );
+  });
+
+  it('logs a masked error even when a router already logged it, since that line has no ref', async () => {
+    const error = driverError();
+    markServerFaultLogged(error);
+    await callOnError(request(2), error);
+
+    expect(vi.mocked(logToAxiom)).toHaveBeenCalledTimes(1);
+  });
+
+  it('CONTROL: an unmasked error a router already logged is not logged again', async () => {
+    const error = new TRPCError({ code: 'CONFLICT', message: 'boom' });
+    markServerFaultLogged(error);
+    await callOnError(request(2), error);
+
+    expect(vi.mocked(logToAxiom)).not.toHaveBeenCalled();
   });
 });

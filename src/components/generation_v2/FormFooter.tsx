@@ -75,10 +75,22 @@ import {
   useGenerateFromGraph,
   useInvalidateWhatIf,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  TrialAccessWarning,
+  TrialBlockedAlert,
+} from '~/components/Generate/GenerationPaidAccessAlerts';
+import {
+  parseTrialMessage,
+  selectedResourceIds,
+  type SelectedResources,
+} from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from './inputs/ResourceDataProvider';
 import { useWhatIfContext } from './WhatIfProvider';
 import { filterSnapshotForSubmit } from './utils';
 import { getMissingFieldMessage } from './hooks/useWhatIfFromGraph';
+import { DownloadReadyAlert } from './ResourceAlerts';
+import { resolveBoostSubmitFields } from './hooks/usePreBoost';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import type { SourceMetadata } from '~/store/source-metadata.store';
 import { sourceMetadataStore } from '~/store/source-metadata.store';
 import { remixProvenanceStore } from '~/store/remix-provenance.store';
@@ -113,7 +125,7 @@ import {
   buildWorkflowPendingChange,
 } from '~/components/generation_v2/CompatibilityConfirmModal';
 import { workflowPreferences } from '~/store/workflow-preferences.store';
-import { useRemixOfId } from './hooks/useRemixOfId';
+import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
 import { remixStore } from '~/store/remix.store';
 import { useMetadataExtractionStore } from '~/store/metadata-extraction.store';
 import { useGeneratedItemWorkflows } from './hooks/useGeneratedItemWorkflows';
@@ -212,6 +224,19 @@ export function useSelectedBuzzType() {
  * The dropdown shows all available buzz types with their balances.
  */
 const BUZZ_SELECTOR_SEEN_KEY = 'buzz-type-selector-seen';
+
+export function StepWarningsNotification({ warnings }: { warnings: { message: string }[] }) {
+  return (
+    <Notification
+      icon={<IconAlertTriangle size={18} />}
+      color="yellow"
+      className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
+      withCloseButton={false}
+    >
+      {warnings.map((warning) => warning.message).join('\n')}
+    </Notification>
+  );
+}
 
 export function BuzzTypeSelector({
   cost,
@@ -486,18 +511,6 @@ interface PriorityAlertSpaceProps {
   onClearInsufficientBuzz?: () => void;
 }
 
-/**
- * Alert space with DailyBoostRewardClaim always on top, then priority-based alerts.
- *
- * Layout:
- * - DailyBoostRewardClaim (always shown if available)
- * - Priority alert (only one shows):
- *   1. Missing field guidance (validation helper)
- *   2. WhatIf error (cost estimation failed)
- *   3. Submit error
- *   4. Membership upsell
- *   5. Queue snackbar (fallback)
- */
 function PriorityAlertSpace({
   submitError,
   onClearSubmitError,
@@ -506,7 +519,16 @@ function PriorityAlertSpace({
   forceInsufficientBuzz,
   onClearInsufficientBuzz,
 }: PriorityAlertSpaceProps) {
-  const { error: whatIfError, isError: hasWhatIfError } = useWhatIfContext();
+  const {
+    error: whatIfError,
+    isError: hasWhatIfError,
+    isSuccess: whatIfSucceeded,
+    data: whatIfData,
+  } = useWhatIfContext();
+  // The advisory alert is derived from entity access, which resolves well before the estimate. Drawing it
+  // then swapping in the blocking alert when the whatIf comes back reads as a yellow-to-red flash, so it
+  // waits for the estimate to settle — there is nothing to advise until we know whether it is blocked.
+  const whatIfSettled = whatIfSucceeded || hasWhatIfError;
   const { selectedType, availableTypes, setBuzzType } = useSelectedBuzzType();
   const {
     data: { accounts },
@@ -515,6 +537,15 @@ function PriorityAlertSpace({
   const totalCost = useTotalGenerationCost();
   const featureFlags = useFeatureFlags();
   const graph = useGraph<GenerationGraphTypes>();
+  const { model, resources, vae } = useGraphSubscriptions(graph, [
+    'model',
+    'resources',
+    'vae',
+  ] as const) as SelectedResources;
+  const selectedIds = useMemo(
+    () => selectedResourceIds({ model, resources, vae }),
+    [model, resources, vae]
+  );
 
   // Check if user has insufficient buzz of the selected type
   // Don't show insufficient buzz until the buzz query has resolved
@@ -531,8 +562,28 @@ function PriorityAlertSpace({
       })
     : undefined;
 
+  // The orchestrator announces the remaining trial count as an ordinary step warning, so it arrives here
+  // rather than on submit. Split out so the generic warnings notification does not render it a second
+  // time beside the offer.
+  const trialWarning = whatIfData?.warnings?.find((w) => parseTrialMessage(w.message));
+  const otherWarnings = whatIfData?.warnings?.filter((w) => w !== trialWarning) ?? [];
+  // Only these two channels BLOCK: the whatIf rejects the estimate when the allowance is short of the
+  // requested quantity, and a submit is refused once it is spent. The step warning is advisory, so it
+  // informs the copy without claiming the user is stuck.
+  const blockingTrialMessage = [
+    submitError,
+    hasWhatIfError ? whatIfError?.message : undefined,
+  ].find((message) => parseTrialMessage(message));
+  const trialRemaining = parseTrialMessage(
+    blockingTrialMessage ?? trialWarning?.message
+  )?.remaining;
+
   // Determine which priority alert to show
   let priorityAlert: ReactNode;
+  // Set by the branch that actually draws, not derived from the conditions again: a higher-priority
+  // alert can win while `submitError` is still set, and restating the precedence here is how the
+  // proactive warning would end up suppressed with nothing shown in its place.
+  let showingTrialAlert = false;
   if (missingFieldMessage) {
     // Show helper message for missing required fields (not an error, just guidance)
     priorityAlert = (
@@ -544,6 +595,16 @@ function PriorityAlertSpace({
       >
         {missingFieldMessage}
       </Notification>
+    );
+  } else if (blockingTrialMessage) {
+    showingTrialAlert = true;
+    priorityAlert = (
+      <TrialBlockedAlert
+        selectedIds={selectedIds}
+        message={blockingTrialMessage}
+        remaining={trialRemaining}
+        onClose={blockingTrialMessage === submitError ? onClearSubmitError : undefined}
+      />
     );
   } else if (hasWhatIfError && whatIfError) {
     priorityAlert = (
@@ -609,6 +670,10 @@ function PriorityAlertSpace({
         </div>
       </Notification>
     );
+    // Above the sdcpp branch because that one always assigns (its MultiController decides
+    // internally whether to draw), so anything after it never renders.
+  } else if (otherWarnings.length) {
+    priorityAlert = <StepWarningsNotification warnings={otherWarnings} />;
   } else if (featureFlags.enhancedCompatibilitySdcpp) {
     // Dismissal is keyed per-ecosystem via DismissibleAlert's localStorage id.
     // When enhancedCompatibility is on, the bonus doesn't apply — swap in a
@@ -661,6 +726,10 @@ function PriorityAlertSpace({
       <QueueSnackbar right={snackbarRight} />
       <GeneratorMessageWarnings />
       <BaseModelWarnings />
+      <DownloadWarning />
+      {whatIfSettled && !showingTrialAlert && (
+        <TrialAccessWarning selectedIds={selectedIds} remaining={trialRemaining} />
+      )}
       {priorityAlert}
     </>
   );
@@ -1078,7 +1147,6 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   const { creatorTip, civitaiTip } = useTipStore();
   const features = useFeatureFlags();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const remixOfId = useRemixOfId();
   const { resources: resourceData } = useResourceDataContext();
   const invalidateWhatIf = useInvalidateWhatIf();
   const membershipUpsell = useMembershipUpsell();
@@ -1100,7 +1168,8 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
   );
 
   // Get whatIf data for buzz transaction checking
-  const { data: whatIfData } = useWhatIfContext();
+  const { data: whatIfData, preBoost, setPreBoost, download } = useWhatIfContext();
+  const isMobile = useIsMobile({ type: 'media' });
 
   // Resolved buzz type shown in the UI — defaults to the site's primary type
   // (e.g. green on .com) when the user hasn't explicitly picked one. Sent with
@@ -1160,6 +1229,11 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     //   - validation passes + not rate-limited → emit { isValid: true } and proceed
     const result = graph.validate();
     const fromAction = useGenerationGraphStore.getState().lastEntryAction;
+
+    // Resolved against the form as it stands, not read from the store: this id
+    // is recorded against a blocked prompt and read back as evidence, so it has
+    // to describe THIS request. See `utils/remix-claim.ts`.
+    const remixOfId = resolveRemixOfId(graph.getSnapshot() as RemixClaimFormState);
 
     // Validation-fail branch. Pairs with the `isValid:true` emit below so the
     // data team has a complete attempt funnel. We deliberately do NOT also
@@ -1309,9 +1383,15 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // point, so reading the store for every image costs nothing when there is
     // none, and collecting by CURRENT url is what drops a token whose image the
     // user has since swapped out.
-    const sourceProvenance = (snapshot.images ?? [])
-      .map((img) => remixProvenanceStore.getToken(img.url))
-      .filter(isDefined);
+    const sourceProvenance = [
+      ...(snapshot.images ?? []).map((img) => remixProvenanceStore.getToken(img.url)),
+      // The reuse-prompt entry point's token. It seeds no source image, so the
+      // image it was minted for is the only thing tying it to this submission —
+      // the store returns it only when that matches the claim this form is
+      // submitting under. Gating on "some claim is fresh" instead let one reuse
+      // click pay for unrelated later submits, crediting the wrong gallery.
+      remixProvenanceStore.getPromptToken(remixOfId),
+    ].filter(isDefined);
 
     // Calculate total cost including tips
     const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
@@ -1323,7 +1403,16 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
     // Any resource with an active paid-access gate (paidAccess is set only for live gates upstream).
     const hasPaidAccess = resourceData.some((x) => x.paidAccess);
 
-    // Wrap the mutation call with buzz transaction check
+    const boostFields = await resolveBoostSubmitFields({
+      preBoost,
+      download,
+      askFirst: !!isMobile,
+    });
+    if (!boostFields) return;
+    // The switch re-prices the whole whatIf, so its fee is already in totalCost; the mobile confirm
+    // is answered after that number was read, so its fee has to be added before the balance check.
+    const boostFee = !preBoost && boostFields.downloadPriority ? download?.boostFee ?? 0 : 0;
+
     const performTransaction = async () => {
       await generateMutation.mutateAsync({
         input: {
@@ -1340,7 +1429,10 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
         ...(sourceProvenance.length ? { sourceProvenance } : {}),
         externalId,
         acknowledgedSoftBlock,
+        ...boostFields,
       });
+
+      if (preBoost) setPreBoost(false);
 
       if (hasPaidAccess) {
         invalidateWhatIf();
@@ -1377,7 +1469,7 @@ export function FormFooter({ onSubmitSuccess }: { onSubmitSuccess?: () => void }
       onSubmitSuccess?.();
     };
 
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(totalCost + boostFee, performTransaction);
   };
 
   const handleReset = () => {
@@ -1655,4 +1747,8 @@ export function MetadataExtractionFooter() {
       </div>
     </div>
   );
+}
+
+function DownloadWarning() {
+  return <DownloadReadyAlert whatIf={useWhatIfContext()} />;
 }

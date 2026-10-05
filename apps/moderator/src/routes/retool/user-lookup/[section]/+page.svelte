@@ -10,6 +10,7 @@
   import BuzzHistoryPanel from '../BuzzHistoryPanel.svelte';
   import BuzzTransactionPanel from '../BuzzTransactionPanel.svelte';
   import ChatContactPanel from '../ChatContactPanel.svelte';
+  import UserChatMessages from '../UserChatMessages.svelte';
   import CommentBurstAlert from '../CommentBurstAlert.svelte';
   import CommentsPanel from '../CommentsPanel.svelte';
   import ContentCounts from '../ContentCounts.svelte';
@@ -102,7 +103,7 @@
            the balances and the history, so hiding one behind the other made the moderator carry the
            numbers in their head. Side by side instead, with the form sticky so it survives scrolling
            a long history. The form needs its own grant; the balances and history do not. -->
-      <BuzzBalances {account} />
+      <BuzzBalances userId={result.identity.id} />
       <div class="flex flex-col gap-4 xl:flex-row xl:items-start">
         {#if data.grants['user.buzz.send']}
           <div class="xl:sticky xl:top-4 xl:w-96 xl:shrink-0">
@@ -184,7 +185,7 @@
         onSuccess={() => (version += 1)}
       />
     {:else if section === 'reactions'}
-      <ReactionsPanel {account} />
+      <ReactionsPanel userId={result.identity.id} />
     {:else if section === 'mod-activity'}
       <ModActivityPanel userId={result.identity.id} civitaiUrl={data.civitaiUrl} />
       <!-- Beside the human record, not in a section of its own: "what did WE do about this account"
@@ -195,6 +196,9 @@
       {/if}
     {:else if section === 'chat'}
       <ChatContactPanel modContact={result.modContact} username={result.identity.username} />
+          {#if data.canSeeChats}
+        <UserChatMessages userId={result.identity.id} />
+      {/if}
     {:else if section === 'notes'}
       <ModerationMemoryPanel userId={result.identity.id} canAct={data.canAct} />
     {:else if section === 'notifications'}

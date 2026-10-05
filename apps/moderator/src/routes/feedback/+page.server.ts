@@ -1,26 +1,19 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { redirect } from '@sveltejs/kit';
 import { z } from 'zod';
 import { env } from '$env/dynamic/public';
 import type { Actions, PageServerLoad } from './$types';
-import { requiresGrant } from '$lib/server/access';
-import { parseForm, parseQuery } from '$lib/server/query';
-import { MAX_INT4, isInt4Id } from '$lib/server/users.service';
-import {
-  DEFAULT_FEEDBACK_STATUSES,
-  FEEDBACK_STATUSES,
-  feedbackAreaOptions,
-  isFeedbackStatus,
-} from '$lib/feedback';
+import { parseQuery } from '$lib/server/query';
+import { MAX_INT4 } from '$lib/server/users.service';
+import { DEFAULT_FEEDBACK_STATUSES, feedbackAreaOptions, isFeedbackStatus } from '$lib/feedback';
 import { FEEDBACK_CURSOR_VALUE_PARAM, parseFeedbackSort } from '$lib/feedback-sort';
+import { FEEDBACK_OPEN_PARAM } from '$lib/feedback-open';
+import { bulkTriageAction, promoteAction, triageAction } from '$lib/server/feedback-actions';
 import {
   FEEDBACK_PAGE_SIZE,
+  feedbackPanelExtras,
   getFeedbackAreas,
   getFeedbackList,
-  getSiblingFeedback,
   isMissingTriageColumns,
-  linkFeedbackToBug,
-  promoteFeedbackToBug,
-  triageFeedback,
 } from '$lib/server/feedback.service';
 
 // Give every field a `.catch()`: query params are user-controllable, so a bad value degrades to the
@@ -30,7 +23,9 @@ const querySchema = z.object({
   status: z.array(z.string()).catch([]),
   area: z.string().trim().catch(''),
   cursor: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
-  open: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
+  // The CONSTANT as the key, like `cursorValue` below: renaming the param breaks the destructure
+  // at compile time instead of silently reading a field nothing writes.
+  [FEEDBACK_OPEN_PARAM]: z.coerce.number().int().positive().max(MAX_INT4).optional().catch(undefined),
   /**
    * The compound keyset's value half. Bounded in LENGTH only and never coerced here: which type it
    * has to be depends on which column `?sort=` names, and that mapping is the service's — see
@@ -40,7 +35,7 @@ const querySchema = z.object({
   [FEEDBACK_CURSOR_VALUE_PARAM]: z.string().max(300).optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url, request }) => {
+export const load: PageServerLoad = async ({ url, request, locals }) => {
   // `cursorValue` is destructured by its literal name on purpose: the schema key above is the
   // CONSTANT, so renaming the param breaks this line at compile time rather than silently reading a
   // field nothing writes.
@@ -119,19 +114,22 @@ export const load: PageServerLoad = async ({ url, request }) => {
       open: null,
       openVisible: false,
       siblings: [],
+      knownIssues: [],
       areaOptions: [],
       grafanaUrl: null,
       migrationPending: true as const,
     };
   }
 
-  // Only for the row that is actually open — this is the one read on the page that is not needed to
-  // render the list.
+  /**
+   * Only for the row that is actually open — the one read on this page that is not needed to render
+   * the list. The conditions inside `feedbackPanelExtras` are shared with `/feedback/<id>`, which
+   * renders the same panel; only "is a row open at all" is the queue's own question.
+   */
   const openRow = open ? list.items.find((r) => r.id === open) : undefined;
-  const siblings =
-    openRow?.bugId != null
-      ? await getSiblingFeedback({ bugId: openRow.bugId, excludeId: openRow.id })
-      : [];
+  const { siblings, knownIssues } = openRow
+    ? await feedbackPanelExtras(openRow, locals.grants)
+    : { siblings: [], knownIssues: [] };
 
   return {
     migrationPending: false as const,
@@ -146,6 +144,7 @@ export const load: PageServerLoad = async ({ url, request }) => {
     // rendering nothing, which is indistinguishable from no row being open at all.
     openVisible: !!openRow,
     siblings,
+    knownIssues,
     areaOptions: feedbackAreaOptions(areas),
     /**
      * 🔴 NULL when unset, and the panel renders no link at all in that case. A missing base would
@@ -156,95 +155,15 @@ export const load: PageServerLoad = async ({ url, request }) => {
   };
 };
 
-const statusEnum = z.enum(FEEDBACK_STATUSES);
-
-const triageSchema = z.object({
-  id: z.coerce.number().int().positive().max(MAX_INT4),
-  status: statusEnum,
-  // The status the operator was LOOKING AT. Posted by the form, never re-read from the database —
-  // re-reading it here would make the guard agree with itself.
-  expectedStatus: statusEnum,
-  note: z.string().max(5000).optional(),
-});
-
-const promoteSchema = z.object({
-  id: z.coerce.number().int().positive().max(MAX_INT4),
-  // 🔴 POSTED EXPLICITLY, never inferred from whether `bugId` is blank. Inferring it sends an empty
-  // issue-number box down the create-a-new-issue branch, which then refuses with "Give the issue a
-  // title" over a form showing no title field.
-  mode: z.enum(['create', 'attach']),
-  bugId: z.string().trim().optional(),
-  title: z.string().trim().max(300).optional(),
-  summary: z.string().trim().max(5000).optional(),
-});
-
-// Page access is gated centrally in `hooks.server.ts` against `/feedback`; these two guard the
-// WRITES, which is the independent axis.
+/**
+ * The queue's three writes, all of which live in `$lib/server/feedback-actions.ts` — `/feedback/<id>`
+ * registers two of the same handlers, and a form action is resolved against the route its FORM is
+ * on, so the definitions cannot live beside either page.
+ *
+ * `bulkTriage` is the queue's alone: there is no selection on a single-report page.
+ */
 export const actions: Actions = {
-  triage: requiresGrant('feedback.status.set', async ({ request, locals }) => {
-    const input = parseForm(triageSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
-
-    const result = await triageFeedback({
-      id: input.id,
-      status: input.status,
-      expectedStatus: input.expectedStatus,
-      // Trimmed, and empty becomes NULL rather than an empty string — the column means "no note".
-      note: input.note?.trim() || null,
-      moderatorId: locals.user.id,
-    });
-
-    if (!result.ok) return fail(410, { error: 'That feedback no longer exists.', gone: true });
-    // 🔴 Zero affected rows is a REFUSAL. The UPDATE is scoped on the status the operator was
-    // looking at, so nothing moving means someone else's verdict is already on the row.
-    if (!result.changed)
-      return fail(409, {
-        error: 'Someone else already triaged this. Reload to see the current verdict.',
-      });
-
-    return { success: true, triaged: input.id };
-  }),
-
-  promote: requiresGrant('feedback.bug.promote', async ({ request, locals }) => {
-    const input = parseForm(promoteSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
-
-    if (input.mode === 'attach') {
-      // Blank and malformed are different mistakes: telling someone who typed `abc` to "enter an
-      // issue number" is an instruction they already followed.
-      if (!input.bugId) return fail(400, { error: 'Enter an issue number.' });
-      const existingBugId = Number(input.bugId);
-      if (!isInt4Id(existingBugId))
-        return fail(400, { error: 'That is not a valid issue number.' });
-
-      const linked = await linkFeedbackToBug({
-        id: input.id,
-        bugId: existingBugId,
-        moderatorId: locals.user.id,
-      });
-      return linked.ok ? { success: true, bugId: linked.bugId } : promoteFailure(linked.reason);
-    }
-
-    // A Bug title is a summary and a feedback message is a complaint, so the moderator writes both
-    // rather than the form seeding them.
-    const title = input.title ?? '';
-    const summary = input.summary ?? '';
-    if (!title) return fail(400, { error: 'Give the issue a title.' });
-    if (!summary)
-      return fail(400, { error: 'Write a summary — it is what the issue board shows.' });
-
-    const promoted = await promoteFeedbackToBug({
-      id: input.id,
-      title,
-      summary,
-      moderatorId: locals.user.id,
-    });
-    return promoted.ok ? { success: true, bugId: promoted.bugId } : promoteFailure(promoted.reason);
-  }),
-};
-
-const promoteFailure = (reason: 'already-linked' | 'no-such-bug' | 'gone') => {
-  if (reason === 'no-such-bug') return fail(404, { error: 'No issue with that number.' });
-  if (reason === 'gone') return fail(410, { error: 'That feedback no longer exists.', gone: true });
-  return fail(409, { error: 'That feedback is already linked to an issue. Reload to see which.' });
+  triage: triageAction,
+  bulkTriage: bulkTriageAction,
+  promote: promoteAction,
 };

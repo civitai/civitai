@@ -1,6 +1,8 @@
 import { TRPCError } from '@trpc/server';
 import type { ProtectedContext } from '~/server/createContext';
+import type { Tracker } from '~/server/clickhouse/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   HasOfficialFileOfSizeInput,
   ModelFileCreateInput,
@@ -133,15 +135,64 @@ export const createFileHandler = async ({
 }: {
   input: ModelFileCreateInput;
   ctx: ProtectedContext;
+}) =>
+  createModelFile({
+    input,
+    userId: ctx.user.id,
+    isModerator: !!ctx.user.isModerator,
+    track: ctx.track,
+    // The server's own read of the host this request arrived on. This is the ONLY source the
+    // stamp may come from — see the `uploadDomain` note on `createModelFile`.
+    uploadDomain: ctx.domain,
+  });
+
+/**
+ * The same create path with no request behind it, so a job can run it: a Hugging Face import
+ * attaches its own file when the transfer lands, and has no session to borrow.
+ */
+export const createModelFile = async ({
+  input,
+  userId,
+  isModerator,
+  track,
+  uploadDomain,
+}: {
+  input: ModelFileCreateInput;
+  userId: number;
+  isModerator: boolean;
+  track: Tracker;
+  /**
+   * The domain colour to stamp onto a 'Training Data' file, which a paid training submit reads to
+   * refuse an NSFW dataset prepared on red being paid for and run on green (`createTrainingWorkflow`
+   * in training.orch.ts). It is a payment/safety provenance stamp, so it must be the SERVER's view
+   * of the request — `ctx.domain` — and never a value off `input.metadata`.
+   *
+   * `null` is for callers with no request behind them (the Hugging Face transfer job): they have no
+   * server-side answer, so the file is left unstamped and falls into the legacy bucket the submit
+   * check lets through to post-run moderation. It does NOT mean "keep whatever the client sent" —
+   * a client-supplied stamp is dropped either way.
+   */
+  uploadDomain: ColorDomain | null;
 }) => {
   try {
     // Extract B2-specific fields before passing to createFile (they aren't DB columns)
     const { backend, s3Path, ...createInput } = input;
 
+    // Stamp the domain the training data is uploaded under, server-side, so a paid submit can
+    // refuse an NSFW dataset prepared on red being paid for on green. Never trusted from the client:
+    // whatever `uploadDomain` the client put in `metadata` is dropped first, and only the caller's
+    // server-derived value is written back. Mirrors the same rule in `updateFileHandler` below.
+    if (createInput.type === 'Training Data') {
+      const metadata = { ...createInput.metadata };
+      delete metadata.uploadDomain;
+      if (uploadDomain) metadata.uploadDomain = uploadDomain;
+      createInput.metadata = metadata;
+    }
+
     const file = await createFile({
       ...createInput,
-      userId: ctx.user.id,
-      isModerator: ctx.user.isModerator,
+      userId: userId,
+      isModerator: isModerator,
       select: {
         id: true,
         name: true,
@@ -165,7 +216,7 @@ export const createFileHandler = async ({
     if (resolved) {
       await safeRegisterFileLocation({
         op: 'create',
-        userId: ctx.user.id,
+        userId: userId,
         fileId: file.id,
         modelVersionId: file.modelVersion.id,
         modelId: file.modelVersion.modelId,
@@ -175,7 +226,7 @@ export const createFileHandler = async ({
       });
     }
 
-    ctx.track
+    track
       .modelFile({ type: 'Create', id: file.id, modelVersionId: file.modelVersion.id })
       .catch(handleLogError);
 
@@ -244,6 +295,17 @@ export const updateFileHandler = async ({
 }) => {
   try {
     const { backend, s3Path, ...updateInput } = input;
+
+    // Provenance is server-owned (see createFileHandler). A content re-upload re-stamps the current
+    // domain; a metadata-only update must not let the client change it, so we drop any client value
+    // and let updateFile's merge preserve the stored one.
+    if (updateInput.type === 'Training Data' && updateInput.url) {
+      updateInput.metadata = { ...updateInput.metadata, uploadDomain: ctx.domain };
+    } else if (updateInput.metadata?.uploadDomain != null) {
+      const nextMetadata = { ...updateInput.metadata };
+      delete nextMetadata.uploadDomain;
+      updateInput.metadata = nextMetadata;
+    }
 
     const result = await updateFile({
       ...updateInput,

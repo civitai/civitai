@@ -1,5 +1,17 @@
 <script lang="ts" module>
-	export type ComboboxOption = { value: string; label: string; disabled?: boolean };
+	export type ComboboxOption = {
+		value: string;
+		label: string;
+		disabled?: boolean;
+		/**
+		 * Extra text the search matches, for an option whose `value` is not what a user would type.
+		 *
+		 * Command filters on `value` (plus these), NOT on the rendered label — so an option keyed by an
+		 * id renders its title and matches only the digits without this. The label is not added
+		 * automatically: an option whose value already IS its text would then be scored twice.
+		 */
+		keywords?: string[];
+	};
 </script>
 
 <script lang="ts">
@@ -67,6 +79,7 @@
 					{#each options as option (option.value)}
 						<Command.Item
 							value={option.value}
+							keywords={option.keywords}
 							disabled={option.disabled}
 							onSelect={() => {
 								value = option.value;

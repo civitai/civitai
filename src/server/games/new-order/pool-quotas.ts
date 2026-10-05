@@ -3,7 +3,7 @@ import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 /**
  * Built-in fallback for `poolQuotas` when Redis config hasn't seeded one.
  * Knight is the only rank that suffers from the SFW/NSFW priority misuse
- * today (see `image-scan-result.ts` routing), so we default it to a 50/50
+ * today (see `addToNewOrderQueue` in `image-scan-pipeline.ts`), so we default it to a 50/50
  * split between Knight1 (SFW) and Knight2 (NSFW). Acolyte/Templar are
  * intentionally omitted to preserve their legacy sequential behavior.
  */

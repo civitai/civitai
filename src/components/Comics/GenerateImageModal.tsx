@@ -13,12 +13,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { Dropzone, IMAGE_MIME_TYPE } from '@mantine/dropzone';
-import {
-  IconCheck,
-  IconRefresh,
-  IconUpload,
-  IconX,
-} from '@tabler/icons-react';
+import { IconCheck, IconRefresh, IconUpload, IconX } from '@tabler/icons-react';
 import type { WorkflowStepEvent } from '@civitai/client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
@@ -168,23 +163,7 @@ export function GenerateImageModal({
   useEffect(() => {
     if (!isGenerating) return;
     const pollTimer = setInterval(() => void doPollOnce(), 5_000);
-    // Auto-timeout after 3 min — gives the user a clear failure instead
-    // of an infinite spinner. Some models (gpt-image-2, nano-banana-2)
-    // can take longer than the previous 90s budget.
-    const timeoutTimer = setTimeout(() => {
-      if (activeWorkflowId.current) {
-        activeWorkflowId.current = null;
-        setIsGenerating(false);
-        showErrorNotification({
-          title: 'Generation timed out',
-          error: new Error('The image took too long to generate. Please try again.'),
-        });
-      }
-    }, 180_000);
-    return () => {
-      clearInterval(pollTimer);
-      clearTimeout(timeoutTimer);
-    };
+    return () => clearInterval(pollTimer);
   }, [isGenerating, doPollOnce]);
 
   const handleGenerate = async () => {
@@ -239,7 +218,7 @@ export function GenerateImageModal({
           ...prev,
           {
             url: result.id,
-            previewUrl: getEdgeUrl(result.id, { width: 100 }) ?? result.id,
+            previewUrl: getEdgeUrl(result.id, { width: 100, optimized: true }) ?? result.id,
             width: dims.width,
             height: dims.height,
           },
@@ -384,7 +363,7 @@ export function GenerateImageModal({
                 }}
               >
                 <img
-                  src={getEdgeUrl(resultImages[0].url, { width: 600 })}
+                  src={getEdgeUrl(resultImages[0].url, { width: 600, optimized: true })}
                   alt="Generated result"
                   style={{ width: '100%', display: 'block' }}
                 />
@@ -401,7 +380,7 @@ export function GenerateImageModal({
                   }}
                 >
                   <img
-                    src={getEdgeUrl(selectedUrl!, { width: 600 })}
+                    src={getEdgeUrl(selectedUrl!, { width: 600, optimized: true })}
                     alt="Selected result"
                     style={{ width: '100%', display: 'block' }}
                   />
@@ -429,7 +408,7 @@ export function GenerateImageModal({
                       }}
                     >
                       <img
-                        src={getEdgeUrl(img.url, { width: 100 })}
+                        src={getEdgeUrl(img.url, { width: 100, optimized: true })}
                         alt={`Option ${idx + 1}`}
                         style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                       />
@@ -470,11 +449,7 @@ export function GenerateImageModal({
               >
                 Regenerate
               </Button>
-              <Button
-                color="blue"
-                leftSection={<IconCheck size={16} />}
-                onClick={handleConfirm}
-              >
+              <Button color="blue" leftSection={<IconCheck size={16} />} onClick={handleConfirm}>
                 Use as {label}
               </Button>
             </>
@@ -483,20 +458,14 @@ export function GenerateImageModal({
               buzzAmount={cost}
               accountTypes={availableBuzzTypes}
               label={
-                isGenerating
-                  ? 'Generating...'
-                  : isCostFetching
-                  ? 'Calculating cost...'
-                  : 'Generate'
+                isGenerating ? 'Generating...' : isCostFetching ? 'Calculating cost...' : 'Generate'
               }
               // Reflect cost recalc as a loading state on the button so
               // users get a visible signal when prompt / quantity / model /
               // references change. Without this the button just goes
               // disabled silently while we wait for the new cost.
               loading={isGenerating || isCostFetching}
-              disabled={
-                !prompt.trim() || isGenerating || isCostFetching || costEstimate == null
-              }
+              disabled={!prompt.trim() || isGenerating || isCostFetching || costEstimate == null}
               onPerformTransaction={handleGenerate}
               showPurchaseModal
             />

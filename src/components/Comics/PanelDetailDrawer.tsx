@@ -166,7 +166,10 @@ export function PanelDetailDrawer({
                     </Text>
                   </div>
                 ) : detailPanel.imageUrl ? (
-                  <img src={getEdgeUrl(detailPanel.imageUrl, { width: 800 })} alt="Panel" />
+                  <img
+                    src={getEdgeUrl(detailPanel.imageUrl, { width: 800, optimized: true })}
+                    alt="Panel"
+                  />
                 ) : (
                   <div
                     className="w-full flex items-center justify-center"
@@ -272,6 +275,7 @@ export function PanelDetailDrawer({
                         openSetBrowsingLevelModal({
                           imageId: detailPanel.imageId!,
                           nsfwLevel: detailPanel.image!.nsfwLevel as NsfwLevel,
+                          isOwner: true,
                           onSubmit: () => {
                             // Rating change shifts the panel's nsfwLevel,
                             // which feeds both the chapter NSFW aggregate

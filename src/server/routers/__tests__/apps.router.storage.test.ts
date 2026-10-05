@@ -48,9 +48,14 @@ const {
     // Mirrors the real AppStorageProvisioner.provisionReviewPreview: derives the
     // disposable `apprev_<norm>` schema from the publishRequestId (so isolation
     // tests can assert distinct schemas) without touching a real DB.
-    mockProvisionReviewPreview: vi.fn(async ({ publishRequestId }: { publishRequestId: string }) => ({
-      schema: `"apprev_${publishRequestId.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 48)}"`,
-    })),
+    mockProvisionReviewPreview: vi.fn(
+      async ({ publishRequestId }: { publishRequestId: string }) => ({
+        schema: `"apprev_${publishRequestId
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '')
+          .slice(0, 48)}"`,
+      })
+    ),
     mockLogToAxiom: vi.fn(async () => undefined),
     mockGetUserById: vi.fn(),
     mockGetSessionUser: vi.fn(),
@@ -104,7 +109,7 @@ vi.mock('~/server/services/user.service', () => ({
   getUserById: (...args: unknown[]) => mockGetUserById(...args),
 }));
 
-import { appsRouter } from '../apps.router';
+import { appsRouter, appsStorageRouter } from '../apps.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 // Globally stubbed in src/__tests__/setup.ts (promMetricStub) — `.inc` is a
 // vi.fn(), so the refusal-instrumentation assertions below can read it.
@@ -289,32 +294,167 @@ beforeEach(() => {
 });
 
 describe('apps.storage shared gates', () => {
-  it('rejects when the Flipt flag is dark', async () => {
-    mockIsAppBlocksEnabled.mockImplementation(async () => false);
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toBeInstanceOf(
-      TRPCError
+  /**
+   * The five storage procedures, each with a minimal call. Shared by the revocation sweep
+   * below and by the growth ledger, so the two cannot disagree about what "every procedure"
+   * means — and so a sixth procedure reaches the revocation sweep rather than being added
+   * beside a list that still covers five.
+   */
+  const STORAGE_CALLS = [
+    [
+      'get',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.get({ blockToken: 't', key: 'k' }),
+    ],
+    [
+      'set',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.set({ blockToken: 't', key: 'k', value: 'v' }),
+    ],
+    [
+      'delete',
+      (c: ReturnType<typeof appsRouter.createCaller>) =>
+        c.storage.delete({ blockToken: 't', key: 'k' }),
+    ],
+    [
+      'list',
+      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' }),
+    ],
+    [
+      'getQuota',
+      (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' }),
+    ],
+  ] as const;
+
+  /**
+   * 🔴 INVARIANT GUARDS, NOT REGRESSION TESTS. No bug has violated these properties; they
+   * were pinned NOWHERE, and they are load-bearing for diagnosability.
+   *
+   * The storage path's two capability gates — this `enforceAppBlocksFlag` middleware (on the
+   * SESSION user, `ctx.user`) and `assertAppBlocksEnabledForTokenUser` in
+   * `app-storage.service` (on the token SUBJECT) — used to throw a byte-identical
+   * `UNAUTHORIZED: 'Apps are not enabled'`, so nothing in the response separated them. They
+   * now carry different messages and the message IS the discriminator, so BOTH halves are
+   * pinned: the first case below fixes the middleware's message, the ordering block's
+   * POSITIVE CONTROL fixes the subject gate's. Re-spell either to match the other and one of
+   * the two goes red.
+   */
+  describe('the SESSION-user gate is identifiable (invariant guards)', () => {
+    // ONE CASE PER PROCEDURE, over the shared list. Both halves are load-bearing: the
+    // MESSAGE is the discriminator, and the per-procedure sweep is the only thing that sees
+    // a procedure not attached to `appStorageProcedure`. No such procedure has ever shipped
+    // — the gap was in COVERAGE, not in the router: measured, dropping the gate from `set`
+    // alone was green across every suite that names this router while only `get` was
+    // covered, and that was equally true before this change.
+    it.each(STORAGE_CALLS)(
+      'INVARIANT: %s refuses with the middleware producer\u2019s exact code and message',
+      async (_op, call) => {
+        mockIsAppBlocksEnabled.mockImplementation(async () => false);
+        const caller = appsRouter.createCaller(fakeCtx() as never);
+
+        await expect(call(caller)).rejects.toMatchObject({
+          code: 'UNAUTHORIZED',
+          message: 'Apps access is not enabled for this browser session',
+        });
+
+        // ATTRIBUTION: the middleware runs BEFORE the resolver, so a refusal here cannot
+        // have verified the token or looked the app up. Without these two the assertion
+        // would be satisfied just as well by the subject gate, were the messages ever
+        // re-conflated.
+        expect(mockVerifyBlockToken).not.toHaveBeenCalled();
+        expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+      }
     );
+
+    /**
+     * 🔴 GROWTH LEDGER — the only case here that can see a procedure that does not exist
+     * yet. A SIXTH storage procedure added without a `STORAGE_CALLS` entry escapes both
+     * sweeps above, so it is covered by nothing while every other case in this file goes on
+     * passing — and if it was also written against a bare `publicProcedure` rather than
+     * `appStorageProcedure`, it is ungated too. Asserted against the ROUTER rather than a hand-written list, and on
+     * EQUALITY rather than containment, so it fails on growth as well as on a rename — the
+     * same shape as `promotion.router.flag-gate.test.ts`. An INVARIANT guard like its
+     * neighbours: no procedure has ever shipped ungated here.
+     */
+    it('INVARIANT: STORAGE_CALLS covers EVERY procedure on appsStorageRouter', () => {
+      const declared = Object.keys(
+        (appsStorageRouter as unknown as { _def: { procedures: Record<string, unknown> } })._def
+          .procedures
+      ).sort();
+
+      expect(declared).toEqual([...STORAGE_CALLS.map(([op]) => op)].sort());
+      // A PROMPT TO RE-READ THIS BLOCK, not a protection — and reachable, which is the
+      // part worth stating. When a procedure is added WITH its `STORAGE_CALLS` entry both
+      // sides agree, the equality passes, and this is the only line left to fail; the
+      // correct remedy is to edit the literal. It exists because the equality above
+      // compares LABELS, so growth is exactly when someone must look at the thunks.
+      // (The two likelier mistakes — one side grows, the other does not — fail the
+      // equality first, whose diff names the new op.)
+      expect(declared).toHaveLength(5);
+    });
+  });
+
+  /**
+   * 🔴 INVARIANT GUARD, NOT A REGRESSION TEST. `resolveStorageContext` looks the `AppBlock`
+   * up and throws `NOT_FOUND: 'app block not found'` BEFORE reaching the per-subject
+   * capability gate, so on a token naming no backing row "the app does not exist" is the
+   * answer even when the subject ALSO lacks the capability. Reverse the two and every
+   * unknown app answers with a capability refusal instead, collapsing two distinct facts
+   * into one message. Never wrong; pinned by nothing.
+   */
+  describe('gate ORDERING: app existence precedes the subject capability gate (invariant guard)', () => {
+    it('INVARIANT: no AppBlock row + a subject without the run capability answers NOT_FOUND', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      mockParseSubjectUserId.mockImplementation(() => 77);
+      mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+      runEnabledUserIds.delete(77); // the SUBJECT gate would also refuse, if reached
+      mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+        message: 'app block not found',
+      });
+      // Ordering, stated structurally rather than inferred from the message: the subject was
+      // never hydrated, so the capability gate cannot have run.
+      expect(mockGetSessionUser).not.toHaveBeenCalled();
+    });
+
+    it('POSITIVE CONTROL: the same subject on an APPROVED app reaches the capability gate', async () => {
+      // Identical to the case above except that the row exists. If the subject gate were
+      // inert, this would answer the `get` happy path instead of refusing — which is what
+      // makes the first case evidence about ORDERING rather than about a dead gate. It is
+      // also the other half of the message discriminator: it pins the SUBJECT gate's
+      // message, where the middleware guard above pins the middleware's.
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
+      mockParseSubjectUserId.mockImplementation(() => 77);
+      mockGetSessionUser.mockResolvedValue({ id: 77, isModerator: false });
+      runEnabledUserIds.delete(77);
+      mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'approved' });
+
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+        code: 'UNAUTHORIZED',
+        message: 'Apps are not enabled',
+      });
+      expect(mockGetSessionUser).toHaveBeenCalledWith(77);
+    });
   });
 
   it('rejects an invalid block token with UNAUTHORIZED', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'UNAUTHORIZED',
+    });
   });
 
   // A revoked instance must lose storage access IMMEDIATELY, not at token expiry.
   // Every op, not just the writes: a read of the user's own rows is still access
   // granted by an install that no longer exists.
-  it.each([
-    ['get', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.get({ blockToken: 't', key: 'k' })],
-    ['set', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.set({ blockToken: 't', key: 'k', value: 'v' })],
-    ['delete', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.delete({ blockToken: 't', key: 'k' })],
-    ['list', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.list({ blockToken: 't' })],
-    ['getQuota', (c: ReturnType<typeof appsRouter.createCaller>) => c.storage.getQuota({ blockToken: 't' })],
-  ] as const)('rejects a revoked block instance on %s', async (_op, call) => {
+  it.each(STORAGE_CALLS)('rejects a revoked block instance on %s', async (op, call) => {
+    const opsInc = vi.mocked(appStorageOpsCounter.inc);
+    opsInc.mockClear();
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockIsRevoked.mockResolvedValueOnce(true);
     const caller = appsRouter.createCaller(fakeCtx() as never);
@@ -322,6 +462,15 @@ describe('apps.storage shared gates', () => {
       code: 'FORBIDDEN',
       message: 'block instance revoked',
     });
+    // 🔴 THE LABEL-TO-PROCEDURE BINDING, and nothing else in this file provides it. The
+    // growth ledger above compares the LABELS on both sides, so an entry spelled `set`
+    // whose thunk calls `c.storage.delete` — or an ungated sixth procedure paired with an
+    // entry that re-runs `get` — satisfies it, and the message arms assert one constant
+    // string that carries no per-procedure information either. This assertion closes both:
+    // the revocation refusal routes through `countStorageOutcome(op, …)` with the SERVICE's
+    // own per-procedure literal, which is byte-identical to these labels, so a mislabelled
+    // or re-pointed thunk fails here.
+    expect(opsInc).toHaveBeenCalledWith({ op, outcome: 'unauthorized' });
     // Refused before any datastore access — not merely refused on the way out.
     expect(mockPool.query).not.toHaveBeenCalled();
     expect(mockPool.connect).not.toHaveBeenCalled();
@@ -332,7 +481,14 @@ describe('apps.storage shared gates', () => {
     mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(caller.storage.get({ blockToken: 't', key: 'k' })).resolves.toEqual({ value: 1 });
-    expect(mockIsRevoked).toHaveBeenCalledWith('mbi_inst');
+    // 🔴 THE SUBJECT IS THE SECOND ARGUMENT AND IT COMES FROM THE TOKEN TOO. It selects
+    // the subject-scoped ban keyspace, which exists because `page_ephemeral-<slug>` is not
+    // unique across users — a global marker there refuses an innocent author's own dev
+    // tunnel. This path cannot reach that shape today (it requires an `approved` AppBlock
+    // row and an ephemeral app has none), but passing anything client-supplied here would
+    // let a caller choose whose revocation they are checked against, so the claim is what
+    // is asserted.
+    expect(mockIsRevoked).toHaveBeenCalledWith('mbi_inst', 'user:42');
   });
 
   // The run-for-real review branch returns before the approved-app checks, so it
@@ -354,9 +510,9 @@ describe('apps.storage shared gates', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockDbRead.appBlock.findUnique.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
   });
 
   it('rejects when the AppBlock status is not approved (FORBIDDEN)', async () => {
@@ -366,9 +522,9 @@ describe('apps.storage shared gates', () => {
       status: 'pending',
     });
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
   });
 
   it('rejects a blockId that doesnt sanitize to a valid slug', async () => {
@@ -378,9 +534,9 @@ describe('apps.storage shared gates', () => {
       status: 'approved',
     });
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'INTERNAL_SERVER_ERROR' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'INTERNAL_SERVER_ERROR',
+    });
   });
 
   // ── Per-user storage is gated on the RUN capability, not the AUTHOR one ──────
@@ -494,7 +650,7 @@ describe('apps.storage shared gates', () => {
       mockGetSessionUser.mockResolvedValue(null);
     });
 
-    it('is refused under TODAY\'s base-false flag (get)', async () => {
+    it("is refused under TODAY's base-false flag (get)", async () => {
       mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:77' }));
 
       const caller = appsRouter.createCaller(fakeCtx() as never);
@@ -600,22 +756,18 @@ describe('apps.storage shared gates', () => {
   // models:read:self) but NOT apps:storage:* must be denied at the storage
   // resolver before it touches appsDb.
   it('rejects a token without apps:storage:read on a read op (FORBIDDEN)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['models:read:self'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['models:read:self'] }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     // The block with no storage scope must never reach the data pool.
     expect(mockPool.query).not.toHaveBeenCalled();
   });
 
   it('rejects a token without apps:storage:write on a write op (FORBIDDEN)', async () => {
     // Read scope present, write scope absent → set/delete must still 403.
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['apps:storage:read'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['apps:storage:read'] }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     await expect(
       caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
@@ -624,9 +776,7 @@ describe('apps.storage shared gates', () => {
   });
 
   it('read scope alone is sufficient for a read op (no write needed)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['apps:storage:read'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['apps:storage:read'] }));
     mockPool.query.mockResolvedValueOnce({ rows: [{ value: 1 }], rowCount: 1 });
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const out = await caller.storage.get({ blockToken: 't', key: 'k' });
@@ -634,13 +784,11 @@ describe('apps.storage shared gates', () => {
   });
 
   it('rejects a delete without apps:storage:write (FORBIDDEN)', async () => {
-    mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ scopes: ['apps:storage:read'] })
-    );
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ scopes: ['apps:storage:read'] }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.delete({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.delete({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     expect(mockPool.connect).not.toHaveBeenCalled();
   });
 });
@@ -735,9 +883,7 @@ describe('apps.storage.set', () => {
     });
     expect(out.ok).toBe(true);
 
-    const sqls = (mockClient.query.mock.calls as Array<[string, unknown?]>).map(
-      (call) => call[0]
-    );
+    const sqls = (mockClient.query.mock.calls as Array<[string, unknown?]>).map((call) => call[0]);
     expect(sqls[0]).toBe('BEGIN');
     expect(sqls[sqls.length - 1]).toBe('COMMIT');
     expect(sqls.some((s) => s.startsWith('SET LOCAL app.current_app_block_id'))).toBe(true);
@@ -1227,9 +1373,9 @@ describe('apps.storage.set', () => {
         'relation "app_x.quota" does not exist'
       );
       // Two attempts, both raising — the fallback did not paper over it.
-      expect(mockPool.query.mock.calls.filter(([s]) => String(s).includes('.quota q'))).toHaveLength(
-        2
-      );
+      expect(
+        mockPool.query.mock.calls.filter(([s]) => String(s).includes('.quota q'))
+      ).toHaveLength(2);
       expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
     });
   });
@@ -1274,9 +1420,7 @@ describe('apps.storage.set', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockPool.query
       .mockResolvedValueOnce({
-        rows: [
-          { used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' },
-        ],
+        rows: [{ used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' }],
         rowCount: 1,
       })
       .mockResolvedValueOnce(sizeProbe());
@@ -1330,9 +1474,9 @@ describe('apps.storage.set', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:42' }));
     const caller = appsRouter.createCaller(fakeCtx() as never);
     const value = 'x'.repeat(500);
-    await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value })
-    ).rejects.toMatchObject({ message: 'per-user storage quota exceeded' });
+    await expect(caller.storage.set({ blockToken: 't', key: 'k', value })).rejects.toMatchObject({
+      message: 'per-user storage quota exceeded',
+    });
     // The wire size and the stored size are different numbers here, which is what
     // makes the assertion able to tell them apart.
     expect(Buffer.byteLength(JSON.stringify(value), 'utf8')).not.toBe(DEFAULT_STORED_BYTES);
@@ -1381,26 +1525,24 @@ describe('apps.storage.set', () => {
   ])(
     'refuses the write when the stored-size probe returns %s',
     async (_label, probeResult, expectedMessage) => {
-    const inc = vi.mocked(appStorageOpsCounter.inc);
-    inc.mockClear();
-    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string) => {
-      if (isSizeProbe(sql)) return probeResult;
-      return {
-        rows: [
-          { used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' },
-        ],
-        rowCount: 1,
-      };
-    });
-    const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
-    ).rejects.toThrow(`app storage: stored-size probe returned ${expectedMessage}`);
-    // It is a FAULT, not a refusal — so it lands on the error series an alert can
-    // watch, and the write never reached the transaction.
-    expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
-    expect(mockPool.connect).not.toHaveBeenCalled();
+      const inc = vi.mocked(appStorageOpsCounter.inc);
+      inc.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string) => {
+        if (isSizeProbe(sql)) return probeResult;
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', user_used_bytes: '0', user_row_count: '0' }],
+          rowCount: 1,
+        };
+      });
+      const caller = appsRouter.createCaller(fakeCtx() as never);
+      await expect(
+        caller.storage.set({ blockToken: 't', key: 'k', value: { a: 1 } })
+      ).rejects.toThrow(`app storage: stored-size probe returned ${expectedMessage}`);
+      // It is a FAULT, not a refusal — so it lands on the error series an alert can
+      // watch, and the write never reached the transaction.
+      expect(inc).toHaveBeenCalledWith({ op: 'set', outcome: 'error' });
+      expect(mockPool.connect).not.toHaveBeenCalled();
     }
   );
 
@@ -1665,7 +1807,11 @@ describe('apps.storage — run-for-real preview namespace', () => {
     // Same synthetic pending token but NO reviewRunForReal → the approved-status
     // gate runs and rejects; the preview namespace is never provisioned.
     mockVerifyBlockToken.mockResolvedValueOnce(
-      validClaims({ appId: 'pending-pubreq_aaa', appBlockId: 'pubreq_aaa', blockId: 'generate-from-model' })
+      validClaims({
+        appId: 'pending-pubreq_aaa',
+        appBlockId: 'pubreq_aaa',
+        blockId: 'generate-from-model',
+      })
     );
     mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', status: 'pending' });
     const caller = appsRouter.createCaller(fakeCtx() as never);
@@ -1731,9 +1877,9 @@ describe('apps.storage — run-for-real preview namespace', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(reviewClaims());
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValueOnce(null);
     const caller = appsRouter.createCaller(fakeCtx() as never);
-    await expect(
-      caller.storage.get({ blockToken: 't', key: 'k' })
-    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    await expect(caller.storage.get({ blockToken: 't', key: 'k' })).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+    });
     expect(mockProvisionReviewPreview).not.toHaveBeenCalled();
   });
 

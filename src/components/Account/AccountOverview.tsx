@@ -131,7 +131,7 @@ export function AccountOverview() {
           href="/user/membership"
           icon={
             tierBadge ? (
-              <EdgeMedia src={tierBadge} width={40} className="size-5" />
+              <EdgeMedia src={tierBadge} width={40} className="size-5" optimized />
             ) : (
               <IconUserCircle size={16} className="text-yellow-6" />
             )

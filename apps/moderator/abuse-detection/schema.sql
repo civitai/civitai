@@ -121,11 +121,24 @@ CREATE INDEX IF NOT EXISTS abuse_detection_finding_user_idx
 --
 -- 🔴 `verdict` IS NOT `actioned`, AND CONFLATING THE TWO IS THE MOST LIKELY BUG THIS TABLE WILL EVER
 -- HAVE. `actioned`/`action` above are the PRODUCER's self-report: what the detector did, written by
--- the detector, never cross-checked. The three columns below are a HUMAN's judgement of whether the
--- detector was right, written by a moderator in the board's UI. They answer different questions and
--- move independently — the common row is `actioned = false` (the detector left the account alone)
--- carrying `verdict = 'tp'` (and it was right to flag it). Nothing reads one to infer the other, and
+-- the detector, never cross-checked. The three columns below are a HUMAN's judgement OF THE ACCOUNT,
+-- written by a moderator in the board's UI: `tp` = this account is abusing the site, `fp` = this
+-- account is fine, `skip` = looked and not calling it. They answer different questions and move
+-- independently — the common row is `actioned = false` (the detector left the account alone) carrying
+-- `verdict = 'tp'` (a moderator says it IS abuse anyway). Nothing reads one to infer the other, and
 -- recording a verdict must leave `actioned`/`action` untouched.
+--
+-- 🔴 THE CODES ARE DETECTOR-ERA JARGON AND THE MEANING IS NOT, SO DO NOT READ `tp` AS "the detector
+-- was right". Under that reading the verdict INVERTED across this table: a flagged-but-unactioned row
+-- and a `confidence = 0` row — the latter being the detector's own "Judged and deliberately NOT
+-- actioned", i.e. it decided the account was FINE — gave `tp` opposite meanings. The UI now asks about
+-- the account, which has one answer in both. The stored codes were left alone on purpose: they are
+-- what this CHECK admits. 🔴 "NO MIGRATION IS OWED" IS A CONDITION ON THE DATA, NOT A FACT ABOUT THE
+-- SCHEMA, and this settles it — 0 means no stored row changed meaning, non-zero means some moderator's
+-- ruling now renders as the opposite of what they clicked:
+--   SELECT count(*) FROM abuse_detection_finding WHERE confidence = 0 AND verdict IS NOT NULL;
+-- It was 0 when the relabel was written and nothing enforces that it stays so. Canonical statement:
+-- `apps/moderator/src/lib/abuse-verdicts.ts`.
 --
 -- NULL `verdict` means UNRULED, which is the state every finding starts in and the state a run's
 -- "still to review" count is derived from. It is not a fourth verdict: `skip` is the moderator

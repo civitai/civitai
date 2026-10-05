@@ -6,6 +6,7 @@ import {
   stickerUsesFromCosmeticData,
 } from '~/shared/utils/sticker-token';
 import { STICKER_OFFER_LIMIT } from '~/server/schema/cosmetic.schema';
+import { chunkIds } from '~/utils/array-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -49,6 +50,8 @@ export type ResolvedSticker = {
    * `useStickerCosmetics`, which every other sticker surface uses, never does.
    */
   createdById?: number | null;
+  /** `CosmeticFlag` bits. Like `createdById`, only `useOwnedSticker` populates it. */
+  flags?: number;
 };
 
 const STICKER_FETCH_CHUNK = STICKER_OFFER_LIMIT;
@@ -69,7 +72,7 @@ export function useOwnedSticker() {
   const sticker = useMemo(() => {
     const owned = data?.sticker ?? [];
     const resolved = owned
-      .map(({ id, name, data: stickerData, obtainedAt, createdById }) => ({
+      .map(({ id, name, data: stickerData, obtainedAt, createdById, flags }) => ({
         id,
         name,
         slug: stickerData?.slug,
@@ -77,6 +80,7 @@ export function useOwnedSticker() {
         animated: stickerData?.animated,
         pricePerUse: stickerData?.pricePerUse,
         createdById,
+        flags,
         obtainedAt,
       }))
       .filter((x) => !!x.slug && !!x.url)
@@ -138,32 +142,13 @@ export const draftedCosmeticIds = (drafts: { cosmeticId: number }[]) =>
   drafts.map((draft) => draft.cosmeticId);
 
 /**
- * Ids split into request-sized chunks, deduped, **in insertion order**.
- *
- * Sorting would make the key independent of the order ids arrive in, which is
- * worth a little when two components ask for the same set differently ordered —
- * and costs a lot to any consumer whose list GROWS. A feed appends older, lower
- * cosmetic ids as it pages; sorted, each one lands mid-list, shifts every chunk
- * boundary after it, changes every chunk key, and refetches the whole surface.
- *
- * Every id lands in exactly one chunk, so no collection is silently truncated to
- * the first.
- */
-export function chunkStickerIds(ids: number[], size: number): number[][] {
-  const unique = [...new Set(ids)];
-  const result: number[][] = [];
-  for (let i = 0; i < unique.length; i += size) result.push(unique.slice(i, i + size));
-  return result;
-}
-
-/**
  * One request per 100 distinct ids for a whole surface, rather than one per
  * rendered sticker — tRPC request batching sits behind a feature flag that is off
  * by default, so per-component queries would be per-component HTTP requests.
  */
 export function useStickerCosmetics(ids: number[]) {
   const chunks = useMemo(
-    () => chunkStickerIds(ids, STICKER_FETCH_CHUNK),
+    () => chunkIds(ids, STICKER_FETCH_CHUNK),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [ids.join(',')]
   );
@@ -458,8 +443,8 @@ export function allocateDraftEntitlements({
  * all — might have gone through, and reissuing the key there is how one purchase
  * becomes two. Unknown holds the key, always.
  *
- * `data.httpStatus` comes from tRPC's error shape, which this repo's
- * `errorFormatter` passes through untouched. A network failure has no `data` and
+ * `data.httpStatus` comes from tRPC's error shape; this repo's `errorFormatter`
+ * may replace the message but always keeps `data.httpStatus`. A network failure has no `data` and
  * therefore holds, which is the point.
  */
 export function purchaseCanBeRetriedFresh(error: unknown): boolean {

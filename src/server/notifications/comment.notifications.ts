@@ -7,6 +7,7 @@ import {
   notThreadMuted,
 } from '~/server/notifications/base.notifications';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
+import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
 
 /**
@@ -92,6 +93,7 @@ export const APP_LISTING_OWNER_SQL = `CASE WHEN al.kind = 'onsite' THEN COALESCE
 const THREAD_TYPE_LABELS = new Map<string, string>([
   ['appListing', 'app listing'],
   ['bountyEntry', 'bounty entry'],
+  ['comicProject', 'comic'],
   ['model3d', '3D model'],
 ]);
 
@@ -136,6 +138,7 @@ export const threadUrlMap = ({ threadType, threadParentId, ...details }: any) =>
     bountyEntry: `/bounties/entries/${threadParentId}?${queryString}`,
     challenge: `/challenges/${threadParentId}?${queryString}`,
     comicChapter: `/comics/${threadParentId}?${queryString}`,
+    comicProject: `/comics/${threadParentId}?${queryString}`,
     model3d: `/3d-models/${threadParentId}?${queryString}`,
     // The one SLUG-addressed entry — see `appListingSlugJoin`. `threadParentId` is NOT the
     // address here (it is `app_listings.serial_id`, which the URL never contains), so this
@@ -172,9 +175,16 @@ export const commentDedupeKeyByVersion = `concat('comment:', case when details->
  * replace one that works.
  *
  * `threadType` resolves to the `'comment'` fallback for any `Thread` entity `threadUrlMap` doesn't
- * address (comicProject, clubPost, model3dReview today). Those threads stay unclaimed, which is what
- * lets a purpose-built owner notification like `new-comic-comment` own the key instead. V1 rows carry no
- * `threadType` and build their URL from `modelId`, so they always render and always claim.
+ * address (clubPost, model3dReview today). Those threads stay unclaimed, which is what lets a
+ * purpose-built owner notification own the key instead. V1 rows carry no `threadType` and build their
+ * URL from `modelId`, so they always render and always claim.
+ *
+ * `comicProject` IS addressed now, so it claims here. That does not strand the comic project owner's
+ * richer `new-comic-comment` (which deep-links to the chapter): it shares this same `comment:v2:<id>`
+ * key deliberately (see `comics.router.ts`), and is inserted synchronously at comment-creation, so its
+ * `PendingNotification` is drained first and wins the partial-unique `(userId, dedupeKey)`. The owner
+ * gets the one deep-linked comic notification; a non-owner thread participant, whom `new-comic-comment`
+ * never targets, gets this working `/comics/<project>` link instead of the dead one it used to render.
  *
  * Add a `Thread` entity column WITHOUT a `threadUrlMap` entry and this keeps the dedupe correct on its
  * own — that omission is exactly how the mention/challenge regression got in.
@@ -206,7 +216,7 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.EntityOwner,
     prepareMessage: ({ details }) => ({
       message: `${details.username} commented on your ${details.modelName} model`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${details.commentId}`,
+      url: getModelCommentThreadUrl({ modelId: details.modelId, commentId: details.commentId }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comments AS (
@@ -244,9 +254,11 @@ export const commentNotifications = createNotificationProcessor({
     priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => ({
       message: `${details.username} responded to your comment on the ${details.modelName} model`,
-      url: `/models/${details.modelId}?dialog=commentThread&commentId=${
-        details.parentId ?? details.commentId
-      }&highlight=${details.commentId}`,
+      url: getModelCommentThreadUrl({
+        modelId: details.modelId,
+        commentId: details.parentId ?? details.commentId,
+        highlight: details.commentId,
+      }),
     }),
     prepareQuery: ({ lastSent }) => `
       WITH new_comment_response AS (
@@ -351,7 +363,8 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyId",
                 root."bountyEntryId",
                 root."challengeId",
-                root."model3dId"
+                root."model3dId",
+                root."comicProjectId"
              ),
             'threadType', CASE
                 WHEN root."imageId" IS NOT NULL THEN 'image'
@@ -365,6 +378,7 @@ export const commentNotifications = createNotificationProcessor({
                 WHEN root."bountyEntryId" IS NOT NULL THEN 'bountyEntry'
                 WHEN root."challengeId" IS NOT NULL THEN 'challenge'
                 WHEN root."model3dId" IS NOT NULL THEN 'model3d'
+                WHEN root."comicProjectId" IS NOT NULL THEN 'comicProject'
                 -- App-store listing threads are SLUG-addressed, so this arm keys on the
                 -- JOINED slug rather than on an id column. al only joins through
                 -- root."appListingId", so a non-null slug already means: this is an
@@ -470,6 +484,7 @@ export const commentNotifications = createNotificationProcessor({
                 root."bountyEntryId",
                 root."challengeId",
                 root."model3dId",
+                root."comicProjectId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -480,7 +495,8 @@ export const commentNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
-                t."model3dId"
+                t."model3dId",
+                t."comicProjectId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -494,6 +510,7 @@ export const commentNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+              WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
               -- SLUG-addressed; see the same arm in new-comment-reply above.
               WHEN al.slug IS NOT NULL THEN 'appListing'
               ELSE 'comment'

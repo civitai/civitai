@@ -143,6 +143,15 @@ export const ImportStatus = {
   Completed: 'Completed',
 } as const;
 export type ImportStatus = (typeof ImportStatus)[keyof typeof ImportStatus];
+export const HuggingFaceImportStatus = {
+  Queued: 'Queued',
+  Transferring: 'Transferring',
+  Completed: 'Completed',
+  Failed: 'Failed',
+  Canceled: 'Canceled',
+} as const;
+export type HuggingFaceImportStatus =
+  (typeof HuggingFaceImportStatus)[keyof typeof HuggingFaceImportStatus];
 export const ModelStatus = {
   Draft: 'Draft',
   Training: 'Training',
@@ -172,6 +181,7 @@ export const CommercialUse = {
   RentCivit: 'RentCivit',
   Rent: 'Rent',
   Sell: 'Sell',
+  SellMerge: 'SellMerge',
 } as const;
 export type CommercialUse = (typeof CommercialUse)[keyof typeof CommercialUse];
 export const CheckpointType = {
@@ -725,6 +735,7 @@ export const JobQueueType = {
   BlockedImageDelete: 'BlockedImageDelete',
   ImageScan: 'ImageScan',
   ReplacedImageDelete: 'ReplacedImageDelete',
+  ImageStorageDelete: 'ImageStorageDelete',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -759,6 +770,7 @@ export const AppealStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
   Rejected: 'Rejected',
+  Void: 'Void',
 } as const;
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
 export const AuctionType = {
@@ -990,3 +1002,28 @@ export const UserHubSourceType = {
   Tag: 'Tag',
 } as const;
 export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];
+export const CrucibleStatus = {
+  Pending: 'Pending',
+  Active: 'Active',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+export type CrucibleStatus = (typeof CrucibleStatus)[keyof typeof CrucibleStatus];
+export const CrucibleIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type CrucibleIngestionStatus =
+  (typeof CrucibleIngestionStatus)[keyof typeof CrucibleIngestionStatus];
+export const CrucibleEngagementType = {
+  Notify: 'Notify',
+} as const;
+export type CrucibleEngagementType =
+  (typeof CrucibleEngagementType)[keyof typeof CrucibleEngagementType];
+export const PrizeSourceType = {
+  Crucible: 'Crucible',
+  Challenge: 'Challenge',
+} as const;
+export type PrizeSourceType = (typeof PrizeSourceType)[keyof typeof PrizeSourceType];

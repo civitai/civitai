@@ -5,7 +5,7 @@
  */
 
 import {
-  ltxVersionIds,
+  minimaxVersionIds,
   nanoBananaVersionIds,
   qwenVersionIds,
 } from '~/shared/data-graph/generation/version-ids';
@@ -52,19 +52,29 @@ export const REMIX_ENGINES: Record<RemixKind, Record<RemixTier, RemixEngine>> = 
       modelVersionId: qwenVersionIds.imageEdit2511,
     },
   },
+  /**
+   * `MiniMaxH3` spans two engines — our own weights (`comfy`) and MiniMax's
+   * hosted API — and the variant resolver falls back to the API on any version
+   * id it does not recognise. So the mature tier's safety rests on the pinned
+   * VERSION, not on the ecosystem key; `h3-ids-agree` pins it.
+   *
+   * Mature routes here with a known cost rather than an absent one: our own
+   * moderation can block an output after the job succeeds, and the Buzz is not
+   * refunded. That was weighed and accepted, not designed away.
+   *
+   * The tiers stay separately addressable though they are equal today, so a
+   * mature-only reroute does not have to reintroduce the structure.
+   */
   video: {
     safe: {
       workflow: 'img2vid',
-      ecosystemKey: 'LTXV23',
-      modelVersionId: ltxVersionIds.v23Dev,
+      ecosystemKey: 'MiniMaxH3',
+      modelVersionId: minimaxVersionIds.comfy,
     },
-    // Sulphur 2 is a fine-tune that runs through the same LTXV23 ecosystem (with
-    // a diffusionModel AIR override), so the ecosystem key stays LTXV23 and only
-    // the pinned version differs.
     mature: {
       workflow: 'img2vid',
-      ecosystemKey: 'LTXV23',
-      modelVersionId: ltxVersionIds.sulphur2Dev,
+      ecosystemKey: 'MiniMaxH3',
+      modelVersionId: minimaxVersionIds.comfy,
     },
   },
 };

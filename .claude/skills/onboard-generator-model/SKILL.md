@@ -30,7 +30,7 @@ Supporting skills: `deploy-status` (the deploy stops), `postgres-query` (used by
 
 Ask for the model name and a reference link, plus the Civitai model URL if the model already exists.
 
-First work out the **kind**: `api-only` (the provider runs it, no files) or `hosted-weights` (we run it from files the user uploads). Settle it with the "Versions: API-only or hosted weights" steps in `official-model-admin`: gather the evidence, then have the user confirm. Never guess it. Settle the kind before the case, because the kind decides the case.
+First work out the **kind**: `api-only` (the provider runs it, no files) or `hosted-weights` (we run it from files on the version). Settle it with the "Versions: API-only or hosted weights" steps in `official-model-admin`: gather the evidence, then have the user confirm. Never guess it. Settle the kind before the case, because the kind decides the case.
 
 Then work out the **case**:
 
@@ -45,14 +45,14 @@ Then work out the **case**:
 
 Adding a base model or an ecosystem costs a second deploy and is hard to undo once resources are published against it. So the default is **neither**. Go down this list and take the first rule that matches:
 
-1. **API-only, and the model's line already has an ecosystem → C or D.** Add a new version under the existing base model. Don't add a base model or an ecosystem: nobody trains resources against an API-only model, so there's nothing compatibility could apply to. For example, later Nano Banana releases stay under the one `Nano Banana` base model.
+1. **API-only, and the model's line already has an ecosystem → C or D.** Add a new version under the existing base model. Don't add a base model or an ecosystem: nobody trains resources against an API-only model, so there's nothing compatibility could apply to. For example, later Nano Banana releases stay under the one `Nano Banana` base model. **Exception → B:** when the existing base model is hosted weights and something keyed by its name must not reach the API release — its licence, a mature-content restriction, a base-model warning, or its LoRAs — add a hidden API-only base model inside the existing ecosystem and toggle between the versions in the generator. Example: `Ideogram 4.5` beside `Ideogram 4.0` in `ECO.Ideogram`.
 2. **API-only, and it's the first model from its line → A.** It still needs an ecosystem to generate under. Name it for the line, not the release (`MuseImage`, not `MuseImage1`), so later releases fit under rule 1.
 3. **Hosted weights, and existing resources work on it → B.** Existing resources (LoRAs, embeddings and other addons) in the ecosystem run on the new checkpoint, so add a base model inside the existing ecosystem. Example: `SDXL 0.9` → `SDXL 1.0` → `SDXL 1.0 LCM`, all in `ECO.SDXL`. If the new checkpoint is a drop-in release that creators won't need to tell apart, prefer C.
 4. **Hosted weights, and existing resources do not work on it → A.** Create a new versioned ecosystem. Example: `LTXV` → `LTXV2` → `LTXV 2.3` → `LTXV 2.5`, each its own ecosystem. Apply the compatibility test in `add-ecosystem` ("The test: does this need its own ecosystem?"). It judges compatibility by the weights actually shipped, not the vendor's family name, and when you're unsure it says to split.
 
 Show the user which rule matched and the evidence for it: the kind, whether the line already has an ecosystem, and for hosted weights, why existing resources do or don't work on it. The user confirms the case. Never guess it, just as you never guess the kind.
 
-The kind also changes Phase 3. A hosted-weights version adds a stop while the user uploads its files.
+The kind also changes Phase 3. A hosted-weights version adds a stop for its files — a server-side Hugging Face import, or a browser upload by the user.
 
 Show the user the case, the kind, the phases and where the run will stop, for deploys and for uploads. Get their confirmation before continuing.
 
@@ -67,7 +67,7 @@ Show the user the case, the kind, the phases and where the run will stop, for de
 
 3. **Version and coverage.**
    1. `official-model-admin create-version --kind <kind>`, using the kind from Phase 0.
-   2. **Hosted weights only:** give the user the upload link `create-version` prints, and **stop until they say the upload is done**. Then run `official-model-admin files --version <id>` until it reports READY. If it reports NOT READY, pass its reason on to the user.
+   2. **Hosted weights only:** get the files onto the version. If the weights are on Hugging Face, ask the user to queue the repo at `/moderator/huggingface-import`, then attach each transferred file with `official-model-admin attach-import` — see "From Hugging Face" in that skill's step 4; you choose the file type, so read the filenames rather than guessing. Otherwise give the user the upload link `create-version` prints and **stop until they say the upload is done**. Either way, then run `official-model-admin files --version <id>` until it reports READY. If it reports NOT READY, pass its reason on to the user.
    3. `generation-coverage add`, labelled with the base model name.
 
 4. **Gate, before the deploy.** `generation-gate-rules add`:
@@ -84,6 +84,12 @@ Show the user the case, the kind, the phases and where the run will stop, for de
    - After the deploy, run `generator-launch check`. Continue only when the version is `Draft`, covered, and `canGenerate: true` for you. Then ask the user to try generating with it on the live site.
 
 8. **Hand off.** Run `generator-launch launch` and give the user its output: publish, then remove the gate. Don't do those steps yourself.
+
+**If community models already host the same weights, that needs no action** — the attribution
+tie-break prefers the official version, and archiving those models would not move credit anyway. See
+`official-model-admin` → "Community copies of the same weights". The question worth raising at hand-off
+is the repo's shared components (text encoders, a VAE): whether to publish them as their own models so
+community finetunes can cite them.
 
 ## Rules for the whole run
 

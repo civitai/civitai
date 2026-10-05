@@ -57,6 +57,27 @@ export enum TransactionType {
   Fee = 25,
   Bid = 26,
   LicenseFee = 27,
+  /**
+   * App Blocks per-generation author fee, both legs (viewer → platform conduit at
+   * submit, conduit → author at settlement).
+   *
+   * Three things a query against this rail has to know, none recoverable from the
+   * member:
+   *
+   * 🔴 PRE-CUTOVER ROWS CARRY `Fee` (25) AND ARE NOT BACK-FILLED — operator
+   * decision, no retroactive write to the Buzz ledger. For the whole history also
+   * match `Fee` + `description LIKE 'App author fee%'`, which is how the rail was
+   * disambiguated while it shared 25 with the placement-escrow legs.
+   *
+   * 🔴 IN CLICKHOUSE THESE ROWS READ AS THE STRING `'28'`, NOT `'appAuthorFee'`.
+   * The ingest MV's int→string map stops at 26, so anything above it is stored as
+   * its digits. `fromClickhouseTransactionType` in `buzz.service.ts` is the one
+   * place that resolves both spellings.
+   *
+   * 🔴 REVERSALS ARE `Refund` + `'App author fee refund'`, not this member, so a
+   * query that sums this type alone overstates net by every reversal.
+   */
+  AppAuthorFee = 28,
 }
 
 type BuzzTypeConfig =

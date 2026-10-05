@@ -19,8 +19,8 @@ export default AuthedEndpoint(async function handler(
   const buzzLimit = context.buzzLimit ?? null;
   const subject = context.subject ?? null;
 
-  // Release email for session auth (no token) or when the token carries the
-  // UserRead scope — same gate the OIDC userinfo endpoint uses.
+  // Release email and moderator status for session auth (no token) or when the
+  // token carries the UserRead scope — same gate the OIDC userinfo endpoint uses.
   const canReadProfile = subject === null || Flags.hasFlag(tokenScope ?? 0, TokenScope.UserRead);
 
   res.send({
@@ -30,6 +30,8 @@ export default AuthedEndpoint(async function handler(
     status: user.bannedAt ? 'banned' : user.muted ? 'muted' : 'active',
     isMember: user.tier ? user.tier !== 'free' : false,
     subscriptions: Object.keys(user.subscriptions ?? {}),
+    // Never `false`: a non-moderator must look identical to a caller the gate withheld it from.
+    ...(canReadProfile && user.isModerator ? { isModerator: true } : {}),
     ...(canReadProfile && user.email
       ? { email: user.email, emailVerified: !!user.emailVerified }
       : {}),

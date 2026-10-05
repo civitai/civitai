@@ -6,7 +6,7 @@
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { portalProps } from '$lib/host';
   import type { LabelType } from '$lib/data/trainingModels';
-  import { captionTriggerHit, isTriggerTag, tagsHaveTrigger, type Img } from './trainingFlow';
+  import { captionTriggerHit, isTriggerTag, splitTags, tagsHaveTrigger, type Img } from './trainingFlow';
 
   // `editing` is the flow's own image proxy, so mutating its tags/caption here applies live to the grid.
   // `onRelabel` runs the auto-label driver (owned by the parent); `tagVocab` is this dataset's tags for
@@ -40,14 +40,7 @@
   function addTag() {
     if (!editing) return;
     const existing = editing.tags;
-    const additions = [
-      ...new Set(
-        newTag
-          .split(/[,\n]/)
-          .map((s) => s.trim())
-          .filter((s) => s.length > 0 && !existing.includes(s))
-      ),
-    ];
+    const additions = [...new Set(splitTags(newTag).filter((s) => !existing.includes(s)))];
     if (additions.length) editing.tags = [...existing, ...additions];
     newTag = '';
   }

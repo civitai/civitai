@@ -29,6 +29,8 @@ import { checkRateLimit } from '$lib/server/auth/rate-limit';
 //                off the single 'unknown' key, not per-tenant abuse-proofing — client_id is unvalidated here).
 //                The limit is a generous gross-abuse ceiling that never throttles legit traffic. Invalid codes
 //                already bail cheaply at the redis lookup.
+//   - app-token: per-(userId, clientId) (60/min) — internal-only app-block mint; a block refreshes at most
+//                once per token TTL, so this only catches a runaway host loop.
 const OAUTH_RATE_LIMITS = {
   token: { limit: 20, windowSeconds: 60 },
   device: { limit: 30, windowSeconds: 60 },
@@ -39,6 +41,7 @@ const OAUTH_RATE_LIMITS = {
   session: { limit: 300, windowSeconds: 60 },
   introspect: { limit: 60, windowSeconds: 60 },
   'introspect-anon': { limit: 120, windowSeconds: 60 },
+  'app-token': { limit: 60, windowSeconds: 60 },
 } as const;
 
 export type OAuthRateLimitBucket = keyof typeof OAUTH_RATE_LIMITS;

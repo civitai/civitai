@@ -15,10 +15,11 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
-import { instrumentApiResponse } from '~/server/prom/http-errors';
+import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
 import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
   GENERIC_CLIENT_ERROR_BY_STATUS,
@@ -27,6 +28,50 @@ import {
   restErrorBody,
 } from '~/server/utils/rest-error-envelope';
 
+/**
+ * The normalized route of the request this response belongs to, or `undefined`.
+ *
+ * 🔴 WHY THIS EXISTS. Until this was added, every line these two helpers emit
+ * carried `source:'handleEndpointError'` and NOTHING identifying the route — so a
+ * REST 500 was counted (by `instrumentApiResponse`) and logged, and still could not
+ * be attributed to an endpoint from Loki. Measured on dp-prod 2026-09-29: 10 lines
+ * in 24h reading `value "…" is out of range for type integer` (Postgres SQLSTATE
+ * 22003), every one of them `source:handleEndpointError` with no `path`, `url` or
+ * `route` field, so "which endpoint is doing this" was unanswerable. The tRPC
+ * formatter has always logged its `path`; this is the REST side of the same claim.
+ *
+ * 🔴 READS `res.req` RATHER THAN TAKING A `req` PARAMETER, deliberately.
+ * `handleEndpointError(res, e)` is called from **57 files** under `src/pages/api`
+ * (counted, not estimated); threading a second argument through all of them makes
+ * attribution depend on every current AND FUTURE caller remembering to pass it, and a
+ * caller that forgets produces exactly the un-attributable line this change exists to
+ * remove — silently, because a missing route looks identical to an underivable one.
+ * Node's
+ * `ServerResponse` exposes the request it was created for, and Next's API layer
+ * passes the same object it populated `req.query` on, so this is the real
+ * `NextApiRequest`. That makes the route a property of the HELPER, which is the
+ * only version of this that cannot be forgotten.
+ *
+ * The cast is needed because `@types/node` types `ServerResponse.req` as the base
+ * `IncomingMessage` (no `query`). `reconstructApiRoute` reads only `method`, `url`
+ * and `query`, and already tolerates a missing `url` and a missing `query`.
+ *
+ * Returns `undefined` rather than throwing or guessing when there is no request —
+ * a hand-built `res` in a unit test is the common case, and telemetry must never be
+ * able to break an error response (the same contract the `.catch`es below keep).
+ * `JSON.stringify` drops an `undefined` value, so the field is simply absent then,
+ * which is honest: absent means "not derivable", never "route unknown to us".
+ */
+function restRouteFor(res: NextApiResponse): string | undefined {
+  const req = (res as unknown as { req?: NextApiRequest }).req;
+  if (!req) return undefined;
+  try {
+    return reconstructApiRoute(req);
+  } catch {
+    return undefined;
+  }
+}
+
 // Fire-and-forget structured, cause-walked error log for a REST 500 produced by
 // `handleEndpointError`. logToAxiom's stderr write is synchronous (→ Alloy → Loki),
 // so the queryable `_axiom` line lands even though we don't await; the `.catch`
@@ -34,12 +79,28 @@ import {
 // un-masked `.cause` chain + severity `type:'error'` (queryable as
 // detected_level="error"); client-fault 4xx and SERVICE_UNAVAILABLE 503s are gated
 // out at the call site so they never hit the error stream.
-function logRestServerFault(e: unknown) {
+function logRestServerFault(e: unknown, res: NextApiResponse) {
   // Skip if a router/service already logged this exact fault before re-throwing.
   if (wasServerFaultLogged(e)) return;
-  logToAxiom({ ...buildCentralErrorLog(e), source: 'handleEndpointError' }, 'civitai-prod').catch(
-    () => undefined
-  );
+  // Spread CONDITIONALLY, the idiom `buildCentralErrorLog` itself uses for `code`.
+  //
+  // ⚠️ NOT because it could otherwise clobber an existing `route`: it could not. Both
+  // branches of `buildCentralErrorLog` produce a FIXED key set — `safeError` returns
+  // exactly name/message/stack/code/causeMessage/inner*, and the TRPCError branch adds
+  // code/name/message/stack/cause — so `route` can never already be present, whatever
+  // properties the error object happens to carry. (Checked, after a first draft of this
+  // comment asserted the opposite and a test written against that claim failed.)
+  //
+  // The real reason is narrower: it keeps the key ABSENT rather than present-and-
+  // undefined when no route is derivable. `logToAxiom` does not only `JSON.stringify` —
+  // it also feeds a structured sink — and an explicit `undefined` can surface there as a
+  // null field, which reads as "we looked and there is no route" instead of "not
+  // derivable". Costs nothing, so prefer the honest shape.
+  const route = restRouteFor(res);
+  logToAxiom(
+    { ...buildCentralErrorLog(e), source: 'handleEndpointError', ...(route ? { route } : null) },
+    'civitai-prod'
+  ).catch(() => undefined);
 }
 
 /**
@@ -64,10 +125,17 @@ function logRestServerFault(e: unknown) {
  * the uniform treatment is the point — "a genericized 4xx is logged for forensics,
  * never as an incident" is one rule rather than three.
  */
-function logRestGenericizedClientFault(e: unknown) {
+function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
   if (wasServerFaultLogged(e)) return;
+  const route = restRouteFor(res); // conditional spread — see logRestServerFault
   logToAxiom(
-    { ...buildCentralErrorLog(e), type: 'info', level: 'info', source: 'handleEndpointError' },
+    {
+      ...buildCentralErrorLog(e),
+      type: 'info',
+      level: 'info',
+      source: 'handleEndpointError',
+      ...(route ? { route } : null),
+    },
     'civitai-prod'
   ).catch(() => undefined);
 }
@@ -218,11 +286,32 @@ function withApiMetrics(
   });
 }
 
+/**
+ * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
+ * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
+ * reachable without a working credential — and a bare key added to a ConfigMap arrives as an empty
+ * string, so that is a configuration typo rather than a decision.
+ *
+ * Emptiness is tested on a trimmed copy; the comparison below trims neither side, or two distinct
+ * configured secrets would collapse into one.
+ *
+ * 503 rather than 401 so an operator reading logs sees a deployment problem rather than a caller with
+ * a bad token, and so `withApiMetrics` records it as a 5xx.
+ *
+ * apps/moderator/src/lib/server/webhook-endpoint.ts applies the same blank-secret rule and status
+ * code, but trims both the secret and the presented token — so a secret carrying a trailing newline
+ * authenticates there and not here. Not a template for this file beyond the blank case.
+ */
 export function TokenSecuredEndpoint(
   token: string,
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (!isConfiguredSecret(token)) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
     if (req.query.token !== token) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
@@ -252,23 +341,44 @@ const allowedOrigins = [env.NEXTAUTH_URL, ...env.TRPC_ORIGINS, ...getAllServerHo
     if (!origin.startsWith('http')) return `https://${origin}`;
     return origin;
   });
+// Exact, so `https://civitai.com.example` is not taken for `https://civitai.com`.
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+// A `*` in Allow-Headers covers every header except Authorization, which has to be named.
+const CORS_ALLOW_HEADERS = 'Authorization, Content-Type, *';
+// Chrome caps a cached preflight at two hours; Firefox allows a day.
+const CORS_MAX_AGE_SECONDS = 7200;
+
+/**
+ * `allowCredentials` grants cookies to civitai's own origins only. Any other
+ * origin gets `*` without credentials: browsers never send it civitai cookies,
+ * so it can only authenticate with a token it already holds.
+ */
 export const addCorsHeaders = (
   req: NextApiRequest,
   res: NextApiResponse,
   allowedMethods: string[] = ['GET'],
   { allowCredentials = false }: { allowCredentials?: boolean } = {}
 ) => {
-  if (allowCredentials) {
-    const origin = req.headers.origin;
-    const allowedOrigin = allowedOrigins.find((o) => origin?.startsWith(o)) ?? allowedOrigins[0];
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  const origin = req.headers.origin;
+  if (allowCredentials && origin && allowedOrigins.some((o) => sameOrigin(o, origin))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+    const vary = res.getHeader('Vary');
+    res.setHeader('Vary', vary ? `${vary}, Origin` : 'Origin');
   } else {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
-  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
   res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
   if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Max-Age', String(CORS_MAX_AGE_SECONDS));
     res.status(200).end();
     return true;
   }
@@ -484,9 +594,6 @@ export function MixedAuthEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    if (!req.method || !allowedMethods.includes(req.method))
-      return res.status(405).json({ error: 'Method not allowed' });
-
     // Same two properties as `PublicEndpoint`, for the same reasons — see the
     // comments there. Two differences worth naming, because this wrapper used to
     // decide on a different axis:
@@ -512,6 +619,10 @@ export function MixedAuthEndpoint(
     // also stops a preflight doing a pointless session resolve after the 200 has
     // already gone out.
     if (addCorsHeaders(req, res, allowedMethods)) return;
+
+    // Below the preflight: an OPTIONS is never in `allowedMethods`, and a 405 fails it.
+    if (!req.method || !allowedMethods.includes(req.method))
+      return res.status(405).json({ error: 'Method not allowed' });
 
     if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
     else addPublicCacheHeaders(req, res);
@@ -614,7 +725,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // The un-redacted error is fully preserved by `logRestServerFault` above —
     // this genericizes the RESPONSE only, never the LOG.
     if (isRestServerFault(status)) {
-      logRestServerFault(apiError);
+      logRestServerFault(apiError, res);
       return noStore(res)
         .status(status)
         .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
@@ -645,7 +756,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // enforced the exclusion, which was false. The map's key set is.
     const generic = GENERIC_CLIENT_ERROR_BY_STATUS[status];
     if (generic && isDriverAuthoredMessage(apiError.message, apiError)) {
-      logRestGenericizedClientFault(apiError);
+      logRestGenericizedClientFault(apiError, res);
       return noStore(res).status(status).json(restErrorBody(generic.code, generic.message));
     }
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
@@ -672,7 +783,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // find one such silent 500). Emit the structured, cause-walked `_axiom` error
     // log (name + message + stack, un-masked cause) so the next one is attributable
     // from Loki the normal way. safeError keeps it PII-light (primitive fields only).
-    logRestServerFault(error);
+    logRestServerFault(error, res);
     // 🔴 civitai#3845 — do NOT put `error.message` (or any other driver-derived
     // text) in this body. `handleEndpointError` is the shared 500 chokepoint for
     // 14 REST routes — 10 on the public `/api/v1` surface, plus 3 `mod/*` and

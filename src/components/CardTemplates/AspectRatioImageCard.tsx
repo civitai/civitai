@@ -7,6 +7,7 @@ import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ConnectType } from '~/components/ImageGuard/ImageGuard2';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -110,6 +111,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   alt,
   impression,
 }: AspectRatioImageCardProps<T>) {
+  const features = useFeatureFlags();
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;
 
   // Rebuilt every render, deliberately not memoized: useTrackImpression keys its
@@ -208,6 +210,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         })}
                         wrapperProps={{ className: 'flex-1 h-full' }}
                         width={IMAGE_CARD_WIDTH}
+                        hiDpi={features.hiDpiPreviews}
+                        sourceWidth={image.width}
                         contain
                       />
                     )
@@ -230,6 +234,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           ? IMAGE_CARD_WIDTH * originalAspectRatio
                           : IMAGE_CARD_WIDTH
                       }
+                      hiDpi={features.hiDpiPreviews}
+                        sourceWidth={image.width}
                       skip={
                         image.type === 'video'
                           ? getSkipValue({

@@ -3,6 +3,8 @@ import { SignJWT } from 'jose';
 import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { BLOCK_TOKEN_LIFETIMES_SECONDS } from '~/server/services/block-token-lifetimes';
+import { ANON_SUBJECT, subjectForUserId } from '~/server/services/block-token-subject';
+import type { PrivateRunAudience } from '~/shared/constants/block-scope.constants';
 
 // L7 (audit-10): shared issuer/audience constants exported for the
 // middleware so a typo in one place can't desynchronize sign-vs-verify.
@@ -201,6 +203,79 @@ export interface SignBlockTokenInput {
    * Absent/false → byte-identical to a normal token (no claim stamped).
    */
   reviewRunForReal?: boolean;
+  /**
+   * PRIVATE-RUN marker. Set ONLY by the (not-yet-built) private-run mint branch,
+   * which serves a DELISTED / SUSPENDED app's already-deployed bundle to its
+   * owner, an accepted listing collaborator, or a moderator — never publicly.
+   *
+   * 🔴 IT IS A MONEY-SAFETY CLAIM, NOT A UX ONE, AND IT IS THE ONLY INPUT THE TWO
+   * ARMS HAVE. A private run is a diagnostic or a takedown review, not a use of
+   * the app, so neither money rail may treat it as one:
+   *   1. `recordSpendAttribution` VOIDS the `block_spend_attribution` row it would
+   *      otherwise write as `tracked`, so a review generation cannot inflate a
+   *      suspended app's owner-visible run count or Buzz total.
+   *   2. `resolveBlockAuthorFeePayee` REFUSES, so the per-generation author fee is
+   *      never quoted, reserved or debited. Without this the reviewer is debited
+   *      and the suspended publisher is credited the same Buzz — the platform takes
+   *      no cut, so it is a straight transfer from the moderator reviewing a
+   *      takedown to the author who was taken down.
+   *
+   * Both arms read the claim only AFTER the RS256 signature is verified, so a
+   * forged `privateRun: true` cannot pass the gate. Stamped only when explicitly
+   * true, so a normal token never carries it and `undefined` is byte-identical to
+   * the pre-feature behaviour.
+   *
+   * 🔴 THIS IS NOT `dev`, AND MUST NEVER BE SET ALONGSIDE IT. `claims.dev === true`
+   * SKIPS the per-app velocity reservation in `reserveBlockBuzzSpendForClaims`, which
+   * would hand a moderator an uncapped per-app spend surface on an app the platform has
+   * taken down. The combination is refused at this signer (it throws) and again at the
+   * verifier.
+   *
+   * ⚠️ CORRECTED WHEN THE MINT LANDED — THIS USED TO SAY `privateRun` "changes no
+   * lifetime and no cap selection", AND THE CAP HALF IS NO LONGER TRUE. It was true
+   * while the claim had no producer. `reserveBlockBuzzSpendForClaims` now has a
+   * `claims.privateRun === true` arm that selects a per-(viewer, appBlockId) cumulative
+   * ceiling (`PRIVATE_RUN_BUZZ_CAP`) in place of the ordinary per-user daily cap —
+   * strictly TIGHTER per app, and deliberately placed ABOVE the `claims.dev` early
+   * return so it can never be skipped. Without an arm of its own a private run would
+   * fall through to the 50k/day platform key, i.e. 20× looser and shared with the
+   * viewer's legitimate app usage.
+   *
+   * ✅ THE LIFETIME HALF STILL HOLDS AND IS STILL PINNED: `privateRun` appears nowhere
+   * in the lifetime selector, so a private-run token takes the ordinary 900s default
+   * rather than the `dev` 4h. That is the half worth keeping, because a long-lived token
+   * on a taken-down app is the thing a delist is supposed to stop.
+   */
+  privateRun?: boolean;
+  /**
+   * WHICH audience a private run was admitted as. Meaningful ONLY alongside
+   * `privateRun: true`, and refused without it (see the signer).
+   *
+   * 🔴 IT IS BRANCHED ON IN TWO PLACES, WHICH IS WHY IT IS SIGNED AT ALL. PR 1
+   * deliberately did NOT sign this field, because at that point it had no producer and
+   * no consumer, and a signed field nothing branches on is the field-exists-but-nothing-
+   * reads-it shape this feature's own seam guard forbids. It earns its place here:
+   *   1. `resolveAppBlockApprovalVerdict` keys the private-run exemption from the
+   *      approved-status decision on the PAIR — `privateRun === true` AND a recognised
+   *      audience — mirroring how the review-sandbox exemption is keyed on the
+   *      `dev && reviewRunForReal` pair rather than on one boolean. A claim that
+   *      exempts a token from a status gate must not be one flipped bit wide.
+   *   2. The runtime editor read-only belt refuses `'editor'` on the spend path, as
+   *      defence-in-depth behind the mint-time scope strip. Two layers, because the
+   *      mint-time strip is a decision taken once at issue time while this one is
+   *      re-taken per submit.
+   *
+   * 🔴 IT IS NOT ON ANY MONEY ROW, DELIBERATELY. The `block_spend_attribution` void
+   * arm keys on `privateRun` alone and is audience-BLIND, so it holds for whichever
+   * audiences the clamp ends up admitting. The audience rides the mint's audit line
+   * instead, which is where "how many private runs, by whom, on what" is answered.
+   *
+   * Validated as a closed set by the verifier (`isPrivateRunAudience`), so a
+   * signature-valid token carrying a garbage audience is rejected outright rather than
+   * silently failing an equality test against `'editor'` and being treated as an
+   * owner.
+   */
+  privateRunAudience?: PrivateRunAudience;
 }
 
 export interface SignBlockTokenResult {
@@ -248,7 +323,12 @@ export class BlockTokenService {
         ? BLOCK_TOKEN_LIFETIMES_SECONDS.settings
         : BLOCK_TOKEN_LIFETIMES_SECONDS.default;
     const exp = iat + lifetime;
-    const sub = input.userId == null ? 'anon' : `user:${input.userId}`;
+    // Built through the shared encoder rather than open-coded. This template used to be
+    // written here AND in `block-revocation.service` (whose docblock claimed to be "THE
+    // ONE PLACE this format is written on the WRITE side" while this line existed), and
+    // every consumer pinned its own copy with its own literal — so nothing in the suite
+    // could see them diverge. See `block-token-subject.ts`.
+    const sub = input.userId == null ? ANON_SUBJECT : subjectForUserId(input.userId);
 
     const claims: Record<string, unknown> = {
       blockId: input.blockId,
@@ -285,6 +365,52 @@ export class BlockTokenService {
     // Stamped only when explicitly true so a normal token never carries it.
     if (input.reviewRunForReal === true) {
       claims.reviewRunForReal = true;
+    }
+    // 🔴 THE `privateRun` + `dev` COMBINATION IS REFUSED AT THE SIGNER, NOT WARNED
+    // ABOUT IN A COMMENT. The input docblock declares this a MUST-NEVER because
+    // `claims.dev === true` SKIPS the per-app velocity reservation in
+    // `reserveBlockBuzzSpendForClaims` — so a `dev` private-run token would hand a
+    // non-owner an UNCAPPED per-app spend surface on an app the platform has taken
+    // down. A review lane pointed out that the rule existed only as prose, and prose
+    // in a docblock cannot stop a mint that reaches for `dev: true` to get past a
+    // status gate. `resolveAppBlockApprovalVerdict` records the same hazard from the
+    // other side: the run-for-real exemption had to be keyed on the dev+flag PAIR.
+    //
+    // Throwing is safe to add now precisely because it is UNREACHABLE now — nothing
+    // sets `privateRun`, so no existing caller can trip it. It becomes load-bearing
+    // the moment the mint exists, which is when it would otherwise be discovered by
+    // a cap that silently stopped applying.
+    if (input.privateRun === true && input.dev === true) {
+      throw new Error(
+        'block token: privateRun and dev must not be combined — `dev` skips the per-app ' +
+          'spend reservation, which would leave a private run uncapped per app'
+      );
+    }
+    // PRIVATE-RUN marker — stamped ONLY for a private run of a delisted/suspended
+    // app. Read (after signature validation) by the two money arms: the spend
+    // attribution void and the author-fee refusal. Stamped only when explicitly
+    // true so a normal token never carries it.
+    if (input.privateRun === true) {
+      claims.privateRun = true;
+    }
+    // 🔴 THE AUDIENCE IS REFUSED WITHOUT THE MARKER, for the same reason the marker is
+    // refused alongside `dev`: a lone `privateRunAudience` would be a claim that looks
+    // like an authorisation and carries none. `resolveAppBlockApprovalVerdict` keys its
+    // status exemption on the PAIR, so a token carrying only the audience would be
+    // exempt from nothing while reading, to anyone inspecting it, as a private-run
+    // token. Refusing the half-stamped shape at the producer keeps the pair the only
+    // representable state.
+    if (input.privateRunAudience !== undefined && input.privateRun !== true) {
+      throw new Error(
+        'block token: privateRunAudience requires privateRun: true — a lone audience ' +
+          'claim exempts a token from nothing and misreads as a private-run token'
+      );
+    }
+    // The audience a private run was admitted as. Stamped only alongside the marker;
+    // read (after signature validation) by the approval-verdict exemption and the
+    // runtime editor read-only belt. Not on any money row — see the input docblock.
+    if (input.privateRun === true && input.privateRunAudience !== undefined) {
+      claims.privateRunAudience = input.privateRunAudience;
     }
 
     const token = await new SignJWT(claims)
@@ -352,7 +478,14 @@ export class BlockTokenService {
   static getJwks(): {
     keys: Array<{ kty: string; use: string; alg: string; kid: string; n: string; e: string }>;
   } {
-    const keys: Array<{ kty: string; use: string; alg: string; kid: string; n: string; e: string }> = [];
+    const keys: Array<{
+      kty: string;
+      use: string;
+      alg: string;
+      kid: string;
+      n: string;
+      e: string;
+    }> = [];
     const current = loadPublicKey();
     const next = loadNextPublicKey();
     for (const k of next ? [current, next] : [current]) {

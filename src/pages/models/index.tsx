@@ -62,8 +62,8 @@ function ModelsPage() {
   return (
     <>
       <Meta
-        title="AI Models | Civitai"
-        description="Browse thousands of free Stable Diffusion & Flux models, LoRAs, checkpoints, and embeddings. The largest collection of AI image generation resources."
+        title="AI Image & Video Models, LoRAs & Checkpoints | Civitai"
+        description="Download AI image and video models from the largest community library: checkpoints and LoRAs for Illustrious, Pony, SDXL, Flux, Wan and more."
         canonical="/models"
       />
 

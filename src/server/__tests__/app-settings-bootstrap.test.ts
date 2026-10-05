@@ -76,6 +76,24 @@ function makeCtx(): AppContext {
   } as unknown as AppContext;
 }
 
+/**
+ * The same context with NO `req` — what Next's client router passes on a client-side
+ * navigation. It builds `{ pathname, query, asPath, locale, locales, defaultLocale,
+ * AppTree }` and no request object, which is what makes `getInitialProps` early-return.
+ */
+function makeClientNavCtx(): AppContext {
+  const noop = () => null;
+  return {
+    Component: noop,
+    AppTree: noop,
+    router: {},
+    // `req: undefined` is spelled out rather than omitted: dropping `ctx` entirely would
+    // hand off to next/app's own `App.getInitialProps` and yield `{ pageProps: {} }` for a
+    // DIFFERENT reason, which would pass the assertions below while testing nothing.
+    ctx: { req: undefined, pathname: '/models', query: {}, asPath: '/models', AppTree: noop },
+  } as unknown as AppContext;
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -215,5 +233,82 @@ describe('_app settings bootstrap — auth cookie discriminator', () => {
       'a legacy-cookie session must survive a degraded settings response too'
     ).toBe(true);
     expect(h.deleteCookie).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 AN INVARIANT GUARD, NOT REGRESSION COVERAGE — it passes on the pre-fix tree too.
+ *
+ * It exists because it is the only executable statement of the PREMISE behind the 5.1.118
+ * white-screen: `<FaroProvider region={region.countryCode} />` threw on every client-side
+ * navigation because `region` was `undefined` there. The AST guard in
+ * `src/tests/pages/app-region-optional-chain.test.ts` pins the optional chain at the call
+ * site, but it can only assert that premise in PROSE — nothing fails if the early return
+ * below is moved or deleted and `region` starts being populated on the client.
+ *
+ *     const { req: request } = appContext.ctx;
+ *     if (!request) return initialProps;      // <- everything below is serverside only
+ *     …
+ *     const region = getRegion(request);
+ *
+ * So: no request ⇒ no `region` in `pageProps`. If someone later hoists `getRegion` above
+ * that guard, or supplies a client-side default, this goes red and the optional chain's
+ * justification can be revisited on purpose rather than by accident.
+ */
+/**
+ * Props the serverside branch populates UNCONDITIONALLY, and the client-nav branch
+ * therefore cannot. One list, asserted PRESENT in the positive control and ABSENT in the
+ * client-nav cases, so the two arms cannot drift apart.
+ *
+ * 🔴 `domain` is deliberately NOT in this list, and the positive control is how that was
+ * found. `getRequestDomainColor` returns `undefined` when the host matches no configured
+ * color domain, so `domain` is absent on the SERVERSIDE path too under this fixture — it
+ * would have sat in the absence ledger proving nothing, which is exactly the failure a
+ * one-sided "assert it is missing" test cannot see. Only add a key here after watching the
+ * positive control assert it PRESENT.
+ */
+const SERVERSIDE_ONLY_PROPS = ['region', 'hasAuthCookie', 'serverDomains', 'canIndex'];
+
+describe('_app getInitialProps — SSR-only props are absent on a client-side navigation', () => {
+  // 🔴 THE POSITIVE CONTROL, and it runs FIRST on purpose. "`region` is absent" is a
+  // reassuring zero: on its own it cannot be told apart from `getInitialProps` throwing
+  // early, a stale mock, or a renamed key. This arm proves the probe can see a `region`
+  // at all, so the absence in the next test is a fact about the client-nav path.
+  it('POSITIVE CONTROL: the SAME call WITH a req populates every one of those keys', async () => {
+    h.respond = async () => json({ session: null, settings: { features: {} } });
+
+    const { pageProps } = await getInitialProps(makeCtx());
+
+    // Asserts the WHOLE ledger, not just `region`. Without this arm the absence test below
+    // is a set of assertions over `{}` — it would pass identically if a key were renamed,
+    // because the client-nav path returns an empty object whatever the serverside path
+    // calls its keys. Pairing the two is what makes the absence mean something.
+    for (const key of SERVERSIDE_ONLY_PROPS) {
+      expect(pageProps[key], `${key} must be populated on the serverside path`).toBeDefined();
+    }
+    expect(pageProps).toHaveProperty('region.countryCode');
+  });
+
+  it('omits `region` entirely when the context carries no req', async () => {
+    const { pageProps } = await getInitialProps(makeClientNavCtx());
+
+    expect(
+      'region' in pageProps,
+      '`region` must not be present on the client-nav path — the whole reason `_app` has to optional-chain it'
+    ).toBe(false);
+    expect(pageProps.region).toBeUndefined();
+  });
+
+  it('does not reach the serverside branch at all on that path', async () => {
+    // What this adds over the case above, stated no wider than it is: it catches a
+    // client-side default being introduced for a serverside-only prop OTHER than `region`.
+    // It does NOT discriminate a key rename (the client-nav path returns `{}` regardless)
+    // nor a thrown bootstrap (that rejects, failing both cases) — the positive control
+    // above is what covers the rename.
+    const { pageProps } = await getInitialProps(makeClientNavCtx());
+
+    for (const key of SERVERSIDE_ONLY_PROPS) {
+      expect(pageProps[key], `${key} is serverside-only and must be absent here`).toBeUndefined();
+    }
   });
 });

@@ -2,6 +2,9 @@ import { defineConfig } from 'vitest/config';
 import { playwright } from '@vitest/browser-playwright';
 import path from 'path';
 
+import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
+import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
+
 // Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
 // run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
 //
@@ -175,7 +178,13 @@ const unitTestConfig = {
   globals: true,
   environment: 'node' as const,
   exclude: ['node_modules', 'tests/**/*'], // Exclude Playwright tests
-  setupFiles: ['src/__tests__/setup.ts'],
+  // The fs tracker records which files each test reads, for the result cache. It is loaded only
+  // when the queue turned the cache on (CIVITAI_TEST_CACHE) and never in CI — see scripts/test-cache.
+  // Tracker FIRST, so reads made while the main setup file loads are recorded too.
+  setupFiles: [
+    ...(testCacheMode() !== 'off' ? ['scripts/test-cache/fs-tracker.mjs'] : []),
+    'src/__tests__/setup.ts',
+  ],
   // Several unit tests cold-`await import(...)` a large Next API-page / service
   // module graph (mocked I/O, but a real ~9–16s TS transform). With the suite's
   // worker pool saturated, that legitimate cold transform races for CPU and
@@ -343,6 +352,21 @@ const browserOptimizeDeps = {
     // pre-bundles it in the same pass as `react`/`react-dom`, so all three
     // share one instance.
     'react-dom/server',
+    // `motion/react` + `motion/react-m` — the SAME failure as `react-dom/server`
+    // above, arriving the same way, and MEASURED rather than anticipated.
+    // `AgentOnboardingCard` is the first component with a browser test that actually
+    // RENDERS a `LazyMotion`/`m` subtree (the `src/components/Chat/*` importers have
+    // none), and without these two entries Vite discovered them mid-run into a
+    // separate optimized chunk carrying its own `react`, so every test that mounted
+    // the animated tree died with
+    // `Cannot read properties of null (reading 'useContext')` — 14 failures across
+    // three files, while the static/reduced-motion arms of the same components passed,
+    // because those render no `m` component at all. The `dedupe` above cannot help:
+    // the second copy comes through the optimizer, not through a transitive dep.
+    // BOTH subpaths are needed — they are separate entry points and either one
+    // discovered alone reopens the split.
+    'motion/react',
+    'motion/react-m',
   ],
   // `@vitest/browser` seeds optimizeDeps.entries from EVERY browser test file
   // (globTestFiles), not just the one you ran. The review app-listing browser tests
@@ -379,8 +403,8 @@ const browserModeOptions = () => ({
   // `PLAYWRIGHT_BROWSERS_PATH` case) — it bypasses the revision lookup.
   // The better fix is to point PLAYWRIGHT_BROWSERS_PATH at a bundle whose
   // version EQUALS this repo's `playwright` pin (1.57.x → chromium-1200),
-  // rather than moving the pin; see CLAUDE.md "Browser/component tests on
-  // NixOS". A mismatch does not say "no browser" — it collects every file
+  // rather than moving the pin; see docs/dev/worktrees.md "Browser/component
+  // tests on NixOS". A mismatch does not say "no browser" — it collects every file
   // and executes none, which reads as a broken suite.
   provider: playwright({
     launchOptions: {
@@ -438,6 +462,9 @@ export default defineConfig({
   resolve: { alias },
   test: {
     maxWorkers,
+    // Root-level because vitest builds ONE sequencer for the whole run. It only ever skips files in
+    // the unit projects, and only when the cache is on.
+    ...(testCacheMode() !== 'off' ? { sequence: { sequencer: TestCacheSequencer } } : {}),
     projects: [
       // The `packages/*` suites, referenced by their OWN config files rather than
       // re-declared here. Until this line existed, nothing in CI invoked them: the `unit`

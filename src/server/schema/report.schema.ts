@@ -198,6 +198,12 @@ export const createEntityAppealSchema = z.object({
   message: z.string().trim().min(1).max(MAX_APPEAL_MESSAGE_LENGTH),
 });
 
+export type GetLatestAppealInput = z.output<typeof getLatestAppealSchema>;
+export const getLatestAppealSchema = z.object({
+  entityId: z.number(),
+  entityType: z.enum(EntityType),
+});
+
 export type GetRecentAppealsInput = z.output<typeof getRecentAppealsSchema>;
 export const getRecentAppealsSchema = z.object({
   userId: z.number().optional(),

@@ -28,8 +28,8 @@ import '~/server/metrics/flipt-eval-cache.metrics';
 // only consumer is the scrape, and this module is what serves it, so the series
 // are present in every response that could ever observe them.
 import { ensureRegisterGenerationModelSubstitutionMetrics } from '~/server/metrics/generation-model-substitution.metrics';
-// Same reason as the neighbour above, and the case where it matters most: seeds all 11
-// outcome series of civitai_image_upload_relay_total at 0. The image-upload relay is a
+// Same reason as the neighbour above, and the case where it matters most: seeds the full
+// outcome x producer cross product of civitai_image_upload_relay_total at 0. The image-upload relay is a
 // FALLBACK that fires for the handful of clients who cannot reach the storage host at
 // all, so on almost every pod the honest reading of that counter is a row of zeros —
 // and prom-client materialises a child only on its first inc(), so without this the
@@ -37,10 +37,26 @@ import { ensureRegisterGenerationModelSubstitutionMetrics } from '~/server/metri
 // never rescued anyone here" would then be the same observation, which is precisely
 // the ambiguity that counter was added to remove.
 import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-upload-relay.metrics';
+// Same reason as the two neighbours above, and the case where it matters MOST: seeds all
+// 12 reachable (path, type, outcome) series of civitai_csam_archive_total at 0. CSAM
+// archives are RARE — so on
+// almost every pod, for almost all of its life, the honest reading of this counter is a
+// row of zeros. prom-client materialises a child only on its first inc(), so without this
+// `…{path="stream"}` returns `no data`, and "streaming has never run here" would be
+// indistinguishable from "the instrument is not wired" — which is the precise ambiguity
+// this counter was added to end, so leaving it unseeded would reproduce the defect one
+// level down.
+import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
+// Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
+// the four were absent in production purely because nothing had ever incremented them, and one
+// of those exists to be alerted on. Called from the handler rather than here because it must
+// await a read of the latency histogram's existing children before zeroing any of them.
+import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
 ensureRegisterImageUploadRelayMetrics();
+ensureRegisterCsamArchiveMetrics();
 
 const labels: Record<string, string> = {};
 if (process.env.PODNAME) {
@@ -173,6 +189,8 @@ async function collectRegistryMetrics(
 }
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
+  await seedAppBlockStorageMetrics();
+
   const metrics = await collectRegistryMetrics(client.register, 'default');
 
   // Metrics emitted from the instrumentation webpack graph (e.g. the event-loop

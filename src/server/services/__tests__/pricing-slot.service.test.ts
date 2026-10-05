@@ -124,7 +124,7 @@ describe('releasePricingSlot', () => {
     expect(mockMetric).not.toHaveBeenCalled();
   });
 
-  // The lookup sits on a creator's save and the client's own timeout is 30s, so a stalled ClickHouse
+  // The lookup sits on a creator's save and the client's own timeout is 300s, so a stalled ClickHouse
   // must not hold the save open. Uses fake timers: a real 3s wait would make this the slowest test here.
   it('gives up on a hung ClickHouse and falls back', async () => {
     vi.useFakeTimers();

@@ -8,12 +8,12 @@
  *
  * | Store                              | Definition                                  | Used By                                                          | Storage        |
  * |------------------------------------|---------------------------------------------|------------------------------------------------------------------|----------------|
- * | useGenerationGraphStore            | store/generation-graph.store.ts              | GenerationForm, GenerationFormProvider, GeneratedItemWorkflowMenu | memory (immer) |
+ * | useGenerationGraphStore            | store/generation-graph.store.ts              | GenerationFormProvider, GeneratedItemWorkflowMenu, useGenerationTour | memory (immer) |
  * | useWorkflowPreferencesStore        | store/workflow-preferences.store.ts          | GenerationFormProvider, useCompatibilityInfo, useGeneratedItemWorkflows | localStorage   |
  * | useTipStore                        | store/tip.store.ts                           | FormFooter                                                       | localStorage   |
  * | useSourceMetadataStore             | store/source-metadata.store.ts               | ImageUploadMultipleInput, FormFooter, useGeneratedItemWorkflows  | sessionStorage |
  * | useRemixProvenanceStore            | store/remix-provenance.store.ts              | SourceImageUploadMultiple, FormFooter                            | sessionStorage |
- * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useRemixOfId, useGeneratedItemWorkflows              | localStorage   |
+ * | useRemixStore                      | store/remix.store.ts                         | FormFooter, useGenerationTour, useGeneratedItemWorkflows         | sessionStorage |
  * | useEcosystemGroupPreferencesStore  | store/ecosystem-group-preferences.store.ts   | BaseModelInput                                                   | localStorage   |
  * | usePromptFocusedStore              | inputs/PromptInput.tsx (local)               | PromptInput                                                      | memory         |
  */
@@ -74,12 +74,7 @@ import { AccordionLayout } from './AccordionLayout';
 import { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 import { FormFooter, MetadataExtractionFooter } from './FormFooter';
 import { GenerationLayout, GenerationFooter } from './GenerationLayout';
-import {
-  ResourceAlerts,
-  GrokEcosystemAlert,
-  SeedanceImg2VidAlert,
-  ReadyAlert,
-} from './ResourceAlerts';
+import { ResourceAlerts, GrokEcosystemAlert, SeedanceImg2VidAlert } from './ResourceAlerts';
 
 // Input components
 import { BaseModelInput } from './inputs/BaseModelInput';
@@ -129,20 +124,12 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 import { ButtonGroupInput } from '~/libs/form/components/ButtonGroupInput';
 import { KlingElementsInput } from './inputs/KlingElementsInput';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { yue2ScorePlanningInfo } from '~/shared/constants/yue2.constants';
 import { triggerPromptEnhance } from '~/components/Generation/PromptEnhance/triggerPromptEnhance';
 import { PromptEnhancePanel } from '~/components/Generation/PromptEnhance/PromptEnhancePanel';
 import { usePromptEnhanceStore } from '~/components/Generation/PromptEnhance/promptEnhanceStore';
 import { MetadataExtractionPanel } from './inputs/MetadataExtractionPanel';
-import {
-  contentGenerationTour,
-  remixContentGenerationTour,
-} from '~/components/Tours/tours/content-gen.tour';
-import { useTourContext } from '~/components/Tours/ToursProvider';
-import { nextTourSteps } from '~/components/Tours/tour-step-updates';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useGenerationGraphStore } from '~/store/generation-graph.store';
-import { useRemixStore } from '~/store/remix.store';
-import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
+import { useGenerationTour } from './hooks/useGenerationTour';
 import { PresetControl } from '~/components/generation_v2/preset/PresetControl';
 import { GateRuleWarnings } from './GateRuleWarnings';
 
@@ -202,119 +189,58 @@ export function GenerationForm() {
   // no-op (we just don't re-add the id).
   const loadFromModelVersion = trpc.wildcardSet.loadFromModelVersion.useMutation();
   const handleAddWildcardSet = useCallback(() => {
+    const addOne = async (resource: GenerationResource) => {
+      try {
+        const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
+        const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
+        // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
+        // empty here because we can't infer the active subgraph's target list
+        // from the form layer — if no snippets node was hydrated yet, the
+        // graph's defaultValue will replace this on the next evaluation.
+        const current = snap.snippets ?? {
+          wildcardSetIds: [],
+          mode: 'random' as const,
+          batchCount: 1,
+          targets: {},
+        };
+        if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
+        graph.set({
+          snippets: {
+            ...current,
+            wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
+          },
+        } as Parameters<typeof graph.set>[0]);
+        if (result.invalidated) {
+          showNotification({
+            title: 'Wildcard set added with warnings',
+            message: result.reason ?? 'The set was added but its content is currently invalidated.',
+            color: 'yellow',
+          });
+        }
+      } catch (e) {
+        showNotification({
+          title: 'Could not add wildcard set',
+          message: e instanceof Error ? e.message : String(e),
+          color: 'red',
+        });
+      }
+    };
+
     openResourceSelectModal({
       title: 'Add wildcard set',
       selectSource: 'addResource',
       // Filter the modal to Wildcards-type models only. `baseModels`
       // omitted intentionally — wildcard packs are model-agnostic.
       options: { resources: [{ type: 'Wildcards' }] },
-      onSelect: async (resource) => {
-        try {
-          const result = await loadFromModelVersion.mutateAsync({ modelVersionId: resource.id });
-          const snap = graph.getSnapshot() as { snippets?: SnippetsNodeValue };
-          // Fallback shape mirrors `snippetsNode([])`'s default. `targets` is
-          // empty here because we can't infer the active subgraph's target list
-          // from the form layer — if no snippets node was hydrated yet, the
-          // graph's defaultValue will replace this on the next evaluation.
-          const current = snap.snippets ?? {
-            wildcardSetIds: [],
-            mode: 'random' as const,
-            batchCount: 1,
-            targets: {},
-          };
-          if (current.wildcardSetIds.includes(result.wildcardSetId)) return;
-          graph.set({
-            snippets: {
-              ...current,
-              wildcardSetIds: [...current.wildcardSetIds, result.wildcardSetId],
-            },
-          } as Parameters<typeof graph.set>[0]);
-          if (result.invalidated) {
-            showNotification({
-              title: 'Wildcard set added with warnings',
-              message:
-                result.reason ?? 'The set was added but its content is currently invalidated.',
-              color: 'yellow',
-            });
-          }
-        } catch (e) {
-          showNotification({
-            title: 'Could not add wildcard set',
-            message: e instanceof Error ? e.message : String(e),
-            color: 'red',
-          });
-        }
+      onSelect: addOne,
+      // Sequential: keeps pick order, and each first pick imports the set server-side.
+      onSelectMultiple: async (resources) => {
+        for (const resource of resources) await addOne(resource);
       },
     });
   }, [graph, loadFromModelVersion]);
 
-  // Tour initialization
-  const { runTour, running, paused, currentStep, steps, setSteps, activeTour } = useTourContext();
-  const status = useGenerationStatus();
-  const loadingGeneratorData = useGenerationGraphStore((state) => state.loading);
-  const remixOfId = useRemixStore((state) => state.data?.remixOfId);
-  const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
-    state.requestsLoading,
-    state.hasGeneratedImages,
-  ]);
-
-  // Trigger tour when form is ready
-  useEffect(() => {
-    if (!status.available || status.isLoading || loadingGeneratorData) return;
-    // `paused` is a tour mid-step, waiting on its own `onNext` hook — and picking a remix
-    // option moves `remixOfId` inside exactly that window. Reading only `running` there
-    // re-entered `runTour({ key })`, which reinstates the UNFILTERED step array under a
-    // step index meant for the filtered one.
-    if (!running && !paused)
-      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
-  }, [
-    status.isLoading,
-    status.available,
-    loadingGenQueueRequests,
-    hasGeneratedImages,
-    remixOfId,
-    loadingGeneratorData,
-    paused,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // Configure tour steps based on user state
-  useEffect(() => {
-    const through = (steps: typeof contentGenerationTour, target: string) => {
-      const end = steps.findIndex((step) => step.target === `[data-tour="${target}"]`);
-      return end === -1 ? steps : steps.slice(0, end + 1);
-    };
-
-    if (!running || loadingGeneratorData) return;
-    const isRemix = remixOfId && activeTour === 'remix-content-generation';
-    let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
-
-    // Both cuts name the step they end on. As positional indexes they silently
-    // re-aimed at whatever moved into the slot — inserting the remix-menu step
-    // pushed `gen:submit` out of the signed-out tour, and nothing failed.
-    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = through(genSteps, 'gen:feed');
-    if (!currentUser) genSteps = through(genSteps, 'gen:submit');
-
-    const alreadyReviewedTerms =
-      window?.localStorage?.getItem('review-generation-terms') === 'true';
-    if (alreadyReviewedTerms)
-      genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
-
-    // Recomputed on every input change, not only at step 0: `hasGeneratedImages` flips the
-    // moment the user generates — which this tour asks them to do — and freezing the array
-    // there left a first-timer's tour permanently cut at `gen:feed`, without the select and
-    // post steps that hand over to the post-generation tour.
-    const next = nextTourSteps(steps, genSteps, currentStep);
-    if (next) setSteps(next);
-  }, [
-    loadingGenQueueRequests,
-    hasGeneratedImages,
-    remixOfId,
-    currentUser,
-    running,
-    activeTour,
-    loadingGeneratorData,
-    currentStep,
-  ]); // eslint-disable-line react-hooks/exhaustive-deps
+  useGenerationTour();
 
   // Get compatibility info based on current workflow and ecosystem
   const compatibility = useCompatibilityInfo({
@@ -773,9 +699,6 @@ export function GenerationForm() {
               }}
             />
 
-            {/* Ready State Alert - Resources need downloading */}
-            <ReadyAlert />
-
             {/* Generate cover toggle (audio workflows) */}
             <Controller
               graph={graph}
@@ -1026,6 +949,36 @@ export function GenerationForm() {
               )}
             />
 
+            <Controller
+              graph={graph}
+              name="yue2MusicMode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Mode</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+
+            <Controller
+              graph={graph}
+              name="soniloOperation"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <Input.Label>Generate</Input.Label>
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+
             {/* Snippet sources strip. Lives in its own Controller so it
                 auto-hides whenever the active graph doesn't include the
                 snippets node — i.e. the ecosystem subgraph didn't opt the
@@ -1192,7 +1145,7 @@ export function GenerationForm() {
             <Controller
               graph={graph}
               name="lyrics"
-              render={({ value, onChange }) => (
+              render={({ value, onChange, error }) => (
                 <Textarea
                   label="Lyrics"
                   description="Structured lyrics with section markers like [Verse], [Chorus], [Bridge]"
@@ -1201,8 +1154,40 @@ export function GenerationForm() {
                   }
                   value={value as string}
                   onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
                   autosize
                   minRows={4}
+                />
+              )}
+            />
+
+            <Controller
+              graph={graph}
+              name="yue2Mode"
+              render={({ value, meta, onChange }) => (
+                <div className="flex flex-col gap-1">
+                  <ControllerLabel label="Score planning" info={yue2ScorePlanningInfo} />
+                  <SegmentedControlWrapper
+                    value={value}
+                    onChange={(v) => onChange(v as typeof value)}
+                    data={[...(meta.options ?? [])]}
+                  />
+                </div>
+              )}
+            />
+            <Controller
+              graph={graph}
+              name="yue2Abc"
+              render={({ value, onChange, error }) => (
+                <Textarea
+                  label="ABC score (optional)"
+                  description="Supply a score to skip automatic composition. Leave blank to compose from your style and lyrics."
+                  placeholder={'X:1\nM:4/4\nL:1/4\nQ:1/4=105\nK:C\nC D E G |'}
+                  value={value}
+                  onChange={(e) => onChange(e.currentTarget.value)}
+                  error={error?.message}
+                  autosize
+                  minRows={3}
                 />
               )}
             />
@@ -1756,26 +1741,16 @@ export function GenerationForm() {
             <Controller
               graph={graph}
               name="aspectRatio"
-              render={({ value, meta, onChange }) => {
-                // Prefer explicit priorityOptions from the node meta; otherwise
-                // fall back to the middle 5 items when there are more than 5.
-                const priorityOptions =
-                  (meta as { priorityOptions?: string[] }).priorityOptions ??
-                  (meta.options.length > 5
-                    ? meta.options.slice(1, 6).map((o) => o.value)
-                    : undefined);
-
-                return (
-                  <AspectRatioInput
-                    value={value}
-                    onChange={onChange}
-                    label="Aspect Ratio"
-                    options={meta.options}
-                    priorityOptions={priorityOptions}
-                    maxVisible={5}
-                  />
-                );
-              }}
+              render={({ value, meta, onChange }) => (
+                <AspectRatioInput
+                  value={value}
+                  onChange={onChange}
+                  label="Aspect Ratio"
+                  options={meta.options}
+                  priorityOptions={(meta as { priorityOptions?: string[] }).priorityOptions}
+                  maxVisible={5}
+                />
+              )}
             />
 
             {/* Duration (video ecosystems) */}
@@ -1793,7 +1768,11 @@ export function GenerationForm() {
                 if (sliderMeta.min !== undefined && sliderMeta.max !== undefined) {
                   return (
                     <SliderInput
-                      label="Duration (seconds)"
+                      label={
+                        snapshot.ecosystem === 'YuE2'
+                          ? 'Maximum duration (seconds)'
+                          : 'Duration (seconds)'
+                      }
                       value={value as number}
                       onChange={onChange}
                       min={sliderMeta.min}
@@ -2530,7 +2509,7 @@ export function GenerationForm() {
                 )}
               />
 
-              {/* Wan: Interpolator model selector (v2.2) */}
+              {/* Wan: Interpolator model selector (v2.2-5b) */}
               <Controller
                 graph={graph}
                 name="interpolatorModel"
@@ -2543,20 +2522,6 @@ export function GenerationForm() {
                   />
                 )}
               />
-
-              {/* Wan: Draft mode toggle (v2.2) */}
-              {/* <Controller
-              graph={graph}
-              name="draft"
-              render={({ value, onChange }) => (
-                <Checkbox
-                  checked={value}
-                  onChange={(e) => onChange(e.target.checked)}
-                  label="Turbo Mode"
-                  description="Generate faster with optimized settings"
-                />
-              )}
-            /> */}
 
               {/* Image ControlNets — txt2img only, per ecosystem graph */}
               <Controller

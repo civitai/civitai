@@ -27,7 +27,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import type { CosmeticType } from '~/shared/utils/prisma/enums';
-import { CosmeticShopItemStatus } from '~/shared/utils/prisma/enums';
+import { getPackPurchaseBlockers } from '~/components/CosmeticShop/pack-purchase-blockers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { trpc } from '~/utils/trpc';
 
@@ -56,22 +56,12 @@ export const CosmeticPackPreviewModal = ({
   const acceptsBlue = !!pack?.meta.acceptsBlueBuzz;
   const accountTypes: BuzzSpendType[] =
     !acceptsBlue || payWith === 'default' ? [domainType] : ['blue', domainType];
-  const unavailable = (pack?.unavailableCount ?? 0) > 0;
-  // The server refuses a purchase that costs nothing — a free pack is
-  // repeatable, and each one stacks another consumable balance. Say so here
-  // rather than letting the button fail.
-  const nothingLeftToBuy = !!pack && pack.amountDue <= 0;
-  // The card that opened this can be stale — a pack delisted, withdrawn or sold
-  // out since it rendered would otherwise show a priced, enabled button that the
-  // server refuses.
-  const offSale = !!pack && (!pack.listed || pack.status !== CosmeticShopItemStatus.Published);
-  const soldOut =
-    !!pack &&
-    pack.availableQuantity !== null &&
-    (pack.meta.purchases ?? 0) >= pack.availableQuantity;
-  // The server refuses the lister outright. Without this the button renders
-  // priced and enabled for the one person guaranteed to fail.
-  const isOwnPack = !!pack?.isPackCreator;
+  const blockers = pack ? getPackPurchaseBlockers(pack) : undefined;
+  const unavailable = !!blockers?.unavailable;
+  const nothingLeftToBuy = !!blockers?.nothingLeftToBuy;
+  const offSale = !!blockers?.offSale;
+  const soldOut = !!blockers?.soldOut;
+  const isOwnPack = !!blockers?.isOwnPack;
 
   const handlePurchase = async () => {
     if (!pack) return;
@@ -108,7 +98,7 @@ export const CosmeticPackPreviewModal = ({
             </Group>
             <Center my="auto" h={250}>
               {pack?.meta.coverUrl ? (
-                <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} />
+                <EdgeMedia src={pack.meta.coverUrl} width={450} alt={pack.title} optimized />
               ) : (
                 <PackCoverTiles tiles={pack?.meta.coverTiles ?? []} size={230} fallbackIcon />
               )}
@@ -129,6 +119,11 @@ export const CosmeticPackPreviewModal = ({
                     it is discounted.
                   </Text>
                 )}
+                {/* Says nothing about those members not being delivered, which
+                    since #5034 they are not. Justin's call, 2026-09-22, asked
+                    and answered: the pack page already lists them and the buyer
+                    made them. Reviews keep proposing the missing sentence — it
+                    was declined, not overlooked. */}
                 {pack.selfAuthored > 0 && (
                   <Text size="xs" c="dimmed">
                     You made {numberWithCommas(pack.selfAuthored)} Buzz worth of what&apos;s in
@@ -165,14 +160,7 @@ export const CosmeticPackPreviewModal = ({
                   )
                 )}
                 <BuzzTransactionButton
-                  disabled={
-                    purchasingShopItem ||
-                    unavailable ||
-                    nothingLeftToBuy ||
-                    isOwnPack ||
-                    offSale ||
-                    soldOut
-                  }
+                  disabled={purchasingShopItem || !!blockers?.blocked}
                   loading={purchasingShopItem}
                   buzzAmount={pack.amountDue}
                   radius="xl"

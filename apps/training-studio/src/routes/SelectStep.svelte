@@ -8,14 +8,15 @@
     IconPlus,
     IconX,
     IconArrowRight,
+    IconSearch,
   } from '@tabler/icons-svelte';
   import { untrack } from 'svelte';
+  import { pickModel } from '$lib/host';
+  import BlueFirstNote from '$lib/components/BlueFirstNote.svelte';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import {
-    CUSTOM_MODEL_SURCHARGE,
     MEDIA_OPTIONS,
-    cardByType,
     cardsForMedia,
     releasedLabel,
     typesForMedia,
@@ -34,6 +35,7 @@
     nextRunId,
     recommendedCardFor,
     runCard,
+    runVersion,
     runVersionLabel,
     selectionFromTotal,
     type Run,
@@ -43,19 +45,26 @@
   let {
     onContinue,
     prices,
+    enabledModelFlags = [],
     initial = null,
   }: {
     onContinue: (sel: Selection) => void;
     prices: Record<string, number>;
+    /** Per-model catalog gates this user may see (`ModelCard.flagKey`). Cards whose gate isn't in
+     *  this set are hidden from every offer surface below. */
+    enabledModelFlags?: string[];
     /** The selection to restore when re-entering this step (e.g. Back from Data) — the flow owns it, so a
      *  remount doesn't lose the chosen model(s). */
     initial?: Selection | null;
   } = $props();
 
+  // Derived so the seed and lists reflect the prop rather than a captured snapshot.
+  const enabledFlags = $derived(new Set(enabledModelFlags));
+
   // The "from" price for a card — the single source of truth lives in trainingFlow so Select/Data/Review
   // can't drift. Null when the orchestrator hasn't quoted it (the caller shows a muted em-dash).
-  function price(cardType: string, custom = false): number | null {
-    return cardFromPrice(prices, cardType, custom);
+  function price(cardType: string): number | null {
+    return cardFromPrice(prices, cardType);
   }
 
   // Seed from a restored selection (Back from Data) when present, else the defaults. untrack marks the
@@ -63,10 +72,16 @@
   let media = $state<Media>(untrack(() => initial?.media ?? 'image'));
   let loraType = $state<string>(untrack(() => initial?.loraType ?? 'character'));
   let runs = $state<Run[]>(
-    untrack(() => (initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image'))]))
+    untrack(() =>
+      initial ? [...initial.runs] : [newRun(recommendedCardFor('character', 'image', enabledFlags))]
+    )
   );
   let focus = $state(0);
   let sweepOpen = $state(untrack(() => (initial?.runs.length ?? 1) > 1));
+  // Until the user touches the base model it tracks the type's recommendation; after that a type
+  // change keeps their pick. Silently swapping a hand-picked SDXL for the recommended model on a
+  // Character→Style click is how a tester started (and paid for) a run on a model they never chose.
+  let userPickedModel = $state(untrack(() => initial?.userPickedModel ?? false));
 
   const types = $derived(typesForMedia(media));
   const type = $derived(types.find((t) => t.id === loraType) ?? types[0]!);
@@ -75,7 +90,13 @@
   const focused = $derived(runs[focus] ?? primary);
   const selectedCard = $derived(runCard(focused));
   const recommendedType = $derived(type.recommended[media]);
-  const recommendedCard = $derived(recommendedType ? cardByType(recommendedType) : undefined);
+  // Undefined when the type has no recommendation for this media, or when the recommended model is gated
+  // off for this user — the banner then simply doesn't show.
+  const recommendedCard = $derived(
+    recommendedType
+      ? cardsForMedia(media, enabledFlags).find((c) => c.type === recommendedType)
+      : undefined
+  );
   // A tight, current set is featured up front; the long tail (older / niche models) sits behind a "show
   // more" toggle so the list isn't a wall of ~20 models. Audio has one card, so it shows everything.
   // `featuredCards` keeps the FEATURED order — the recommended model is first in it.
@@ -84,7 +105,7 @@
     video: ['minimaxh3', 'wan', 'ltx'],
   };
   const featuredCards = $derived.by(() => {
-    const cards = cardsForMedia(media);
+    const cards = cardsForMedia(media, enabledFlags);
     const featured = FEATURED[media];
     if (!featured) return cards;
     return featured
@@ -95,7 +116,7 @@
     const featured = FEATURED[media];
     if (!featured) return [];
     const featuredSet = new Set(featured);
-    return cardsForMedia(media).filter((c) => !featuredSet.has(c.type));
+    return cardsForMedia(media, enabledFlags).filter((c) => !featuredSet.has(c.type));
   });
   let showAllModels = $state(false);
   // Keep the tail open when the chosen model lives there, so the selection is never hidden.
@@ -106,6 +127,9 @@
   const labelModeNoun = $derived(labelNoun(runCard(primary)));
   // Partial when any selected run is unpriced — the summary shows "—" rather than a total missing a model.
   const total = $derived(selectionFromTotal(prices, runs));
+  const keptOverRecommendation = $derived(
+    !multi && userPickedModel && !!recommendedCard && recommendedCard.type !== primary.cardType
+  );
 
   function pickMedia(m: Media) {
     if (m === media) return;
@@ -115,15 +139,16 @@
     const next = typesForMedia(m);
     const t = next.find((o) => o.id === loraType) ?? next[0]!;
     loraType = t.id;
-    runs = [newRun(recommendedCardFor(t.id, m))];
+    runs = [newRun(recommendedCardFor(t.id, m, enabledFlags))];
+    userPickedModel = false;
     focus = 0;
     sweepOpen = false;
   }
 
   function pickType(id: string) {
     loraType = id;
-    if (runs.length === 1) {
-      runs = [newRun(recommendedCardFor(id, media))];
+    if (runs.length === 1 && !userPickedModel) {
+      runs = [newRun(recommendedCardFor(id, media, enabledFlags))];
       focus = 0;
     }
   }
@@ -131,6 +156,14 @@
   function pickBase(card: ModelCard) {
     if (multi && !labelOptions(card).includes(labelMode)) return; // label-type lock
     runs = runs.map((r, i) => (i === focus ? { ...newRun(card), id: r.id } : r));
+    userPickedModel = true;
+  }
+
+  function useRecommended() {
+    if (!recommendedCard) return;
+    runs = [newRun(recommendedCard)];
+    focus = 0;
+    userPickedModel = false;
   }
 
   function openSweep() {
@@ -140,12 +173,46 @@
 
   function pickVersion(runIndex: number, versionKey: string) {
     runs = runs.map((r, i) => (i === runIndex ? { ...r, versionKey } : r));
+    userPickedModel = true;
   }
   function setCustomAir(runIndex: number, value: string) {
-    runs = runs.map((r, i) => (i === runIndex ? { ...r, customAir: value } : r));
+    // A hand-edited AIR is no longer the picked model — drop its name.
+    runs = runs.map((r, i) =>
+      i === runIndex ? { ...r, customAir: value, customName: undefined } : r
+    );
+    userPickedModel = true;
+    pickErrorRunId = null;
   }
   // A Custom run needs a valid pasted AIR before it can continue.
   const customIncomplete = $derived(runs.some((r) => isCustom(r) && !isValidAir(r.customAir ?? '')));
+
+  // The host's model picker (the embed's resource-select modal); absent standalone — the paste
+  // input then stands alone. Resolved at use time, like every other capability accessor.
+  let pickingRunId = $state<number | null>(null);
+  let pickErrorRunId = $state<number | null>(null);
+
+  async function browseModel(run: Run) {
+    const pick = pickModel();
+    if (!pick || pickingRunId !== null) return;
+    pickingRunId = run.id;
+    pickErrorRunId = null;
+    const airAtStart = run.customAir;
+    try {
+      const picked = await pick({ ecosystem: runVersion(run).ecosystem });
+      // Keyed by run id (a sweep row can be removed while the picker is open), and only onto an
+      // untouched input — a hand-edit during the pick beats a late resolution.
+      if (picked)
+        runs = runs.map((r) =>
+          r.id === run.id && r.customAir === airAtStart
+            ? { ...r, customAir: picked.air, customName: picked.name }
+            : r
+        );
+    } catch {
+      pickErrorRunId = run.id;
+    } finally {
+      pickingRunId = null;
+    }
+  }
 
   function addRun() {
     if (runs.length >= MAX_RUNS) return;
@@ -165,8 +232,8 @@
 
   function versionsFor(card: ModelCard) {
     return [
-      ...card.versions.map((v) => ({ key: v.key, label: v.label, surcharge: 0 })),
-      { key: CUSTOM_VERSION_KEY, label: 'Custom', surcharge: CUSTOM_MODEL_SURCHARGE },
+      ...card.versions.map((v) => ({ key: v.key, label: v.label })),
+      { key: CUSTOM_VERSION_KEY, label: 'Custom' },
     ];
   }
 
@@ -202,7 +269,8 @@
   {/if}
 {/snippet}
 
-<!-- The Custom… base: paste a Civitai model AIR to train on (we don't have a model picker yet). -->
+<!-- The Custom… base: paste a Civitai model AIR to train on — or browse the host's model picker
+     when it offers one (the embed's resource-select modal). -->
 {#snippet customAirInput(run: Run, runIndex: number)}
   <div class="mt-2.5">
     <label
@@ -211,16 +279,36 @@
     >
       Civitai model AIR
     </label>
-    <Input
-      id={`custom-air-${run.id}`}
-      value={run.customAir ?? ''}
-      oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
-      placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
-      class="mt-1 font-mono text-xs"
-    />
+    <div class="mt-1 flex items-center gap-2">
+      <Input
+        id={`custom-air-${run.id}`}
+        value={run.customAir ?? ''}
+        oninput={(e) => setCustomAir(runIndex, (e.currentTarget as HTMLInputElement).value)}
+        placeholder="urn:air:sdxl:checkpoint:civitai:…@…"
+        class="min-w-0 flex-1 font-mono text-xs"
+      />
+      {#if pickModel()}
+        <Button
+          variant="outline"
+          size="sm"
+          class="shrink-0"
+          disabled={pickingRunId !== null}
+          onclick={() => browseModel(run)}
+        >
+          <IconSearch size={13} stroke={2} class="mr-1 inline" />
+          {pickingRunId === run.id ? 'Browsing…' : 'Browse models'}
+        </Button>
+      {/if}
+    </div>
     <p class="mt-1 text-xs leading-snug text-dark-2">
       {#if run.customAir && !isValidAir(run.customAir)}
         <span class="text-buzz">Paste a full model AIR — it starts with <code>urn:air:</code>.</span>
+      {:else if pickErrorRunId === run.id}
+        <span class="text-buzz">Couldn't open the model browser — paste the AIR instead.</span>
+      {:else if run.customName}
+        Training on <span class="font-semibold text-dark-0">{run.customName}</span>
+      {:else if pickModel()}
+        Browse for a Civitai model to train on, or paste its AIR from the model's page.
       {:else}
         Paste the AIR of a Civitai model to train on (copy it from the model's page).
       {/if}
@@ -237,8 +325,9 @@
       </p>
     </div>
 
-    <!-- Media + Type gate everything below (switching either resets the model), so they stay full
-         labeled rows rather than a dropdown or a quiet segmented strip that would under-sell them. -->
+    <!-- Media + Type gate everything below (media always resets the model; type does until the user
+         picks one), so they stay full labeled rows rather than a dropdown or a quiet segmented strip
+         that would under-sell them. -->
     <div class="flex flex-col gap-3">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1.5">
         <div id="media-group-label" class="w-14 shrink-0 font-mono text-xs uppercase tracking-wider text-dark-2">
@@ -318,7 +407,19 @@
           <IconStarFilled size={12} class="mr-0.5 inline text-buzz" />
           We recommend <span class="font-semibold text-white">{recommendedCard.name}</span> for a
           {type.name.toLowerCase()}
-          {media} LoRA — or pick any below.
+          {media} LoRA —
+          {#if keptOverRecommendation}
+            keeping your pick, <span class="font-semibold text-white">{selectedCard.name}</span>.
+            <button
+              type="button"
+              onclick={useRecommended}
+              class="font-semibold text-primary underline-offset-2 hover:underline"
+            >
+              Use {recommendedCard.name} instead
+            </button>
+          {:else}
+            or pick any below.
+          {/if}
         </p>
       {/if}
 
@@ -355,26 +456,30 @@
               {disabled ? 'cursor-not-allowed opacity-40 grayscale' : ''}"
           >
             <div class="flex items-center gap-2">
-              <div class="min-w-0 flex-1">
-                <div class="truncate text-sm font-semibold text-dark-0">{card.name}</div>
+              <div class="min-w-0 flex-1 truncate text-sm font-semibold text-dark-0">
+                {card.name}
               </div>
-              {#if card.flag}
-                <span class="inline-flex shrink-0 items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
-                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
-                </span>
-              {/if}
               {#if selected}
                 <span class="grid h-4 w-4 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground">
                   <IconCheck size={11} stroke={3} />
                 </span>
               {/if}
             </div>
+            <!-- Own row, never sharing the title's: on the recommended tile the badge was truncating
+                 the model name to "MiniMax …". -->
+            {#if card.flag}
+              <div class="mt-1">
+                <span class="inline-flex items-center gap-0.5 rounded bg-primary px-1.5 py-0.5 font-mono text-xs font-bold uppercase tracking-wide text-primary-foreground">
+                  {#if card.flag === 'recommended'}<IconStarFilled size={8} />{/if}{card.flag}
+                </span>
+              </div>
+            {/if}
             <!-- Two lines, and always two lines tall: at one line most taglines were clipped mid-sentence,
                  and letting the height follow the text made the price rows sit at different heights. -->
             <div class="mt-1 line-clamp-2 min-h-[2lh] text-xs leading-snug text-dark-2">
               {card.description}
             </div>
-            <div class="mt-2 flex items-center gap-2">
+            <div class="mt-auto flex items-center gap-2 pt-2">
               {#if cardPrice != null}
                 <span
                   class="inline-flex items-center whitespace-nowrap rounded border border-buzz/25 bg-buzz/[0.08] px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
@@ -422,10 +527,12 @@
         </button>
       {/if}
 
+      <BlueFirstNote class="mt-2" />
+
       <!-- version choice for the single selected model, inline (no disclosure) -->
       {#if !multi}
         {@const card = selectedCard}
-        {@const runPrice = price(primary.cardType, isCustom(primary))}
+        {@const runPrice = price(primary.cardType)}
         <div class="mt-3 rounded-md border border-dark-4 bg-dark-6 p-3">
           <div class="flex items-center gap-3">
             <div class="min-w-0">
@@ -434,11 +541,7 @@
                 {runVersionLabel(primary)}
               </div>
               <div class="font-mono text-xs text-dark-2">
-                {labelNoun(card)}{#if isCustom(primary)} · custom (+<IconBoltFilled
-                    size={10}
-                    stroke={2}
-                    class="inline"
-                  />{CUSTOM_MODEL_SURCHARGE}){/if}
+                {labelNoun(card)}{#if isCustom(primary)} · custom{/if}
               </div>
             </div>
             <div class="ml-auto">{@render priceTag(runPrice, 'text-[13px]')}</div>
@@ -464,13 +567,6 @@
                 >
                   <div class="flex items-center gap-2">
                     <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
-                    {#if v.surcharge}
-                      <span
-                        class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
-                      >
-                        +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                      </span>
-                    {/if}
                   </div>
                 </button>
               {/each}
@@ -504,10 +600,20 @@
           {#each runs as r, ri (r.id)}
             {@const card = runCard(r)}
             {@const focusedRow = ri === focus}
-            {@const runPrice = price(r.cardType, isCustom(r))}
+            {@const runPrice = price(r.cardType)}
+            <!-- Whole-card pointer target: anywhere on the row focuses the run (inner controls keep
+                 their own behavior and bubble here, which also focuses — intended; the remove X is
+                 the exception, since its run is gone and removeRun already re-aims focus). Keyboard
+                 focus stays on the title button below, the semantic control — so no role/tabindex
+                 here. -->
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
-              class="rounded-md border p-3 transition
-                {focusedRow ? 'border-primary ring-2 ring-primary/30' : 'border-dark-4 bg-dark-6'}"
+              onclick={() => (focus = ri)}
+              class="cursor-pointer rounded-md border p-3 transition
+                {focusedRow
+                ? 'border-primary ring-2 ring-primary/30'
+                : 'border-dark-4 bg-dark-6 hover:border-dark-3'}"
             >
               <div class="flex items-center gap-3">
                 <button
@@ -522,11 +628,7 @@
                       {runVersionLabel(r)}
                     </div>
                     <div class="font-mono text-xs text-dark-2">
-                      {labelNoun(card)}{#if isCustom(r)} · custom (+<IconBoltFilled
-                          size={10}
-                          stroke={2}
-                          class="inline"
-                        />{CUSTOM_MODEL_SURCHARGE}){/if}{focusedRow ? ' · editing' : ''}
+                      {labelNoun(card)}{#if isCustom(r)} · custom{/if}{focusedRow ? ' · editing' : ''}
                     </div>
                   </div>
                 </button>
@@ -535,7 +637,10 @@
                   <button
                     type="button"
                     aria-label={`Remove run ${ri + 1}`}
-                    onclick={() => removeRun(ri)}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      removeRun(ri);
+                    }}
                     class="grid h-7 w-7 shrink-0 place-items-center rounded border border-dark-4 text-dark-2 hover:border-red-500 hover:text-red-400"
                   >
                     <IconX size={14} stroke={2} />
@@ -557,13 +662,6 @@
                   >
                     <div class="flex items-center gap-2">
                       <span class="text-[12.5px] font-bold text-dark-0">{v.label}</span>
-                      {#if v.surcharge}
-                        <span
-                          class="inline-flex rounded bg-buzz/15 px-1.5 py-0.5 font-mono text-xs font-semibold text-buzz"
-                        >
-                          +<IconBoltFilled size={10} stroke={2} class="inline" />{v.surcharge.toLocaleString()}
-                        </span>
-                      {/if}
                     </div>
                   </button>
                 {/each}
@@ -596,11 +694,15 @@
     <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
       <span class="text-dark-2">Type</span><span class="font-semibold text-dark-0">{type.name}</span>
     </div>
-    {#if multi}
+    {#each runs as r, ri (r.id)}
       <div class="flex justify-between gap-2.5 border-b border-dark-4 py-2 text-sm">
-        <span class="text-dark-2">Models</span><span class="font-semibold text-dark-0">{runs.length}</span>
+        <span class="shrink-0 text-dark-2">{multi ? `Run ${ri + 1}` : 'Base model'}</span>
+        <span class="truncate text-right font-semibold text-dark-0" title={isCustom(r) ? r.customAir : undefined}>
+          {runCard(r).name}
+          {runVersionLabel(r)}
+        </span>
       </div>
-    {/if}
+    {/each}
     <div class="flex justify-between gap-2.5 py-2 text-sm">
       <span class="text-dark-2">Labeling</span>
       <span class="font-semibold text-dark-0">{labelMode === 'tag' ? 'Tags' : 'Captions'}</span>
@@ -621,7 +723,7 @@
     <Button
       class="mt-4 h-11 w-full"
       disabled={customIncomplete}
-      onclick={() => onContinue({ media, loraType, runs })}
+      onclick={() => onContinue({ media, loraType, runs, userPickedModel })}
     >
       Continue to data<IconArrowRight size={15} stroke={2} class="ml-1.5 inline" />
     </Button>

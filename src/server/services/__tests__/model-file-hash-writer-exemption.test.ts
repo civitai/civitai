@@ -36,13 +36,6 @@ vi.mock('~/utils/delivery-worker', () => ({
 }));
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (url: string) => url }));
 vi.mock('~/env/other', () => ({ isProd: false }));
-vi.mock('~/env/server', () => ({
-  env: {
-    ORCHESTRATOR_ACCESS_TOKEN: undefined,
-    NEXTAUTH_URL: 'https://civitai.test',
-    WEBHOOK_TOKEN: 'wh-token',
-  },
-}));
 
 // --- model-file-scan.service edges (normalizeScanHashes itself stays real) --
 vi.mock('~/server/redis/caches', () => ({ dataForModelsCache: { refresh: vi.fn() } }));
@@ -70,6 +63,15 @@ import { normalizeScanHashes } from '~/server/services/model-file-scan.service';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+
+// Overrides on the canonical env mock, so keys this file doesn't name (LOGGING, read at import by
+// createLogger) keep their defaults.
+setEnv({
+  ORCHESTRATOR_ACCESS_TOKEN: undefined,
+  NEXTAUTH_URL: 'https://civitai.test',
+  WEBHOOK_TOKEN: 'wh-token',
+});
 const mockDbWrite = dbMock.dbWrite;
 dbMock.dbWrite.modelFile.update.mockResolvedValue({});
 dbMock.dbWrite.modelFileHash.upsert.mockResolvedValue({});

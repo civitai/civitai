@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type { NOWPayments } from '~/server/http/nowpayments/nowpayments.schema';
 
 // Use vi.hoisted so mocks are available inside vi.mock factories
@@ -170,6 +171,77 @@ describe('processDeposit', () => {
 
     expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  it('records failed status and grants zero buzz', async () => {
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'confirming',
+      buzzCredited: null,
+    });
+
+    const event = makeWebhookEvent({ payment_status: 'failed', outcome_amount: 5.0 });
+    const result = await processDeposit(12345, 'failed', event);
+
+    expect(result).toEqual({ userId: 42, buzzAmount: 0, transactionId: undefined });
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+
+    const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+    expect(upsertCall?.create).toMatchObject({ status: 'failed' });
+    expect(upsertCall?.update).toHaveProperty('status', 'failed');
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'NowPayments reported deposit failed', userId: 42 })
+    );
+  });
+
+  it('does not overwrite buzz_failed status with failed (keeps it in the retry sweep)', async () => {
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'buzz_failed',
+      buzzCredited: null,
+    });
+
+    const event = makeWebhookEvent({ payment_status: 'failed', outcome_amount: 5.0 });
+    await processDeposit(12345, 'failed', event);
+
+    expect(mockDbWrite.cryptoDeposit.upsert).toHaveBeenCalledTimes(1);
+    const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0][0];
+    // No `status` in the update means the row keeps its buzz_failed status.
+    expect(upsertCall.update).not.toHaveProperty('status');
+  });
+
+  it('preserves recorded amounts when a failed event with null amounts lands on a finished row', async () => {
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'finished',
+      payAmount: 10,
+      outcomeAmount: 9.5,
+      buzzCredited: 9500,
+    });
+
+    const event = makeWebhookEvent({
+      payment_status: 'failed',
+      actually_paid: null,
+      outcome_amount: null,
+    });
+    await processDeposit(12345, 'failed', event);
+
+    const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0][0];
+    // Status stays finished (immutable) and the amounts are not nulled out.
+    expect(upsertCall.update).not.toHaveProperty('status');
+    expect(upsertCall.update).toMatchObject({ payAmount: 10, outcomeAmount: 9.5 });
+  });
+
+  it('advances failed to finished when a completed webhook arrives afterward', async () => {
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValueOnce({
+      status: 'failed',
+      buzzCredited: null,
+    });
+
+    const event = makeWebhookEvent({ outcome_amount: 5.0 });
+    await processDeposit(12345, 'finished', event);
+
+    expect(mockGrantBuzzPurchase).toHaveBeenCalled();
+    const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+    expect(upsertCall?.update).toHaveProperty('status', 'finished');
   });
 
   it('calculates buzz correctly: floors fractional amounts', async () => {

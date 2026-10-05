@@ -37,6 +37,17 @@ export const reactableEntities = [
   'bountyEntry',
 ] as const;
 
+/**
+ * Cap matches `getStickerPlacementsSchema`, the other per-viewer batch a feed surface makes, so
+ * both chunk at the same size. The client chunks rather than truncating: a partially hydrated
+ * grid leaves the un-hydrated cards showing an un-given reaction, which is the state that gets a
+ * viewer to click their own reaction off again.
+ */
+export type GetMyImageReactionsInput = z.infer<typeof getMyImageReactionsSchema>;
+export const getMyImageReactionsSchema = z.object({
+  imageIds: z.array(z.number()).min(1).max(100),
+});
+
 export type ReactionEntityType = ToggleReactionInput['entityType'];
 export type ToggleReactionInput = z.infer<typeof toggleReactionSchema>;
 export const toggleReactionSchema = z.object({

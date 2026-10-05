@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { toResourceSelectFilterInput } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { queryRetry, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -45,8 +46,7 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
       sort,
       limit,
       resources: resources.map((r) => ({ type: r.type as ModelType, baseModels: r.baseModels })),
-      filterTypes: filters.types,
-      filterBaseModels: filters.baseModels,
+      ...toResourceSelectFilterInput(filters),
       tagName: categoryTag,
       canGenerate,
       excludedVersionIds: excludedIds,
@@ -64,10 +64,14 @@ export function useResourceSelectInfinite({ query }: { query: string }) {
     }
   );
 
+  const coverageNext = queryResult.data?.pages[0]?.coverageNext ?? false;
+  // Absent page = no data yet; member:false is the narrower view, so a hit cannot flash selectable.
+  const member = queryResult.data?.pages[0]?.member ?? false;
+
   const items = useMemo(
     () => queryResult.data?.pages.flatMap((p) => p.items) ?? [],
     [queryResult.data]
   );
 
-  return { ...queryResult, items };
+  return { ...queryResult, items, coverageNext, member };
 }

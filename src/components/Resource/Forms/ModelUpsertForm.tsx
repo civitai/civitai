@@ -119,7 +119,8 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Image, label: 'Sell generated images' },
   { value: CommercialUse.RentCivit, label: 'Use on Civitai generation service' },
   { value: CommercialUse.Rent, label: 'Use on other generation services' },
-  { value: CommercialUse.Sell, label: 'Sell this model or merges' },
+  { value: CommercialUse.Sell, label: 'Sell this model' },
+  { value: CommercialUse.SellMerge, label: 'Sell merges using this model' },
 ];
 
 // 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below
@@ -171,6 +172,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
       CommercialUse.RentCivit,
       CommercialUse.Rent,
       CommercialUse.Sell,
+      CommercialUse.SellMerge,
     ],
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,

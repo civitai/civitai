@@ -826,6 +826,36 @@ export async function getModelPaidAccessGates(
 }
 
 /**
+ * Live gate terms keyed by VERSION, for the search-index document build. The model-level rollup above
+ * keeps only a deadline, which cannot say whether generation is free on a particular version.
+ *
+ * Sales are deliberately not resolved: `discountedPrice` floors at `MIN_SALE_PRICE`, so no signal can
+ * change under a sale. Raw SQL rather than `getPaidAccess` so a full index rebuild doesn't churn its
+ * Redis cache.
+ */
+export async function getModelVersionPaidAccessTerms(
+  versionIds: number[]
+): Promise<Map<number, { endsAt: Date | null; terms: ModelVersionTerms }>> {
+  if (!versionIds.length) return new Map();
+
+  // `paidAccessLiveSql` scopes on `mv.status`, so the join is required for it to compile.
+  const rows = await dbRead.$queryRaw<{ entityId: number; endsAt: Date | null; terms: unknown }[]>`
+    SELECT pa."entityId", pa."endsAt", pa.terms
+    FROM "PaidAccess" pa
+    JOIN "ModelVersion" mv ON mv.id = pa."entityId"
+    WHERE ${paidAccessLiveSql}
+      AND pa."entityId" IN (${Prisma.join(versionIds)})
+  `;
+
+  return new Map(
+    rows.map((r) => [
+      Number(r.entityId),
+      { endsAt: r.endsAt ?? null, terms: r.terms as ModelVersionTerms },
+    ])
+  );
+}
+
+/**
  * Every model with a live gate, unbounded. The batched `getModelPaidAccessGates` cannot serve this —
  * the feed filter needs the whole set before it knows which models it is choosing between.
  *

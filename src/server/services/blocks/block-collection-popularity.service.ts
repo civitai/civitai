@@ -87,25 +87,24 @@ export const CH_RANKING_DEPTH = 10_000;
  *
  * 🔴 MORE THAN ONE, BECAUSE THE TRANSPORT UNDER THIS QUERY DROPS REQUESTS AT A RATE A
  * ONE-SHOT READ CANNOT ABSORB, AND A DROP HERE IS USER-VISIBLE. `@clickhouse/client`
- * 0.2.10 pools keep-alive sockets and proactively destroys any it hands out that has
- * been idle longer than `keep_alive.socket_ttl` (2500 ms, set in
- * `packages/civitai-clickhouse/src/client.ts`). When the socket it is handed is stale
- * it destroys that socket and asks the agent for another — four times — and then
- * throws `Socket hang up after 3 retries`, instantly, before a byte reaches
- * ClickHouse. Measured against the production deployment on 2026-09-11: **~341 such
- * throws per hour** app-wide, and the single live `period=Month` request in that
- * day's ingress access log (21:58:27Z) is one of them — it degraded to the all-time Postgres
- * ordering and rendered the app's "ranking isn't available right now" note.
+ * pools keep-alive sockets and retires any it is about to hand out that has been idle
+ * longer than `keep_alive.idle_socket_ttl` (2500 ms, set in
+ * `packages/civitai-clickhouse/src/client.ts`); when the connection it does hand out
+ * was already closed by the server the request throws `socket hang up` instantly,
+ * before a byte reaches ClickHouse. Measured against the production deployment on
+ * 2026-09-11, then running 0.2.10: **~341 such throws per hour** app-wide, and the
+ * single live `period=Month` request in that day's ingress access log (21:58:27Z) is
+ * one of them — it degraded to the all-time Postgres ordering and rendered the app's
+ * "ranking isn't available right now" note.
  *
- * 🔴 THE CLIENT'S OWN FOUR ATTEMPTS ARE NOT A SUBSTITUTE, AND AN ATTEMPT HERE IS BEST
- * READ AS "DRAIN UP TO FOUR MORE STALE SOCKETS". No `max_open_connections` is
- * configured, so Node's agent pools without bound and a burst can leave more than four
- * idle sockets behind; each failed `$query` retires the four it touched, so a further
- * ask is materially more likely to reach a live or brand-new connection than the one
- * before it. THREE is therefore a probability improvement, not a guarantee — the
- * durable fix is at the shared client (bound the pool, or stop handing out sockets
- * this close to their TTL), which is an app-wide change and deliberately not made from
- * this feature.
+ * 🔴 AN ATTEMPT HERE IS BEST READ AS "DRAIN ANOTHER STALE SOCKET". The pool is
+ * unbounded (`max_open_connections: Infinity`), so a burst can leave several dead
+ * sockets behind and each failed `$query` retires the one it touched — a further ask
+ * is materially more likely to reach a live or brand-new connection than the one
+ * before it. THREE is therefore a probability improvement, not a guarantee. The shared
+ * client now sweeps stale sockets before handing one out
+ * (`keep_alive.eagerly_destroy_stale_sockets`); whether that removes the need for this
+ * loop is a question for the measured socket-hangup rate, not for this file.
  *
  * 🔴 IT IS A RETRY OF A `SELECT`, AND NOTHING ELSE MAY EVER BE RETRIED HERE. This
  * query reads; it has no side effect to duplicate. A future writer on this path must
@@ -120,9 +119,9 @@ export const CH_RANKING_MAX_ATTEMPTS = 3;
  * is a budget and not a plain attempt count. The failure mode above is instantaneous
  * (the socket is destroyed locally, nothing is sent), so every attempt it allows fits
  * inside the budget many times over. The failure mode that must NOT be retried is a
- * slow one — `@clickhouse/client`'s own 30 s `request_timeout` against a saturated or
- * unreachable server — because retrying that parks a user-facing discovery request for
- * a further 30 s to reach the same answer it already had. Elapsed time is the signal
+ * slow one — the client's `request_timeout`, 300 s, against a saturated or unreachable
+ * server — because retrying that parks a user-facing discovery request for a further
+ * 300 s to reach the same answer it already had. Elapsed time is the signal
  * that separates them, so elapsed time is what is measured.
  *
  * 1500 ms sits an order of magnitude above the whole healthy query (Month ranks
@@ -208,7 +207,7 @@ export async function getWindowedCollectionRanking({
   // ATTEMPT LOOP — see CH_RANKING_MAX_ATTEMPTS / CH_RANKING_RETRY_BUDGET_MS. The
   // budget is measured from the START of the first attempt, not per attempt, so the
   // whole loop costs at most CH_RANKING_RETRY_BUDGET_MS plus one final attempt —
-  // never CH_RANKING_MAX_ATTEMPTS × the client's own 30 s request_timeout.
+  // never CH_RANKING_MAX_ATTEMPTS × the client's 300 s request_timeout.
   const startedAt = Date.now();
   let lastError: unknown;
   let attempts = 0;

@@ -92,7 +92,6 @@ export function ChapterComments({
           showMore: false,
           toggleShowMore: () => {},
           highlighted,
-          hiddenCount: 0,
           forceLocked: undefined,
           sort,
           setSort,

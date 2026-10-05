@@ -1,15 +1,23 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import MyTrainings from '../../routes/MyTrainings.svelte';
   import TrainingFlow from '../../routes/TrainingFlow.svelte';
   import RunView from './RunView.svelte';
   import { backend, navigate, type StudioLocation } from '$lib/host';
+  import { buzzBalance } from '$lib/buzz-balance.svelte';
 
   // The element's internal views — the host owns the URL space and hands us a location; everything
   // below resolves data through the backend seam, so no view ever leaves the embedding page.
   let {
     location,
     reloadTick = 0,
-  }: { location: StudioLocation; reloadTick?: number } = $props();
+    enabledModelFlags = [],
+  }: { location: StudioLocation; reloadTick?: number; enabledModelFlags?: string[] } = $props();
+
+  // The shell seeds the balance from its server load; the element must pull it through the host's
+  // getBuzzBalances (null when the host has none) — without this, the Review step's Yellow/Green
+  // spend confirmation had no Blue balance to compare against in the embed and never fired.
+  onMount(() => void buzzBalance.refresh());
 
   // `reloadTick` is the host-context refresh(): bumping it rebuilds the promises, so "server data is
   // stale" re-reads the current view. Entering a view re-derives too, so home is always fresh after
@@ -29,9 +37,9 @@
     {#await pricesPromise}
       <div class="grid place-items-center py-20 font-mono text-sm text-dark-2">Loading pricing…</div>
     {:then prices}
-      <TrainingFlow {prices} onExit={() => navigate({ view: 'home' })} />
+      <TrainingFlow {prices} {enabledModelFlags} onExit={() => navigate({ view: 'home' })} />
     {:catch}
-      <TrainingFlow prices={{}} onExit={() => navigate({ view: 'home' })} />
+      <TrainingFlow prices={{}} {enabledModelFlags} onExit={() => navigate({ view: 'home' })} />
     {/await}
   {/if}
 {:else if rowsPromise}

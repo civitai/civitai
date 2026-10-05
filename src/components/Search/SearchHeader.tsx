@@ -99,7 +99,7 @@ export const SearchHeader = () => {
       ),
       value: MODELS_SEARCH_INDEX,
     },
-    features.imageSearch
+    features.imageSearchEntry
       ? {
           label: (
             <Group align="center" gap={8} wrap="nowrap">

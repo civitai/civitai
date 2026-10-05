@@ -16,14 +16,12 @@ const {
   mockGetTransactionByExternalId,
   mockRefundMultiAccountTransaction,
   mockRefundTransaction,
-  
 } = vi.hoisted(() => ({
   mockCreateBuzzTransaction: vi.fn(),
   mockCreateBuzzTransactionMany: vi.fn(),
   mockGetTransactionByExternalId: vi.fn(),
   mockRefundMultiAccountTransaction: vi.fn().mockResolvedValue({ refundedTransactions: [] }),
   mockRefundTransaction: vi.fn(),
-  
 }));
 const mockChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
 const mockCollectionItemCount = dbMock.dbRead.collectionItem.count;
@@ -42,7 +40,7 @@ const {
   chargeEntryFees,
   chargeInitialPrize,
   refundUserChallengeFunds,
-  buildWinnerPayoutTransactions,
+  buildWinnerPrizes,
   reportPoolFundingShortfall,
 } = await import('./challenge-funding');
 const { CHALLENGE_ENTRY_HOUSE_CUT, getEntryPoolContribution } = await import(
@@ -268,7 +266,12 @@ describe('chargeInitialPrize externalTransactionId', () => {
   });
 
   it('scopes the externalTransactionId by currency (yellow)', async () => {
-    await chargeInitialPrize({ challengeId: 42, userId: 7, amount: 100, fromAccountType: 'yellow' });
+    await chargeInitialPrize({
+      challengeId: 42,
+      userId: 7,
+      amount: 100,
+      fromAccountType: 'yellow',
+    });
     const [arg] = mockCreateBuzzTransaction.mock.calls[0];
     expect(arg.externalTransactionId).toBe('challenge-initial-prize-42-creator-yellow');
   });
@@ -294,33 +297,27 @@ describe('chargeEntryFees fromAccountType', () => {
   });
 });
 
-describe('buildWinnerPayoutTransactions', () => {
-  it('pays winners in the challenge buzzType (green)', () => {
-    const txs = buildWinnerPayoutTransactions({
+describe('buildWinnerPrizes', () => {
+  // The winner picks the currency when claiming, whatever the pool was funded in, so the prize
+  // carries none. The key is the one winner payouts have always settled under.
+  it('awards each winner a plain Buzz prize under the place-keyed ledger id', () => {
+    const prizes = buildWinnerPrizes({
       challengeId: 7,
       title: 'Neon Cats',
-      buzzType: 'green',
-      winners: [{ userId: 11, position: 1, prize: 5000 }],
+      winners: [{ userId: 11, imageId: 99, position: 1, prize: 5000 }],
     });
-    expect(txs).toEqual([
-      expect.objectContaining({
-        toAccountId: 11,
-        fromAccountId: 0,
+    expect(prizes).toEqual([
+      {
+        userId: 11,
+        sourceType: 'Challenge',
+        sourceId: 7,
+        subjectId: 99,
+        position: 1,
         amount: 5000,
-        toAccountType: 'green',
+        title: 'Challenge Winner Prize #1: Neon Cats',
         externalTransactionId: 'challenge-winner-prize-7-11-place-1',
-      }),
+      },
     ]);
-  });
-
-  it('pays winners in yellow when the challenge is yellow', () => {
-    const [tx] = buildWinnerPayoutTransactions({
-      challengeId: 7,
-      title: 'Neon Cats',
-      buzzType: 'yellow',
-      winners: [{ userId: 11, position: 1, prize: 5000 }],
-    });
-    expect(tx.toAccountType).toBe('yellow');
   });
 
   // The choke point's own dedupe is a no-op while both callers dedupe first, so nothing else in the
@@ -328,10 +325,9 @@ describe('buildWinnerPayoutTransactions', () => {
   // guards a batch of duplicate transaction ids being handed to an external ledger whose
   // within-batch behaviour we cannot observe.
   it('never emits the same transaction id twice, even if a caller passes a duplicated creator', () => {
-    const txs = buildWinnerPayoutTransactions({
+    const txs = buildWinnerPrizes({
       challengeId: 7,
       title: 'Neon Cats',
-      buzzType: 'yellow',
       // One creator named at two places — the shape an un-deduped caller would produce.
       winners: [
         { userId: 11, position: 1, prize: 5000 },
@@ -366,10 +362,9 @@ describe('buildWinnerPayoutTransactions', () => {
   it('records the drop, so money vanishing here can never be silent', async () => {
     const before = (await readChokepointDrops()) ?? 0;
 
-    buildWinnerPayoutTransactions({
+    buildWinnerPrizes({
       challengeId: 7,
       title: 'Neon Cats',
-      buzzType: 'yellow',
       winners: [
         { userId: 11, position: 1, prize: 5000 },
         { userId: 11, position: 2, prize: 2500 },
@@ -385,10 +380,9 @@ describe('buildWinnerPayoutTransactions', () => {
   it('stays silent on a clean pick — the counter cannot drift up on normal payouts', async () => {
     const before = (await readChokepointDrops()) ?? 0;
 
-    buildWinnerPayoutTransactions({
+    buildWinnerPrizes({
       challengeId: 7,
       title: 'Neon Cats',
-      buzzType: 'yellow',
       winners: [
         { userId: 11, position: 1, prize: 5000 },
         { userId: 22, position: 2, prize: 2500 },
@@ -404,10 +398,9 @@ describe('buildWinnerPayoutTransactions', () => {
   it('records how many placements were dropped, not merely that some were', async () => {
     const before = (await readChokepointDrops()) ?? 0;
 
-    buildWinnerPayoutTransactions({
+    buildWinnerPrizes({
       challengeId: 7,
       title: 'Neon Cats',
-      buzzType: 'yellow',
       winners: [
         { userId: 11, position: 1, prize: 5000 },
         { userId: 11, position: 2, prize: 2500 },
@@ -433,10 +426,7 @@ describe('refundUserChallengeFunds — void refunds pool legs only', () => {
     const prefixes = mockRefundMultiAccountTransaction.mock.calls.map(
       ([input]) => input.externalTransactionIdPrefix
     );
-    expect(prefixes).toEqual([
-      'challenge-entry-fee-7-',
-      'challenge-initial-prize-7-creator',
-    ]);
+    expect(prefixes).toEqual(['challenge-entry-fee-7-', 'challenge-initial-prize-7-creator']);
     expect(prefixes.some((p: string) => p.includes('house'))).toBe(false);
   });
 

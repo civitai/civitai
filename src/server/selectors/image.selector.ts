@@ -85,3 +85,44 @@ const imageResourceHelper = Prisma.validator<Prisma.ImageResourceHelperDefaultAr
 export type ImageResourceHelperModel = Prisma.ImageResourceHelperGetPayload<
   typeof imageResourceHelper
 >;
+
+const reviewedImageWhere = { needsReview: null, tosViolation: false } as const;
+
+const publishedPostWhere = (): Prisma.PostWhereInput => ({ publishedAt: { lte: new Date() } });
+
+export const publishedImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: publishedPostWhere(),
+});
+
+/** An entered image's post may be scheduled for its crucible's end; only unpublishing takes it out. */
+export const enteredImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { publishedAt: { not: null } },
+});
+
+/** Unpublished media, held to the same review gates as published media. */
+export const draftImageWhere = (post: Prisma.PostWhereInput): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: { ...post, publishedAt: null },
+});
+
+/**
+ * Marks a post the crucible entry modal created, so its unentered media stays pickable later and
+ * `revealCrucibleEntryPosts` can find an entered one's scheduled post.
+ */
+export const CRUCIBLE_ENTRY_DRAFT_METADATA_KEY = 'crucibleEntryDraft';
+
+/** One relation filter rather than an OR of two, so the planner can still semi-join on Post. */
+export const publishedOrEntryDraftImageWhere = (): Prisma.ImageWhereInput => ({
+  ...reviewedImageWhere,
+  post: {
+    OR: [
+      publishedPostWhere(),
+      {
+        publishedAt: null,
+        metadata: { path: [CRUCIBLE_ENTRY_DRAFT_METADATA_KEY], equals: true },
+      },
+    ],
+  },
+});

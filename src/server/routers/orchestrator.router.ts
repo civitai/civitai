@@ -1,10 +1,12 @@
 import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 import {
+  boostWorkflow,
   buildGenerationContext,
   bustQueriedWorkflowsCache,
   formatGenerationResponse2,
   generateFromGraph,
+  getWorkflowBoostCost,
   getWorkflowStatusUpdate,
   queryGeneratedImageWorkflows2,
   updateWorkflow,
@@ -19,7 +21,7 @@ import {
   buildServerFaultErrorLog,
   markServerFaultLogged,
 } from '~/server/logging/client';
-import { edgeCacheIt } from '~/server/middleware.trpc';
+import { edgeCacheIt, rateLimit } from '~/server/middleware.trpc';
 import { generatorFeedbackReward } from '~/server/rewards';
 import { generationStatusDefaultMessage } from '~/server/schema/generation.schema';
 import {
@@ -82,6 +84,21 @@ import { getAllowedAccountTypes } from '../utils/buzz-helpers';
 import { getVideoMetadata } from '~/server/services/orchestrator/videoEnhancement';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { isRawAirResource } from '~/shared/utils/air';
+
+/**
+ * True when the (unvalidated) graph input carries raw-AIR resources — training
+ * epoch blobs referenced directly, without a ModelVersion row. Used to gate the
+ * feature-flag before the input reaches the service, mirroring the
+ * workflow-flag gates below.
+ */
+function containsRawAirResources(formInput: unknown): boolean {
+  const resources = (formInput as { resources?: unknown } | undefined)?.resources;
+  if (!Array.isArray(resources)) return false;
+  return resources.some(
+    (r) => typeof r === 'object' && r !== null && isRawAirResource(r as { id?: unknown })
+  );
+}
 
 /**
  * Resolves the currencies to use for a generation request.
@@ -244,6 +261,29 @@ export const orchestratorRouter = router({
       bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
       return result;
     }),
+  getBoostCost: orchestratorProcedure
+    // Each call is a whatif PUT to the orchestrator, and a window focus re-prices every boostable
+    // card at once.
+    .use(
+      rateLimit([{ limit: 120, period: 60 }], undefined, { sharedKey: 'orchestrator:boost-cost' })
+    )
+    .input(workflowIdSchema)
+    .query(({ ctx, input }) =>
+      getWorkflowBoostCost({ token: ctx.token, workflowId: input.workflowId })
+    ),
+  boostWorkflow: orchestratorProcedure
+    .meta({ requiredScope: TokenScope.AIServicesWrite })
+    .input(z.object({ workflowId: z.string(), expectedCost: z.number().int().min(0) }))
+    .mutation(async ({ ctx, input }) => {
+      const result = await boostWorkflow({
+        token: ctx.token,
+        workflowId: input.workflowId,
+        expectedCost: input.expectedCost,
+        user: ctx.user,
+      });
+      bustQueriedWorkflowsCache(ctx.user.id).catch(() => null);
+      return result;
+    }),
   // #endregion
 
   // #region [steps]
@@ -347,6 +387,7 @@ export const orchestratorRouter = router({
         externalId,
         acknowledgedSoftBlock,
         sourceProvenance,
+        downloadPriority,
       } = input;
       const tags = ctx.domain === 'green' ? ['green', ...(inputTags ?? [])] : inputTags ?? [];
       const userTier = ctx.user.tier ?? 'free';
@@ -382,6 +423,15 @@ export const orchestratorRouter = router({
         throw new TRPCError({
           code: 'FORBIDDEN',
           message: 'This workflow is not available for your account.',
+        });
+      }
+
+      // Raw-AIR (training epoch blob) resources are flag-gated. The service
+      // still enforces ownership regardless of the flag; this is the rollout gate.
+      if (containsRawAirResources(formInput) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
         });
       }
 
@@ -444,6 +494,7 @@ export const orchestratorRouter = router({
         // `.input(z.any())` — an explicit identity check, so a truthy non-boolean
         // from a hand-rolled client can't stand in for the acknowledgement.
         acknowledgedSoftBlock: acknowledgedSoftBlock === true,
+        downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
       });
 
       // Bust the short-TTL queryGeneratedImages cache so a concurrent tab or an
@@ -491,6 +542,14 @@ export const orchestratorRouter = router({
         });
       }
 
+      // Mirror of the raw-AIR flag gate in `generateFromGraph`.
+      if (containsRawAirResources(input) && ctx.features.generationAirResources !== true) {
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: 'Epoch resources are not available for your account.',
+        });
+      }
+
       if (status.mode === 'disabled' && !ctx.user.isModerator) {
         throw new TRPCError({
           code: 'BAD_REQUEST',
@@ -504,15 +563,19 @@ export const orchestratorRouter = router({
         });
       }
 
+      // Rides alongside the graph input rather than inside it — it is not a graph node.
+      const { downloadPriority, ...graphInput } = (input ?? {}) as Record<string, unknown>;
+
       try {
         return await whatIfFromGraph({
-          input,
+          input: graphInput,
           externalCtx,
           userId: ctx.user.id,
           isModerator: ctx.user.isModerator,
           token: ctx.token,
           experimental: ctx.experimental,
           currencies: getAllowedAccountTypes(ctx.features, ['blue']),
+          downloadPriority: downloadPriority === 'high' ? 'high' : undefined,
         });
       } catch (e) {
         // ~94% of failures here are EXPECTED client-fault validation (BAD_REQUEST
@@ -594,6 +657,38 @@ export const orchestratorRouter = router({
         }),
       };
     }),
+
+  /**
+   * The same mint for the reuse-prompt entry point, which seeds no media and so
+   * leaves the server nothing to resolve a link from at submit.
+   *
+   * Separate from `mintRemixProvenance` rather than a `kind` parameter: the kind
+   * is the whole security property, and a client-chosen one would let the caller
+   * ask for the stronger `mint` audience from the weaker click.
+   *
+   * `getImage` is the gate here for the same reason it is there — it applies the
+   * needs-review, published-or-owner and Blocked checks, so a token cannot be
+   * minted for an image the caller could not open.
+   */
+  mintPromptProvenance: orchestratorProcedure
+    .meta({ requiredScope: TokenScope.AIServicesRead })
+    .input(z.object({ imageId: z.number() }))
+    .mutation(async ({ ctx, input }) => {
+      const image = await getImage({
+        id: input.imageId,
+        userId: ctx.user.id,
+        isModerator: ctx.user.isModerator,
+      });
+      if (!image) throw new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
+
+      return {
+        provenance: signProvenance({
+          userId: ctx.user.id,
+          sourceImageIds: [image.id],
+          kind: 'prompt',
+        }),
+      };
+    }),
   // #endregion
 
   // #region [Image upload]
@@ -616,6 +711,7 @@ export const orchestratorRouter = router({
         token: ctx.token,
         user: ctx.user,
         features: ctx.features,
+        domain: ctx.domain,
         currencies: resolveGenerationCurrencies(ctx.features, buzzType),
       };
       return await createTrainingWorkflow(args);

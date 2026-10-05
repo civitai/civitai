@@ -224,7 +224,6 @@ async function updateNsfw() {
       type ImageForSearchIndex = {
         id: number;
         nsfwLevel: NsfwLevel;
-        aiNsfwLevel: NsfwLevel;
         nsfwLevelLocked: boolean;
       };
 
@@ -237,7 +236,6 @@ async function updateNsfw() {
           p."publishedAt",
           GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
           i."nsfwLevel",
-          i."aiNsfwLevel",
           i."nsfwLevelLocked"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId" AND p."publishedAt" < now()
@@ -253,10 +251,7 @@ async function updateNsfw() {
       const consoleTransformKey = `Transform: ${start} - ${end}`;
       console.log(consoleTransformKey);
       console.time(consoleTransformKey);
-      const documents = records.map(({ nsfwLevelLocked, ...r }) => ({
-        ...r,
-        combinedNsfwLevel: nsfwLevelLocked ? r.nsfwLevel : Math.max(r.nsfwLevel, r.aiNsfwLevel),
-      }));
+      const documents = records.map(({ nsfwLevelLocked, ...r }) => r);
       console.timeEnd(consoleTransformKey);
 
       const consolePushKey = `Push: ${start} - ${end}`;

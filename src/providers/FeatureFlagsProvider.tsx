@@ -55,7 +55,14 @@ export const FeatureFlagsProvider = ({
   } = trpc.user.getFeatureFlags.useQuery(undefined, {
     gcTime: Infinity,
     staleTime: Infinity,
-    retry: 0,
+    // A failed fetch here reads as an EMPTY overlay ({} merges over host flags),
+    // and with staleTime: Infinity and this provider never remounting, nothing
+    // ever refetches it — every toggleable-gated page 404s for the whole SPA
+    // session on one transient failure. Retry a couple of times, and while the
+    // query is errored re-enable the (globally disabled) focus refetch so a
+    // later tab-in self-heals instead of staying wedged.
+    retry: 2,
+    refetchOnWindowFocus: (query) => query.state.status === 'error',
     enabled: !!session.data,
     initialData: userFlags,
   });
@@ -71,8 +78,8 @@ export const FeatureFlagsProvider = ({
   // logged-in user and permanently hide the chat icon + 3 migration alerts.
   // `isSuccess` flips true immediately on the seed (no flash: user flags are
   // present from frame 0). The `|| isError` arm preserves the no-seed error
-  // path (retry: 0): a failed client fetch still settles to ready, exactly as
-  // `isFetched` did, so consumers don't hang forever on a transient failure.
+  // path: a client fetch that fails through its retries still settles to ready,
+  // exactly as `isFetched` did, so consumers don't hang forever on an outage.
   const ready = !session.data || isSuccess || isError;
 
   const featureFlags = useMemo(

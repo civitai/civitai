@@ -13,7 +13,6 @@ import {
   partitionByConfidence,
   placeholderHeuristic,
   renderNotes,
-  renderSubScores,
   scoreAccount,
   soleSignalCounters,
   soleSignalDominance,
@@ -176,10 +175,10 @@ describe('scoreAccount', () => {
 });
 
 describe('heuristicCounters', () => {
-  it('counts evaluations, firings and clamps per heuristic', () => {
-    // Three distinct numbers, because "how often does this fire, and how hard" cannot be answered
-    // by a single count: a signal that never triggers and one that triggers weakly on everything
-    // are the two failures shadow mode exists to tell apart.
+  it('counts evaluations, firings and clamps per heuristic, and sums the scores', () => {
+    // FOUR numbers, because "how often does this fire, and how hard" cannot be answered by counts
+    // alone: a signal that never triggers and one that triggers weakly on everything are the two
+    // failures shadow mode exists to tell apart, and the first three keys are ALL counts.
     const scores = [
       scoreAccount([heuristic('a', 0.4), heuristic('b', 0)], evidence),
       scoreAccount([heuristic('a', 0), heuristic('b', 0)], evidence),
@@ -189,10 +188,33 @@ describe('heuristicCounters', () => {
       'heuristic:a:evaluated': 3,
       'heuristic:a:fired': 2,
       'heuristic:a:clamped': 1,
+      // 🔴 THE MAGNITUDE, WHICH USED TO REACH NOBODY BUT THE MODERATOR'S REASON CELL. 0.4 + 0 + 1
+      // (the 9 is clamped to 1 before it is summed, so a broken heuristic cannot inflate this the
+      // way it cannot inflate a confidence). Mean sub-score is `score_sum / evaluated`.
+      'heuristic:a:score_sum': 1.4,
       'heuristic:b:evaluated': 3,
       'heuristic:b:fired': 0,
       'heuristic:b:clamped': 0,
+      'heuristic:b:score_sum': 0,
     });
+  });
+
+  it('🔴 rounds the sum, so float error does not reach the board', () => {
+    // 0.1 + 0.2 is 0.30000000000000004 in IEEE-754, and a counter rendered key-by-key on the run
+    // page invites someone to explain the tail. Asserted with `toBe`, not `toBeCloseTo` — the
+    // whole point is the exact value that lands in the jsonb column.
+    const scores = [
+      scoreAccount([heuristic('a', 0.1)], evidence),
+      scoreAccount([heuristic('a', 0.2)], evidence),
+    ];
+    expect(heuristicCounters(scores)['heuristic:a:score_sum']).toBe(0.3);
+    // …and it is a ROUND, not a truncation to two places: a magnitude finer than the `id=0.00`
+    // clause it replaced would otherwise be lost in the move.
+    const fine = [
+      scoreAccount([heuristic('a', 0.12345)], evidence),
+      scoreAccount([heuristic('a', 0.11111)], evidence),
+    ];
+    expect(heuristicCounters(fine)['heuristic:a:score_sum']).toBe(0.2346);
   });
 
   it('publishes a zero rather than omitting a heuristic that never fired', () => {
@@ -284,7 +306,8 @@ describe('the reporting threshold', () => {
     // against a silently changed lone-signal bar and this case would stay green. With it, changing
     // the bar requires editing a test that says out loud that the value is inherited — which is the
     // point at which someone has to supply evidence for a new one. `asset-staging`'s boundaries are
-    // derived against this number, so it is load-bearing for a firing point even while provisional.
+    // CHECKED against this number — they were derived from it until the ordering evidence set that
+    // heuristic's volume boundary instead — so it still bounds a firing point even while provisional.
     expect(LONE_SIGNAL_CUT).toBe(0.45);
     // A worked instance, with literals rather than expressions over the constants — the same
     // reasoning the boundary cases in `heuristics.test.ts` are written with. A registry of four
@@ -486,17 +509,14 @@ describe('the sole-signal dominance bar', () => {
   });
 });
 
-describe('renderSubScores', () => {
-  it('names every heuristic and its own number', () => {
-    expect(
-      renderSubScores([
-        { id: 'a', score: 0.125, weight: 1, note: null, clamped: false },
-        { id: 'b', score: 1, weight: 1, note: null, clamped: false },
-      ])
-    ).toBe('a=0.13, b=1.00');
-  });
-
-  it('says so when nothing is registered, rather than rendering an empty clause', () => {
-    expect(renderSubScores([])).toBe('no heuristics registered');
-  });
-});
+/**
+ * 🔴 `renderSubScores` HAS NO SUITE BECAUSE IT NO LONGER EXISTS. It produced the `a=0.13, b=1.00`
+ * clause `report.ts` appended to every finding's `reason` — machine syntax on the one string the
+ * wire contract calls "the whole value of the row to a moderator". It had exactly one caller, and
+ * deleting the function rather than leaving it uncalled is what stops it coming back.
+ *
+ * The magnitudes it rendered are asserted above instead, as `heuristic:<id>:score_sum` — the same
+ * numbers, aggregated per run, in the counters a grading pass already reads. What is NOT recoverable
+ * is the per-account breakdown, and that is stated on `buildFinding` rather than mourned here: the
+ * wire contract has no structured field on a finding to carry it.
+ */

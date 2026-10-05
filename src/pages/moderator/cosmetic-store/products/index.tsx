@@ -28,6 +28,8 @@ import {
   useQueryCosmeticShopItemsPaged,
 } from '~/components/CosmeticShop/cosmetic-shop.util';
 import { CosmeticsFiltersDropdown } from '~/components/Cosmetics/CosmeticsFiltersDropdown';
+import { CreatorShopPackModal } from '~/components/CreatorShop/Pack/CreatorShopPackModal';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -41,10 +43,12 @@ import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export const getServerSideProps = createServerSideProps({ requireModerator: true });
 
 export default function CosmeticStoreProducts() {
+  const features = useFeatureFlags();
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
     page: 1,
   });
@@ -167,7 +171,9 @@ export default function CosmeticStoreProducts() {
                           <Text>{shopItem.cosmetic?.name ?? '—'}</Text>
                         </Stack>
                       </Table.Td>
-                      <Table.Td>{shopItem.cosmetic ? getDisplayName(shopItem.cosmetic.type) : 'Pack'}</Table.Td>
+                      <Table.Td>
+                        {shopItem.cosmetic ? getDisplayName(shopItem.cosmetic.type) : 'Pack'}
+                      </Table.Td>
                       <Table.Td>
                         <Center>
                           {shopItem.cosmetic && <CosmeticSample cosmetic={shopItem.cosmetic} />}
@@ -196,16 +202,33 @@ export default function CosmeticStoreProducts() {
                       </Table.Td>
                       <Table.Td>
                         <Group gap={4} wrap="nowrap">
-                          {/* A pack is edited in the pack editor; this form
-                              always fails on save for one, losing whatever the
-                              moderator typed. */}
-                          {shopItem.cosmetic && (
+                          {/* The generic product form requires a cosmeticId, so
+                              it always fails on save for a pack. Packs go to the
+                              pack editor, which is the only thing that can edit
+                              their contents. */}
+                          {shopItem.cosmetic ? (
                             <LegacyActionIcon
                               component={Link}
                               href={`/moderator/cosmetic-store/products/${shopItem.id}/edit`}
                             >
                               <IconEdit />
                             </LegacyActionIcon>
+                          ) : (
+                            // An archived pack is refused by the save, and an
+                            // editor that cannot save is the bug this replaced.
+                            features.cosmeticPacks &&
+                            !shopItem.archivedAt && (
+                              <LegacyActionIcon
+                                onClick={() =>
+                                  dialogStore.trigger({
+                                    component: CreatorShopPackModal,
+                                    props: { item: shopItem },
+                                  })
+                                }
+                              >
+                                <IconEdit />
+                              </LegacyActionIcon>
+                            )
                           )}
                           <LegacyActionIcon onClick={() => handleDeleteItem(shopItem.id)}>
                             <IconTrash />

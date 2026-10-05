@@ -222,7 +222,7 @@
           <TableCell>{report.reason}</TableCell>
           <!-- Retool's Details column. The reporter's own words decide whether a row is worth opening,
                and reading them meant opening the sheet and picking them out of a JSON dump. -->
-          <TableCell class="max-w-sm">
+          <TableCell class="max-w-xs">
             <span class="line-clamp-2 text-sm text-muted-foreground" title={reportComment(report)}>
               {reportComment(report) ?? '—'}
             </span>

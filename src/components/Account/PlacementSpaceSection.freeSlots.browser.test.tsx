@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as NotificationUtils from '~/utils/notifications';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
@@ -19,8 +20,10 @@ import { renderWithProviders } from '../../../test/component-setup';
  * nobody.
  */
 
-const { mutate, spaces, sent, waiting } = vi.hoisted(() => ({
+const { mutate, spaces, sent, waiting, notificationSettings, toggleSetting } = vi.hoisted(() => ({
   mutate: vi.fn(),
+  notificationSettings: { value: [] as { type: string }[] | undefined },
+  toggleSetting: vi.fn(),
   spaces: { value: [] as Record<string, unknown>[] },
   sent: { value: [] as { status: string }[] },
   waiting: { value: 0 },
@@ -30,7 +33,15 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ stickerPlacement: true }),
 }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: vi.fn() }));
+// Spread rather than hand-listed. Listing one export couples this file to the
+// component's ENTIRE transitive import graph: when the component grew an import
+// that reached `showSuccessNotification`, this module stopped providing it and
+// the whole file failed to COLLECT -- `Tests no tests`, which reads as a pass to
+// anything checking a summary, and no CI job runs the browser project.
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationUtils>()),
+  showErrorNotification: vi.fn(),
+}));
 // The received-queue count comes from the notification bell's query now, not
 // from this card's own paged fetch — one number instead of two, and no 50-row
 // request on a settings page that renders none of them. Mocked at the hook
@@ -41,7 +52,10 @@ vi.mock('~/components/Notifications/notifications.utils', () => ({
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcModule>()),
   trpc: {
-    useUtils: () => ({ placement: { invalidate: vi.fn() } }),
+    useUtils: () => ({
+      placement: { invalidate: vi.fn() },
+      user: { getNotificationSettings: { invalidate: vi.fn() } },
+    }),
     placement: {
       getPriceRange: {
         useQuery: () => ({ data: { min: 50, max: 500, freeSlotCap: 4, score: 0, tier: 'free' } }),
@@ -60,6 +74,13 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       // `sticker-placement.service.ts`.
       getMyStickerPlacements: { useQuery: () => ({ data: sent.value }) },
       setSpace: { useMutation: () => ({ mutate, isPending: false }) },
+    },
+    // Read for the auto-mode notification pointer. Present with no rows, which
+    // is the ordinary case: these tests are about what a save sends, not about
+    // notification polarity.
+    user: { getNotificationSettings: { useQuery: () => ({ data: notificationSettings.value }) } },
+    notification: {
+      updateUserSettings: { useMutation: () => ({ mutate: toggleSetting, isPending: false }) },
     },
   },
 }));
@@ -80,6 +101,7 @@ beforeEach(() => {
   spaces.value = [];
   sent.value = [];
   waiting.value = 0;
+  notificationSettings.value = [];
 });
 
 describe('PlacementSpaceSection — what a save sends for freeSlots', () => {
@@ -235,5 +257,110 @@ describe('PlacementSpaceSection — the received count', () => {
     const label = page.getByText('Review pending stickers');
     await expect.element(label).toBeInTheDocument();
     expect(label.element().closest('a')?.textContent?.trim()).toBe('Review pending stickers');
+  });
+});
+
+/**
+ * The auto-mode notification prompt.
+ *
+ * Opt-in inverts what a `UserNotificationSettings` row means for this type -- a
+ * row is SUBSCRIBED, where for 84 other types it means muted -- and the
+ * component encodes that inversion at a site no server test can see. Drop the
+ * leading `!` and the prompt is offered only to creators who already subscribed
+ * and never to the ones who need it: the feature does nothing for its whole
+ * audience, silently. That is the same shape as the Model3D incident the
+ * polarity guard was written for.
+ *
+ * The two tests are a pair. Without the second, the first passes for a component
+ * that renders the alert unconditionally.
+ */
+describe('PlacementSpaceSection — the auto-mode notification prompt', () => {
+  const AUTO_ACCEPTED_NOTIFICATION = 'sticker-placement-auto-accepted';
+
+  /**
+   * Located by ROLE with a loose name, then read. Two things follow from that
+   * and neither is cosmetic.
+   *
+   * A locator that matches nothing spends the whole 15s budget and then reports
+   * only that it found nothing -- the same reason `names the control once, not
+   * twice` above locates loosely. Reading the label off the element fails in
+   * milliseconds with BOTH labels in the message.
+   *
+   * And `.element()` is strict, so a component that rendered both buttons fails
+   * here. Asserting `getByText('Notify me')` per arm would pass for that
+   * component, because each arm only ever looks for its own label.
+   */
+  const notifyButton = () => page.getByRole('button', { name: /notif/i });
+
+  test('offers it to a creator with no row', async () => {
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    await expect.element(notifyButton()).toBeVisible();
+    expect(notifyButton().element().textContent).toBe('Notify me');
+  });
+
+  test('offers the way OUT to a creator who already has a row', async () => {
+    // The other arm, and a finding in its own right: subscribing in one click
+    // and then having to find a checkbox that is `disabled` for this exact
+    // population is the same dead end reversed.
+    notificationSettings.value = [{ type: AUTO_ACCEPTED_NOTIFICATION }];
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    await expect.element(notifyButton()).toBeVisible();
+    expect(notifyButton().element().textContent).toBe('Stop notifying me');
+  });
+
+  test('asks for the state it is NOT in, in both directions', async () => {
+    // `toggle` is the state being requested. Passing the current one through is
+    // a click that does nothing either way -- a real, documented bug on the
+    // other two callers of this mutation, which is why it is asserted rather
+    // than assumed.
+    notificationSettings.value = [{ type: AUTO_ACCEPTED_NOTIFICATION }];
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+    await userEvent.click(notifyButton());
+
+    expect(toggleSetting).toHaveBeenCalledWith({
+      toggle: false,
+      type: [AUTO_ACCEPTED_NOTIFICATION],
+    });
+    // A doubled write is not harmless in the other direction: two deletes are
+    // idempotent, two inserts are only saved by the unique constraint.
+    expect(toggleSetting).toHaveBeenCalledTimes(1);
+  });
+
+  test('says nothing on a space that still reviews', async () => {
+    // Every other test here clicks "Accept all" first, so all of them run at
+    // mode `auto` and none of them would notice the mode term disappearing from
+    // the gate -- which would tell a creator who reviews each sticker by hand
+    // that stickers are accepted without asking them.
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    // The awaited positive first: an absence read before the render commits
+    // asserts nothing at all.
+    await expect.element(page.getByText('Accept all')).toBeVisible();
+    expect(notifyButton().elements()).toHaveLength(0);
+  });
+
+  test('says nothing until the settings have arrived', async () => {
+    // The flash guard. An opt-in type with no row is indistinguishable from one
+    // nobody subscribed to, so without `!!notificationSettings` the alert offers
+    // "Notify me" to a creator who already subscribed, until the query lands.
+    notificationSettings.value = undefined;
+    givenSpace(null);
+    renderWithProviders(<PlacementSpaceSection />);
+
+    await userEvent.click(page.getByText('Accept all'));
+
+    expect(notifyButton().elements()).toHaveLength(0);
   });
 });

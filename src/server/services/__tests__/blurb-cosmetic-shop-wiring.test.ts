@@ -37,6 +37,7 @@ const ITEM_ID = 31;
 const CREATED_ID = 32;
 const OWNER_ID = 7;
 const MODERATOR_ID = 9;
+const STORED_PURCHASES = 12;
 
 const CLIENT_HTML = '<div data-type="blurb" data-id="7">ATTACKER SUPPLIED</div>';
 const EXPANDED_HTML = '<div data-type="blurb" data-id="7">REAL</div>';
@@ -63,10 +64,21 @@ beforeEach(() => {
     id: ITEM_ID,
     cosmeticId: 4,
     addedById: OWNER_ID,
+    meta: { purchases: STORED_PURCHASES },
     _count: { purchases: 0 },
   });
-  dbMock.dbWrite.cosmeticShopItem.update.mockResolvedValue({ id: ITEM_ID, cosmeticId: null });
-  dbMock.dbWrite.cosmeticShopItem.create.mockResolvedValue({ id: CREATED_ID, cosmeticId: null });
+  dbMock.dbWrite.cosmeticShopItem.update.mockResolvedValue({
+    id: ITEM_ID,
+    cosmeticId: null,
+    meta: { purchases: STORED_PURCHASES },
+    _count: { purchases: 20 },
+  });
+  dbMock.dbWrite.cosmeticShopItem.create.mockResolvedValue({
+    id: CREATED_ID,
+    cosmeticId: null,
+    meta: { purchases: 0 },
+    _count: { purchases: 0 },
+  });
   dbMock.dbWrite.cosmeticShopItem.updateMany.mockResolvedValue({ count: 1 });
 });
 
@@ -122,6 +134,22 @@ describe('upsertCosmeticShopItem — blurb expansion', () => {
     expect(dbMock.dbWrite.cosmeticShopItem.create.mock.calls[0][0].data.description).toBe(
       EXPANDED_HTML
     );
+  });
+
+  /**
+   * The create-side twin of "only a purchase moves the stored counter". A new
+   * listing has sold nothing, and `purchases` is client-supplied on the upsert
+   * input, so the zero has to be imposed rather than trusted.
+   *
+   * Nothing else sees this one: deleting `purchases: 0` from the create branch
+   * leaves 603 tests green and typechecks clean, because `meta` is Json.
+   */
+  it('starts a new listing at zero sold, whatever the client posted', async () => {
+    dbMock.dbWrite.cosmeticShopItem.findUnique.mockResolvedValue(null);
+
+    await upsert({ id: undefined, meta: { purchases: 99 } });
+
+    expect(dbMock.dbWrite.cosmeticShopItem.create.mock.calls[0][0].data.meta.purchases).toBe(0);
   });
 });
 
@@ -191,5 +219,59 @@ describe('applyCosmeticShopItemContentChange', () => {
     await expect(
       applyCosmeticShopItemContentChange({ id: ITEM_ID, description: EXPANDED_HTML })
     ).rejects.toThrow(/No cosmetic shop item/);
+  });
+});
+
+/**
+ * Reads now serve the purchase-row count in `meta.purchases`, and this form
+ * seeds itself from a read and posts the whole meta object back. Without this
+ * the editor writes a derived number into the stored counter on every save — of
+ * a value that came from a React Query cache, so it can be older than the one it
+ * replaces.
+ *
+ * TO WHOEVER IS ABOUT TO DELETE THIS: it is what keeps the sold-count change a
+ * READ change. Only a purchase moves the stored counter.
+ */
+describe('upsertCosmeticShopItem — the stored purchase counter', () => {
+  it('keeps the stored value when the client posts a different one', async () => {
+    await upsert({ meta: { purchases: 99, acceptsBlueBuzz: true } });
+
+    const { data } = dbMock.dbWrite.cosmeticShopItem.update.mock.calls[0][0];
+    expect(data.meta.purchases).toBe(STORED_PURCHASES);
+  });
+
+  it('still saves the rest of the meta the moderator edited', async () => {
+    await upsert({ meta: { purchases: 99, acceptsBlueBuzz: true } });
+
+    const { data } = dbMock.dbWrite.cosmeticShopItem.update.mock.calls[0][0];
+    expect(data.meta.acceptsBlueBuzz).toBe(true);
+  });
+
+  /**
+   * A fast second signal, NOT the gate. Dropping `meta: true` from the select is
+   * already a compile error — Prisma narrows the row to the select, so
+   * `existingItem.meta` stops existing and the read is `TS2339` on a named line.
+   * This just fails in a second rather than after a typecheck, and says why.
+   *
+   * It would stop covering anything if that select's typing were ever loosened —
+   * a hand-written type, an `as` cast, a widened shared constant — because a
+   * mock hands back whatever the fixture says regardless of what was asked for.
+   */
+  it('asks the database for the stored meta it preserves', async () => {
+    await upsert({ meta: { purchases: 99 } });
+
+    expect(dbMock.dbWrite.cosmeticShopItem.findUnique.mock.calls[0][0].select.meta).toBe(true);
+  });
+
+  /**
+   * The save's response is deliberately NOT passed through `withSoldCounts`,
+   * unlike every read path. Its only consumer invalidates the paged query and
+   * discards the payload, so mapping it would spend a query on a value nobody
+   * reads.
+   */
+  it('hands back what it wrote, not a row-derived count', async () => {
+    const saved = await upsert({ meta: { purchases: 99 } });
+
+    expect(saved.meta.purchases).toBe(STORED_PURCHASES);
   });
 });

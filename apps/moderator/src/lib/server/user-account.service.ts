@@ -340,6 +340,25 @@ export type ReactionSummary = {
   /** Every creator matching `flagged`, not just the `flagLimit` returned — rendering the cap as the
    *  total would read as the whole victim list. */
   flaggedTotal: number;
+  /** Reactions this account GAVE AND TOOK BACK. `ImageReaction` is the live set, so an un-reacted row
+   *  is simply gone from it — an account that reacted 350 times and removed all 350 is indistinguishable
+   *  in Postgres from one that never reacted, and the panel rendered both as "None." Null when the
+   *  event log could not be read, which must not read as zero. */
+  removed: RemovedReactions | null;
+};
+
+/** From the ClickHouse `reactions` event log, which keeps the Create and the Delete. */
+export type RemovedReactions = {
+  days: number;
+  given: number;
+  removed: number;
+  creators: number;
+  /** Create→Delete pairs, and how many of those were undone inside a minute. Buzz is awarded on the
+   *  Create and not clawed back, so a pair held for seconds is the earning pattern rather than a change
+   *  of mind — the distinction the raw counts cannot make. */
+  pairs: number;
+  removedWithinAMinute: number;
+  medianHeldSeconds: number | null;
 };
 
 type ReactionRow = ReactionTarget & { total: number; creators: number; flaggedTotal: number };
@@ -403,7 +422,69 @@ export async function getReactionTargets(
     creators: rows[0]?.creators ?? 0,
     flaggedTotal: rows[0]?.flaggedTotal ?? 0,
     targets: rows.map(({ total: _t, creators: _c, flaggedTotal: _f, ...target }) => target),
+    removed: await getRemovedReactions(userId),
   };
+}
+
+const REMOVED_REACTION_DAYS = 90;
+
+/**
+ * Did this account react and then take it back? `ImageReaction` keeps only live rows, so an account
+ * that reacted 350 times and removed all 350 reads identically to one that never reacted — the case
+ * this was reported for. Best-effort: ClickHouse being down annotates the panel, it does not blank it.
+ */
+async function getRemovedReactions(userId: number): Promise<RemovedReactions | null> {
+  try {
+    // Bounded on `time`, the table's sort key — `userId` is not indexed, so an unbounded read is all
+    // 825M rows.
+    const scope = `
+      FROM default.reactions
+      WHERE userId = ${userId}
+        AND time > now() - INTERVAL ${REMOVED_REACTION_DAYS} DAY
+        AND type IN ('Image_Create', 'Image_Delete')
+    `;
+
+    const ch = getClickhouse();
+    // Two queries because the counts are over EVENTS and the hold times are over IMAGES — one row per
+    // entityId, which the counts must not be collapsed to.
+    const [[totals], [held]] = await Promise.all([
+      ch.$query<{ given: string; removed: string; creators: string }>(`
+        SELECT
+          countIf(type = 'Image_Create') AS given,
+          countIf(type = 'Image_Delete') AS removed,
+          uniqExactIf(ownerId, type = 'Image_Create') AS creators
+        ${scope}
+      `),
+      ch.$query<{ pairs: string; within: string; median: number | null }>(`
+        SELECT count() AS pairs, countIf(seconds <= 60) AS within, median(seconds) AS median
+        FROM (
+          SELECT dateDiff(
+            'second',
+            minIf(time, type = 'Image_Create'),
+            minIf(time, type = 'Image_Delete')
+          ) AS seconds
+          ${scope}
+          GROUP BY entityId
+          -- Both halves, so a still-live reaction contributes no pair.
+          HAVING countIf(type = 'Image_Create') > 0 AND countIf(type = 'Image_Delete') > 0
+        )
+      `),
+    ]);
+    if (!totals) return null;
+    return {
+      days: REMOVED_REACTION_DAYS,
+      given: Number(totals.given),
+      removed: Number(totals.removed),
+      creators: Number(totals.creators),
+      pairs: Number(held?.pairs ?? 0),
+      removedWithinAMinute: Number(held?.within ?? 0),
+      medianHeldSeconds:
+        held?.median === null || held?.median === undefined ? null : Math.round(held.median),
+    };
+  } catch (e) {
+    console.error('[user-lookup] removed reactions unavailable', e);
+    return null;
+  }
 }
 
 export type UserCosmeticRow = {
@@ -461,42 +542,36 @@ export type UserBuzz = {
 } | null;
 
 export async function getBuzzBalance(userId: number): Promise<UserBuzz> {
-  try {
-    // Typed read: untyped `/account/{id}` returns Yellow + Blue summed, overstating Yellow by the
-    // user's generation balance.
-    const account = await getBuzz().getUserBuzzByAccountType(userId, 'yellow');
-    // Colour balances are a second call and a softer failure — yellow is the one a moderator acts on,
-    // so it must not be lost when the multi-account read fails.
-    let blue: number | null = null;
-    let green: number | null = null;
-    let blueLifetime: number | null = null;
-    let greenLifetime: number | null = null;
-    try {
-      // Per-type reads rather than `getUserAccounts`, which returns balances only — Retool showed a
-      // lifetime for every colour, and lifetime is what says whether a balance was earned or granted.
-      const [blueAcct, greenAcct] = await Promise.all([
-        getBuzz().getUserBuzzByAccountType(userId, 'blue'),
-        getBuzz().getUserBuzzByAccountType(userId, 'green'),
-      ]);
-      blue = blueAcct?.balance ?? null;
-      green = greenAcct?.balance ?? null;
-      blueLifetime = blueAcct?.lifetimeBalance ?? null;
-      greenLifetime = greenAcct?.lifetimeBalance ?? null;
-    } catch (e) {
-      console.error('[user-lookup] buzz colour balances unavailable', e);
-    }
-    return {
-      balance: account.balance,
-      lifetimeBalance: account.lifetimeBalance,
-      blue,
-      green,
-      blueLifetime,
-      greenLifetime,
-    };
-  } catch (e) {
-    console.error('[user-lookup] buzz balance unavailable', e);
+  // `allSettled`, not `all`, because the failures are not equivalent: yellow is the balance a moderator
+  // acts on and its loss blanks the panel, while a missing colour renders as `—` beside a yellow figure
+  // that is still true. Typed reads throughout: untyped `/account/{id}` returns Yellow + Blue summed,
+  // overstating Yellow by the user's generation balance.
+  const [yellow, blue, green] = await Promise.allSettled([
+    getBuzz().getUserBuzzByAccountType(userId, 'yellow'),
+    getBuzz().getUserBuzzByAccountType(userId, 'blue'),
+    getBuzz().getUserBuzzByAccountType(userId, 'green'),
+  ]);
+
+  if (yellow.status === 'rejected') {
+    console.error('[user-lookup] buzz balance unavailable', yellow.reason);
     return null;
   }
+  for (const colour of [blue, green]) {
+    if (colour.status === 'rejected')
+      console.error('[user-lookup] buzz colour balances unavailable', colour.reason);
+  }
+
+  const blueAcct = blue.status === 'fulfilled' ? blue.value : null;
+  const greenAcct = green.status === 'fulfilled' ? green.value : null;
+
+  return {
+    balance: yellow.value.balance,
+    lifetimeBalance: yellow.value.lifetimeBalance,
+    blue: blueAcct?.balance ?? null,
+    green: greenAcct?.balance ?? null,
+    blueLifetime: blueAcct?.lifetimeBalance ?? null,
+    greenLifetime: greenAcct?.lifetimeBalance ?? null,
+  };
 }
 
 // COSMETIC SHOP PURCHASES (Retool's GetPurchases). Read from `UserCosmeticShopPurchases` rather than
@@ -1042,8 +1117,6 @@ async function getTrainingCharges(
 }
 
 // BUZZ HISTORY (Retool's Receipts + Payments, which were two queries and two tables on the page).
-// Merged: a moderator wants this account's Buzz movement in one timeline, and the two queries differ
-// only in which side of the transaction the account is on.
 //
 // `buzzTransactions` is 1.5B rows partitioned by month, so the window bound prunes partitions as well as
 // rows — Retool bounded it too (`buzzDateTime`). Even bounded to 90 days this measures ~2.5s: the table
@@ -1057,63 +1130,129 @@ const BUZZ_COLORS: Record<string, string> = {
 };
 
 /** Account types whose id is a real `User.id`. Everything else transacts in the same integer space
- *  without being a user — see the collision note in `getBuzzHistory`. */
+ *  without being a user — see the collision note in `getBuzzLedgerSide`. */
 const USER_ACCOUNT_TYPES = new Set(['user', 'yellow', 'generation', 'blue', 'green']);
 
 const counterpartyLabel = (accountType: string, id: number) =>
   id === 0 ? 'Civitai' : accountType || `account ${id}`;
 
+type BuzzRow = {
+  transactionId: string;
+  date: string;
+  amount: string;
+  accountType: string;
+  type: string;
+  description: string;
+  externalTransactionId: string;
+  counterpartyId: string;
+  counterpartyType: string;
+};
+
 /**
- * Retool ran this as two queries — `Payments` (`fromAccountId = user`, money OUT) and `Receipts`
- * (`toAccountId = user`, money IN) — shown side by side, each with its own filters. One merged list
- * cannot answer "what did this account spend" without the reader sorting it by eye, which is the
- * question a farming or chargeback investigation actually asks.
+ * Two queries, each with its own cap, because the sides are wildly asymmetric: an account earning
+ * reaction rewards takes thousands of receipts a week against a handful of payments. Selecting both
+ * sides under ONE cap lets the busy side consume the whole of it — measured on user 2557503, all 200
+ * rows of a 90-day window were receipts spanning the most recent two days, so every one of its 128
+ * payments was invisible and the 10k Buzz Creator Shop fee that prompted this was unfindable.
  */
-export async function getBuzzHistory(
+/**
+ * 🔴 `$query` interpolates and does NOT escape, so a type reaching the SQL is validated here rather
+ * than trusted. A closed list would go stale as transaction types are added — every value this column
+ * holds is a bare identifier, so the shape is the check, and anything else is dropped to "no filter"
+ * rather than passed through.
+ */
+const buzzTypeFilter = (type?: string) =>
+  type && /^[A-Za-z]{1,32}$/.test(type) ? `AND type = '${type}'` : '';
+
+const buzzSideQuery = (
   userId: number,
-  days = 90,
-  /** `includeBank` is an access decision, not a filter — see the caller. */
-  { limit = 200, includeBank = true }: { limit?: number; includeBank?: boolean } = {}
-): Promise<{
-  payments: BuzzTransaction[];
-  receipts: BuzzTransaction[];
-  days: number;
-  truncated: boolean;
-}> {
-  const rows = await getClickhouse().$query<{
-    transactionId: string;
-    date: string;
-    direction: string;
-    amount: string;
-    accountType: string;
-    type: string;
-    description: string;
-    externalTransactionId: string;
-    counterpartyId: string;
-    counterpartyType: string;
-  }>(`
+  direction: 'in' | 'out',
+  days: number,
+  limit: number,
+  type?: string
+) => {
+  const mine = direction === 'in' ? 'toAccount' : 'fromAccount';
+  const theirs = direction === 'in' ? 'fromAccount' : 'toAccount';
+  return `
     SELECT
       transactionId,
       date,
-      if(toAccountId = ${userId}, 'in', 'out') AS direction,
       amount,
       -- OUR side, not the counterparty's. Which colour of Buzz this account received or spent is the
       -- point; the other side's type is a different fact. Reading the wrong side mislabels the most
       -- common row on the table (a yellow-to-blue reward reads as Yellow when Blue was received), and
       -- Yellow vs Blue is exactly the distinction a farming investigation turns on. Matches the main
       -- app's buzz.service.ts.
-      if(toAccountId = ${userId}, toAccountType, fromAccountType) AS accountType,
-      if(toAccountId = ${userId}, fromAccountType, toAccountType) AS counterpartyType,
+      ${mine}Type AS accountType,
+      ${theirs}Type AS counterpartyType,
       type,
       description,
       externalTransactionId,
-      if(toAccountId = ${userId}, fromAccountId, toAccountId) AS counterpartyId
+      ${theirs}Id AS counterpartyId
     FROM default.buzzTransactions
     WHERE date > now() - INTERVAL ${days} DAY
-      AND (fromAccountId = ${userId} OR toAccountId = ${userId})
+      AND ${mine}Id = ${userId}
+      ${buzzTypeFilter(type)}
     ORDER BY date DESC
     LIMIT ${limit + 1}
-  `);
+  `;
+};
+
+/**
+ * The types this account actually has on this side of the ledger, over the whole window rather than
+ * the page.
+ *
+ * The dropdown used to be built from the loaded rows, which made it a list of what survived the cap —
+ * so a type pushed out by reward volume could not even be selected, let alone reached. An aggregate,
+ * so it costs nothing next to the row fetch: measured at tens of milliseconds on the heaviest account.
+ */
+const buzzTypesQuery = (userId: number, direction: 'in' | 'out', days: number) => `
+  SELECT DISTINCT type
+  FROM default.buzzTransactions
+  WHERE date > now() - INTERVAL ${days} DAY
+    AND ${direction === 'in' ? 'toAccount' : 'fromAccount'}Id = ${userId}
+  ORDER BY type
+`;
+
+/**
+ * ONE side of the ledger — payments (money out) or receipts (money in).
+ *
+ * Per side, not per request, because the two columns carry independent filters and a shared request
+ * made every one of them reload the other: changing the receipts type blanked the payments column and
+ * re-ran its query for an answer that had not changed.
+ *
+ * Retool ran these as two queries too (`Payments` / `Receipts`), shown side by side with their own
+ * filters. One merged list cannot answer "what did this account spend" without the reader sorting it by
+ * eye, which is the question a farming or chargeback investigation actually asks.
+ */
+export async function getBuzzLedgerSide(
+  userId: number,
+  side: 'payments' | 'receipts',
+  days = 90,
+  {
+    limit = 200,
+    includeBank = true,
+    type,
+  }: {
+    limit?: number;
+    /** `includeBank` is an access decision, not a filter — see the caller. */
+    includeBank?: boolean;
+    /** Narrows server-side, ahead of the cap. */
+    type?: string;
+  } = {}
+): Promise<{
+  rows: BuzzTransaction[];
+  days: number;
+  limit: number;
+  truncated: boolean;
+}> {
+  const direction = side === 'receipts' ? 'in' : 'out';
+  const ch = getClickhouse();
+  // The cap applies AFTER the type filter, which is the whole point: selecting a type re-queries for
+  // `limit` rows OF THAT TYPE rather than narrowing the mixed page already fetched. An account taking
+  // thousands of rewards a week filled the cap inside two days, so every older purchase, tip or
+  // chargeback was unreachable at any window — filtering could only ever shrink what was already there.
+  const rows = await ch.$query<BuzzRow>(buzzSideQuery(userId, direction, days, limit, type));
 
   const truncated = rows.length > limit;
   const page = rows.slice(0, limit);
@@ -1135,7 +1274,7 @@ export async function getBuzzHistory(
       // time and shift every row by the viewer's offset, putting it on a different day from the IP and
       // prompt timestamps it is meant to line up with.
       date: clickhouseDate(r.date),
-      direction: r.direction === 'in' ? 'in' : 'out',
+      direction,
       amount: Number(r.amount),
       color: BUZZ_COLORS[r.accountType] ?? r.accountType,
       type: r.type,
@@ -1154,9 +1293,9 @@ export async function getBuzzHistory(
 
   return {
     days,
+    limit,
     truncated,
-    payments: visible.filter((t) => t.direction === 'out'),
-    receipts: visible.filter((t) => t.direction === 'in'),
+    rows: visible,
   };
 }
 
@@ -1298,4 +1437,33 @@ export async function getPayouts(userId: number, limit = 50): Promise<Capped<Pay
   ].sort((a, b) => (b.createdAt?.getTime() ?? 0) - (a.createdAt?.getTime() ?? 0));
 
   return capped(rows, limit);
+}
+
+/**
+ * The transaction types this account has on each side of the ledger, across the whole window.
+ *
+ * Separate from the rows, and depending on neither the cap nor the selected type, so the filter stays
+ * populated and selectable while the rows it controls are still loading — a moderator who picked the
+ * wrong type should not have to wait out a query against 1.5B rows before picking another.
+ *
+ * Built from the loaded page instead, the list described what survived the cap: a type pushed out by
+ * reward volume could not be offered, and offering it is the only thing that would have fetched it.
+ */
+export async function getBuzzLedgerTypes(
+  userId: number,
+  days = 90,
+  { includeBank = true }: { includeBank?: boolean } = {}
+): Promise<{ payments: string[]; receipts: string[] }> {
+  const ch = getClickhouse();
+  const [out, inbound] = await Promise.all([
+    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'out', days)),
+    ch.$query<{ type: string }>(buzzTypesQuery(userId, 'in', days)),
+  ]);
+
+  // Bank rows are withheld from the rows, so the filter must not offer a type whose every row it would
+  // then withhold — that reads as an empty result rather than as a permission.
+  const offerable = (rows: { type: string }[]) =>
+    rows.map((r) => r.type).filter((t) => includeBank || t !== 'bank');
+
+  return { payments: offerable(out), receipts: offerable(inbound) };
 }

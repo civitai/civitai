@@ -1,5 +1,6 @@
 import type { SessionUser } from '~/types/session';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import * as z from 'zod';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import {
@@ -142,6 +143,21 @@ const aiToolkitTrainingParams = z
       ecosystem: z.literal('flux2klein'),
       modelVariant: z.enum(['4b', '9b']),
     }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('qwen21'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('ming'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
+    aiToolkitBaseParams.extend({
+      ecosystem: z.literal('yue2'),
+      modelVariant: z.undefined().optional(),
+      batchSize: z.literal(1).optional(),
+    }),
     // ACE-Step audio
     aiToolkitBaseParams.extend({
       ecosystem: z.literal('ace_step_15'),
@@ -239,6 +255,7 @@ const whatIfAiToolkitParams = z.object({
   // fees attach to; without them the whatif estimate omits the fee that the
   // real submission incurs. Optional so pre-update clients still validate.
   samplePrompts: z.array(z.string()).optional(),
+  samplesOverrides: z.array(audioSampleOverrideSchema).optional(),
 });
 
 export const imageTrainingRouterWhatIfSchema = z
@@ -283,6 +300,7 @@ const imageTrainingWorkflowSchema = imageTrainingRouterInputSchema.extend({
 export type ImageTrainingWorkflowSchema = z.infer<typeof imageTrainingWorkflowSchema> & {
   user: SessionUser;
   features: FeatureAccess;
+  domain: ColorDomain;
 };
 
 // Can't extend a union, so we need to merge with an intersection

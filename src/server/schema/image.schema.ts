@@ -1,4 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 import { imageSelectProfileFilterSchema } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
@@ -6,6 +5,7 @@ import { constants } from '~/server/common/constants';
 import {
   baseQuerySchema,
   infiniteQuerySchema,
+  keysetCursorSchema,
   paginationSchema,
   periodModeSchema,
 } from '~/server/schema/base.schema';
@@ -384,18 +384,6 @@ export type GetInfiniteImagesOutput = z.output<typeof getInfiniteImagesSchema>;
 //   months-old draft, then submit it" they do not, and the draft lands at its
 //   upload rank rather than first.
 //
-//   🔴 One difference goes the OTHER way, and it is an accepted widening rather
-//   than an oversight. The index filters on `combinedNsfwLevel` whenever
-//   `useCombinedNsfwLevel` is set (i.e. for anyone without NSFW access), and that
-//   is `nsfwLevelLocked ? nsfwLevel : max(nsfwLevel, aiNsfwLevel)`. `getAllImages`
-//   has no equivalent — it filters bare `i."nsfwLevel"`. So an image the AI scored
-//   higher than its assigned level is hidden by the index and returned by the DB.
-//   In these pickers that is the caller's own image shown back to the caller, and
-//   the handler's caller check keeps it that way. Justin accepted it knowingly on
-//   2026-08-27 rather than widen this change into the shared feed query. Do not
-//   "fix" it here by reverting the routing: the fix is to teach `getAllImages`
-//   about `aiNsfwLevel`, which is a feed change and wants its own review.
-//
 //   Cost, measured on the prod replica 2026-08-27: 0.83-1.03 ms at a wide
 //   browsing level, 14-82 ms at browsingLevel=1, where the backward index walk
 //   discards thousands of rows before 51 survive. Plan is an index scan backward
@@ -415,8 +403,10 @@ export function requiresImageDbPath(input: {
   prioritizedUserIds?: number[] | null;
   publishedOnly?: boolean | null;
   userId?: number | null;
+  hidden?: boolean | null;
 }) {
   return (
+    !!input.hidden ||
     !!input.postId ||
     !!input.postIds?.length ||
     !!input.collectionId ||
@@ -442,6 +432,9 @@ export const getInfiniteImagesSchema = baseQuerySchema
     hidden: z.boolean().optional(),
     limit: z.number().min(0).max(200).default(constants.galleryFilterDefaults.limit),
     modelId: z.number().optional(),
+    // The viewer's level before a model gallery's cap narrows `browsingLevel`. A
+    // sponsored post is served at this and the cap frozen when its host accepted.
+    preCapBrowsingLevel: z.number().int().min(0).optional(),
     modelVersionId: z.number().optional(),
     // Filter the gallery to posts linked to a single Model3D
     // (Post.model3dId). Resolved server-side into a postIds prefilter so the
@@ -482,14 +475,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     requiringMeta: z.boolean().optional(),
 
     // - additional
-    cursor: z
-      .union([z.bigint(), z.number(), z.string(), z.date()])
-      .transform((val) =>
-        typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-          ? new Date(val)
-          : val
-      )
-      .optional(),
+    cursor: keysetCursorSchema.optional(),
     excludedTagIds: z.array(z.number()).optional(),
     excludedUserIds: z.array(z.number()).optional(),
     // excludedImageIds: z.array(z.number()).optional(),
@@ -671,4 +657,8 @@ export const toggleImageFlagSchema = z.object({
 });
 
 export type GetMyImagesInput = z.infer<typeof getMyImagesInput>;
-export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema);
+export const getMyImagesInput = infiniteQuerySchema.merge(imageSelectProfileFilterSchema).extend({
+  publishedOnly: z.boolean().optional(),
+  /** With publishedOnly: also the caller's unpublished media from the crucible entry modal. */
+  includeEntryDrafts: z.boolean().optional(),
+});

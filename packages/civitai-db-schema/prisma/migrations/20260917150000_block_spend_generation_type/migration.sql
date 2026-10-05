@@ -1,0 +1,60 @@
+-- ============================================================
+-- App Blocks — buzz SPEND attribution: generation TYPE
+-- ============================================================
+-- One additive, nullable column on block_spend_attribution recording WHICH kind
+-- of generation a block-initiated spend paid for, so a per-generation-type
+-- author fee has data to reason about. An event written untyped can never be
+-- typed retrospectively, which is why the column lands ahead of the fee.
+--
+--   generation_type   '<coarse>' or '<coarse>:<subtype>'. The COARSE key is
+--                     everything before the FIRST colon and is what a per-type
+--                     fee groups on (split_part(generation_type, ':', 1)); a
+--                     value carries at most one colon. Today:
+--                       textToImage:txt2img | :img2img | :img2img-edit
+--                       customComfy:<registered recipe id> | customComfy:inline
+--                       convert-image | chat-completion   (step ids, no subtype)
+--                     A bare 'textToImage' / 'customComfy' means the sub-axis
+--                     could not be established. NULL means the type could not.
+--
+-- 🔴 THE VALUE GRAMMAR, THE APP-FACING-ID-NEVER-ORCHESTRATOR-$type RULE, AND WHY
+--    THERE IS NO CHECK CONSTRAINT OR ENUM ARE DOCUMENTED IN ONE PLACE:
+--    src/server/services/blocks/generation-type.ts. Read it before widening the
+--    value space. In short: both the step and recipe registries are built to
+--    grow ADDITIVELY, and a CHECK here would turn every new entry into a
+--    migration — so the bound lives in code, against those same registries, and
+--    is re-checked at the write. An unrecognised value is never stored.
+--
+-- ⚠️ MANUAL-APPLY: committed for history, NOT auto-applied. A human applies this
+--    to prod and the dev database out of band (the main civitai DB is not on an
+--    auto-migrate path). A single ADD COLUMN of a nullable TEXT — no rewrite, no
+--    lock of consequence.
+--
+-- 🔴 APPLY THIS BEFORE THE CODE SHIPS — the order is NOT free, and getting it
+--    wrong fails SILENTLY. The Prisma model gains the field and the writer always
+--    passes it, so the generated INSERT names "generation_type"; against a
+--    database without the column that INSERT cannot succeed (Prisma P2022 over
+--    Postgres 42703 — reasoned from the query Prisma builds, NOT executed, since
+--    nothing here touches a database). The write is fire-and-forget behind a
+--    catch, so the user's generation is unaffected and nothing surfaces — but the
+--    attribution row is LOST for the whole window, and a lost row is not
+--    recoverable. Applied first, the column sits NULL until the populating code
+--    deploys, which is harmless. There are zero readers of the column today.
+--
+-- 🔴 VERIFY THE APPLY, don't assume it. The repo ships a read-only drift
+--    detector whose "Column present" check answers exactly "is generation_type
+--    in THIS database": DATABASE_URL=… pnpm --filter @civitai/db-schema drift.
+--    Run it against each environment after applying and before the code ships.
+--    The CI drift:gate cannot substitute — it compares against a committed
+--    snapshot and reports this column as one of ~18 non-blocking
+--    "NEW, pending migration" warnings.
+--
+-- 🔴 NO BACKFILL. Existing rows predate the column and the type was never
+--    recorded anywhere else on them, so there is nothing to recover — a backfill
+--    could only guess. They stay NULL, which is the honest value.
+--
+-- No index. Nothing reads the column yet; the per-type rollups that will read it
+-- arrive with the fee work, and the access shape they need is not yet known.
+-- Adding a speculative index now would be guessing at it.
+
+ALTER TABLE "block_spend_attribution"
+  ADD COLUMN "generation_type" TEXT;

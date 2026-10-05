@@ -175,10 +175,7 @@ describe('image hub: bogo quantity floor', () => {
 
 describe('grok image: v2 image cap', () => {
   it('7 staged images truncate to 3 on a v2 switch instead of failing max(3)', () => {
-    const store = makeStore({
-      ...EXT,
-      flags: { grokImagine2: true } as GenerationCtx['flags'],
-    });
+    const store = makeStore(EXT);
     store.set({ workflow: 'img2img:edit', ecosystem: 'Grok', prompt: 'x' });
     const img = (i: number) => ({ url: `https://example.com/${i}.png`, width: 512, height: 512 });
     store.set({ model: { id: grokVersionIds['v1.5'], model: { type: 'Checkpoint' } } });

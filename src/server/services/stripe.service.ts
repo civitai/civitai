@@ -117,6 +117,110 @@ export async function deriveSubscriptionAttributionMetadata({
   return encodeAttributionMetadata(derived);
 }
 
+/**
+ * Resolve the membership Price this customer can actually be charged.
+ *
+ * Stripe pins a customer to ONE billing currency the first time they are invoiced
+ * (`customer.currency`) and it is immutable thereafter. Every subscription price billed to
+ * that customer has to be payable in it, or Stripe rejects the call with
+ *
+ *   The price specified only supports `usd`. This doesn't match the expected currency: `aud`.
+ *
+ * That rejection is a raw throw out of `checkout.sessions.create` / `subscriptions.update`,
+ * so it reached the client as a tRPC INTERNAL_SERVER_ERROR (HTTP 500).
+ *
+ * The membership IS purchasable in that currency — each membership Product carries an
+ * active monthly sibling Price per supported currency, and the pricing page ships the whole
+ * set to the browser (`getPlans` selects `product.prices`). What the client cannot know is
+ * which one the customer is pinned to: `customer.currency` is a Stripe-side fact with no
+ * representation in our database and no endpoint that exposes it. So the substitution
+ * belongs here, where both the customer and the price are already in hand, rather than in
+ * the price picker — and putting it here also covers the plan-change path and any caller
+ * that reaches the procedure without going through the pricing page at all.
+ *
+ * Returns the Price to charge. Throws a typed BAD_REQUEST only in the two cases where no
+ * single correct answer exists; it never guesses an amount.
+ */
+async function resolvePriceForCustomerCurrency({
+  stripe,
+  customer,
+  price,
+}: {
+  stripe: Stripe;
+  customer: Stripe.Customer;
+  price: Stripe.Price;
+}): Promise<Stripe.Price> {
+  // Null until Stripe has invoiced them — an unpinned customer constrains nothing.
+  const customerCurrency = customer.currency?.toLowerCase();
+  if (!customerCurrency) return price;
+
+  // Lower-cased on both sides. Stripe's API returns lower-case currency codes, but this
+  // value is also compared against data that reaches us from the price picker, and the
+  // Product/Price tables carry upper-case codes for the other payment provider, so a
+  // case-sensitive comparison is one catalog edit away from being wrong in both directions.
+  // `Stripe.Price.currency` is non-optional, so there is no absent-currency case here.
+  if (price.currency.toLowerCase() === customerCurrency) return price;
+
+  // A multi-currency Price is payable in every currency it declares, so there is nothing to
+  // substitute. Our membership catalog does not use this — it uses sibling Prices, which is
+  // what the lookup below is for — but Stripe supports both, and without this check
+  // provisioning `currency_options` on a Price would turn a purchase that works today into
+  // the error below. `currency_options` is an expandable field and is NOT returned by
+  // default, hence the expand at the call site; without it this branch is dead.
+  if (price.currency_options?.[customerCurrency]) return price;
+
+  const productId = typeof price.product === 'string' ? price.product : price.product.id;
+  const interval = price.recurring?.interval;
+
+  // Every membership price is recurring (the caller has already checked the price belongs to
+  // a membership product), so this is a shape assertion rather than a reachable branch.
+  if (!interval) {
+    throw throwBadRequestError(
+      `This membership cannot be billed in ${customerCurrency.toUpperCase()}, the currency your billing account is set up in.`
+    );
+  }
+
+  // Scoped to the SAME product, so the substitute is the same membership tier. `product` is
+  // read off the Stripe Price we just retrieved, which also keeps the lookup inside Stripe's
+  // catalog — the Product/Price tables hold rows for other payment providers under the same
+  // tier names, and one of those price ids handed to Stripe would be a different failure.
+  const { data: siblings } = await stripe.prices.list({
+    product: productId,
+    currency: customerCurrency,
+    active: true,
+    type: 'recurring',
+    recurring: { interval },
+    limit: 100,
+  });
+
+  // `interval_count` is not a list filter, so it is applied here. Without it a monthly
+  // membership could be substituted by a price billed every 3 months at the same interval.
+  const intervalCount = price.recurring?.interval_count ?? 1;
+  const candidates = siblings.filter((p) => (p.recurring?.interval_count ?? 1) === intervalCount);
+
+  if (candidates.length === 1) return candidates[0];
+
+  if (candidates.length === 0) {
+    // The genuine fallback: the membership really is not sold in this currency. Says that,
+    // and does not claim the account is unusable — the other tiers may well be sold in it.
+    throw throwBadRequestError(
+      `Your billing account is set up in ${customerCurrency.toUpperCase()}, and this ` +
+        `membership is not currently sold in ${customerCurrency.toUpperCase()}. Stripe does ` +
+        `not allow an account's billing currency to change once it is set. Please contact ` +
+        `support and we can look at the options for your account.`
+    );
+  }
+
+  // More than one active price matches. Picking one would charge an amount nobody chose, and
+  // the amounts in a duplicated row are not necessarily close — so refuse instead. This is a
+  // catalog problem support can actually get fixed, unlike the currency pin.
+  throw throwBadRequestError(
+    `We could not determine the price of this membership in ${customerCurrency.toUpperCase()}, ` +
+      `the currency your billing account is set up in. Please contact support so we can ` +
+      `correct it — you have not been charged.`
+  );
+}
+
 export const createSubscribeSession = async ({
   priceId,
   refCode,
@@ -157,11 +261,26 @@ export const createSubscribeSession = async ({
     throw throwBadRequestError(`Could not find customer with id: ${customerId}`);
   }
 
-  const price = await stripe.prices.retrieve(priceId);
+  // `currency_options` is an expandable field and is NOT returned by default, so without
+  // this expand the multi-currency branch of resolvePriceForCustomerCurrency is dead and a
+  // Price that Stripe would happily charge in the customer's currency gets substituted (or
+  // rejected) anyway. Expanding costs no extra round trip, only a larger response body.
+  const requestedPrice = await stripe.prices.retrieve(priceId, { expand: ['currency_options'] });
 
-  if (!price || !membershipProducts.find((x) => x.id === (price.product as string))) {
+  if (
+    !requestedPrice ||
+    !membershipProducts.find((x) => x.id === (requestedPrice.product as string))
+  ) {
     throw throwNotFoundError(`The product you are trying to purchase does not exists`);
   }
+
+  // Everything downstream charges `price`, never the requested id: the customer may be
+  // pinned to a billing currency the requested Price is not sold in, in which case this is
+  // the same membership's sibling Price in that currency. Resolved once, ahead of BOTH
+  // price-carrying Stripe calls — the in-place `subscriptions.update` plan change rejects on
+  // a currency mismatch exactly as `checkout.sessions.create` does, so substituting in front
+  // of only one of them would still 500 every pinned member's upgrade.
+  const price = await resolvePriceForCustomerCurrency({ stripe, customer, price: requestedPrice });
 
   const activeSubscription = subscriptions.find((x) => x.status !== 'canceled');
   const subscriptionItem = activeSubscription?.items.data.find((d) =>
@@ -304,10 +423,12 @@ export const createSubscribeSession = async ({
     }
   }
 
-  // array of items we are charging the customer
+  // array of items we are charging the customer. `price.id`, NOT the requested `priceId` —
+  // they differ whenever the customer is pinned to a currency the requested Price is not
+  // sold in, and Checkout rejects a mismatched currency exactly as the plan-change path does.
   const lineItems = [
     {
-      price: priceId,
+      price: price.id,
       quantity: 1,
     },
   ];
@@ -528,59 +649,6 @@ export const cancelSubscriptionWithFallback = async ({
 
     return { type: 'direct' as const };
   }
-};
-
-// DEAD CODE: no live callers. Buzz purchases go through `getPaymentIntent` below,
-// which charges `unitAmount` from our DB `Price` rows and does NOT reference
-// Stripe Price objects. Therefore Stripe's buzz Prices are allowed to drift from
-// our DB (intentionally). Do not resurrect this path without also aligning the
-// Stripe Price catalog — and note that our DB Price IDs for buzz packages may be
-// synthetic (e.g. `price_civitai_buzz_25`) and not valid in Stripe.
-export const createBuzzSession = async ({
-  customerId,
-  user,
-  returnUrl,
-  priceId,
-  customAmount,
-}: Schema.CreateBuzzSessionInput & {
-  customerId?: string;
-  user: Schema.CreateCustomerInput;
-}) => {
-  const stripe = await getServerStripe();
-  if (!stripe) throw throwBadRequestError('Stripe is not available');
-
-  if (!customerId) {
-    customerId = await createCustomer(user);
-  }
-
-  const price = await dbRead.price.findUnique({
-    where: { id: priceId },
-    select: { productId: true, currency: true, type: true },
-  });
-
-  if (!price)
-    throw throwNotFoundError(`The product you are trying to purchase does not exists: ${priceId}`);
-
-  const session = await stripe.checkout.sessions.create({
-    customer: customerId,
-    cancel_url: returnUrl,
-    line_items: [
-      customAmount
-        ? {
-            price_data: {
-              unit_amount: customAmount * 100,
-              currency: price.currency,
-              product: price.productId,
-            },
-            quantity: 1,
-          }
-        : { price: priceId, quantity: 1 },
-    ],
-    mode: price.type === 'recurring' ? 'subscription' : 'payment',
-    success_url: returnUrl,
-  });
-
-  return { sessionId: session.id, url: session.url };
 };
 
 export const upsertSubscription = async (
@@ -1148,6 +1216,7 @@ export const cancelSubscription = async ({
   userId,
   subscriptionId,
   atPeriodEnd,
+  removeRecord,
 }: {
   userId?: number;
   subscriptionId?: string;
@@ -1156,6 +1225,10 @@ export const cancelSubscription = async ({
   // restriction flows so the user keeps what they paid for and the action is
   // reversible via reinstateSubscription.
   atPeriodEnd?: boolean;
+  // Delete our CustomerSubscription row once Stripe has confirmed the cancel. Only after:
+  // every cancel path finds the subscription through that row, so deleting it first turns a
+  // failed cancel into a silent no-op that keeps billing.
+  removeRecord?: boolean;
 }) => {
   if (!subscriptionId && userId) {
     const subscription = await dbWrite.customerSubscription.findFirst({
@@ -1183,7 +1256,19 @@ export const cancelSubscription = async ({
     return;
   }
 
-  await stripe.subscriptions.del(subscriptionId);
+  // The shared client retries nothing (stripe-node's default is 0), so one transient error
+  // would otherwise leave a deleted account billing. The timeout bounds the retries: at the
+  // default 80s per attempt, three attempts outlast the gateway and a completed deletion 504s.
+  await stripe.subscriptions.del(
+    subscriptionId,
+    {},
+    removeRecord ? { maxNetworkRetries: 2, timeout: 10_000 } : {}
+  );
+  if (!removeRecord) return;
+
+  // deleteMany: the customer.subscription.deleted webhook may have removed the row already.
+  await dbWrite.customerSubscription.deleteMany({ where: { id: subscriptionId } });
+  if (userId) await invalidateSubscriptionCaches(userId);
 };
 
 // Reverses a cancel_at_period_end cancellation while the subscription is still
@@ -1285,8 +1370,45 @@ export const getPaymentIntent = async ({
   }
 
   if (unitAmount !== metadata.buzzAmount / 10) {
-    // Safeguard against tampering with the amount on the client side
-    throw new Error('There was an error while creating your order. Please try again later.');
+    // Safeguard against tampering with the amount on the client side.
+    //
+    // Typed rather than a bare `Error`: `getTRPCErrorFromUnknown` maps a plain Error to
+    // INTERNAL_SERVER_ERROR, so rejected input on this route answered with a 500 — the same
+    // defect class as the fractional amount above. This is an exposed authenticated
+    // procedure. The condition is unchanged; only its type.
+    //
+    // 🔴 The demotion costs this guard its only COUNTER, which is why the explicit log
+    // below is not optional. `recordTrpcError` (`server/prom/http-errors.ts`) increments
+    // `civitai_app_http_errors_total` only for `status >= 500`, and the central error log
+    // tags a 4xx `type:'info'` — so as a BAD_REQUEST this fires no metric and leaves the
+    // error stream entirely. A scripted probe hunting for a window where the guard is
+    // bypassable would otherwise be invisible.
+    //
+    // 🔴 Named `-mismatch`, NOT `-tamper`, and deliberately so. Tampering is the motivating case
+    // but it is not the only way to arrive here: `buzzPriceMetadataSchema.buzzAmount` is an
+    // INDEPENDENT value with a sibling `bonusDescription`, and the form submits
+    // `selectedPrice.buzzAmount ?? unitAmount * 10` — so a Stripe buzz Price configured with bonus
+    // Buzz (charge 1000, credit 11000) trips this condition from an ordinary package click. No
+    // such Price exists today (all five live buzz Prices carry empty metadata, checked
+    // 2026-09-19), so this is latent rather than active; but naming the event after the malicious
+    // reading would attach the word "tamper" — and an innocent buyer's userId — to whoever
+    // configures the next bonus package.
+    logToAxiom(
+      {
+        name: 'buzz-purchase-amount-mismatch',
+        type: 'warning',
+        message: 'rejected a buzz purchase whose unitAmount did not match metadata.buzzAmount',
+        userId: user.id,
+        submittedUnitAmount: unitAmount,
+        submittedBuzzAmount: metadata.buzzAmount,
+        expectedUnitAmount: metadata.buzzAmount / 10,
+      },
+      'webhooks'
+    ).catch(() => null);
+
+    throw throwBadRequestError(
+      'There was an error while creating your order. Please try again later.'
+    );
   }
 
   // FIN-1: App Blocks revenue attribution is client-forgeable end-to-end —

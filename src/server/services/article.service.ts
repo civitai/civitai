@@ -1863,7 +1863,7 @@ export type ArticleTextModerationStatus = {
   updatedAt: Date | null;
 };
 
-// `scanJobs.error` is stamped by `markImageScanError` (image-scan-result.service, scan
+// `scanJobs.error` is stamped by `markImageScanError` (image-scan-pipeline, scan
 // verdicts) and `markImageScanSubmitFailure` (image.service, submit rejections). Both
 // carry the classifier's verdict (transient | permanent | unknown) plus the human reason,
 // letting the scan-status UI render a class-aware cause.

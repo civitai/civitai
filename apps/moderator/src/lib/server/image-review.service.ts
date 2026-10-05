@@ -401,7 +401,7 @@ export async function getAppealImageQueue({
         query_params: { ids },
         format: 'JSONEachRow',
       });
-      for (const t of await resp.json<{ imageId: number; tosReason: string }[]>())
+      for (const t of await resp.json<{ imageId: number; tosReason: string }>())
         tosByImage.set(t.imageId, t.tosReason);
     } catch (e) {
       console.error('[appeals] tosReason lookup failed', e);

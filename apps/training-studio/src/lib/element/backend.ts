@@ -3,7 +3,14 @@
 // to the orchestrator with the client-safe cores — no server routes involved.
 import { createCivitaiClient } from '@civitai/client';
 import type { StudioBackend } from '$lib/backend';
-import type { StudioLocation } from '$lib/host';
+import type {
+  GenerateRequest,
+  ModelPageRequest,
+  PickedModel,
+  PickModelRequest,
+  PublishRequest,
+  StudioLocation,
+} from '$lib/host';
 import { UploadError } from '$lib/upload';
 import { computeFromPrices } from '$lib/pricing-core';
 import * as label from '$lib/autolabel-core';
@@ -24,9 +31,44 @@ export interface StudioElementHost {
     imageLocation?: string | null;
     /** Opt training jobs into the NDJSON live trace (`events` or `logs`); off when omitted. */
     traceMode?: string;
+    /** The host page's Buzz color (green domain vs yellow). When set, the element locks the Buzz
+     *  mode to it — no user toggle, and nothing persisted to localStorage. Omit to leave the
+     *  user's own toggle in charge. */
+    buzzMode?: 'yellow' | 'green';
+    /** Whether this user may generate with UNPUBLISHED training results — the main app gates that
+     *  on membership (member or moderator). Pass `false` for a non-member: the per-epoch Generate
+     *  affordance disables with a membership explanation instead of silently doing nothing. Omit
+     *  when the host doesn't know (behaves as before). */
+    canGenerateUnpublished?: boolean;
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
+     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
+     *  the host doesn't know. */
+    isPaidMember?: boolean;
+    /** The host's membership-plans page, linked from that explanation. Relative = same-tab
+     *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
+    pricingUrl?: string;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
+     *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
+    enabledModelFlags?: string[];
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
+  /** Open the host page's own generator in place, seeded with an epoch's weights — no navigation.
+   *  Preferred over `generateUrl` when both are provided. */
+  generate?(req: GenerateRequest): void;
+  /** URL for the main app's `/generate` deep link primed with an epoch's weights; omit both this
+   *  and `generate` to hide the per-epoch Generate affordance (e.g. the viewing user can't use
+   *  the generator hand-off). */
+  generateUrl?(req: GenerateRequest): string;
+  /** URL for the main app's publish-from-workflow entry (draft model + wizard) for a run's
+   *  checkpoint; omit to hide the Publish affordance. Relative = same-tab, absolute = new tab. */
+  publishUrl?(req: PublishRequest): string;
+  /** URL for the run's model page — draft or published (runs carry a modelId once a draft
+   *  exists); omit to hide the "view model" affordance. Relative = same-tab, absolute = new tab. */
+  modelPageUrl?(req: ModelPageRequest): string;
+  /** Open the host's own model picker for the Custom base; resolves null when the user cancels.
+   *  Omit to keep the paste-an-AIR input alone. */
+  pickModel?(req: PickModelRequest): Promise<PickedModel | null>;
 }
 
 class UnauthorizedError extends Error {}
@@ -118,6 +160,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
 
+    epochArchive: (workflowId) => call((client) => orch.createEpochArchive(client, workflowId)),
+    deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
+
     continueQuote: (workflowId, fromEpoch, addEpochs) =>
       call((client) =>
         train.continueTrainingWhatIf(client, { workflowId, fromEpoch, addEpochs }, submitOpts())
@@ -133,6 +178,8 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       ),
 
     getFromPrices: () => call((client) => computeFromPrices(client)),
+
+    quoteRun: (input) => call((client) => orch.trainingWhatIf(client, input)),
 
     getBuzz: async () => (host.getBuzzBalances ? host.getBuzzBalances() : null),
   };

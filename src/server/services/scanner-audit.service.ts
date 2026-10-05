@@ -14,6 +14,7 @@
 import crypto from 'crypto';
 import type { MediaRatingOutput, Workflow, XGuardModerationStep } from '@civitai/client';
 import { clickhouse } from '~/server/clickhouse/client';
+import type { ImageScanningResult } from '~/server/services/image-scanning-result.service';
 import { logToAxiom } from '~/server/logging/client';
 import {
   applyDerivedLabels,
@@ -525,6 +526,94 @@ export async function recordImageScan({
     entityType: 'image',
     entityId: String(imageId),
     modelVersion: '1',
+    startedAt,
+    completedAt,
+    labels,
+  });
+}
+
+// imageScanning's age and recognition models differ from mediaRating's, so its rows must not
+// aggregate with version 1.
+const IMAGE_SCANNING_AUDIT_VERSION = '2';
+
+/** `recordImageScan` for the imageScanning step. */
+export async function recordImageScanningResult({
+  workflowId,
+  imageId,
+  scan,
+  startedAt,
+  completedAt,
+}: {
+  workflowId: string;
+  imageId: number;
+  scan: ImageScanningResult;
+  startedAt?: Date | string | null;
+  completedAt?: Date | string | null;
+}) {
+  if (!clickhouse) return;
+
+  const baseRow = {
+    threshold: null,
+    version: IMAGE_SCANNING_AUDIT_VERSION,
+    matchedText: [] as string[],
+    matchedPositivePrompt: [] as string[],
+    matchedNegativePrompt: [] as string[],
+  };
+  const labels: LabelRowSeed[] = [
+    {
+      ...baseRow,
+      label: normClassifierLabel(scan.nsfwLevel),
+      labelValue: 'nsfw_level',
+      score: 1,
+      triggered: 1,
+    },
+  ];
+
+  // Nothing acts on this label yet.
+  if (scan.csam !== null) {
+    labels.push({
+      ...baseRow,
+      label: 'csam',
+      labelValue: '',
+      score: scan.csam ? 1 : 0,
+      triggered: scan.csam ? 1 : 0,
+    });
+  }
+
+  if (scan.ageDetections.length > 0) {
+    labels.push({
+      ...baseRow,
+      label: 'minor',
+      labelValue: scan.ageDetections
+        .map((d) => d.ageBand)
+        .filter((x): x is string => !!x)
+        .join(', '),
+      score: clamp01(Math.max(...scan.ageDetections.map((d) => d.under18Probability ?? 0))),
+      triggered: scan.minorDetected ? 1 : 0,
+    });
+  }
+
+  for (const [recognition, labelValue] of [
+    [scan.aiRecognition, 'ai_recognition'],
+    [scan.animeRecognition, 'anime_recognition'],
+  ] as const) {
+    if (!recognition?.label) continue;
+    labels.push({
+      ...baseRow,
+      label: normClassifierLabel(recognition.label),
+      labelValue,
+      score: clamp01(recognition.score),
+      triggered: 1,
+    });
+  }
+
+  await insertRows({
+    workflowId,
+    scanner: 'image_ingestion',
+    contentHash: computeContentHash(`image:${imageId}`),
+    entityType: 'image',
+    entityId: String(imageId),
+    modelVersion: IMAGE_SCANNING_AUDIT_VERSION,
     startedAt,
     completedAt,
     labels,

@@ -20,8 +20,8 @@ One process owns the whole notification write side:
   `NOT EXISTS "UserNotificationSettings"` clause is unmuteable.
 - **(B) Fan-out worker** — the ported ~5s poll loop. Claims `PendingNotification` rows, fans each into
   `Notification` + `UserNotification` rows (normal / debounced), deletes/reschedules the pending row,
-  and POSTs a realtime `notification:new` signal per affected user while bumping the redis unread
-  counter.
+  and POSTs a realtime `notification:new` signal per affected user, bumping that user's redis unread
+  counter only if one is already cached (an uncached user is recounted from the DB on the next read).
 - **Ops routes** — `GET /health` (no-dep liveness), `GET /pool-stats` (notif pool snapshots),
   `GET /metrics` (Prometheus, private-by-XFF).
 
@@ -48,7 +48,8 @@ Unlike the auth/gateway images, this app imports `@civitai/db`'s Prisma-backed h
 build needs the generated Prisma client — the Dockerfile does a full frozen install so the root
 `postinstall` runs `db:generate` (see the Dockerfile header).
 
-## Not done here (follow the plan)
+## Deploy status
 
-Deploy wiring (datapacket-talos app dir, Tekton `APP_CONFIG` entry, lockfile refresh, worker cutover
-soak/canary) and the read-path move (C) are separate, sequenced steps — see §5 of the plan.
+Deployed and running in production with `WORKER_ENABLED=true` since 2026-07 — this app's worker is
+the site's sole fan-out consumer. The `.env.example` default of `false` exists so a fresh local
+checkout never races the real worker; it does not describe production.

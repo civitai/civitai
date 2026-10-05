@@ -177,9 +177,28 @@ export function scoreAccount(
 /**
  * The per-heuristic counters that ride out with every report.
  *
- * Three numbers per heuristic, not one, because the question shadow mode asks is "how often does
+ * FOUR numbers per heuristic, not one, because the question shadow mode asks is "how often does
  * this fire, and how hard" — `fired` alone cannot distinguish a signal that never triggers from one
  * that triggers weakly on everything.
+ *
+ * 🔴 `score_sum` IS THE "HOW HARD" HALF, AND UNTIL IT EXISTED THIS DOCSTRING PROMISED IT WITHOUT
+ * DELIVERING IT. `evaluated`, `fired` and `clamped` are all COUNTS: between them they say how often
+ * a heuristic ran, how often it returned anything at all, and how often it returned nonsense — and
+ * not one of them carries a MAGNITUDE, so a signal firing at 0.05 on everything and one firing at
+ * 0.95 on everything produce byte-identical counters. The only place a magnitude reached anybody was
+ * the `id=0.00` list dumped into each finding's `reason`, i.e. the moderator-facing sentence, which
+ * is the wrong surface for it twice over: unreadable to the person it was shown to, and per-account
+ * rather than aggregated for the person who wanted it.
+ *
+ * So the sum rides out here instead, and `score_sum / evaluated` is the mean sub-score for the run.
+ * A SUM rather than a mean because the contract's counters are a flat `Record<string, number>` with
+ * no way to say "this one is an average, weight it by that one" — two runs' means cannot be combined
+ * without their denominators, and both halves of the pair are already emitted.
+ *
+ * Rounded to four places on the way out: a float sum accumulates representation error (0.1 + 0.2)
+ * and a counter reading `1.2000000000000002` on a board invites someone to explain the tail. Four
+ * places is finer than the two the dumped clause ever rendered, so nothing is lost against what it
+ * replaced.
  *
  * The `heuristic:` prefix keeps them from colliding with the run-level counters in the same flat
  * record; a heuristic id containing a colon would read ambiguously, which is why ids are identifiers.
@@ -191,11 +210,15 @@ export function heuristicCounters(scores: BotAccountScore[]): Record<string, num
       const evaluated = `heuristic:${sub.id}:evaluated`;
       const fired = `heuristic:${sub.id}:fired`;
       const clamped = `heuristic:${sub.id}:clamped`;
+      const scoreSum = `heuristic:${sub.id}:score_sum`;
       counters[evaluated] = (counters[evaluated] ?? 0) + 1;
       counters[fired] = (counters[fired] ?? 0) + (sub.score > 0 ? 1 : 0);
       counters[clamped] = (counters[clamped] ?? 0) + (sub.clamped ? 1 : 0);
+      counters[scoreSum] = (counters[scoreSum] ?? 0) + sub.score;
     }
   }
+  for (const key of Object.keys(counters))
+    if (key.endsWith(':score_sum')) counters[key] = Math.round(counters[key] * 10_000) / 10_000;
   return counters;
 }
 
@@ -327,22 +350,35 @@ export function soleSignalCounters(
   return counters;
 }
 
-/** The compact `id=0.00` rendering the finding's reason carries, so a moderator sees each
- *  heuristic's own number rather than only the blend. */
-export function renderSubScores(subScores: HeuristicScore[]): string {
-  if (!subScores.length) return 'no heuristics registered';
-  return subScores.map((s) => `${s.id}=${s.score.toFixed(2)}`).join(', ');
-}
+/**
+ * 🔴 `renderSubScores` IS GONE, AND IT WAS DELETED RATHER THAN LEFT UNCALLED. It produced the
+ * `id=0.00, id=0.00` clause that `report.ts` appended to every finding's `reason` — machine syntax
+ * on the one string the wire contract calls "the whole value of the row to a moderator", and the
+ * part of it a non-technical reader stops at. There is no second caller and no second surface that
+ * wants that shape, so an unused export would be an invitation to put it back.
+ *
+ * The numbers it rendered are NOT gone: `heuristicCounters` above now emits
+ * `heuristic:<id>:score_sum`, which is the magnitude a grading pass actually wanted, aggregated per
+ * run in the record that already carries the other three per-heuristic counters. The trade is stated
+ * on `buildFinding` in `report.ts`: per-ACCOUNT sub-scores no longer leave the process, because the
+ * contract has no structured field on a finding to carry them.
+ */
 
 /**
  * The evidence-citing clauses, in one string a moderator can act on.
  *
  * 🔴 THE NOTES WERE COLLECTED AND THEN DROPPED. `HeuristicScore.note` has always existed and every
- * heuristic has always been asked to produce one, but the finding's reason rendered only
- * `renderSubScores` — the bare `id=0.00` list. So the board carried three numbers and no statement
- * of what any of them SAW, which is the half a moderator needs to decide anything. With a
- * do-nothing placeholder as the only heuristic that gap was invisible, because the only note was
- * always `null`.
+ * heuristic has always been asked to produce one, but the finding's reason once rendered only the
+ * bare `id=0.00` list (by a `renderSubScores` that has since been deleted — see the block above).
+ * So the board carried three numbers and no statement of what any of them SAW, which is the half a
+ * moderator needs to decide anything. With a do-nothing placeholder as the only heuristic that gap
+ * was invisible, because the only note was always `null`.
+ *
+ * 🔴 AND THIS IS NOW THE ONLY PART OF THE SCORING IN THE SENTENCE. The numbers went to the counters
+ * and the notes stayed, which is the right way round: a note says what a signal saw, and that is
+ * what a non-technical moderator can check. A heuristic whose `explain` returns something a reader
+ * cannot act on is therefore a defect in that heuristic, not a cosmetic issue — nothing else is
+ * left to carry the evidence.
  *
  * Heuristics that scored 0 return `null` and contribute nothing here, deliberately: a reason that
  * recites every signal that did not fire buries the one that did.
@@ -424,9 +460,10 @@ export const MIN_REPORTED_CONFIDENCE = 0.1125;
  *
  * So: PROVISIONAL. It is carried forward unchanged because changing it would move the reported
  * population of every heuristic at once, which is a decision that wants its own evidence and its
- * own change — not a side effect of adding a signal. `asset-staging`'s boundaries are derived
- * AGAINST this number (see `STAGED_ONE_AT`), so it is load-bearing for that heuristic's firing
- * point; that makes it more important to be honest about its provenance, not less. The
+ * own change — not a side effect of adding a signal. `asset-staging`'s boundaries are CHECKED
+ * against this number (see `STAGED_ONE_AT` — they were derived from it until the ordering evidence
+ * set the volume boundary instead), so it still bounds that heuristic's firing point; that makes it
+ * more important to be honest about its provenance, not less. The
  * `confidence_bucket_*` counters are what can eventually replace it with a measured value.
  */
 export const LONE_SIGNAL_CUT = 0.45;

@@ -315,11 +315,11 @@ function ImageContent({
                   aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
                 },
               }}
-              // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
+              // No `width`: EdgeImage turns one into an inline `maxWidth` that beats `max-w-full`,
+              // and the aspect-ratio wrapper then clips the image's height.
               // `anim` and `original` feed the CDN URL — an inactive slide has to
               // request the same URL the active one will, or it warms nothing
               anim
-              quality={90}
               original={isVideo ? true : undefined}
               html5Controls={
                 active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))

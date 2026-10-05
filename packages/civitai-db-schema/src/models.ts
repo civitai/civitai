@@ -30,11 +30,13 @@ export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "Ae
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
+export type HuggingFaceImportStatus = "Queued" | "Transferring" | "Completed" | "Failed" | "Canceled";
+
 export type ModelStatus = "Draft" | "Training" | "Published" | "Scheduled" | "Unpublished" | "UnpublishedViolation" | "GatherInterest" | "Deleted";
 
 export type TrainingStatus = "Pending" | "Submitted" | "Paused" | "Denied" | "Processing" | "InReview" | "Failed" | "Approved" | "Expired";
 
-export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell";
+export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell" | "SellMerge";
 
 export type CheckpointType = "Trained" | "Merge";
 
@@ -178,7 +180,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -188,7 +190,7 @@ export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audi
 
 export type TechniqueType = "Image" | "Video";
 
-export type AppealStatus = "Pending" | "Approved" | "Rejected";
+export type AppealStatus = "Pending" | "Approved" | "Rejected" | "Void";
 
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
@@ -253,6 +255,14 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
+
+export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
+
+export type CrucibleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
+export type CrucibleEngagementType = "Notify";
+
+export type PrizeSourceType = "Crucible" | "Challenge";
 
 export interface Account {
   id: number;
@@ -530,6 +540,8 @@ export interface User {
   comments?: Comment[];
   commentReactions?: CommentReaction[];
   notificationSettings?: UserNotificationSettings[];
+  pushSubscriptions?: PushSubscription[];
+  pushSettings?: UserPushSetting[];
   webhooks?: Webhook[];
   interests?: ModelInterest[];
   engagingUsers?: UserEngagement[];
@@ -589,6 +601,7 @@ export interface User {
   referralRewards?: ReferralReward[];
   referralRewardsAsReferee?: ReferralReward[];
   referralMilestones?: ReferralMilestone[];
+  creatorMilestones?: UserCreatorMilestone[];
   referralRedemptions?: ReferralRedemption[];
   referralAttributions?: ReferralAttribution[];
   clubs?: Club[];
@@ -642,6 +655,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
   model3ds?: Model3D[];
@@ -661,8 +675,13 @@ export interface User {
   blockSpendAttributionsAsSpender?: BlockSpendAttribution[];
   blockSpendAttributionsAsAppOwner?: BlockSpendAttribution[];
   blockSpendAttributionsAsContentAuthor?: BlockSpendAttribution[];
+  blockAuthorFeeAccrualsAsAppOwner?: BlockAuthorFeeAccrual[];
+  blockAuthorFeeAccrualsAsViewer?: BlockAuthorFeeAccrual[];
   blockSubscriptionAttributionsAsPurchaser?: BlockSubscriptionAttribution[];
   blockSubscriptionAttributionsAsAppOwner?: BlockSubscriptionAttribution[];
+  blockGoodPurchasesAsBuyer?: BlockGoodPurchase[];
+  blockGoodPurchasesAsAppOwner?: BlockGoodPurchase[];
+  blockGoodEntitlements?: BlockGoodEntitlement[];
   publishRequestsSubmitted?: AppBlockPublishRequest[];
   publishRequestsReviewed?: AppBlockPublishRequest[];
   blockScopeInvocations?: BlockScopeInvocation[];
@@ -682,6 +701,7 @@ export interface User {
   appOwnershipTransfersFrom?: AppOwnershipTransfer[];
   appOwnershipTransfersTo?: AppOwnershipTransfer[];
   targetedAnnouncements?: AnnouncementUser[];
+  dismissedAnnouncements?: AnnouncementDismissal[];
   authoredAnnouncements?: Announcement[];
   announcementSpends?: AnnouncementSpend[];
   announcementMutesGiven?: UserAnnouncementMute[];
@@ -691,6 +711,10 @@ export interface User {
   placementsMade?: Placement[];
   placementsSold?: Placement[];
   pricingSlots?: PricingSlot[];
+  crucibles?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
+  crucibleEngagements?: CrucibleEngagement[];
+  prizes?: Prize[];
 }
 
 export interface CustomerSubscription {
@@ -778,6 +802,13 @@ export interface Purchase {
   createdAt: Date;
 }
 
+export interface CreatorGalleryHiddenUser {
+  creatorId: number;
+  userId: number;
+  note: string | null;
+  createdAt: Date;
+}
+
 export interface UserEngagement {
   userId: number;
   user?: User;
@@ -832,6 +863,40 @@ export interface Import {
   model?: Model | null;
   children?: Import[];
   importId: number | null;
+}
+
+export interface HuggingFaceImport {
+  id: number;
+  repo: string;
+  revision: string;
+  filename: string;
+  groupName: string;
+  sourceUrl: string;
+  sizeBytes: bigint | null;
+  sourceSha256: string | null;
+  status: HuggingFaceImportStatus;
+  bytesTransferred: bigint;
+  uploadId: string | null;
+  partSize: number | null;
+  parts: JsonValue | null;
+  bucket: string | null;
+  key: string | null;
+  url: string | null;
+  error: string | null;
+  attempts: number;
+  nextAttemptAt: Date | null;
+  userId: number | null;
+  modelVersionId: number | null;
+  modelFileId: number | null;
+  attachVersionId: number | null;
+  attachType: string | null;
+  claimedBy: string | null;
+  claimedAt: Date | null;
+  heartbeatAt: Date | null;
+  startedAt: Date | null;
+  completedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Model {
@@ -989,6 +1054,7 @@ export interface ModelVersion {
   usageControl: ModelUsageControl;
   earlyAccessTimeFrame: number;
   flags: number;
+  generatorLoaded: boolean;
   licensingFee: Decimal | null;
   licensingFeeType: LicensingFeeType | null;
   licensingFeeSettlementCurrency: LicensingFeeSettlementCurrency | null;
@@ -1003,6 +1069,7 @@ export interface ModelVersion {
   imageResources?: ImageResource[];
   posts?: Post[];
   resourceReviews?: ResourceReview[];
+  resourceInsight?: ResourceInsight | null;
   hashes?: ModelHash[];
   metricsDaily?: ModelMetricDaily[];
   modelVersionExploration?: ModelVersionExploration[];
@@ -1230,6 +1297,7 @@ export interface Report {
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
+  crucible?: CrucibleReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -1355,6 +1423,20 @@ export interface ResourceReviewReaction {
   reaction: ReviewReactions;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ResourceInsight {
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  role: string;
+  styleFamily: string;
+  contentTypes: string[];
+  qualityScore: number;
+  confidence: number;
+  specHash: string;
+  model: string;
+  createdAt: Date;
+  stale: boolean;
 }
 
 export interface Post {
@@ -1492,12 +1574,21 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  crucibles?: Crucible[];
+  crucibleHeroes?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface ImageTagForReview {
   imageId: number;
   image?: Image;
   tagId: number;
+}
+
+export interface ImageMetaFlags {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
 }
 
 export interface ImageFlag {
@@ -1614,12 +1705,13 @@ export interface CollectionMetric {
 export interface Tag {
   id: number;
   name: string;
+  displayName: string | null;
   color: string | null;
   createdAt: Date;
   updatedAt: Date;
   target: TagTarget[];
   type: TagType;
-  nsfw: NsfwLevel;
+  nsfwTerm: boolean;
   nsfwLevel: number;
   unlisted: boolean;
   unfeatured: boolean;
@@ -1863,7 +1955,9 @@ export interface OauthClient {
   appBlocks?: AppBlock[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  goodPurchases?: BlockGoodPurchase[];
   connectListings?: AppListing[];
 }
 
@@ -1930,7 +2024,10 @@ export interface AppBlock {
   userSubscriptions?: BlockUserSubscription[];
   buzzAttributions?: BlockBuzzAttribution[];
   spendAttributions?: BlockSpendAttribution[];
+  authorFeeAccruals?: BlockAuthorFeeAccrual[];
   subscriptionAttributions?: BlockSubscriptionAttribution[];
+  goodPurchases?: BlockGoodPurchase[];
+  goodEntitlements?: BlockGoodEntitlement[];
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
@@ -2289,6 +2386,7 @@ export interface BlockSpendAttribution {
   contentAuthorUserId: number | null;
   contentAuthor?: User | null;
   sharedContentKey: string | null;
+  generationType: string | null;
   status: string;
   voidedReason: string | null;
   attributedAt: Date;
@@ -2296,6 +2394,72 @@ export interface BlockSpendAttribution {
   voidedAt: Date | null;
   paidOutAt: Date | null;
   payoutId: string | null;
+}
+
+export interface BlockAuthorFeeAccrual {
+  id: string;
+  workflowId: string;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  appOwnerUserId: number;
+  appOwner?: User;
+  viewerUserId: number;
+  viewer?: User;
+  buzzType: string;
+  feeBuzz: number;
+  baseGenerationBuzz: number;
+  flatLegBuzz: number;
+  pctLegBuzz: number;
+  governingLeg: string;
+  generationType: string | null;
+  status: string;
+  settlementKey: string | null;
+  accruedAt: Date;
+  settledAt: Date | null;
+}
+
+export interface BlockGoodPurchase {
+  id: string;
+  userId: number;
+  user?: User;
+  appId: string;
+  app?: OauthClient;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  blockInstanceId: string | null;
+  goodId: string;
+  manifestVersion: string;
+  priceBuzz: number;
+  bluePaidBuzz: number;
+  appOwnerUserId: number;
+  appOwner?: User;
+  appOwnerShareBuzz: number;
+  platformShareBuzz: number;
+  buzzTransactionId: string;
+  payouts: JsonValue;
+  status: string;
+  refundReason: string | null;
+  refundedAt: Date | null;
+  createdAt: Date;
+  entitlement?: BlockGoodEntitlement | null;
+}
+
+export interface BlockGoodEntitlement {
+  id: string;
+  userId: number;
+  user?: User;
+  appBlockId: string;
+  appBlock?: AppBlock;
+  goodId: string;
+  kind: string;
+  payload: JsonValue;
+  purchaseId: string;
+  purchase?: BlockGoodPurchase;
+  grantedAt: Date;
+  revokedAt: Date | null;
+  revokeReason: string | null;
 }
 
 export interface BlockSubscriptionAttribution {
@@ -2363,6 +2527,8 @@ export interface AppUserScopeGrant {
   grantedScopes: string[];
   grantedAt: Date;
   revokedAt: Date | null;
+  revokedScopes: string[];
+  revokedScopesAt: Date | null;
   buzzBudgetPerDay: number | null;
 }
 
@@ -2443,6 +2609,27 @@ export interface UserNotificationSettings {
   user?: User;
   type: string;
   disabledAt: Date;
+}
+
+export interface PushSubscription {
+  id: number;
+  userId: number;
+  user?: User;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Date;
+  lastSeenAt: Date;
+  lastSuccessAt: Date | null;
+  failureCount: number;
+}
+
+export interface UserPushSetting {
+  userId: number;
+  user?: User;
+  type: string;
+  createdAt: Date;
 }
 
 export interface Webhook {
@@ -2689,6 +2876,7 @@ export interface Announcement {
   cover?: Image | null;
   profileOnly: boolean;
   targetUsers?: AnnouncementUser[];
+  dismissals?: AnnouncementDismissal[];
   spends?: AnnouncementSpend[];
   reports?: AnnouncementReport[];
 }
@@ -2713,6 +2901,14 @@ export interface UserAnnouncementMute {
 export interface AnnouncementUser {
   announcementId: number;
   userId: number;
+  announcement?: Announcement;
+  user?: User;
+}
+
+export interface AnnouncementDismissal {
+  announcementId: number;
+  userId: number;
+  dismissedAt: Date;
   announcement?: Announcement;
   user?: User;
 }
@@ -2757,12 +2953,14 @@ export interface Cosmetic {
   pHashHex: string | null;
   pHashVersion: string | null;
   pHashFailedAt: Date | null;
+  flags: number;
   creator?: User | null;
   UserCosmetic?: UserCosmetic[];
   purchases?: UserCosmeticShopPurchases[];
   purchaseComponents?: UserCosmeticShopPurchaseCosmetic[];
   cosmeticShopItems?: CosmeticShopItem[];
   packMemberships?: CosmeticShopItemCosmetic[];
+  creatorMilestones?: CreatorMilestone[];
 }
 
 export interface UserCosmetic {
@@ -2779,6 +2977,29 @@ export interface UserCosmetic {
   forId: number | null;
   forType: CosmeticEntity | null;
   remaining: number | null;
+}
+
+export interface CreatorMilestone {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: boolean;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
+  sortOrder: number;
+  achievements?: UserCreatorMilestone[];
+}
+
+export interface UserCreatorMilestone {
+  userId: number;
+  user?: User;
+  milestoneKey: string;
+  milestone?: CreatorMilestone;
+  achievedAt: Date;
+  seenAt: Date | null;
 }
 
 export interface CosmeticShopSection {
@@ -3596,6 +3817,7 @@ export interface JobQueue {
   entityType: EntityType;
   entityId: number;
   createdAt: Date;
+  data: JsonValue | null;
 }
 
 export interface VaultItem {
@@ -3632,6 +3854,32 @@ export interface Vault {
   updatedAt: Date;
   meta: JsonValue;
   items?: VaultItem[];
+}
+
+export interface UserStorageUsage {
+  userId: number;
+  kind: string;
+  publicStatus: string;
+  baseModel: string;
+  month: Date;
+  fileCount: number;
+  bytes: bigint;
+  computedAt: Date;
+}
+
+export interface UserStorageRollup {
+  userId: number;
+  imagesRequestedAt: Date | null;
+  imagesStartedAt: Date | null;
+  imagesComputedAt: Date | null;
+}
+
+export interface UserStorageSnapshot {
+  userId: number;
+  date: Date;
+  kind: string;
+  fileCount: number;
+  bytes: bigint;
 }
 
 export interface RedeemableCode {
@@ -4544,7 +4792,6 @@ export interface ImageTag {
   tag?: Tag;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;
@@ -4644,6 +4891,7 @@ export interface GenerationCoverage {
   modelVersionId: number;
   modelVersion?: ModelVersion;
   covered: boolean;
+  coveredNext: boolean;
 }
 
 export interface UserProfile {
@@ -5101,6 +5349,15 @@ export interface GenerationPreset {
   updatedAt: Date;
 }
 
+export interface GenerationSizePreset {
+  id: number;
+  userId: number;
+  user?: User;
+  width: number;
+  height: number;
+  createdAt: Date;
+}
+
 export interface WildcardSet {
   id: number;
   kind: WildcardSetKind;
@@ -5449,6 +5706,7 @@ export interface UserHubSource {
   enabled: boolean;
   exclude: boolean;
   index: number;
+  groupKey: number | null;
 }
 
 export interface Blurb {
@@ -5472,6 +5730,97 @@ export interface BlurbReference {
   materializedHash: string;
   materializedAt: Date;
   pendingSince: Date | null;
+}
+
+export interface Crucible {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  heroImageId: number | null;
+  heroImage?: Image | null;
+  buzzType: string;
+  nsfwLevel: number;
+  contentType: MediaType;
+  entryFee: number;
+  seededPrizePool: number;
+  prizePool: number;
+  entryLimit: number;
+  freeEntriesPerUser: number;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: JsonValue;
+  allowedResources: JsonValue | null;
+  allowedBaseModels: string[];
+  duration: number;
+  startAt: Date | null;
+  endAt: Date | null;
+  status: CrucibleStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+  ingestion: CrucibleIngestionStatus;
+  scannedAt: Date | null;
+  textNsfw: boolean;
+  entries?: CrucibleEntry[];
+  reports?: CrucibleReport[];
+  engagements?: CrucibleEngagement[];
+}
+
+export interface CrucibleEngagement {
+  userId: number;
+  user?: User;
+  crucibleId: number;
+  crucible?: Crucible;
+  type: CrucibleEngagementType;
+  createdAt: Date;
+}
+
+export interface CrucibleReport {
+  crucibleId: number;
+  crucible?: Crucible;
+  reportId: number;
+  report?: Report;
+}
+
+export interface CrucibleEntry {
+  id: number;
+  crucibleId: number;
+  crucible?: Crucible;
+  userId: number;
+  user?: User;
+  imageId: number | null;
+  image?: Image | null;
+  score: number;
+  voteCount: number;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Date;
+}
+
+export interface Prize {
+  id: number;
+  userId: number;
+  user?: User;
+  sourceType: PrizeSourceType;
+  sourceId: number;
+  subjectId: number | null;
+  position: number | null;
+  amount: number;
+  title: string;
+  externalTransactionId: string;
+  createdAt: Date;
+  autoClaimAt: Date;
+  claimedAt: Date | null;
+  buzzType: string | null;
+  autoClaimed: boolean;
+  paidAt: Date | null;
+  voidedAt: Date | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

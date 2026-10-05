@@ -9,17 +9,21 @@ import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
-// Hard per-image backstop for a single submit. The orchestrator submit is already
-// bounded per-attempt (createImageIngestionRequest, ~15s AbortSignal), but this also
-// covers any other external await inside ingestImage (Redis flag read, prompt lookup,
-// the scanJobs UPDATE) so one hung submit ties up a single concurrency slot rather
-// than the whole run. A fired timeout just fails that image → it stays queued and is
-// retried on a later run.
+// Minutes a just-created image counts as "submit in flight" (see the double-submit
+// note below). Must stay above the upload-path submit's own ceiling or the window it
+// closes reopens; overshooting costs one cron tick of delay for an image whose submit
+// died without writing the row at all.
+const SUBMIT_IN_FLIGHT_GRACE = 2;
+
+// Hard per-image backstop. The orchestrator submit is bounded per attempt (~15s), but the
+// Flipt flag read before it and the scanJobs UPDATE after it are not, so this keeps one hung
+// image to one concurrency slot. A timed-out image stays queued for a later run.
 const INGEST_IMAGE_TIMEOUT_MS = 60 * 1000;
 
 // Per-run wall-clock budget. Once exceeded we stop STARTING new submits so the run
@@ -150,9 +154,22 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
 
+  // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
+  // trigger queues a new image immediately, but `ingestImage` stamps
+  // `scanRequestedAt` only once its upload-path submit returns — up to ~50s later
+  // (3 attempts x the 15s per-attempt abort). A run landing inside that window reads
+  // the NULL as eligible and submits a SECOND workflow for the same image. Measured
+  // 2026-09-18: of 41,865 images scanned in 12h, 166 had two workflows, and 161 of
+  // those were created within 30s of a cron tick (uniform baseline: 9.8%).
+  const submitInFlightDate = decreaseDate(now, SUBMIT_IN_FLIGHT_GRACE, 'minutes');
+  const isSubmitInFlight = (img: IngestImageRow) =>
+    img.ingestion === 'Pending' && !img.scanRequestedAt && img.createdAt > submitInFlightDate;
+
   const pendingImages = images.filter(
     (img) =>
-      img.ingestion === 'Pending' && (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
+      img.ingestion === 'Pending' &&
+      !isSubmitInFlight(img) &&
+      (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
   );
 
   // Age-out safety net for never-returning Pending scans.
@@ -246,6 +263,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         ) {
           return true;
         }
+        // Skipped this run only because its first submit may still be in flight. It is
+        // neither processed nor waiting on a cooldown, so without this it prunes as
+        // stale — and if that submit died silently, nothing would ever re-drive it.
+        if (isSubmitInFlight(img)) return true;
         // Rescan waiting for the retry delay (and still under the retry cap) - KEEP.
         // Must mirror the rescanImages cooldown above, otherwise a cooled-down
         // Rescan image is neither processed nor waiting and gets wrongly pruned.
@@ -281,8 +302,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     return true;
   });
 
+  const submitInFlightCount = images.filter(isSubmitInFlight).length;
+
   console.log({
     pendingImages: pendingImages.length,
+    submitInFlight: submitInFlightCount,
     pendingUserUploads: pendingUserUploads.length,
     pendingBackfill: pendingBackfill.length,
     agedOutPending: agedOutPendingIds.length,
@@ -379,6 +403,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   imageIngestCronCounter.inc({ bucket: 'waitingForRetry' }, waitingForRetryIds.size);
   imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
   imageIngestCronCounter.inc({ bucket: 'agedOutPending' }, agedOutPendingIds.length);
+  imageIngestCronCounter.inc({ bucket: 'submitInFlight' }, submitInFlightCount);
 
   // Failed sends = images whose submit was attempted and returned/threw failure,
   // across every lane. Images not reached this run (budget/cancel) are neither sent
@@ -402,6 +427,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       rescan: rescanImages.length,
       error: errorImages.length,
       agedOutPending: agedOutPendingIds.length,
+      submitInFlight: submitInFlightCount,
       waitingForRetry: waitingForRetryIds.size,
       staleRemoved: staleIds.length,
       failedSends,
@@ -429,6 +455,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     sentRescan: sentRescanIds.length,
     sentError: sentErrorIds.length,
     agedOutPending: agedOutPendingIds.length,
+    submitInFlight: submitInFlightCount,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
     failedSends,
@@ -474,7 +501,6 @@ export async function sendImagesForScanBulk(
   return { sent, failed };
 }
 
-const BLOCKED_IMAGE_RETENTION_DAYS = 7;
 // Ceiling on the CSAM hold below, measured from the REPORT, not from the block: the
 // send/archive pipeline has no retry limit and no dead-letter, so a report nobody finishes
 // would otherwise hold a user's blocked media forever. Clocking it from the block instead
@@ -557,19 +583,34 @@ export const removeBlockedImages = createJob(
         ).map((x) => x.id)
       : [];
 
+    // The appeal decides this image's fate: approval unblocks it, rejection clears needsReview
+    // and the next run deletes it. Purging it first strands the Appeal as Pending forever.
+    // dbWrite for the same replica-lag reason as the CSAM lookup above.
+    const appealHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Image"
+        WHERE "needsReview" = 'appeal'
+          AND ingestion = 'Blocked'::"ImageIngestionStatus"
+      `
+    ).map((x) => x.id);
+
+    const held = [...heldActive, ...appealHeld];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
         entityType: EntityType.Image,
-        ...(heldActive.length ? { entityId: { notIn: heldActive } } : {}),
+        ...(held.length ? { entityId: { notIn: held } } : {}),
       },
       take: 15000,
       orderBy: { createdAt: 'asc' },
     });
 
     if (!jobQueue.length) {
-      console.log('No blocked images in queue', { csamHeld: heldActive.length });
-      return { processed: 0, csamHeld: heldActive.length };
+      console.log('No blocked images in queue', {
+        csamHeld: heldActive.length,
+        appealHeld: appealHeld.length,
+      });
+      return { processed: 0, csamHeld: heldActive.length, appealHeld: appealHeld.length };
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -624,6 +665,7 @@ export const removeBlockedImages = createJob(
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
       csamHoldExpired: holdExpiredDeletions.length,
+      appealHeld: appealHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -702,9 +744,9 @@ export const removeBlockedImages = createJob(
     // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only the shared
     //   object is left alone:
     //     • the scan pipeline's three block outcomes — the orchestrator content rating
-    //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine — in
-    //       BOTH copies of that pipeline: `image-scan-result.service` and the legacy bodies in
-    //       `api/webhooks/image-scan-result`. Automated, no moderator, no `ModActivity`.
+    //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
+    //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
+    //       `ModActivity`.
     //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
     //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
     //       and not by a moderator reviewing one. This is the writer that would be most dangerous
@@ -809,6 +851,7 @@ export const removeBlockedImages = createJob(
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
       csamHoldExpired: holdExpiredDeletions.length,
+      appealHeld: appealHeld.length,
     };
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod

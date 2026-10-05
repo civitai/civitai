@@ -425,7 +425,7 @@ export const getCommentCountByModel = ({
   modelId,
   hidden = false,
 }: GetCommentCountByModelInput) => {
-  return dbRead.comment.count({ where: { modelId, hidden } });
+  return dbRead.comment.count({ where: { modelId, hidden, parentId: null } });
 };
 
 /**

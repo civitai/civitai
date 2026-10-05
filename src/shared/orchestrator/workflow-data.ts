@@ -13,7 +13,10 @@ import type {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
-import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
+import {
+  orchestratorCompletedStatuses,
+  orchestratorRefundableStatuses,
+} from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Defaults
@@ -112,6 +115,12 @@ export class WorkflowData {
     return this.steps.flatMap((s) => s.blockedReasons);
   }
 
+  /** Whether any step still owes the user an output. See `StepData.awaitingOutput`. */
+  get awaitingOutput(): boolean {
+    if (!this.steps.length) return true;
+    return this.steps.some((s) => s.awaitingOutput);
+  }
+
   /** Create a StepData bound to this workflow. */
   step(step: Record<string, any> & Pick<NormalizedStep, 'metadata'>) {
     return new StepData(step, this);
@@ -195,12 +204,19 @@ export class StepData {
   }
 
   /**
-   * Whether this step's output should be hidden from the user.
-   * Set to true for intermediate steps in multi-step workflows (e.g., Wan 2.2 low-fps videoGen
-   * before frame interpolation).
+   * Whether this step's output should be hidden from the user: an intermediate step (a ControlNet
+   * preprocess, Wan 2.2's 12fps pass) — unless a later step failed, in which case the intermediate
+   * result is all the user got for what they were charged, so it is shown.
    */
   get suppressOutput(): boolean {
-    return (this.metadata as any)?.suppressOutput === true;
+    if ((this.metadata as any)?.suppressOutput !== true) return false;
+    if (this.status !== 'succeeded' || this.output.length === 0) return true;
+    const steps = this.#workflow.steps ?? [];
+    const index = steps.indexOf(this);
+    if (index < 0) return true;
+    return !steps
+      .slice(index + 1)
+      .some((s) => s.status && orchestratorRefundableStatuses.includes(s.status));
   }
 
   /**
@@ -219,6 +235,8 @@ export class StepData {
         return 'video';
       case 'aceStepAudio':
       case 'miniMaxMusic3':
+      case 'yuE2':
+      case 'soniloAudioGen':
         return 'audio';
       default:
         return 'image';
@@ -251,6 +269,16 @@ export class StepData {
   /** Blocked reason strings (for display grouping). */
   get blockedReasons(): string[] {
     return this.output.map((x) => x.blockedReason).filter((x): x is string => !!x);
+  }
+  /**
+   * Whether this step still owes the user an output. A non-terminal status is not
+   * enough on its own: the orchestrator holds a workflow at `processing` indefinitely
+   * when a mature result needs the owner to unlock it (`allowMatureContent: false` +
+   * `upgradeMode: 'manual'`), and every output has already landed by then.
+   */
+  get awaitingOutput(): boolean {
+    if (this.status && orchestratorCompletedStatuses.includes(this.status)) return false;
+    return !this.output.length || this.processingCount > 0;
   }
 }
 

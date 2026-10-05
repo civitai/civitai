@@ -25,6 +25,13 @@
  */
 
 import { TokenScope } from './token-scope.constants';
+// 🔴 `import type`, NOT a value import, and the distinction is load-bearing for this
+// module. `app-capabilities.constants` itself imports from `~/server/services/blocks/…`,
+// so a VALUE import would pull a server path into a module this file's own header keeps
+// deliberately dependency-free and which client code imports. A type-only import is
+// ERASED at compile time and creates no runtime edge at all, so it buys the compile-time
+// binding described at `PrivateRunAudience` below at zero graph cost.
+import type { AppRole } from './app-capabilities.constants';
 
 /**
  * Sentinel value for scopes that intentionally do not require an OAuth-bitmask
@@ -142,9 +149,108 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   // gallery target, because the content differs every time and a blanket grant
   // cannot inform. See `createPostFromAppGate.ts`.
   'posts:write:self': TokenScope.MediaWrite,
+  // goods:read:self — read the entitlements the VIEWER holds FROM THE CALLING
+  // APP. Scoped to `claims.appBlockId` server-side, so an app can only ever see
+  // what it sold: the reply is its own sales ledger filtered to one viewer, not
+  // a view of the viewer's purchases elsewhere. CONSENT-EXEMPT for that reason
+  // (the server-side app scoping is the gate, like the collections read
+  // scopes), and :self ⇒ a non-anon subject.
+  //
+  // SKIP_OAUTH_CHECK: an app good is a platform-mediated entitlement that
+  // touches none of the viewer's civitai resources through the OAuth surface,
+  // so there is no bit to require. Same posture as `apps:storage:*` /
+  // `collections:*`.
+  'goods:read:self': SKIP_OAUTH_CHECK,
+  // goods:purchase:self — SPEND the viewer's Buzz on a manifest-declared good.
+  //
+  //   - SENSITIVE ⇒ the manifest must justify it or submit is rejected.
+  //   - CONSENT-GATED: deliberately NOT in CONSENT_EXEMPT_SCOPES. Money out of
+  //     the viewer's balance always needs an explicit grant.
+  //   - :self ⇒ non-anon subject; there is nobody to bill otherwise.
+  //   - SKIP_OAUTH_CHECK for the same reason as the read half. Note this
+  //     DIFFERS from `social:tip:self`, which maps to `TokenScope.SocialTip`:
+  //     that bit is specifically "tip other users" and reusing it would let
+  //     every app already approved to tip start selling goods. There is no
+  //     app-goods bit, and minting one is a change to a bitmask persisted on
+  //     every API key — out of proportion to a capability whose real gates are
+  //     the approved-scope snapshot, the consent grant and the per-op check.
+  //
+  // PAGE-SAFE by BOUNDING, not by prohibition (so it stays off
+  // PAGE_FORBIDDEN_SCOPES, like tipping): the price is review-gated and
+  // hard-capped per purchase, and a per-user daily ceiling bounds the day.
+  'goods:purchase:self': SKIP_OAUTH_CHECK,
 } as const;
 
 export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
+
+/**
+ * The APP-STORAGE scope family — the one family whose runtime resolvers do NOT read
+ * the claims `withBlockScope` already resolved, but re-verify the caller's RAW bearer
+ * as a block JWS:
+ *
+ *   - `apps:storage:read` / `apps:storage:write`  → `resolveStorageContext`
+ *     (`server/services/apps/app-storage.service.ts`) — `verifyBlockToken(blockToken)`.
+ *   - `apps:storage:shared:read` / `…:shared:write` → `resolveSharedContext`
+ *     (`server/routers/apps-shared.router.ts`) — `verifyBlockToken(blockToken)`, reached
+ *     from eleven `/api/v1/blocks/shared-storage/*` routes that each pass `bearer(req)`
+ *     back down after the middleware already verified it.
+ *
+ * `verifyBlockToken` requires a JWS with a `kid` it can pin, deliberately and strictly.
+ * An `auth: "oauth"` app is minted an OPAQUE OAuth access token instead of a block JWT
+ * (`/api/v1/block-tokens`, `mintOauthAppToken`), so that bearer is not a JWS and every
+ * app-storage op 401s. `BlockManifestValidator` refuses the combination at submit time
+ * for exactly this reason — see `oauthAppStorageConflictError`.
+ *
+ * DERIVED from the scope vocabulary above by prefix, never re-typed, so a fifth
+ * `apps:storage:*` scope is covered the day it is added rather than silently exempt.
+ * The derived membership is pinned (on growth AND shrink) by the
+ * `APP_STORAGE_SCOPES (the auth:"oauth" conflict set)` suite in
+ * `src/shared/constants/__tests__/block-scope.constants.test.ts` — if that ledger fails
+ * because a new storage scope DOES read middleware-resolved claims, update the ledger and
+ * this docblock in the same commit.
+ *
+ * The eleven routes and the four `verifyBlockToken` call sites have their OWN ledgers in
+ * `src/server/middleware/__tests__/block-token-kind-app-storage-seam.test.ts`. When the
+ * first of those empties out, this family stops needing the manifest refusal at all.
+ */
+export const APP_STORAGE_SCOPE_PREFIX = 'apps:storage:';
+export const APP_STORAGE_SCOPES: readonly string[] = Object.keys(BLOCK_SCOPE_TO_OAUTH_BIT).filter(
+  (scope) => scope.startsWith(APP_STORAGE_SCOPE_PREFIX)
+);
+
+/**
+ * The app-storage scopes present in a manifest's declared `scopes`, in the order the
+ * manifest declared them (so the error names them the way the author typed them).
+ * Non-string entries are ignored — the per-element `scopes` validation upstream already
+ * reports those, and this predicate must not turn one malformed entry into a second,
+ * confusing error.
+ */
+export function appStorageScopesIn(scopes: readonly unknown[]): string[] {
+  const storage = new Set(APP_STORAGE_SCOPES);
+  return scopes.filter((scope): scope is string => typeof scope === 'string' && storage.has(scope));
+}
+
+/**
+ * Does this manifest ask the host for an OAuth access token instead of a block JWT?
+ * `auth` is optional and absent means `block-token` (see `RawManifest.auth`).
+ *
+ * 🔴 ONE definition, read by BOTH the runtime and the gate. The two mint paths branch on
+ * this (`/api/v1/block-tokens` page mint at `manifestWantsOauthToken(block.manifest)`, and the
+ * dev-tunnel mint), and `BlockManifestValidator` refuses `auth: "oauth"` alongside any
+ * `APP_STORAGE_SCOPES` entry. If the gate and the mint ever disagreed about what
+ * `auth: "oauth"` means, the gate would pass a manifest the runtime cannot serve — which is
+ * the exact failure it exists to prevent.
+ *
+ * Lives HERE, in the client-safe shared module, rather than in
+ * `~/server/services/blocks/block-oauth-scope` (which now RE-EXPORTS it, so its existing
+ * callers and tests are untouched): `block-manifest-validator.service.ts` is imported by
+ * `ManifestEditForm.tsx`, so everything it pulls in lands in the client bundle. Same reason
+ * the SSRF hostname guards and the `repository` rule were extracted rather than imported
+ * from a server module — see that file's import block.
+ */
+export function manifestWantsOauthToken(manifest: unknown): boolean {
+  return (manifest as { auth?: unknown } | null | undefined)?.auth === 'oauth';
+}
 
 /**
  * MOD REVIEW SANDBOX "run for real" (#2831) — the AGGREGATE (session) Buzz
@@ -161,6 +267,157 @@ export type BlockScopeString = keyof typeof BLOCK_SCOPE_TO_OAUTH_BIT;
  * cumulative ceiling is what actually bounds a run-for-real session.
  */
 export const REVIEW_RUN_FOR_REAL_BUZZ_CAP = 5000;
+
+/**
+ * The audiences admitted to a PRIVATE RUN of a delisted / suspended app.
+ *
+ * 🔴 A CLOSED SET, AND THE ORDER OF POWER IS NOT THE ORDER LISTED. `moderator` has
+ * full parity including capped spend; `owner` likewise (self-bound, as the existing
+ * dev-tunnel precedent already is); `editor` — an ACCEPTED `AppCollaborator` seat —
+ * is READ-ONLY by operator decision, delivered by stripping `ai:write:budgeted` in
+ * `clampPrivateRunScopes`. Read that function, not this list, for what each audience
+ * can actually do.
+ *
+ * Client-safe (this module is imported by client code), so the host chrome and the
+ * server mint name the same three values.
+ */
+export const PRIVATE_RUN_AUDIENCES = ['owner', 'editor', 'moderator'] as const;
+
+/**
+ * 🔴 EVERY DECLARATION OF THIS UNION MUST IMPORT THIS TYPE, NEVER SPELL IT INLINE.
+ *
+ * Six sites originally hand-spelled `'owner' | 'editor' | 'moderator'` — the two clamp
+ * and signer signatures, the two claim declarations, and two page props. The failure
+ * that shape produces is in the UNSAFE direction and is invisible: widening
+ * `PRIVATE_RUN_AUDIENCES` immediately widens `isPrivateRunAudience`, so the verifier
+ * starts ADMITTING a fourth value into fields still typed to three. Claims are a JWT
+ * payload with no compile-time binding, so `claims.privateRunAudience === 'editor'` in
+ * the read-only belt still type-checks — and the new audience silently receives
+ * owner/moderator treatment. That is precisely the failure the claim's own docblock
+ * says it is guarding against; the verifier guard closes the FORGED case, and importing
+ * this type is what closes the WIDENED one.
+ *
+ * It IS derived from the tuple above — see the next docblock for why that beat the
+ * alternative. The property the predicate's audience bridge depends on is not the spelling
+ * of this line but `AppRole` being a SUBSET of it, which `_appRoleSubsetWitness` asserts at
+ * compile time; a future third `AppRole` is a COMPILE ERROR there rather than being
+ * silently collapsed into `'editor'` — a collapse that would under-grant (safe) while
+ * mislabelling the audit line and the chrome copy (not safe to leave unnoticed).
+ *
+ * ⚠️ THIS PARAGRAPH USED TO SAY "It is NOT derived from the tuple above directly. It is
+ * `AppRole | 'moderator'`". That declaration was tried and REVERTED in the round-2 fixes,
+ * for the reasons argued below — but the paragraph describing it survived, one line above
+ * the code contradicting it, so a reader met two adjacent docblocks giving opposite
+ * accounts of the same type. Worth naming rather than quietly deleting: the retraction is
+ * the interesting half, and a docblock that describes a reverted design is indistinguishable
+ * from one that is merely out of date.
+ */
+export type PrivateRunAudience = (typeof PRIVATE_RUN_AUDIENCES)[number];
+
+/**
+ * 🔴 `AppRole` MUST REMAIN A SUBSET OF `PrivateRunAudience`, ASSERTED AT COMPILE TIME.
+ *
+ * ⚠️ THE TYPE WAS BRIEFLY DECLARED AS `AppRole | 'moderator'` INSTEAD, AND THAT WAS
+ * UNSOUND IN THE DANGEROUS DIRECTION — review caught it. Decoupling the type from the
+ * tuple bought a compile error when `AppRole` GREW, and paid for it by making
+ * `isPrivateRunAudience`'s `value is PrivateRunAudience` predicate a LIE: it tests
+ * membership of the tuple, so adding a fourth member to the TUPLE alone made the guard
+ * admit a value the type says cannot exist. Nothing type-errored — the narrowing at the
+ * verifier laundered it — and downstream `=== 'editor'` is false for the new value, so
+ * it would have received owner/moderator power with full spend. That is verbatim the
+ * failure the decoupling was introduced to prevent, one direction over.
+ *
+ * So the type is DERIVED from the tuple again (the predicate is sound by construction),
+ * and the `AppRole`-growth property is bought separately by this assignability
+ * assertion, which costs one unused type and no runtime bytes. Both directions are now
+ * compile-time:
+ *   - `AppRole` grows  → this line errors (the new role is not in the tuple).
+ *   - the tuple grows  → `PRIVATE_RUN_AUDIENCE_WITNESS` below errors, and the runtime
+ *     lockstep test compares the two.
+ */
+type _AppRoleIsAPrivateRunAudience = AppRole extends PrivateRunAudience ? true : never;
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _appRoleSubsetWitness: _AppRoleIsAPrivateRunAudience = true;
+
+/**
+ * The BIDIRECTIONAL LOCKSTEP between the type and the tuple.
+ *
+ * ⚠️ THE DOCBLOCK ABOVE CLAIMED "the lockstep test below pins the two against each
+ * other" BEFORE THIS EXISTED. That was a comment asserting a guarantee nothing provided
+ * — the one class of defect this feature's review found most of — so it is made true
+ * here rather than softened. It matters because the two can drift in BOTH directions and
+ * only one of them is loud:
+ *
+ *   - `AppRole` grows (it gains a third role): the tuple no longer covers it, so
+ *     `isPrivateRunAudience` would REJECT a legitimate audience. Caught by
+ *     `_appRoleSubsetWitness` above, not by this literal — since the type is derived from
+ *     the tuple, this literal's keys move with the tuple and cannot see that case.
+ *   - The TUPLE grows without the type: `isPrivateRunAudience` starts ADMITTING a value
+ *     the type says cannot exist, which is the unsafe direction — the verifier lets it
+ *     through and the read-only belt's `=== 'editor'` silently treats it as an owner.
+ *     🔴 CAUGHT TWICE, AND NEITHER HALF IS REDUNDANT — DO NOT DELETE EITHER. (a) AT COMPILE
+ *     TIME BY THIS LITERAL: the type is derived from the tuple, so growing the tuple moves
+ *     the type and `Record<PrivateRunAudience, true>` fails — TS2741 for ONE added member,
+ *     TS2739 only at two or more. The mirror edit (a witness key the tuple lacks) fails
+ *     instead as an excess property, TS2353. Codes measured against this repo's tsc 5.9.2.
+ *     (b) AT RUNTIME BY THE HARDCODED TUPLE LEDGER at
+ *     `src/server/middleware/__tests__/block-scope.private-run-claims.test.ts`, which
+ *     asserts `PRIVATE_RUN_AUDIENCES` equals the three members literally.
+ *
+ *     🔴 (b) IS THE ONLY THING THAT CATCHES A TUPLE **AND** WITNESS WIDENING — that edit is
+ *     typecheck-clean, so (a) is blind to it, and a widened tuple makes
+ *     `isPrivateRunAudience` admit a value the read-only belt's `=== 'editor'` then treats
+ *     as an owner. (b) also fails on a one-line tuple REORDER or a duplicate member, both
+ *     typecheck-clean and both behaviour-preserving, because `toEqual` on an array is
+ *     order-sensitive — so the guarantee is about WIDENING, not about mutations in general.
+ *
+ * 🔴 IT LIVES IN PRODUCTION CODE, NOT IN A TEST, AND THAT PLACEMENT IS THE POINT.
+ * `tsconfig.json` EXCLUDES `src/**` `__tests__` directories, so a compile-time
+ * exhaustiveness witness written in the sibling test file would never be typechecked and
+ * would provide exactly nothing. Here it is checked by `pnpm typecheck` on every run.
+ *
+ * Exported so the test can compare against it rather than hand-copying the members —
+ * a hand-copied expectation is how the first version of the matrix's completeness check
+ * went stale.
+ */
+export const PRIVATE_RUN_AUDIENCE_WITNESS: Record<PrivateRunAudience, true> = {
+  owner: true,
+  editor: true,
+  moderator: true,
+};
+
+/**
+ * Membership test for the `privateRunAudience` token claim.
+ *
+ * 🔴 AN OWN-SET TEST OVER A FROZEN TUPLE, NOT an `in` on an object — the sibling
+ * `isKnownBlockScope` used to use `in`, which walks the prototype chain and let 12
+ * inherited `Object.prototype` keys through as "known". The claim arrives from a
+ * VERIFIED token, but the verifier is what calls this, so it must not be the weak
+ * link in its own guard.
+ */
+export function isPrivateRunAudience(value: unknown): value is PrivateRunAudience {
+  return typeof value === 'string' && (PRIVATE_RUN_AUDIENCES as readonly string[]).includes(value);
+}
+
+/**
+ * PRIVATE RUN — the AGGREGATE Buzz ceiling one viewer's OWN account can spend across
+ * ALL private-run generations of ONE delisted app, over the reservation window
+ * (~25h, re-armed on first write). Enforced as a per-(viewer, appBlockId) cumulative
+ * Redis reservation in `blocks.router.ts` (see `reservePrivateRunBuzzSpend`).
+ *
+ * 🔴 TIGHTER THAN `REVIEW_RUN_FOR_REAL_BUZZ_CAP` (5000), ON PURPOSE. A run-for-real
+ * review session is vetting an app the platform is deciding ABOUT; a private run is
+ * of an app the platform has already TAKEN DOWN. The stricter posture is the correct
+ * default for the second case, and it is cheap to widen later. The two values are
+ * also deliberately DIFFERENT so a test asserting the private-run ceiling cannot
+ * pass by accidentally reading the review one.
+ *
+ * SINGLE SOURCE OF TRUTH, defined in this client-safe module so the server
+ * enforcement, the mint and any future consent copy read the identical value. A low
+ * per-call `buzzBudget` alone is NOT sufficient — a hostile app loops sub-budget
+ * calls — so this cumulative ceiling is what actually bounds a private-run session.
+ */
+export const PRIVATE_RUN_BUZZ_CAP = 2500;
 
 /**
  * PLATFORM per-(USER, UTC-day) cumulative Buzz-spend ceiling across ALL the apps
@@ -203,6 +460,68 @@ export const BLOCK_BUZZ_CAP_PER_DAY = 50_000;
  */
 export const BLOCK_CONSENT_BUDGET_MIN_PER_DAY = 1;
 export const BLOCK_CONSENT_BUDGET_MAX_PER_DAY = BLOCK_BUZZ_CAP_PER_DAY;
+
+/**
+ * The scope the per-app daily Buzz budget governs.
+ *
+ * ⚠️ IT IS NOT THE ONLY SCOPE THAT CAN SPEND THE VIEWER'S BUZZ, AND THIS LINE SAID IT WAS. The
+ * digital-goods rail added `goods:purchase:self`, which also debits the viewer's balance — so a
+ * superlative here is simply false, and replacing it with a narrower superlative would be the same
+ * mistake one step along. The honest distinction is not "the only spender" but WHICH rail the
+ * per-app budget bounds: this scope's spend is reserved against the budget the viewer sets per app,
+ * while a goods purchase is bounded by its own per-USER daily cap and a per-purchase price ceiling
+ * and never consults that budget. Both are consent-gated and both are revokable; only this one is
+ * budgeted, which is exactly what the three surfaces below coordinate on.
+ *
+ * 🔴 THE CLIENT-SIDE HOME, AND IT REPLACES THREE LOCAL CONSTS RATHER THAN ADDING A FOURTH. Before
+ * this, the literal `'ai:write:budgeted'` was declared privately in
+ * `src/pages/apps/activity.tsx` (the budget editor), `src/components/AppBlocks/BlockConsentModal.tsx`
+ * (the grant modal) and — added by phase 3 and then moved here —
+ * `src/components/Apps/scopeRevoke.tsx` (the revoke dialog). Two of those carried a BYTE-IDENTICAL
+ * name and doc sentence and neither knew about the other. All three now import this; no alias or
+ * re-export is left behind, because a rename is not a consolidation (round 1 left
+ * `export const SPEND_SCOPE = BLOCK_SPEND_SCOPE` in `scopeRevoke.tsx`, which preserved the exact
+ * dependency edge the move existed to cut — the budget editor reading its spend-scope identity out
+ * of the revoke feature).
+ *
+ * 🔴 WHY HERE AND NOT `scope-grant.service.ts`, which already owns `CONSENT_SPEND_SCOPE` with a
+ * docblock making exactly this argument ("a string literal repeated at N sites is a predicate that
+ * will be wrong at N−1 of them the first time the vocabulary moves"). That module imports
+ * `dbRead`/`dbWrite`, so it is server-graph and no client surface can import it. This file is
+ * client-safe, already owns the scope vocabulary (`isKnownBlockScope`, `SENSITIVE_BLOCK_SCOPES`)
+ * AND already holds viewer-facing consent copy (`BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY`), so it is
+ * the one place both sides can reach.
+ *
+ * ⚠️ THE SERVER SIDE IS DELIBERATELY NOT COLLAPSED INTO THIS ONE, AND **NO COUNT OF THE REMAINING
+ * COPIES IS QUOTED HERE** — because two successive attempts to quote one were both wrong, in the
+ * same direction, and the second was wrong after being "corrected".
+ *   · First: *"server 1 + client 1 = 2, down from server 1 + client 3 = 4"*. RETRACTED — it counted
+ *     only NAMED declarations.
+ *   · Then, on the reuse lane's measurement: *"5 declarations that own the literal, down to 4"*.
+ *     ALSO RETRACTED. A direct enumeration of `'ai:write:budgeted'` across `src/` (excluding tests)
+ *     returns roughly THIRTY live production uses — registry keys, `requiredScope:` values,
+ *     `includes()` checks on minted scope sets, telemetry labels, description-map keys — spread over
+ *     ~20 files. Two named constants and two `filter` calls is not the population.
+ *
+ * 🔴 THE REPO ALREADY OWNS THE RIGHT ANSWER AND IT IS A DERIVATION, NOT A NUMBER.
+ * `scope-grant.service.ts` states it on the docblock above `CONSENT_SPEND_SCOPE`:
+ * *"`git grep "'ai:write:budgeted'"` is the authority on what remains"* — and, importantly, that the
+ * `scope:` arguments handed to `recordScopeInvocation` are TELEMETRY LABELS rather than gate
+ * predicates, so they are deliberately literal and must not be swept. Any future consolidation
+ * starts from that grep and that distinction; a figure restated here would be stale before the next
+ * reader trusts it, which has now happened twice in one phase.
+ *
+ * What is true without a count: the two NAMED constants are this one and `CONSENT_SPEND_SCOPE`,
+ * they are asserted equal by `src/components/Apps/__tests__/scopeConsentRows.test.ts`, and that
+ * guard exists only because `scope-grant.service.ts` reaches Prisma and so cannot be imported from
+ * a client surface. It can be deleted the moment `CONSENT_SPEND_SCOPE` becomes a re-export of this.
+ *
+ * 🔴 THE THREE SURFACES MUST AGREE OR THE BUDGET SILENTLY DETACHES FROM THE SCOPE IT BOUNDS: the
+ * grant modal decides whether to offer a budget field, the budget editor decides what to send, and
+ * the revoke dialog has to say that withdrawing this scope CLEARS the stored budget. A disagreement
+ * is not a rendering bug, it is a spend path that stops being capped.
+ */
+export const BLOCK_SPEND_SCOPE = 'ai:write:budgeted';
 
 /**
  * Pre-filled suggestion when a user turns a limit ON (consent modal + the editor on
@@ -352,6 +671,10 @@ export const SENSITIVE_BLOCK_SCOPES: ReadonlySet<string> = new Set([
   // visible to other viewers OF THAT APP, this one is visible to the whole site
   // and carries the viewer's byline.
   'posts:write:self',
+  // Spends the viewer's Buzz on an app's own catalog. The read half
+  // (`goods:read:self`) is not sensitive — it returns only what the calling app
+  // already sold to this viewer.
+  'goods:purchase:self',
 ]);
 
 export function isSensitiveBlockScope(scope: string): boolean {

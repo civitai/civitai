@@ -1,11 +1,14 @@
 /**
  * Ideogram Ecosystem Handler
  *
- * Handles Ideogram 4 workflows using imageGen step type.
- * Uses the comfy engine with ComfyIdeogram4CreateImageGenInput.
+ * Ideogram 4.0 runs on comfy with LoRAs; 4.5 is API-only on fal.
  */
 
 import type { ComfyIdeogram4CreateImageGenInput, ImageGenStepTemplate } from '@civitai/client';
+import type {
+  Ideogram45CreateFalImageGenInput,
+  Ideogram45EditFalImageGenInput,
+} from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { ResourceData } from '~/shared/data-graph/generation/common';
@@ -16,6 +19,44 @@ type IdeogramCtx = EcosystemGraphOutput & { ecosystem: 'Ideogram' };
 
 export const createIdeogramInput = defineHandler<IdeogramCtx, [ImageGenStepTemplate]>(
   (data, ctx) => {
+    if (data.ideogramVersion === 'v4.5') {
+      const baseInput = {
+        engine: 'fal' as const,
+        model: 'ideogram45' as const,
+        prompt: data.prompt,
+        quantity: data.quantity ?? 1,
+        seed: data.seed,
+        quality: data.quality,
+      };
+
+      if (!data.workflow.startsWith('txt')) {
+        return [
+          {
+            $type: 'imageGen',
+            input: removeEmpty({
+              ...baseInput,
+              operation: 'editImage',
+              imageSize: 'auto',
+              images: data.images?.map((x) => x.url) ?? [],
+            }) as Ideogram45EditFalImageGenInput,
+          },
+        ];
+      }
+
+      return [
+        {
+          $type: 'imageGen',
+          input: removeEmpty({
+            ...baseInput,
+            operation: 'createImage',
+            width: data.aspectRatio?.width,
+            height: data.aspectRatio?.height,
+            enablePromptExpansion: data.enablePromptExpansion,
+          }) as Ideogram45CreateFalImageGenInput,
+        },
+      ];
+    }
+
     const loras: Record<string, number> = {};
     if ('resources' in data && Array.isArray(data.resources)) {
       for (const resource of data.resources as ResourceData[]) {

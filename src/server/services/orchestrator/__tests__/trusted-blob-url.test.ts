@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  KNOWN_ORCHESTRATOR_HOSTS,
   isTrustedOrchestratorUrl,
   logHostOf,
 } from '~/server/services/orchestrator/trusted-blob-url';
@@ -25,16 +26,39 @@ describe('isTrustedOrchestratorUrl', () => {
     expect(isTrustedOrchestratorUrl(`https://orchestration.civitai.com${BLOB}`)).toBe(true);
   });
 
-  // Every host observed in stored epoch urls, including the low-volume ones — a blocked host here
-  // is a publish or download that fails for a run nobody can re-create.
-  it('accepts every host stored rows actually carry', () => {
-    for (const host of [
+  // A blocked host here is a publish or download that fails for a run nobody can
+  // re-create, so every trusted entry gets a behavioural case of its own.
+  it('accepts every host on the allowlist', () => {
+    for (const host of KNOWN_ORCHESTRATOR_HOSTS) {
+      expect(isTrustedOrchestratorUrl(`https://${host}${BLOB}`), host).toBe(true);
+    }
+  });
+
+  // Ledger: the list is EXACTLY these hosts. Deliberately an exact-set assertion rather
+  // than a per-name check, so it fails when the set GROWS as well as when it shrinks —
+  // mirroring the ledger on CIVITAI_IMAGE_HOSTS in
+  // src/components/AppBlocks/saveImageDownload.test.ts.
+  //
+  // Why a set and not three named strings: the hosts removed on 2026-09-15 were all
+  // NXDOMAIN, and a name with no DNS record cannot serve a blob — so trusting it bought
+  // nothing, while a record created later would inherit that trust without review. A
+  // guard naming only those three would not catch a FOURTH dead host, and nothing else
+  // would either: a dead host produces no traffic, so there is no signal to miss.
+  it('pins the allowlist as an exact set', () => {
+    expect(KNOWN_ORCHESTRATOR_HOSTS).toEqual([
+      'orchestration.civitai.com',
       'orchestration-new.civitai.com',
+      'orchestration-next.civitai.com',
+    ]);
+  });
+
+  it('rejects the non-resolving hosts that were removed from the allowlist', () => {
+    for (const host of [
       'orchestration-stage.civitai.com',
       'orchestration-dev.civitai.com',
       'image-generation.civitai.com',
     ]) {
-      expect(isTrustedOrchestratorUrl(`https://${host}${BLOB}`), host).toBe(true);
+      expect(isTrustedOrchestratorUrl(`https://${host}${BLOB}`), host).toBe(false);
     }
   });
 

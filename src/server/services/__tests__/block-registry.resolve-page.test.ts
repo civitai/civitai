@@ -221,3 +221,315 @@ describe('BlockRegistry.resolvePageBlockBySlug — NSFW-app-red-only contentRati
     expect(res?.contentRating).toBeNull();
   });
 });
+
+/**
+ * 🔴 THE MINT-SIDE MIRROR OF THE SSR INVARIANT — and its ABSENCE is what created
+ * `tryDevTunnelOwnedNonApprovedMint`.
+ *
+ * `block-registry.resolve-dev.test.ts` pins one half:
+ * "INVARIANT: the public resolvePageBlockBySlug requires status:approved". That is the
+ * SSR resolver. The MINT resolver, `resolvePageBlock`, had no equivalent — and the
+ * asymmetry between the two sides of exactly this seam is the whole reason a rescue
+ * branch had to be written after the fact. Pinning the invariant on ONE side of a seam
+ * is how you discover the other side disagreed.
+ *
+ * With the private-run surface added, these two resolvers are no longer the only ways to
+ * reach a page app, so the property they guarantee has to be stated rather than assumed:
+ * they remain APPROVED-ONLY, and the non-approved surface is reached exclusively through
+ * `resolvePrivateRunPageBlock` behind `resolvePrivateRunAccess`.
+ */
+describe('BlockRegistry.resolvePageBlock — the MINT-side approved-only invariant [INV]', () => {
+  beforeEach(() => {
+    // 🔴 `clearAllMocks` AS WELL AS the targeted reset, matching this file's three other
+    // describes. The canonical db mock is shared per WORKER under `isolate: false`, and
+    // the last test in this block asserts `mockDbRead.appBlock.findUnique` was NOT
+    // called — the assertion shape most exposed to a call inherited from a previous
+    // file. Resetting only the one handle left that assertion reading a dirty spy.
+    vi.clearAllMocks();
+    mockDbWrite.appBlock.findUnique.mockReset();
+    mockDbRead.appBlock.findUnique.mockReset();
+  });
+
+  it('INVARIANT: a NON-APPROVED row resolves to null, whatever its status', async () => {
+    // The status gate is POST-query here (unlike `resolvePageBlockBySlug`, which pins it
+    // in the WHERE), so a row IS returned by Prisma and the refusal is the branch. That
+    // makes this the more important of the two to pin behaviourally: there is no WHERE
+    // clause to read, only a branch that could be deleted.
+    for (const status of ['suspended', 'pending', 'deprecated', 'removed', 'draft', '']) {
+      mockDbWrite.appBlock.findUnique.mockResolvedValue({
+        id: 'apb_1',
+        blockId: 'hello-page',
+        appId: 'app_1',
+        status,
+        manifest: PAGE_MANIFEST(),
+        approvedScopes: [],
+        currentVersionDeployedAt: new Date('2026-09-01'),
+        app: { allowedScopes: 0 },
+      });
+      expect(
+        await BlockRegistry.resolvePageBlock('apb_1'),
+        `status=${JSON.stringify(status)} must not resolve through the production mint`
+      ).toBeNull();
+    }
+  });
+
+  it('POSITIVE CONTROL: an APPROVED row DOES resolve — the refusal above is not vacuous', async () => {
+    // Without this the loop above would pass against a resolver that returned null for
+    // everything, including a healthy approved app.
+    mockDbWrite.appBlock.findUnique.mockResolvedValue({
+      id: 'apb_1',
+      blockId: 'hello-page',
+      appId: 'app_1',
+      status: 'approved',
+      manifest: PAGE_MANIFEST(),
+      approvedScopes: ['models:read:self'],
+      currentVersionDeployedAt: new Date('2026-09-01'),
+      app: { allowedScopes: 0 },
+    });
+    const res = await BlockRegistry.resolvePageBlock('apb_1');
+    expect(res?.appBlock.id).toBe('apb_1');
+    expect(res?.appBlock.status).toBe('approved');
+  });
+
+  it('reads the PRIMARY by default, so a freshly-suspended block cannot slip a lag window', async () => {
+    mockDbWrite.appBlock.findUnique.mockResolvedValue(null);
+    await BlockRegistry.resolvePageBlock('apb_1');
+    expect(mockDbWrite.appBlock.findUnique).toHaveBeenCalled();
+    expect(mockDbRead.appBlock.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * 🔴 `resolvePrivateRunPageBlock` — THE PROJECTION, WHICH WAS COVERED NOWHERE.
+ *
+ * ⚠️ THIS DESCRIBE WAS ADDED BECAUSE REVIEW FOUND THE NEW RESOLVER'S OUTPUT ENTIRELY
+ * UNTESTED. The predicate suite reaches only its three REFUSAL branches; the SSR page
+ * test mocks the predicate away, so the projection never runs; the seam ledger only
+ * counts its callers. The consequence was not theoretical: a mutant sourcing
+ * `trustTier` from `manifest.trustTier` instead of the COLUMN survived the entire suite.
+ *
+ * That is the C1 trust-tier SELF-ESCALATION class — a publisher declaring `internal` in
+ * their own manifest to widen the iframe sandbox — and this route passes the value
+ * straight through to `PageBlockHost`. The public sibling `resolvePageBlockBySlug` has
+ * two dedicated tests for exactly this, above; the new resolver copied the logic without
+ * the tests, which is the specific way a copied projection goes wrong.
+ */
+describe('BlockRegistry.resolvePrivateRunPageBlock — the projection [REG]', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDbWrite.appBlock.findFirst.mockReset();
+  });
+
+  /** A suspended, deployed, page-declaring row as Prisma would return it. */
+  const row = (over: Record<string, unknown> = {}) => ({
+    id: 'apb_pr',
+    blockId: 'hello-page',
+    appId: 'app_pr',
+    status: 'suspended',
+    manifest: PAGE_MANIFEST(),
+    approvedScopes: ['models:read:self'],
+    trustTier: 'unverified',
+    contentRating: 'g',
+    currentVersionDeployedAt: new Date('2026-09-01'),
+    app: { userId: 4001 },
+    appListing: { status: 'removed' },
+    ...over,
+  });
+
+  it('🔴 trustTier comes from the COLUMN — column=unverified WINS over manifest=internal', async () => {
+    // The C1 self-escalation case, stated as the public sibling states it: a
+    // publisher-declared `internal` must not widen the sandbox.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({ manifest: PAGE_MANIFEST({ trustTier: 'internal' }), trustTier: 'unverified' })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok).toBe(true);
+    expect(res.ok && res.block.trustTier).toBe('unverified');
+  });
+
+  it('honours a COLUMN value of internal even when the manifest declares unverified', async () => {
+    // The mirror image — without it, the row above passes against a resolver that
+    // hardcodes `'unverified'`, which is the wrong reason to be safe.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({ manifest: PAGE_MANIFEST({ trustTier: 'unverified' }), trustTier: 'internal' })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok && res.block.trustTier).toBe('internal');
+  });
+
+  it('maps a garbage column value to unverified (fail-closed)', async () => {
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(row({ trustTier: 'super-trusted' }));
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok && res.block.trustTier).toBe('unverified');
+  });
+
+  it('the select requests every column the private surface gates on', async () => {
+    // The gates are only as good as the columns being read. A `select` that quietly
+    // dropped `currentVersionDeployedAt` would make the deploy gate read `undefined` —
+    // which is `== null`, so it would refuse EVERYTHING and look like a broken feature
+    // rather than a hole; dropping `app` would make the ban gate skip silently, which is
+    // the dangerous direction.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(null);
+    await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    const call = mockDbWrite.appBlock.findFirst.mock.calls.at(-1)?.[0] as {
+      select?: Record<string, unknown>;
+    };
+    expect(call?.select?.currentVersionDeployedAt).toBe(true);
+    expect(call?.select?.trustTier).toBe(true);
+    expect(call?.select?.contentRating).toBe(true);
+    expect(call?.select?.approvedScopes).toBe(true);
+    expect(call?.select?.status).toBe(true);
+    expect(call?.select?.app).toBeTruthy();
+    // The last two, because the title says EVERY column and it previously checked six.
+    expect(call?.select?.manifest).toBe(true);
+    expect(call?.select?.appListing).toBeTruthy();
+    // Positive control on the assertion shape: a column the surface does NOT gate on is
+    // absent, so `toBeTruthy()` above is not passing on an all-true object.
+    expect(call?.select?.deletedAt).toBeUndefined();
+  });
+
+  it('projects the manifest fields the host needs, with the strict bootSkeleton rule', async () => {
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(row());
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.block.appBlockId).toBe('apb_pr');
+    expect(res.block.blockId).toBe('hello-page');
+    expect(res.block.appId).toBe('app_pr');
+    expect(res.block.status).toBe('suspended');
+    expect(res.block.approvedScopes).toEqual(['models:read:self']);
+    expect(res.block.ownerUserId).toBe(4001);
+    expect(res.block.listingStatus).toBe('removed');
+    expect(res.block.currentVersionDeployedAt).toEqual(new Date('2026-09-01'));
+    // STRICT `=== true`: publisher JSON must not flip a host behaviour with a
+    // truthy-but-not-boolean value.
+    expect(res.block.bootSkeleton).toBe(false);
+  });
+
+  it('bootSkeleton is true ONLY for a literal boolean true', async () => {
+    for (const [value, expected] of [
+      [true, true],
+      ['true', false],
+      [1, false],
+      [{}, false],
+      [undefined, false],
+    ] as const) {
+      mockDbWrite.appBlock.findFirst.mockResolvedValue(
+        row({ manifest: PAGE_MANIFEST({ bootSkeleton: value }) })
+      );
+      const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+      expect(res.ok && res.block.bootSkeleton, `bootSkeleton=${String(value)}`).toBe(expected);
+    }
+  });
+
+  it('null-safe on the nullable columns, in the fail-closed direction', async () => {
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({ contentRating: undefined, currentVersionDeployedAt: null, app: null, appListing: null })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    // A missing/garbage rating is treated as SFW by the host gate, which is the safe
+    // reading for a gate that refuses MATURE content.
+    expect(res.block.contentRating).toBeNull();
+    // `null` here is what the deploy gate refuses on — the fail-closed direction.
+    expect(res.block.currentVersionDeployedAt).toBeNull();
+    // A dangling owner becomes `null`, which the predicate can only pair with `no-role`.
+    expect(res.block.ownerUserId).toBeNull();
+    expect(res.block.listingStatus).toBeNull();
+  });
+
+  it('🔴 projects the sandbox from the MANIFEST, at a value the fixture default cannot be', async () => {
+    // ⚠️ THE ONLY SANDBOX ASSERTION IN THIS DESCRIBE USED TO BE THE FIXTURE'S OWN
+    // DEFAULT, so a mutant hardcoding that exact string in the resolver survived — the
+    // fixture could not produce a value the constant cannot equal. `sandbox` is the
+    // iframe's actual containment attribute, so it deserves the two-sided treatment
+    // `trustTier` already gets. This row feeds a DISTINCT value and watches it through.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({
+        manifest: {
+          ...PAGE_MANIFEST(),
+          iframe: { src: 'https://x.civit.ai', sandbox: 'allow-scripts' },
+        },
+      })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok && res.block.sandbox).toBe('allow-scripts');
+    // A second, different value — so the assertion cannot be satisfied by any constant.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({
+        manifest: {
+          ...PAGE_MANIFEST(),
+          iframe: { src: 'https://x.civit.ai', sandbox: 'allow-scripts allow-popups' },
+        },
+      })
+    );
+    const res2 = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res2.ok && res2.block.sandbox).toBe('allow-scripts allow-popups');
+  });
+
+  it('projects name, pageTitle and the DECLARED manifest scopes', async () => {
+    // Also previously unasserted. `scopes` is the interesting one: it is the manifest's
+    // DECLARED set, which is deliberately NOT the clamp's source — so the resolver must
+    // surface it for the host's BLOCK_INIT while the token comes from `approvedScopes`.
+    // Feeding the two differently is what makes that distinction visible here.
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({
+        manifest: {
+          ...PAGE_MANIFEST(),
+          name: 'Private Fixture',
+          scopes: ['ai:write:budgeted', 'models:read:self'],
+          page: { path: '/', title: 'Diagnostics' },
+        },
+        approvedScopes: ['models:read:self'],
+      })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.block.name).toBe('Private Fixture');
+    expect(res.block.pageTitle).toBe('Diagnostics');
+    expect(res.block.scopes).toEqual(['ai:write:budgeted', 'models:read:self']);
+    // 🔴 AND THE TWO ARE DISTINCT — the snapshot is narrower than the declaration, so a
+    // resolver that returned one where the other belongs is visible.
+    expect(res.block.approvedScopes).toEqual(['models:read:self']);
+    expect(res.block.scopes).not.toEqual(res.block.approvedScopes);
+  });
+
+  it('extracts sandbox independently of iframe.src being a string (#7 parity)', async () => {
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(
+      row({
+        manifest: {
+          ...PAGE_MANIFEST(),
+          iframe: { src: 12345, sandbox: 'allow-scripts allow-forms' },
+        },
+      })
+    );
+    const res = await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.block.sandbox).toBe('allow-scripts allow-forms');
+    // A non-string src projects to '' — which the SSR route refuses on.
+    expect(res.block.iframeSrc).toBe('');
+  });
+
+  it('the three refusals are DISCRIMINATED, not one bare null', async () => {
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(null);
+    expect(await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' })).toEqual({
+      ok: false,
+      reason: 'no-app',
+    });
+
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(row({ status: 'approved' }));
+    expect(await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' })).toEqual({
+      ok: false,
+      reason: 'approved',
+    });
+
+    mockDbWrite.appBlock.findFirst.mockResolvedValue(row({ manifest: { name: 'x', scopes: [] } }));
+    expect(await BlockRegistry.resolvePrivateRunPageBlock({ appBlockId: 'apb_pr' })).toEqual({
+      ok: false,
+      reason: 'not-a-page',
+    });
+  });
+});

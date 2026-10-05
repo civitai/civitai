@@ -55,6 +55,22 @@ the promise rebuilds. Don't reach for `invalidateAll()` when the data didn't com
 resetting a local mirror when a prop changes). It is not a data-fetching hook and it is not a computed
 value. Use `untrack()` for a `$state` initialiser seeded from a prop.
 
+#### The one exception: keeping the previous answer visible
+
+`{#await}` has no concept of a previous answer — **any** refetch re-enters the pending branch. That is
+right for a panel with nothing to show yet, and wrong for one the operator is already reading: paging a
+list replaces the rows with a spinner, and re-filtering takes the control they were using with it. On a
+query against a 1.5B-row table that is seconds of empty screen traded for data already on screen.
+
+`apps/moderator`'s `$lib/keep-last.svelte.ts` is the sanctioned shape for that, and the only one. Reach
+for it when a refetch is a REFINEMENT of something visible — another page, a narrower filter — never as
+a general replacement for the pattern above. Its decisions live in the plain-TypeScript
+`$lib/keep-last.ts` so the guards are tested rather than asserted in a comment, and each closes one of
+the three failure modes named above: `loading` clears on both settle paths, the effect reads none of the
+state it writes, and a response whose ticket is no longer current is discarded rather than allowed to
+overwrite a newer one. A failure keeps the last good answer and says so — blanking it turns a transient
+error into apparent absence, and absence is a finding on a moderation screen.
+
 ### Keys are correctness, not a lint rule
 
 `{#each rows as row (row.id)}` — an unkeyed or duplicate-keyed loop reuses the wrong DOM node, so a
@@ -186,7 +202,7 @@ Reuse the shapes already on the page rather than inventing spacing: panels are
 
 ## Comments
 
-Per the [root guide](../CLAUDE.md#comments), and more strictly here: a comment in these apps earns its
+Per the [root comment guideline](../.claude/rules/comments.md), and more strictly here: a comment in these apps earns its
 place only as a **breakage guard** — an invariant, a cast, an ordering requirement, a hazard a future
 edit would otherwise walk into. No narration, no provenance, no "ported from X", no explaining your work
 to a reviewer. Say that in the PR.
@@ -194,7 +210,7 @@ to a reviewer. Say that in the PR.
 ## Verifying
 
 `typecheck`, never `check` — and `build` is not a check. Both run `svelte-kit sync`, which fights the
-dev server's file watcher; see the root [`CLAUDE.md`](../CLAUDE.md) for the full rule and why. Read
+dev server's file watcher; see [`.claude/rules/sveltekit.md`](../.claude/rules/sveltekit.md) for the full rule and why. Read
 `svelte-check`'s **WARNING** lines as well as its errors: `state_referenced_locally` is a real bug and
 appears nowhere else.
 

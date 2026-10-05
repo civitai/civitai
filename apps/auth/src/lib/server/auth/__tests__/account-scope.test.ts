@@ -160,3 +160,15 @@ describe('findOrCreateUser — canonical email only stored when verified', () =>
     expect(h.userInsert?.emailVerified).toBeInstanceOf(Date);
   });
 });
+
+describe('findOrCreateUser — the provider name is never persisted', () => {
+  it('writes name as null even when the provider supplies one', async () => {
+    // Deliberate (GDPR): an unverified, user-controlled value that outlives a soft-deleted
+    // account. Staff accounts created after this file NCMEC reports with no reporter firstName.
+    // Asserting null rather than absent: an omitted key falls back to the column default,
+    // which is a separate decision this test should not silently depend on.
+    await findOrCreateUser('discord', profile({ name: 'Mod' }), DISCORD_SCOPE);
+    expect(h.userCreated).toBe(true);
+    expect(h.userInsert).toHaveProperty('name', null);
+  });
+});

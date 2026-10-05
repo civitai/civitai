@@ -168,10 +168,7 @@ export default function EventPageDetails({
 
   return (
     <>
-      <Meta
-        title={`${eventData.title} | Civitai`}
-        canonical={`/events/${event}`}
-      />
+      <Meta title={`${eventData.title} | Civitai`} canonical={`/events/${event}`} />
       <Container size="md">
         <Stack gap={48}>
           <Paper
@@ -179,7 +176,7 @@ export default function EventPageDetails({
             className="flex aspect-square flex-col justify-end overflow-hidden @sm:aspect-[3]"
             style={{
               backgroundImage: eventData.coverImage
-                ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600 })})`
+                ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600, optimized: true })})`
                 : undefined,
               backgroundRepeat: 'no-repeat',
               backgroundPosition: 'bottom left',

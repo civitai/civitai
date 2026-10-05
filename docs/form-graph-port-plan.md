@@ -288,7 +288,7 @@ branch member carries `defineGraph({ scope: familyScope })` (ecosystem group id,
 wan versions and klein variants share buckets); `SEED`, `controlNetsDef` and
 `controlVideoDef` opt out to bare keys (v1 stores them globally); images/video wrap their def fns
 in `workflowScoped` (per-workflow buckets); the hubs scope `ecosystem` per
-output type, `quantity` per workflow only on draft, `enhancedCompatibility`
+output type, `enhancedCompatibility`
 per family bucket; and the turbo-variant families (zimage/boogu/krea2/anima/ernie/lens/mage-flow — all seven ported
 entries of v1's TURBO_VARIANT_ECOSYSTEMS) refine
 cfgScale/steps `perModelScope` — per model version, v1's
@@ -338,6 +338,12 @@ itself is staged: GenerationTabs mounts `FormGraphGenerator` behind the
 **Closing condition:** the generation form works end to end in the dev server (use the
 `/dev-server` skill; verify with `probe`), typecheck green, full suite green. This phase
 needs Briant's hands-on testing before it is called done.
+
+**UI parity sweep (2026-09-23):** [`form-graph-lane-parity-sweep.md`](form-graph-lane-parity-sweep.md)
+reads the two lanes across for behaviour the port does not cover — seven gaps, the largest being that
+the content-generation tour never starts on the form-graph lane. It also records what looks like a gap
+and is not (three v2 controls whose fields no graph declares), and sizes the Phase 6 blast radius.
+Re-run it before the flag widens past moderators.
 
 ### Phase 6 — deletion
 
@@ -403,8 +409,8 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
   their port wrapper; the production call site lands with the Phase 4 submit wiring,
   beside `normalizeInput`), and `modelSelectorRules` attached with `.effect` on both
   hubs so an interactive pick moves the selectors identically. Two ordering truths the
-  matrix forced: a LOCKED slot (ecosystem-defaults `modelLocked`, or flux's draft
-  workflow) beats a cross-family model — v1 substitutes it before its effect runs — but
+  matrix forced: a LOCKED slot (ecosystem-defaults `modelLocked`) beats a cross-family
+  model — v1 substitutes it before its effect runs — but
   version SIBLINGS (LTX↔LTX, wan↔wan) re-pick THROUGH the lock, since they are valid in
   the locked picker's own version list; and a gate-HIDDEN selection drops to the default
   before v1's model effect runs, an ordering the ext-free boundary reconciler cannot see,
@@ -433,11 +439,11 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | video hub (ecosystem/quantity, video-scoped) | DONE | DONE | workflow/output/input moved to the composed root |
 | composed root (`form-graph/generation/hub.graph.ts`, image+video dispatch) | DONE | DONE | audio/model3d hubs arrive with their families |
 | image hub (ecosystem/priority/outputFormat/enhancedCompatibility/quantity) | DONE | DONE | enhancedCompatibility + quantity sit AFTER the family dispatch (they read model/effectiveEcosystem) |
-| image: stable-diffusion (SD1/SD2/SDXL/Pony/Illustrious/NoobAI) | DONE | DONE | ecosystem FOLLOWS a cross-eco model (`effectiveEcosystem` emit; `checkpointDef modelWins`); SD2 supports no workflows |
+| image: stable-diffusion (SD1/SDXL/Pony/Illustrious/NoobAI) | DONE | DONE | ecosystem FOLLOWS a cross-eco model (`effectiveEcosystem` emit; `checkpointDef modelWins`); SD2's generation support was dropped and it is no longer in the family discriminator |
 | image: zimage (Turbo/Base) | DONE | DONE | Base's negativePrompt is NOT a snippet target (v1 mode-subgraph quirk) |
 | image: chroma | DONE | DONE | no negative prompt, no images node |
 | video: seedance | DONE | DONE | no resources, no negative prompt; resolution/duration ceilings per model version. Unblocked the video suite's hidden-ecosystem gate coverage (hidden selections fall back to Seedance) |
-| image: flux (Flux1/FluxKrea, 5 modes) | DONE | DONE | `workflowVersions` turned out UNUSED by flux — its draft coupling is two sync effects, resolved at parse as "the workflow wins" (both directions are `correct` policies on the model, probed 2026-09-01). The `fluxMode` tagged branch picks on `model.id` — a mounted branch's pick sees prior fields via ctx-over-ext. Kontext/Flux2/Klein are separate graphs (rows below). |
+| image: flux (Flux1/FluxKrea, 5 modes) | DONE | DONE | `workflowVersions` turned out UNUSED by flux. Draft⇄workflow coupling: the draft build moves the workflow into `txt2img:draft` (`deriveWorkflowFromModel`, both lanes), the draft workflow forces the draft build and locks the picker (the model `correct`), and picking another build leaves draft (store lane only, `fluxDraftWorkflowFor`). The `fluxMode` tagged branch picks on `model.id` — a mounted branch's pick sees prior fields via ctx-over-ext. Kontext/Flux2/Klein are separate graphs (rows below). |
 | image: flux-kontext (pro/max) | DONE | DONE | img2img-primary; both modes share one field set, so the mode is just a version pick — no branch |
 | image: flux2 (dev/flex/pro/max) | DONE | DONE | mode by model.id; only dev carries resources |
 | image: flux2-klein (9B/9B-base/4B/4B-base) | DONE | DONE | FOUR ecosystems share the graph — mode from ecosystem, not model. negativePrompt is NOT a snippet target (v1's own comment claims it self-registers; the differential says no). Handler pins distilled steps/cfg even though the graph exposes a steps slider — v1 quirk, mirrored |
@@ -458,6 +464,7 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | image: qwen (Qwen/Qwen2/Qwen3) | DONE | DONE | one graph, untagged sub-branch on ecosystem; Qwen's workflow-scoped versions hit the LOCK (cross-workflow version substitutes to the current workflow's default — probed, a third semantics next to boogu/mageflow) |
 | image: nano-banana (standard/pro/v2/v2lite) | DONE | DONE | resolution-multiplied AR dims; negativePrompt only in pro, not a snippet target |
 | image: muse-image (Meta, fal) | DONE | DONE | ported 2026-09-03 with the main merge that introduced it — reve-shaped (locked model, prompt-only block, txt-only aspectRatio, edit images 1-4, NO seed); in the image-parity matrix |
+| image: flux3 (FLUX 3 Image, BFL, fal) | DONE | DONE | ported with the change that introduced it — locked model; txt2img takes resolution (1k/2k/4k) and aspectRatio, img2img:edit sends aspectRatio 'auto' so the output follows the first reference (1-10 images); in the image-parity matrix and the handler differential |
 | image: grok (+ video arm) | DONE | DONE | spans BOTH output types: grokImage + grokVideo share `grokHead` (flag-gated version list) and a promptAlwaysRequired text block; the dispatcher routes Grok by workflow prefix. Image hub COMPLETE |
 | image: wan-image (v2.7) | DONE | DONE | tagged v2.7 branch; negativePrompt max length 500, not a snippet target; AR hidden when edit images staged |
 | video: mochi | DONE | DONE | locked model, promptOnly; NO live workflows — excluded from the parity matrix like legacy WanVideo/SD2 |
@@ -471,6 +478,8 @@ home); full suite + typecheck + lint green; Briant reviews the final diff.
 | video: kling (legacy/v3) | DONE | DONE | ref2vid FORCES model→v3 (`correct` on model — probed, workflow wins); legacy full text block (negative IS a snippet target), v3 promptAlwaysRequired + no negative; legacy duration is a STRING enum; multiShot/klingElements dead in v1, not ported. Video hub COMPLETE |
 | audio: ace (5 versions, simple/custom modes) | DONE | DONE | untagged mode branch on the `aceAudioMode` FIELD (user-selected, not computed); v1's model effect stomps cfg/steps to variant defaults AT PARSE — ported as `correct` policies, the interactive reset as a `.effect` rule. No snippets (v1 merges triggerWordsGraph only) |
 | audio: minimax-music (MiniMaxMusic3) | DONE | DONE | simple/custom on `minimaxMusicMode`; custom requires BOTH musicDescription and lyrics; duration clamps (sliderDef) so a carried-over video duration can't fail invisibly |
+| audio: yue2 | DONE | DONE | in the audio-parity matrix and the handler differential |
+| audio: sonilo (music / soundEffect) | DONE | DONE | ported with the change that introduced it; `soniloOperation` enum picks the duration range per operation (music 5-360s, sound effect 0.5-180s), locked model; step `$type` is `soniloAudioGen`; in the audio-parity matrix and the handler differential |
 | audio hub | DONE | DONE | ecosystem scoped 'audio', default Ace; no quantity/priority/outputFormat (image/video concerns) |
 | model3d: polygen (Meshy v6/v7) | DONE | DONE | `polygenVersion` flag-gated (meshyV7Generator) AND workflow-clamped (v7-on-text → v6) in both input and output transforms; v7-only knobs null out per version/image-count; v7 has no seed |
 | model3d: tripo / hunyuan3d / pixal3d / trellis2 | DONE | DONE | image-to-3D only; pixal3d and trellis2 are field-identical (one factory, two instances for their own family scopes); hunyuan keeps its `hunyuan*` field prefixes, mapped back in the handler |

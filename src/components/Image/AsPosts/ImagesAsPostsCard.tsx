@@ -32,6 +32,7 @@ import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { SponsoredBadge } from '~/components/Promotion/SponsoredBadge';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -113,6 +114,11 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           className={clsx({ ['border']: !pinned })}
         >
           <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          {data.sponsored && (
+            <div className="relative z-10 flex px-2 pt-2">
+              <SponsoredBadge kind="post" />
+            </div>
+          )}
           {data.user.id !== -1 && <ImagesAsPostsCardHeader {...props} cosmetic={cosmetic} />}
 
           <div className="relative flex-1 overflow-hidden">
@@ -316,6 +322,8 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -330,6 +338,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -441,6 +450,8 @@ function PostCarouselSlide({
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -453,6 +464,7 @@ function PostCarouselSlide({
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -622,7 +634,15 @@ export function LazyPostImagesCarousel({
   const postTail = useMemo<PostTailDescriptor | undefined>(
     () =>
       postId != null
-        ? { postId, imageCount: total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers }
+        ? {
+            postId,
+            imageCount: total,
+            filters,
+            browsingLevel,
+            hiddenImageIds,
+            hiddenTags,
+            hiddenUsers,
+          }
         : undefined,
     [postId, total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers]
   );

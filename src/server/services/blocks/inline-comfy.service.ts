@@ -505,7 +505,7 @@ function parseInlineAir(raw: string): ParsedInlineAir {
  */
 export async function assertViewerEntitledToInlineResources(opts: {
   airs: string[];
-  user: { id: number; isModerator: boolean };
+  user: { id: number; isModerator: boolean; tier?: string };
 }): Promise<void> {
   const parsed = opts.airs.map(parseInlineAir);
 
@@ -524,7 +524,7 @@ export async function assertViewerEntitledToInlineResources(opts: {
   if (versionIds.length === 0) return;
 
   const resources = await getResourceData(versionIds, {
-    user: { id: opts.user.id, isModerator: opts.user.isModerator },
+    user: { id: opts.user.id, isModerator: opts.user.isModerator, tier: opts.user.tier },
     generation: true,
   });
   const byId = new Map(resources.map((r) => [r.id, r]));

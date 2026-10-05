@@ -20,6 +20,11 @@ const buildIndex = (overrides: Partial<Processor> = {}) =>
     setup: async () => undefined,
     prepareBatches: async () => ({ batchSize: 100, startId: 0, endId: 0 }),
     pullData: async (_ctx, batch) => (batch.type === 'update' ? batch.ids : []),
+    // LOAD-BEARING: this returns the pulled value unchanged, and `pullData` above returns bare
+    // NUMBERS. That is what makes these batches an unreadable shape to the without-document accounting in
+    // `base.search-index.ts`, so every result here reports `idsWithoutDocument: 0` and these cases stay
+    // about failure reporting alone. Making it return documents "like the drop-reporting file"
+    // would flip that and turn these assertions into drop assertions.
     transformData: async (data: unknown) => data,
     pushData: async () => undefined,
     ...overrides,
@@ -53,6 +58,9 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 1,
       failedTasks: 1,
       failedIds: 3,
+      idsWithoutDocument: 0,
+      idsWithoutDocumentSample: [],
+      handledWithoutDocument: 0,
     });
     // 1 attempt + the 3 retries the queue promises. Before the retry slot was held open across
     // the backoff, every worker exited during the first retry's sleep and the task was dropped
@@ -108,6 +116,9 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 4,
       failedTasks: 2,
       failedIds: 14,
+      idsWithoutDocument: 0,
+      idsWithoutDocumentSample: [],
+      handledWithoutDocument: 0,
     });
     // A partial failure, not a total one: strictly fewer than every batch, and strictly fewer
     // than every id.
@@ -131,6 +142,9 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 1,
       failedTasks: 0,
       failedIds: 0,
+      idsWithoutDocument: 0,
+      idsWithoutDocumentSample: [],
+      handledWithoutDocument: 0,
     });
     expect(pushData).toHaveBeenCalledTimes(1);
   });
@@ -142,6 +156,9 @@ describe('updateSync :: failure reporting', () => {
       totalTasks: 0,
       failedTasks: 0,
       failedIds: 0,
+      idsWithoutDocument: 0,
+      idsWithoutDocumentSample: [],
+      handledWithoutDocument: 0,
     });
   });
 });

@@ -11,8 +11,7 @@ import {
   notifyAppealResolved,
   emailAppealResolution,
 } from './image-moderation-effects';
-import { bustCachedObject } from './cache';
-import { REDIS_KEYS } from '@civitai/redis';
+import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
 
 const BLOCKED_REASON_MODERATED = 'moderated';
@@ -33,7 +32,7 @@ const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
-  await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
+  await invalidateThumbnails(imageId);
 };
 
 export async function acceptImage({
@@ -46,7 +45,7 @@ export async function acceptImage({
   removeMinorFlag?: boolean;
   userId: number;
   deferAppealEmail?: boolean;
-}): Promise<void> {
+}): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
     .selectFrom('Image')
     .select(['needsReview', 'pHash', 'postId'])
@@ -109,9 +108,6 @@ export async function acceptImage({
       }))
     );
     await dbWrite.deleteFrom('ImageTagForReview').where('imageId', '=', imageId).execute();
-    // upsertTagsOnImageNew does NOT bust the thumbnail cache (recompute() does), so bust it here or an
-    // unblocked thumbnail-child image serves a stale Blocked level until TTL.
-    await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
   } else {
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
@@ -122,21 +118,13 @@ export async function acceptImage({
   await applyAcceptSideEffects(img, imageId);
 
   if (nr === 'appeal') {
-    const appeal = await dbRead
-      .selectFrom('Appeal')
-      .select(['id', 'userId', 'buzzTransactionId'])
-      .where('entityType', '=', 'Image')
-      .where('entityId', '=', imageId)
-      .where('status', '=', 'Pending')
-      .executeTakeFirst();
-    await dbWrite
-      .updateTable('Appeal')
-      .set({ status: 'Approved', resolvedBy: userId, resolvedAt: new Date() })
-      .where('entityType', '=', 'Image')
-      .where('entityId', '=', imageId)
-      .where('status', '=', 'Pending')
-      .execute();
+    const appeal = await closePendingAppeal(imageId, {
+      status: 'Approved',
+      resolvedBy: userId,
+      resolvedAt: new Date(),
+    });
     if (appeal) await runAppealCascade(appeal, imageId, true, undefined, !deferAppealEmail);
+    return appeal;
   }
 }
 
@@ -157,7 +145,15 @@ export async function blockImage({
 }): Promise<void> {
   const img = await dbRead
     .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'blockedFor', 'postId', 'nsfwLevel', 'userId'])
+    .select([
+      'needsReview',
+      'pHash',
+      'blockedFor',
+      'postId',
+      'nsfwLevel',
+      'userId',
+      thumbnailParentId.as('parentId'),
+    ])
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return;
@@ -182,6 +178,7 @@ export async function blockImage({
     })
     .where('id', '=', imageId)
     .execute();
+  await invalidateThumbnails(imageId, [img.parentId]);
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
@@ -199,9 +196,33 @@ export async function blockImage({
 
 export type AppealDecision = 'Approved' | 'Rejected';
 
-// `appeal` must be read while still Pending (before the row is closed) — the buzz txn id is needed here.
+/**
+ * Closes the image's pending appeal and returns it, or nothing when another resolution closed it
+ * first. Closing and reading must stay one statement, or concurrent resolutions both refund the fee.
+ */
+function closePendingAppeal(
+  imageId: number,
+  decision: {
+    status: AppealDecision;
+    resolvedBy: number;
+    resolvedAt: Date;
+    resolvedMessage?: string | null;
+  }
+) {
+  return dbWrite
+    .updateTable('Appeal')
+    .set(decision)
+    .where('entityType', '=', 'Image')
+    .where('entityId', '=', imageId)
+    .where('status', '=', 'Pending')
+    .returning(['id', 'userId', 'buzzTransactionId'])
+    .executeTakeFirst();
+}
+
+export type ClosedAppeal = NonNullable<Awaited<ReturnType<typeof closePendingAppeal>>>;
+
 async function runAppealCascade(
-  appeal: { id: number; userId: number; buzzTransactionId: string | null },
+  appeal: ClosedAppeal,
   imageId: number,
   approved: boolean,
   resolvedMessage?: string,
@@ -214,7 +235,7 @@ async function runAppealCascade(
       entityId: imageId,
     });
   await notifyAppealResolved({
-    userId: appeal.userId,
+    appeal,
     entityId: imageId,
     status: approved ? 'Approved' : 'Rejected',
     resolvedMessage,
@@ -235,19 +256,15 @@ async function runAppealCascade(
   }
 }
 
-// Call BEFORE the bulk resolution closes the rows — the status='Pending' filter needs them still open.
-export async function getPendingImageAppealAppellants(
-  imageIds: number[]
-): Promise<{ userId: number; imageId: number }[]> {
-  if (!imageIds.length) return [];
-  const rows = await dbRead
-    .selectFrom('Appeal')
-    .select(['userId', 'entityId'])
-    .where('entityType', '=', 'Image')
-    .where('entityId', 'in', imageIds)
-    .where('status', '=', 'Pending')
-    .execute();
-  return rows.map((r) => ({ userId: r.userId, imageId: r.entityId }));
+/** Pairs each image with the appeal its resolution closed, dropping images whose appeal it did not. */
+export function closedAppellants(
+  imageIds: number[],
+  closed: (ClosedAppeal | undefined)[]
+): { userId: number; imageId: number }[] {
+  return imageIds.flatMap((imageId, i) => {
+    const appeal = closed[i];
+    return appeal ? [{ userId: appeal.userId, imageId }] : [];
+  });
 }
 
 export async function sendBulkAppealEmails(
@@ -291,30 +308,26 @@ export async function resolveImageAppeal({
   resolvedMessage?: string;
   userId: number;
   deferAppealEmail?: boolean;
-}): Promise<void> {
+}): Promise<ClosedAppeal | undefined> {
   const approved = status === 'Approved';
 
-  // Read the pending appeal (appellant + buzz txn) BEFORE closing it — the cascade below needs them.
-  const appeal = await dbRead
-    .selectFrom('Appeal')
-    .select(['id', 'userId', 'buzzTransactionId'])
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .where('status', '=', 'Pending')
-    .executeTakeFirst();
-
-  await dbWrite
-    .updateTable('Appeal')
-    .set({
-      status,
-      resolvedBy: userId,
-      resolvedMessage: resolvedMessage ?? null,
-      resolvedAt: new Date(),
-    })
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .where('status', '=', 'Pending')
-    .execute();
+  const appeal = await closePendingAppeal(imageId, {
+    status,
+    resolvedBy: userId,
+    resolvedMessage: resolvedMessage ?? null,
+    resolvedAt: new Date(),
+  });
+  if (!appeal) {
+    // Another resolution decided it, so this verdict must not reach the image. Only the queue flag is
+    // cleared: an image flagged for appeal with no pending appeal would otherwise never leave the queue.
+    await dbWrite
+      .updateTable('Image')
+      .set({ needsReview: null })
+      .where('id', '=', imageId)
+      .where('needsReview', '=', 'appeal')
+      .execute();
+    return undefined;
+  }
 
   const img = await dbRead
     .selectFrom('Image')
@@ -341,7 +354,7 @@ export async function resolveImageAppeal({
 
   await applyVisibilitySideEffects(imageId, img?.postId ?? null);
 
-  if (appeal) await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);
+  await runAppealCascade(appeal, imageId, approved, resolvedMessage, !deferAppealEmail);
 
   await recordModActivity({
     userId,
@@ -349,4 +362,5 @@ export async function resolveImageAppeal({
     entityId: imageId,
     activity: 'resolveAppeal',
   });
+  return appeal;
 }

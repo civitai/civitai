@@ -53,3 +53,46 @@ describe('controlVideo whatIf fingerprint', () => {
     );
   });
 });
+
+describe('YuE2 score pricing', () => {
+  it('refetches when a supplied score replaces paid planning, not on every note edit', () => {
+    const absent = applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: '' });
+    const supplied = applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: 'X:1\nK:C\nC D E G |' });
+    expect(supplied).not.toEqual(absent);
+    expect(applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: 'X:1\nK:G\nG A B d |' })).toEqual(
+      supplied
+    );
+    expect(applyWhatIfFingerprints({ yue2Mode: 'full', yue2Abc: '   ' })).toEqual(absent);
+    expect(applyWhatIfFingerprints({ yue2Mode: 'off', yue2Abc: '' })).not.toEqual(absent);
+  });
+});
+
+describe('partially hydrated resources', () => {
+  // These run over the raw node value, where the input schema still allows a bare `{ id }`. A throw
+  // reaches an unisolated watcher loop and freezes the quoted cost on the previous selection, so the
+  // projection has to survive a resource whose model has not been filled in yet.
+  it('fingerprints a resource that has no model yet', () => {
+    expect(() => applyWhatIfFingerprints({ resources: [{ id: 7 }] })).not.toThrow();
+  });
+
+  it('still distinguishes one id from another while unhydrated', () => {
+    expect(applyWhatIfFingerprints({ resources: [{ id: 7 }] })).not.toEqual(
+      applyWhatIfFingerprints({ resources: [{ id: 8 }] })
+    );
+  });
+
+  it('refetches once the type arrives', () => {
+    expect(applyWhatIfFingerprints({ resources: [{ id: 7 }] })).not.toEqual(
+      applyWhatIfFingerprints({ resources: [{ id: 7, model: { type: 'Checkpoint' } }] })
+    );
+  });
+});
+
+describe('denoise whatIf fingerprint', () => {
+  // Denoise changes the price, so a new value must re-fire the estimate.
+  it('treats a denoise change as cost-relevant', () => {
+    expect(applyWhatIfFingerprints({ denoise: 0.4 })).not.toEqual(
+      applyWhatIfFingerprints({ denoise: 0.75 })
+    );
+  });
+});

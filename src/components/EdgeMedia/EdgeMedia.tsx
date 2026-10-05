@@ -30,7 +30,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     disableWebm?: boolean;
     disablePoster?: boolean;
     videoProps?: React.HTMLAttributes<HTMLVideoElement> &
-      React.MediaHTMLAttributes<HTMLVideoElement>;
+      React.MediaHTMLAttributes<HTMLVideoElement> & { hoverPlay?: boolean };
     imageProps?: React.HTMLAttributes<HTMLImageElement>;
     /** Database image ID — forwarded to EdgeImage for drag-and-drop metadata lookup */
     imageId?: number;
@@ -74,6 +74,7 @@ export function EdgeMedia({
   optimized,
   imageId,
   hiDpi,
+  sourceWidth,
   ...imgProps
 }: EdgeMediaProps) {
   const imgRef = useRef<HTMLImageElement>(null);
@@ -89,6 +90,7 @@ export function EdgeMedia({
   const options = {
     name,
     width,
+    sourceWidth,
     height,
     fit,
     blur,

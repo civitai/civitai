@@ -4,6 +4,7 @@ import { assertMediaPresentForPublish, MediaPresence, summarizeProbeError } from
 import { STUCK_PENDING_MINUTES } from '@civitai/shared/image-ingestion';
 import { dbRead, dbWrite } from './db';
 import { bustCachedObject } from './cache';
+import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { syncSearchIndex } from './search-index';
 import { recordModActivity } from './mod-activity';
 import { getMediaProbeStorage } from './storage';
@@ -286,7 +287,7 @@ export async function resolveIngestionError({
 }): Promise<void> {
   const image = await dbWrite
     .selectFrom('Image')
-    .select(['postId', 'metadata', 'url'])
+    .select(['postId', 'metadata', 'url', thumbnailParentId.as('parentId')])
     .where('id', '=', id)
     .executeTakeFirst();
   if (!image) throw new Error('Image not found');
@@ -347,6 +348,7 @@ export async function resolveIngestionError({
     })
     .where('id', '=', id)
     .execute();
+  await invalidateThumbnails(id, [image.parentId]);
 
   // Cast to int[] — Postgres infers a bare `ARRAY[$1]` param array as text[], which won't match the
   // function's int[] signature.

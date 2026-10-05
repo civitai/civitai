@@ -3,6 +3,8 @@ import type * as Models from '~/server/services/orchestrator/models';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
 import type * as AssertOwner from '~/server/services/orchestrator/assert-workflow-owner';
 
+const MEMBER = { next: true, member: true };
+
 const queryResources = vi.fn();
 const getModelClient = vi.fn();
 const submitWorkflow = vi.fn();
@@ -24,12 +26,17 @@ vi.mock('~/server/services/orchestrator/assert-workflow-owner', async (importOri
 
 import { Air } from '@civitai/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import {
   estimateResourceLoad,
   getResourceLoadQueue,
   getResourceLoadState,
   submitResourceLoad,
 } from '~/server/services/resource-load.service';
+import {
+  bustResourceResidency,
+  getResourceResidency,
+} from '~/server/services/resource-residency.service';
 
 const version = {
   id: 501,
@@ -43,22 +50,15 @@ const version = {
 /** The SafeTensor rule is checkpoint-scoped, so format cases need a checkpoint, not the LoRA above. */
 const checkpointVersion = { ...version, model: { ...version.model, type: 'Checkpoint' } };
 
+const externalVersion = { ...version, usageControl: 'ExternalGeneration' };
+
 const versionAir = 'urn:air:sdxl:lora:civitai:42@501';
 
-/**
- * The global `@civitai/client` stub returns `''` from `Air.stringify` and has no `parseSafe` at all,
- * so the queue's AIR -> version mapping needs a real round-trip here.
- */
+/** The global `@civitai/client` stub returns `''` from `Air.stringify`; the lookup needs a real one. */
 function installAirCodec() {
   const air = Air as unknown as Record<string, unknown>;
   air.stringify = ({ ecosystem, type, source, id, version }: Record<string, string>) =>
     `urn:air:${ecosystem}:${type}:${source}:${id}@${version}`;
-  air.parseSafe = (identifier: string) => {
-    const match = /^urn:air:([^:]+):([^:]+):([^:]+):(\d+)@(\d+)$/.exec(identifier);
-    if (!match) return null;
-    const [, ecosystem, type, source, id, version] = match;
-    return { ecosystem, type, source, id, version };
-  };
 }
 
 function orchestratorReturns(availability: unknown, size = 1024) {
@@ -69,25 +69,39 @@ beforeEach(() => {
   vi.clearAllMocks();
   installAirCodec();
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([version]);
-  // The GenerationCoverageNext lookup — covered by default.
-  dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelVersionId: 501 }]);
+  // Covered under both rules. A fixture that sets only `audience` refuses every model-locked
+  // checkpoint.
+  dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelVersionId: 501, audience: true, live: true }]);
+  // A cache miss that wins the stampede lock; losing it makes fetchThroughCache sleep and retry.
+  redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
 });
 
 describe('getResourceLoadState', () => {
   it('asks the orchestrator for the AIR built from the version and its primary file', async () => {
     orchestratorReturns({ status: 'available', workers: 2 });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(getModelClient).toHaveBeenCalledWith(expect.objectContaining({ air: versionAir }));
     expect(state).toMatchObject({ modelVersionId: 501, modelId: 42, air: versionAir, size: 1024 });
     expect(state.availability).toEqual({ status: 'available', workers: 2 });
   });
 
+  it('answers `external` for an API model without asking the orchestrator at all', async () => {
+    // Asked, the orchestrator would say `unavailable` — a download the user is told to wait for.
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([externalVersion]);
+    orchestratorReturns({ status: 'unavailable' });
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+
+    expect(state.availability).toEqual({ status: 'external' });
+    expect(getModelClient).not.toHaveBeenCalled();
+  });
+
   it('keeps queuePosition, which lives on `unavailable` and not on `loading`', async () => {
     orchestratorReturns({ status: 'unavailable', queuePosition: 7 });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual({ status: 'unavailable', queuePosition: 7 });
   });
@@ -95,7 +109,7 @@ describe('getResourceLoadState', () => {
   it('reports a status this build does not know as `unknown` rather than guessing', async () => {
     orchestratorReturns({ status: 'evicting', someNewField: 1 });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual({ status: 'unknown' });
   });
@@ -103,9 +117,99 @@ describe('getResourceLoadState', () => {
   it('reports `unknown` when the orchestrator returns no data at all', async () => {
     getModelClient.mockResolvedValue({ data: undefined, error: { status: 500 } });
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
 
     expect(state.availability).toEqual({ status: 'unknown' });
+  });
+
+  it('reads the beta.105 `queued` shape, boosted ETA included', async () => {
+    const queued = {
+      status: 'queued',
+      queuePosition: 3,
+      lane: 'low',
+      etaSeconds: 600,
+      boostedEtaSeconds: 60,
+    };
+    orchestratorReturns(queued);
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+
+    expect(state.availability).toEqual(queued);
+  });
+});
+
+describe('getResourceResidency', () => {
+  const queued = { status: 'queued', queuePosition: 4, lane: 'normal', etaSeconds: 90 };
+
+  it('returns each version once, with its parsed availability', async () => {
+    orchestratorReturns(queued);
+
+    const result = await getResourceResidency([501, 501]);
+
+    expect(result).toEqual([{ modelVersionId: 501, availability: queued, size: 1024 }]);
+  });
+
+  it('answers `external` for an API model, so the mark never says "Not loaded"', async () => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([externalVersion]);
+    orchestratorReturns({ status: 'unavailable' });
+
+    const [residency] = await getResourceResidency([501]);
+
+    expect(residency.availability).toEqual({ status: 'external' });
+    expect(getModelClient).not.toHaveBeenCalled();
+  });
+
+  // The router leaves this open to every signed-in viewer on the strength of the cache, so the
+  // per-version key and the cache hit are the properties that make it safe.
+  it('reads one cache key per version', async () => {
+    orchestratorReturns(queued);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([version, { ...version, id: 502 }]);
+
+    await getResourceResidency([501, 502]);
+
+    const readKeys = redisMock.redis.packed.mGet.mock.calls.flatMap(
+      (call: unknown[]) => (call[0] as string[]) ?? []
+    );
+    expect(readKeys).toEqual(
+      expect.arrayContaining([expect.stringContaining(':501'), expect.stringContaining(':502')])
+    );
+  });
+
+  it('does not ask the orchestrator for a version already cached', async () => {
+    redisMock.redis.packed.mGet.mockResolvedValue([
+      { modelVersionId: 501, availability: { status: 'available', workers: 2 } },
+    ]);
+
+    const result = await getResourceResidency([501]);
+
+    expect(getModelClient).not.toHaveBeenCalled();
+    expect(result).toEqual([
+      { modelVersionId: 501, availability: { status: 'available', workers: 2 } },
+    ]);
+  });
+});
+
+describe('bustResourceResidency', () => {
+  it('leaves a cached answer stale at once, so the next read refreshes it', async () => {
+    redisMock.redis.packed.mGet.mockResolvedValue([
+      { modelVersionId: 501, availability: { status: 'unavailable' }, cachedAt: new Date() },
+    ]);
+
+    await bustResourceResidency([501]);
+
+    const [key, value] = redisMock.redis.packed.set.mock.calls.at(-1) as [
+      string,
+      { cachedAt: Date }
+    ];
+    expect(key).toMatch(/:501$/);
+    // The default debounce would backdate it only 20s, leaving the old answer fresh for 10 more.
+    expect(new Date(value.cachedAt).getTime()).toBeLessThanOrEqual(Date.now() - 30_000);
+  });
+
+  it('touches nothing for an empty list', async () => {
+    await bustResourceResidency([]);
+
+    expect(redisMock.redis.packed.mGet).not.toHaveBeenCalled();
   });
 });
 
@@ -126,6 +230,12 @@ describe('getResourceLoadQueue', () => {
             availability: { status: 'unavailable', queuePosition: 2 },
           },
           { air: 'not-an-air', size: 1, availability: { status: 'unavailable' } },
+          // Integer version, but not civitai's: it must not resolve to version 501.
+          {
+            air: 'urn:air:sdxl:lora:orchestrator:blob@501',
+            size: 1,
+            availability: { status: 'unavailable' },
+          },
         ],
       },
     });
@@ -154,7 +264,11 @@ describe('the purchase path refuses before it submits', () => {
 
   it('refuses a resource the site cannot generate with, whatever the cluster says', async () => {
     orchestratorReturns({ status: 'unavailable', queuePosition: null });
-    dbMock.dbRead.$queryRaw.mockResolvedValue([]); // not in GenerationCoverageNext
+    // The reshaped query returns a row per requested id and gates in JS, so the realistic uncovered
+    // case is a row whose audience flag is false — not an absent row.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: false, live: true },
+    ]);
 
     await expect(
       submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })
@@ -228,7 +342,7 @@ describe('the purchase path refuses before it submits', () => {
       },
     ]);
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
     expect(state.loadable).toBe(false);
     expect(state.unloadableReason).toBe('unsupported-format');
   });
@@ -247,7 +361,7 @@ describe('the purchase path refuses before it submits', () => {
         },
       ]);
 
-      const [state] = await getResourceLoadState([501]);
+      const [state] = await getResourceLoadState([501], MEMBER);
       expect(state.loadable).toBe(true);
       expect(state.unloadableReason).toBeUndefined();
     }
@@ -262,7 +376,7 @@ describe('the purchase path refuses before it submits', () => {
       },
     ]);
 
-    const [state] = await getResourceLoadState([501]);
+    const [state] = await getResourceLoadState([501], MEMBER);
     expect(state.unloadableReason).toBe('no-weights');
   });
 
@@ -387,5 +501,58 @@ describe('estimateResourceLoad', () => {
     });
 
     expect(result).toMatchObject({ cost: 250, priced: true });
+  });
+});
+
+/**
+ * The reshaped coverage query returns both answers and gates in JS, so which Set feeds which
+ * argument is now a code decision rather than a SQL one. A locked ecosystem is the only shape that
+ * can tell them apart — every other fixture here is a LoRA on SDXL, where `isGenerationEligible`
+ * returns before it ever looks at `coveredLive`.
+ */
+describe('a model-locked ecosystem is held to the live rule', () => {
+  const lockedCheckpoint = {
+    ...version,
+    baseModel: 'Qwen',
+    model: { ...version.model, type: 'Checkpoint' },
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([lockedCheckpoint]);
+  });
+
+  it('refuses a community checkpoint the staged rule covers and the live rule does not', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: true, live: false },
+    ]);
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+    expect(state.eligible).toBe(false);
+  });
+
+  it('keeps one the live rule covers — the ecosystem defaults ride on that column', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: true, live: true },
+    ]);
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+    expect(state.eligible).toBe(true);
+  });
+
+  it('still reads the audience answer for a non-checkpoint on the same ecosystem', async () => {
+    // `covered` has to stay wired to the audience Set: a locked ecosystem's LoRAs do run, so they
+    // keep the staged expansion. Only `live: false` distinguishes this from the checkpoint above.
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { ...lockedCheckpoint, model: { ...version.model, type: 'LORA' } },
+    ]);
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: true, live: false },
+    ]);
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+    expect(state.eligible).toBe(true);
   });
 });

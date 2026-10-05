@@ -1,4 +1,8 @@
 import { TRPCError } from '@trpc/server';
+import {
+  coverageAudience,
+  coveragePairForUser,
+} from '~/server/services/generation/coverage-source';
 
 import { licensingFeeBlockedFor, paidAccessBlockedFor } from '@civitai/buzz';
 import { recordPricingSlot, releasePricingSlot } from '~/server/services/pricing-slot.service';
@@ -16,7 +20,11 @@ import type { SessionUser } from '~/types/session';
 import type { BaseModelType } from '~/server/common/constants';
 import type { LicensingSourceRejection } from '~/server/schema/model-version.schema';
 import { type BaseModel, DEPRECATED_BASE_MODELS } from '~/shared/constants/basemodel.constants';
-import { baseModelLicenses, constants } from '~/server/common/constants';
+import {
+  baseModelLicenses,
+  constants,
+  hasAdditionalLicensePermissions,
+} from '~/server/common/constants';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
@@ -144,6 +152,7 @@ const loadModelVersion = async ({
         trainingStatus: true,
         uploadType: true,
         usageControl: true,
+        generatorLoaded: true,
         availability: true,
         licensingFee: true,
         licensingFeeType: true,
@@ -203,7 +212,7 @@ const loadModelVersion = async ({
             },
           },
         },
-        generationCoverage: { select: { covered: true } },
+        generationCoverage: { select: { covered: true, coveredNext: true } },
       },
     });
 
@@ -276,6 +285,7 @@ const loadModelVersion = async ({
 
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
+    const { next, member } = await coverageAudience(ctx.user ?? undefined);
     const genStates = await resolveCanGenerateForVersions(
       [
         {
@@ -284,7 +294,10 @@ const loadModelVersion = async ({
           availability: version.availability,
           usageControl: version.usageControl,
           baseModel: version.baseModel,
-          covered: version.generationCoverage?.covered ?? false,
+          ...coveragePairForUser(version, next, {
+            member,
+            isCheckpoint: version.model.type === 'Checkpoint',
+          }),
           modelUserId: version.model.user.id,
           modelType: version.model.type,
           flags: version.flags,
@@ -841,13 +854,9 @@ export const publishModelVersionHandler = async ({
 
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
-    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       versionMeta || {};
-    const updatedVersion = await publishModelVersionById({
-      ...input,
-      meta,
-      republishing,
-    });
+    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
 
     await queueModelEarlyAccessReindex({ id: updatedVersion.modelId }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -1146,14 +1155,7 @@ export async function getVersionLicenseHandler({ input }: { input: GetByIdInput 
     if (!constants.supportedBaseModelAddendums.includes(version.baseModel as 'SD 1.5' | 'SDXL 1.0'))
       return throwBadRequestError('License not available for this model');
 
-    const hasAdditionalPermissions =
-      !version.model.allowCommercialUse.length ||
-      version.model.allowCommercialUse.some((permission) =>
-        ['None', 'Image', 'RentCivit', 'Rent', 'Sell'].includes(permission)
-      ) ||
-      !version.model.allowNoCredit ||
-      !version.model.allowDerivatives ||
-      version.model.allowDifferentLicense;
+    const hasAdditionalPermissions = hasAdditionalLicensePermissions(version.model);
 
     if (!hasAdditionalPermissions) throw throwBadRequestError('No additional permissions');
 

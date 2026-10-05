@@ -5,6 +5,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { registerCounterWithLabels } from '~/server/prom/client';
 import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { traceContextHeaders } from '~/server/utils/otel-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
 import {
   buildFeedRequestRow,
@@ -13,6 +14,8 @@ import {
 } from '~/server/services/feed-request-capture.service';
 
 export const MAX_OFFSET = 20_000;
+export const DEEP_OFFSET = `offset>${MAX_OFFSET}`;
+export const CURSOR_UNPARSED = 'cursor:unparsed';
 const CONFIG_TTL_MS = 15_000;
 const ERROR_LOG_INTERVAL_MS = 60_000;
 
@@ -69,8 +72,11 @@ const PERIOD_DAYS: Record<string, number | undefined> = {
   AllTime: undefined,
 };
 const LEVELS = [1, 2, 4, 8, 16, 32];
+// The feed service's own ceiling on userIds.
+const MAX_USER_IDS = 10_000;
+const MAX_FOLLOWED = MAX_USER_IDS;
 // Filters the candidate has no dimension for; the app resolves the server-side lists
-// (followed, hidden, newCreators) inside the search functions, out of this hook's reach.
+// (hidden) inside the search functions, out of this hook's reach.
 const UNSUPPORTED_KEYS = [
   'postId',
   'postIds',
@@ -83,19 +89,15 @@ const UNSUPPORTED_KEYS = [
   'generation',
   'reactions',
   'blockedFor',
+  'remixOfId',
 ] as const;
 const UNSUPPORTED_FLAGS = [
-  'followed',
-  'newCreators',
   'hidden',
-  'withMeta',
   'requiringMeta',
-  'fromPlatform',
-  'hideAutoResources',
-  'hideManualResources',
-  'hideChallenges',
   'pending',
   'publishedOnly',
+  'remixesOnly',
+  'nonRemixesOnly',
 ] as const;
 
 const present = (v: unknown) =>
@@ -135,21 +137,25 @@ export function mapSearchInputToFeedQuery(
   const skip = (reason: string): FeedQueryMapping => ({ ok: false, reason });
   for (const key of UNSUPPORTED_KEYS) if (present(input[key])) return skip(`input:${key}`);
   for (const flag of UNSUPPORTED_FLAGS) if (input[flag] === true) return skip(`flag:${flag}`);
+  // These only narrow a model version's gallery; without one they filter nothing.
+  if (present(input.modelVersionId))
+    for (const flag of ['hideAutoResources', 'hideManualResources'] as const)
+      if (input[flag] === true) return skip(`flag:${flag}`);
+  // Signed out, the search path drops the flag and serves the global feed.
+  const followedOn = input.followed === true && present(input.currentUserId);
+  const followed = followedOn ? input.followedUserIds : undefined;
+  if (followedOn) {
+    if (!Array.isArray(followed)) return skip('flag:followed');
+    if (followed.length > MAX_FOLLOWED) return skip(`followed>${MAX_FOLLOWED}`);
+    if (present(input.userId)) return skip('flag:followed:userId');
+  }
+  const newCreators = input.newCreators === true ? input.newCreatorUserIds : undefined;
+  if (input.newCreators === true) {
+    if (!Array.isArray(newCreators)) return skip('flag:newCreators');
+    if (newCreators.length > MAX_USER_IDS) return skip(`newCreators>${MAX_USER_IDS}`);
+    if (present(input.userId) || input.followed === true) return skip('flag:newCreators:userId');
+  }
 
-  let offset = 0;
-  let before: number | undefined;
-  const cursor = input.cursor;
-  const feedCursor = parseFeedCursor(cursor);
-  if (feedCursor) {
-    if (mode !== 'primary') return skip('cursor:feed');
-  } else if (typeof cursor === 'string' && cursor) {
-    const m = /^(\d{1,12})\|(\d{1,15})$/.exec(cursor);
-    if (!m) return skip('cursor:unparsed');
-    offset = Number(m[1]);
-    before = Math.floor(Number(m[2]) / 60_000) * 60_000;
-  } else if (cursor) return skip('cursor:unparsed');
-  if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
-  if (offset > MAX_OFFSET) return skip(`offset>${MAX_OFFSET}`);
 
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);
@@ -179,6 +185,23 @@ export function mapSearchInputToFeedQuery(
       ? 'scheduled'
       : undefined;
   if (visibility && !userId) return skip(`flag:${visibility}:no-user`);
+  // Parsed last: a cursor the feed cannot read is refused, so every reason the request
+  // could not be served anyway must come first.
+  let offset = 0;
+  let before: number | undefined;
+  const cursor = input.cursor;
+  const feedCursor = parseFeedCursor(cursor);
+  if (feedCursor) {
+    if (mode !== 'primary') return skip('cursor:feed');
+  } else if (typeof cursor === 'string' && cursor) {
+    const m = /^(\d{1,12})(?:\|(\d{1,15}))?$/.exec(cursor);
+    if (!m) return skip(CURSOR_UNPARSED);
+    offset = Number(m[1]);
+    if (m[2]) before = Math.floor(Number(m[2]) / 60_000) * 60_000;
+  } else if (typeof cursor === 'number' && Number.isInteger(cursor) && cursor >= 0) offset = cursor;
+  else if (cursor) return skip(CURSOR_UNPARSED);
+  if (typeof input.offset === 'number' && input.offset > 0) offset = Math.max(offset, input.offset);
+  if (offset > MAX_OFFSET) return skip(DEEP_OFFSET);
 
   const params = new URLSearchParams();
   params.set('levels', levels.join(','));
@@ -189,7 +212,18 @@ export function mapSearchInputToFeedQuery(
   if (excludedUsers.length) params.set('excludedUserIds', excludedUsers.slice(0, 1000).join(','));
   if (versionIds) params.set('versionIds', versionIds.join(','));
   if (userId) params.set('userIds', String(userId));
+  const followedIds = ints(followed);
+  if (followedIds.length) params.set('userIds', followedIds.join(','));
+  const newCreatorIds = ints(newCreators);
+  if (newCreatorIds.length) params.set('userIds', newCreatorIds.join(','));
   if (types.length) params.set('types', types.join(','));
+  if (input.withMeta === true) params.set('withMeta', '1');
+  if (input.fromPlatform === true) params.set('fromPlatform', '1');
+  if (input.disableMinor === true) params.set('excludeMinor', '1');
+  if (input.disablePoi === true) {
+    params.set('excludePoi', '1');
+    if (present(input.currentUserId)) params.set('viewerId', String(input.currentUserId));
+  }
   const baseModels = Array.isArray(input.baseModels)
     ? input.baseModels.map(String).filter(Boolean)
     : [];
@@ -391,7 +425,7 @@ export async function fetchFeedAnswer(
   const started = Date.now();
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/v1/feed?${query}`, {
     signal: AbortSignal.timeout(timeoutMs),
-    headers: { 'x-request-source': source },
+    headers: { ...traceContextHeaders(), 'x-request-source': source },
   });
   const ms = Date.now() - started;
   if (!res.ok) return { status: res.status, ms, ids: [] };

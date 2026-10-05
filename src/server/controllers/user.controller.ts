@@ -1,11 +1,10 @@
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { purgeCache } from '~/server/cloudflare/client';
+import { isAllowedAvatarUrl } from '~/server/utils/image-scan-url';
 import { constants } from '~/server/common/constants';
-import type { NotificationCategory } from '~/server/common/enums';
 import {
   OnboardingComplete,
   OnboardingSteps,
@@ -16,6 +15,7 @@ import { getStaticContent, resolveTosHash } from '~/server/services/content.serv
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { getUserFollows } from '~/server/redis/caches';
+import { getFollowsViewer } from '~/server/services/follows-viewer.service';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
@@ -59,6 +59,7 @@ import type {
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
 import { getUserNotificationCount } from '~/server/services/notification.service';
+import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
 import { getPendingPlacementCounts } from '~/server/services/placement.service';
 import { queueModelMetricPrivacyReindex } from '~/server/services/model.service';
 import { getUserResourceReview } from '~/server/services/resourceReview.service';
@@ -147,7 +148,7 @@ import {
 } from '../services/feature-flags.service';
 import {
   getEntityCoverImage,
-  ingestImage,
+  ingestImageById,
   queueReplacedImageDeletion,
 } from '../services/image.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -311,16 +312,6 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       })),
     ]);
 
-    const reduced = unreadCount.reduce(
-      (acc, { category, count }) => {
-        const key = category.toLowerCase() as Lowercase<NotificationCategory>;
-        acc[key] = Number(count);
-        acc['all'] += Number(count);
-        return acc;
-      },
-      { all: 0 } as Record<Lowercase<NotificationCategory> | 'all', number>
-    );
-
     // `pendingPlacements` rides along here rather than getting its own query:
     // this is the one request that already runs once per session for every
     // signed-in user (`staleTime: Infinity`, see useQueryNotificationsCount),
@@ -334,7 +325,7 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
     // see NON_CATEGORY_COUNT_KEYS in notifications.utils.ts, which is where the
     // invariant for adding another non-category key to this payload lives.
     return {
-      ...reduced,
+      ...summarizeUnreadCounts(unreadCount),
       // One number for the menu entry, and the split for the segmented control
       // on the placements page — the entry points at both queues now, so a
       // sticker-only count would under-report the thing it links to.
@@ -354,16 +345,14 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
   }
 };
 
-const validAvatarUrlPrefixes = [
-  'https://cdn.discordapp.com/avatars/',
-  'https://cdn.discordapp.com/embed/avatars/',
-  'https://avatars.githubusercontent.com/u/',
-  'https://lh3.googleusercontent.com/a/',
-];
+// 🔴 Shares the PREDICATE with the image-scan ingestion allowlist
+// (`isAllowedAvatarUrl` in ~/server/utils/image-scan-url), not just the host list. Sharing
+// only the list left each side open-coding the test that applies it, and they diverged:
+// the ingestion side checks the normalized href while this one checked the raw string, so
+// `…/avatars/../attachments/x` was refused there and accepted here.
 const verifyAvatar = (avatar: string) => {
-  if (avatar.startsWith('http')) {
-    return validAvatarUrlPrefixes.some((prefix) => avatar.startsWith(prefix));
-  } else if (isUUID(avatar)) return true; // Is a CF Images UUID
+  if (avatar.startsWith('http')) return isAllowedAvatarUrl(avatar);
+  else if (isUUID(avatar)) return true; // Is a CF Images UUID
   return false;
 };
 
@@ -627,8 +616,18 @@ export const updateUserHandler = async ({
       : inputProfilePicture;
 
   try {
-    const user = await getUserById({ id, select: { profilePictureId: true } });
+    const user = await getUserById({
+      id,
+      select: { profilePictureId: true, profilePicture: { select: { userId: true } } },
+    });
     if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+    // The client sends the current picture's id when it re-saves it, and no id for a new upload,
+    // so any other picture is always created as a new row.
+    const newPicture =
+      profilePicture && profilePicture.id !== user.profilePictureId
+        ? { ...profilePicture, id: undefined }
+        : undefined;
 
     const payloadCosmeticIds: number[] = [];
     const unequipPromises: Promise<unknown>[] = [];
@@ -661,20 +660,17 @@ export const updateUserHandler = async ({
       data: {
         ...data,
         username,
-        profilePicture: profilePicture
+        profilePicture: newPicture
           ? {
-              connectOrCreate: {
-                where: { id: profilePicture.id ?? -1 },
-                create: {
-                  ...profilePicture,
-                  metadata: {
-                    ...profilePicture.metadata,
-                    profilePicture: true,
-                    userId: id,
-                    username,
-                  },
+              create: {
+                ...newPicture,
+                metadata: {
+                  ...newPicture.metadata,
+                  profilePicture: true,
                   userId: id,
+                  username,
                 },
+                userId: id,
               },
             }
           : undefined,
@@ -694,25 +690,17 @@ export const updateUserHandler = async ({
     // of those are bugs on their own; they only became user-visible breakage because the
     // target was *gone* rather than merely *stale*. Queuing instead keeps the old picture
     // fetchable for the retention window, so every one of those caches self-corrects.
-    if (user.profilePictureId && profilePicture && user.profilePictureId !== profilePicture.id) {
+    //
+    // Only a picture this user owns is ever queued.
+    if (newPicture && user.profilePictureId && user.profilePicture?.userId === id) {
       postUpdatePromises.push(queueReplacedImageDeletion([user.profilePictureId]));
     }
 
-    if (
-      profilePicture &&
-      updatedUser.profilePictureId &&
-      user.profilePictureId !== profilePicture?.id
-    ) {
+    if (newPicture && updatedUser.profilePictureId) {
       postUpdatePromises.push(
-        ingestImage({
-          image: {
-            id: updatedUser.profilePictureId,
-            url: profilePicture.url,
-            type: profilePicture.type,
-            height: profilePicture.height,
-            width: profilePicture.width,
-          },
-        }).then(() => deleteUserProfilePictureCache(id))
+        ingestImageById({ id: updatedUser.profilePictureId }).then(() =>
+          deleteUserProfilePictureCache(id)
+        )
       );
     }
 
@@ -770,8 +758,9 @@ export const deleteUserHandler = async ({
 }) => {
   const { id } = input;
   const currentUser = ctx.user;
-  const canRemoveAsModerator = !isProd && currentUser.isModerator;
-  if (id !== currentUser.id && !canRemoveAsModerator) throw throwAuthorizationError();
+  // Self-only, in every environment. A moderator deleting somebody else's account goes through
+  // `/api/mod/user/delete`, which writes a ModActivity row.
+  if (id !== currentUser.id) throw throwAuthorizationError();
 
   try {
     const user = await deleteUser(input);
@@ -904,6 +893,20 @@ export const getUserFollowingListHandler = async ({ ctx }: { ctx: ProtectedConte
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
+  }
+};
+
+export const getFollowsMeHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
+  try {
+    return await getFollowsViewer({ viewerId: ctx.user.id, userId: input.id });
+  } catch (error) {
+    throw throwDbError(error);
   }
 };
 
@@ -1554,10 +1557,9 @@ export const getUserSettingsHandler = async ({ ctx }: { ctx: ProtectedContext })
 /**
  * Settings keys that `setUserSettingsInput` can write AND that the auth hub folds into the cached
  * SessionUser (`apps/auth/src/lib/server/auth/session-shape.ts` — its `settingsSchema` reads
- * `allowAds`, `redBrowsingLevel`, `isEarlyAdopter`). Writing one of these without busting
+ * `allowAds`, `isEarlyAdopter`). Writing one of these without busting
  * `session:data2:{id}` leaves the session serving the old value for the rest of its 4h TTL.
- * Keep this in sync with that schema; `redBrowsingLevel` is intentionally excluded because this
- * endpoint cannot write it (see the gate below).
+ * Keep this in sync with that schema.
  */
 const SESSION_PROJECTED_SETTING_KEYS = ['allowAds', 'isEarlyAdopter'] as const;
 
@@ -1597,7 +1599,7 @@ export const setUserSettingHandler = async ({
     if (metricPrivacyChanged) await queueModelMetricPrivacyReindex(id);
 
     // Some settings keys are PROJECTED ONTO THE SESSION by the auth hub — `shapeSessionUser`
-    // reads `allowAds`, `redBrowsingLevel` and `isEarlyAdopter` out of `User.settings` and
+    // reads `allowAds` and `isEarlyAdopter` out of `User.settings` and
     // folds them into the SessionUser — and the hub caches that projection in
     // `session:data2:{id}` for 4h. Without a bust the toggle reads as instantly applied
     // client-side (the `getSettings` cache is patched optimistically) while every session
@@ -1611,8 +1613,6 @@ export const setUserSettingHandler = async ({
     // endpoint's schema, so turning ads off left the session serving `allowAds: true` for up
     // to 4h. The gate is a set now, so adding a projected key is one edit here rather than a
     // silent re-introduction of the same bug (#4298's defect class).
-    // `redBrowsingLevel` is deliberately absent — it is not part of `setUserSettingsInput`;
-    // it is written by `updateContentSettings`, which performs its own bust.
     //
     // Gated on a CHANGE, not on key presence, and compared against `restInput` — the keys
     // THIS request sent — rather than against the stored blob. Mirrors the

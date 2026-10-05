@@ -12,12 +12,14 @@ import { chroma } from './chroma.graph';
 import { flux } from './flux.graph';
 import { fluxKontext } from './flux-kontext.graph';
 import { flux2 } from './flux2.graph';
+import { flux3 } from './flux3.graph';
 import { flux2Klein } from './flux2-klein.graph';
 import { boogu } from './boogu.graph';
 import { krea2 } from './krea2.graph';
 import { imagen4 } from './imagen4.graph';
 import { ponyV7 } from './pony-v7.graph';
 import { reve } from './reve.graph';
+import { ming } from './ming.graph';
 import { museImage } from './muse-image.graph';
 import { mai } from './mai.graph';
 import { ernie } from './ernie.graph';
@@ -63,7 +65,8 @@ export const imageHub = defineGraph<RootCtx>()
       ...ecosystemFieldSchemas(
         _ext.workflow,
         hiddenEcosystems,
-        ecosystemStates.map((e) => e.key)
+        ecosystemStates.map((e) => e.key),
+        usableEcosystems
       ),
       default: defaultValue,
       // v1 stores the ecosystem selection per OUTPUT type
@@ -80,12 +83,13 @@ export const imageHub = defineGraph<RootCtx>()
     // one entry per family, however many ecosystems it serves — the keys
     // type each arm's `ecosystem` literal
     branch('ecosystem', [
-      [['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'], sd],
+      [['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'], sd],
       [['ZImageTurbo', 'ZImageBase'], zimage],
       [['Chroma'], chroma],
       [['Flux1', 'FluxKrea'], flux],
       [['Flux1Kontext'], fluxKontext],
       [['Flux2'], flux2],
+      [['Flux3'], flux3],
       [['Flux2Klein_9B', 'Flux2Klein_9B_base', 'Flux2Klein_4B', 'Flux2Klein_4B_base'], flux2Klein],
       [['Boogu'], boogu],
       [['Krea2'], krea2],
@@ -93,6 +97,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['PonyV7'], ponyV7],
       [['Reve'], reve],
       [['MuseImage'], museImage],
+      [['Ming'], ming],
       [['MAI'], mai],
       [['Ernie'], ernie],
       [['Ideogram'], ideogram],
@@ -103,7 +108,7 @@ export const imageHub = defineGraph<RootCtx>()
       [['HiDream-O1'], hiDreamO1],
       [['OpenAI'], openai],
       [['Lens'], lens],
-      [['Qwen', 'Qwen2', 'Qwen3'], qwen],
+      [['Qwen', 'Qwen2', 'Qwen21', 'Qwen3'], qwen],
       [['NanoBanana'], nanoBanana],
       [['WanImage27'], wanImage],
       [['Grok'], grokImage],
@@ -119,19 +124,20 @@ export const imageHub = defineGraph<RootCtx>()
       : null
   )
   .field('quantity', ({ model, effectiveEcosystem, ecosystem, enhancedCompatibility, _ext }) => {
-    const isDraft = _ext.workflow === 'txt2img:draft';
     const bogoActive =
       !!_ext.flags?.enhancedCompatibilitySdcpp &&
       _ext.workflow === 'txt2img' &&
       supportsSdcpp(effectiveEcosystem ?? ecosystem, model?.id) &&
       enhancedCompatibility !== true;
-    const step = isDraft ? 4 : bogoActive ? 2 : 1;
-    // draft's 4-step quantity gets its own bucket (v1's conditional group);
-    // everywhere else quantity is global — so a stored value below bogo's
-    // step floor must be corrected, or it fails min(step) and dead-submits
+    const step = bogoActive ? 2 : 1;
+    // quantity is shared across image families, so a stored value below bogo's
+    // step floor must be corrected, or it fails min(step) and dead-submits.
+    // Scoped to image rather than bare: video keeps its own (see video/hub.graph.ts),
+    // and a scoped read falls back to the bare key, so a bare image value
+    // would leak into video.
     return {
       ...quantityDef({ max: _ext.limits.maxQuantity, step }),
-      scope: isDraft ? rootScope(_ext.workflow) : rootScope(),
+      scope: rootScope('image'),
       correct: (v: number) =>
         v < step ? { value: step, reason: 'quantity_step_floor' } : undefined,
     };

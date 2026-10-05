@@ -5,6 +5,7 @@ import { dbWrite } from './db';
 import { getStorage } from './storage';
 import { getSysRedis } from './redis';
 import { bustCachedObject } from './cache';
+import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { bustPostGalleryCaches } from './image-moderation-effects';
 import { syncSearchIndexBulk } from './search-index';
 
@@ -13,6 +14,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
   // Only ids whose row was actually deleted — the loop `continue`s past a missing one, and de-indexing
   // an image that still exists would hide it from search while it is live on the site.
   const deleted: number[] = [];
+  const parentIds: (number | null)[] = [];
   for (const id of ids) {
     try {
       await dbWrite.deleteFrom('CollectionItem').where('imageId', '=', id).execute();
@@ -20,13 +22,14 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
       const image = await dbWrite
         .deleteFrom('Image')
         .where('id', '=', id)
-        .returning(['url', 'postId'])
+        .returning(['url', 'postId', thumbnailParentId.as('parentId')])
         .executeTakeFirst();
       if (!image) continue;
       // Recorded HERE, not after the S3 work below: a throw from the storage delete or the shared-url
       // check lands in the catch with the row already gone, and the id would never be de-indexed —
       // leaving a deleted image in Meilisearch.
       deleted.push(id);
+      parentIds.push(image.parentId);
       if (image.postId != null) affectedPostIds.add(image.postId);
 
       if (image.url) {
@@ -60,6 +63,7 @@ export async function deleteImagesByIds(ids: number[]): Promise<void> {
   }
 
   void syncSearchIndexBulk({ entityType: 'image', entityIds: deleted, action: 'delete' });
+  await invalidateThumbnails(deleted, parentIds);
 
   if (affectedPostIds.size) {
     const postIds = [...affectedPostIds];

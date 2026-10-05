@@ -8,6 +8,7 @@ import { Tracker } from '~/server/clickhouse/client';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import type { SessionUser } from '~/types/session';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 // MODERATOR ENDPOINTS — one declaration per endpoint, carrying its own summary, input schema and
 // handler. Mirrors `apps/moderator/src/lib/server/api-endpoint.ts`, for the same reason: the spec is
@@ -39,6 +40,12 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
 export type ModeratorCtx = {
   actor: SessionUser;
+  /**
+   * The OAuth/API-key scope the caller authenticated with, or `TokenScope.Full` for a cookie
+   * session. Nothing here enforces it — an endpoint that needs a scope narrower than "any
+   * moderator" reads this itself, the way `/api/mod/user/delete` does.
+   */
+  tokenScope: number;
   tracker: Tracker;
   req: NextApiRequest;
   res: NextApiResponse;
@@ -68,6 +75,12 @@ export type ModeratorDefinition<S extends z.ZodType, TOutput> = {
   notes?: string[];
   rateLimit?: { max: number; windowSeconds: number };
   /**
+   * Parameter names to keep OUT of the audit row. For a value the endpoint reads and then has no
+   * further use for — a confirmation the caller had to type, rather than an input that changes what
+   * the action does. The check still runs; only the recorded copy is dropped.
+   */
+  auditExclude?: (keyof z.input<S> & string)[];
+  /**
    * Return `{ affected: {...} }` alongside the response to populate the audit row's `affected` column;
    * the rest is sent as JSON.
    */
@@ -87,7 +100,10 @@ export const moderatorBoolean = z.preprocess((v) => {
   return v;
 }, z.boolean());
 
-type ActorResult = { actor: SessionUser } | { status: number; error: string };
+type ActorResult = { actor: SessionUser; tokenScope: number } | { status: number; error: string };
+
+type ScopedSession = { tokenScope?: number };
+type RequestWithContext = NextApiRequest & { context?: { tokenScope?: number } };
 
 async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<ActorResult> {
   const authHeader = req.headers.authorization;
@@ -95,12 +111,20 @@ async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<
   if (authHeader?.toLowerCase().startsWith('bearer ')) {
     const session = await getSessionFromBearerToken(authHeader.slice('bearer '.length).trim());
     if (!session?.user) return { status: 401, error: 'Invalid API key' };
-    return { actor: session.user as SessionUser };
+    return {
+      actor: session.user as SessionUser,
+      tokenScope: (session as ScopedSession).tokenScope ?? TokenScope.Full,
+    };
   }
 
   const session = await getServerAuthSession({ req, res });
   if (!session?.user) return { status: 401, error: 'Not signed in' };
-  return { actor: session.user as SessionUser };
+  // Absent means the cookie path, which carries no scope and is the full-authority case. Same
+  // fallback as `createContext`, so the REST and tRPC surfaces resolve a caller's scope alike.
+  return {
+    actor: session.user as SessionUser,
+    tokenScope: (req as RequestWithContext).context?.tokenScope ?? TokenScope.Full,
+  };
 }
 
 function collectInput(req: NextApiRequest): Record<string, unknown> {
@@ -109,6 +133,49 @@ function collectInput(req: NextApiRequest): Record<string, unknown> {
   // Query wins over body: the URL names the resource, so a body field disagreeing with it is a caller
   // mistake rather than an override. Both arrive as strings, so schemas need `z.coerce`.
   return { ...body, ...query };
+}
+
+const REQUEST_LEVEL_FIELDS = new Set(['token', 'authorization']);
+
+/**
+ * The audit row records an endpoint's own parameters.
+ *
+ * For an endpoint with a schema, the validated input's KEYS are an allowlist over the request as
+ * sent, so a field the endpoint does not declare is not recorded as something it was called with,
+ * and a field added to the request surface later needs no maintenance here. An endpoint with no
+ * usable schema has nothing to allowlist against and falls back to the request as sent, less the
+ * request-level fields.
+ */
+function auditablePayload(
+  raw: Record<string, unknown>,
+  parsed: unknown,
+  hasSchema: boolean,
+  exclude: string[] = []
+): Record<string, unknown> {
+  const dropped = new Set(exclude.map((key) => key.toLowerCase()));
+  // The KEYS come from the schema; the VALUES stay as the request sent them. Recording the coerced
+  // value instead would make new rows disagree with stored ones wherever a value arrived as a
+  // string — `42` where they hold `'42'` — for no gain here.
+  // TWO conditions, because neither covers the other and dropping either one loses a case.
+  //
+  // An empty allowlist filters every request key out and writes `{}` for a privileged action, with
+  // nothing to indicate it happened — that is what a top-level `z.coerce.date()`, a Map, a Set or a
+  // `.transform()` returning an object with no own enumerable keys all produce.
+  //
+  // An ARRAY is the case emptiness does NOT catch: `Object.keys(['42'])` is `['0']`, non-empty and
+  // matching no real parameter, so the payload comes out `{}` just the same.
+  if (hasSchema && parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const declared = new Set(Object.keys(parsed as Record<string, unknown>));
+    if (declared.size > 0)
+      return Object.fromEntries(
+        Object.entries(raw).filter(([key]) => declared.has(key) && !dropped.has(key.toLowerCase()))
+      );
+  }
+  return Object.fromEntries(
+    Object.entries(raw).filter(
+      ([key]) => !REQUEST_LEVEL_FIELDS.has(key.toLowerCase()) && !dropped.has(key.toLowerCase())
+    )
+  );
 }
 
 function extractAffected(result: unknown): {
@@ -149,7 +216,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     const resolved = await resolveActor(req, res);
     if ('error' in resolved) return res.status(resolved.status).json({ error: resolved.error });
 
-    const { actor } = resolved;
+    const { actor, tokenScope } = resolved;
     if (!actor.isModerator || actor.bannedAt) {
       return res.status(403).json({ error: 'Moderator role required' });
     }
@@ -194,15 +261,16 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
       });
     }
 
+    const auditPayload = auditablePayload(raw, input, Boolean(def.input), def.auditExclude);
     const tracker = new Tracker(req, res);
     try {
-      const result = await def.handler(input, { actor, tracker, req, res });
+      const result = await def.handler(input, { actor, tokenScope, tracker, req, res });
       const { affected, response } = extractAffected(result);
       void tracker.retoolAudit({
         action: name,
         privileged: Boolean(def.privileged),
         outcome: 'ok',
-        payload: raw,
+        payload: auditPayload,
         affected,
       });
       return res.status(200).json(response);
@@ -213,7 +281,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
         privileged: Boolean(def.privileged),
         outcome: 'error',
         errorMsg: err.message ?? String(e),
-        payload: raw,
+        payload: auditPayload,
       });
       return handleEndpointError(res, e);
     }

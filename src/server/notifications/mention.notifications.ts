@@ -77,6 +77,7 @@ export const mentionNotifications = createNotificationProcessor({
                 root."bountyEntryId",
                 root."challengeId",
                 root."model3dId",
+                root."comicProjectId",
                 t."imageId",
                 t."modelId",
                 t."postId",
@@ -87,7 +88,8 @@ export const mentionNotifications = createNotificationProcessor({
                 t."bountyId",
                 t."bountyEntryId",
                 t."challengeId",
-                t."model3dId"
+                t."model3dId",
+                t."comicProjectId"
              ),
             'threadType', CASE
               WHEN COALESCE(root."imageId", t."imageId") IS NOT NULL THEN 'image'
@@ -101,6 +103,7 @@ export const mentionNotifications = createNotificationProcessor({
               WHEN COALESCE(root."bountyEntryId", t."bountyEntryId") IS NOT NULL THEN 'bountyEntry'
               WHEN COALESCE(root."challengeId", t."challengeId") IS NOT NULL THEN 'challenge'
               WHEN COALESCE(root."model3dId", t."model3dId") IS NOT NULL THEN 'model3d'
+              WHEN COALESCE(root."comicProjectId", t."comicProjectId") IS NOT NULL THEN 'comicProject'
               -- App-store listings are SLUG-addressed, so this arm keys on the JOINED slug
               -- rather than an id column — see appListingSlugJoin.
               WHEN al.slug IS NOT NULL THEN 'appListing'
@@ -197,7 +200,7 @@ export const mentionNotifications = createNotificationProcessor({
         -- working URL. Three ways it doesn't:
         --   * mentionedIn = 'model' — a model DESCRIPTION mention, no comment behind it at all
         --   * v2 threadType 'comment' — the fallback for a thread entity threadUrlMap can't address
-        --     (comicProject, clubPost, ...), which renders a dead link
+        --     (clubPost, model3dReview, ...), which renders a dead link
         --   * v1 parentType 'review' — prepareMessage bails and returns undefined, so the row renders as
         --     NOTHING. Left unguarded this silently swallows the new-comment the user should have got.
         -- Anything excluded here still delivers as its own (lower-priority) notification, unchanged.

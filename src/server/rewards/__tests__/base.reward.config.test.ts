@@ -46,6 +46,7 @@ vi.mock('~/server/prom/client', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: any[]) => h.createBuzzTransactionMany(...args),
   getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
+  getTransactionByExternalId: vi.fn(async () => null),
 }));
 
 import { createBuzzEvent, ON_DEMAND_REWARD_SCRIPT } from '~/server/rewards/base.reward';

@@ -1,12 +1,13 @@
 import { dbRead, dbWrite } from './db';
-import { recordModActivity } from './mod-activity';
-import type { FeedbackStatus } from '$lib/feedback';
+import { recordModActivity, recordModActivityBatch } from './mod-activity';
+import { FEEDBACK_PAGE_SIZE, type FeedbackStatus } from '$lib/feedback';
 import {
   isFeedbackSortState,
   type FeedbackSort,
   type FeedbackSortColumn,
 } from '$lib/feedback-sort';
 import { MAX_INT4 } from './users.service';
+import type { PermissionSet } from '$lib/permissions';
 
 /**
  * The `Feedback` table, read and triaged.
@@ -20,7 +21,9 @@ import { MAX_INT4 } from './users.service';
  * silently overwrites a colleague's verdict is indistinguishable, on screen, from one that worked.
  */
 
-export const FEEDBACK_PAGE_SIZE = 50;
+// Re-exported so existing importers keep one import site; the value is owned by `$lib/feedback.ts`
+// because the browser needs it too (see its docstring).
+export { FEEDBACK_PAGE_SIZE };
 
 /** The four columns `20260911120000_feedback_triage` adds — the only ones this page can explain. */
 const TRIAGE_COLUMNS = ['triageNote', 'handledById', 'handledAt', 'bugId'];
@@ -201,6 +204,82 @@ const coerceSortValue = (
   return n >= -MAX_INT4 - 1 && n <= MAX_INT4 ? n : undefined;
 };
 
+/**
+ * Every column a `FeedbackRow` carries, joined the way it is carried, in ONE place.
+ *
+ * 🔴 THE QUEUE AND THE SINGLE-REPORT PAGE RENDER THE SAME PANEL, so a column added for one is a
+ * column the other must carry — open-coding the projection twice is how a panel ends up showing
+ * `undefined` on exactly one of the two routes, with nothing failing.
+ *
+ * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write here
+ * reloads the page, so under replica lag an operator can see their own triage come back unapplied,
+ * and their next click then posts the STALE `expectedStatus` and is refused with "someone else
+ * already triaged this" over their own write.
+ *
+ * Left on the replica anyway: it fails CLOSED (a refusal, never a silent overwrite), it is the
+ * convention every other queue in this app follows, and a triage queue read by a handful of people
+ * is the shape where lag is least likely to be observed. `linkFeedbackToBug`'s Bug lookup goes to
+ * the primary instead, and that is not an inconsistency — there the stale answer is a flat "no issue
+ * with that number" for an issue the operator is looking at, which reads as a defect rather than as
+ * a conflict.
+ *
+ * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
+ */
+const feedbackRowQuery = () =>
+  dbRead
+    .selectFrom('Feedback as f')
+    .leftJoin('User as u', 'u.id', 'f.userId')
+    .leftJoin('User as h', 'h.id', 'f.handledById')
+    .leftJoin('Bug as b', 'b.id', 'f.bugId')
+    .select([
+      'f.id',
+      'f.area',
+      'f.userId',
+      'u.username',
+      'f.message',
+      'f.context',
+      'f.status',
+      'f.createdAt',
+      'f.triageNote',
+      'f.handledById',
+      'h.username as handledByUsername',
+      'f.handledAt',
+      'f.bugId',
+      'b.title as bugTitle',
+      'b.status as bugStatus',
+    ]);
+
+/**
+ * 🔴 TYPED FROM THE QUERY, AND WITHOUT A CAST, BECAUSE THE RETURN ANNOTATION IS THE ONLY THING THAT
+ * COMPARES THE PROJECTION AGAINST `FeedbackRow`. An `as FeedbackRow` here would make the whole point
+ * of `feedbackRowQuery` — one projection, two routes — unenforced: adding a field to `FeedbackRow`
+ * and forgetting it in the `.select([...])` above would typecheck, and both routes would render
+ * `undefined` with nothing failing.
+ */
+type FeedbackRowQueryResult = Awaited<
+  ReturnType<ReturnType<typeof feedbackRowQuery>['execute']>
+>[number];
+
+const toFeedbackRow = (r: FeedbackRowQueryResult): FeedbackRow => ({
+  ...r,
+  createdAt: new Date(r.createdAt),
+  handledAt: r.handledAt ? new Date(r.handledAt) : null,
+});
+
+/**
+ * One report, by id, with no reference to the queue's filters, sort or cursor.
+ *
+ * 🔴 THIS IS WHAT `/feedback/<id>` EXISTS FOR, and the difference from `getFeedbackList` is the
+ * whole point: `?open=` on the queue resolves against the rows the current view happens to hold, so
+ * a link to a report outside the active filters or past the first keyset page dead-ends. A link
+ * handed to someone outside this queue — in a ticket, in a message — has to resolve whatever view
+ * the reader lands with.
+ */
+export async function getFeedbackRow(id: number): Promise<FeedbackRow | null> {
+  const row = await feedbackRowQuery().where('f.id', '=', id).executeTakeFirst();
+  return row ? toFeedbackRow(row) : null;
+}
+
 export async function getFeedbackList(input: {
   statuses: readonly FeedbackStatus[];
   area?: string | null;
@@ -247,44 +326,7 @@ export async function getFeedbackList(input: {
    */
   const ascending = sort?.direction === 'asc';
 
-  /**
-   * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write
-   * here reloads the page, so under replica lag an operator can see their own triage come back
-   * unapplied, and their next click then posts the STALE `expectedStatus` and is refused with
-   * "someone else already triaged this" over their own write.
-   *
-   * Left on the replica anyway: it fails CLOSED (a refusal, never a silent overwrite), it is the
-   * convention every other queue in this app follows, and a triage queue read by a handful of
-   * people is the shape where lag is least likely to be observed. `linkFeedbackToBug`'s Bug lookup
-   * goes to the primary instead, and that is not an inconsistency — there the stale answer is a
-   * flat "no issue with that number" for an issue the operator is looking at, which reads as a
-   * defect rather than as a conflict.
-   *
-   * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
-   */
-  let query = dbRead
-    .selectFrom('Feedback as f')
-    .leftJoin('User as u', 'u.id', 'f.userId')
-    .leftJoin('User as h', 'h.id', 'f.handledById')
-    .leftJoin('Bug as b', 'b.id', 'f.bugId')
-    .select([
-      'f.id',
-      'f.area',
-      'f.userId',
-      'u.username',
-      'f.message',
-      'f.context',
-      'f.status',
-      'f.createdAt',
-      'f.triageNote',
-      'f.handledById',
-      'h.username as handledByUsername',
-      'f.handledAt',
-      'f.bugId',
-      'b.title as bugTitle',
-      'b.status as bugStatus',
-    ])
-    .limit(limit + 1);
+  let query = feedbackRowQuery().limit(limit + 1);
 
   /**
    * 🔴 `id DESC`, not `createdAt DESC`, and the keyset below compares the same column.
@@ -379,13 +421,7 @@ export async function getFeedbackList(input: {
 
   const rows = await query.execute();
   const hasMore = rows.length > limit;
-  const items = (hasMore ? rows.slice(0, limit) : rows).map(
-    (r): FeedbackRow => ({
-      ...r,
-      createdAt: new Date(r.createdAt),
-      handledAt: r.handledAt ? new Date(r.handledAt) : null,
-    })
-  );
+  const items = (hasMore ? rows.slice(0, limit) : rows).map(toFeedbackRow);
 
   const boundaryRow = hasMore && items.length ? items[items.length - 1] : null;
   return {
@@ -473,7 +509,16 @@ export async function triageFeedback(input: {
   id: number;
   status: FeedbackStatus;
   expectedStatus: FeedbackStatus;
-  note: string | null;
+  /**
+   * 🔴 `undefined` MEANS "LEAVE THE COLUMN ALONE"; `null` MEANS "CLEAR IT". They are opposite
+   * instructions and collapsing them DESTROYS DATA, which is why this is not simply `string | null`.
+   *
+   * The status buttons post no note at all — the panel has no note box — so every status click would
+   * otherwise write `null` over whatever was stored, on a column nothing else in this app can
+   * restore. The distinction lives in the TYPE rather than in a caller's discipline because there is
+   * no failure to notice: the UPDATE succeeds, the status moves, and the note is gone.
+   */
+  note?: string | null;
   moderatorId: number;
 }): Promise<TriageResult> {
   const handled = input.status !== 'new';
@@ -481,7 +526,7 @@ export async function triageFeedback(input: {
     .updateTable('Feedback')
     .set({
       status: input.status,
-      triageNote: input.note,
+      ...(input.note === undefined ? {} : { triageNote: input.note }),
       handledById: handled ? input.moderatorId : null,
       handledAt: handled ? new Date() : null,
       // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
@@ -518,6 +563,187 @@ export async function triageFeedback(input: {
   return (await feedbackExists(dbWrite, input.id))
     ? { ok: true, changed: false }
     : { ok: false, reason: 'gone' };
+}
+
+/**
+ * Set one status across many rows, each scoped on the status ITS OWN row was showing.
+ *
+ * 🔴 ONE STATEMENT PER DISTINCT `expectedStatus`, NOT ONE PER ROW. The selection spans rows at
+ * different statuses, and `FEEDBACK_STATUSES` has four members, so this is at most four UPDATEs
+ * however many rows are selected. Each carries the same `WHERE status = ?` guard the single-row path
+ * uses, so a row someone else moved is refused individually rather than taking the batch with it.
+ *
+ * 🔴 `RETURNING id` IS WHAT MAKES PARTIAL SUCCESS HONEST. A bare affected-row COUNT says how many
+ * moved but not WHICH, and the audit rows have to name the rows that actually changed — counting
+ * and then logging the whole selection would write `ModActivity` entries for reports this moderator
+ * did not move. The returned ids are the only set that is true of both.
+ *
+ * Rows that did not move are not distinguished here between "someone else got there first" and
+ * "deleted": the single-row path spends an extra read on that because it has one row and one
+ * sentence to write, while here the honest summary is a count either way, and per-row reads would be
+ * one query per refusal to produce words nobody can act on individually.
+ */
+export async function bulkTriageFeedback(input: {
+  /**
+   * 🔴 IDS MUST BE UNIQUE, AND THIS FUNCTION DOES NOT ENFORCE IT. `parseFeedbackBulkRows` refuses a
+   * repeated id before this is reached — two pairs naming one row carry two different expectations —
+   * but this is exported and the test tier calls it directly. A duplicate would inflate `actionable`
+   * without `changed` following, i.e. report a refusal that never happened.
+   */
+  rows: readonly { id: number; expectedStatus: FeedbackStatus }[];
+  status: FeedbackStatus;
+  moderatorId: number;
+}): Promise<{ changed: number[]; actionable: number }> {
+  const handled = input.status !== 'new';
+  const byExpected = new Map<FeedbackStatus, number[]>();
+  for (const row of input.rows) {
+    const ids = byExpected.get(row.expectedStatus);
+    if (ids) ids.push(row.id);
+    else byExpected.set(row.expectedStatus, [row.id]);
+  }
+
+  /**
+   * 🔴 ONE TRANSACTION ACROSS THE (AT MOST FOUR) STATEMENTS. They are issued sequentially, so a
+   * throw on the second would otherwise leave the first group's rows MOVED with no audit row for
+   * them — `recordModActivityBatch` runs after the loop. Rolling back is the only outcome that
+   * leaves the queue and the audit log agreeing. Same argument `promoteFeedbackToBug` makes
+   * further down this file.
+   *
+   * ⚠️ IT PROTECTS THE DATA AND NOTHING ELSE. Nothing here catches, so a throw still reaches the
+   * error boundary and still takes an open detail panel's unsaved draft with it — the siblings
+   * (`triage`, `promote`) behave the same way, and `CLAUDE.md` bans `throw error()` rather than
+   * uncaught throws. An earlier version of this comment claimed the transaction covered that too.
+   */
+  const { changed, actionable } = await dbWrite.transaction().execute(async (trx) => {
+    const changed: number[] = [];
+    let actionable = 0;
+    for (const [expectedStatus, ids] of byExpected) {
+      /**
+       * 🔴 A ROW ALREADY AT THE TARGET STATUS IS SKIPPED AND EXCLUDED FROM `actionable`, AND BOTH
+       * HALVES MATTER.
+       *
+       * 🔴 DO NOT READ THIS AS A NO-OP — AN EARLIER VERSION OF THIS COMMENT SAID THE UPDATE "COULD
+       * NOT MATCH", WHICH IS MEASURABLY FALSE AND WOULD LICENSE DELETING THE GUARD.
+       * `UPDATE … SET status='reviewed' WHERE status='reviewed'` matches perfectly well and writes a
+       * new tuple: measured by removing this line, after which `RETURNING id` hands the
+       * already-at-target row back. Without the skip, such a row has its `handledById`/`handledAt`
+       * RE-STAMPED to whoever clicked, lands in `changed`, and earns a spurious `ModActivity` row
+       * asserting a triage that did not happen.
+       *
+       * The second half: a skipped row left inside the denominator would be reported to the operator
+       * as a row that "did not change" — a refusal that did not happen, over a row already in the
+       * state they asked for.
+       *
+       * The filter lives HERE rather than in the action so there is one definition of what this
+       * function was asked to move. A caller filtering first, plus this, would be the same predicate
+       * in two places.
+       */
+      if (expectedStatus === input.status) continue;
+      actionable += ids.length;
+      const rows = await trx
+        .updateTable('Feedback')
+        .set({
+          status: input.status,
+          // 🔴 `triageNote` UNTOUCHED. A bulk verdict says what happened to a batch; a note says
+          // something about ONE report, and writing one across a selection would overwrite whatever
+          // each row already had. The single-row form is where a note belongs.
+          handledById: handled ? input.moderatorId : null,
+          handledAt: handled ? new Date() : null,
+          // 🔴 `bugId` UNTOUCHED, for the reason `triageFeedback` records at length — the link says
+          // THIS REPORT IS ABOUT THAT ISSUE, which a status change does not make false.
+        })
+        .where('id', 'in', ids)
+        .where('status', '=', expectedStatus)
+        .returning('id')
+        .execute();
+      changed.push(...rows.map((r) => r.id));
+    }
+    return { changed, actionable };
+  });
+
+  // Outside the transaction, and best-effort by design: the audit row records a write that already
+  // committed, so failing the operator's action because the log failed would turn a completed bulk
+  // triage into an error message.
+  await recordModActivityBatch({
+    userId: input.moderatorId,
+    entityType: 'feedback',
+    entityIds: changed,
+    activity: 'triage',
+  });
+
+  return { changed, actionable };
+}
+
+export type KnownIssueOption = {
+  id: number;
+  title: string;
+  status: string;
+  /** Resolved with `isBugClosed`, never by the caller eyeballing `status` — see `getKnownIssues`. */
+  closed: boolean;
+};
+
+/**
+ * The issue picker's options.
+ *
+ * 🔴 NOT FILTERED TO OPEN ISSUES, and that is measured rather than assumed: of 31 rows, 6 are
+ * disabled and exactly ONE has `status = 'Open'`. An open-only picker is a one-item list, and the
+ * report in front of the moderator is usually a second sighting of something already triaged —
+ * which is the whole reason to attach rather than create. `status` rides along so the operator can
+ * see they are attaching to something closed rather than discovering it afterwards.
+ *
+ * `disabled` IS filtered: that flag is the issue board's own "retired", and offering one is offering
+ * a link the board will not show.
+ *
+ * Bounded because it is a picker, not a report. Ordered by id descending so the newest issues — the
+ * ones a fresh duplicate is most likely about — are the ones that survive the bound.
+ */
+export async function getKnownIssues(limit = 200): Promise<KnownIssueOption[]> {
+  const rows = await dbRead
+    .selectFrom('Bug')
+    .select(['id', 'title', 'status'])
+    .where('disabled', '=', false)
+    .orderBy('id', 'desc')
+    .limit(limit)
+    .execute();
+  // 🔴 DECIDED HERE, WITH THE PREDICATE THIS MODULE ALREADY OWNS. `Bug.status` is a free-form
+  // ClickUp string with no enum — "Complete", "Done", "Resolved" all mean closed — so a picker that
+  // rendered the raw value and left the reader to recognise it would make the docstring's claim
+  // ("so the operator can see they are attaching to something closed") depend on eyeballing free
+  // text. One definition of closed, in one place.
+  return rows.map((r) => ({ ...r, closed: isBugClosed(r.status) }));
+}
+
+/**
+ * Everything `FeedbackDetail` needs beyond the row itself, for ONE report.
+ *
+ * 🔴 THE READ HALF OF THE SEAM `feedback-actions.ts` CLOSED FOR WRITES. Both routes render that
+ * panel, so both have to satisfy its prerequisites — and open-coding them twice is a divergence
+ * TYPECHECK CANNOT SEE: a missing prop fails at the call site, a diverged CONDITION does not. Widen
+ * when the picker may be shown (a re-attach flow, an area filter) and whichever copy is missed
+ * renders an empty control on one route with nothing failing anywhere.
+ *
+ * 🔴 BOTH READS ARE CONDITIONAL, AND THE CONDITIONS ARE THE POINT, not an optimisation. The issue
+ * picker exists only for an UNLINKED row held by someone with the promote grant, so loading its
+ * options otherwise is a `Bug` query per page view for a control nobody can see. `siblings` is the
+ * mirror image: only a LINKED row has any.
+ */
+export async function feedbackPanelExtras(
+  row: Pick<FeedbackRow, 'id' | 'bugId'>,
+  /**
+   * 🔴 `PermissionSet`, NOT A LOOSE STRING RECORD — this is the ONE site that gates the issue picker
+   * on both routes, so a widened key type retires the invariant `apps/moderator/CLAUDE.md` states in
+   * its own words: "a mistyped id does not compile". Measured with `svelte-check`: a typo here under
+   * the loose type produced 0 errors, and the same typo against `locals.grants` produced 1 naming
+   * the valid union. A typo that compiles renders the picker's "No issues to pick from yet" branch,
+   * which reads as an empty `Bug` table rather than a defect — on both routes at once.
+   */
+  grants: PermissionSet
+): Promise<{ siblings: FeedbackSibling[]; knownIssues: KnownIssueOption[] }> {
+  const siblings =
+    row.bugId != null ? await getSiblingFeedback({ bugId: row.bugId, excludeId: row.id }) : [];
+  const knownIssues =
+    row.bugId === null && grants['feedback.bug.promote'] ? await getKnownIssues() : [];
+  return { siblings, knownIssues };
 }
 
 /**
@@ -564,6 +790,19 @@ export async function promoteFeedbackToBug(input: {
   id: number;
   title: string;
   summary: string;
+  /**
+   * The ClickUp task this issue tracks. Omitted or null when no task was linked.
+   *
+   * 🔴 VALIDATED BY THE CALLER, AND IT HAS TO BE. This column is what the main app's ClickUp
+   * webhook matches on to auto-close the entry, so a value it cannot parse a task id out of is an
+   * issue that will never close itself — silently. The action gates on `isClickupTaskUrl` before
+   * reaching here; this signature only records that null is the "no task" spelling, not ''.
+   *
+   * Optional rather than required: the overwhelmingly common call is "no task", and making every
+   * caller write `clickupUrl: null` to say nothing taxes each one without catching anything — the
+   * column is nullable and the default below is the same value they would have passed.
+   */
+  clickupUrl?: string | null;
   moderatorId: number;
 }): Promise<PromoteResult> {
   try {
@@ -575,6 +814,7 @@ export async function promoteFeedbackToBug(input: {
           title: input.title,
           summary: input.summary,
           status: BUG_INITIAL_STATUS,
+          clickupUrl: input.clickupUrl ?? null,
           // Derived, not hardcoded null: with a fixed 'Open' this is always null, and a future
           // status control on the form would make that assumption wrong silently.
           resolvedAt: isBugClosed(BUG_INITIAL_STATUS) ? now : null,

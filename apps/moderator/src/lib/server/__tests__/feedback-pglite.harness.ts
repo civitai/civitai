@@ -127,12 +127,26 @@ export async function seedFeedback(
      */
     handledById?: number | null;
     bugId?: number | null;
+    /**
+     * 🔴 THE COLUMN NO SCREEN CAN WRITE ANY MORE. The panel's note box is gone, so a stored note can
+     * only ever be READ or DESTROYED from here on — which is precisely why a fixture has to be able
+     * to put one there: the guard worth having is that a triage posting no note leaves it standing.
+     *
+     * ⚠️ The column arrives with `20260911120000_feedback_triage`, so this is usable on
+     * `freshFeedbackDb` only — `freshPreMigrationDb` is the table WITHOUT it, and passing a note
+     * there fails on the INSERT rather than silently doing nothing.
+     */
+    triageNote?: string | null;
   }
 ): Promise<number> {
   const res = await db.query<{ id: number }>(
     `INSERT INTO "Feedback"
-       ("area", "userId", "message", "context", "status", "createdAt", "handledById", "handledAt", "bugId")
-     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9) RETURNING "id"`,
+       ("area", "userId", "message", "context", "status", "createdAt", "handledById", "handledAt", "bugId"${
+         row.triageNote === undefined ? '' : ', "triageNote"'
+       })
+     VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9${
+       row.triageNote === undefined ? '' : ', $10'
+     }) RETURNING "id"`,
     [
       row.area ?? 'apps-marketplace',
       row.userId,
@@ -143,6 +157,7 @@ export async function seedFeedback(
       row.handledById ?? null,
       row.handledById == null ? null : '2026-09-02T09:00:00.000Z',
       row.bugId ?? null,
+      ...(row.triageNote === undefined ? [] : [row.triageNote]),
     ]
   );
   return res.rows[0].id;

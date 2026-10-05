@@ -2,7 +2,8 @@ import { getGenerationDataSchema } from '~/server/schema/generation.schema';
 import { getGenerationData } from '~/server/services/generation/generation.service';
 import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
-import { getRequestDomainColor } from '~/server/utils/server-domain';
+import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 export default PublicEndpoint(
   async function handler(req, res) {
@@ -37,7 +38,10 @@ export default PublicEndpoint(
       const queryResult = await getGenerationData({
         query: queryInput.data,
         user: session?.user,
-        sfwOnly: getRequestDomainColor(req) === 'green',
+        browsingLevel: getRequestBrowsingLevel({
+          features: getFeatureFlagsLazy({ user: session?.user, req }),
+          user: session?.user,
+        }),
       });
       return res.status(200).json(queryResult);
     } catch (e) {

@@ -50,6 +50,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -253,6 +254,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                   placeholder="empty"
                   src={image.url}
                   alt={undefined}
+                  width={DEFAULT_EDGE_IMAGE_WIDTH}
                   style={{ objectFit: 'cover', height: '100%' }}
                 />
                 <div style={{ position: 'absolute', top: 12, right: 12 }}>
@@ -300,6 +302,7 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                         placeholder="empty"
                         src={file.url}
                         alt={file.name ?? undefined}
+                        width={DEFAULT_EDGE_IMAGE_WIDTH}
                         style={{ objectFit: 'cover', height: '100%' }}
                       />
                       <div style={{ position: 'absolute', top: 12, right: 12 }}>

@@ -61,13 +61,16 @@ const SURFACES: Record<string, number> = {
   'src/server/services/creator-announcement.service.ts': 1,
   'src/server/services/creator-shop-pack.service.ts': 2,
   'src/server/services/creator-shop.service.ts': 2,
+  'src/server/services/crucible.service.ts': 2,
   'src/server/services/model-version.service.ts': 4,
   'src/server/services/model.service.ts': 3,
   'src/server/services/model3d-review.service.ts': 1,
   'src/server/services/model3d.service.ts': 1,
   'src/server/services/post.service.ts': 2,
   'src/server/services/resourceReview.service.ts': 3,
-  'src/server/services/user-hub.service.ts': 2,
+  // 4: the two writers below, plus the template path's alias scan — a batch call and
+  // a per-alias one, which runs only to find which alias the batch refused.
+  'src/server/services/user-hub.service.ts': 4,
   'src/server/services/user-link.service.ts': 2,
   'src/server/services/user-profile.service.ts': 1,
 };
@@ -125,6 +128,7 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     submitCreatorShopItem: 1,
     updateCreatorShopItem: 1,
   },
+  'src/server/services/crucible.service.ts': { createCrucible: 1, updateCrucible: 1 },
   'src/server/services/model-version.service.ts': {
     applyModelVersionContentChange: 1,
     upsertExplorationPrompt: 1,
@@ -139,7 +143,11 @@ const EXPECTED_WRITERS: Record<string, Record<string, number>> = {
     updateResourceReview: 1,
     upsertResourceReview: 1,
   },
-  'src/server/services/user-hub.service.ts': { addUserHubSource: 1, upsertUserHub: 1 },
+  'src/server/services/user-hub.service.ts': {
+    addUserHubSource: 1,
+    upsertUserHub: 1,
+    withoutBlockedAliases: 2,
+  },
   'src/server/services/user-link.service.ts': { upsertManyUserLinks: 1, upsertUserLink: 1 },
   'src/server/services/user-profile.service.ts': { updateUserProfile: 1 },
 };

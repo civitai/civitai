@@ -113,7 +113,13 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
 // badge renders); `mobile: false` = the desktop popover path. The mobile drawer path
 // and the pre-hydration path get their own files.
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');

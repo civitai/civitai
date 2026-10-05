@@ -18,18 +18,14 @@ const { amIBlockedByUser } = vi.hoisted(() => ({
  * The two clients, split — the old fixture aliased them to one object, so every routing claim
  * below was unobservable. Resolved against the entry points this file imports:
  *
- *   dbRead   model.findUnique          block-check.service.ts:283, via getBlockCheckOwnerIds
- *            modelVersion.findFirst    resourceReview.service.ts:267
+ *   dbRead   modelVersion.findFirst    resourceReview.service.ts:267
  *            imageResourceNew.count    resourceReview.service.ts:291
  *            user.findFirst            resourceReview.service.ts:298
- *   dbWrite  resourceReview.findUnique resourceReview.service.ts:327, via storedReviewModelId
+ *   dbWrite  model.findUnique          block-check.service.ts, via getBlockCheckOwnerIds
+ *            resourceReview.findUnique resourceReview.service.ts:327, via storedReviewModelId
  *            resourceReview.create     resourceReview.service.ts:368, :464
  *            resourceReview.update     resourceReview.service.ts:392, :500
  *            resourceReview.findUniqueOrThrow  resourceReview.service.ts:378, :471
- *
- * ⚠️ `resourceReview.findUnique` is ALSO spelled on dbRead, at block-check.service.ts:291 — but
- * only for entityType 'resourceReview', and these paths always ask for 'model'. A whole-module
- * grep finds that line and gets the routing wrong.
  *
  * The unlisted models the service touches (none, on these paths) need no fixture: the canonical
  * mock vivifies any method and answers reads with a plausible empty value.
@@ -93,7 +89,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mockDbRead.user.findFirst.mockResolvedValue({ username: 'tester' });
   amIBlockedByUser.mockResolvedValue(false);
-  mockDbRead.model.findUnique.mockResolvedValue({ userId: 1 });
+  mockDbWrite.model.findUnique.mockResolvedValue({ userId: 1 });
   mockDbWrite.resourceReview.findUnique.mockResolvedValue(null);
   // The canonical mock has no default for a write, and callers read what these return —
   // `update`'s result feeds the cache bust, so `undefined` throws in the service rather than
@@ -163,7 +159,7 @@ describe('resource review writes — block enforcement', () => {
   // and the tests below arm `mockDbWrite.resourceReview.findUnique`. Route that read to the
   // replica and the guard resolves no stored model, so every refusal below stops firing.
   const owners = (byModelId: Record<number, number>) =>
-    mockDbRead.model.findUnique.mockImplementation(async (args: unknown) => {
+    mockDbWrite.model.findUnique.mockImplementation(async (args: unknown) => {
       const id = (args as { where: { id: number } }).where.id;
       return byModelId[id] ? { userId: byModelId[id] } : null;
     });

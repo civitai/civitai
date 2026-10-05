@@ -247,13 +247,22 @@ describe('listMyScopeGrants', () => {
   });
 
   /**
-   * ⚠️ INVARIANT GUARD, NOT REGRESSION COVERAGE — labelled so nobody counts it as the
-   * latter. Nothing in this repo writes a non-null `revoked_at`, so this state is not
-   * currently reachable in production. It pins the intent that a revoked grant conveys
-   * nothing: it must not mint a row whose only reason to exist is a consent that was
-   * withdrawn, which would offer a budget control for an app that cannot spend.
+   * ⚠️ THIS ARM IS INVERTED, AND IT HAS NOW HAD BOTH ITS LABEL AND ITS EXPECTATION RETRACTED.
+   * It began as an "invariant guard" (*"nothing in this repo writes a non-null `revoked_at`"* —
+   * false since `revokeScopes` shipped), then as live coverage of a SKIP, asserting
+   * `result` is `[]`. The skip is gone: on a grant-only app it was the only leg that could mint
+   * the card, so withdrawing your last permission deleted the app from `/apps/activity`
+   * altogether — see the condition's comment in `user-app-surface.service.ts` for the isolating
+   * control that measured it.
+   *
+   * 🔴 WHAT THE OLD EXPECTATION WAS PROTECTING AGAINST STILL HOLDS, AND IS ASSERTED BELOW RATHER
+   * THAN ASSUMED. Its stated reason was *"would offer a budget control for an app that cannot
+   * spend"* — but the budget control is gated on `spendScopeGranted`/`buzzBudgetPerDay`, both of
+   * which are already `false`/`null` for a revoked grant via `liveGrantedScopes` and
+   * `usableConsentBudget`. The stored 1200 here is deliberately non-null so that is a measurement
+   * and not a restatement of a fixture default.
    */
-  it('does NOT surface a grant-only app whose grant is revoked (invariant guard)', async () => {
+  it('DOES surface a grant-only app whose grant is revoked, with no spend affordance', async () => {
     const { listMyScopeGrants } = await import('../user-app-surface.service');
     mockDbRead.blockUserSubscription.findMany.mockResolvedValue([]);
     mockDbRead.appUserScopeGrant.findMany.mockResolvedValue([
@@ -266,7 +275,17 @@ describe('listMyScopeGrants', () => {
       },
     ]);
     const result = await listMyScopeGrants(42);
-    expect(result).toEqual([]);
+    expect(
+      result,
+      'a fully-revoked grant-only app vanished from the permissions surface — the grant leg is ' +
+        'the only leg that can carry it, so the viewer loses the app rather than seeing what ' +
+        'they withdrew'
+    ).toHaveLength(1);
+    expect(result[0].appBlockId).toBe('apb_9');
+    expect(result[0].origin).toBe('consent');
+    expect(result[0].grantedScopes).toEqual([]);
+    expect(result[0].spendScopeGranted).toBe(false);
+    expect(result[0].buzzBudgetPerDay).toBeNull();
   });
 
   /**

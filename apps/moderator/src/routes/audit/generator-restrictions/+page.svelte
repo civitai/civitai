@@ -51,8 +51,10 @@
 
 <RestrictionFilters q={data.q} status={data.status} type={data.type} />
 
-<div class="flex items-start gap-6">
-  <div class="flex w-104 shrink-0 flex-col">
+<!-- A fixed-width pane here does not stack below `lg`; pinned by
+     `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`. -->
+<div data-two-pane class="grid items-start gap-6 lg:grid-cols-[26rem_1fr]">
+  <div data-pane class="flex min-w-0 flex-col">
     {#if data.items.length === 0}
       <p class="text-sm text-dark-2">
         No {RESTRICTION_TYPE_LABELS[data.type].toLowerCase()} restrictions match these filters.
@@ -84,7 +86,7 @@
     {/if}
   </div>
 
-  <div class="min-w-0 flex-1">
+  <div data-pane class="min-w-0">
     {#if data.current}
       <!-- Ticked triggers and an open ban confirmation both describe ONE restriction. -->
       {#key data.current.id}

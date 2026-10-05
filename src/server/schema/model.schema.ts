@@ -1,5 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
-
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
@@ -9,6 +7,7 @@ import {
   baseQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
+  keysetCursorSchema,
   paginationSchema,
   periodModeSchema,
   userPreferencesSchema,
@@ -58,14 +57,7 @@ export const getAllModelsSchema = z.object({
 
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: keysetCursorSchema.optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   tagname: z.string().optional(),
@@ -96,6 +88,10 @@ export const getAllModelsSchema = z.object({
   sort: z.enum(ModelSort).default(constants.modelFilterDefaults.sort),
   period: z.enum(MetricTimeframe).default(constants.modelFilterDefaults.period),
   periodMode: periodModeSchema,
+  // Opt-in: retry the first page at AllTime when `period` returns nothing. Off by
+  // default because an empty result is the correct answer on a browse feed — the
+  // caller has to be a surface where an empty page is a dead end, like /tag/:name.
+  periodFallback: z.boolean().optional(),
   rating: z
     .preprocess((val) => Number(val), z.number())
     .transform((val) => Math.floor(val))
@@ -251,6 +247,27 @@ export const updateGallerySettingsSchema = z.object({
   gallerySettings: modelGallerySettingsInput.nullable(),
 });
 
+const creatorGalleryHiddenUserNote = z
+  .string()
+  .trim()
+  .max(constants.modelGallery.maxCreatorHiddenUserNoteLength)
+  .nullish();
+
+export type UpsertCreatorGalleryHiddenUserInput = z.infer<
+  typeof upsertCreatorGalleryHiddenUserSchema
+>;
+export const upsertCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
+  note: creatorGalleryHiddenUserNote,
+});
+
+export type RemoveCreatorGalleryHiddenUserInput = z.infer<
+  typeof removeCreatorGalleryHiddenUserSchema
+>;
+export const removeCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
+});
+
 export type CopyGallerySettingsInput = z.infer<typeof copyGallerySettingsSchema>;
 export const copyGallerySettingsSchema = z.object({ id: z.number() });
 
@@ -316,6 +333,10 @@ export type MinorFlagSnapshot = {
 };
 
 export type ModelMeta = Partial<{
+  /** Orchestrator workflow this Trained model was drafted from (Training Studio publish flow).
+   *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
+   *  to stamp the published model back onto the workflow. */
+  trainingStudioWorkflowId: string;
   unpublishedReason: UnpublishReason;
   customMessage: string;
   needsReview: boolean;
@@ -502,8 +523,10 @@ export const getResourceSelectSchema = z.object({
     .default([]),
   filterTypes: z.enum(ModelType).array().default([]),
   filterBaseModels: z.string().array().default([]),
+  filterLoaded: z.boolean().default(false),
   tagName: z.string().optional(),
   canGenerate: z.boolean().optional(),
+  hidePaid: z.boolean().optional(),
   excludedVersionIds: z.number().array().default([]),
   // recent → generation only: orchestrator history ids resolved client-side
   restrictToIds: z.number().array().optional(),

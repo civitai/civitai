@@ -9,6 +9,9 @@ Status: **decided** (supersedes the "keep fat token" framing in [auth-hub-launch
 
 The design evolved past "package owns the cache, the main app injects the compute." Final model:
 
+> `redBrowsingLevel` was retired in 2026-09: the browsing level is one `User` column on every domain, and
+> the hub no longer projects it. The mentions below are the design record.
+
 **One producer: the auth hub.** `auth.civitai.com` is the **sole** producer of session-user data — nothing
 else computes it. The hub:
 - Queries Postgres via **Kysely** — `jsonObjectFrom`/`jsonArrayFrom` collapse `User` + `profilePicture` +

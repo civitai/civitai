@@ -35,6 +35,7 @@ import { shuffle } from '~/utils/array-helpers';
 import classes from '~/components/HomeBlocks/HomeBlock.module.scss';
 import type { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -89,12 +90,22 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata, blockIndex }: Props
   });
 
   const maxPerUser = metadata.collection?.maxPerUser;
-  const items = useDedupedCappedItems(filtered as { id: number; user?: { id: number } | null }[], {
-    order: dedupeOrder(blockIndex),
-    entity: type,
-    rows,
-    maxPerUser,
-  }) as typeof filtered;
+  // Served from the same shared, viewer-agnostic entry the feed block is, so image items arrive
+  // with `reactions: []` for every viewer. Passed straight into the cap rather than held in a
+  // binding of its own, which removes the INVITED mistake of rendering the un-hydrated list —
+  // not every one: `filtered` is still in scope, and so is what `ImagesProvider` is handed below.
+  const items = useDedupedCappedItems(
+    useHydratedImageReactions(filtered, { entity: type }) as {
+      id: number;
+      user?: { id: number } | null;
+    }[],
+    {
+      order: dedupeOrder(blockIndex),
+      entity: type,
+      rows,
+      maxPerUser,
+    }
+  ) as typeof filtered;
 
   // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 

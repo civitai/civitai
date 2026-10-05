@@ -166,8 +166,7 @@ replica-lag miss, so a plain `dbRead` is safe.
   branches). When there's no post it does a `dbRead` lookup by `thumbnailImageId`, then calls
   `updateModel3DNsfwLevels` directly (a **synchronous** recompute — not a JobQueue enqueue).
 - Call sites (each just passes `{ imageId, postId }`, replacing the removed `queueModel3D…`):
-  - `src/pages/api/webhooks/image-scan-result.ts` — Scanned + Blocked
-  - `src/server/services/image-scan-result.service.ts` — Scanned + Blocked branches
+  - `src/server/services/image-scan-pipeline.ts` `applyIngestionSideEffects` — Scanned + Blocked branches (shared by both scan pipelines; the legacy webhook body is gone)
   - `src/server/services/image.service.ts` `updateImageNsfwLevel` — moderator branch (also
     added `postId` to the `findUnique` select)
 
@@ -195,7 +194,7 @@ Model3D trigger) and had the image trigger read it (zero lookup). A review found
 soundness gap: `Image.metadata` is rewritten **wholesale** in several places, so the flag
 could be silently and permanently dropped:
 
-- `src/server/services/image-scan-result.service.ts` (~line 735): `"metadata" =
+- `src/server/services/image-scan-pipeline.ts` (`resolveScanOutcome`): `"metadata" =
   COALESCE(<modRule.metadata>::jsonb, "metadata")` **replaces** the column when a mod rule
   carries a metadata payload — on the scan path, same UPDATE as the nsfwLevel change.
 - `src/server/services/image.service.ts` `updateImageNsfwLevel` (~line 6747) and the

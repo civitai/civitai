@@ -16,8 +16,16 @@ import { queryDb } from '../generation-coverage/coverage.mjs';
 // constants.system.officialUserId in src/server/common/constants.ts
 const OFFICIAL_USER_ID = 12042163;
 const KINDS = { 'api-only': 'ExternalGeneration', 'hosted-weights': 'Download' };
+// The "base model" tag is what puts a model in that category on the site; it is the one tag every
+// CivitaiOfficial mirror carries.
+const BASE_MODEL_TAG = { id: 1237, name: 'base model' };
+// constants.modelFileFp in src/server/common/constants.ts — the schema takes any string, so a typo
+// would store silently and show up as a precision the file picker cannot label.
+const FP_VALUES = [
+  'fp32', 'fp16', 'bf16', 'mxfp8', 'fp8_mixed', 'fp8_scaled', 'fp8', 'int8', 'nf4', 'nvfp4', 'int4',
+];
 const ECOSYSTEMS_DIR = resolve(projectRoot, 'src/server/services/orchestrator/ecosystems');
-// Mirrors checkLoadable in src/server/services/resource-load.service.ts.
+// Mirrors LOADABLE_FILE_TYPES in src/utils/file-display-helpers.ts, which checkLoadable applies.
 const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
 // Closed models reachable only through their provider's API, plus fal, which hosts third-party models.
 const EXTERNAL_ENGINES = [
@@ -28,6 +36,7 @@ const EXTERNAL_ENGINES = [
 const { flags, writable, fail, required, requiredInt, oneOf, dryRun, dispatch } = createCli([
   'writable',
   'no-download',
+  'optional',
 ]);
 
 const sqlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
@@ -80,6 +89,14 @@ function printDiff(current, proposed) {
 async function transferToOfficial(modelId, targetUserId) {
   await trpcCall('moderator.models.transferOwnership', { modelIds: [modelId], targetUserId });
   console.log(`Transferred model ${modelId} to user ${targetUserId}.`);
+
+  // The transfer sets `isOfficial` server-side, but only on builds carrying that change. Asserted
+  // rather than assumed: the flag gates the official-models cache and resource attribution, and its
+  // absence is invisible on the model page — which is how 14 releases shipped without it.
+  const after = await trpcCall('model.getById', { id: modelId }, 'GET');
+  if (after.isOfficial) return;
+  await trpcCall('model.setOfficial', { id: modelId, isOfficial: true });
+  console.log(`Marked model ${modelId} official (the transfer did not).`);
 }
 
 async function createModel() {
@@ -87,11 +104,22 @@ async function createModel() {
   const description = readDescription();
   const targetUserId = flags['owner-id'] ? requiredInt('owner-id') : OFFICIAL_USER_ID;
   const hash = approvalHash(name, description);
-  const payload = { name, description, type: flags.type ?? 'Checkpoint', uploadType: 'Created', status: 'Draft' };
+  const type = flags.type ?? 'Checkpoint';
+  const payload = {
+    name,
+    description,
+    type,
+    uploadType: 'Created',
+    status: 'Draft',
+    tagsOnModels: [BASE_MODEL_TAG],
+    // Meaningless on anything but a checkpoint, and the column stays null there.
+    ...(type === 'Checkpoint' ? { checkpointType: 'Trained' } : {}),
+  };
 
   if (!writable) {
     console.log(`[dry run] model.upsert → ${API_URL}, then transfer to user ${targetUserId}`);
-    console.log(`Name: ${name}   Type: ${payload.type}   Status: Draft\n`);
+    console.log(`Name: ${name}   Type: ${payload.type}   Status: Draft`);
+    console.log(`Checkpoint type: ${payload.checkpointType ?? 'n/a'}   Category: ${BASE_MODEL_TAG.name}\n`);
     console.log(oneTagPerLine(description));
     return printApprovalFooter(hash);
   }
@@ -303,6 +331,86 @@ async function files() {
   console.log('\nREADY: the weight files are uploaded and scanned. Next: the coverage row.');
 }
 
+
+// The transfer itself is queued from /moderator/huggingface-import.
+
+const formatBytes = (bytes) => {
+  if (!bytes) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** i).toFixed(i ? 2 : 0)} ${units[i]}`;
+};
+
+async function hfImports() {
+  // Filtered server-side: a client-side filter over this page silently misses anything past the
+  // limit, and reports it as "no imports" — indistinguishable from never having imported it.
+  const input = { limit: 100 };
+  if (flags.repo) input.repo = flags.repo;
+  if (flags.group) input.groupName = flags.group;
+  const shown = await trpcCall('huggingFaceImport.getAll', input, 'GET');
+  if (!shown.length) {
+    const what = flags.repo ?? flags.group;
+    return console.log(what ? `No imports matching ${what}.` : 'No imports.');
+  }
+
+  for (const row of shown) {
+    const attached = row.modelFileId
+      ? `attached → file ${row.modelFileId} on version ${row.modelVersionId}`
+      : row.status === 'Completed'
+      ? 'ready to attach'
+      : '';
+    console.log(
+      [
+        String(row.id).padStart(5),
+        row.status.padEnd(12),
+        formatBytes(row.sizeBytes).padStart(10),
+        `${row.repo}/${row.filename}`,
+        `[${row.groupName}]`,
+        row.suggestedType ? `(suggests ${row.suggestedType})` : '',
+        attached,
+      ]
+        .filter(Boolean)
+        .join('  ')
+    );
+    if (row.error) console.log(`        ${row.error}`);
+  }
+  console.log(
+    `
+Attach with: attach-import --import <id> --version <id> --type <${LOADABLE_FILE_TYPES.join('|')}|Text Encoder|Config|...>`
+  );
+  console.log('The type decides whether the version can load — read the filename, do not guess.');
+}
+
+async function attachImport() {
+  const id = requiredInt('import');
+  const modelVersionId = requiredInt('version');
+  const type = required('type');
+  // The attach writes `format` only. Precision is not inferable from the file — `w4a8` is `int4`,
+  // and every quant name is the publisher's own — so it is stated, and a wrong one misprices the
+  // download a user picks between.
+  const fp = flags.fp ? oneOf('fp', flags.fp, FP_VALUES) : undefined;
+  const metadata = { ...(fp ? { fp } : {}), ...(flags.optional ? { isRequired: false } : {}) };
+
+  if (!writable)
+    return dryRun('huggingFaceImport.attach', {
+      id,
+      modelVersionId,
+      type,
+      ...(Object.keys(metadata).length ? { 'then modelFile.update metadata': metadata } : {}),
+    });
+
+  const result = await trpcCall('huggingFaceImport.attach', { id, modelVersionId, type });
+  console.log(
+    `Attached import ${id} as model file ${result.modelFileId} on version ${result.modelVersionId}.`
+  );
+  if (Object.keys(metadata).length) {
+    // updateFile merges metadata, so this keeps the `format` the attach just wrote.
+    await trpcCall('modelFile.update', { id: result.modelFileId, metadata });
+    console.log(`  metadata: ${JSON.stringify(metadata)}`);
+  }
+  console.log('Scanning and hashing start on their own. Check with: files --version ' + modelVersionId);
+}
+
 const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command> [flags]
 
   whoami
@@ -313,6 +421,8 @@ const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command
   create-version      --model-id <id> --name <n> --base-model <name> --kind <api-only|hosted-weights>
                       [--no-download] [--writable]
   files               --version <id>                                 are the uploaded files ready?
+  hf-imports          [--repo <owner/name>] [--group <name>]         Hugging Face transfers and their state
+  attach-import       --import <id> --version <id> --type <type> [--fp <precision>] [--optional] [--writable]
 
 Description writes need --approved <hash>, printed by the dry run of the same command.
 --kind api-only → ExternalGeneration (no files); hosted-weights → Download, or Generation with --no-download.
@@ -327,6 +437,8 @@ dispatch(
     evidence,
     'create-version': createVersion,
     files,
+    'hf-imports': hfImports,
+    'attach-import': attachImport,
   },
   HELP
 );

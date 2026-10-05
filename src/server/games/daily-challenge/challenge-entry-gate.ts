@@ -1,4 +1,4 @@
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { ChallengeSource, ChallengeStatus } from '~/shared/utils/prisma/enums';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -17,7 +17,7 @@ export async function assertUserChallengeAcceptingEntries(
   const userChallenge =
     preloaded !== undefined
       ? preloaded
-      : await dbRead.challenge.findFirst({
+      : await dbWrite.challenge.findFirst({
           where: { collectionId, source: ChallengeSource.User },
           select: { status: true },
         });

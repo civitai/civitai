@@ -9,9 +9,22 @@ const baseExt: GenerationCtx = {
   gateRules: [],
 };
 
-const flagOn: GenerationCtx = { ...baseExt, flags: { grokImagine2: true } };
+const v2Hidden: GenerationCtx = {
+  ...baseExt,
+  gateRules: [
+    {
+      id: 'hide-grok-v2',
+      name: '',
+      availableTo: 'moderators',
+      presentation: 'hidden',
+      ecosystems: [],
+      workflows: [],
+      modelVersionIds: [grokVersionIds['v2.0']],
+    },
+  ],
+};
 
-function init(workflow: string, modelId: number, ext: GenerationCtx = flagOn) {
+function init(workflow: string, modelId: number, ext: GenerationCtx = baseExt) {
   const graph = generationGraph as any;
   graph.init(
     {
@@ -55,29 +68,37 @@ describe('grok image versions', () => {
   });
 });
 
-describe('grokImagine2 feature flag', () => {
-  it('offers v2.0 in the version picker only when the flag is on', () => {
+describe('grok v2.0 gate rule', () => {
+  it('offers v2.0 unless a gate rule hides it', () => {
     expect(versionIds(init('txt2img', grokVersionIds['v1.0']))).toContain(grokVersionIds['v2.0']);
 
-    const off = init('txt2img', grokVersionIds['v1.0'], baseExt);
-    expect(versionIds(off)).toEqual([grokVersionIds['v1.0'], grokVersionIds['v1.5']]);
+    const hidden = init('txt2img', grokVersionIds['v1.0'], v2Hidden);
+    expect(versionIds(hidden)).toEqual([grokVersionIds['v1.0'], grokVersionIds['v1.5']]);
   });
 
-  it('fails closed — an absent flags object hides v2.0', () => {
-    const noFlags = init('txt2img', grokVersionIds['v1.0'], baseExt);
-    expect(versionIds(noFlags)).not.toContain(grokVersionIds['v2.0']);
+  // gateRules reach the graph from getGenerationConfig AFTER init, unlike the
+  // feature flags this gate replaced, which are right on the first render. The
+  // model node captures its version list in a meta closure, so without an
+  // `ext:gateRules` dep the hidden version stays in the picker for the session.
+  it('applies a rule that arrives after init', () => {
+    // its own ext object: `setExt` Object.assigns into the ext passed to `init`,
+    // so sharing `baseExt` here would leave gateRules set for every later test
+    const g = init('txt2img', grokVersionIds['v2.0'], { ...baseExt, gateRules: [] });
+    expect(versionIds(g)).toContain(grokVersionIds['v2.0']);
+
+    g.setExt({ gateRules: v2Hidden.gateRules });
+    expect(versionIds(g)).not.toContain(grokVersionIds['v2.0']);
+    expect(selectedModelId(g)).toBe(grokVersionIds['v1.0']);
   });
 
-  // Grok is `modelLocked`, so the model node clamps any id outside the version
-  // options back to the ecosystem default. That is the server-side half of the
-  // gate: a v2.0 id submitted with the flag off generates v1.0, it does not
-  // reach the v2.0 handler branch.
-  it('clamps a submitted v2.0 id back to v1.0 when the flag is off', () => {
-    const off = init('txt2img', grokVersionIds['v2.0'], baseExt);
-    expect(selectedModelId(off)).toBe(grokVersionIds['v1.0']);
-    expect(off.hasNode('resolution')).toBe(false);
+  // Grok is `modelLocked`, so a hidden id outside the version options is clamped
+  // back to the ecosystem default — the server-side half of the gate.
+  it('clamps a submitted v2.0 id back to v1.0 when hidden', () => {
+    const hidden = init('txt2img', grokVersionIds['v2.0'], v2Hidden);
+    expect(selectedModelId(hidden)).toBe(grokVersionIds['v1.0']);
+    expect(hidden.hasNode('resolution')).toBe(false);
 
-    const on = init('txt2img', grokVersionIds['v2.0']);
-    expect(selectedModelId(on)).toBe(grokVersionIds['v2.0']);
+    const open = init('txt2img', grokVersionIds['v2.0']);
+    expect(selectedModelId(open)).toBe(grokVersionIds['v2.0']);
   });
 });

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import FeedbackBrowserErrors from './FeedbackBrowserErrors.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import {
     FARO_LOKI_RETENTION_HOURS,
@@ -122,6 +123,8 @@
     {/if}
   </div>
 </section>
+
+<FeedbackBrowserErrors {context} />
 
 {#if context.other}
   <section class="flex min-w-0 flex-col gap-2">

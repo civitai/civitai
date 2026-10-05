@@ -188,16 +188,17 @@ describe('getWindowedCollectionRanking', () => {
   /**
    * THE RETRY, at the level the transport actually fails.
    *
-   * `@clickhouse/client` 0.2.10 throws `Socket hang up after 3 retries` the moment every
-   * pooled keep-alive socket it tries is past `keep_alive.socket_ttl` — ~341 times an
-   * hour against the production deployment on 2026-09-11, and once on the single live
+   * `@clickhouse/client` throws `socket hang up` the moment it hands out a pooled
+   * keep-alive socket the server has already closed — ~341 times an hour against the
+   * production deployment on 2026-09-11 (then running 0.2.10, whose message carried an
+   * `after 3 retries` suffix its own retry loop added), and once on the single live
    * `period=Month` request in that day's ingress access log. Nothing is sent, so
    * the failure is instantaneous; a second ask opens a fresh connection.
    */
   describe('the retry', () => {
     it('re-asks once after a Socket-hang-up and serves the ranking', async () => {
       mockQuery
-        .mockRejectedValueOnce(new Error('ClickHouse query failed: Socket hang up after 3 retries'))
+        .mockRejectedValueOnce(new Error('ClickHouse query failed: socket hang up'))
         .mockResolvedValueOnce([{ id: 5 }, { id: 8 }]);
       const result = await getWindowedCollectionRanking({
         period: MetricTimeframe.Month,
@@ -214,17 +215,15 @@ describe('getWindowedCollectionRanking', () => {
     });
 
     it('is BOUNDED at CH_RANKING_MAX_ATTEMPTS — it is a retry, not a spin', async () => {
-      mockQuery.mockRejectedValue(
-        new Error('ClickHouse query failed: Socket hang up after 3 retries')
-      );
+      mockQuery.mockRejectedValue(new Error('ClickHouse query failed: socket hang up'));
       await getWindowedCollectionRanking({ period: MetricTimeframe.Month, now: NOW });
       expect(mockQuery).toHaveBeenCalledTimes(CH_RANKING_MAX_ATTEMPTS);
     });
 
     /**
      * 🔴 THE BUDGET IS THE HALF THAT MATTERS, because it is what stops the retry
-     * doubling the failure mode it is NOT for: a 30 s `request_timeout` against a
-     * saturated server. The clock, not an attempt counter, separates the two — so
+     * doubling the failure mode it is NOT for: a slow query running out its
+     * `request_timeout` against a saturated server. The clock, not an attempt counter, separates the two — so
      * this test makes the first attempt SLOW and asserts there is no second one.
      */
     it('does not retry a failure that already spent the whole budget', async () => {
@@ -246,7 +245,7 @@ describe('getWindowedCollectionRanking', () => {
       mockQuery
         .mockImplementationOnce(async () => {
           vi.advanceTimersByTime(CH_RANKING_RETRY_BUDGET_MS - 1);
-          throw new Error('ClickHouse query failed: Socket hang up after 3 retries');
+          throw new Error('ClickHouse query failed: socket hang up');
         })
         .mockResolvedValueOnce([{ id: 42 }]);
       const result = await getWindowedCollectionRanking({

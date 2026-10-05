@@ -45,6 +45,7 @@ vi.mock('~/server/prom/client', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: (...args: any[]) => h.createBuzzTransactionMany(...args),
   getMultipliersForUser: (...args: any[]) => h.getMultipliersForUser(...args),
+  getTransactionByExternalId: vi.fn(async () => null),
 }));
 
 import { BUZZ_EVENTS_MAX_MULTIPLIER, clampBuzzEventMultiplier } from '@civitai/clickhouse';

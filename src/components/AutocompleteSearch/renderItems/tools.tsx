@@ -18,7 +18,7 @@ export const ToolSearchItem = forwardRef<
     <Group ref={ref} {...props} key={hit.id} gap="md" wrap="nowrap">
       {icon ? (
         <Image
-          src={getEdgeUrl(icon, { width: 96 })}
+          src={getEdgeUrl(icon, { width: 96, optimized: true })}
           alt={name ?? ''}
           className="size-8 rounded-full"
         />

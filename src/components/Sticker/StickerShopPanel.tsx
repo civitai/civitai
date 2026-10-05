@@ -26,6 +26,7 @@ import { HOVER_DELAY_MS } from '~/components/UserAvatar/hover-card.constants';
 import { StickerPriceBadge } from '~/components/Sticker/StickerPriceBadge';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
+import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
 import { CosmeticShopSort } from '~/server/common/enums';
 import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -78,10 +79,12 @@ type Tile = {
 export function StickerShopPanel({
   onClose,
   maxScale,
+  imageNsfwLevel,
 }: {
   onClose: () => void;
   /** The space's own ceiling, so a sticker dragged from here starts inside it. */
   maxScale: number;
+  imageNsfwLevel: number;
 }) {
   const { grab, dragging } = useStickerDragOut(maxScale);
   const [search, setSearch] = useState('');
@@ -115,10 +118,9 @@ export function StickerShopPanel({
   const query = search.trim().toLowerCase();
 
   const tiles = useMemo(() => {
-    // Official first, then community, each most-sold first. Not interleaved:
-    // the two halves are separately paged catalogs with no comparable sort key
-    // — `meta.purchases` against a joined row count — so a merged ordering would
-    // be a made-up one.
+    // Official first, then community, each most-sold first. Not interleaved: the
+    // community half is paged while the official one arrives whole, so a merged
+    // ordering would rank a complete catalog against whichever page is in hand.
     const official = browseShopItems({
       entries: (cosmeticShopSections ?? []).flatMap((section) => section.items),
       shopItemOf: (entry) => entry.shopItem,
@@ -139,6 +141,7 @@ export function StickerShopPanel({
         title: shopItem.title,
         unitAmount: shopItem.unitAmount,
         cosmeticData: shopItem.cosmetic?.data,
+        cosmeticFlags: shopItem.cosmetic?.flags,
         meta: shopItem.meta,
         creatorUsername: shopItem.cosmetic?.creator?.username ?? null,
         creator: shopItem.cosmetic?.creator ?? null,
@@ -152,6 +155,7 @@ export function StickerShopPanel({
       title: item.title,
       unitAmount: item.unitAmount,
       cosmeticData: item.cosmetic?.data,
+      cosmeticFlags: item.cosmetic?.flags,
       meta: item.meta,
       // Who drew it, which is not always who listed it — a resold sticker is
       // sold by one creator and made by another, and the purchase line names
@@ -170,6 +174,9 @@ export function StickerShopPanel({
       if (entry.cosmeticId == null || seen.has(entry.shopItemId)) return acc;
       const data = entry.cosmeticData as StickerCosmetic['data'] | undefined;
       if (!data?.url) return acc;
+      // Bought here and then refused by the placement is money for nothing.
+      if (isStickerKeptOffImage({ cosmeticFlags: entry.cosmeticFlags ?? 0, imageNsfwLevel }))
+        return acc;
 
       seen.add(entry.shopItemId);
       acc.push({
@@ -186,7 +193,7 @@ export function StickerShopPanel({
       });
       return acc;
     }, []);
-  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, query]);
+  }, [cosmeticShopSections, communityItems, ownedCosmeticIds, query, imageNsfwLevel]);
 
   return (
     <div className="mb-2 w-full overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">

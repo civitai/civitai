@@ -183,6 +183,7 @@ export function PostImages({
                               imageId={image.id}
                               width={width < maxWidth ? width : maxWidth}
                               hiDpi={features.hiDpiPreviews}
+                              sourceWidth={image.width}
                               original={image.type === 'video'}
                               anim={safe}
                               html5Controls={showsControlStrip}
@@ -204,6 +205,7 @@ export function PostImages({
                           entityId={image.id}
                           entityType="image"
                           reactions={image.reactions}
+                          metricsUnknown={image.stats?.statsUnknown}
                           metrics={{
                             likeCount: image.stats?.likeCountAllTime,
                             dislikeCount: image.stats?.dislikeCountAllTime,

@@ -24,6 +24,12 @@ export const ModelVersionFlag = {
 
   /** This version is not a derivative of a licensing root — so the version form doesn't require or auto-select a "fine-tuned from" parent for it (e.g. an ecosystem's API-only official checkpoints). It can still set its own licensing fee. Moderator-controlled. */
   NotDerivative: 1 << 2, // 4
+
+  /** Generation nodes must keep at least one copy of this version's files; surfaced to the orchestrator as `evictable: false` on the mini endpoint. Moderator-controlled. */
+  NotEvictable: 1 << 3, // 8
+
+  /** Generating with this version adds no additional-resource fee (speed LoRAs such as LCM or Lightning); surfaced to the orchestrator as `additionalResourceCharge: false` on the mini endpoint. Moderator-controlled. */
+  NoAdditionalResourceFee: 1 << 4, // 16
 } as const;
 
 export type ModelVersionFlagValue = (typeof ModelVersionFlag)[keyof typeof ModelVersionFlag];
@@ -37,6 +43,8 @@ export type ModelVersionFlagValue = (typeof ModelVersionFlag)[keyof typeof Model
 export const modelVersionFlagLabels: Record<number, string> = {
   [ModelVersionFlag.GenerationDisabled]: 'Generation blocked',
   [ModelVersionFlag.NotDerivative]: 'Not a derivative',
+  [ModelVersionFlag.NotEvictable]: 'Not evictable',
+  [ModelVersionFlag.NoAdditionalResourceFee]: 'No additional resource fee',
 };
 
 /**
@@ -55,3 +63,8 @@ export const getModelVersionFlagLabels = (flags: number): string[] =>
  */
 export const isGenerationDisabled = (flags: number) =>
   Flags.hasFlag(flags, ModelVersionFlag.GenerationDisabled);
+
+export const isEvictable = (flags: number) => !Flags.hasFlag(flags, ModelVersionFlag.NotEvictable);
+
+export const isAdditionalResourceFeeWaived = (flags: number) =>
+  Flags.hasFlag(flags, ModelVersionFlag.NoAdditionalResourceFee);

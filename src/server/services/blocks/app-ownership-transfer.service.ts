@@ -92,14 +92,17 @@ import {
  *     preserved for audit fidelity. Same locked decision as `claimListing`.
  *   - 🔴 `BlockBuzzAttribution.appOwnerUserId` — NOT rewritten. Product decision: Buzz
  *     accrued before the transfer stays with the OLD owner; the transfer is a clean
- *     forward cut. This is also what keeps the money invariant safe: those rows are
- *     grouped by `appOwnerUserId` in `bulk-payout-block-attributions.ts` and
- *     `mintPayoutForOwner` carries a `(app_owner_user_id, period_key)` UNIQUE.
- *     Rewriting the column mid-period would MERGE the two owners' pending rows into
- *     one payout group and could collide on that unique. Leaving them alone means the
- *     old owner is still paid for what they accrued and the new owner starts at zero.
- *     `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE" describe pins this
- *     (including the positive control that proves those mocks CAN record a call).
+ *     forward cut, so the old owner keeps what they accrued and the new owner starts
+ *     at zero. ⚠️ An earlier revision also justified this by a payout-grouping hazard —
+ *     a weekly stub cron grouped these rows by `appOwnerUserId` and the mint it was to
+ *     call carried a `(app_owner_user_id, period_key)` UNIQUE a mid-period rewrite could
+ *     collide on. Both were deleted and nothing disburses a purchase-rail share, so that
+ *     justification has lapsed and there is no replacement: the product decision is the
+ *     whole of the reason. (The MINT's identifier is deliberately unspelled:
+ *     `payout-copy-truthfulness.test.ts` scans raw text tree-wide for that one, so
+ *     naming it here reddens the suite. The cron's is only checked in the job array.)
+ *     `app-ownership-transfer.service.test.ts`'s "MONEY INVARIANCE" describe is what
+ *     still pins the behaviour.
  *
  * ## Forgejo
  *

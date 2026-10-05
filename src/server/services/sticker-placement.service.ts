@@ -1,6 +1,8 @@
+import { Prisma } from '@prisma/client';
 import { toQueueImage } from '~/server/utils/queue-image';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { cosmeticCache } from '~/server/redis/caches';
 import {
   holdPlacementEscrow,
   settlePlacement,
@@ -21,7 +23,14 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
-import type { PlacementStatus } from '~/shared/utils/placement';
+import {
+  CosmeticFlag,
+  isStickerKeptOffImage,
+  STICKER_SFW_ONLY_REFUSAL,
+} from '~/shared/constants/cosmetic-flags.constants';
+import { Flags } from '~/shared/utils/flags';
+import { isDefined } from '~/utils/type-guards';
+import type { PlacementSpaceMode, PlacementStatus } from '~/shared/utils/placement';
 import {
   PLACEMENT_QUEUE_PAGE_SIZE,
   PLACEMENT_SURFACES,
@@ -41,11 +50,36 @@ import {
   parseStickerPlacementData,
   stickerMaxScale,
   stickerRemovableAt,
+  STICKER_AUTO_SPACE_KEY,
   STICKER_PLACEMENT_QUEUE_LIMIT,
 } from '~/shared/utils/sticker-placement';
 
 const SURFACE = 'sticker' as const;
 const TARGET_TYPE = 'image' as const;
+
+/**
+ * Records that nobody reviewed this placement, on the row, at the moment the
+ * resolved mode is in hand.
+ *
+ * The `sticker-placement-auto-accepted` notification needs to tell an auto
+ * approval from an owner approving in their queue, and nothing else on the row
+ * can: both go through `settlePlacement({ action: 'approve', actorId: ownerId })`.
+ * Reading `PlacementSpace` from the notification's SQL instead would re-derive
+ * the image/post/user cascade that lives in `resolvePlacementSpace` alone, and
+ * would read the mode as of the job rather than as of the approval.
+ *
+ * Both create paths call this. The free one is easy to miss and fails silently —
+ * the notification simply never fires for free placements.
+ *
+ * The stamp records the SPACE, not the outcome. If the settle below throws, the
+ * row stays pending, reaches the owner's queue, and this notification fires when
+ * they approve it by hand, about a placement they did review. Left that way
+ * knowingly: telling the two apart needs a column the row does not carry, and
+ * the same is already true of a failed creation settling as `expired`. Do not
+ * "fix" it with a WHERE clause; it would need the settle to mark itself.
+ */
+const autoSpaceStamp = (space: { mode: PlacementSpaceMode }) =>
+  space.mode === 'auto' ? { [STICKER_AUTO_SPACE_KEY]: true } : {};
 
 /**
  * How many pending placements one placer may have waiting on one owner.
@@ -98,27 +132,50 @@ const nextRemovableAt = (approvedAt: Date) => {
 async function loadPlaceableSticker({
   cosmeticId,
   placerId,
+  imageId,
 }: {
   cosmeticId: number;
   placerId: number;
+  imageId: number;
 }) {
   const [cosmetic] = await dbWrite.$queryRaw<
-    { id: number; createdById: number | null; owned: boolean }[]
+    {
+      id: number;
+      createdById: number | null;
+      owned: boolean;
+      flags: number;
+      imageNsfwLevel: number;
+    }[]
   >`
     SELECT c.id, c."createdById",
            EXISTS (
              SELECT 1 FROM "UserCosmetic" uc
              WHERE uc."cosmeticId" = c.id AND uc."userId" = ${placerId}
-           ) AS owned
+           ) AS owned,
+           ${stickerImageEligibilityColumns(imageId)}
     FROM "Cosmetic" c
     WHERE c.id = ${cosmeticId} AND c.type = 'Sticker'::"CosmeticType"
   `;
 
   if (!cosmetic) throw throwBadRequestError('placement: that sticker no longer exists');
   if (!cosmetic.owned) throw throwAuthorizationError('placement: you do not own that sticker');
+  if (isKeptOffRow(cosmetic)) throw throwBadRequestError(STICKER_SFW_ONLY_REFUSAL);
 
   return cosmetic;
 }
+
+/**
+ * The two columns every primary-side SFW check reads, selected against
+ * `"Cosmetic" c`. One fragment so the placement and the approval cannot drift
+ * apart on what a missing image means (unrated, so refused).
+ */
+const stickerImageEligibilityColumns = (imageId: number) => Prisma.sql`
+  c.flags,
+  COALESCE((SELECT i."nsfwLevel" FROM "Image" i WHERE i.id = ${imageId}), 0) AS "imageNsfwLevel"
+`;
+
+const isKeptOffRow = (row: { flags: number; imageNsfwLevel: number }) =>
+  isStickerKeptOffImage({ cosmeticFlags: row.flags, imageNsfwLevel: row.imageNsfwLevel });
 
 export type CreateStickerPlacement = {
   /**
@@ -249,7 +306,7 @@ export async function createStickerPlacement({
       'placement: you already have the maximum pending placements with this creator'
     );
 
-  const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId });
+  const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId, imageId });
   await assertHasUse({ userId: placerId, cosmeticId: sticker.id });
 
   const comment = commentFrom(data);
@@ -273,6 +330,7 @@ export async function createStickerPlacement({
         // Omitted rather than stored as an empty string, so "left the field
         // blank" and "wrote nothing but spaces" are the same row.
         ...(comment ? { comment } : {}),
+        ...autoSpaceStamp(space),
       },
     },
     select: { id: true },
@@ -351,7 +409,7 @@ async function placeFreeSticker({
   data: Omit<StickerPlacementInput, 'cosmeticId'> & { cosmeticId: number };
   space: Awaited<ReturnType<typeof resolvePlacementSpaceFor>>;
 }) {
-  const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId });
+  const sticker = await loadPlaceableSticker({ cosmeticId: data.cosmeticId, placerId, imageId });
   await assertHasUse({ userId: placerId, cosmeticId: sticker.id });
 
   const comment = commentFrom(data);
@@ -369,6 +427,7 @@ async function placeFreeSticker({
       cosmeticId: sticker.id,
       ...normalizeStickerPlacement(data),
       ...(comment ? { comment } : {}),
+      ...autoSpaceStamp(space),
     },
   });
 
@@ -533,6 +592,7 @@ export async function getStickerPlacementDetail({
       // infer it from `amount`, which is a number rather than a fact.
       free: true,
       data: true,
+      targetId: true,
       ownerId: true,
       placerId: true,
       placer: { select: userWithCosmeticsSelect },
@@ -545,6 +605,14 @@ export async function getStickerPlacementDetail({
   // `data` is JSON, so the cosmetic id is not a relation Prisma can follow.
   const data = parseStickerPlacementData(placement.data);
   const cosmeticId = data?.cosmeticId ?? null;
+
+  if (
+    !isModerator &&
+    (
+      await keptOffPlacementIds([{ id: placement.id, targetId: placement.targetId, cosmeticId }])
+    ).has(placement.id)
+  )
+    throw throwNotFoundError('placement: that placement is not available');
 
   const isParty =
     isModerator ||
@@ -613,6 +681,45 @@ export async function getStickerPlacementDetail({
 }
 
 /**
+ * Placements whose sticker a moderator has since kept off this image's rating.
+ *
+ * Hidden rather than removed: no money moves, and unflagging the sticker or
+ * re-rating the image brings them back. Only flagged stickers cost an image
+ * read, so a page with none makes no database call here.
+ */
+async function keptOffPlacementIds(
+  rows: { id: number; targetId: number; cosmeticId: number | null }[]
+) {
+  const cosmeticIds = [...new Set(rows.map((row) => row.cosmeticId).filter(isDefined))];
+  if (!cosmeticIds.length) return new Set<number>();
+
+  const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+  const flagged = rows.filter(
+    (row) =>
+      row.cosmeticId != null &&
+      Flags.hasFlag(cosmetics[row.cosmeticId]?.flags ?? 0, CosmeticFlag.SfwPlacementsOnly)
+  );
+  if (!flagged.length) return new Set<number>();
+
+  const images = await dbRead.image.findMany({
+    where: { id: { in: [...new Set(flagged.map((row) => row.targetId))] } },
+    select: { id: true, nsfwLevel: true },
+  });
+  const nsfwLevels = new Map(images.map((image) => [image.id, image.nsfwLevel]));
+
+  return new Set(
+    flagged
+      .filter((row) =>
+        isStickerKeptOffImage({
+          cosmeticFlags: cosmetics[row.cosmeticId!]?.flags ?? 0,
+          imageNsfwLevel: nsfwLevels.get(row.targetId) ?? 0,
+        })
+      )
+      .map((row) => row.id)
+  );
+}
+
+/**
  * Approved placements for a set of images, plus the viewer's own pending ones.
  *
  * The pending row is deliberately in the same payload rather than a second call:
@@ -624,9 +731,11 @@ export async function getStickerPlacementDetail({
 export async function getStickerPlacements({
   imageIds,
   viewerId,
+  isModerator = false,
 }: {
   imageIds: number[];
   viewerId?: number;
+  isModerator?: boolean;
 }): Promise<StickerPlacementView[]> {
   if (!imageIds.length) return [];
 
@@ -667,9 +776,19 @@ export async function getStickerPlacements({
     orderBy: { createdAt: 'asc' },
   });
 
-  return rows.flatMap((row) => {
-    const data = parseStickerPlacementData(row.data);
-    if (!data) return [];
+  const parsed = rows.map((row) => ({ row, data: parseStickerPlacementData(row.data) }));
+  const keptOff = isModerator
+    ? new Set<number>()
+    : await keptOffPlacementIds(
+        parsed.map(({ row, data }) => ({
+          id: row.id,
+          targetId: row.targetId,
+          cosmeticId: data?.cosmeticId ?? null,
+        }))
+      );
+
+  return parsed.flatMap(({ row, data }) => {
+    if (!data || keptOff.has(row.id)) return [];
 
     const isParty = !!viewerId && (viewerId === row.ownerId || viewerId === row.placerId);
 
@@ -699,18 +818,32 @@ export async function getStickerPlacements({
 export async function getStickerPlacementCounts(imageIds: number[]) {
   if (!imageIds.length) return {} as Record<number, number>;
 
-  const rows = await dbRead.placement.groupBy({
-    by: ['targetId'],
+  // Rows rather than a groupBy, so the count agrees with the listing about
+  // placements kept off an image by a moderator flag.
+  const rows = await dbRead.placement.findMany({
     where: {
       surface: SURFACE,
       targetType: TARGET_TYPE,
       targetId: { in: imageIds },
       status: 'approved',
     },
-    _count: { _all: true },
+    select: { id: true, targetId: true, data: true },
   });
 
-  return Object.fromEntries(rows.map((row) => [row.targetId, row._count._all]));
+  const keptOff = await keptOffPlacementIds(
+    rows.map((row) => ({
+      id: row.id,
+      targetId: row.targetId,
+      cosmeticId: parseStickerPlacementData(row.data)?.cosmeticId ?? null,
+    }))
+  );
+
+  const counts: Record<number, number> = {};
+  for (const row of rows) {
+    if (keptOff.has(row.id)) continue;
+    counts[row.targetId] = (counts[row.targetId] ?? 0) + 1;
+  }
+  return counts;
 }
 
 /**
@@ -840,6 +973,15 @@ export async function actOnStickerPlacement({
 
   if (action === 'remove') return removeApprovedSticker({ placement, userId, isModerator });
 
+  // The image may have been rated, or the sticker flagged, since it was placed.
+  // Nobody can approve it then, so declining it is not the owner's judgement and
+  // takes no fee — the same waiver the remix gallery gives an unshowable host.
+  const keptOff = await isPendingStickerKeptOff(placement);
+  if (action === 'approve' && keptOff)
+    throw throwBadRequestError(
+      "This sticker can no longer go on this image, so it can't be approved. Declining it costs the placer no fee."
+    );
+
   // Before the settle, so a refused note is never live for the window between
   // the two writes.
   if (action === 'approve' && hideComment !== undefined)
@@ -847,11 +989,23 @@ export async function actOnStickerPlacement({
 
   const { settled } = await settlePlacement({
     placementId,
-    action: action === 'approve' ? 'approve' : 'decline',
+    action: action === 'approve' ? 'approve' : keptOff ? 'declineUnshowableHost' : 'decline',
     actorId: userId,
   });
 
   return { settled };
+}
+
+async function isPendingStickerKeptOff(placement: { targetId: number; data: unknown }) {
+  const cosmeticId = parseStickerPlacementData(placement.data)?.cosmeticId;
+  if (!cosmeticId) return false;
+
+  const [row] = await dbWrite.$queryRaw<{ flags: number; imageNsfwLevel: number }[]>`
+    SELECT ${stickerImageEligibilityColumns(placement.targetId)}
+    FROM "Cosmetic" c
+    WHERE c.id = ${cosmeticId}
+  `;
+  return !!row && isKeptOffRow(row);
 }
 
 type ActionablePlacement = {

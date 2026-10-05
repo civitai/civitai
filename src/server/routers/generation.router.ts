@@ -7,6 +7,8 @@ import {
   getResourceDataByIdsSchema,
   resolveImageMetaSchema,
   resolveWildcardPackSchema,
+  setEvictableSchema,
+  setAdditionalResourceFeeWaivedSchema,
   // sendFeedbackSchema,
 } from '~/server/schema/generation.schema';
 import {
@@ -27,6 +29,8 @@ import {
   // textToImage,
   // textToImageTestRun,
   toggleGenerationDisabled,
+  setEvictable,
+  setAdditionalResourceFeeWaived,
 } from '~/server/services/generation/generation.service';
 import { generatorMessageSchema } from '~/shared/generation/messages';
 import { moderatorProcedure, protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -39,6 +43,7 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import * as z from 'zod';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 export const generationRouter = router({
   getWorkflowDefinitions: publicProcedure
@@ -61,7 +66,11 @@ export const generationRouter = router({
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getGenerationDataSchema)
     .query(({ input, ctx }) =>
-      getGenerationData({ query: input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+      getGenerationData({
+        query: input,
+        user: ctx.user,
+        browsingLevel: getRequestBrowsingLevel(ctx),
+      })
     ),
   checkResourcesCoverage: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
@@ -137,6 +146,14 @@ export const generationRouter = router({
     .mutation(({ input, ctx }) =>
       toggleGenerationDisabled({ ...input, isModerator: ctx.user.isModerator })
     ),
+  setEvictable: moderatorProcedure
+    .input(setEvictableSchema)
+    .mutation(({ input, ctx }) => setEvictable({ ...input, isModerator: ctx.user.isModerator })),
+  setAdditionalResourceFeeWaived: moderatorProcedure
+    .input(setAdditionalResourceFeeWaivedSchema)
+    .mutation(({ input, ctx }) =>
+      setAdditionalResourceFeeWaived({ ...input, isModerator: ctx.user.isModerator })
+    ),
   getResourceDataByIds: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(getResourceDataByIdsSchema)
@@ -144,14 +161,14 @@ export const generationRouter = router({
       getResourceData(input.ids, {
         user: ctx.user,
         withPreview: true,
-        sfwOnly: ctx.features.isGreen,
+        browsingLevel: getRequestBrowsingLevel(ctx),
       })
     ),
   resolveImageMeta: publicProcedure
     .meta({ requiredScope: TokenScope.AIServicesRead })
     .input(resolveImageMetaSchema)
     .query(({ input, ctx }) =>
-      resolveImageMeta({ input, user: ctx.user, sfwOnly: ctx.features.isGreen })
+      resolveImageMeta({ input, user: ctx.user, browsingLevel: getRequestBrowsingLevel(ctx) })
     ),
   // App Blocks wildcard-pack import (W13) — the SESSION-authed resolve step for
   // the page-host message bridge. A page block posts GET_WILDCARD_PACK to the

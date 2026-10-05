@@ -481,26 +481,6 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
           </>
         )}
 
-        {/* 🔴 OUTSIDE the free/paid block, and that is the point rather than
-            layout. This is the sentence saying WHY free is unavailable, and
-            every gate it has lived behind has hidden it in the state that needed
-            it most: `method === 'paid'` hid it once the card started holding on
-            free, and `takesFree` hides it on a gallery that takes no free
-            submissions and no paid ones either — a dead end with no explanation.
-            `offer.reason` is null whenever free is genuinely on offer, so this
-            cannot fire against the FREE button. It can and should fire beside a
-            working PAID one — an unverified remix on an ordinarily-priced
-            gallery is the commonest case there is, and the sentence is the only
-            thing explaining why the free option is greyed out. */}
-        {selected != null && !freeRefusal && freeUnavailableReason && (
-          <>
-            <Divider />
-            <Text size="xs" c="dimmed" className="shrink-0 px-4 pt-3">
-              {freeUnavailableReason}
-            </Text>
-          </>
-        )}
-
         {selected != null && takesFree && (
           <>
             <Divider />
@@ -550,6 +530,40 @@ export function RemixGallerySubmitModal({ hostImageId }: { hostImageId: number }
                 </Text>
               )}
             </Stack>
+          </>
+        )}
+
+        {/* Rendered AFTER the segmented control so it reads as a note on the
+            greyed-out Free button rather than a preamble to the choice, but
+            still gated independently of it.
+
+            🔴 That independence is the point rather than the order. Every gate
+            this sentence has lived behind has hidden it in the state that needed
+            it most: `method === 'paid'` hid it once the card started holding on
+            free, and `takesFree` hides it on a gallery that takes no free
+            submissions and no paid ones either — a dead end with no explanation.
+            Moving it inside the block above would reintroduce exactly that.
+            `offer.reason` is null whenever free is genuinely on offer, so this
+            cannot fire against a working FREE button. It can and should fire
+            beside a working PAID one — an unverified remix on an
+            ordinarily-priced gallery is the commonest case there is, and the
+            sentence is the only thing explaining why free is greyed out. */}
+        {selected != null && !freeRefusal && freeUnavailableReason && (
+          <>
+            {/* Only when the control above is absent. With it present this note
+                is a caption on it, and a rule between the two reads as a section
+                break where there is no new section. */}
+            {!takesFree && <Divider />}
+            <Group gap="xs" wrap="nowrap" align="flex-start" className="shrink-0 px-4 pt-3">
+              <IconInfoCircle
+                size={14}
+                className="text-blue-500"
+                style={{ flexShrink: 0, marginTop: 2 }}
+              />
+              <Text size="xs" c="dimmed">
+                {freeUnavailableReason}
+              </Text>
+            </Group>
           </>
         )}
 

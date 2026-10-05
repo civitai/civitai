@@ -5,14 +5,8 @@ import type { ResourceSelectModalProps } from '~/components/ImageGeneration/Gene
 import { ResourceSelectProvider } from '~/components/ImageGeneration/GenerationForm/ResourceSelectProvider';
 import { ResourceSelectModalContent } from './ResourceSelectModalContent';
 
-/**
- * The catalog is the same size in both roles; the modal is that plus the rail
- * when there is one. Sized so the grid clears four columns — see
- * MIN_COLUMN_WIDTH in ResourceHitList.
- */
+/** Sized so the grid clears four columns — see MIN_COLUMN_WIDTH in ResourceHitList. */
 const CATALOG_WIDTH = 1276;
-/** `w-56` on PickerRail's column. */
-const RAIL_WIDTH = 224;
 
 export default function ResourceSelectModal(props: ResourceSelectModalProps) {
   const dialog = useDialogContext();
@@ -29,7 +23,7 @@ export default function ResourceSelectModal(props: ResourceSelectModalProps) {
     <Modal
       {...dialog}
       onClose={handleClose}
-      size={props.rail ? CATALOG_WIDTH + RAIL_WIDTH : CATALOG_WIDTH}
+      size={CATALOG_WIDTH}
       fullScreen={isMobile}
       withCloseButton={false}
       padding={0}
@@ -39,7 +33,7 @@ export default function ResourceSelectModal(props: ResourceSelectModalProps) {
       }}
     >
       <ResourceSelectProvider {...props}>
-        <ResourceSelectModalContent Rail={props.rail} />
+        <ResourceSelectModalContent />
       </ResourceSelectProvider>
     </Modal>
   );

@@ -54,8 +54,8 @@ export function CollapsibleCard({
 
   return (
     <Card className={clsx('flex flex-col gap-3', rounded ? 'rounded-xl' : 'rounded-none')}>
-      {/* The whole row toggles, including the gap between the title and the
-          chevron. It is a div rather than a button because `actions` holds a
+      {/* The row toggles everywhere except the actions and a buffer around
+          them. It is a div rather than a button because `actions` holds a
           button of its own — the copy control — and a button inside a button is
           invalid markup that swallows its own click. So the row carries the
           role and the keyboard handling instead, and the actions stop the click
@@ -86,7 +86,11 @@ export function CollapsibleCard({
             // the first focusable control put in here would close the card out
             // from under whoever was using it.
             onKeyDown={(event) => event.stopPropagation()}
-            className="flex items-center"
+            // The padding is a buffer, not spacing — the negative margin gives
+            // it back. A few pixels either side of the control belong to
+            // nothing rather than to the toggle, so overshooting the copy link
+            // does nothing instead of folding the section.
+            className="-mx-1 flex items-center px-1"
           >
             {actions}
           </div>

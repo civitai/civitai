@@ -490,6 +490,19 @@ interface ActiveBranch {
  */
 export type ValueProvider<Ctx> = (key: keyof Ctx & string, ctx: Ctx) => unknown | undefined;
 
+/**
+ * Watchers are independent subscribers, so one that throws must not decide whether the rest run.
+ * Un-isolated, the first failure also aborted the write that triggered the notification, which
+ * surfaced as unrelated parts of the form silently ceasing to update.
+ */
+function runWatcher(callback: () => void) {
+  try {
+    callback();
+  } catch (error) {
+    console.error('[data-graph] watcher threw', error);
+  }
+}
+
 export class DataGraph<
   Ctx extends Record<string, unknown> = EmptyObject,
   ExternalCtx extends Record<string, unknown> = EmptyObject,
@@ -859,7 +872,7 @@ export class DataGraph<
     const callbacks = this.rootGraph.nodeWatchers.get(key);
     if (callbacks) {
       for (const callback of callbacks) {
-        callback();
+        runWatcher(callback);
       }
     }
   }
@@ -1132,14 +1145,14 @@ export class DataGraph<
    * // Before: 12 branches → 12 type union members
    * .discriminator('workflow', {
    *   txt2img: ecosystemGraph,
-   *   'txt2img:draft': ecosystemGraph,
+   *   'txt2img:face-fix': ecosystemGraph,
    *   // ... 10 more pointing to ecosystemGraph
    *   'vid2vid:interpolate': videoInterpolationGraph,
    * })
    *
    * // After: 5 groups → 5 type union members
    * .groupedDiscriminator('workflow', [
-   *   { values: ['txt2img', 'txt2img:draft', ...] as const, graph: ecosystemGraph },
+   *   { values: ['txt2img', 'txt2img:face-fix', ...] as const, graph: ecosystemGraph },
    *   { values: ['vid2vid:interpolate'] as const, graph: videoInterpolationGraph },
    *   // ...
    * ])
@@ -1623,7 +1636,7 @@ export class DataGraph<
    *
    * When context is provided, it controls which branches are visited:
    * - **Pinned**: If the context contains a value for the current discriminator,
-   *   only that branch is visited (e.g., `{ workflow: 'image:draft' }`)
+   *   only that branch is visited (e.g., `{ workflow: 'txt2img' }`)
    * - **Resolved**: If context exists but doesn't pin the current discriminator,
    *   the discriminator's node factory is evaluated with the accumulated context
    *   to resolve a default value, and only that branch is visited
@@ -1636,11 +1649,9 @@ export class DataGraph<
    * // Discovery: find all workflows that have an 'images' node
    * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images')
    *
-   * // Context-aware: check if image:draft has an 'images' node
-   * // Resolves ecosystem to default (SD1), evaluates when → false
+   * // Context-aware: check if txt2img has an 'images' node
    * generationGraph.findKeyInBranches(['workflow', 'ecosystem'], 'images',
-   *   { workflow: 'image:draft' })
-   * // → [] (images has when:false in SD family for draft)
+   *   { workflow: 'txt2img' })
    * ```
    */
   findKeyInBranches(
@@ -2103,7 +2114,7 @@ export class DataGraph<
       this.notifyNodeWatchers(key);
     }
     for (const callback of this.globalWatchers) {
-      callback();
+      runWatcher(callback);
     }
   }
 }

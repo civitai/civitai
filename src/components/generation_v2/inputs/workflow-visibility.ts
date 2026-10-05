@@ -14,12 +14,8 @@ import {
 } from '~/shared/data-graph/generation/gates';
 
 /**
- * Who may see which workflow — the single answer for both pickers.
- *
- * `WorkflowInput` (data-graph lane) and `WorkflowPicker` (form-graph lane) are
- * live at the same time and both have to decide this. Keeping a copy each meant
- * a gate rule or a feature flag could be honoured in one lane and ignored in
- * the other, which is exactly what the server-side resolver exists to prevent.
+ * Who may see which workflow. Mirrors the server-side resolver, so a gate rule
+ * or a feature flag cannot be honoured in the picker and ignored on submit.
  */
 
 /**

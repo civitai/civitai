@@ -24,6 +24,8 @@
  *   rename <task> "new name"      Rename a task
  *   priority <task> <level>       Set priority (urgent/high/normal/low)
  *   subtask <task> "title"        Create a subtask
+ *   parent <task> <parent_task>   Make an existing task a subtask of another task
+ *   milestone <task> <on|off>     Turn a task into a milestone, or back (reversible)
  *   move <task> <list_id>         Move task to different list
  *   link <task> <url> ["desc"]    Add external link reference
  *   checklist <task> "item"       Add checklist item
@@ -88,6 +90,10 @@ import {
   updateTask,
   createTask,
   createSubtask,
+  setParent,
+  getAncestorIds,
+  findCustomItemByName,
+  setCustomItemId,
   searchTasks,
   getMyTasks,
   assignTask,
@@ -322,6 +328,8 @@ Task Commands:
   rename <task> "new name"      Rename a task
   priority <task> <level>       Set priority (urgent/high/normal/low)
   subtask <task> "title"        Create a subtask
+  parent <task> <parent_task>   Make an existing task a subtask of another task
+  milestone <task> <on|off>     Turn a task into a milestone, or back (reversible)
   move <task> <list_id>         Move task to different list
   link <task> <url> ["desc"]    Add external link reference
   checklist <task> "item"       Add checklist item
@@ -1335,6 +1343,138 @@ async function main() {
           console.log(`Subtask created: ${subtask.name}`);
           console.log(`ID: ${subtask.id}`);
           console.log(`URL: ${subtask.url}`);
+        }
+        break;
+      }
+
+      case 'parent': {
+        const taskId = parseTaskId(targetInput);
+        if (!taskId) {
+          console.error('Error: Could not parse task ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: Parent task ID required');
+          console.error('Usage: node query.mjs parent <task> <parent_task>');
+          console.error(
+            'ClickUp has no detach: a subtask cannot be turned back into a top-level task.'
+          );
+          process.exit(1);
+        }
+        const newParentId = parseTaskId(arg2);
+        if (!newParentId) {
+          console.error('Error: Could not parse parent task ID');
+          process.exit(1);
+        }
+        if (newParentId === taskId) {
+          console.error(`Error: Task ${taskId} cannot be its own parent`);
+          process.exit(1);
+        }
+
+        const before = await getTask(taskId);
+        const parentAncestors = await getAncestorIds(newParentId);
+        if (parentAncestors.includes(taskId)) {
+          console.error(
+            `Error: ${newParentId} is already a descendant of ${taskId} — this would create a cycle`
+          );
+          console.error(`Chain: ${newParentId} -> ${parentAncestors.join(' -> ')}`);
+          process.exit(1);
+        }
+        if (before.parent === newParentId) {
+          console.log(`No change: ${taskId} is already a subtask of ${newParentId}`);
+          break;
+        }
+
+        await setParent(taskId, newParentId);
+
+        // Report the server's state, not the request we sent — and fail before
+        // printing anything success-shaped, because ClickUp can accept an
+        // UpdateTask and ignore the `parent` in it.
+        const after = await getTask(taskId);
+        if (after.parent !== newParentId) {
+          console.error(
+            `Error: re-read shows parent ${after.parent ?? 'none'}, expected ${newParentId}`
+          );
+          process.exit(1);
+        }
+        if (jsonOutput) {
+          console.log(JSON.stringify(after, null, 2));
+        } else {
+          console.log(`Parent now: ${after.parent} (was ${before.parent ?? 'none'})`);
+          if (after.list?.id !== before.list?.id) {
+            console.log(
+              `List moved: ${before.list?.name ?? before.list?.id} -> ${
+                after.list?.name ?? after.list?.id
+              }`
+            );
+          }
+          console.log(
+            `Status: ${after.status?.status ?? 'unknown'}, priority: ${
+              after.priority?.priority ?? 'none'
+            }`
+          );
+          if (after.url) console.log(`URL: ${after.url}`);
+        }
+        break;
+      }
+
+      case 'milestone': {
+        const taskId = parseTaskId(targetInput);
+        if (!taskId) {
+          console.error('Error: Could not parse task ID from input');
+          process.exit(1);
+        }
+        if (!arg2) {
+          console.error('Error: Mode required');
+          console.error('Usage: node query.mjs milestone <task> <on|off>');
+          process.exit(1);
+        }
+        const mode = arg2.toLowerCase();
+        if (!['on', 'off'].includes(mode)) {
+          console.error(`Error: Unknown mode "${arg2}"`);
+          console.error('Usage: node query.mjs milestone <task> <on|off>');
+          process.exit(1);
+        }
+        const workspaceId = await getTeamId();
+        const milestoneType = await findCustomItemByName(workspaceId, 'milestone');
+        if (!milestoneType) {
+          console.error('Error: This workspace has no "milestone" task type');
+          process.exit(1);
+        }
+        // Clearing the type is WRITTEN as null but READS BACK as 0 (measured
+        // against a real task), so the wanted value for `off` is 0, not null.
+        const wanted = mode === 'on' ? milestoneType.id : 0;
+
+        const before = await getTask(taskId);
+        const beforeId = before.custom_item_id;
+        // A missing field is not evidence of anything, so it must not satisfy
+        // the no-op — fall through and let the re-read decide.
+        if (typeof beforeId === 'number' && beforeId === wanted) {
+          console.log(
+            `No change: ${taskId} is already ${mode === 'on' ? 'a milestone' : 'a regular task'}`
+          );
+          break;
+        }
+
+        await setCustomItemId(taskId, mode === 'on' ? milestoneType.id : null);
+
+        const after = await getTask(taskId);
+        const afterId = after.custom_item_id;
+        if (afterId !== wanted) {
+          console.error(
+            `Error: re-read shows custom_item_id ${afterId ?? 'absent'}, expected ${wanted}`
+          );
+          process.exit(1);
+        }
+        if (jsonOutput) {
+          console.log(JSON.stringify(after, null, 2));
+        } else {
+          console.log(
+            `Type now: ${
+              afterId === milestoneType.id ? 'milestone' : 'task'
+            } (custom_item_id ${afterId}, was ${beforeId ?? 'absent'})`
+          );
+          if (after.url) console.log(`URL: ${after.url}`);
         }
         break;
       }

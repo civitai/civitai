@@ -6,6 +6,7 @@ import { notifications } from '~/server/notifications/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { notificationBatches } from '~/server/notifications/utils.notifications';
+import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate } from './job';
@@ -28,6 +29,10 @@ const NOTIFICATION_QUERY_TIMEOUT_MS = 20_000;
 export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *', async (e) => {
   try {
     const [lastRun, setLastRun] = await getJobDate('last-sent-notifications');
+    // The LENIENT reader: a milestone that fires on the pre-exclusion count is how these
+    // behaved before; one that silently never fires is worse. Read once per run, not per
+    // processor, and passed in because the processor files cannot import it.
+    const excludedUserIds = await getMetricExcludedUserIds();
 
     // Run batches
     for (const batch of notificationBatches) {
@@ -45,6 +50,7 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             lastSent: lastSent.toISOString(),
             lastSentDate: lastSent,
             clickhouse,
+            excludedUserIds,
           });
           if (query) {
             const start = Date.now();

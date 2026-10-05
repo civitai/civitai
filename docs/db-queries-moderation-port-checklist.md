@@ -187,11 +187,11 @@ one) and **Net-new** (moderation the moderator app doesn't cover — new domains
 
 ### 13. knights "down-leveled" review (`services/image.service.ts`)
 
-- [ ] `getDownleveledImages` (ClickHouse `knights_new_order_downleveled` + PG join) + `addToNewOrderQueue`
+- [ ] `getDownleveledImages` (ClickHouse `knights_new_order_downleveled` + PG join) (`image.service.ts`) + `addToNewOrderQueue` (`image-scan-pipeline.ts`)
 
-### 14. scan-result ingestion pipeline internals (`services/image-scan-result.service.ts`)
+### 14. scan-result ingestion pipeline internals (`services/image-scan-pipeline.ts`, `services/image-scan-result.service.ts`)
 
-- [ ] `resolveScanOutcome`, `auditScanResults`, `markImageScanError`, `blockImageFromRating`, `getAssociatedEntities`, `evaluateImageModRules`, `isExemptFromAiVerification`, `processTags`
+- [ ] `resolveScanOutcome`, `auditScanResults`, `markImageScanError`, `getAssociatedEntities`, `evaluateImageModRules`, `processTags` (pipeline); `blockImageFromRating`, `isExemptFromAiVerification` (image-scan-result.service)
 
 ---
 

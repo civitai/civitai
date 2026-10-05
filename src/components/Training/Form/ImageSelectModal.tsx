@@ -40,7 +40,10 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
-import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  matchesMarkerTags,
+  useGetTextToImageRequests,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -81,6 +84,7 @@ import { isDefined } from '~/utils/type-guards';
 import styles from '~/components/Search/SearchLayout.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 // const take = 20;
 
@@ -150,6 +154,7 @@ export default function ImageSelectModal({
     isFetchingNextPage: isFetchingNextPageGenerations,
     hasNextPage: hasNextPageGenerations,
     fetchNextPage: fetchNextPageGenerations,
+    markerTags,
     // isError: isErrorGenerations,
   } = useGetTextToImageRequests(
     { tags: videoAllowed ? [] : [WORKFLOW_TAGS.IMAGE] },
@@ -188,10 +193,11 @@ export default function ImageSelectModal({
         // Training datasets only accept 2D media; PolyGen (3D) outputs
         // have no sensible representation here.
         wf.succeededOutput.filter(
-          (x): x is TrainingGenerationBlob => x.available && x.type !== 'model3d'
+          (x): x is TrainingGenerationBlob =>
+            x.available && x.type !== 'model3d' && matchesMarkerTags(x, markerTags)
         )
       ),
-    [generationData]
+    [generationData, markerTags]
   );
 
   const uploadedMedia = useMemo(
@@ -681,6 +687,7 @@ const ImageGridMedia = ({
         alt={`Imported Media - ${img.id}`}
         src={img.url}
         type={img.type}
+        width={DEFAULT_EDGE_IMAGE_WIDTH}
         className={`h-[250px] w-full object-cover`}
         anim={true}
       />

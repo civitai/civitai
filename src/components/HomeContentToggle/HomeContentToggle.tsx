@@ -60,7 +60,23 @@ export function HomeTabs() {
   };
 
   return (
-    <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden text-black @md:overflow-visible dark:text-white">
+    // Horizontal padding only, and it is load-bearing: `overflow-x: auto` clips at the padding box,
+    // and an outline contributes no scrollable overflow, so without it the first pill's focus ring
+    // is cut on the left and the last control's on the right with no way to scroll them into view.
+    // No VERTICAL padding — it would make the bar taller on every page, which Justin declined on
+    // review, so the ring is clipped top and bottom.
+    //
+    // Not `px-1`: Mantine's ring is a `2px` outline at `calc(0.125rem * var(--mantine-scale))`
+    // offset, so a pure-rem class matches the ink only at a 16px root with scale 1. 4px at
+    // defaults.
+    //
+    // `flex-1` keeps `SubNav2`'s feed filters on this same line. That container wraps, and a
+    // wrapping container places items at their flex BASIS before shrinking any of them, so at the
+    // default `basis: auto` this row's ~1334px of content does not fit and the filters wrap to a
+    // second line. `basis: 0` lets both share the line and this row absorb the shortfall by
+    // scrolling. `shrink-0` on the More button below is the other half: the shrink then lands on
+    // the children, and More is the one that collapses — to an empty 28px circle.
+    <div className="flex flex-1 items-center gap-1 overflow-x-auto overflow-y-hidden px-[calc(0.125rem*var(--mantine-scale,1)+2px)] text-black dark:text-white">
       {bar.map((entry) => {
         const label = getDisplayName(entry.key);
         // Mantine's `disabled` only gates the Transition, not the portal — a disabled Tooltip
@@ -84,6 +100,10 @@ export function HomeTabs() {
             classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
           >
             {navIcons[entry.key]({ size: 16 })}
+            {/* These two do NOT render: `globals.css`'s `.mantine-Button-label *` sets `font-size`
+                and `font-weight` to `inherit`, is unlayered, and sits after `@tailwind utilities`,
+                so the span inherits Mantine's `size="sm"` 14px/600. Three reviewers have read this
+                as 16px/500 in one day. Measured 2026-09-15. */}
             {showLabels && <span className="text-base font-medium capitalize">{label}</span>}
             {dot(entry, '-ml-1 -mr-2')}
           </Button>
@@ -114,7 +134,7 @@ export function HomeTabs() {
               color="gray"
               variant="subtle"
               data-active={moreOpened}
-              className={classes.moreButton}
+              className={clsx('h-8 shrink-0', classes.moreButton)}
             >
               <Group gap={4} wrap="nowrap">
                 More

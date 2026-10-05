@@ -20,3 +20,13 @@ export const BULK_SOURCE_LABELS: Record<BulkSource, string> = {
   userRemoved: 'User — already removed',
   imageIds: 'Image IDs (comma or newline)',
 };
+
+export const REMOVED_FILTERS = ['only', 'hide'] as const;
+export type RemovedFilter = (typeof REMOVED_FILTERS)[number];
+export const isRemovedFilter = (value: string): value is RemovedFilter =>
+  (REMOVED_FILTERS as readonly string[]).includes(value);
+
+export const REMOVED_FILTER_LABELS: Record<RemovedFilter, string> = {
+  only: "Only ToS'd",
+  hide: 'Hide removed',
+};

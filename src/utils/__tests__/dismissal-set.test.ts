@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { addDismissals, pruneDismissals } from '~/utils/dismissal-set';
+import { addDismissals, pruneDismissals, selectLiveDismissals } from '~/utils/dismissal-set';
 
 describe('addDismissals', () => {
   it('appends a new id after the existing ones', () => {
@@ -66,5 +66,34 @@ describe('pruneDismissals', () => {
     const dismissed = [1, 2];
     pruneDismissals(dismissed, [1]);
     expect(dismissed).toEqual([1, 2]);
+  });
+});
+
+describe('selectLiveDismissals', () => {
+  it('keeps only the remote ids the surface is showing', () => {
+    expect(selectLiveDismissals([1, 2, 3], [2, 3, 4])).toEqual([2, 3]);
+  });
+
+  /**
+   * The account set is one flat list across every announcement type and both stores. Merging an
+   * id the surface does not show would put a creator announcement's dismissal in the sitewide
+   * cookie, or a `generator` id in the `site` bucket.
+   */
+  it('drops remote ids that belong to another surface', () => {
+    expect(selectLiveDismissals([90, 91], [1, 2])).toEqual([]);
+  });
+
+  it('returns nothing when the live set is empty', () => {
+    expect(selectLiveDismissals([1], [])).toEqual([]);
+  });
+
+  it('accepts a Set as the live collection', () => {
+    expect(selectLiveDismissals([1, 2], new Set([1]))).toEqual([1]);
+  });
+
+  it('does not mutate the input', () => {
+    const remote = [1, 2];
+    selectLiveDismissals(remote, [1]);
+    expect(remote).toEqual([1, 2]);
   });
 });

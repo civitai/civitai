@@ -22,10 +22,26 @@
     config: {
       imageLocation: env.PUBLIC_IMAGE_LOCATION || null,
       signalsEndpoint: env.PUBLIC_SIGNALS_ENDPOINT || null,
+      // canGenerateUnpublished stays unset: the standalone shell doesn't gate epoch generation.
+      // svelte-ignore state_referenced_locally — the session user's tier is fixed for the page's life
+      isPaidMember: data.isPaidMember,
+      // svelte-ignore state_referenced_locally — civitaiUrl is env-derived, constant for the session
+      pricingUrl: `${data.civitaiUrl}/pricing`,
     },
     hrefFor,
     navigate: (loc, opts) => goto(hrefFor(loc), opts?.refreshAll ? { invalidateAll: true } : undefined),
     refresh: (key) => invalidate(key),
+    // Always provided, even though the main app's /generate ingestion is flag-gated (mod-only for
+    // now) and silently drops the params for users without it — the shell can't read that flag, so
+    // the link goes live per-user as the flag widens.
+    generateUrl: ({ air, workflowId, name }) =>
+      `${data.civitaiUrl}/generate?${new URLSearchParams({ air, workflowId, name })}`,
+    publishUrl: ({ workflowId, epoch }) =>
+      `${data.civitaiUrl}/models/train/from-orchestrator?${new URLSearchParams({
+        workflowId,
+        epoch: String(epoch),
+      })}`,
+    modelPageUrl: ({ modelId }) => `${data.civitaiUrl}/models/${modelId}`,
   });
 
   // Open the shared signals connection once per tab and keep the header balance live: a `buzz:update` fires

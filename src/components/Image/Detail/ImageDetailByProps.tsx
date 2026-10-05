@@ -55,6 +55,17 @@ import { trpc } from '~/utils/trpc';
 import { Notifications } from '@mantine/notifications';
 import classes from './ImageDetailByProps.module.scss';
 import clsx from 'clsx';
+import type { ImageV2Stats } from '~/server/selectors/imagev2.selector';
+
+type ImageDetailStats = Pick<
+  ImageV2Stats,
+  | 'likeCountAllTime'
+  | 'dislikeCountAllTime'
+  | 'heartCountAllTime'
+  | 'laughCountAllTime'
+  | 'cryCountAllTime'
+  | 'statsUnknown'
+>;
 
 export function ImageDetailByProps({
   imageId,
@@ -80,13 +91,7 @@ export function ImageDetailByProps({
 
   const image = data || defaultImageItem || null;
   const reactions = data?.reactions ?? [];
-  const stats: {
-    likeCountAllTime: number;
-    dislikeCountAllTime: number;
-    heartCountAllTime: number;
-    laughCountAllTime: number;
-    cryCountAllTime: number;
-  } | null = data?.stats ?? null;
+  const stats: ImageDetailStats | null = data?.stats ?? null;
 
   const user = data?.user;
   const theme = useMantineTheme();
@@ -436,13 +441,7 @@ function ImageDetailByPropsReactions({
 }: {
   imageId: number;
   reactions: { userId: number; reaction: any }[];
-  stats: {
-    likeCountAllTime: number;
-    dislikeCountAllTime: number;
-    heartCountAllTime: number;
-    laughCountAllTime: number;
-    cryCountAllTime: number;
-  } | null;
+  stats: ImageDetailStats | null;
   userId?: number;
 }) {
   return (
@@ -463,6 +462,7 @@ function ImageDetailByPropsReactions({
           entityType="image"
           reactions={reactions}
           metrics={metrics}
+          metricsUnknown={stats?.statsUnknown}
           targetUserId={userId}
         />
       )}

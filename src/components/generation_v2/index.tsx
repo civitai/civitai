@@ -1,8 +1,5 @@
 /**
- * Generation V2 Index
- *
- * Exports a drop-in replacement for GenerationForm that can be used
- * in GenerationTabs.tsx without any changes to the parent component.
+ * Generation V2 Index — the data-graph generation form lane.
  */
 
 import { LoadingOverlay } from '@mantine/core';
@@ -30,24 +27,8 @@ export interface GenerationFormV2Props {
 // =============================================================================
 
 /**
- * GenerationFormV2
- *
- * A drop-in replacement for the old GenerationForm that uses the new
- * DataGraph-based form system. Can be used directly in GenerationTabs.tsx.
- *
- * Usage in GenerationTabs.tsx:
- * ```tsx
- * import { GenerationFormV2 } from '~/components/generation_v2';
- *
- * const tabs: Tabs = {
- *   generate: {
- *     Icon: IconBrush,
- *     label: 'Generate',
- *     Component: GenerationFormV2,
- *   },
- *   // ...
- * };
- * ```
+ * The data-graph form lane. `GenerationTabs.tsx` mounts it in the form slot when
+ * `formGraphGenerator` is off; `FormGraphGenerator` is the other lane.
  */
 export function GenerationFormV2({ debug = false }: GenerationFormV2Props = {}) {
   const loading = useGenerationGraphStore((state) => state.loading);
@@ -81,5 +62,5 @@ export { FormFooter } from './FormFooter';
 export { AccordionLayout } from './AccordionLayout';
 export { openCompatibilityConfirmModal } from './CompatibilityConfirmModal';
 export { WhatIfProvider, useWhatIfContext } from './WhatIfProvider';
-export { ResourceAlerts, ReadyAlert } from './ResourceAlerts';
+export { ResourceAlerts, DownloadReadyAlert } from './ResourceAlerts';
 export { ExperimentalFlask, GateRuleAlerts } from './Experimental';

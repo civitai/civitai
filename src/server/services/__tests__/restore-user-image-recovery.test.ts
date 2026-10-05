@@ -129,7 +129,13 @@ describe('restoreUser image recovery', () => {
     mockDbWrite.user.findFirst.mockResolvedValueOnce({
       id: USER_ID,
       deletedAt: new Date('2026-07-28T00:00:00Z'),
-      meta: { imageRemoval: 'grace', strikeFlaggedForReview: true },
+      meta: {
+        imageRemoval: 'grace',
+        strikeFlaggedForReview: true,
+        // Belongs to the deletion, not the account: a re-deleted account inheriting this would
+        // start already backed off and alert as stuck long before it is.
+        gdprStripeScrub: { attempts: 3, lastAttemptAt: '2020-01-01T00:00:00.000Z' },
+      },
     });
 
     await restore();

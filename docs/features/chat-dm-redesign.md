@@ -14,7 +14,7 @@ it stands:
 | 1 | Privacy & abuse — graded DM policy, Requests, new-account hold | yes | built |
 | 2 | Conversation management — settings, pin, notification levels, delete | yes | built |
 | 3 | Surface redesign — grouped rows, reply quotes, composer, paging | no | built |
-| 4 | Moderation audit — edit/clear events, edit length cap, per-message delete | yes | |
+| 4 | Moderation audit — edit/clear events, edit length cap, per-message delete | yes | built |
 
 ## Corrections to the source card
 
@@ -237,10 +237,8 @@ complexity, server structure.
 
 ### Edit path
 
-`updateMessage` exists as a handler but is **unrouted**, and `updateMessageInput` has **no max
-length** — where `createMessageInput` caps content at 2,000. Routing it as-is would open an
-uncapped write path. Before it is routed it needs the cap and the guards `createMessage` applies
-to new content: blocklist/profanity scanning and sticker ownership resolution.
+`updateMessage` is routed and emits an `edit` audit row. It applies the same guards `createMessage`
+does — blocklist and message-pattern scanning on the new text — and caps content at 2,000.
 
 ### Per-message delete
 
@@ -282,9 +280,6 @@ app's own tokens.
 
 ## Open
 
-- **Sticker asset spec** — emoji are fixed at 128×128 (D6). Stickers render far larger and need
-  their own numbers before any creator uploads one. Belongs in `cosmeticImageRequirements`.
-  Tracked in `868kk3t0t`.
 - **Per-tier chat themes** — all three themes come with any membership. The mockup had Terminal
   as Gold-exclusive; splitting them by tier is a product call, and `resolveChatTheme` takes the
   entitlement as an argument, so it is a one-line change when someone decides. Granting themes as

@@ -1,4 +1,13 @@
+import { Flags } from '~/shared/utils/flags';
+import { getSponsoredModel } from '~/server/services/promotion.service';
+import { sponsoredSlotIndex } from '~/shared/utils/promotion';
 import { Prisma } from '@prisma/client';
+import {
+  coverageAudience,
+  coveragePair,
+  coveragePairForUser,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
 import { TRPCError } from '@trpc/server';
 import { isPaidAccessActive } from '@civitai/buzz';
 import {
@@ -9,6 +18,7 @@ import type { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink
 import type { BaseModelType, ModelFileType } from '~/server/common/constants';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
+import { canViewModelVersionStatus } from '~/server/common/model-version-visibility';
 import {
   EntityAccessPermission,
   ModelSort,
@@ -17,6 +27,7 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { stampWorkflowPublished } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import {
   applyTrainingWorkflowOverlay,
@@ -123,7 +134,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { getLatestModelAppeal } from '~/server/services/report.service';
+import { getLatestAppeal } from '~/server/services/report.service';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags, getCreationBlockedTags } from '~/server/services/system-cache';
 import {
@@ -165,6 +176,7 @@ import {
   Availability,
   BountyType,
   CollectionItemStatus,
+  EntityType,
   MetricTimeframe,
   ModelHashType,
   ModelModifier,
@@ -177,7 +189,7 @@ import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { redis, REDIS_KEYS } from '../redis/client';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
   getResourceData,
@@ -222,14 +234,15 @@ export const getModelHandler = async ({
       throw throwNotFoundError(`No model with id ${input.id}`);
     }
 
-    const now = new Date();
-    const filteredVersions = isOwner
-      ? model.modelVersions
-      : model.modelVersions.filter(
-          (version) =>
-            version.status === ModelStatus.Published &&
-            (!version.publishedAt || version.publishedAt <= now)
-        );
+    const filteredVersions = model.modelVersions.filter((version) =>
+      canViewModelVersionStatus({
+        viewer: ctx.user,
+        ownerId: model.user.id,
+        modelStatus: model.status,
+        versionStatus: version.status,
+        publishedAt: version.publishedAt,
+      })
+    );
     const modelVersionIds = filteredVersions.map((version) => version.id);
     const posts = await dbRead.post.findMany({
       where: {
@@ -251,6 +264,7 @@ export const getModelHandler = async ({
     const modelCategories = await getCategoryTags('model');
 
     const sfwOnly = !!features.isGreen;
+    const { next: useNext, member } = await coverageAudience(ctx.user ?? undefined);
     const versionGenStates = await resolveCanGenerateForVersions(
       filteredVersions.map((v) => ({
         id: v.id,
@@ -258,7 +272,7 @@ export const getModelHandler = async ({
         availability: v.availability,
         usageControl: v.usageControl,
         baseModel: v.baseModel,
-        covered: v.generationCoverage?.covered ?? false,
+        ...coveragePairForUser(v, useNext, { member, isCheckpoint: model.type === 'Checkpoint' }),
         modelUserId: model.user.id,
         modelType: model.type,
         flags: v.flags,
@@ -512,7 +526,13 @@ export const getModelHandler = async ({
 
     // Gated here to skip the query for the vast majority of page views (visitors);
     // resolveMinorAppeal below is the actual enforced boundary, independent of this.
-    const minorAppeal = isOwner ? await getLatestModelAppeal(model.id, model.user.id) : null;
+    const minorAppeal = isOwner
+      ? await getLatestAppeal({
+          entityType: EntityType.Model,
+          entityId: model.id,
+          userId: model.user.id,
+        })
+      : null;
 
     return {
       ...model,
@@ -584,6 +604,8 @@ export const getModelsInfiniteHandler = async ({
     // value so the feed-hydration path skips the metric-privacy resolution when OFF.
     const metricPrivacyEnabled = !!ctx.features.modelMetricPrivacyReadtime;
     const results: Awaited<ReturnType<typeof getModelsWithImagesAndModelVersions>>['items'] = [];
+    // The loop below advances `input.cursor`, so capture what the caller actually asked for.
+    const requestedCursor = input.cursor;
     while (results.length < (input.limit ?? 100) && loopCount < 3) {
       const result = await getModelsWithImagesAndModelVersions({
         input,
@@ -601,6 +623,35 @@ export const getModelsInfiniteHandler = async ({
       nextCursor = result.nextCursor;
       loopCount++;
     }
+
+    // A period-filtered feed that finds nothing is a dead end on surfaces whose whole
+    // purpose is to list one collection — /tag/:name promises "N models tagged X" in its
+    // meta description and CollectionPage schema, then renders an empty grid whenever
+    // none of those models shipped inside the window. Retry once at AllTime so the page
+    // shows the content it advertises. First page only: deep paging legitimately runs out.
+    if (
+      !results.length &&
+      !requestedCursor &&
+      input.periodFallback &&
+      input.period !== MetricTimeframe.AllTime
+    ) {
+      const fallback = await getModelsWithImagesAndModelVersions({
+        input: { ...input, cursor: undefined, period: MetricTimeframe.AllTime },
+        user: ctx.user,
+        domain: getRequestBoardDomainColor(ctx.req),
+        imagesPerModel,
+        biasImageSlice: slim,
+        metricPrivacyEnabled,
+      });
+      if (fallback.isPrivate) isPrivate = true;
+      if (isPrivate) ctx.cache.canCache = false;
+      return {
+        items: fallback.items,
+        nextCursor: fallback.nextCursor,
+        periodFallbackApplied: true,
+      };
+    }
+
     if (isPrivate) ctx.cache.canCache = false;
     return { items: results, nextCursor };
   } catch (error) {
@@ -789,7 +840,7 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    const { needsReview, unpublishedReason, unpublishedAt, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
 
@@ -813,6 +864,18 @@ export const publishModelHandler = async ({
         type: 'published',
         entityType: 'model',
         entityId: updatedModel.id,
+      });
+    }
+
+    // A scheduled publish skips this (status isn't Published yet) and the scheduled-publishing job
+    // doesn't stamp either — the studio then just keeps offering its idempotent publish entry.
+    if (modelMeta?.trainingStudioWorkflowId && updatedModel.status === ModelStatus.Published) {
+      await stampWorkflowPublished({
+        ownerId: updatedModel.userId,
+        callerId: ctx.user.id,
+        workflowId: modelMeta.trainingStudioWorkflowId,
+        modelId: updatedModel.id,
+        modelVersionId: updatedModel.modelVersions[0]?.id,
       });
     }
 
@@ -1286,6 +1349,10 @@ export const getMyDraftModelsHandler = async ({
         updatedAt: true,
         modelVersions: {
           select: {
+            id: true,
+            name: true,
+            status: true,
+            publishedAt: true,
             _count: {
               select: { files: true, posts: { where: { userId, publishedAt: { not: null } } } },
             },
@@ -1708,6 +1775,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
   try {
     const { fromId, type, ...userPreferences } = input;
     const { user } = ctx;
+    const useNext = await nextCoverageEnabled();
     const associatedResources = await dbRead.modelAssociations.findMany({
       where: { fromModelId: fromId, type },
       select: { toModelId: true, toArticleId: true },
@@ -1719,6 +1787,27 @@ export const getAssociatedResourcesCardDataHandler = async ({
         ? { id: toModelId, resourceType: 'model' as const }
         : { id: toArticleId, resourceType: 'article' as const }
     );
+
+    // A paid, host-accepted model promotion takes the second slot. The viewer's
+    // own level and hidden lists still apply to it below, like any other card.
+    const sponsored =
+      type === 'Suggested'
+        ? await getSponsoredModel({ modelId: fromId, features: ctx.features }).catch(
+            () => undefined
+          )
+        : undefined;
+    if (sponsored) {
+      // Its organic copy is dropped, as in the gallery, so the card the buyer paid
+      // for is the one in the sponsored slot.
+      const organic = resourcesIds.findIndex(
+        ({ id, resourceType }) => resourceType === 'model' && id === sponsored.modelId
+      );
+      if (organic >= 0) resourcesIds.splice(organic, 1);
+      resourcesIds.splice(sponsoredSlotIndex(0, resourcesIds.length), 0, {
+        id: sponsored.modelId,
+        resourceType: 'model' as const,
+      });
+    }
 
     if (!resourcesIds.length) return [];
 
@@ -1782,7 +1871,7 @@ export const getAssociatedResourcesCardDataHandler = async ({
                 status: v.status,
                 availability: v.availability,
                 baseModel: v.baseModel,
-                covered: v.covered,
+                ...coveragePair(v, useNext),
                 modelUserId: m.user.id,
                 modelType: m.type,
                 flags: v.flags,
@@ -1885,8 +1974,16 @@ export const getAssociatedResourcesCardDataHandler = async ({
             const model = completeModels.find((model) => model.id === id);
             if (!model) return null;
             if (excludedUserIds.includes(model.user.id)) return null;
+            const isSponsored = id === sponsored?.modelId;
+            // A buyer who re-rates their model above what the page may show ends
+            // their own run.
+            if (
+              isSponsored &&
+              (!model.nsfwLevel || !Flags.hasFlag(sponsored.servingLevel, model.nsfwLevel))
+            )
+              return null;
 
-            return { resourceType: 'model' as const, ...model };
+            return { resourceType: 'model' as const, ...model, sponsored: isSponsored };
         }
       })
       .filter(isDefined);
@@ -2127,8 +2224,7 @@ export const updateGallerySettingsHandler = async ({
       id,
       data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
     });
-    // Clear cache
-    await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
+    await bustModelGallerySettings([id]);
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { backend, browser, portalProps } from '$lib/host';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import ModelCodeBadge from '$lib/components/ModelCodeBadge.svelte';
   import type { TrainingRow } from '$lib/data/trainingRows';
   import type { Media } from '$lib/data/trainingModels';
   import { toReuseItems } from '$lib/reuse';
@@ -15,11 +14,22 @@
     open: boolean;
     /** Only same-media runs are reusable — an image dataset can't seed an audio run, etc. */
     media: Media;
-    onReuse: (items: { blobId: string; url: string; name: string; caption: string }[]) => void;
+    onReuse: (
+      items: { blobId: string; name: string; caption: string; previewWorkflowId: string }[]
+    ) => void;
   } = $props();
 
   // Derive the fetch from `open` so the list re-loads each time it's opened; never rejects the panel.
   const trainings = $derived(browser && open ? backend().listTrainings() : null);
+
+  // Time as well as date: same-day re-runs of one dataset are exactly the duplicates this tells apart.
+  const createdLabel = (iso: string) =>
+    new Date(iso).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
 
   let loadingId = $state<string | null>(null);
   let error = $state('');
@@ -35,11 +45,11 @@
         return;
       }
       onReuse(
-        (await toReuseItems(dataset, row.workflowId)).map((i) => ({
+        toReuseItems(dataset, row.workflowId).map((i) => ({
           blobId: i.air,
-          url: i.previewUrl,
           name: i.name,
           caption: i.caption,
+          previewWorkflowId: i.workflowId,
         }))
       );
       open = false;
@@ -82,12 +92,14 @@
                 disabled={loadingId != null}
                 class="flex items-center gap-3 rounded-lg border border-dark-4 bg-dark-6 p-3 text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-50"
               >
-                <ModelCodeBadge code={row.code} size="lg" />
                 <div class="min-w-0">
                   <div class="truncate text-sm font-semibold text-dark-0">{row.name}</div>
                   <div class="truncate font-mono text-xs text-dark-2">
                     {row.base}{row.sub ? ` · ${row.sub}` : ''}
                   </div>
+                  {#if row.createdAt}
+                    <div class="font-mono text-xs text-dark-2">{createdLabel(row.createdAt)}</div>
+                  {/if}
                 </div>
                 <span class="ml-auto font-mono text-xs text-dark-2">
                   {loadingId === row.workflowId ? 'Loading…' : 'Use'}

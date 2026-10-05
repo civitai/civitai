@@ -156,6 +156,22 @@ export function useViewerBrowsingLevelDebounced() {
   return debounced ? debounced : BROWSING_LEVEL_FALLBACK;
 }
 
+/**
+ * Drops the page-level override for this subtree; the forced cap is kept. Use it rather than
+ * `useViewerBrowsingLevelDebounced` at one site when several readers derive from the level
+ * (e.g. the addons provider) and must agree.
+ */
+export function ViewerBrowsingLevelScope({ children }: { children: React.ReactNode }) {
+  const ctx = useBrowsingLevelContext();
+  return (
+    <BrowsingModeOverrideCtx.Provider
+      value={{ ...ctx, browsingLevelOverride: undefined, childBrowsingLevelOverride: undefined }}
+    >
+      {children}
+    </BrowsingModeOverrideCtx.Provider>
+  );
+}
+
 export function BrowsingLevelProviderOptional({
   children,
   browsingLevel,

@@ -11,6 +11,7 @@ import {
   BountySort,
   BuzzWithdrawalRequestSort,
   CollectionSort,
+  CrucibleSort,
   GenerationSort,
   ImageSort,
   ImageSortHidden,
@@ -46,6 +47,7 @@ const sortOptions = {
   generation: Object.values(GenerationSort),
   tools: Object.values(ToolSort),
   buzzWithdrawalRequests: Object.values(BuzzWithdrawalRequestSort),
+  crucibles: Object.values(CrucibleSort),
 };
 
 export function SortFilter(props: SortFilterProps) {
@@ -64,7 +66,8 @@ type SortOption =
   | GenerationSort
   | ThreadSort
   | ToolSort
-  | BuzzWithdrawalRequestSort;
+  | BuzzWithdrawalRequestSort
+  | CrucibleSort;
 
 type DumbProps = {
   // Dumb props should work without needing to create a full filter attribute.

@@ -6,6 +6,8 @@ type PageOptions = {
   InnerLayout?: (page: { children: React.ReactElement }) => JSX.Element;
   features?: (features: UseFeatureFlagsReturn) => boolean;
   subNav?: React.ReactNode | null;
+  /** A second sticky row under the site sub-nav, for navigation that belongs to this page. */
+  pageNav?: React.ReactNode;
   left?: React.ReactNode;
   right?: React.ReactNode;
   main?: React.ReactNode;
@@ -23,6 +25,7 @@ export function Page(Component: CustomNextPage, options?: PageOptions) {
   Component.InnerLayout = options?.InnerLayout;
   Component.features = options?.features;
   Component.subNav = options?.subNav;
+  Component.pageNav = options?.pageNav;
   Component.left = options?.left;
   Component.right = options?.right;
   Component.main = options?.main;

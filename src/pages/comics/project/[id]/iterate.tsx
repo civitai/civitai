@@ -130,7 +130,7 @@ function ComicIteratePage() {
     const h = typeof height === 'string' ? parseInt(height, 10) : 1024;
     return {
       url: imageUrl,
-      previewUrl: getEdgeUrl(imageUrl, { width: 400 }) ?? imageUrl,
+      previewUrl: getEdgeUrl(imageUrl, { width: 400, optimized: true }) ?? imageUrl,
       width: w,
       height: h,
     };

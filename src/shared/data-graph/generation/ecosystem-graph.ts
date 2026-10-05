@@ -31,7 +31,6 @@ import {
 } from './config';
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import {
   pickStrongerGate,
   rulesToStates,
@@ -47,6 +46,7 @@ import { nanoBananaGraph } from './nano-banana-graph';
 import { seedreamGraph } from './seedream-graph';
 import { imagen4Graph } from './imagen4-graph';
 import { flux2Graph } from './flux2-graph';
+import { flux3Graph } from './flux3-graph';
 import { flux2KleinGraph } from './flux2-klein-graph';
 import { fluxKontextGraph } from './flux-kontext-graph';
 import { zImageGraph } from './z-image-graph';
@@ -74,6 +74,7 @@ import { lensGraph } from './lens-graph';
 import { krea2Graph } from './krea2-graph';
 import { maiGraph } from './mai-graph';
 import { reveGraph } from './reve-graph';
+import { mingGraph } from './ming-graph';
 import { museImageGraph } from './muse-image-graph';
 import { mageFlowGraph } from './mage-flow-graph';
 import { seedanceGraph } from './seedance-graph';
@@ -81,6 +82,8 @@ import { flux3VideoGraph } from './flux3-video-graph';
 import { happyHorseGraph } from './happy-horse-graph';
 import { aceAudioGraph } from './ace-audio-graph';
 import { minimaxMusicGraph } from './minimax-music-graph';
+import { yue2Graph } from './yue2-graph';
+import { soniloGraph } from './sonilo-graph';
 import { polyGenGraph } from './polygen-graph';
 import { tripoGraph } from './tripo-graph';
 import { hunyuan3dGraph } from './hunyuan3d-graph';
@@ -133,22 +136,8 @@ function getValidEcosystemForWorkflow(workflowId: string, currentValue?: string)
 
 type EcosystemGateExt = Pick<
   GenerationCtx,
-  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules' | 'flags'
+  'selfHostedDisabledEcosystems' | 'selfHostedMode' | 'gateRules'
 >;
-
-/**
- * Ecosystems hidden unless their feature flag is explicitly enabled — the deploy
- * gate for newer generators. Fail-closed: an absent/false flag hides the
- * ecosystem from the picker (client) and rejects it on submit (server). Meshy
- * (PolyGen) is intentionally NOT here — it rides the workflow-level
- * `model3dGenerator` gate like the original 3D launch.
- */
-const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAccess }> = [
-  { key: 'Tripo', flag: 'tripoGenerator' },
-  { key: 'Hunyuan3D', flag: 'hunyuan3dGenerator' },
-  { key: 'Pixal3D', flag: 'pixal3dGenerator' },
-  { key: 'Trellis2', flag: 'trellis2Generator' },
-];
 
 /**
  * Resolve the unified gate state for the workflow's ecosystems. Folds the gate
@@ -165,8 +154,8 @@ const FEATURE_FLAG_GATED_ECOSYSTEMS: Array<{ key: string; flag: keyof FeatureAcc
  * they never diverge. Reads gating from `ext`, populated async by
  * `getGenerationConfig` — hence `meta` must call this on every `setExt`.
  */
-// Exported (additive) so the form-graph port reuses this rather than
-// duplicating the gate resolution. Behaviour unchanged.
+// The form-graph port keeps its own copy in `ecosystem-gates.ts` (it must not
+// import from this dying engine file); the differential suite pins the two.
 export function getEcosystemStates(
   workflow: string,
   ext: EcosystemGateExt
@@ -182,14 +171,6 @@ export function getEcosystemStates(
     states.set(key, pickStrongerGate(states.get(key), { state: selfHostedState }));
   for (const [key, res] of rulesToStates(ext.gateRules ?? []).ecosystems)
     states.set(key, pickStrongerGate(states.get(key), res));
-
-  // Feature-flag deploy gate — hide any flag-gated ecosystem whose flag isn't
-  // explicitly on (fail-closed). `ext.flags` is populated on the client from
-  // FeatureFlagsProvider and on the server from `buildGenerationContext`.
-  for (const { key, flag } of FEATURE_FLAG_GATED_ECOSYSTEMS) {
-    if (ext.flags?.[flag] !== true)
-      states.set(key, pickStrongerGate(states.get(key), { state: 'hidden' }));
-  }
 
   const hiddenEcosystems = [...states].filter(([, r]) => r.state === 'hidden').map(([key]) => key);
   const hiddenSet = new Set(hiddenEcosystems);
@@ -362,7 +343,7 @@ export const ecosystemGraph = new DataGraph<
   .groupedDiscriminator('ecosystem', [
     // Image ecosystems - Stable Diffusion family (ONE type branch)
     {
-      values: ['SD1', 'SD2', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'] as const,
+      values: ['SD1', 'SDXL', 'Pony', 'Illustrious', 'NoobAI'] as const,
       graph: stableDiffusionGraph,
     },
     // Image ecosystems - Flux family (ONE type branch)
@@ -371,11 +352,12 @@ export const ecosystemGraph = new DataGraph<
       graph: fluxGraph,
     },
     // Image ecosystems - individual families
-    { values: ['Qwen', 'Qwen2', 'Qwen3'] as const, graph: qwenGraph },
+    { values: ['Qwen', 'Qwen2', 'Qwen21', 'Qwen3'] as const, graph: qwenGraph },
     { values: ['NanoBanana'] as const, graph: nanoBananaGraph },
     { values: ['Seedream'] as const, graph: seedreamGraph },
     { values: ['Imagen4'] as const, graph: imagen4Graph },
     { values: ['Flux2'] as const, graph: flux2Graph },
+    { values: ['Flux3'] as const, graph: flux3Graph },
     {
       values: [
         'Flux2Klein_9B',
@@ -400,6 +382,7 @@ export const ecosystemGraph = new DataGraph<
     { values: ['MAI'] as const, graph: maiGraph },
     { values: ['Reve'] as const, graph: reveGraph },
     { values: ['MuseImage'] as const, graph: museImageGraph },
+    { values: ['Ming'] as const, graph: mingGraph },
     { values: ['MageFlow'] as const, graph: mageFlowGraph },
     { values: ['OpenAI'] as const, graph: openaiGraph },
     // Video ecosystems - Wan family (ONE type branch for all Wan variants)
@@ -438,6 +421,8 @@ export const ecosystemGraph = new DataGraph<
     // Audio ecosystems
     { values: ['Ace'] as const, graph: aceAudioGraph },
     { values: ['MiniMaxMusic3'] as const, graph: minimaxMusicGraph },
+    { values: ['YuE2'] as const, graph: yue2Graph },
+    { values: ['Sonilo'] as const, graph: soniloGraph },
     // 3D Model ecosystems — PolyGen (Meshy via Fal). Field rendering for the
     // PolyGen graph lives in `GenerationForm.tsx`, auto-hidden via Controller
     // when the active ecosystem isn't PolyGen (same pattern as ACE audio).
@@ -466,20 +451,17 @@ export const ecosystemGraph = new DataGraph<
   // ecosystems that batch multiple outputs in a single job (see
   // VID_QUANTITY_ECOSYSTEMS — they generate extra videos via Seed + slotIndex).
   //
-  // Step: draft=4, BOGO-enabled w/ enhancedCompatibility off=2, else=1.
-  // The step=2 path is gated by the `enhancedCompatibilitySdcpp` feature flag and
-  // limited to txt2img (matches the `enhancedCompatibility` toggle's visibility).
+  // step=2 is limited to txt2img so it matches the enhancedCompatibility toggle's own visibility.
   .node(
     'quantity',
     (ctx, ext) => {
-      const isDraft = ctx.workflow === 'txt2img:draft';
       const modelId = 'model' in ctx ? ctx.model?.id : undefined;
       const bogoActive =
         !!ext.flags?.enhancedCompatibilitySdcpp &&
         ctx.workflow === 'txt2img' &&
         supportsSdcpp(ctx.ecosystem, modelId) &&
         ctx.enhancedCompatibility !== true;
-      const step = isDraft ? 4 : bogoActive ? 2 : 1;
+      const step = bogoActive ? 2 : 1;
       const batchesVideos = VID_QUANTITY_ECOSYSTEMS.has(ctx.ecosystem);
       const supportsVideoQuantity = ctx.output === 'video' && batchesVideos;
       // These use tier-gated vidQuantity (free=1, bronze=2, silver=3, gold=4)

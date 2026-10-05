@@ -40,7 +40,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           data: {
             id: entityId,
             locked: threadLocked.get(`${entityType}:${entityId}`) ?? false,
-            hiddenCount: 0,
           },
         }),
       },

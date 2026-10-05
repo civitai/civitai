@@ -1,6 +1,8 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { sourceFiles } from '../../../../../test/source-scan';
+import { stripComments } from '../../../../../test/strip-comments';
 
 /**
  * RELATIONSHIP GUARD for the `clampDevScopes` spend ceiling (#3703 step 1).
@@ -52,33 +54,14 @@ const CALL_SITE_LEDGER: Record<string, string> = {
 /** A CALL — the identifier immediately followed by `(` and an object literal. */
 const CALL_RE = /clampDevScopes\s*\(\s*\{/;
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
+const FILES = sourceFiles(ROOT);
 
 /**
  * Source with comments removed — prose ABOUT the clamp is wanted, and there is a lot
  * of it; only real code should count as a call site.
  */
 function code(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return stripComments(readFileSync(join(ROOT, file), 'utf8'));
 }
 
 const CODE = new Map(FILES.map((f) => [f, code(f)] as const));

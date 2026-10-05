@@ -4,7 +4,7 @@ import clsx from 'clsx';
 import Link from 'next/link';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useHubFollows } from '~/components/Hubs/FollowHubButton';
-import { hubUrl } from '~/components/Hubs/hub.utils';
+import { describeHubSources, hubUrl } from '~/components/Hubs/hub.utils';
 
 /**
  * The followed half of the rail, styled like the owned list above it. Renders
@@ -46,9 +46,7 @@ export function FollowedHubsSection({ activeHubKey }: { activeHubKey?: string })
                 {hub.name}
               </Text>
               <Text size="xs" c="dimmed">
-                {hub.sources.length === 0
-                  ? 'No sources'
-                  : `${hub.sources.length} source${hub.sources.length === 1 ? '' : 's'}`}
+                {describeHubSources(hub.sourceCounts)}
               </Text>
             </Link>
 

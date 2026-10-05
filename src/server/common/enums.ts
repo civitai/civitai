@@ -167,7 +167,6 @@ export enum SignalMessages {
   WorkflowUpdate = 'orchestrator:workflow-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
-  ModelVersionPopularityUpdate = 'model-version:popularity:update',
   ResourceLoadUpdate = 'resource-load:update',
   Pong = 'pong',
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
@@ -208,6 +207,13 @@ export enum BountyBenefactorSort {
   Newest = 'Newest',
 }
 
+export enum CrucibleSort {
+  PrizePool = 'Prize Pool',
+  EndingSoon = 'Ending Soon',
+  Newest = 'Newest',
+  MostEntries = 'Most Entries',
+}
+
 export enum BountyStatus {
   Open = 'Open',
   Expired = 'Expired',
@@ -233,6 +239,7 @@ export enum ViolationType {
   RealisticMinorNsfw = 'realisticMinorNsfw',
   AnimatedMinorNsfw = 'animatedMinorNsfw',
   SchoolNsfw = 'schoolNsfw',
+  MinorViolence = 'minorViolence',
   Bestiality = 'bestiality',
   SexualViolence = 'sexualViolence',
   MindAlteredNsfw = 'mindAlteredNsfw',

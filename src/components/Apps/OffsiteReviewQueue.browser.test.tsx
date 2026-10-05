@@ -4,6 +4,7 @@ import { page } from 'vitest/browser';
 import { formatDate } from '~/utils/date-helpers';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -26,7 +27,7 @@ const OFFSITE_ROW = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 42, username: 'author-dev', image: null },
+  submittedBy: { id: 42, username: 'author-dev', deletedAt: null, image: null },
 };
 
 const DEFAULT_ASSETS = {
@@ -66,7 +67,15 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 // which reads useCurrentUser — boundary-stub it (null user is fine).
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
-vi.mock('~/utils/notifications', () => ({
+// Same reasoning as the `~/utils/trpc` factory below, and the same fix — this one is here
+// because it actually fired. #5082 added `showWarningNotification` to
+// `HideUserButton/BlockUserButton`, reached from here through
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
+// requested module '/src/utils/notifications.tsx' does not provide an export named
+// 'showWarningNotification'`. #5102
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));
@@ -420,7 +429,7 @@ describe('OffsiteReviewModal — on-site listing-media revision (kind: onsite)',
       // was pinning the cap copy onto a request shape that may not be under a cap.
       revisionOfId: 'listing-parent',
     },
-    submittedBy: { id: 42, username: 'author-dev', image: null },
+    submittedBy: { id: 42, username: 'author-dev', deletedAt: null, image: null },
   };
 
   test('renders the listing-media header, the asset checklist, and NO URL / connect panel', async () => {
@@ -480,7 +489,7 @@ describe('OffsiteReviewModal — on-site republish re-review (kind: onsite, NON-
       // The whole discriminator: this request targets the LIVE listing, not a shadow.
       revisionOfId: null,
     },
-    submittedBy: { id: 42, username: 'author-dev', image: null },
+    submittedBy: { id: 42, username: 'author-dev', deletedAt: null, image: null },
   };
 
   test('🔴 the note describes a REPUBLISH review and says the rating is RAISED, not capped', async () => {

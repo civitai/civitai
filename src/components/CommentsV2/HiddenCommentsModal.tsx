@@ -2,34 +2,17 @@ import { Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { Comment } from '~/components/CommentsV2/Comment/Comment';
-import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CommentDiscussionItem } from '~/components/Model/ModelDiscussion/CommentDiscussionItem';
 import { ReviewSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 
-type CommentEntityType =
-  | 'model'
-  | 'model3d'
-  | 'model3dReview'
-  | 'post'
-  | 'article'
-  | 'bounty'
-  | 'bountyEntry'
-  | 'challenge'
-  | 'comment'
-  | 'image'
-  | 'appListing';
-
+// Legacy model comments only: a hidden CommentV2 renders in place as a placeholder instead.
 export default function HiddenCommentsModal({
   entityId,
-  entityType,
-  userId,
 }: {
-  entityType: CommentEntityType;
+  entityType: 'model';
   entityId: number;
-  userId?: number; // Optional userId for badges, if needed
 }) {
   const dialog = useDialogContext();
   return (
@@ -47,11 +30,7 @@ export default function HiddenCommentsModal({
           Some comments may be hidden by the author or moderators to ensure a positive and inclusive
           environment. Moderated for respectful and relevant discussions.
         </AlertWithIcon>
-        {entityType === 'model' ? (
-          <HiddenModelCommentsContent modelId={entityId} />
-        ) : (
-          <HiddenCommentsContent entityType={entityType} entityId={entityId} userId={userId} />
-        )}
+        <HiddenModelCommentsContent modelId={entityId} />
       </Stack>
     </Modal>
   );
@@ -96,53 +75,5 @@ function HiddenModelCommentsContent({ modelId }: { modelId: number }) {
         </Center>
       )}
     </Stack>
-  );
-}
-
-function HiddenCommentsContent({
-  entityType,
-  entityId,
-  userId,
-}: {
-  entityType: CommentEntityType;
-  entityId: number;
-  userId?: number;
-}) {
-  return (
-    <RootThreadProvider
-      entityType={entityType}
-      entityId={entityId}
-      limit={20}
-      badges={userId ? [{ userId, label: 'op', color: 'violet' }] : undefined}
-      hidden
-    >
-      {({ data, isLoading, isFetching, isFetchingNextPage, showMore, toggleShowMore }) =>
-        isLoading || isFetching ? (
-          <Center mt="xl">
-            <Loader type="bars" />
-          </Center>
-        ) : !!data?.length ? (
-          <Stack className="relative" gap="xl">
-            {data?.map((comment) => (
-              <Comment key={comment.id} comment={comment} resourceOwnerId={userId} />
-            ))}
-            {showMore && (
-              <Center>
-                <Button
-                  onClick={toggleShowMore}
-                  loading={isFetchingNextPage}
-                  variant="subtle"
-                  size="md"
-                >
-                  Load More Comments
-                </Button>
-              </Center>
-            )}
-          </Stack>
-        ) : (
-          <Text>No hidden comments</Text>
-        )
-      }
-    </RootThreadProvider>
   );
 }

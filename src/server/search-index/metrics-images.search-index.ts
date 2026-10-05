@@ -29,7 +29,10 @@ const sortableAttributes = [
 
 const rankingRules = ['sort'];
 
-const filterableAttributes = [
+// Exported so the retirement of `combinedNsfwLevel` can be asserted: Meili rejects a
+// filter naming a non-filterable attribute, which is what makes a re-introduced filter
+// fail loudly instead of returning an empty page.
+export const filterableAttributes = [
   'id',
   'sortAtUnix',
   'modelVersionIds', // auto-detected going forward, auto + postedTo historically
@@ -53,7 +56,6 @@ const filterableAttributes = [
   'collectionIds',
   'userId',
   'nsfwLevel',
-  'combinedNsfwLevel',
   'postId',
   'publishedAtUnix',
   'existedAtUnix',
@@ -138,7 +140,6 @@ export type SearchBaseImage = {
   postId: number;
   url: string;
   nsfwLevel: number;
-  aiNsfwLevel: number;
   nsfwLevelLocked: boolean;
   width: number;
   height: number;
@@ -250,9 +251,6 @@ const transformData = async ({
         ...imageMetrics,
         // Best way we currently have to detect current POI of processed images.
         poi: imageRecord.poi ?? resourcePoi,
-        combinedNsfwLevel: nsfwLevelLocked
-          ? imageRecord.nsfwLevel
-          : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
         baseModel,
         modelVersionIds: modelVersionIdsAuto,
         modelVersionIdsManual,
@@ -345,7 +343,6 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."postId",
         i."url",
         i."nsfwLevel",
-        i."aiNsfwLevel",
         i."nsfwLevelLocked",
         i."width",
         i."height",

@@ -1,6 +1,7 @@
 ---
 name: civitai-test-review
 description: Reviews the tests in a feature segment of the main Civitai Next.js app (src/) for whether they would actually fail if the code broke — vacuous assertions, over-broad mocks, fakes that hang instead of failing, suites that collect zero tests, and races in browser tests. Use before calling a segment done, alongside civitai-reuse-review, civitai-correctness-review, civitai-perf-review and civitai-intent-review.
+model: sonnet
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -9,7 +10,7 @@ tools: Read, Grep, Glob, Bash
 **Scope is the tests in `src/` and the packages it imports.** The SvelteKit apps under `apps/` belong
 to the `svelte-*-review` trio.
 
-Read the **Testing** section of the root `CLAUDE.md` in full before you start. It is doctrine written
+Read the **Tests** section of the root `CLAUDE.md`, plus `.claude/rules/testing.md`, `.claude/rules/convention-guards.md` and `docs/dev/convention-guards.md`, in full before you start. It is doctrine written
 off real incidents in this repo, most of it recorded nowhere else, and it is the substance of this
 review.
 
@@ -178,40 +179,13 @@ Worked examples of both fixes: the two retry tests in
 
 ### Convention guards
 
-36 live in `src/server/services/__tests__/no-*.test.ts`:
-`no-agent-ground-truth-write`, `no-coerce-boolean-in-api`, `no-direct-shared-module-mock`,
-`no-divergent-can-generate-derivation`, `no-divergent-model-recency-derivation` (the New/Updated card rule and its day-old cutoff each have one definition — three cards restated them, and when the paid badge took ModelCard's single status slot only that copy knew, so a paid model published minutes ago showed "Paid" on the feed and "New" in the resource picker), `no-divergent-paid-gate-derivation` (the feed and the search index must derive the paid badge from one helper, never two copies of the query), `no-divergent-safetensor-rule` (the coverage view and `checkLoadable` state the checkpoint SafeTensor rule twice and nothing executes the SQL, so the two literals and the checkpoint scoping are pinned textually), `no-doubled-free-slot-noun`, `no-hand-typed-redis-key-constants` (the Redis key-constant
-ratchet — hand-typed `REDIS_KEYS` in an allowlisted mock had drifted 15 times), `no-io-in-transaction`,
-`no-job-kind-on-remix-mint`, `no-lint-rules-script-drift`,
-`no-menu-target-tooltip-nesting` (a `Tooltip` INSIDE `Menu.Target` steals the ref the menu needs and
-the trigger silently stops opening),
-`no-module-scope-cache`, `no-pk-addressed-engagement-write`, `no-server-infra-in-app-graph`,
-`no-sharp-outside-native-project`, `no-ssr-divergent-media-query`, `no-stale-moderator-route-probe`, `no-static-html2canvas-import`,
-`no-unbounded-paging-fake`, `no-unbumped-draft-status-write`, `no-unguarded-billable-submit` (a user-token orchestrator submit must have its
-owner checked — see `assertWorkflowOwner`),
-`no-unguarded-block-rest-token` (every block REST page route must be wrapped by
-`withBlockScope`, which is the only place the REST surface takes the approved-status
-decision — an open-coded `verifyBlockToken` in a route is the same shape the bridge had),
-`no-unguarded-block-bridge-token` (every tRPC bridge proc must resolve its claims through
-`authorizeBlockBridgeToken`, never a bare `verifyBlockToken`), `no-unguarded-user-text`, `no-unloadable-image-fixture`,
-`no-unmoderated-blob-retraction` (the ledger of flows allowed to ask the image-cache service to
-destroy an image's SHARED stored object — a cross-account, irreversible act; moderation only),
-`no-unmuteable-comment-processor`, `no-unscoped-email-verification-exemption`,
-`no-untruthy-query-gate` (a query gated on a feature flag must coerce it — a sparse
-flag reads `undefined`, and React Query treats that as enabled), `no-unverified-provenance-write`,
-`no-unroled-image-resource-match` (resource detection must not match an image to a model on
-hash value alone — a bundled upstream component file otherwise credits a stranger's checkpoint),
-`no-unpriced-default-model`, `no-unwrapped-knob-rotation`, `no-wholesale-module-mock`.
+Every guard and what it enforces is listed in `docs/dev/convention-guards.md`; read it. Check a diff
+against the guards it could trip.
 
 ⚠️ **`pnpm run test:lint-rules` is a hand-maintained file list**, so a guard can be missing from it and
-fail only in a full-suite run. Five were missing when this was last audited, on 2026-08-24, and were
-wired in then. If the diff adds a guard, check it was wired into the script, and don't treat a green
+fail only in a full-suite run. If the diff adds a guard, check it was wired into the script and into
+`docs/dev/convention-guards.md` (`no-lint-rules-script-drift` checks both), and don't treat a green
 `test:lint-rules` as "all guards passed".
-
-`test:lint-rules` names 41 files today.
-
-Both numbers and the list are checked by `no-lint-rules-script-drift`, which reads the two phrasings
-above literally — edit the numbers, not the shapes.
 
 If a guard fails, the code gets fixed. An added exemption needs a stated reason in the diff.
 

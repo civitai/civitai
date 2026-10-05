@@ -39,8 +39,6 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const draftSorts = [PostSort.Newest, PostSort.Oldest];
-
 function UserPostsPage() {
   const currentUser = useCurrentUser();
   const {
@@ -49,7 +47,7 @@ function UserPostsPage() {
   } = usePostQueryParams();
   // const { replace, section: querySection, ...queryFilters } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const querySort = query.sort ?? PostSort.Newest;
+  const sort = query.sort ?? PostSort.Newest;
   const selfView =
     !!currentUser &&
     !!query.username &&
@@ -64,9 +62,6 @@ function UserPostsPage() {
   );
   const viewingDraft = section === 'draft';
   const effectiveScheduled = viewingDraft ? query.scheduled ?? true : query.scheduled;
-  // Reaction/comment/collected counts are meaningless on unpublished drafts, and those
-  // sorts filter on `count > 0` server-side, so a draft feed under them comes back empty.
-  const sort = viewingDraft && !draftSorts.includes(querySort) ? PostSort.Newest : querySort;
 
   if (!query.username) return <NotFound />;
 
@@ -87,29 +82,21 @@ function UserPostsPage() {
                   onChange={(section) => {
                     const nextSection = section as 'published' | 'draft';
                     setSection(nextSection);
-                    replace({
-                      section: nextSection,
-                      scheduled: undefined,
-                      // Carry the sort across the toggle. Only a count sort has to be
-                      // dropped, and only into drafts, where it would filter to nothing.
-                      sort:
-                        nextSection === 'draft' && !draftSorts.includes(querySort)
-                          ? undefined
-                          : querySort,
-                    });
+                    replace({ section: nextSection, scheduled: undefined });
                   }}
                 />
               )}
               {!selfView && <ActiveTagFilter tagIds={query.tags ?? []} />}
               <Group gap={8} ml="auto" wrap="nowrap">
-                <SortFilter
-                  type="posts"
-                  value={sort}
-                  onChange={(x) => replace({ sort: x as PostSort })}
-                  options={
-                    viewingDraft ? draftSorts.map((value) => ({ label: value, value })) : undefined
-                  }
-                />
+                {/* Drafts are a publish queue with a fixed order (see post-sort.ts), so there is
+                    nothing for the picker to change there. */}
+                {!viewingDraft && (
+                  <SortFilter
+                    type="posts"
+                    value={sort}
+                    onChange={(x) => replace({ sort: x as PostSort })}
+                  />
+                )}
                 <PostFiltersDropdown
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}

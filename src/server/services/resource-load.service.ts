@@ -8,31 +8,37 @@ import type {
   GetResourceLoadQueueInput,
   ResourceLoadAvailability,
 } from '~/server/schema/resource-load.schema';
-import {
-  resourceAvailabilitySchema,
-  UNLOADABLE_MESSAGES,
-} from '~/server/schema/resource-load.schema';
+import { UNLOADABLE_MESSAGES } from '~/server/schema/resource-load.schema';
 import type { UnloadableReason } from '~/server/schema/resource-load.schema';
 import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
+import {
+  coveredForUserSql,
+  nextCoverageEnabled,
+} from '~/server/services/generation/coverage-source';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
 import { getModelClient, queryResourcesClient } from '~/server/services/orchestrator/models';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { logToAxiom } from '~/server/logging/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  getVersionsForAir,
+  LOADABLE_FILE_TYPES,
+  parseAvailability,
+  STATE_FETCH_CONCURRENCY,
+  type VersionForAir,
+} from '~/server/services/resource-residency.service';
 import { modelVersionToAir } from '~/server/utils/resource-air';
-import { parseAIRSafe } from '~/shared/utils/air';
+import { versionIdFromAir } from '~/shared/utils/air';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { BuzzTypes } from '~/shared/constants/buzz.constants';
 
 const PREPARE_STEP_NAME = 'prepare-resource';
 
 /**
- * A file the cluster can serve as weights. Types mirror the coverage view minus its
- * `trainingResults` disjunct — a training archive is not a weight.
- *
  * Format is an allow-list because `format` is free text and frequently unset; a deny-list cannot
  * promise the loader only ever sees SafeTensor.
  */
-const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
 const LOADABLE_FORMAT = 'SafeTensor';
 
 function checkLoadable(
@@ -47,9 +53,6 @@ function checkLoadable(
     return { loadable: false, unloadableReason: 'unsupported-format' };
   return { loadable: true };
 }
-
-/** Each state fetch is an orchestrator grain call, so keep the fan-out bounded. */
-const STATE_FETCH_CONCURRENCY = 10;
 
 export type ResourceLoadState = {
   modelVersionId: number;
@@ -68,62 +71,39 @@ export type ResourceLoadState = {
   unloadableReason?: UnloadableReason;
 };
 
-type VersionForAir = {
-  id: number;
-  name: string;
-  baseModel: string;
-  flags: number;
-  model: { id: number; name: string; type: ModelType };
-  files: { type: string; scannedAt: Date | null; metadata: BasicFileMetadata }[];
-};
-
-async function getVersionsForAir(modelVersionIds: number[]) {
-  return (await dbRead.modelVersion.findMany({
-    where: { id: { in: modelVersionIds } },
-    select: {
-      id: true,
-      name: true,
-      baseModel: true,
-      flags: true,
-      model: { select: { id: true, name: true, type: true } },
-      files: { select: { type: true, scannedAt: true, metadata: true } },
-    },
-  })) as VersionForAir[];
-}
-
-/**
- * The live view still gates checkpoints on `CoveredCheckpoint` — the weekly auction's residency
- * proxy — so it reports exactly the community checkpoints this feature exists to load as NOT
- * covered. Gating on it would refuse every load worth making. The two converge when the staged view
- * replaces the live one.
- */
-async function getNextCoveredVersionIds(modelVersionIds: number[]) {
-  if (!modelVersionIds.length) return new Set<number>();
-  const rows = await dbRead.$queryRaw<{ modelVersionId: number }[]>`
-    SELECT "modelVersionId" FROM "GenerationCoverageNext"
+/** The live rule too: `isGenerationEligible` holds a locked ecosystem's checkpoints to it. */
+async function getCoveredVersionIds(
+  modelVersionIds: number[],
+  audience: { next: boolean; member: boolean }
+) {
+  const empty = { covered: new Set<number>(), live: new Set<number>() };
+  if (!modelVersionIds.length) return empty;
+  const covered = coveredForUserSql(audience);
+  const rows = await dbRead.$queryRaw<
+    { modelVersionId: number; audience: boolean; live: boolean }[]
+  >`
+    SELECT "modelVersionId", ${covered} AS audience, "covered" AS live
+    FROM "GenerationCoverage"
     WHERE "modelVersionId" IN (${Prisma.join(modelVersionIds)})
   `;
-  return new Set(rows.map((r) => r.modelVersionId));
+  return {
+    covered: new Set(rows.filter((r) => r.audience).map((r) => r.modelVersionId)),
+    live: new Set(rows.filter((r) => r.live).map((r) => r.modelVersionId)),
+  };
 }
 
-function parseAvailability(availability: unknown): ResourceLoadAvailability {
-  const parsed = resourceAvailabilitySchema.safeParse(availability);
-  return parsed.success ? parsed.data : { status: 'unknown' };
-}
-
-/**
- * Live residency for a set of model versions.
- *
- * Uncached on purpose: `modelVersionResourceCache` holds the same `ResourceInfo` on a day-long TTL
- * and throws `availability` away, so it looks like it already has this and does not.
- */
+/** Live residency for a set of model versions. */
 export async function getResourceLoadState(
-  modelVersionIds: number[]
+  modelVersionIds: number[],
+  audience: { next: boolean; member: boolean }
 ): Promise<ResourceLoadState[]> {
   const versions = await getVersionsForAir(modelVersionIds);
   if (!versions.length) return [];
 
-  const coveredIds = await getNextCoveredVersionIds(versions.map((v) => v.id));
+  const coverage = await getCoveredVersionIds(
+    versions.map((v) => v.id),
+    audience
+  );
 
   const results: ResourceLoadState[] = [];
   const tasks = versions.map((version) => async () => {
@@ -135,13 +115,19 @@ export async function getResourceLoadState(
       name: version.name,
       modelName: version.model.name,
       eligible: isGenerationEligible({
-        covered: coveredIds.has(version.id),
+        covered: coverage.covered.has(version.id),
+        coveredLive: coverage.live.has(version.id),
         baseModel: version.baseModel,
         modelType: version.model.type,
         flags: version.flags,
       }),
       ...checkLoadable(version.files, version.model.type),
     };
+
+    if (generatorReadiness(version) === 'external') {
+      results.push({ ...base, availability: { status: 'external' } });
+      return;
+    }
 
     const response = await getModelClient({ token: env.ORCHESTRATOR_ACCESS_TOKEN, air });
     if (!response?.data) {
@@ -174,8 +160,8 @@ export async function getResourceLoadQueue({ cursor, take }: GetResourceLoadQueu
 
   // Rows whose AIR resolves to no version on this site are loaded outside our catalogue; drop them.
   const parsed = data.items.flatMap((item) => {
-    const air = parseAIRSafe(item.air);
-    return air?.version ? [{ item, versionId: air.version }] : [];
+    const versionId = versionIdFromAir(item.air);
+    return versionId ? [{ item, versionId }] : [];
   });
 
   const versions = await getVersionsForAir(parsed.map((x) => x.versionId));
@@ -203,7 +189,11 @@ export async function getResourceLoadQueue({ cursor, take }: GetResourceLoadQueu
 /** Refuses `available` too: the orchestrator accepts an already-resident prepare and completes it
  *  instantly, so the user would pay for nothing. */
 async function resolveLoadable(modelVersionId: number) {
-  const [state] = await getResourceLoadState([modelVersionId]);
+  // `member: true`: this is the PAID load path — the purchase IS what the gate asks for.
+  const [state] = await getResourceLoadState([modelVersionId], {
+    next: await nextCoverageEnabled(),
+    member: true,
+  });
   if (!state) throw throwNotFoundError(`No model version with id ${modelVersionId}`);
 
   if (!state.eligible)
@@ -229,7 +219,7 @@ function prepareResourceStep(air: string) {
 }
 
 /** 🔴 `CalculateCost` for a prepare step returns an empty cost, so `whatif` reports 0 until C2 —
- *  see docs/features/paid-model-loading-checklist.md. `priced` distinguishes that from a real quote. */
+ *  see docs/features/paid-model-loading.md. `priced` distinguishes that from a real quote. */
 export async function estimateResourceLoad({
   modelVersionId,
   token,

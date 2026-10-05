@@ -31,7 +31,26 @@ export type BlockActionCode =
   | 'storage.set'
   | 'storage.delete'
   | 'storage.increment'
-  | 'post.create';
+  // The SHARED (cross-user, app-global) storage mutations, reachable over
+  // `/api/v1/blocks/shared-storage/{append,update,vote,unvote,withdraw,report}`.
+  // Six codes rather than one `storage.shared`, because they are six different
+  // consequences — publishing text other users read, editing it, moving a public
+  // tally, deleting a row, filing a moderator report — and the audit row's other
+  // two columns cannot tell them apart: `scope` is `apps:storage:shared:write`
+  // for all six and `endpoint` is only the route name. Distinguishing them is
+  // exactly what `detail` exists for.
+  | 'shared.append'
+  | 'shared.update'
+  | 'shared.vote'
+  | 'shared.unvote'
+  | 'shared.withdraw'
+  | 'shared.report'
+  | 'post.create'
+  // A DIGITAL GOODS purchase (`/api/v1/blocks/goods/purchase`). Distinct from
+  // `tip`: both spend the viewer's Buzz, but the counterparty is the app owner
+  // rather than another user, and the row names a `goodId` rather than a
+  // `toUserId`.
+  | 'goods.purchase';
 
 export type BlockActionDetail = {
   /** Stable action code (see BlockActionCode). Free-form on the wire for fwd-compat. */
@@ -79,8 +98,14 @@ export type BlockActionDetail = {
    * capability) usage accounting was therefore not answerable from this table at
    * all.
    *
-   * Bounded by construction: the value is a registry KEY, which the wire schema
-   * derives its `step` enum from (`REGISTERED_STEP_IDS`) — never client text.
+   * ⚠️ NO LONGER BOUNDED BY CONSTRUCTION. On the registry arm the value is a
+   * registry KEY, which the wire schema derives its `step` enum from
+   * (`REGISTERED_STEP_IDS`). The PASS-THROUGH arm writes the submitted
+   * orchestrator `$type` here instead, and that is app-supplied text bounded
+   * only by `z.string().min(1).max(64)` — deliberately, because on an arm whose
+   * type set is open by construction this is the one dimension that makes two
+   * submits distinguishable. Nothing reads this field for display today; treat
+   * it as untrusted if anything starts to.
    */
   step?: string;
   /**
@@ -111,6 +136,13 @@ export type BlockActionDetail = {
    * this table needs. (The post itself is on `entityType`/`entityId`.)
    */
   modelVersionId?: number;
+  /**
+   * The manifest `goods[].id` a `goods.purchase` bought. The app's own
+   * identifier, bounded by `BLOCK_GOOD_ID_RE` at manifest validation, and the
+   * only thing on the row that says WHICH item was bought — `scope` is
+   * `goods:purchase:self` for every purchase and `endpoint` is the route name.
+   */
+  goodId?: string;
 };
 
 /**
@@ -127,6 +159,7 @@ export const READ_SCOPE_LABELS: Record<string, string> = {
   'apps:storage:read': 'Read your app storage',
   'apps:storage:shared:read': 'Read shared app storage',
   'block:settings:read': 'Read your block settings',
+  'goods:read:self': 'Read what you own from this app',
 };
 
 /** Runtime guard for a `detail` value read back off the DB (typed `unknown`). */
@@ -224,6 +257,25 @@ export function describeBlockAction(
       return detail.key ? `Deleted app storage "${detail.key}"` : 'Deleted app storage';
     case 'storage.increment':
       return detail.key ? `Bumped shared counter "${detail.key}"` : 'Bumped a shared counter';
+    // 🔴 The KEY IS DELIBERATELY NOT RENDERED for these six, unlike the three
+    // `storage.*` cases above. A per-user storage key is a name the app's author
+    // chose (`playcount:<id>`, `settings`) and reads as a label; a shared_kv key
+    // is a SERVER-GENERATED ULID, so putting it in the sentence would add 26
+    // characters of noise and no information. It is still STORED on the row —
+    // that is what makes a reported/withdrawn row traceable from the audit table
+    // — which is the design's "stores IDS, not display names" split.
+    case 'shared.append':
+      return 'Posted to shared app storage';
+    case 'shared.update':
+      return 'Edited your post in shared app storage';
+    case 'shared.vote':
+      return 'Up-voted a post in shared app storage';
+    case 'shared.unvote':
+      return 'Removed your up-vote in shared app storage';
+    case 'shared.withdraw':
+      return 'Withdrew your post from shared app storage';
+    case 'shared.report':
+      return 'Reported a post in shared app storage';
     case 'post.create': {
       // Named rather than generic: without a case here the Activity feed renders
       // "Performed an app action" for the single most consequential thing a block
@@ -238,6 +290,17 @@ export function describeBlockAction(
       // a model gallery" — they have different consequences.
       const gallery = detail.modelVersionId != null ? ', attached to a model gallery' : '';
       return `Published ${what} to your profile${gallery}${failed}`;
+    }
+    case 'goods.purchase': {
+      // Named for the same reason `post.create` is: this is the viewer's money
+      // leaving their balance, and "Performed an app action" is not an audit row.
+      // No `failed` suffix, unlike `workflow.submit`/`post.create`: the purchase
+      // route stashes a detail ONLY on success (asserted by its own test), so a
+      // `goods.purchase` row with `outcome: 'failed'` cannot exist. Rendering one
+      // would read as failure-audit coverage and provide none.
+      const amt = typeof detail.amount === 'number' ? ` for ${formatBuzz(detail.amount)}` : '';
+      const what = detail.goodId ? `"${detail.goodId}"` : 'an item';
+      return `Bought ${what} from this app${amt}`;
     }
     default:
       // Unknown / forward-compat action code — safe generic line.

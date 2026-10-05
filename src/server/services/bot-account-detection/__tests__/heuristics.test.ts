@@ -240,8 +240,21 @@ describe('posting-velocity', () => {
   it('explains itself with the numbers it used, and says nothing at zero', () => {
     const wave = member({ all: { images: 40 }, createdAt: at('2026-09-03T11:40:00.000Z') });
     const note = postingVelocityHeuristic.explain(evidence(wave), 1);
-    expect(note).toContain('40 item(s)');
+    expect(note).toContain('posted 40 items in');
     expect(note).toContain('/hour');
+    // Singular too, at the other end: a helper hardcoded to always append `s` passes the line above
+    // and fails only here.
+    //
+    // ⚠️ THE SINGULAR IS NOT REACHABLE THROUGH THE HEURISTIC, AND THIS CASE FABRICATES THE SCORE TO
+    // GET AT IT. `score` returns 0 below `MIN_ITEMS` (5) and `explain` returns null at 0, so one
+    // item can never render this clause on a real run — the `1` passed here is a score no caller
+    // would produce for this member. The agreement is written anyway for the reason
+    // `heuristics/staging.ts` gives for its own unreachable singular: `explain` is a pure function
+    // anyone may call, and a boundary that moves must not leave a grammar bug behind it. An earlier
+    // wording here claimed the fixture sat AT `MIN_ITEMS`; it is four below it.
+    const lone = member({ all: { images: 1 }, createdAt: at('2026-09-03T11:40:00.000Z') });
+    expect(postingVelocityHeuristic.score(evidence(lone))).toBe(0); // the premise, asserted
+    expect(postingVelocityHeuristic.explain(evidence(lone), 1)).toContain('posted 1 item in');
     // A reason reciting every heuristic that did NOT fire buries the one that did.
     expect(postingVelocityHeuristic.explain(evidence(member()), 0)).toBeNull();
   });
@@ -665,32 +678,113 @@ describe('asset-staging', () => {
     // boundary case written as `{ count: STAGED_ZERO_AT }` is vacuous about the constant under
     // test — measured on this module: a mutant moving `CLUSTER_ZERO_AT` survived exactly that.
     expect(STAGED_ZERO_AT).toBe(1);
-    expect(STAGED_ONE_AT).toBe(3);
+    expect(STAGED_ONE_AT).toBe(2);
     expect(BURST_ZERO_AT).toBe(1);
     expect(BURST_ONE_AT).toBe(3);
-    // 🔴 THE TWO PAIRS ARE NOW EQUAL, AND THAT IS A BLIND SPOT THIS CASE CANNOT COVER: a mutant
-    // that swaps the volume boundaries for the burst ones changes nothing observable. What covers
-    // the burst arm instead is the subset pin below — it is the case that goes red if the burst
-    // pair ever moves BELOW the volume pair, which is the only direction in which this arm can
-    // start affecting the score again.
-    expect([BURST_ZERO_AT, BURST_ONE_AT]).toEqual([STAGED_ZERO_AT, STAGED_ONE_AT]);
   });
 
-  it('scores 0 for ONE staged upload and fires from two', () => {
-    // One unattached, metadata-free upload is the commonest shape on the site that matches this
-    // predicate at all — somebody started a post and did not finish. Scoring it would fire on a
-    // large share of every day's genuine signups.
+  it('🔴 the volume boundaries stay no wider than the burst ones, so the burst arm cannot lead', () => {
+    // 🔴 ITS OWN CASE, NOT A TAIL ON THE ONE ABOVE, AND THAT IS THE WHOLE REASON IT IS HERE. These
+    // two lines were first written at the end of the CONSTANTS case, directly after four literal
+    // `toBe` pins on the same four constants. Vitest aborts an `it` at the first failed `expect`, so
+    // behind those literals they were UNREACHABLE: every mutant they claimed to catch died two lines
+    // earlier, and a relational assertion that can never be the failing line is documentation
+    // wearing a guard's clothes. Split out, they can fail on their own and the claim below is true.
     //
-    // LITERAL counts and a LITERAL expected value. 2 staged is (2-1)/(3-1) = 0.5. That it IS a
-    // round half now is a consequence of where the derived boundary landed, not a convenience, so
-    // the mutants it separates are named rather than assumed: dropping the `- zeroAt` gives
-    // 2/(3-1) = 1; dividing by `oneAt` gives 1/3; `zeroAt` 1→0 gives 2/3; `oneAt` 3→4 gives 1/3;
-    // `oneAt` 3→2 saturates to 1. All five differ from 0.5, so none of them survives this case.
+    // WHAT THEY GUARD, stated no wider than it is: the volume ramp must be at or above the burst
+    // ramp at every input — same or lower `zeroAt`, same or lower `oneAt`. Why that relationship is
+    // what makes `max(volume, burst)` identically `volume`, and which half of it is actually load-
+    // bearing at the shipped constants, is on `BURST_ONE_AT`. The literal pins above catch a BLIND
+    // mutant of either constant.
+    //
+    // 🔴 THIS CASE IS NEVER THE SOLE FAILURE, AND CLAIMING IT CATCHES A RE-TUNE "THE LITERALS
+    // CANNOT" WOULD OVERSELL IT. Measured: a dominance-breaking re-tune with its literal pin updated
+    // turns ~10 other cases red too, because every such edit also moves a ramp and the behavioural
+    // cases see it. Its unique value is one step further out — the author who re-tunes, updates the
+    // literal pin AND updates the behavioural expectations, where this relation is the last thing
+    // standing. That is the edit this PR itself performed on the volume side, which is why it is
+    // worth four lines.
+    //
+    // 🔴 THE TWO LINES GUARD OPPOSITE SIDES, AND SAYING "BOTH CATCH A BURST RE-TUNE" WOULD BE ONE
+    // BOUNDARY TOO WIDE. Measured: the `zeroAt` line fires on a BURST re-tune — `BURST_ZERO_AT` to 0
+    // with its pin updated gives `expected 1 to be less than or equal to 0` here. The `oneAt` line
+    // is what catches a VOLUME widening — `STAGED_ONE_AT` to 4 with its pin updated gives
+    // `expected 4 to be less than or equal to 3`.
+    //
+    // A burst re-tune CAN reach the `oneAt` line — `BURST_ONE_AT` to 1 with its pin updated fires it
+    // with `expected 2 to be less than or equal to 1`, because this case reads constants and never
+    // calls `rampScore`. It is simply not a viable edit: that pair throws inside `rampScore` and
+    // takes ~80 other cases with it. An earlier wording here said the line was "not reachable by any
+    // integer burst re-tune", which was a false absolute of exactly the kind this file has spent
+    // several rounds removing — unreachable and unviable are different claims.
+    expect(STAGED_ZERO_AT).toBeLessThanOrEqual(BURST_ZERO_AT);
+    expect(STAGED_ONE_AT).toBeLessThanOrEqual(BURST_ONE_AT);
+  });
+
+  it('🔴 THE ORDERING: three or more staged uploads never OUTSCORES exactly two', () => {
+    // 🔴 THE PROPERTY THE RAMP GOT BACKWARDS, PINNED AS A COMPARISON RATHER THAN AS TWO VALUES.
+    // WHY the old ordering was backwards — which population clusters where, and what the old
+    // boundaries therefore weighted highest — is on `STAGED_ONE_AT` and is deliberately not
+    // reproduced here. It was, for two rounds, and the two copies had already drifted apart on the
+    // detail before anyone noticed; one argument, one place.
+    //
+    // 🔴 ASSERTED AS `>=`, DELIBERATELY, SO IT PINS THE ORDERING AND NOT ONE PARTICULAR CURE. A
+    // plateau (3+ scoring the same as a pair) and a decline (3+ scoring less) both satisfy it, and
+    // both are defensible shapes; what is NOT defensible is the direction, which is the thing that
+    // was measured. A case asserting literal values here would go red on a later re-shaping that
+    // kept the ordering intact, and would then be pinning an implementation rather than a finding.
+    //
+    // 🔴 NOT FULLY SHAPE-NEUTRAL, THOUGH, AND SAYING "IT IS" WOULD BE FALSE. The non-suppression
+    // floor further down requires `at3 >= LONE_SIGNAL_CUT`, which rules out a decline to, say, 0.3 —
+    // a shape that satisfies the ordering and keeps the arm scoring. That is deliberate rather than
+    // an oversight: a 3+ arm scoring below the lone-signal cut is no longer independently reportable,
+    // so an account carried by that arm alone leaves the board entirely. For an arm that still
+    // carries genuine catches — it graded worse than the pair rung, not empty — that is suppression
+    // by another route, and
+    // the floor is where this case says so. A re-shape that genuinely intends it must move the floor
+    // deliberately, which is the point of making it an assertion rather than an assumption.
+    //
+    // 🔴 AND READ THE `>=` COMPARISONS AS REGRESSION COVERAGE, NOT AS A STANDING INVARIANT. `at2` is
+    // the ramp's ceiling at today's constants and `rampScore` clamps at 1, so `at2 >= at3` and the
+    // loop below hold for every NON-DEGENERATE boundary pair with `oneAt <= 2` — a pair with
+    // `zeroAt >= oneAt` satisfies that quantifier and throws instead, which is why the qualifier is
+    // there. They were red at the pre-change
+    // constants — which is what they exist to pin — but going forward the teeth are in the three
+    // assertions after the loop, not in the comparisons. Do not "simplify" this case by deleting
+    // them.
+    const at2 = score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 1 }));
+    const at3 = score(member(), stagedSignals(42, { count: 3, largestSameSecondBurst: 1 }));
+    expect(at2).toBeGreaterThanOrEqual(at3);
+
+    // The claim is about the whole arm, not about its first member: `3+` is one population and a
+    // ramp that merely delayed its rise by a step would satisfy the line above while still putting
+    // its top rung on the wrong accounts. Counts pairwise distinct, and distinct from every
+    // constant this case names.
+    //
+    // 🔴 FOUR SAMPLES RATHER THAN ONE, AND UNDER MONOTONICITY THAT WOULD BE THREE TOO MANY — the
+    // largest count would subsume the rest. They earn their place because this case deliberately
+    // admits a NON-MONOTONE re-shape (that is what the `>=` above is for), and under a decline the
+    // binding count need not be the largest.
+    for (const count of [4, 7, 11, 40]) {
+      expect(
+        score(member(), stagedSignals(42, { count, largestSameSecondBurst: 1 }))
+      ).toBeLessThanOrEqual(at2);
+    }
+
+    // 🔴 AND NOT SATISFIABLE BY SUPPRESSION, WHICH IS THE CHEAP WAY TO PASS THE LINES ABOVE AND IS
+    // THE WRONG FIX. The 3+ arm is worse than the pair arm; it is not empty, and zeroing it would
+    // discard the genuine catches it still carries. So the arm must keep scoring, and keep scoring
+    // enough to reach a moderator ON ITS OWN — the same `s >= LONE_SIGNAL_CUT` test the firing
+    // point below is derived from, asserted here on the arm that must not be thrown away.
+    expect(at3).toBeGreaterThan(0);
+    // ⚠️ This line cannot fail for any plausible value of `LONE_SIGNAL_CUT` — `at3` is 1 today, so
+    // any cut at or below 1 satisfies it. It is not a guard on the cut; it fires only on a re-shape
+    // that declines the 3+ arm below it, which is the thing it is here for.
+    expect(at3).toBeGreaterThanOrEqual(LONE_SIGNAL_CUT);
+
+    // Nor by flattening the ramp into a constant: ONE staged upload is the commonest shape on the
+    // site that matches this predicate at all, and it must still be worth nothing.
     expect(score(member(), stagedSignals(42, { count: 1, largestSameSecondBurst: 1 }))).toBe(0);
-    expect(score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 1 }))).toBeCloseTo(
-      0.5,
-      12
-    );
   });
 
   it('🔴 THE FIRING POINT: a LONE asset-staging signal is REPORTED at two staged uploads, not one', () => {
@@ -702,15 +796,23 @@ describe('asset-staging', () => {
     // one of them moving silently breaks it. So this case runs the REAL registry through the REAL
     // blend and the REAL partition, and asserts the reported/suppressed verdict itself.
     //
-    // The derivation it pins: a lone sub-score `s` blends to `s / n` and is compared against
-    // `LONE_SIGNAL_CUT / n`, so the `n`s cancel and the account is reported exactly when
-    // `s >= LONE_SIGNAL_CUT`. With `zeroAt = 1`, `1 / (oneAt - 1) >= 0.45` forces `oneAt <= 3.22…`,
-    // i.e. 3. A pair scores 0.5 and clears; a single upload scores 0 and does not.
+    // The property it pins: a lone signal is reported exactly when `s >= LONE_SIGNAL_CUT`. The
+    // algebra behind that, and the bound it puts on `oneAt`, are on `STAGED_ONE_AT` — this segment
+    // had to edit BOTH copies of that derivation to make one change, which is the argument for
+    // keeping it in one place. Here: a pair saturates at 1 and clears the cut, a single upload
+    // scores 0 and does not.
     //
     // The member is built so every OTHER heuristic scores 0 — a common mail provider, no shared
     // address, no templated text, 7 images over 11 hours (0.64/hour, far under the velocity floor).
-    // The fixture numbers are pairwise distinct and distinct from every constant named below: 7
-    // images, 1 and 2 staged, against 0.5, 0.45 and 0.1125.
+    // 🔴 ONE FIXTURE VALUE DOES COLLIDE WITH AN EXPECTED ONE — the same-second burst is 1, which is
+    // also what the pair's sub-score now saturates to, and a mutant returning the raw burst tally
+    // would satisfy that line. It is separated by the OTHER verdict rather than by the fixture: this
+    // fixture also pins the burst tally at 1 for a count of ONE, where the expected sub-score is 0,
+    // so that mutant fails on `verdict(1)`. (A tally of 0 beside a count of 1 IS buildable — a row
+    // whose timestamp will not parse increments the count and is skipped by the burst fold — it is
+    // simply not what this fixture supplies.) The staged COUNT of 1 also equals the expected
+    // sub-score of 1 in `verdict(2)`; same separation, same reason. The remaining numbers are
+    // pairwise distinct: 7 images against 0.25, 0.45 and 0.1125.
     const loner = () =>
       member({
         all: { images: 7 },
@@ -744,36 +846,112 @@ describe('asset-staging', () => {
     const pair = verdict(2);
     expect(pair.reported).toBe(1);
     expect(pair.others).toEqual([0, 0, 0]);
-    expect(pair.staged).toBeCloseTo(0.5, 12);
+    expect(pair.staged).toBe(1);
     expect(pair.staged as number).toBeGreaterThanOrEqual(LONE_SIGNAL_CUT);
-    expect(pair.confidence).toBeCloseTo(0.125, 12);
+    expect(pair.confidence).toBeCloseTo(0.25, 12);
     expect(pair.confidence).toBeGreaterThanOrEqual(MIN_REPORTED_CONFIDENCE);
+    // 🔴 TWO OF THESE ASSERTIONS GOT SLACKER IN THE CHANGE THAT MOVED THE SUB-SCORE TO 1, AND THE
+    // CASE'S OWN RATIONALE ABOVE ("any one of the four moving silently breaks it") IS WHY THAT IS
+    // WORTH WRITING DOWN. The confidence is now 0.25, so the window of `MIN_REPORTED_CONFIDENCE`
+    // values this case tolerates doubled from `(0, 0.125]` to `(0, 0.25]` — a mutant raising it to
+    // 0.2 used to flip `reported` to 0 and now does not. And `pair.staged >= LONE_SIGNAL_CUT` is
+    // satisfied by any cut at or below 1, so it can no longer fail for a plausible value. Both
+    // constants are still pinned literally in `scoring.test.ts`, so neither mutant escapes the
+    // suite; what changed is that THIS case stopped being the place they die.
   });
 
-  it('saturates at the volume boundary and stays there', () => {
-    // Lands exactly ON the boundary, then overshoots it — 3 and 11 against a boundary of 3.
+  it('starts at 0 below the volume boundary, saturates ON it, and stays there', () => {
+    // Below the boundary, exactly ON it, one past it, then far past it — 1, 2, 3 and 11 against a
+    // boundary of 2. The plateau is the shape the ORDERING case requires and this is its other half:
+    // every count above the boundary scores the SAME as the boundary, rather than tailing off.
+    //
+    // 🔴 THE `count: 1` LINE IS WHAT MAKES THE TITLE TRUE, AND WITHOUT IT THE CASE IS BLIND. The
+    // other three counts are all at or above `oneAt`, so all three of those assertions are the upper
+    // clamp: a `score` that returned 1 for EVERY input would satisfy them, and the case could not
+    // distinguish "saturates at 2" from "always 1". One count below the boundary separates them.
+    //
+    // LITERAL counts and LITERAL expected values. The mutants this separates, named rather than
+    // assumed: `zeroAt` 1→0 puts a single upload at (1-0)/(2-0) = 0.5 instead of 0; `oneAt` 2→3 puts
+    // a pair at 0.5 instead of 1, which is the inversion the ORDERING case above exists for;
+    // `oneAt` 2→1 throws at `rampScore`'s own guard.
+    //
+    // (This case absorbed a separate `scores 0 for ONE staged upload and fires from two`, whose two
+    // assertions had become a subset of the first two here — so no mutant could separate them, and
+    // counting it as a second guard was counting the same coverage twice. Its rationale is not
+    // reproduced here: the "commonest shape on the site" argument lives on `STAGED_ZERO_AT` and in
+    // the ORDERING case, and the boundary derivation is on `STAGED_ONE_AT`. A below-boundary control
+    // still appears in several other
+    // cases in this file and in `run.test.ts`, each as that case's own negative control — moving
+    // `STAGED_ZERO_AT` turns all of them red, deliberately. No count is given here: a ledger of them
+    // went stale inside the change that wrote it.)
+    //
+    // 🔴 WHAT THE VOLUME HALF CANNOT SEE, SAID PLAINLY RATHER THAN LEFT TO BE ASSUMED FROM THE
+    // GREEN: with `zeroAt = 1` and `oneAt = 2` there is NO INTEGER strictly between the two
+    // boundaries, so no count reaches `rampScore`'s interpolation line THROUGH THIS CALL SITE —
+    // both ends are clamps. A mutant of that arithmetic (dropping the `- zeroAt`, dividing by
+    // `oneAt` rather than by the span) is therefore invisible through `score`. It is NOT invisible
+    // through this heuristic: the BURST call site runs at (1, 3), a tally of 2 lands strictly
+    // between, and the two assertions that read `assetStagingHalfScores(...).burst` at 0.5 go red on
+    // exactly those mutants. The other three heuristics cover it as well.
+    expect(score(member(), stagedSignals(42, { count: 1, largestSameSecondBurst: 1 }))).toBe(0);
+    expect(score(member(), stagedSignals(42, { count: 2, largestSameSecondBurst: 1 }))).toBe(1);
     expect(score(member(), stagedSignals(42, { count: 3, largestSameSecondBurst: 1 }))).toBe(1);
     expect(score(member(), stagedSignals(42, { count: 11, largestSameSecondBurst: 1 }))).toBe(1);
   });
 
-  it('🔴 the burst half NEVER exceeds the volume half at today’s boundaries', () => {
-    // 🔴 THE HONEST REPLACEMENT FOR A CASE THAT USED TO ASSERT THE OPPOSITE. Until the firing point
-    // moved to two, the burst boundaries sat tighter than the volume ones (4 against 8) and a
-    // same-second pair genuinely scored HIGHER than the same count spread out; a case here asserted
-    // exactly that. Both pairs are now (1, 3), and a same-second group is a SUBSET of the staged
-    // rows, so `largestSameSecondBurst <= count` always and a monotonic ramp over identical
-    // boundaries cannot turn the smaller input into the larger score. `max(volume, burst)` is
+  it('🔴 the SCORE is identically the volume half — the burst arm cannot raise it', () => {
+    // 🔴 THE HONEST REPLACEMENT FOR A CASE THAT USED TO ASSERT THE OPPOSITE. Long ago the burst
+    // boundaries sat tighter than the volume ones (4 against 8) and a same-second pair genuinely
+    // scored HIGHER than the same count spread out; a case here asserted exactly that. A
+    // same-second group is a SUBSET of the staged rows, so `largestSameSecondBurst <= count`
+    // always, and the volume ramp (1, 2) is at or above the burst ramp (1, 3) at every input, so a
+    // monotonic ramp cannot turn the smaller input into the larger score. `max(volume, burst)` is
     // therefore identically `volume`: the burst arm changes neither whether this heuristic fires
     // nor how high it scores. Asserting a comparison it can no longer satisfy would be a guard
     // describing behaviour the code does not have.
     //
-    // This IS regression coverage for the boundary change and not only a forward-looking guard:
-    // measured red against the pre-change constants with `expected 0.3333… to be less than or
-    // equal to 0.1428…`, i.e. the (2, 2) row, where the old tighter burst pair genuinely produced
-    // the larger score. It doubles as the future guard — it goes red the moment `BURST_ONE_AT`
-    // drops below `STAGED_ONE_AT` again, which is the only edit that can revive this arm, and it is
-    // what keeps the `max` in `staging.ts` from being deleted as dead code without anyone noticing
-    // the arm went with it.
+    // 🔴 THE LOOP BELOW IS VACUOUS ABOUT THE BURST RAMP — NOT MERELY ABOUT ITS BOUNDARIES — AND THE
+    // TITLE WAS RENAMED BECAUSE OF IT. Every row of the table has `count >= 2`, so `volume` is 1 for
+    // all five, and `rampScore` clamps at 1: `burst <= 1 === volume` therefore holds for any burst
+    // implementation whose output STAYS IN [0, 1] — which is every boundary mutation `rampScore`
+    // ACCEPTS, since it clamps those — including one that returned a constant 1. (Not for literally
+    // any implementation: a burst half returning 2, or returning the raw same-second tally unramped,
+    // does fail that line. The clamp is the hypothesis.) 🔴 "ACCEPTS" IS LOAD-BEARING AND AN EARLIER
+    // WORDING OMITTED IT, SAYING "every boundary mutation": a DEGENERATE pair does not produce an
+    // output in [0, 1] at all, it THROWS (`rampScore` guards `!(oneAt > zeroAt)`), so the loop goes
+    // red rather than holding. That is the same false-absolute class the case two hundred lines up
+    // retracts by name, and this file would have held two paragraphs disagreeing about it. The error
+    // ran in the safe direction — it overstated the loop's vacuity, i.e. understated coverage — but
+    // it was still wrong. This case used to double
+    // as the guard that went red if the burst pair were tightened below the volume pair; it cannot
+    // any more, because the volume half is now a STEP at two and is already saturated wherever the
+    // burst half is non-zero.
+    //
+    // WHAT ACTUALLY GUARDS THE BURST PAIR, so nobody deletes it believing this loop has them
+    // covered: the four literal pins in the CONSTANTS case (which kill a blind mutant of either
+    // constant), the separate dominance case beside them (which catches a deliberate re-tune that
+    // updates those literals), and `spread.burst` in the penultimate block of THIS case — 2 in one second on an
+    // account with 5 staged is `rampScore(2, 1, 3) = 0.5`, and both `BURST_ZERO_AT -> 0` (0.666…)
+    // and `BURST_ONE_AT -> 2` (1) fail it. That last one is the only burst-pair guard inside this
+    // case, and it is the reason the case is not merely the `x <= x` its loop has become.
+    //
+    // 🔴 READ THAT LIST AS THE DESIGNATED GUARDS, NOT AS THE COMPLETE SET — it understates, which is
+    // the safe direction, but a reader deciding what is safe to delete needs to know. Dropping
+    // `BURST_ZERO_AT` below `STAGED_ZERO_AT` turns far more cases red than the three named, most of
+    // them ordinary behavioural ones; the measured count is recorded once, on the `max` in
+    // `staging.ts`, rather than copied here where it would go stale separately.
+    //
+    // What the loop pins is that `score` is not `burst` (a burst-half mutant fails it) and not a
+    // sum (1.5 against 1). It does NOT by itself pin "not a constant": every row has `count >= 2`,
+    // so `halves.volume` is 1 throughout and `score(...) === halves.volume` reduces to `1 === 1` —
+    // `score: () => 1` walks the loop untouched. The below-boundary line AFTER it is what closes
+    // that, the same control the two neighbouring cases carry.
+    //
+    // 🔴 AND NONE OF IT KEEPS THE `max` FROM BEING REWRITTEN TO A BARE `volume`, WHICH THIS COMMENT
+    // USED TO CLAIM: that rewrite satisfies `score === volume` BY CONSTRUCTION, and it is recorded
+    // on the `max` in `staging.ts` as a measured survivor of the whole suite. Nothing in this file
+    // catches it, and saying otherwise here would be a coverage claim about the one mutation this
+    // module is measured to miss.
     //
     // Every pair respects `burst <= count`, because a pair that does not is a state the evidence
     // layer cannot build and proves nothing about the shipped code.
@@ -790,14 +968,25 @@ describe('asset-staging', () => {
       expect(halves.burst).toBeLessThanOrEqual(halves.volume);
       expect(score(member(), s)).toBe(halves.volume);
     }
-    // And the two values are genuinely different somewhere in that table, so the loop is not
-    // asserting `x <= x` five times over.
+    // 🔴 THE TWO VALUES ARE GENUINELY DIFFERENT HERE, AND THIS IS THE CASE'S BURST-PAIR ASSERTION.
+    // The loop's FIRST line is `x <= x` five times over (see the note at the top); its second line
+    // is a real assertion, and `spread.burst` is where a burst BOUNDARY is observable here.
     const spread = assetStagingHalfScores(
       42,
       stagedSignals(42, { count: 5, largestSameSecondBurst: 2 })
     );
     expect(spread.volume).toBe(1);
     expect(spread.burst).toBeCloseTo(0.5, 12);
+
+    // 🔴 LAST, AND THE ORDER IS LOAD-BEARING. This is the negative control the loop cannot supply —
+    // every row it iterates is at or above the boundary, so `score: () => 1` walks all of them; one
+    // count below the boundary is what closes that. It sits AFTER the spread block deliberately:
+    // placed before it, this line is the first to fail under `BURST_ZERO_AT -> 0` (a count of 1
+    // scores `rampScore(1, 0, 3)` = 0.333 on the burst half), vitest aborts the case there, and
+    // `spread.burst` — the assertion the comment above credits with catching that mutant — never
+    // executes. That is the same unreachability the dominance case was split out to remove, and it
+    // was introduced here by an earlier round's fix before being measured.
+    expect(score(member(), stagedSignals(42, { count: 1, largestSameSecondBurst: 1 }))).toBe(0);
   });
 
   it('scores a burst of ONE as nothing — every upload shares its own second', () => {
@@ -807,16 +996,21 @@ describe('asset-staging', () => {
     // stop distinguishing anything — which matters for the `fired_burst` counter and the moderator
     // clause even now that the half cannot move the score.
     //
-    // 🔴 ASSERTED ON THE HALF, NOT ON THE BLEND, BECAUSE THE BLEND CANNOT SEE THIS MUTANT — and
-    // that is now true by construction rather than by luck. `max` is identically `volume`, so NO
-    // mutation of a burst constant is visible through `score` at all. Reading the half directly is
-    // the only reachable assertion this arm has. (Measured before the boundaries met: moving
+    // 🔴 ASSERTED ON THE HALF, NOT ON THE BLEND, BECAUSE THE BLEND CANNOT SEE THIS MUTANT AT THE
+    // SHIPPED CONSTANTS. `max` is identically `volume` while the burst pair stays no steeper than
+    // the volume pair, so a mutation of `BURST_ONE_AT` is invisible through `score`. It is NOT true
+    // that no burst mutation is visible at all — dropping `BURST_ZERO_AT` below `STAGED_ZERO_AT`
+    // breaks the dominance and does move the score — but that is the one BOUNDARY direction. Other
+    // mutations of this half are visible through `score` too (replacing it with a constant 1 moves
+    // 16 cases); the narrow claim is about its two boundaries, not about the half. Reading the half
+    // directly is what makes this arm assertable without depending on any of that. (Measured before
+    // two pairs met: moving
     // `BURST_ZERO_AT` to 0 made a burst of one score 0.25 while the volume half at a count of 3 was
     // already 0.2857, so the blended expectation passed at BOTH values of the constant.)
     const facts = stagedSignals(42, { count: 2, largestSameSecondBurst: 1 });
     expect(assetStagingHalfScores(42, facts).burst).toBe(0);
-    // And the blend is then the volume half's (2-1)/(3-1) and nothing else.
-    expect(score(member(), facts)).toBeCloseTo(0.5, 12);
+    // And the blend is then the volume half saturating at its boundary of two, and nothing else.
+    expect(score(member(), facts)).toBe(1);
   });
 
   it('saturates the burst half at its own boundary', () => {
@@ -827,18 +1021,28 @@ describe('asset-staging', () => {
     ).toBe(1);
   });
 
-  it('🔴 combines the two halves with max, NOT a sum', () => {
+  it('🔴 does NOT sum the two halves', () => {
     // A sum would double-count the same uploads — every burst member is also a count member — and
     // would make the sub-score stop meaning "how far past ordinary these uploads are". Still worth
     // pinning although `max` currently resolves to `volume`: the combination is what becomes wrong
-    // first if the boundaries ever diverge again.
+    // first if the volume half ever stops being a step.
     //
-    // 2 staged in one second is 0.5 on BOTH halves, so max is 0.5 and a sum is 1.0 — a different
-    // number from the operands and from the max, and below the clamp, so the sum mutant is visible
-    // in this function's own return value rather than being flattened to 1 by `scoreAccount`.
+    // 2 staged in one second saturates the volume half at 1 and puts the burst half at 0.5, so max
+    // is 1 and a sum is 1.5 — above the clamp, so the sum mutant is visible in this function's own
+    // return value before `scoreAccount` flattens it. A mutant returning the BURST half gives 0.5
+    // and fails too.
+    //
+    // 🔴 THE TITLE SAYS "DOES NOT SUM" RATHER THAN "COMBINES WITH MAX" BECAUSE THE COMBINATION IS NO
+    // LONGER OBSERVABLE HERE. At the previous boundaries both halves scored 0.5 on this fixture and
+    // the expected 0.5 was a value neither `1` nor `0` could impersonate; now the expected value IS
+    // the ceiling, so `score: () => 1` and `Math.max(volume, burst, 1)` both survive the FIRST line
+    // below. The second — the `count: 1` control — is what kills them, measured: `return 1` fails it
+    // with `expected 1 to be +0`. The mutant this case genuinely cannot see either way is one
+    // returning the VOLUME half: semantically equivalent at these constants, and named as a known
+    // survivor on the `max` in `staging.ts`.
     const both = stagedSignals(42, { count: 2, largestSameSecondBurst: 2 });
-    expect(score(member(), both)).toBeCloseTo(0.5, 12);
-    expect(score(member(), both)).not.toBeCloseTo(1.0, 6);
+    expect(score(member(), both)).toBe(1);
+    expect(score(member(), stagedSignals(42, { count: 1, largestSameSecondBurst: 1 }))).toBe(0);
   });
 
   it('scores an account with nothing staged 0, without throwing', () => {
@@ -869,13 +1073,14 @@ describe('asset-staging', () => {
     // 🔴 THE ASYMMETRY IS THE HONEST PART. "Volume without burst" is a real and common state. Its
     // mirror — a burst half firing on an account whose volume half did not — was asserted here
     // until the boundaries met, and it is now UNREACHABLE for any index the evidence layer can
-    // build: `burst <= count` and the two ramps are identical, so `burst > 0` implies
-    // `volume >= burst > 0`. Asserting the old direction would have required a fixture with more
-    // same-second rows than staged rows, which is not a state that exists. So the reachable claim
-    // is stated instead: the two halves are separately readable, one can be zero while the other is
-    // not, and the impossible direction is named rather than faked with an invalid fixture.
+    // build: `burst <= count` and the volume ramp is at or above the burst ramp everywhere, so
+    // `burst > 0` implies `volume >= burst > 0`. Asserting the old direction would have required a
+    // fixture with more same-second rows than staged rows, which is not a state that exists. So the
+    // reachable claim is stated instead: the two halves are separately readable, one can be zero
+    // while the other is not, and the impossible direction is named rather than faked with an
+    // invalid fixture.
     const volumeOnly = signalsWith({ staged: { 42: { count: 2, largestSameSecondBurst: 1 } } });
-    expect(assetStagingHalfScores(42, volumeOnly).volume).toBeCloseTo(0.5, 12);
+    expect(assetStagingHalfScores(42, volumeOnly).volume).toBe(1);
     expect(assetStagingHalfScores(42, volumeOnly).burst).toBe(0);
 
     // Both halves non-zero, read independently and NOT as two names for the max: 9 staged saturates
@@ -884,6 +1089,14 @@ describe('asset-staging', () => {
     const both = signalsWith({ staged: { 42: { count: 9, largestSameSecondBurst: 2 } } });
     expect(assetStagingHalfScores(42, both).volume).toBe(1);
     expect(assetStagingHalfScores(42, both).burst).toBeCloseTo(0.5, 12);
+
+    // 🔴 AND A CONTROL ON `volume` ITSELF, WHICH THIS CASE LOST WHEN THE RAMP BECAME A STEP. Both
+    // fixtures above now score 1 on the volume half — at the previous boundaries they were 0.5 and
+    // 1, two distinct values, so a mutant returning a constant for `volume` died inside this case.
+    // It no longer would. One fixture below the boundary restores the separation.
+    const belowBoundary = signalsWith({ staged: { 42: { count: 1, largestSameSecondBurst: 1 } } });
+    expect(assetStagingHalfScores(42, belowBoundary).volume).toBe(0);
+    expect(assetStagingHalfScores(42, belowBoundary).burst).toBe(0);
   });
 
   it('🔴 explains itself with the numbers it used, and states the account’s image total', () => {
@@ -897,7 +1110,7 @@ describe('asset-staging', () => {
       1
     );
     expect(note).toContain('9 of this account');
-    expect(note).toContain('12 uploaded image(s)');
+    expect(note).toContain('12 uploaded images');
     expect(note).toContain('no generation metadata');
     expect(note).toContain('4 of them were created within the same second');
   });

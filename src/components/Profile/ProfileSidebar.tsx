@@ -183,7 +183,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
       >
         <Popover.Target>
           <Box style={style}>
-            <EdgeMedia src={url} alt={award.name} />
+            <EdgeMedia src={url} alt={award.name} optimized />
           </Box>
         </Popover.Target>
         <Popover.Dropdown>
@@ -219,12 +219,13 @@ export function ProfileSidebar({ username, className }: { username: string; clas
     <Group gap={4} wrap="nowrap" className="flex-1">
       <FollowUserButton
         userId={user.id}
+        checkFollowsYou
         leftSection={isMobile ? undefined : <IconRss size={16} />}
         size={sizeOpts.button}
         style={{ fontSize: 14, fontWeight: 600, lineHeight: 1.5, flex: 1 }}
         variant={isMobile ? 'filled' : undefined}
       />
-      <AnnouncementMuteToggle creatorId={user.id} />
+      <AnnouncementMuteToggle creatorId={user.id} creatorName={user.username} />
     </Group>
   );
 

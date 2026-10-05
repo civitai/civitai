@@ -4,7 +4,6 @@ import {
   Availability,
   MediaType,
   MetricTimeframe,
-  TagTarget,
   TagType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
@@ -68,21 +67,48 @@ export const HUB_COLLECTION_SOURCES_ENABLED = false;
  * with it and the server ASSERTS with it, and a picker offering something the server
  * 404s is the shape this is here to stop.
  *
- * Moderation and System tags are out in BOTH directions — Justin's call, 2026-09-04.
- * Excluding a moderation label is a reasonable thing to want, but the browsing level
- * is the control that already enforces it; a second, weaker spelling would leave a
- * user believing they had set something stronger than they had.
- */
-/**
- * ⚠️ `entityType` holding exactly ONE value is load-bearing. The picker reaches
- * `getTags`, which matches it with array OVERLAP (`target && ARRAY[...]`, i.e. ANY);
- * the server's `hubTagWhere` uses `hasEvery` (ALL). Identical at one element, and
- * they part company at two — in the dangerous direction, with the picker offering
- * tags the server then refuses. Add a second target only with that reconciled.
+ * Moderation tags are IN, both directions — Justin's call, 2026-09-17, reversing his
+ * 2026-09-04 call that kept them out.
+ *
+ * That call gave two reasons, and only the first is wrong. It said the browsing level
+ * already enforces this: it does not, because the level is a coarse nsfwLevel bitmask
+ * ANDed across the whole feed, so it cannot express "keep this band but drop images
+ * tagged sexy" — a per-tag exclude, and the one thing a hub had no way to say.
+ *
+ * The second reason still stands and was overridden rather than refuted: a tag exclude
+ * IS weaker than the browsing level. It filters on labels a scanner wrote, so an
+ * untagged image of the same kind still arrives, where the level is an enforced cap.
+ * The call is that a cap the user cannot aim is worse than a filter they can — not
+ * that the filter is equivalent. Anyone arguing this back is arguing that trade, and
+ * should say why it fell the other way, rather than re-deriving that the exclude is
+ * best-effort. It is, and that was known.
+ *
+ * System stays out, and not as a judgement: both System image tags are `unlisted`, and
+ * `getTags`/`hubTagWhere` drop unlisted rows separately, so listing the type would
+ * offer 0 of 2 tags. Moderation is 51 of 53 by that same count — the two it leaves out
+ * (`self injury`, `extremist`) are `unlisted` too, not a carve-out. Prod, 2026-09-17.
+ *
+ * The picker and the write path now read this through ONE `hubTagWhere`, so the
+ * vocabulary cannot be offered and refused by two different rules. It used to be two:
+ * the client picker called `getTags` while the server used a `where` fragment; keep it
+ * one by not reintroducing a client-side copy.
+ *
+ * Eligibility follows ACTUAL image usage, not `Tag.target`. The image tagger applies
+ * many tags whose `target` never gains Image (it keeps reading {Model,Post}), yet each
+ * is carried by real images and returns real hub results — so gating on `target` hid
+ * them. `hubTagWhere` reads AllTime `TagMetric.imageCount` instead — the same number the
+ * picker ranks by, so a tag that would collect nothing is also the one left out. `types`
+ * still bounds which kinds of tag qualify.
+ *
+ * The trade this makes explicit: `imageCount` is a periodically-recomputed aggregate,
+ * not tag state, so a tag whose AllTime metric row has not caught up is refused until
+ * the metric job runs — where `target` admitted a used tag the moment it was applied.
+ * Accepted: a tag with no counted images returns an empty hub anyway.
+ *
+ * See `hub-moderation-tag-vocabulary.test.ts` before narrowing any of this.
  */
 export const HUB_TAG_SOURCE_FILTER = {
-  entityType: [TagTarget.Image],
-  types: [TagType.UserGenerated, TagType.Label],
+  types: [TagType.UserGenerated, TagType.Label, TagType.Moderation],
 } as const;
 
 // The hub's public identifier, as it appears in the URL. A string, because the route
@@ -118,6 +144,26 @@ export const userHubSourceSchema = z.object({
   // anyway, and spelling it makes the round trip visible.
   exclude: z.boolean().default(false),
   index: z.number().int().min(0).default(0),
+  // A tag AND-set. Tag sources of one hub sharing a key, on the same side of
+  // `exclude`, must ALL match; null is a group of one. Assigned client-side by
+  // position, like `index`, which is safe because a save REPLACES the hub's whole
+  // source list — there is no stored key to collide with.
+  //
+  // Only Tag sources are grouped. It is nullable rather than validated per type
+  // because the resolver groups within the tag rows alone, so a key on any other
+  // type is inert rather than wrong.
+  //
+  // Bounded, not merely non-negative: the column is a Postgres `INTEGER`, and an
+  // unbounded value passes zod and then fails inside the replace transaction as a
+  // raw DB error rather than a validation message. The ceiling is the most rows a
+  // hub can hold, which is the most distinct keys it can ever need —
+  // `nextHubGroupKey` hands out the lowest free one for that reason.
+  groupKey: z
+    .number()
+    .int()
+    .min(0)
+    .max(hubLimits.sourcesPerHub + hubLimits.exclusionsPerHub)
+    .nullish(),
 });
 
 const capList = <T>(value: T[]) => value.slice(0, hubLimits.filterListLength);
@@ -215,6 +261,19 @@ export type HubSourceExclusionInput = z.infer<typeof hubSourceExclusionSchema>;
 export const hubSourceKey = (source: HubSourceExclusionInput) =>
   `${source.type}:${source.targetId}`;
 
+/**
+ * The equivalence key for a tag AND-group: rows sharing it, within one hub, are ANDed.
+ *
+ * 🔴 `exclude` is part of the key, not merely a property of the list it is computed
+ * over. An include group 3 and an exclude group 3 are different groups, and a caller
+ * that keys on the bare `groupKey` is correct only for as long as it happens to be
+ * handed a polarity-uniform list — which is a fact about its caller, not about it.
+ * That exact divergence has already happened once here: the client carried the
+ * polarity and the server did not, and the two were fixed a round apart.
+ */
+export const hubTagGroupKey = (source: { exclude?: boolean | null; groupKey: number }) =>
+  `${source.exclude ? 'x' : 'i'}-${source.groupKey}`;
+
 // 🔴 Keyed, not int. `getFollowed` returns each hub's `key`, so an int-addressed
 // follow of a public hub handed that key to any signed-in caller for the price of
 // counting — defeating the URL encoding without touching the salt.
@@ -232,29 +291,40 @@ export type UpsertUserHubInput = z.infer<typeof upsertUserHubSchema>;
 export type UserHubSourceInput = z.infer<typeof userHubSourceSchema>;
 export type SetUserHubOrderInput = z.infer<typeof setUserHubOrderSchema>;
 
+// A hub built from something the user already has, rather than from an empty one they
+// then have to fill. The template names WHAT to gather; the sources it resolves to are
+// a point-in-time copy, so a model published afterwards is not in the hub.
+export const hubTemplateSchema = z.enum(['my-models', 'following', 'bookmarks']);
+
+export type HubTemplate = z.infer<typeof hubTemplateSchema>;
+
+export const getHubSourceCandidatesSchema = z.object({ template: hubTemplateSchema });
+
+export type GetHubSourceCandidatesInput = z.infer<typeof getHubSourceCandidatesSchema>;
+
 export const resolveHubSourceSchema = z.object({
   url: z.string().trim().min(1).max(500),
 });
 
 export type ResolveHubSourceInput = z.infer<typeof resolveHubSourceSchema>;
 
-// One type per request: each arm is a multi-query fan-out over sets that scale
-// with how much the viewer follows, so searching all three per keystroke does not
-// pay for itself.
-export const hubSuggestionTypeSchema = z.enum([
-  UserHubSourceType.User,
-  UserHubSourceType.Model,
-  UserHubSourceType.Collection,
-]);
+/**
+ * What the picker is looking through. A tab, not a filter: the search box under it
+ * searches WITHIN the chosen scope, so "no results" means no results of that kind —
+ * which is why the server also reports where the matches actually were.
+ *
+ * `tags` is the odd one: nothing of yours to browse, so it holds nothing until typed.
+ */
+export const hubSourceScopeSchema = z.enum(['all', 'following', 'my-models', 'bookmarks', 'tags']);
 
-export const getHubSourceSuggestionsSchema = z.object({
-  type: hubSuggestionTypeSchema.default(UserHubSourceType.User),
+export type HubSourceScope = z.infer<typeof hubSourceScopeSchema>;
+
+export const getHubSourceScopeSchema = z.object({
+  scope: hubSourceScopeSchema,
   query: z.string().trim().max(100).optional(),
 });
 
-export type HubSuggestionType = z.infer<typeof hubSuggestionTypeSchema>;
-
-export type GetHubSourceSuggestionsInput = z.infer<typeof getHubSourceSuggestionsSchema>;
+export type GetHubSourceScopeInput = z.infer<typeof getHubSourceScopeSchema>;
 
 // One source at a time, addressed by what it points at rather than by row id: the
 // caller is a model or creator page that knows the target and nothing about the
@@ -265,6 +335,11 @@ export const userHubSourceRefSchema = z.object({
   type: z.enum(UserHubSourceType),
   targetId: z.number().int().positive(),
 });
+
+// One target, no hub: "where does this already sit across my hubs".
+export const hubSourceTargetSchema = userHubSourceRefSchema.omit({ hubId: true });
+
+export type HubSourceTargetInput = z.infer<typeof hubSourceTargetSchema>;
 
 export const addUserHubSourceSchema = userHubSourceRefSchema.extend({
   alias: userHubSourceSchema.shape.alias,

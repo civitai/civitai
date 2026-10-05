@@ -4,8 +4,14 @@
  */
 
 import type { ModelFileType } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { filenamize, getFileExtension, replaceInsensitive } from '~/utils/string-helpers';
+import {
+  filenamize,
+  getDisplayName,
+  getFileExtension,
+  replaceInsensitive,
+} from '~/utils/string-helpers';
 
 /**
  * Metadata shape expected for file display functions
@@ -78,6 +84,31 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
     default:
       return true;
   }
+}
+
+/**
+ * File-type options for a filename, with display labels. `currentType` stays selectable even
+ * when not otherwise offered, so an existing file never renders as a blank Select.
+ */
+export function getModelFileTypeOptions(
+  fileName: string,
+  {
+    types = constants.modelFileTypes,
+    currentType,
+    modelType,
+  }: {
+    types?: readonly ModelFileType[];
+    currentType?: ModelFileType | null;
+    modelType?: ModelType | null;
+  } = {}
+) {
+  return types
+    .filter((type) => type === currentType || filterFileTypeByExtension(type, fileName))
+    .map((type) => ({
+      value: type,
+      label:
+        comfyFileTypeLabels[type] ?? getDisplayName(type === 'Model' ? modelType ?? type : type),
+    }));
 }
 
 /**

@@ -4,17 +4,20 @@
  */
 
 import type {
-  ImageGenStepTemplate,
   Qwen2CreateFalImageGenInput,
   Qwen2EditFalImageGenInput,
   QwenApiCreateImageGenInput,
   QwenApiEditImageGenInput,
 } from '@civitai/client';
 import type {
+  ImageGenStepTemplate,
+  ComfyQwen21CreateImageGenInput,
+  ComfyQwen21EditImageGenInput,
   ComfyQwen20bCreateImageGenInput,
   ComfyQwen20bEditImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
+import { qwen21DiffusionModel } from '~/shared/constants/qwen21.constants';
 import { defineHandler } from '../ecosystems/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
@@ -42,11 +45,51 @@ const imageSizeMap: Record<string, Qwen2CreateFalImageGenInput['imageSize']> = {
 const QWEN3_MODEL: QwenApiCreateImageGenInput['model'] = '3.0-pro';
 
 export const createQwenInput = defineHandler<
-  EcosystemData<'Qwen' | 'Qwen2' | 'Qwen3'>,
+  EcosystemData<'Qwen' | 'Qwen2' | 'Qwen21' | 'Qwen3'>,
   [ImageGenStepTemplate]
 >((data, ctx) => {
   const isTxt2Img = (data.workflow ?? '').startsWith('txt');
   const quantity = data.quantity ?? 1;
+
+  if (data.ecosystem === 'Qwen21') {
+    const loras: Record<string, number> = {};
+    for (const resource of data.resources ?? []) {
+      loras[ctx.airs.getOrThrow(resource.id)] = resource.strength ?? 1;
+    }
+    const baseInput = {
+      engine: 'comfy' as const,
+      ecosystem: 'qwen' as const,
+      model: '2.1' as const,
+      diffusionModel: qwen21DiffusionModel(data.model, ctx.airs),
+      prompt: data.prompt,
+      negativePrompt: data.negativePrompt,
+      steps: data.steps,
+      cfgScale: data.cfgScale,
+      sampler: 'euler' as const,
+      scheduler: 'simple' as const,
+      quantity,
+      seed: data.seed,
+      loras: Object.keys(loras).length ? loras : undefined,
+      outputFormat: data.outputFormat,
+    };
+    if (isTxt2Img) {
+      if (!data.aspectRatio) throw new Error('Aspect ratio is required');
+      const input = {
+        ...baseInput,
+        operation: 'createImage',
+        width: data.aspectRatio.width,
+        height: data.aspectRatio.height,
+      } satisfies ComfyQwen21CreateImageGenInput;
+      return [{ $type: 'imageGen', input: removeEmpty(input) }];
+    }
+    const input = {
+      ...baseInput,
+      operation: 'editImage',
+      resolution: data.resolution === '2K' ? 2048 : 1024,
+      images: data.images?.map((image) => image.url) ?? [],
+    } satisfies Omit<ComfyQwen21EditImageGenInput, 'width' | 'height'>;
+    return [{ $type: 'imageGen', input: removeEmpty(input) }];
+  }
 
   if (data.ecosystem === 'Qwen3') {
     const baseInput = {

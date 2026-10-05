@@ -8,6 +8,7 @@ interface UseBlockTokenResult {
   /** ISO-8601 expiry of the current token. Surfaces to the iframe in
    *  BLOCK_INIT.token.expiresAt so blocks don't have to JWT-decode. */
   expiresAt: string | null;
+  kind: 'block' | 'oauth' | undefined;
   error: Error | null;
   pending: boolean;
   /** A6: true when the app's approved manifest declares scopes the viewer has
@@ -49,6 +50,7 @@ interface UseBlockTokenResult {
 interface TokenResponse {
   token: string;
   expiresAt: string;
+  kind?: 'block' | 'oauth';
   /** A6: present from the server when the viewer's grant is short of the
    *  app's approved manifest. Older responses omit these → treat as no-op. */
   needsConsent?: boolean;
@@ -85,6 +87,7 @@ const MIN_REFRESH_MS = 30 * 1000;
 export function useBlockToken(install: BlockInstall, context: SlotContext): UseBlockTokenResult {
   const [token, setToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
+  const [kind, setKind] = useState<'block' | 'oauth' | undefined>(undefined);
   const [error, setError] = useState<Error | null>(null);
   const [pending, setPending] = useState<boolean>(true);
   const [needsConsent, setNeedsConsent] = useState<boolean>(false);
@@ -230,6 +233,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
       expiresAtRef.current = data.expiresAt;
       setToken(data.token);
       setExpiresAt(data.expiresAt);
+      setKind(data.kind === 'block' || data.kind === 'oauth' ? data.kind : undefined);
       setNeedsConsent(data.needsConsent === true);
       setMissingScopes(Array.isArray(data.missingScopes) ? data.missingScopes : []);
       setDomain(
@@ -444,6 +448,7 @@ export function useBlockToken(install: BlockInstall, context: SlotContext): UseB
   return {
     token: scopedToken,
     expiresAt: scopedExpiresAt,
+    kind: tokenMatchesInstance ? kind : undefined,
     error,
     pending,
     needsConsent,

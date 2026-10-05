@@ -44,7 +44,6 @@ import {
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 import { grokVersionIds } from './version-ids';
-import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 // =============================================================================
 // Constants
@@ -101,18 +100,11 @@ const grokV2Qualities = [
   { label: 'Medium', value: 'medium' },
 ] as const;
 
-/**
- * Options for the Grok version selector (using version IDs as values).
- *
- * v2.0 is behind the `grokImagine2` flag. Dropping it from the options both
- * hides it client-side and makes the model node reject it: Grok is
- * `modelLocked`, so a submitted id outside the version options is clamped back
- * to the ecosystem default. Fail-closed — an absent `ext.flags` hides v2.0.
- */
-const getGrokVersionOptions = (flags?: Partial<FeatureAccess>) => [
+/** Options for the Grok version selector (using version IDs as values). */
+const grokVersionOptions = [
   { label: 'v1.0', value: grokVersionIds['v1.0'] },
   { label: 'v1.5', value: grokVersionIds['v1.5'] },
-  ...(flags?.grokImagine2 === true ? [{ label: 'v2.0', value: grokVersionIds['v2.0'] }] : []),
+  { label: 'v2.0', value: grokVersionIds['v2.0'] },
 ];
 
 /** True when the selected model version is Grok Imagine v1.5 */
@@ -259,14 +251,9 @@ type GrokCtx = {
  * Uses a discriminator on the parent's `output` node to split into image/video subgraphs.
  */
 export const grokGraph = new DataGraph<GrokCtx, GenerationCtx>()
-  // Version-locked model (v1.0 / v1.5, plus v2.0 when its flag is on) — swap
-  // button hidden via modelLocked in ecosystemSettings; the default model id
-  // comes from ecosystemSettings.
-  .merge(
-    (_ctx, ext) =>
-      createCheckpointGraph({ versions: { options: getGrokVersionOptions(ext.flags) } }),
-    ['ext:flags']
-  )
+  // Version-locked model — swap button hidden via modelLocked in
+  // ecosystemSettings; the default model id comes from ecosystemSettings.
+  .merge(() => createCheckpointGraph({ versions: { options: grokVersionOptions } }), [])
 
   // Seed node
   .node('seed', seedNode())
@@ -291,7 +278,6 @@ export {
   grokV15Resolutions,
   grokV2Resolutions,
   grokV2Qualities,
-  getGrokVersionOptions,
   isGrokV15,
   isGrokV2,
 };

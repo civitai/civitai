@@ -5,8 +5,7 @@ import {
   type PromptTrigger,
   type PromptTriggerCategory,
 } from '~/utils/metadata/audit';
-import blockedNSFW from '~/utils/metadata/lists/blocklist-nsfw.json';
-import blockedNSFWOverridable from '~/utils/metadata/lists/blocklist-nsfw-overridable.json';
+import { blockedNSFW, blockedNSFWOverridable } from '@civitai/mod-utils/prompt-audit/lists';
 
 /**
  * The generation gate lets a user proceed past the over-eager regex categories

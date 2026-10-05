@@ -483,4 +483,11 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
   pullData,
   transformData,
   pushData,
+  // A disqualified collection is handled — `pushData` deletes its document — so it is not a
+  // silent drop. Without this the base processor, which can only see documents, would report
+  // every prune as an id that produced nothing.
+  getHandledIds: ({ records, disqualifiedIds }: Awaited<ReturnType<typeof transformData>>) => [
+    ...records.map((record) => record.id),
+    ...disqualifiedIds,
+  ],
 });

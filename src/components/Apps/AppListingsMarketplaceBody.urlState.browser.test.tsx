@@ -70,7 +70,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 // 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
 // It replaces the module outright, so a named import in the file's module graph that
 // the factory omits makes the whole file fail to IMPORT — reported as

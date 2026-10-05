@@ -34,10 +34,10 @@ const hubSources = (over: Partial<ResolvedHubSources> = {}): ResolvedHubSources 
   userIds: [],
   modelVersionIds: [],
   collectionIds: [],
-  tagIds: [],
+  tagGroups: [],
   truncated: false,
   forcedBrowsingLevel: 0,
-  excluded: { userIds: [], modelVersionIds: [], tagIds: [] },
+  excluded: { userIds: [], modelVersionIds: [], tagGroups: [] },
   ...over,
 });
 
@@ -188,7 +188,7 @@ describe('hub filter reaches the search backend', () => {
 
 describe('a tag source joins the OR group', () => {
   it('emits the tag arm beside the others', async () => {
-    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10], tagIds: [77, 78] }));
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ userIds: [10], tagGroups: [[77], [78]] }));
 
     await getImagesFromSearchPreFilter(input(1));
 
@@ -197,10 +197,28 @@ describe('a tag source joins the OR group', () => {
     expect(emittedFilter()).toContain('(userId IN [10] OR tagIds IN [77,78])');
   });
 
+  it('ANDs a grouped tag source, bracketed, against the other arms', async () => {
+    // The exact string, not `toContain('AND')`. Dropping the brackets in
+    // `renderHubArm` still emits both tags and still contains ' AND ' — but AND binds
+    // tighter than OR in Meilisearch, so the filter re-associates to
+    // `userId IN [10] OR (tagIds IN [77] AND tagIds IN [78])` ... which reads the same
+    // here and does NOT on a three-arm hub, where the creator arm silently acquires
+    // the second tag.
+    resolveHubSourcesMock.mockResolvedValue(
+      hubSources({ userIds: [10], tagGroups: [[79], [77, 78]] })
+    );
+
+    await getImagesFromSearchPreFilter(input(1));
+
+    expect(emittedFilter()).toContain(
+      '(userId IN [10] OR tagIds IN [79] OR (tagIds IN [77] AND tagIds IN [78]))'
+    );
+  });
+
   it('serves a hub whose ONLY source is a tag', async () => {
     // The empty-hub branch reads the arm list, not the source list. A tag-only hub
     // that produced no arm would return an empty page while its rail showed a source.
-    resolveHubSourcesMock.mockResolvedValue(hubSources({ tagIds: [77] }));
+    resolveHubSourcesMock.mockResolvedValue(hubSources({ tagGroups: [[77]] }));
 
     await getImagesFromSearchPreFilter(input(1));
 
@@ -238,7 +256,7 @@ describe('a hub keeps its excluded sources out', () => {
 
   const withExclusions = hubSources({
     userIds: [10],
-    excluded: { userIds: [11], modelVersionIds: [20], tagIds: [77] },
+    excluded: { userIds: [11], modelVersionIds: [20], tagGroups: [[77]] },
   });
 
   it('ANDs a NOT group onto the source filter', async () => {
@@ -248,6 +266,26 @@ describe('a hub keeps its excluded sources out', () => {
 
     expect(emittedFilter()).toContain(
       '(userId IN [10]) AND NOT (userId IN [11] OR tagIds IN [77] OR postedToId IN [20] OR modelVersionIds IN [20] OR modelVersionIdsManual IN [20])'
+    );
+  });
+
+  it('keeps a grouped exclusion bracketed inside the NOT', async () => {
+    // A grouped exclusion removes LESS than an ungrouped one — `NOT (x AND y)` keeps
+    // an image carrying only x — and that is the agreed behaviour, not a bug. What is
+    // a bug is the group losing its brackets: `NOT (userId IN [11] OR tagIds IN [77]
+    // AND tagIds IN [78])` binds the AND to the userId arm and stops excluding the
+    // creator at all.
+    resolveHubSourcesMock.mockResolvedValue(
+      hubSources({
+        userIds: [10],
+        excluded: { userIds: [11], modelVersionIds: [], tagGroups: [[77, 78]] },
+      })
+    );
+
+    await getImagesFromSearchPreFilter(input(1));
+
+    expect(emittedFilter()).toContain(
+      'NOT (userId IN [11] OR (tagIds IN [77] AND tagIds IN [78]))'
     );
   });
 

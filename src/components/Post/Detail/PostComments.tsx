@@ -4,9 +4,6 @@ import { RootThreadProvider } from '~/components/CommentsV2/CommentsProvider';
 import { CreateComment } from '~/components/CommentsV2/Comment/CreateComment';
 import { ReturnToRootThread } from '../../CommentsV2/ReturnToRootThread';
 import classes from '~/components/CommentsV2/Comment/Comment.module.css';
-import { IconMessageCancel } from '@tabler/icons-react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import HiddenCommentsModal from '~/components/CommentsV2/HiddenCommentsModal';
 import { SortFilter } from '~/components/Filters';
 import type { ThreadSort } from '~/server/common/enums';
 
@@ -31,7 +28,6 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
         showMore,
         toggleShowMore,
         activeComment,
-        hiddenCount,
         sort,
         setSort,
       }) => (
@@ -41,25 +37,6 @@ export function PostComments({ postId, userId }: PostCommentsProps) {
               <Title order={2} id="comments">
                 Comments
               </Title>
-              {hiddenCount > 0 && !isLoading && (
-                <Button
-                  variant="subtle"
-                  onClick={() =>
-                    dialogStore.trigger({
-                      component: HiddenCommentsModal,
-                      props: { entityId: postId, entityType: 'post', userId },
-                    })
-                  }
-                  size="compact-xs"
-                >
-                  <Group gap={4} justify="center">
-                    <IconMessageCancel size={16} />
-                    <Text inherit inline>
-                      {`See ${hiddenCount} more hidden ${hiddenCount > 1 ? 'comments' : 'comment'}`}
-                    </Text>
-                  </Group>
-                </Button>
-              )}
             </Group>
             <SortFilter type="threads" value={sort} onChange={(v) => setSort(v as ThreadSort)} />
           </Group>

@@ -1,11 +1,13 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { sourceFiles } from '../../../../test/source-scan';
+import { stripComments } from '../../../../test/strip-comments';
 
 /**
  * RELATIONSHIP GUARD for the mint-audit DUAL SINK (#3715, step 3 of #3703).
  *
- * The behavioural suites prove each of the five mint-audit events is individually
+ * The behavioural suites prove each of the seven mint-audit events is individually
  * mirrored to stdout. What none of them can express is the property that actually
  * decays: that the SET of mint-audit emit sites is closed, and that every member of it
  * writes to BOTH sinks.
@@ -55,9 +57,10 @@ type LedgerEntry = {
    * toward the #3715 30-day adoption gate (read from Axiom, not from stdout).
    * 'audit-only'  — carries `spendGranted` only; forensic record, NOT gate input.
    *
-   * 🔴 A reader who counts all five against the gate gets the WRONG DENOMINATOR, and the
+   * 🔴 A reader who counts all seven against the gate gets the WRONG DENOMINATOR, and the
    * audit-only path is the BUSIER one in practice, which makes that mistake easy to
-   * reach for. Only 3 of the 5 are gate input.
+   * reach for. Only 3 of the 7 are gate input — the gate-bearing set has not grown
+   * since #3715 and the audit-only set has, which is the direction that misleads.
    */
   kind: 'gate-bearing' | 'audit-only';
   why: string;
@@ -89,6 +92,16 @@ const MINT_AUDIT_LEDGER: Record<string, LedgerEntry> = {
     kind: 'audit-only',
     why: 'DEV TUNNEL owned NON-APPROVED mint. Parity with the ephemeral branch: the record of granting a possibly spend-capable token to an app no moderator approved. Also carries no spendGrantBasis, for the same reason as its sibling.',
   },
+  'app-blocks.private-run.mint': {
+    file: 'src/pages/api/v1/block-tokens/index.ts',
+    kind: 'audit-only',
+    why: 'PRIVATE RUN GRANT — a delisted / suspended app served to its owner, an accepted listing collaborator, or a MODERATOR. The only event here that can record a NON-OWNER being granted a token for someone else’s app, which is what makes it the forensic record of the feature rather than a convenience: an operator decision makes the run invisible to the app owner (no moderation event, no play count), so this line is the ONLY place "who privately ran what, as which audience" is answerable. NO spendGrantBasis: there is no per-mint spend request on this path, so there is no basis to derive — correct per #3715, and the same reason both dev-tunnel siblings omit it.',
+  },
+  'app-blocks.private-run.mint-refused': {
+    file: 'src/pages/api/v1/block-tokens/index.ts',
+    kind: 'audit-only',
+    why: 'PRIVATE RUN REFUSAL — the FIRST refusal-side mint audit in this ledger, and the reason it exists is that the HTTP response deliberately says nothing. Every private-run refusal is a bare 404 byte-identical to a missing app (no existence oracle), so "somebody is probing which delisted apps they can reach" is answerable ONLY here; it carries the predicate’s `reason` and the viewer’s id. A SEPARATE NAME from the grant rather than an `outcome` field on one name, because this ledger enumerates emit sites as a LIST and therefore also asserts one site per event name — one name from two sites reddens it, and deduping its comparison would have removed a property it was enforcing. The `flag-off` reason is deliberately NOT emitted: it is answered before any DB read, so it is the cheapest request in the set and carries no information while the flag is off.',
+  },
 };
 
 /** `emitMintAuditToStdout('<event>'` — the stdout mirror. */
@@ -96,33 +109,14 @@ const MIRROR_RE = /emitMintAuditToStdout\(\s*'([^']+)'/g;
 /** `…log?.info('<event>'` / `…log.info('<event>'` — the Axiom sink. */
 const AXIOM_RE = /\blog\??\.info\(\s*'([^']+)'/g;
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
+const FILES = sourceFiles(ROOT);
 
 /**
  * Source with comments removed. There is a LOT of prose about these events (including
  * the event names themselves, quoted); only real code may count as an emit site.
  */
 function code(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return stripComments(readFileSync(join(ROOT, file), 'utf8'));
 }
 
 const CODE = new Map(FILES.map((f) => [f, code(f)] as const));
@@ -148,8 +142,8 @@ const MIRRORS = emits(MIRROR_RE);
  * the unfiltered `MIRRORS` equality no matter how it is spelled.
  *
  * Widening discards nothing today: the entire non-test `src/` tree contains exactly
- * FIVE `log?.info('…')` calls IN CODE and all five are these events, so the filter is not
- * protecting the ledger from unrelated log lines. (A bare grep reports six — the extra
+ * SEVEN `log?.info('…')` calls IN CODE and all seven are these events, so the filter is not
+ * protecting the ledger from unrelated log lines. (A bare grep reports eight — the extra
  * hit is prose inside a docblock, which `code()` strips and which lacks the quoted first
  * argument this regex requires.) If an unrelated event ever legitimately contains "mint",
  * add it to the ledger or tighten this with a stated reason — do not silently re-anchor.
@@ -202,7 +196,7 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
 
   it('the set of STDOUT-MIRRORED mint-audit events EXACTLY equals the ledger (fails on GROWTH and on SHRINK)', () => {
     // Enumerated equality, not containment: a 6th mirrored event fails here, and so
-    // does deleting one of the five. The message names the ledger so the fix is obvious.
+    // does deleting one of the seven. The message names the ledger so the fix is obvious.
     expect(
       MIRRORS.map(([name]) => name).sort(),
       'update MINT_AUDIT_LEDGER in this file in the same commit as the emit-site change'
@@ -309,7 +303,7 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
     const auditOnly = Object.entries(MINT_AUDIT_LEDGER).filter(([, e]) => e.kind === 'audit-only');
     // Positive control: both groups are non-empty, so neither loop is vacuous.
     expect(gateBearing.length).toBe(3);
-    expect(auditOnly.length).toBe(2);
+    expect(auditOnly.length).toBe(4);
 
     for (const [name, e] of gateBearing) {
       const src = CODE.get(e.file)!;
@@ -336,7 +330,7 @@ describe('mint-audit stdout-mirror call-site ledger (#3715)', () => {
   });
 
   it('the helper is defined in exactly ONE place (no open-coded second emitter)', () => {
-    // The whole point of the shared emitter: five call sites, one definition. An
+    // The whole point of the shared emitter: seven call sites, one definition. An
     // open-coded `console.log(JSON.stringify({ event: '<a mint event>' …` at a mint site
     // would drift from the helper's no-normalisation contract, which the three-valued
     // requestBudgetedSpend signal depends on.

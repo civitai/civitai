@@ -64,7 +64,7 @@ describe('comment notifications — shared dedupe key', () => {
   it.each(['new-comment-reply', 'new-thread-response'])(
     '%s only claims the key for a thread threadUrlMap can address',
     (type) => {
-      // Both fall back to threadType 'comment' for an unmapped Thread entity (comicProject, clubPost,
+      // Both fall back to threadType 'comment' for an unmapped Thread entity (clubPost,
       // model3dReview), which renders a dead link. Claiming there would suppress a working owner
       // notification — that is exactly how the mention/challenge regression got in.
       expect(sqlFor(type)).toContain(`when details->>'threadType' <> 'comment' then`);
@@ -237,6 +237,14 @@ describe('a type that claims the dedupe key must render', () => {
             threadType: 'model3d',
             threadParentId: 1,
           },
+          {
+            ...base,
+            mentionedIn: 'comment',
+            version: 2,
+            threadId: 7,
+            threadType: 'comicProject',
+            threadParentId: 3314,
+          },
           // App-store listing threads claim the key too now, and they are the one shape whose URL
           // comes from a joined SLUG rather than `threadParentId` — so `threadParentId` is null
           // here on purpose. A claimant that cannot render is the whole point of this suite.
@@ -262,6 +270,7 @@ describe('a type that claims the dedupe key must render', () => {
       case 'new-thread-response':
         return [
           { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
+          { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
           {
             ...base,
             version: 2,
@@ -276,6 +285,7 @@ describe('a type that claims the dedupe key must render', () => {
       case 'new-comment-reply':
         return [
           { ...base, version: 2, threadId: 7, threadType: 'model', threadParentId: 1 },
+          { ...base, version: 2, threadId: 7, threadType: 'comicProject', threadParentId: 3314 },
           {
             ...base,
             version: 2,
@@ -356,7 +366,7 @@ describe('a type that claims the dedupe key must render', () => {
   it('new-mention resolves the same thread entities as the types it outranks', () => {
     // It suppresses new-thread-response, so anything that one can address, this one must address too.
     const mention = defs['new-mention'].prepareQuery!({ lastSent: '2026-01-01' });
-    for (const entity of ['challengeId', 'model3dId']) {
+    for (const entity of ['challengeId', 'model3dId', 'comicProjectId']) {
       expect(mention, `new-mention resolves ${entity}`).toContain(`t."${entity}"`);
     }
     // ...and it ADDRESSES appListing threads, for the same reason the reply processors now do.

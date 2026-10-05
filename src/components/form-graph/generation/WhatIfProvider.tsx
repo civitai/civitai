@@ -16,6 +16,7 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
+import { usePreBoostWhatIf } from '~/components/generation_v2/hooks/usePreBoost';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useImagesUploadingOrVerifying } from '~/components/Generation/Input/SourceImageUploadMultiple';
 import { useDisabledGates } from '~/components/generation_v2/gate-block';
@@ -27,22 +28,42 @@ import { applyWhatIfFingerprints } from '~/shared/data-graph/generation/whatif-f
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { defaultWorkflowCost } from '~/shared/orchestrator/workflow-data';
-import { trpc } from '~/utils/trpc';
 import type { GenerationStore } from './store';
 
-/** The first blocking message, in field declaration order. */
+const fieldLabel = (key: string) =>
+  key
+    .slice(key.lastIndexOf('.') + 1)
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/^./, (c) => c.toUpperCase());
+
+/**
+ * The first blocking message, in field declaration order, named by its field.
+ * Only the required-content fields render their own error, and a schema message
+ * ("Invalid option") does not say which control to go and fix — which for a
+ * field inside a collapsed section leaves nowhere to look.
+ */
 export function getMissingFieldMessage(
   errors: Record<string, { message?: string }> | null
 ): string | null {
   if (!errors) return null;
-  for (const error of Object.values(errors)) {
-    if (error.message) return error.message;
+  const entries = Object.entries(errors);
+  for (const [key, error] of entries) {
+    if (!error.message) continue;
+    const label = fieldLabel(key);
+    return error.message.toLowerCase().includes(label.toLowerCase())
+      ? error.message
+      : `${label}: ${error.message}`;
   }
-  return null;
+  const first = entries[0];
+  return first ? `${fieldLabel(first[0])} is invalid.` : null;
 }
 
 /** Fields whose content never affects cost — placeholdered for estimation. */
-const CONTENT_PLACEHOLDERS = { prompt: 'cost estimation', musicDescription: 'cost estimation' };
+const CONTENT_PLACEHOLDERS = {
+  prompt: 'cost estimation',
+  musicDescription: 'cost estimation',
+  lyrics: 'cost estimation',
+};
 const CONTENT_KEYS = ['prompt', 'negativePrompt', 'musicDescription', 'lyrics', 'styleReferences'];
 
 export function useWhatIfFromStore({
@@ -97,6 +118,12 @@ export function useWhatIfFromStore({
   const queryPayload = useMemo(() => {
     if (!parseResult.success) return null;
     const outputSnapshot = omit(parseResult.data as Record<string, unknown>, CONTENT_KEYS);
+    if ('yue2Abc' in outputSnapshot) {
+      outputSnapshot.yue2Abc =
+        typeof outputSnapshot.yue2Abc === 'string' && outputSnapshot.yue2Abc.trim()
+          ? 'provided score'
+          : '';
+    }
     return filterSnapshotForSubmit(outputSnapshot, { computedKeys: store.getComputedKeys() });
   }, [parseResult, store]);
 
@@ -108,26 +135,24 @@ export function useWhatIfFromStore({
   // Don't estimate a selection the server will refuse.
   const gateBlocked = useDisabledGates(selectionValues).length > 0;
 
-  const queryResult = trpc.orchestrator.whatIfFromGraph.useQuery(
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    queryPayload as any,
-    {
-      enabled:
-        enabled &&
-        !isNoSubmit &&
-        !gateBlocked &&
-        !!currentUser &&
-        !!queryPayload &&
-        !resourcesLoading &&
-        !imagesPending,
-    }
-  );
+  const { queryResult, preBoost, setPreBoost, download } = usePreBoostWhatIf({
+    revision,
+    queryPayload,
+    enabled:
+      enabled &&
+      !isNoSubmit &&
+      !gateBlocked &&
+      !!currentUser &&
+      !resourcesLoading &&
+      !imagesPending,
+  });
 
   const data = useMemo(
     () =>
       queryResult.data ?? {
         cost: defaultWorkflowCost,
         ready: false,
+        preparation: undefined,
         allowMatureContent: false,
         transactions: undefined,
       },
@@ -143,6 +168,9 @@ export function useWhatIfFromStore({
     canEstimateCost,
     gateBlocked,
     validationErrors,
+    preBoost,
+    setPreBoost,
+    download,
   };
 }
 

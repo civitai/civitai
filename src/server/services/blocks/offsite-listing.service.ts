@@ -5,7 +5,12 @@ import { TRPCError } from '@trpc/server';
 import { Prisma } from '@prisma/client';
 
 import { dbRead, dbWrite } from '~/server/db/client';
-import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import { reviewUserChipSelect } from '~/server/selectors/review-user-chip.selector';
+import {
+  bustAppListingCatalogCache,
+  listingQueueFacts,
+  NO_LISTING_QUEUE_FACTS,
+} from '~/server/services/blocks/app-listing.service';
 import {
   listingAssetTooLargeReason,
   MAX_LISTING_ASSET_SIZE_BYTES,
@@ -4072,7 +4077,79 @@ const mySubmissionSelect = {
   },
 } as const;
 
-const submitterChip = { select: { id: true, username: true, image: true } } as const;
+/**
+ * The user chip the moderator queue renders for an OFF-SITE row.
+ *
+ * 🔴 THE SAME SELECT AS EVERY ON-SITE READER, from the one declaration, and that matters
+ * because the two render SIDE BY SIDE in one list. `UnifiedReviewList` hands both to the
+ * same `UserAvatar` with `linkToProfile`, so while this chip omitted `deletedAt` and the
+ * on-site ones carried it, a closed account read as `[deleted]` on one row and as a live,
+ * clickable profile on the row beneath — two rows on one screen disagreeing about the
+ * identity a moderator is judging.
+ */
+const submitterChip = { select: reviewUserChipSelect } as const;
+
+/**
+ * `submissionSelect` PLUS the store-listing facts the MODERATOR queue shows beside each
+ * row — lifetime plays and the listing's media.
+ *
+ * 🔴 A THIRD SELECT RATHER THAN THREE MORE KEYS ON `submissionSelect`. That base select is
+ * shared with the author-facing `listMySubmissions`, which renders none of this; widening
+ * it would add two image joins and a metric join to a read that does not use them.
+ *
+ * Keyed off the row's own `appListingId` relation, so there is no slug join here — unlike
+ * the on-site queue, whose request table has no FK while a first version is pending.
+ */
+const modQueueSubmissionSelect = {
+  ...submissionSelect,
+  appListing: {
+    select: {
+      ...submissionSelect.appListing.select,
+      // 🔴 THE LISTING's kind, not the REQUEST's — `submissionSelect` already carries the
+      // latter and they are different columns on different tables. `cardOpenCount`
+      // discriminates on the listing's, and says in capitals never to substitute
+      // `appBlockId` nullness for it.
+      kind: true,
+      icon: { select: { url: true } },
+      cover: { select: { url: true } },
+      metric: { select: { openCount: true } },
+    },
+  },
+} as const;
+
+/**
+ * Project the mod-queue listing facts onto a row, through the shared `listingQueueFacts`
+ * so the store card and the review row cannot answer "how many plays" differently.
+ *
+ * 🔴 AN OFF-SITE LISTING'S COUNT IS STRUCTURALLY UNMEASURABLE — its CTA is an external
+ * anchor — so `cardOpenCount` returns `null` for it rather than the literal `0` the
+ * `NOT NULL DEFAULT 0` column carries. Only the `onsite` media-revision rows in this queue
+ * can ever show a number.
+ */
+function withModQueueListingFacts<
+  T extends {
+    appListing: {
+      kind?: string | null;
+      icon?: { url: string | null } | null;
+      cover?: { url: string | null } | null;
+      metric?: { openCount: number } | null;
+    } | null;
+  }
+>(row: T) {
+  const { appListing, ...rest } = row;
+  // The three relation objects are stripped so the derived strings are the payload, which
+  // is the on-site path's shape. ⚠️ A DENYLIST, so it is not a guarantee about keys added
+  // later: everything else in `modQueueSubmissionSelect.appListing.select` still rides
+  // through, `kind` included.
+  const { icon: _icon, cover: _cover, metric: _metric, ...listingRest } = appListing ?? {};
+  return {
+    ...rest,
+    appListing: appListing
+      ? (listingRest as Omit<NonNullable<T['appListing']>, 'icon' | 'cover' | 'metric'>)
+      : null,
+    ...(appListing ? listingQueueFacts(appListing) : NO_LISTING_QUEUE_FACTS),
+  };
+}
 
 export type ListOffsiteRequestsOptions = { limit?: number; cursor?: string };
 
@@ -4283,10 +4360,10 @@ export async function listPendingOffsiteRequests(opts: ListOffsiteRequestsOption
     orderBy: { submittedAt: 'asc' },
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
-    select: { ...submissionSelect, submittedBy: submitterChip },
+    select: { ...modQueueSubmissionSelect, submittedBy: submitterChip },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4299,13 +4376,13 @@ export async function listApprovedOffsiteRequests(opts: ListOffsiteRequestsOptio
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: {
-      ...submissionSelect,
+      ...modQueueSubmissionSelect,
       submittedBy: submitterChip,
       reviewedBy: submitterChip,
     },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }
 
@@ -4318,12 +4395,12 @@ export async function listRejectedOffsiteRequests(opts: ListOffsiteRequestsOptio
     take: limit + 1,
     ...(opts.cursor ? { cursor: { id: opts.cursor }, skip: 1 } : {}),
     select: {
-      ...submissionSelect,
+      ...modQueueSubmissionSelect,
       submittedBy: submitterChip,
       reviewedBy: submitterChip,
     },
   });
   const hasNext = rows.length > limit;
-  const items = hasNext ? rows.slice(0, limit) : rows;
+  const items = (hasNext ? rows.slice(0, limit) : rows).map(withModQueueListingFacts);
   return { items, nextCursor: hasNext ? items[items.length - 1].id : null };
 }

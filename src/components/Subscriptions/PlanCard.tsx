@@ -1,7 +1,7 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Card, Center, Divider, Group, Select, Stack, Text, Title } from '@mantine/core';
 import { IconChevronDown, IconGift } from '@tabler/icons-react';
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -18,6 +18,7 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { capitalize, getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
+import { useSelectedPriceId } from '~/components/Subscriptions/useSelectedPriceId';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { getBuzzMembershipPrice, isMembershipActive } from '~/shared/utils/buzz-membership';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -78,11 +79,21 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const defaultPriceId = _isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
-  const [priceId, setPriceId] = useState<string | null>(
-    product.prices.find((p) => p.id === defaultPriceId)?.id ??
-      product.prices.find((p) => p.currency.toLowerCase() === 'usd')?.id ??
-      product.prices[0].id
-  );
+  const [priceId, setPriceId] = useSelectedPriceId({
+    prices: product.prices,
+    defaultPriceId,
+    // Stripe pins a customer to one billing currency on their first invoice, and it cannot
+    // change. We cannot read that pin client-side, but an existing subscription's price is
+    // proof of it: Stripe accepted that price, so its currency is the pinned one. Preselect
+    // the sibling in that currency so the amount shown is the amount charged — the server
+    // substitutes it either way, and the plan-change path charges with no confirmation
+    // screen in between.
+    //
+    // `subscription` arrives LATE on /pricing — the plans are prefetched server-side, the
+    // subscription is a plain client query — so this hook derives the selection on every
+    // render rather than freezing it at mount. See useSelectedPriceId for why.
+    pinnedCurrency: subscription?.price.currency,
+  });
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
   const siteBuzzType = features.isGreen ? 'green' : 'yellow';
   const buzzPrice = getBuzzMembershipPrice({
@@ -243,7 +254,14 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   </Group>
                   {!isBuzzPurchase && (
                     <Select
-                      data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
+                      // Upper-cased in the data, not only by the `uppercase` class below:
+                      // the two payment providers spell the same currency differently
+                      // (Stripe lower-case, the other upper-case), so the label a user sees
+                      // should not depend on which catalog the product came from.
+                      data={product.prices.map((p) => ({
+                        label: p.currency.toUpperCase(),
+                        value: p.id,
+                      }))}
                       value={priceId}
                       onChange={(val) => val && setPriceId(val)}
                       allowDeselect={false}

@@ -1069,7 +1069,10 @@ describe('POST /api/v1/blocks/dev-token', () => {
       // row's owner != caller), so the caller falls through to the PENDING branch.
       // Were the pending path to mint appId=`appblk-<slug>`, recordSpendAttribution
       // would resolve the VICTIM's real OauthClient on spend and write a forged
-      // blockSpendAttribution row (the #2605 payout rail reads exactly that row).
+      // blockSpendAttribution row. (Corrected: this used to say "the #2605 payout
+      // rail reads exactly that row" — #2605 reads the PURCHASE table only, and
+      // the spend bounty is removed. The row's live consumer is the app-owner
+      // analytics dashboard; see the re-pointed GATE in dev-token.ts.)
       // The fix mints a synthetic `pending-<pubreqId>` instead, which can never
       // resolve to a real OauthClient.id → the attribution write is skipped.
       mockGetSession.mockResolvedValueOnce(MOD_SESSION);

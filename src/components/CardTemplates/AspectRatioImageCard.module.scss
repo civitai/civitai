@@ -2,16 +2,21 @@
   flex: 1;
   display: flex;
   flex-direction: column;
+}
 
+// The zoom hangs off the card body rather than the link because the header is a
+// SIBLING of the link, not a child: a chip in there that takes pointer events
+// pulls the pointer off the link and the picture drops back mid-hover.
+:global([data-card-hover]) {
   &:hover {
     .image {
       transform: scale(1.05) rotate(0.02deg);
     }
 
     // Placed stickers ride the same zoom as the picture they were placed on.
-    // The overlay is a SIBLING of this link rather than a child — it must paint
-    // above the media and must not join the link's click target — so it cannot
-    // inherit the transform and has to be given the same one. Left out, the
+    // The overlay sits outside the media element — it must paint above the media
+    // and must not join the link's click target — so it cannot inherit the
+    // transform and has to be given the same one. Left out, the
     // artwork grows under stickers that stay put, and every one of them drifts
     // off the spot it was placed on for as long as the pointer is on the card.
     //
@@ -23,7 +28,7 @@
     // edge. `.image` pins its own height below for exactly that reason: let the
     // media box shrink and the centres separate, and this rule starts CAUSING
     // the drift it exists to remove.
-    ~ :global([data-sticker-overlay]) {
+    :global([data-sticker-overlay]) {
       transform: scale(1.05) rotate(0.02deg);
     }
   }

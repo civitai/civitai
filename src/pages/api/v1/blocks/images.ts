@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 
 import {
@@ -13,6 +12,7 @@ import { runImageSearch } from '~/server/services/image-search.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { isClientAbortError } from '~/server/utils/errorHandling';
@@ -21,7 +21,7 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
-import { constants } from '~/server/common/constants';
+import { constants, IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { baseModels } from '~/shared/constants/basemodel.constants';
@@ -96,19 +96,32 @@ const blockImagesSchema = z.object({
   modelId: numericString().optional(),
   modelVersionId: numericString().optional(),
   imageId: numericString().optional(),
+  // Batch by id — `?ids=1,2,3`. The direct replacement for the `GET_IMAGES_BY_IDS`
+  // bridge message a block used to get its grid in one round trip
+  // (civitai/civitai-app-starters#429), capped at the SAME ceiling that message
+  // enforced (see IMAGE_IDS_BATCH_MAX).
+  //
+  // 🔴 `ids` IS A FILTER, NEVER A MATURITY BYPASS. It is narrowed by the same
+  // clamped `browsingLevel` every other selector on this route is: the clamp
+  // reaches the search as `ctx.browsingLevel` (resolved below from the token,
+  // never the request) and `getAllImages` applies it as its OWN independent SQL
+  // clause — `(i."nsfwLevel" & ${browsingLevel}) != 0 ...` at
+  // image.service.ts:2241 — alongside, not instead of, the `i."id" = ANY(...)`
+  // clause at :1799. Naming an id therefore cannot surface an image the block's
+  // ceiling excludes; it comes back absent, exactly as on the public route.
+  // Pinned by `blocks-ids-clamp` in `src/tests/api/v1/blocks/images-endpoint.test.ts`.
+  //
+  // Misses are reported by OMISSION — the same deliberate non-disclosure the
+  // public route documents, and the same one `BlockGatedImage` already makes.
+  ids: commaDelimitedNumberArray(
+    z.number().int().positive().array().min(1).max(IMAGE_IDS_BATCH_MAX)
+  ).optional(),
   username: usernameSchema.optional(),
   userId: numericString().optional(),
   period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.enum(ImageSort).default(constants.galleryFilterDefaults.sort),
   tags: commaDelimitedNumberArray().optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: keysetCursorSchema.optional(),
   type: z.enum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),
@@ -261,9 +274,7 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
       if (!res.headersSent) {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
-        res
-          .status(503)
-          .json({ error: 'Image search is temporarily overloaded — please retry.' });
+        res.status(503).json({ error: 'Image search is temporarily overloaded — please retry.' });
       }
       return;
     }

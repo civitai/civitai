@@ -32,6 +32,17 @@ export type StickerPlacementData = {
    * backfill.
    */
   commentHidden?: boolean;
+  /**
+   * The space was on `auto` when this was placed, so nobody reviewed it.
+   *
+   * Stamped at create time because no column records it: an auto space calls
+   * `settlePlacement` with the same action and actor as an owner approving from
+   * their queue, and `mode` itself is a three-level cascade resolved only in
+   * `resolvePlacementSpace`. Absent on every row written before this existed and
+   * deliberately not backfilled — the notification that reads it only ever looks
+   * at rows resolved since it last ran.
+   */
+  autoSpace?: boolean;
   /** Mirrored horizontally, so a sticker can face into the artwork. */
   flip: boolean;
   /** 0.3–1. Floored, never zero — see `STICKER_PLACEMENT_MIN_OPACITY`. */
@@ -105,6 +116,13 @@ export function stickerMaxScale(settings?: Record<string, unknown> | null) {
 }
 
 export const STICKER_MAX_SCALE_KEY = 'maxScale';
+
+/**
+ * Written by the sticker create path, read by the owner-facing auto-accept
+ * notification's SQL. Both sides take the spelling from here, because a rename
+ * on one side alone fails as a notification that silently never fires.
+ */
+export const STICKER_AUTO_SPACE_KEY = 'autoSpace';
 
 /**
  * What a caller may hand IN, as against `StickerPlacementData`, which is what a

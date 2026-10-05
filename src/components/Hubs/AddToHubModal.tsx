@@ -31,6 +31,13 @@ export default function AddToHubModal({
   const [name, setName] = useState('');
 
   const { data: hubs, isLoading } = trpc.userHub.getAll.useQuery();
+  // Where this one target already sits. Separate from the hub list because it is the
+  // only thing on this screen that is per-target: the list itself carries no sources.
+  const { data: state = [] } = trpc.userHub.sourceState.useQuery({
+    type: source.type,
+    targetId: source.targetId,
+  });
+  const stateByHub = new Map(state.map((row) => [row.hubId, row]));
 
   const onError = (title: string) => (error: { message: string }) =>
     showErrorNotification({ title, error: new Error(error.message) });
@@ -73,9 +80,7 @@ export default function AddToHubModal({
                 // Membership here means "this hub shows me that source", so a row the
                 // owner switched off in the rail reads as unticked: the hub is not
                 // showing it, and ticking is what turns it back on.
-                const row = hub.sources.find(
-                  (s) => s.type === source.type && s.targetId === source.targetId
-                );
+                const row = stateByHub.get(hub.id);
                 const checked = !!row?.enabled && !row.exclude;
                 // 🔴 A hub that EXCLUDES this target must not render as an empty box.
                 // The server flips a row rather than refusing the pair, so ticking it
@@ -86,7 +91,7 @@ export default function AddToHubModal({
                 const excluded = !!row?.exclude;
                 // Exclusions have their own cap, so counting them here would report a
                 // hub as full while it still had room for what this box adds.
-                const held = hub.sources.filter((s) => !s.exclude).length;
+                const held = hub.sourceCount;
                 const full = held >= hubLimits.sourcesPerHub;
                 return (
                   <Checkbox

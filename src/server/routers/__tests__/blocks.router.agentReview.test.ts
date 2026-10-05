@@ -228,7 +228,55 @@ describe('blocks.startAgentReview — CONFLICT preservation', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const res = await caller.startAgentReview({ publishRequestId: PUBREQ });
     expect(res).toMatchObject({ status: 'running' });
-    expect(mockStartAgentReview).toHaveBeenCalledWith({ publishRequestId: PUBREQ, modUserId: 1 });
+    expect(mockStartAgentReview).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+      sections: undefined,
+    });
+    // 🔴 WHAT THE `sections: undefined` ABOVE DOES AND DOES NOT CLAIM. `toHaveBeenCalledWith`
+    // uses `toEqual` semantics, under which an ABSENT key and an explicitly-`undefined` key
+    // are equal. So that line does catch `sections: ['codeReview']`, and it cannot
+    // distinguish "the router omitted the key" from "the router passed it as undefined" —
+    // which is fine, because the service branches on the VALUE, not on key presence.
+    // It is restated below as its own assertion for one reason: a failure there names
+    // `sections` and prints the offending value, where the matcher above fails with a whole-
+    // object diff in which the one field that matters is easy to miss.
+    const call = mockStartAgentReview.mock.calls[0][0] as { sections?: unknown };
+    expect(call.sections, 'a plain dispatch must be a FULL run').toBeUndefined();
+  });
+
+  it('🔴 forwards an optional `sections` list (the targeted re-run of ONE failed analysis)', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.startAgentReview({ publishRequestId: PUBREQ, sections: ['codeReview'] });
+    expect(mockStartAgentReview).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+      sections: ['codeReview'],
+    });
+  });
+
+  it('🔴 REFUSES a section name that is not one of the three — the input is user-supplied', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.startAgentReview({
+        publishRequestId: PUBREQ,
+        // @ts-expect-error — deliberately outside the enum; the zod schema is the gate.
+        sections: ['summaryMd'],
+      })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('🔴 REFUSES an EMPTY section list rather than treating it as "run everything"', async () => {
+    // `[]` is an instruction to run nothing, which is not a thing the runner can do; the
+    // way to ask for a full run is to omit the field. Accepting `[]` would make the
+    // service's `length > 0` test the only thing standing between a mod and a no-op
+    // dispatch they were charged a pod for.
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.startAgentReview({ publishRequestId: PUBREQ, sections: [] })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
   });
 
   it('a service CONFLICT ("already running") is preserved as CONFLICT, not flattened to BAD_REQUEST', async () => {

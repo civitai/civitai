@@ -10,6 +10,10 @@ import { randomUUID } from 'crypto';
 import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
+import {
+  filterViewableModelVersions,
+  modelVersionVisibilitySelect,
+} from '~/server/services/model-version-visibility.service';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -19,9 +23,10 @@ import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
 import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
-import { feedShadow } from '~/server/services/feed-shadow.service';
+import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
 import {
   feedFliptContext,
+  feedHydrateQuery,
   feedPrimaryAvailable,
   fetchFeedPrimary,
   serveFromFeed,
@@ -33,10 +38,9 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
 import {
   BlockedReason,
-  ImageScanType,
   ImageSort,
   NotificationCategory,
   NsfwLevel,
@@ -98,7 +102,9 @@ import {
   imageTagsCache,
   tagCache,
   tagIdsForImagesCache,
+  refreshThumbnailCache,
   thumbnailCache,
+  userImageVideoCountCaches,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import {
@@ -138,12 +144,9 @@ import type {
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
+import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import {
-  articlesSearchIndex,
-  imagesMetricsSearchIndex,
-  imagesSearchIndex,
-} from '~/server/search-index';
+import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import type {
   ImageMetricsSearchIndexRecord,
   MetricsImageFilterableAttribute,
@@ -151,8 +154,12 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { imageSelect } from '~/server/selectors/image.selector';
-import type { ImageV2Model } from '~/server/selectors/imagev2.selector';
+import {
+  imageSelect,
+  publishedImageWhere,
+  publishedOrEntryDraftImageWhere,
+} from '~/server/selectors/image.selector';
+import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
   getCollectionRandomSeed,
@@ -171,7 +178,6 @@ import {
 } from '~/server/services/model3d.service';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
-import { parseScannerFlag } from '~/server/services/image-scanner-flag';
 import {
   deleteImagTagsForReviewByImageIds,
   getImagTagsForReviewByImageIds,
@@ -202,10 +208,10 @@ import {
   throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
+  browsingLevels as selectableBrowsingLevels,
   nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
@@ -257,6 +263,8 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
+import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
+import type { ImageMetrics } from '../../../event-engine-common/types/metric-types';
 import { CacheService } from '../../../event-engine-common/services/cache';
 import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
 import type {
@@ -266,7 +274,15 @@ import type {
 } from '../../../event-engine-common/types/package-stubs';
 import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
 import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
-import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createImageIngestionRequest,
+  imageIngestionLogName,
+} from '~/server/services/orchestrator/orchestrator.service';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+} from '~/server/utils/image-scan-url';
+import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { getGenerationDisplayKeys } from '~/server/services/orchestrator/legacy-metadata-mapper';
 import {
   sanitizeProvenance,
@@ -457,8 +473,19 @@ export async function deleteImageFromS3({
   // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
   // destroys and for the collateral that is knowingly accepted along with it.
   retractPublicBlobs = false,
-}: { id: number; url: string } & PurgeResizeCacheRetraction) {
-  if (!env.DATABASE_IS_PROD) return;
+  // The retry job turns this off: the first failure already purged, and an outage would otherwise
+  // re-purge every queued key on every run.
+  purgeOnFailure = true,
+  // The shared B2 client sets no request timeout, and it also serves uploads, so a caller that
+  // needs a bound supplies its own.
+  abortSignal,
+}: {
+  id: number;
+  url: string;
+  purgeOnFailure?: boolean;
+  abortSignal?: AbortSignal;
+} & PurgeResizeCacheRetraction): Promise<StorageDeleteOutcome> {
+  if (!env.DATABASE_IS_PROD) return 'skipped';
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
   // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
   if (!url || url.startsWith('http')) {
@@ -473,9 +500,10 @@ export async function deleteImageFromS3({
         imageId: id,
         url,
       }).catch(() => undefined);
-    return;
+    return 'skipped';
   }
 
+  let outcome: StorageDeleteOutcome = 'deleted';
   try {
     const otherImagesWithSameUrl = await dbWrite.image.findFirst({
       select: { id: true },
@@ -485,7 +513,7 @@ export async function deleteImageFromS3({
       },
     });
 
-    if (!!otherImagesWithSameUrl) return;
+    if (!!otherImagesWithSameUrl) return 'skipped';
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
@@ -532,12 +560,14 @@ export async function deleteImageFromS3({
         new DeleteObjectCommand({
           Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
           Key: url,
-        })
+        }),
+        { abortSignal }
       )
     );
   } catch (error) {
-    // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
-    // publicly reachable (CDN urls are unsigned) with only this line to find it by.
+    // The DB row is already gone, so this key is the only route back to a publicly reachable
+    // object (CDN urls are unsigned). `retry-image-storage-deletes` works the queue.
+    outcome = 'failed';
     await logToAxiom({
       type: 'error',
       name: 'delete-image-from-s3-failed',
@@ -546,6 +576,7 @@ export async function deleteImageFromS3({
       url,
       error: safeError(error),
     }).catch(() => undefined);
+    await queueImageStorageDeleteRetry({ id, url });
   }
 
   // 🔴 The only attribution trail. Retraction destroys the shared stored object for every
@@ -567,7 +598,40 @@ export async function deleteImageFromS3({
   // bytes are still in the bucket and a live cache entry keeps serving content whose row is
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
   // to an image that is still live, so its bytes are not ours to retract either.
-  await purgeResizeCache({ url: url, retractPublicBlobs });
+  if (outcome === 'deleted' || purgeOnFailure)
+    await purgeResizeCache({ url: url, retractPublicBlobs });
+  return outcome;
+}
+
+export type StorageDeleteOutcome = 'deleted' | 'skipped' | 'failed';
+
+/**
+ * 🔴 Must tolerate the enum label not existing yet: it is added only after the deploy, since a label
+ * written before every pod knows it breaks every Prisma reader of JobQueue. Until then this insert
+ * fails and is logged, which is today's behaviour.
+ */
+export async function queueImageStorageDeleteRetry({ id, url }: { id: number; url: string }) {
+  const payload: ImageStorageDeletePayload = { url };
+  try {
+    await dbWrite.$executeRaw`
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
+      VALUES (${id}, ${EntityType.Image}::"EntityType", ${
+      JobQueueType.ImageStorageDelete
+    }::"JobQueueType", ${JSON.stringify(payload)}::jsonb)
+      -- Every failed retry lands here again; an unchanged key must not leave a dead row version.
+      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "data" = EXCLUDED."data"
+        WHERE "JobQueue"."data"->>'url' IS DISTINCT FROM EXCLUDED."data"->>'url'
+    `;
+  } catch (error) {
+    await logToAxiom({
+      type: 'error',
+      name: 'queue-image-storage-delete-retry-failed',
+      message: 'failed storage delete was not queued for retry; the object may still be public',
+      imageId: id,
+      url,
+      error: safeError(error),
+    }).catch(() => undefined);
+  }
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
@@ -647,9 +711,13 @@ export const deleteImageById = async ({
 
     const image = await dbWrite.image.delete({
       where: { id },
-      select: { url: true, postId: true, nsfwLevel: true, userId: true },
+      select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
     });
     if (!image) return;
+
+    // A custom video thumbnail is cached under its video, and the row that names the video is
+    // now gone, so `refreshThumbnailCache` can no longer find it.
+    const thumbnailParentId = (image.metadata as { parentId?: number } | null)?.parentId;
 
     const invalidateExistence = invalidateManyImageExistence([id]);
 
@@ -669,7 +737,9 @@ export const deleteImageById = async ({
       invalidateExistence,
       imageMetaCache.refresh(id),
       imageMetadataCache.refresh(id),
+      userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
+      ...(thumbnailParentId ? [thumbnailCache.refresh(thumbnailParentId)] : []),
     ]);
 
     return image;
@@ -766,13 +836,21 @@ export async function deleteImages(
     });
 
     const results = await dbWrite.$queryRaw<
-      { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
+      {
+        id: number;
+        url: string;
+        postId: number | null;
+        nsfwLevel: number;
+        userId: number;
+        parentId: number | null;
+      }[]
     >`
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(ids)})
-      RETURNING id, url, "postId", "nsfwLevel", "userId"
+      RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
+    const thumbnailParentIds = uniq(results.map((x) => x.parentId).filter(isDefined));
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
     const invalidateExistence = invalidateManyImageExistence(imageIds);
@@ -788,7 +866,10 @@ export async function deleteImages(
       invalidateExistence,
       imageMetaCache.refresh(imageIds),
       imageMetadataCache.refresh(imageIds),
+      userImageVideoCountCaches.bust(uniq(results.map((x) => x.userId))),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
+      // Custom video thumbnails are cached under their video; see deleteImageById.
+      ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -1064,7 +1145,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await thumbnailCache.refresh(ids);
+  await refreshThumbnailCache(ids);
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -1153,29 +1234,6 @@ export const getImageById = async ({ id }: GetByIdInput) => {
   });
 };
 
-/**
- * Runtime toggle for the new image ingestion path (createImageIngestionRequest
- * with the expanded mediaRating step). Reads from Redis so ops can flip
- * without a deploy. Accepts '1'/'true' / '0'/'false' as string values.
- *
- * If the key doesn't exist (first request after deploy), seeds it to 'false'
- * so the toggle is discoverable in Redis and explicitly off by default.
- * Operators set the key to '1' to enable.
- */
-async function isImageScannerNewEnabled(): Promise<boolean> {
-  // The HA/Sentinel sysRedis returns a Buffer for BLOB_STRING replies, which
-  // matched none of the literals pre-fix → fell through and destructively
-  // overwrote the operator's '1' with 'false'. parseScannerFlag coerces the
-  // Buffer first and returns null ONLY for a genuinely-unset/unknown key, so
-  // the seed below now fires only in its intended default-seeding case.
-  // See PR #2697/#2700 for the canonical Buffer-vs-string regression.
-  const raw = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW);
-  const parsed = parseScannerFlag(raw);
-  if (parsed !== null) return parsed;
-  await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.IMAGE_SCANNER_NEW, 'false');
-  return false;
-}
-
 export const ingestImageById = async ({ id }: GetByIdInput) => {
   const images = await dbWrite.$queryRaw<IngestImageInput[]>`
     SELECT id, url, type, width, height, meta->>'prompt' as prompt
@@ -1196,16 +1254,6 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   return await ingestImage({ image: images[0] });
 };
-
-// const scanner = env.EXTERNAL_IMAGE_SCANNER;
-// const clavataScan = env.CLAVATA_SCAN;
-export const imageScanTypes: ImageScanType[] = [
-  ImageScanType.WD14,
-  // ImageScanType.Hash,
-  // ImageScanType.Clavata,
-  // ImageScanType.Hive,
-  ImageScanType.SpineRating,
-];
 
 function extractSubmitErrorMessage(error: unknown): string | null {
   if (!error) return null;
@@ -1291,233 +1339,94 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  // if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
-  //   console.log('skipping image ingestion');
-  //   const updated = await dbClient.image.update({
-  //     where: { id: image.id },
-  //     select: { postId: true },
-  //     data: {
-  //       scanRequestedAt,
-  //       scannedAt: scanRequestedAt,
-  //       ingestion: ImageIngestionStatus.Scanned,
-  //       nsfwLevel: NsfwLevel.PG,
-  //     },
-  //   });
-
-  //   // Update post NSFW level
-  //   if (updated.postId) await updatePostNsfwLevel(updated.postId);
-
-  //   return true;
-  // }
-
   const parsedImage = ingestImageSchema.safeParse(image);
   if (!parsedImage.success) throw new Error('Failed to parse image data');
 
-  const { url, id, type, width, height } = parsedImage.data;
+  const { url, id, type } = parsedImage.data;
+
+  if (!isAllowedImageScanUrl(url)) {
+    // Same guard createImageIngestionRequest applies (which would throw here); checking
+    // first routes the rejection through the submit-failure machinery — status 400
+    // classifies PERMANENT, so the row terminalizes to Error on this attempt (retry
+    // ceiling 1) instead of churning orchestrator submits for media we will never fetch.
+    const blocked = new ImageIngestionUrlBlockedError(url);
+    const failureClass = await markImageScanSubmitFailure({
+      dbClient,
+      imageId: id,
+      status: 400,
+      error: blocked,
+    });
+    // `lane` is unknown here by construction: it comes from a Flipt read inside
+    // `createImageIngestionRequest`, which this rejection returns before. Attributing it to
+    // a concrete lane would make a per-lane rejection rate wrong, so it is reported as
+    // `unknown` rather than guessed.
+    imageScanSubmittedCounter.inc({ lane: 'unknown', result: 'rejected' });
+    logToAxiom({
+      name: imageIngestionLogName(false),
+      type: 'error',
+      reason: 'url-not-allowed',
+      failureType: 'send-fail',
+      failureClass,
+      imageId: id,
+      mediaType: type,
+      url,
+    }).catch(() => null);
+    return false;
+  }
 
   const callbackUrl =
     env.IMAGE_SCANNING_CALLBACK ??
     `${env.NEXTAUTH_URL}/api/webhooks/image-scan-result?token=${env.WEBHOOK_TOKEN}`;
 
-  if (!image.prompt) {
-    const { prompt } = await dbClient.$queryRaw<{ prompt?: string }>`
-      SELECT meta->>'prompt' as prompt FROM "Image" WHERE id = ${id}
-    `;
-    image.prompt = prompt;
-  }
-
-  if (await isImageScannerNewEnabled()) {
-    const {
-      data: workflowResponse,
-      error: submitError,
-      status: submitStatus,
-    } = await createImageIngestionRequest({
-      imageId: id,
-      url,
-      type,
-      callbackUrl,
-      priority: lowPriority ? 'low' : undefined,
-    });
-    if (!workflowResponse) {
-      imageScanSubmittedCounter.inc({ lane: 'new', result: 'failed' });
-      const failureClass = await markImageScanSubmitFailure({
-        dbClient,
-        imageId: id,
-        status: submitStatus,
-        error: submitError,
-      });
-      // The orchestrator submit already logs the transient failure in
-      // createImageIngestionRequest, but from here it's otherwise a silent
-      // `return false` — surface it at the dispatch layer so the failure is
-      // attributable to a specific image + media type.
-      logToAxiom({
-        name: 'image-ingestion',
-        type: 'error',
-        reason: 'no-workflow-response',
-        failureType: 'send-fail',
-        failureClass,
-        responseStatus: submitStatus,
-        imageId: id,
-        mediaType: type,
-      }).catch(() => null);
-      return false;
-    }
-    const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
-    await dbClient.$executeRaw`
-        UPDATE "Image"
-        SET
-          "scanRequestedAt" = ${scanRequestedAt},
-          "scanJobs" = CASE
-            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
-              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
-            ELSE
-              ${scanJobsJson}::jsonb
-          END
-        WHERE id = ${id}
-      `;
-    imageScanSubmittedCounter.inc({ lane: 'new', result: 'success' });
-    return true;
-  }
-
-  let scanUrl = `${env.IMAGE_SCANNING_ENDPOINT}/enqueue`;
-  if (lowPriority) scanUrl += '?lowpri=true';
-
-  const response = await fetch(scanUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    signal: fetchTimeoutSignal(60_000),
-    body: JSON.stringify({
-      imageId: id,
-      imageKey: url,
-      type,
-      width,
-      height,
-      prompt: image.prompt,
-      // wait: true,
-      scans: imageScanTypes,
-      callbackUrl,
-      movieRatingModel: env.IMAGE_SCANNING_MODEL,
-    }),
+  const {
+    data: workflowResponse,
+    error: submitError,
+    status: submitStatus,
+    useImageScanning,
+  } = await createImageIngestionRequest({
+    imageId: id,
+    url,
+    type,
+    callbackUrl,
+    priority: lowPriority ? 'low' : undefined,
   });
-  if (response.status === 202) {
-    const scanJobs = (await response.json().catch(() => Prisma.JsonNull)) as
-      | { jobId: string }
-      | typeof Prisma.JsonNull;
-
-    // Convert scanJobs to JSON string for raw SQL, preserving existing retryCount if it exists
-    const scanJobsJson = scanJobs === Prisma.JsonNull ? null : JSON.stringify(scanJobs);
-
-    if (scanJobsJson) {
-      await dbClient.$executeRaw`
-        UPDATE "Image"
-        SET
-          "scanRequestedAt" = ${scanRequestedAt},
-          "scanJobs" = CASE
-            WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
-              ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
-            ELSE
-              ${scanJobsJson}::jsonb
-          END
-        WHERE id = ${id}
-      `;
-    } else {
-      await dbClient.$executeRaw`
-        UPDATE "Image"
-        SET "scanRequestedAt" = ${scanRequestedAt}
-        WHERE id = ${id}
-      `;
-    }
-
-    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'success' });
-    return true;
-  } else {
-    await logToAxiom({
-      name: 'image-ingestion',
-      type: 'error',
+  const lane = useImageScanning ? 'imageScanning' : 'new';
+  if (!workflowResponse) {
+    imageScanSubmittedCounter.inc({ lane, result: 'failed' });
+    const failureClass = await markImageScanSubmitFailure({
+      dbClient,
       imageId: id,
-      url,
-      responseStatus: response.status,
+      status: submitStatus,
+      error: submitError,
     });
-
-    imageScanSubmittedCounter.inc({ lane: 'legacy', result: 'failed' });
+    // createImageIngestionRequest's own log carries neither mediaType nor failureClass.
+    logToAxiom({
+      name: imageIngestionLogName(useImageScanning),
+      type: 'error',
+      reason: 'no-workflow-response',
+      failureType: 'send-fail',
+      failureClass,
+      responseStatus: submitStatus,
+      imageId: id,
+      mediaType: type,
+    }).catch(() => null);
     return false;
   }
-};
-
-export const ingestImageBulk = async ({
-  images,
-  tx,
-  lowPriority = true,
-  scans,
-}: {
-  images: IngestImageInput[];
-  tx?: Prisma.TransactionClient;
-  lowPriority?: boolean;
-  scans?: ImageScanType[];
-}): Promise<boolean> => {
-  if (!env.IMAGE_SCANNING_ENDPOINT)
-    throw new Error('missing IMAGE_SCANNING_ENDPOINT environment variable');
-
-  const callbackUrl = env.IMAGE_SCANNING_CALLBACK;
-  const scanRequestedAt = new Date();
-  const imageIds = images.map(({ id }) => id);
-  const dbClient = tx ?? dbWrite;
-
-  if (!imageIds.length) return false;
-
-  // TODO.articleImageScan: uncomment when ready to enable image scanning for articles
-  // if (!isProd || !callbackUrl) {
-  //   console.log('skip ingest');
-  //   await dbClient.image.updateMany({
-  //     where: { id: { in: imageIds } },
-  //     data: {
-  //       scanRequestedAt,
-  //       scannedAt: scanRequestedAt,
-  //       ingestion: ImageIngestionStatus.Scanned,
-  //       nsfwLevel: NsfwLevel.PG,
-  //     },
-  //   });
-  //   return true;
-  // }
-
-  const needsPrompts = !images.some((x) => x.prompt);
-  if (needsPrompts) {
-    const prompts = await dbClient.$queryRaw<{ id: number; prompt?: string }[]>`
-      SELECT id, meta->>'prompt' as prompt FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
+  const scanJobsJson = JSON.stringify({ workflowId: workflowResponse.id });
+  await dbClient.$executeRaw`
+      UPDATE "Image"
+      SET
+        "scanRequestedAt" = ${scanRequestedAt},
+        "scanJobs" = CASE
+          WHEN "scanJobs" IS NOT NULL AND "scanJobs" ? 'retryCount' THEN
+            ${scanJobsJson}::jsonb || jsonb_build_object('retryCount', ("scanJobs"->'retryCount'))
+          ELSE
+            ${scanJobsJson}::jsonb
+        END
+      WHERE id = ${id}
     `;
-    const promptMap = Object.fromEntries(prompts.map((x) => [x.id, x.prompt]));
-    for (const image of images) image.prompt = promptMap[image.id];
-  }
-
-  const response = await fetch(
-    env.IMAGE_SCANNING_ENDPOINT + `/enqueue-bulk?lowpri=${lowPriority}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      signal: fetchTimeoutSignal(60_000),
-      body: JSON.stringify(
-        images.map((image) => ({
-          imageId: image.id,
-          imageKey: image.url,
-          type: image.type,
-          width: image.width,
-          height: image.height,
-          prompt: image.prompt,
-          scans: scans ?? imageScanTypes,
-          callbackUrl,
-        }))
-      ),
-    }
-  );
-  if (response.status === 202) {
-    await dbClient.image.updateMany({
-      where: { id: { in: imageIds } },
-      data: { scanRequestedAt },
-    });
-    return true;
-  }
-
-  return false;
+  imageScanSubmittedCounter.inc({ lane, result: 'success' });
+  return true;
 };
 
 export function enqueueImageIngestion({
@@ -1652,7 +1561,6 @@ type GetAllImagesRaw = {
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
-  useCombinedNsfwLevel?: boolean;
   user?: SessionUser;
   // Request color, used to pick which "new & upcoming" board backs `newCreators`.
   domain?: DomainColor;
@@ -1691,13 +1599,59 @@ const imageFeedStatementTimeoutCounter = registerCounterWithLabels({
   labelNames: ['dbTarget'] as const,
 });
 
+// The feed service hydrates its pages by id, so an empty by-id page is a fallback to Meilisearch;
+// the stage names the branch that emptied it.
+const imagesByIdsEmptyCounter = registerCounterWithLabels({
+  name: 'images_by_ids_empty_total',
+  help: 'getAllImages pages requested by id that came back empty, by the branch that emptied them',
+  labelNames: ['stage'] as const,
+});
+const IDS_EMPTY_LOG_INTERVAL_MS = 10_000;
+let idsEmptyLoggedAt = 0;
+function noteEmptyIdsPage(
+  input: {
+    ids?: number[];
+    sort?: unknown;
+    browsingLevel?: number;
+    user?: { id?: number; isModerator?: boolean };
+  },
+  stage: string,
+  details?: Record<string, unknown>
+) {
+  if (!input.ids?.length) return;
+  imagesByIdsEmptyCounter.inc({ stage });
+  const now = Date.now();
+  if (now - idsEmptyLoggedAt < IDS_EMPTY_LOG_INTERVAL_MS) return;
+  idsEmptyLoggedAt = now;
+  logToAxiom(
+    {
+      type: 'warning',
+      name: 'images-by-ids-empty',
+      stage,
+      ids: input.ids.length,
+      firstIds: input.ids.slice(0, 5),
+      sort: input.sort,
+      browsingLevel: input.browsingLevel,
+      viewerId: input.user?.id,
+      isModerator: input.user?.isModerator,
+      ...details,
+    },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
+
 // getImageMetricsObject soft-fallback rate: incremented whenever the ClickHouse
 // image-metrics read exceeds CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS and we serve
 // empty (TRANSIENT-zero) metrics. Makes the otherwise axiom-only fallback rate
 // observable in Prometheus. No label dimension — the timeout has no natural one.
 const imageMetricsClickhouseTimeoutCounter = registerCounter({
   name: 'image_metrics_clickhouse_timeout_total',
-  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (served empty metrics)',
+  help: 'getImageMetricsObject ClickHouse read exceeded the soft-fallback timeout (serves cached counts where warm, omits the id otherwise)',
+});
+
+const imageMetricsStaleCacheTimeoutCounter = registerCounter({
+  name: 'image_metrics_stale_cache_timeout_total',
+  help: 'getImageMetricsObject metric-cache fallback exceeded its own deadline (serves only the ids that landed in time)',
 });
 
 /**
@@ -1770,7 +1724,10 @@ const getAllImagesUncaptured = async (
     username: input.user?.username,
     isModerator: input.user?.isModerator,
   });
-  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
+  if (blockedEnforcement.emptyResult) {
+    noteEmptyIdsPage(input, 'blocked-tags');
+    return { nextCursor: undefined, items: [] };
+  }
   applyHideChallengesExclusion(input);
 
   const {
@@ -1918,6 +1875,7 @@ const getAllImagesUncaptured = async (
       isPersonalized = true; // per-user hidden image set
       AND.push(Prisma.sql`i."id" IN (${Prisma.join(imageIds)})`);
     } else {
+      noteEmptyIdsPage(input, 'hidden');
       return { items: [], nextCursor: undefined };
     }
   }
@@ -1938,6 +1896,7 @@ const getAllImagesUncaptured = async (
     const cachedData = await imagesForModelVersionsCache.fetch([modelVersionId]);
     const versionData = cachedData[modelVersionId];
     if (!versionData || !versionData.images?.length) {
+      noteEmptyIdsPage(input, 'prioritized');
       return { items: [], nextCursor: undefined };
     }
 
@@ -2018,7 +1977,11 @@ const getAllImagesUncaptured = async (
     AND.push(Prisma.sql`(i."poi" != TRUE OR p."userId" = ${userId})`);
   }
   if (disableMinor) {
-    AND.push(Prisma.sql`(i."minor" != TRUE)`);
+    AND.push(
+      userId
+        ? Prisma.sql`(i."minor" != TRUE OR i."userId" = ${userId})`
+        : Prisma.sql`(i."minor" != TRUE)`
+    );
   }
   if (excludedTagIds?.length) {
     const notExcluded = Prisma.sql`NOT EXISTS (
@@ -2161,6 +2124,7 @@ const getAllImagesUncaptured = async (
   if (collectionId) {
     // Check if user has access to collection (prefetched)
     if (!prefetchedCollectionPermissions?.read) {
+      noteEmptyIdsPage(input, 'collection');
       return { nextCursor: undefined, items: [] };
     }
 
@@ -2398,11 +2362,9 @@ const getAllImagesUncaptured = async (
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     // Acceptable in collections, need to check for contest collection only
     if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
-    AND.push(
-      browsingLevel
-        ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
-        : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
-    );
+    if (browsingLevel)
+      AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`);
+    AND.push(imageReviewedSql());
   }
 
   // TODO: Adjust ImageMetric
@@ -2550,10 +2512,12 @@ const getAllImagesUncaptured = async (
           baseModelCount: baseModels?.length,
         },
       }).catch(() => undefined);
+      noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
       return { items: [], nextCursor: undefined };
     }
     throw e;
   }
+  if (!rawImages.length) noteEmptyIdsPage(input, 'no-rows', { dbTarget });
   // const rawImages = await dbRead.$queryRaw<GetAllImagesRaw[]>(query);
 
   const imageIds = rawImages.map((i) => i.id);
@@ -2568,7 +2532,7 @@ const getAllImagesUncaptured = async (
 
   // Fetch all cache data in parallel
   const [
-    reactionsRaw,
+    userReactions,
     tagIdsVar,
     tagsVar,
     userVotes,
@@ -2582,12 +2546,7 @@ const getAllImagesUncaptured = async (
     imageResources,
   ] = await withSpan('image:getAllImages:parallelFetch', () =>
     Promise.all([
-      userId
-        ? dbRead.imageReaction.findMany({
-            where: { imageId: { in: imageIds }, userId },
-            select: { imageId: true, reaction: true },
-          })
-        : undefined,
+      userId ? getUserReactionsForImages({ imageIds, userId }) : undefined,
       include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
       include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
       include?.includes('tags') && userId
@@ -2622,16 +2581,6 @@ const getAllImagesUncaptured = async (
     : undefined;
 
   const images = withSpan('image:getAllImages:transform', () => {
-    // Process reactions into lookup
-    let userReactions: Record<number, ReviewReactions[]> | undefined;
-    if (reactionsRaw) {
-      userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-        acc[imageId] ??= [] as ReviewReactions[];
-        acc[imageId].push(reaction);
-        return acc;
-      }, {} as Record<number, ReviewReactions[]>);
-    }
-
     // Merge user votes into tags
     if (tagsVar && userVotes) {
       const voteMap = new Map(userVotes.map((v) => [`${v.imageId}:${v.tagId}`, v.vote]));
@@ -2660,6 +2609,8 @@ const getAllImagesUncaptured = async (
       // if (x.ingestion !== 'Scanned' && x.userId !== userId) return false;
       return true;
     });
+    if (rawImages.length && !filtered.length)
+      noteEmptyIdsPage(input, 'filtered', { rows: rawImages.length });
 
     const result: Array<
       Omit<ImageV2Model, 'nsfwLevel' | 'metadata'> & {
@@ -2731,19 +2682,7 @@ const getAllImagesUncaptured = async (
           cosmetics: userCosmetics?.[creatorId] ?? [],
           profilePicture: profilePictures?.[creatorId] ?? null,
         },
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
         reactions:
           userReactions?.[i.id]?.map((r) => ({ userId: userId as number, reaction: r })) ?? [],
         tags: tagsByImageId?.get(i.id),
@@ -2796,6 +2735,34 @@ export const getAllImages = async (input: Parameters<typeof getAllImagesUncaptur
 
 // TODO split this into image-index.service because this file is a giant
 
+/**
+ * The viewer's own reactions for a set of images, grouped by image id.
+ *
+ * Three callers: the two feed paths above and below, which fold the result into their own
+ * payloads, and `reaction.getMyImageReactions`, which exists because a home block's payload is
+ * served from a shared anonymous cache and so cannot carry it.
+ */
+export const getUserReactionsForImages = async ({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) => {
+  if (!imageIds.length) return {} as Record<number, ReviewReactions[]>;
+
+  const rows = await dbRead.imageReaction.findMany({
+    where: { imageId: { in: imageIds }, userId },
+    select: { imageId: true, reaction: true },
+  });
+
+  return rows.reduce((acc, { imageId, reaction }) => {
+    acc[imageId] ??= [] as ReviewReactions[];
+    acc[imageId].push(reaction);
+    return acc;
+  }, {} as Record<number, ReviewReactions[]>);
+};
+
 const getMetaForImages = async (imageIds: number[]) => {
   if (imageIds.length === 0) return {};
   return imageMetaCache.fetch(imageIds);
@@ -2819,8 +2786,16 @@ type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
  * because the blocked-browsing early return and a search reporting none both omit it.
  */
 type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
-  source?: AsyncReturnType<typeof getImagesFromSearch>['source'];
+  source?: 'feed' | AsyncReturnType<typeof getImagesFromSearch>['source'];
 };
+async function getUserIdByUsername(username: string) {
+  const user =
+    (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
+    (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
+  if (!user) throw throwNotFoundError('User not found');
+  return user.id;
+}
+
 export const getAllImagesIndex = async (
   input: GetAllImagesInput
 ): Promise<GetAllImagesIndexSourcedResult> => {
@@ -2885,6 +2860,63 @@ export const getAllImagesIndex = async (
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
 
   const currentUserId = user?.id;
+  const userId =
+    input.userId ?? (input.username ? await getUserIdByUsername(input.username) : undefined);
+
+  const searchInput = {
+    ...input,
+    userId,
+    currentUserId,
+    isModerator: user?.isModerator,
+    offset,
+    entry,
+  };
+  // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
+  // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
+  if (feedPrimaryAvailable()) {
+    const feedPrimary = await withSpan('image:flipt:feedPrimary', () =>
+      getFliptBoolean(
+        FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
+        currentUserId?.toString() || 'anonymous',
+        feedFliptContext(searchInput)
+      )
+    );
+    if (feedPrimary) {
+      const started = Date.now();
+      const [followedUserIds, newCreatorUserIds] = await Promise.all([
+        input.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
+        input.newCreators
+          ? getNewCreatorUserIds({ entity: 'images', domain: input.domain })
+          : undefined,
+      ]);
+      const served = await withSpan('image:feedPrimary', () =>
+        serveFromFeed(
+          { ...searchInput, followedUserIds, newCreatorUserIds },
+          {
+            fetchFeed: fetchFeedPrimary,
+            hydrate: async (ids) =>
+              (
+                await getAllImagesUncaptured(feedHydrateQuery(input, ids))
+              ).items,
+          }
+        )
+      );
+      if (served.ok) {
+        void feedRequestCapture().record(searchInput, {
+          source: 'getImagesFromSearch',
+          filterMode: 'feed',
+          elapsedMs: Date.now() - started,
+          resultIds: served.page.data.map((i) => i.id),
+          nextCursor: served.page.nextCursor,
+        });
+        return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
+      }
+      if (served.reason === DEEP_OFFSET)
+        throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
+      if (served.reason === CURSOR_UNPARSED)
+        throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
+    }
+  }
 
   let searchResults: Awaited<ReturnType<typeof getImagesFromSearch>>['data'];
   let searchNextCursor: Awaited<ReturnType<typeof getImagesFromSearch>>['nextCursor'];
@@ -2894,15 +2926,7 @@ export const getAllImagesIndex = async (
       data: searchResults,
       nextCursor: searchNextCursor,
       source: searchSource,
-    } = await withSpan('image:getAllImagesIndex:search', () =>
-      getImagesFromSearch({
-        ...input,
-        currentUserId,
-        isModerator: user?.isModerator,
-        offset,
-        entry,
-      })
-    ));
+    } = await withSpan('image:getAllImagesIndex:search', () => getImagesFromSearch(searchInput)));
   } catch (err) {
     // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
     // Surface as TRPCError SERVICE_UNAVAILABLE (HTTP 503) so the client gets a
@@ -2950,18 +2974,9 @@ export const getAllImagesIndex = async (
   const videoIds = searchResults.filter((sr) => sr.type === MediaType.video).map((sr) => sr.id);
   const userIds = searchResults.map((sr) => sr.userId);
 
-  let userReactions: Record<number, ReviewReactions[]> | undefined;
-  if (currentUserId) {
-    const reactionsRaw = await dbRead.imageReaction.findMany({
-      where: { imageId: { in: imageIds }, userId: currentUserId },
-      select: { imageId: true, reaction: true },
-    });
-    userReactions = reactionsRaw.reduce((acc, { imageId, reaction }) => {
-      acc[imageId] ??= [] as ReviewReactions[];
-      acc[imageId].push(reaction);
-      return acc;
-    }, {} as Record<number, ReviewReactions[]>);
-  }
+  const userReactions = currentUserId
+    ? await getUserReactionsForImages({ imageIds, userId: currentUserId })
+    : undefined;
 
   const [
     userDatas,
@@ -3081,17 +3096,7 @@ export const getAllImagesIndex = async (
           cosmetics: userCosmetics?.[sr.userId] ?? [],
           profilePicture: profilePictures?.[sr.userId] ?? null,
         },
-        stats: {
-          likeCountAllTime: metrics?.reactionLike ?? 0,
-          laughCountAllTime: metrics?.reactionLaugh ?? 0,
-          heartCountAllTime: metrics?.reactionHeart ?? 0,
-          cryCountAllTime: metrics?.reactionCry ?? 0,
-          commentCountAllTime: metrics?.comment ?? 0,
-          collectedCountAllTime: metrics?.collection ?? 0,
-          tippedAmountCountAllTime: metrics?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(metrics),
         reactions,
         cosmetic: imageCosmetics?.[sr.id] ?? null,
         // TODO fix below
@@ -3185,7 +3190,6 @@ export const makeMeiliImageSearchSort = (
 };
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
-  useCombinedNsfwLevel?: boolean;
   domain?: DomainColor;
   currentUserId?: number;
   isModerator?: boolean;
@@ -3194,8 +3198,6 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   blockedFor?: string[];
   signal?: AbortSignal;
   actor?: string;
-  /** Hydrate exactly these ids: a page the feed service already selected and ordered. */
-  feedIds?: number[];
   // Unhandled
   //prioritizedUserIds?: number[];
   //userIds?: number | number[];
@@ -3248,13 +3250,13 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
     const result = await searchImages(input);
     const outcome = {
       source: 'getImagesFromSearch' as const,
-      filterMode: result.source === 'feed' ? ('feed' as const) : result.filterMode,
+      filterMode: result.filterMode,
       elapsedMs: Date.now() - started,
       resultIds: result.data.map((i: { id: number }) => i.id),
       nextCursor: result.nextCursor,
     };
     void feedRequestCapture().record(input, outcome);
-    if (result.source !== 'feed') void feedShadow().compare(input, outcome);
+    void feedShadow().compare(input, outcome);
     return result;
   } catch (err) {
     void feedRequestCapture().record(input, {
@@ -3277,7 +3279,6 @@ async function searchImages(input: ImageSearchInput) {
     };
   let searchFn = getImagesFromSearchPreFilter;
   let filterMode: 'pre' | 'post' = 'pre';
-  let feedFirst = false;
   // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
   // flag fetch is contributing to the parent span's latency. Routes through
   // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
@@ -3287,46 +3288,13 @@ async function searchImages(input: ImageSearchInput) {
   // fallthrough (flags default off → pre-filter).
   input = await withSpan('image:flipt:eval', async () => {
     const entityId = input.currentUserId?.toString() || 'anonymous';
-    const [postFilter, feedPrimary] = await Promise.all([
-      getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId),
-      feedPrimaryAvailable()
-        ? getFliptBoolean(
-            FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
-            entityId,
-            feedFliptContext(input)
-          )
-        : false,
-    ]);
+    const postFilter = await getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId);
     if (postFilter) {
       searchFn = getImagesFromSearchPostFilter;
       filterMode = 'post';
     }
-    feedFirst = feedPrimary;
     return input;
   });
-
-  // The feed service selects and orders the page; Meilisearch only hydrates those ids
-  // through the same search function, so every post-filter still applies. Anything the
-  // feed cannot answer (unmapped shape, timeout, error) falls through to Meilisearch.
-  if (feedFirst) {
-    const served = await withSpan('image:feedPrimary', () =>
-      serveFromFeed(input, {
-        fetchFeed: fetchFeedPrimary,
-        hydrate: async (ids) =>
-          (
-            await searchFn({
-              ...input,
-              feedIds: ids,
-              limit: ids.length,
-              offset: 0,
-              entry: undefined,
-              cursor: undefined,
-            })
-          ).data,
-      })
-    );
-    if (served.ok) return { ...served.page, source: 'feed' as const, filterMode };
-  }
 
   const result = await searchFn(input);
 
@@ -3439,9 +3407,6 @@ export async function getImagesFromFeedSearch(
         techniqueIds,
         // Flags object (not in ImagesInfiniteModel)
         flags,
-        // NSFW fields (different handling)
-        aiNsfwLevel,
-        combinedNsfwLevel,
         // Metric counts (stats object has these instead)
         reactionCount,
         commentCount,
@@ -3483,6 +3448,13 @@ export async function getImagesFromFeedSearch(
         availability: img.availability ?? Availability.Public,
         reactions: transformedReactions,
         tags: transformedTags,
+        // Not derived: this path's stats come from `event-engine-common`'s ImageStats,
+        // which has already collapsed an absent metric row to zero and cannot say which
+        // it was. Type satisfaction only -- `runImageSearch`'s shaper in
+        // image-search.service.ts drops the field on both branches, so neither REST
+        // surface it backs receives it. Carrying the flag properly needs the shape
+        // changed in the submodule first.
+        stats: { ...rest.stats, statsUnknown: false },
       };
     });
 
@@ -3531,7 +3503,8 @@ export async function getImagesFromFeedSearch(
     // populatedQuery (the event-engine-common MetricService read). The feed items
     // come from Meili+Postgres; only the display-only engagement metrics are
     // ClickHouse-backed, and they ALREADY fail-open to zero elsewhere
-    // (getImageMetricsObject → {}). But this feed path runs the metric read INSIDE
+    // (getImageMetricsObject serves the cached counts, or omits the id). But this
+    // feed path runs the metric read INSIDE
     // populatedQuery, so a CH connection error (socket hang up / Code 279 / Code
     // 210) thrown there isn't a Meili error → it would fall through to `throw err`
     // → the handler's generic 500. Re-map it to the same retryable 503 as a Meili
@@ -3587,7 +3560,44 @@ async function resolvedHubSources(input: ImageSearchInput) {
   });
 }
 
-type HubFilterArm = { field: MetricsImageFilterableAttribute; ids: number[] };
+type HubFilterClause = { field: MetricsImageFilterableAttribute; ids: number[] };
+/**
+ * One arm of the OR a hub's sources become. Its clauses are ANDed, which only a tag
+ * GROUP ever uses — every other arm is a single clause.
+ */
+type HubFilterArm = HubFilterClause[];
+
+/**
+ * 🔴 The brackets are load-bearing. Arms are joined with ` OR ` and AND binds tighter,
+ * so a multi-clause arm emitted bare re-associates the whole filter — silently ANDing
+ * one tag onto every other arm. A single clause needs none, and gets none, so a hub
+ * without groups emits exactly the filter it emitted before groups existed.
+ */
+function renderHubArm(arm: HubFilterArm) {
+  const clauses = arm.map((clause) =>
+    makeMeiliImageSearchFilter(clause.field, `IN [${clause.ids.join(',')}]`)
+  );
+  // No producer can emit an empty arm today. If one ever does, `clauses[0]` is
+  // `undefined`, that literal text lands in the filter string, and Meilisearch rejects
+  // the whole query — a 503 on the hub feed, far from the mistake that caused it.
+  if (!clauses.length) throw new Error('hub filter arm has no clauses');
+  return clauses.length > 1 ? `(${clauses.join(' AND ')})` : clauses[0];
+}
+
+/**
+ * Tag groups as arms. Single-tag groups are folded into ONE `IN [...]` clause rather
+ * than an arm each — identical to OR-ing them, and it keeps a hub built before
+ * `groupKey` existed on the same one-clause shape it always had.
+ */
+function tagGroupArms(tagGroups: number[][]): HubFilterArm[] {
+  const arms: HubFilterArm[] = [];
+  const singles = tagGroups.filter((group) => group.length === 1).map(([id]) => id);
+  if (singles.length) arms.push([{ field: 'tagIds', ids: singles }]);
+  for (const group of tagGroups) {
+    if (group.length > 1) arms.push(group.map((id) => ({ field: 'tagIds' as const, ids: [id] })));
+  }
+  return arms;
+}
 
 // The single enumeration of the arms a hub ORs together. One builder consumes it
 // today (`buildHubFilter`); the split survives so a second clause syntax cannot be
@@ -3602,22 +3612,22 @@ function hubFilterArms(
   }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
 ): HubFilterArm[] | null {
   const arms: HubFilterArm[] = [];
-  if (sources.userIds.length) arms.push({ field: 'userId', ids: sources.userIds });
+  if (sources.userIds.length) arms.push([{ field: 'userId', ids: sources.userIds }]);
   if (sources.modelVersionIds.length) {
-    arms.push({ field: 'postedToId', ids: sources.modelVersionIds });
-    if (!hideAutoResources) arms.push({ field: 'modelVersionIds', ids: sources.modelVersionIds });
+    arms.push([{ field: 'postedToId', ids: sources.modelVersionIds }]);
+    if (!hideAutoResources) arms.push([{ field: 'modelVersionIds', ids: sources.modelVersionIds }]);
     if (!hideManualResources)
-      arms.push({ field: 'modelVersionIdsManual', ids: sources.modelVersionIds });
+      arms.push([{ field: 'modelVersionIdsManual', ids: sources.modelVersionIds }]);
   }
   // No guard, unlike `collectionIds` below: `tagIds` has been a live filterable
   // attribute on the metrics index since 2024, and the ids are denormalised onto the
   // documents at index time. Verified against the prod index rather than assumed —
   // a tag filter returns hits where `collectionIds IN [...]` is rejected outright.
-  if (sources.tagIds.length) arms.push({ field: 'tagIds', ids: sources.tagIds });
+  arms.push(...tagGroupArms(sources.tagGroups));
   // Guarded, not merely unused: filtering on an attribute the index has not been
   // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
   if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
-    arms.push({ field: 'collectionIds', ids: sources.collectionIds });
+    arms.push([{ field: 'collectionIds', ids: sources.collectionIds }]);
 
   return arms.length ? arms : null;
 }
@@ -3638,14 +3648,17 @@ function hubFilterArms(
  * attribution.
  */
 function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
-  const { userIds, modelVersionIds, tagIds } = sources.excluded;
+  const { userIds, modelVersionIds, tagGroups } = sources.excluded;
   const arms: HubFilterArm[] = [];
-  if (userIds.length) arms.push({ field: 'userId', ids: userIds });
-  if (tagIds.length) arms.push({ field: 'tagIds', ids: tagIds });
+  if (userIds.length) arms.push([{ field: 'userId', ids: userIds }]);
+  // A grouped exclusion removes LESS than an ungrouped one: `NOT (x AND y)` keeps an
+  // image carrying only x. The UI states that where the group is built; it is not
+  // something the filter can compensate for.
+  arms.push(...tagGroupArms(tagGroups));
   if (modelVersionIds.length) {
-    arms.push({ field: 'postedToId', ids: modelVersionIds });
-    arms.push({ field: 'modelVersionIds', ids: modelVersionIds });
-    arms.push({ field: 'modelVersionIdsManual', ids: modelVersionIds });
+    arms.push([{ field: 'postedToId', ids: modelVersionIds }]);
+    arms.push([{ field: 'modelVersionIds', ids: modelVersionIds }]);
+    arms.push([{ field: 'modelVersionIdsManual', ids: modelVersionIds }]);
   }
   if (!arms.length) return null;
 
@@ -3653,9 +3666,7 @@ function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
   // `tagIds` is empty survives `NOT tagIds IN [x]`, and `NOT field IN [unused-id]`
   // returns the whole set. So a NOT arm removes matches only — it does not also
   // drop documents that lack the field.
-  return `NOT (${arms
-    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
-    .join(' OR ')})`;
+  return `NOT (${arms.map(renderHubArm).join(' OR ')})`;
 }
 
 function buildHubFilter(
@@ -3664,9 +3675,7 @@ function buildHubFilter(
 ): string | null {
   const arms = hubFilterArms(sources, input);
   if (!arms) return null;
-  return `(${arms
-    .map((arm) => makeMeiliImageSearchFilter(arm.field, `IN [${arm.ids.join(',')}]`))
-    .join(' OR ')})`;
+  return `(${arms.map(renderHubArm).join(' OR ')})`;
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
@@ -3703,7 +3712,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     reviewId,
     modelId,
     prioritizedUserIds,
-    useCombinedNsfwLevel,
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
@@ -3748,7 +3756,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(`(NOT poi = true${ownCarveOut})`);
   }
   if (disableMinor) {
-    filters.push(`(NOT minor = true)`);
+    filters.push(`(NOT minor = true${ownCarveOut})`);
   }
 
   if (isModerator) {
@@ -3850,9 +3858,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 
   if (isModerator && includesNsfwContent) browsingLevels.push(0);
 
-  const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
-    ? 'combinedNsfwLevel'
-    : 'nsfwLevel';
+  const nsfwLevelField: MetricsImageFilterableAttribute = 'nsfwLevel';
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
@@ -3990,8 +3996,6 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
   if (postIds?.length)
     filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
-  if (input.feedIds?.length)
-    filters.push(makeMeiliImageSearchFilter('id', `IN [${input.feedIds.join(',')}]`));
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
@@ -4161,17 +4165,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         const match = imageMetrics[h.id];
         return {
           ...h,
-          stats: {
-            likeCountAllTime: match?.reactionLike ?? 0,
-            laughCountAllTime: match?.reactionLaugh ?? 0,
-            heartCountAllTime: match?.reactionHeart ?? 0,
-            cryCountAllTime: match?.reactionCry ?? 0,
-            commentCountAllTime: match?.comment ?? 0,
-            collectedCountAllTime: match?.collection ?? 0,
-            tippedAmountCountAllTime: match?.buzz ?? 0,
-            dislikeCountAllTime: 0,
-            viewCountAllTime: 0,
-          },
+          stats: toImageV2Stats(match),
         };
       });
 
@@ -4284,17 +4278,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
       const match = imageMetrics[h.id];
       return {
         ...h,
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
       };
     });
 
@@ -4359,7 +4343,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     reviewId,
     modelId,
     prioritizedUserIds,
-    useCombinedNsfwLevel,
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
@@ -4392,7 +4375,8 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(`(NOT poi = true)`);
   }
   if (disableMinor) {
-    filters.push(`(NOT minor = true)`);
+    const ownCarveOut = currentUserId ? ` OR "userId" = ${currentUserId}` : '';
+    filters.push(`(NOT minor = true${ownCarveOut})`);
   }
 
   if (isModerator) {
@@ -4491,9 +4475,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
 
   if (isModerator && includesNsfwContent) browsingLevels.push(0);
 
-  const nsfwLevelField: MetricsImageFilterableAttribute = useCombinedNsfwLevel
-    ? 'combinedNsfwLevel'
-    : 'nsfwLevel';
+  const nsfwLevelField: MetricsImageFilterableAttribute = 'nsfwLevel';
   const nsfwFilters = [
     makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
   ];
@@ -4631,8 +4613,6 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
   if (postIds?.length)
     filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
-  if (input.feedIds?.length)
-    filters.push(makeMeiliImageSearchFilter('id', `IN [${input.feedIds.join(',')}]`));
   if (baseModels?.length)
     filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
 
@@ -4980,17 +4960,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
         const match = imageMetrics[h.id];
         return {
           ...h,
-          stats: {
-            likeCountAllTime: match?.reactionLike ?? 0,
-            laughCountAllTime: match?.reactionLaugh ?? 0,
-            heartCountAllTime: match?.reactionHeart ?? 0,
-            cryCountAllTime: match?.reactionCry ?? 0,
-            commentCountAllTime: match?.comment ?? 0,
-            collectedCountAllTime: match?.collection ?? 0,
-            tippedAmountCountAllTime: match?.buzz ?? 0,
-            dislikeCountAllTime: 0,
-            viewCountAllTime: 0,
-          },
+          stats: toImageV2Stats(match),
         };
       });
 
@@ -5108,17 +5078,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
       const match = imageMetrics[h.id];
       return {
         ...h,
-        stats: {
-          likeCountAllTime: match?.reactionLike ?? 0,
-          laughCountAllTime: match?.reactionLaugh ?? 0,
-          heartCountAllTime: match?.reactionHeart ?? 0,
-          cryCountAllTime: match?.reactionCry ?? 0,
-          commentCountAllTime: match?.comment ?? 0,
-          collectedCountAllTime: match?.collection ?? 0,
-          tippedAmountCountAllTime: match?.buzz ?? 0,
-          dislikeCountAllTime: 0,
-          viewCountAllTime: 0,
-        },
+        stats: toImageV2Stats(match),
       };
     });
 
@@ -5166,6 +5126,162 @@ type ImageMetricsObject = Record<
   }
 >;
 
+// Cache-only read of the `metrics:*` hashes, for the stale arm below.
+//
+// Staleness is bounded by the WATCHER, not by the cache TTL: the event-engine
+// watcher hIncrIfExists-es these same keys as reactions arrive, and the failure
+// this arm exists for is app-to-ClickHouse transport, which leaves that writer
+// running. The TTL bounds eviction, and hot entries slide it.
+//
+// Never write back: a cached zero or unknown would outlive the outage by that
+// TTL. An id with nothing cached stays ABSENT, which is what `statsUnknown`
+// below reports to the client.
+//
+// Plain client on purpose - `redis.packed.hGetAll` hDels every field it fails to
+// decode, and a multi-digit counter string does fail, so that read would gut the hash.
+const STALE_METRIC_CACHE_TIMEOUT_MS = 500;
+
+const getCachedImageMetricsObject = async (ids: number[]): Promise<ImageMetricsObject> => {
+  const uniqueIds = [...new Set(ids)];
+  if (!uniqueIds.length) return {};
+
+  const metricRedis = redis as unknown as IRedisClient;
+
+  // The deadline below serves whatever ARRIVED: racing the aggregate would let one
+  // slow shard discard the N-1 answers already in hand, and this arm only runs when
+  // the tail is already bad.
+  const landed: (Record<string, string> | undefined)[] = new Array(uniqueIds.length);
+  // A metric-redis outage that REJECTS resolves in milliseconds, so the deadline
+  // never fires and the timeout counter never sees it. Without this the loudest
+  // half of an outage is the silent one.
+  let rejected = 0;
+
+  try {
+    // Runs AFTER the outer timeout settled: without its own deadline this await is
+    // bounded only by the redis client's multi-second backstops (cluster per-command
+    // deadline 15s, socket idle 10s), reopening the SSR hazard the outer timeout closes.
+    const reads = Promise.all(
+      uniqueIds.map((id, index) =>
+        metricRedis
+          .hGetAll(cacheKeys.metric('Image', id))
+          .then((hash) => {
+            landed[index] = hash;
+          })
+          // Per id: one rejected key must not discard the other N-1 answers.
+          .catch(() => {
+            rejected += 1;
+          })
+      )
+    );
+
+    await withTimeoutFallback<unknown>(reads, STALE_METRIC_CACHE_TIMEOUT_MS, undefined, () => {
+      imageMetricsStaleCacheTimeoutCounter.inc();
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getCachedImageMetrics timeout',
+          message: `Stale metric cache read exceeded ${STALE_METRIC_CACHE_TIMEOUT_MS}ms`,
+          idCount: uniqueIds.length,
+        },
+        'clickhouse'
+      ).catch();
+    });
+
+    if (rejected > 0) {
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'getCachedImageMetrics rejected',
+          message: `Metric cache read rejected for ${rejected} of ${uniqueIds.length} ids`,
+          idCount: uniqueIds.length,
+        },
+        'clickhouse'
+      ).catch();
+    }
+
+    const result: ImageMetricsObject = {};
+    uniqueIds.forEach((id, index) => {
+      const hash = landed[index];
+      if (!hash || Object.keys(hash).length === 0) return;
+
+      // A `notFound` sentinel is a positive "ClickHouse had no rows", so it
+      // shapes to nulls like any cached value - the same zeros MetricService
+      // itself resolves that id to. Only an absent key is unknown.
+      //
+      // `|| null` here, not only in the shaper: it keeps NaN from ever leaving this
+      // helper, so changing the shaper's `||` to `??` cannot leak one downstream.
+      const count = (value: string | undefined) => Number.parseInt(value ?? '', 10) || null;
+
+      result[id] = shapeImageMetrics(id, {
+        Like: count(hash.Like),
+        Heart: count(hash.Heart),
+        Laugh: count(hash.Laugh),
+        Cry: count(hash.Cry),
+        commentCount: count(hash.commentCount),
+        Collection: count(hash.Collection),
+        tippedAmount: count(hash.tippedAmount),
+      });
+    });
+
+    return result;
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom(
+      {
+        type: 'error',
+        name: 'Failed to getCachedImageMetrics',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      },
+      'clickhouse'
+    ).catch();
+    return {};
+  }
+};
+
+// Both arms shape here: a second copy of this field list is how the stale arm
+// silently serves null for a metric someone adds to the fresh arm only.
+// `ImageMetrics` is generated, so a MIS-KEYED field in the stale arm's
+// hand-written list is a compile error. An added metric is not - `Partial`
+// makes every key optional, so the stale arm would serve null for it.
+const shapeImageMetrics = (
+  id: number,
+  m: Partial<Record<keyof ImageMetrics, number | null>> | undefined
+): ImageMetricsObject[number] => ({
+  imageId: id,
+  reactionLike: m?.Like || null,
+  reactionHeart: m?.Heart || null,
+  reactionLaugh: m?.Laugh || null,
+  reactionCry: m?.Cry || null,
+  comment: m?.commentCount || null,
+  collection: m?.Collection || null,
+  buzz: m?.tippedAmount || null,
+});
+
+/**
+ * The one place an `ImageMetricsObject` entry becomes a feed `stats` block.
+ *
+ * Seven call sites derived this independently, all reading `match?.x ?? 0`, which
+ * is why `statsUnknown` lives here: the absent-vs-zero decision has to be made the
+ * same way at every one of them or a metrics outage reads as silence on some feeds
+ * and as unknown on others.
+ */
+export function toImageV2Stats(match: ImageMetricsObject[number] | undefined): ImageV2Stats {
+  return {
+    likeCountAllTime: match?.reactionLike ?? 0,
+    laughCountAllTime: match?.reactionLaugh ?? 0,
+    heartCountAllTime: match?.reactionHeart ?? 0,
+    cryCountAllTime: match?.reactionCry ?? 0,
+    commentCountAllTime: match?.comment ?? 0,
+    collectedCountAllTime: match?.collection ?? 0,
+    tippedAmountCountAllTime: match?.buzz ?? 0,
+    dislikeCountAllTime: 0,
+    viewCountAllTime: 0,
+    statsUnknown: !match,
+  };
+}
+
 // Image metric counts are read from the watcher-fed `metrics:*` cache via
 // MetricService (which now pulls from the FINAL `entityMetricDailyAgg_v2` view).
 // The legacy in-app `entitymetric:*` read path (imageMetricsCache) was retired
@@ -5176,18 +5292,24 @@ export const getImageMetricsObject = async (
   try {
     const ids = data.map((d) => d.id);
 
-    // The ClickHouse read has NO request-level timeout other than the
-    // @clickhouse/client 30s default, and a try/catch CANNOT catch a hang. Bound
+    // The ClickHouse read has NO request-level timeout other than the client's own
+    // `request_timeout` (300s), and a try/catch CANNOT catch a hang. Bound
     // it here so a saturated/cold-miss metric read fails SOFT to empty metrics
-    // (callers treat missing ids as null) instead of parking ~30s and blowing the
-    // SSR deadline. Empty `{}` matches the existing catch fallback.
+    // instead of parking for minutes and blowing the SSR deadline.
     const timeoutMs = env.CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS;
     // Narrow type flows from this call (`fetch('Image', …)` → Record<number,
     // ImageMetrics>); withTimeoutFallback infers T from it so the empty fallback
     // is typed identically (no widening to the full metric union).
     const fetchPromise = getImageMetricService().fetch('Image', ids);
     type ImageMetricMap = Awaited<typeof fetchPromise>;
+    // The two failure exits have to produce the SAME shape, because callers now read
+    // the absence of an id as "unresolved". The loop below writes an entry for every
+    // requested id, so without this flag a timeout would hand back all-null entries
+    // that are present -- i.e. indistinguishable from an image nobody reacted to,
+    // which is the exact confusion this function's callers exist to avoid.
+    let resolved = true;
     const metrics = await withTimeoutFallback(fetchPromise, timeoutMs, {} as ImageMetricMap, () => {
+      resolved = false;
       imageMetricsClickhouseTimeoutCounter.inc();
       logToAxiom(
         {
@@ -5200,20 +5322,12 @@ export const getImageMetricsObject = async (
         'clickhouse'
       ).catch();
     });
+    // Both failure exits serve the cache: an id it answers for is KNOWN (stale by
+    // at most the watcher's lag), and one it cannot stays absent, which
+    // `toImageV2Stats` reports as `statsUnknown`.
+    if (!resolved) return await getCachedImageMetricsObject(ids);
     const result: ImageMetricsObject = {};
-    for (const id of ids) {
-      const m = metrics[id];
-      result[id] = {
-        imageId: id,
-        reactionLike: m?.Like || null,
-        reactionHeart: m?.Heart || null,
-        reactionLaugh: m?.Laugh || null,
-        reactionCry: m?.Cry || null,
-        comment: m?.commentCount || null,
-        collection: m?.Collection || null,
-        buzz: m?.tippedAmount || null,
-      };
-    }
+    for (const id of ids) result[id] = shapeImageMetrics(id, metrics[id]);
     return result;
   } catch (e) {
     const error = e as Error;
@@ -5227,7 +5341,7 @@ export const getImageMetricsObject = async (
       },
       'clickhouse'
     ).catch();
-    return {};
+    return await getCachedImageMetricsObject(data.map((d) => d.id));
   }
 };
 
@@ -5435,19 +5549,7 @@ export const getImage = async ({
       cosmetics: userCosmetics?.[creatorId] ?? [],
       profilePicture: profilePictures?.[creatorId] ?? null,
     },
-    stats: {
-      likeCountAllTime: match?.reactionLike ?? 0,
-      laughCountAllTime: match?.reactionLaugh ?? 0,
-      heartCountAllTime: match?.reactionHeart ?? 0,
-      cryCountAllTime: match?.reactionCry ?? 0,
-
-      commentCountAllTime: match?.comment ?? 0,
-      collectedCountAllTime: match?.collection ?? 0,
-      tippedAmountCountAllTime: match?.buzz ?? 0,
-
-      dislikeCountAllTime: 0,
-      viewCountAllTime: 0,
-    },
+    stats: toImageV2Stats(match),
     reactions: userId ? reactions?.map((r) => ({ userId, reaction: r })) ?? [] : [],
   };
 
@@ -5583,6 +5685,7 @@ export const getImagesForModelVersion = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i."nsfwLevel" != 0`
     );
+    imageWhere.push(imageReviewedSql());
   }
 
   const query = Prisma.sql`
@@ -5844,7 +5947,11 @@ export const getImagesForPosts = async ({
   }
 
   if (disableMinor) {
-    imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
+    imageWhere.push(
+      userId
+        ? Prisma.sql`(i."minor" = false OR i."minor" IS NULL OR i."userId" = ${userId})`
+        : Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`
+    );
   }
 
   if (isModerator) {
@@ -6355,6 +6462,13 @@ export async function createImage({
     select: { id: true },
   });
 
+  // The upload page reads these in the browser; API and script uploads arrive without them, and
+  // the grid then renders the video as a cropped square. Not awaited: an ffprobe round-trip
+  // must not sit on the create request.
+  if (image.type === MediaType.video && (!image.width || !image.height)) {
+    void fillVideoDimensions({ id: result.id, url: image.url }).catch(() => null);
+  }
+
   if (!skipIngestion) {
     await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
     await ingestImage({
@@ -6376,6 +6490,36 @@ export async function createImage({
   // publish and scan completion.
 
   return result;
+}
+
+/**
+ * Probes a stored video and writes its width/height (and duration, unless one is recorded) onto
+ * the row. Returns the dimensions written, or null when the probe had no answer or the row
+ * already had dimensions.
+ */
+export async function fillVideoDimensions({ id, url }: { id: number; url: string }) {
+  const dimensions = await probeVideoDimensions(url);
+  if (!dimensions) return null;
+
+  const { width, height, duration } = dimensions;
+  const written = await dbWrite.$executeRaw`
+    UPDATE "Image"
+    SET
+      width = ${width},
+      height = ${height},
+      metadata = COALESCE(metadata, '{}'::jsonb)
+        || jsonb_build_object('width', ${width}::int, 'height', ${height}::int)
+        || CASE
+             WHEN metadata ? 'duration' OR ${duration ?? null}::float8 IS NULL THEN '{}'::jsonb
+             ELSE jsonb_build_object('duration', ${duration ?? null}::float8)
+           END
+    WHERE id = ${id} AND (width IS NULL OR height IS NULL)
+  `;
+  if (!written) return null;
+
+  await imageMetadataCache.bust(id);
+  await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  return dimensions;
 }
 
 export const createEntityImages = async ({
@@ -6921,20 +7065,6 @@ export async function reportCsamImages({
   await bulkSetReportStatus({ ids: reportIds, status: ReportStatus.Actioned, userId: user.id, ip });
 }
 
-export async function ingestArticleCoverImages(array: { imageId: number; articleId: number }[]) {
-  const imageIds = array.map((x) => x.imageId);
-  const images = await dbRead.image.findMany({
-    where: { id: { in: imageIds } },
-    select: { id: true, url: true, height: true, width: true },
-  });
-
-  await articlesSearchIndex.queueUpdate(
-    array.map((x) => ({ id: x.articleId, action: SearchIndexUpdateQueueAction.Update }))
-  );
-
-  await ingestImageBulk({ images, lowPriority: true });
-}
-
 export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
@@ -6957,14 +7087,14 @@ export async function updateImageNsfwLevel({
     if (!image) throw throwNotFoundError('Image not found');
 
     const metadata = (image.metadata as ImageMetadata) ?? undefined;
-    if (activity === 'setNsfwLevelKono' && !reason) reason = 'Knights Vote';
+    if (activity === 'setNsfwLevelKono' && !reason) reason = KNIGHTS_VOTE_NSFW_LEVEL_REASON;
     const updatedMetadata = { ...metadata, nsfwLevelReason: reason ?? null };
 
     await dbWrite.image.update({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await imageMetadataCache.refresh(id);
+    await Promise.all([imageMetadataCache.refresh(id), refreshThumbnailCache(id)]);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7019,6 +7149,44 @@ export async function updateImageNsfwLevel({
   }
 
   return nsfwLevel;
+}
+
+/**
+ * Applies an owner's own rating at once when it only RAISES the level: nobody over-rates their own
+ * content to hide it, so upward-only needs no review first. Not locked, so Knights and moderators
+ * still review the vote recorded alongside it and can change the level.
+ *
+ * Scanned images only: on an unscanned image the scan sets the level, and a lock-free raise would be
+ * overwritten by it anyway.
+ */
+export async function raiseOwnImageNsfwLevel({
+  id,
+  nsfwLevel,
+  userId,
+}: {
+  id: number;
+  nsfwLevel: NsfwLevel;
+  userId: number;
+}) {
+  if (!selectableBrowsingLevels.some((level) => level === nsfwLevel)) return false;
+
+  const [raised] = await dbWrite.$queryRaw<{ postId: number | null }[]>`
+    UPDATE "Image"
+    SET "nsfwLevel" = ${nsfwLevel}
+    WHERE id = ${id}
+      AND "userId" = ${userId}
+      AND NOT "nsfwLevelLocked"
+      AND ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"
+      AND "nsfwLevel" < ${nsfwLevel}
+    RETURNING "postId"
+  `;
+  if (!raised) return false;
+
+  await refreshThumbnailCache(id);
+  if (raised.postId) await updatePostNsfwLevel(raised.postId);
+  await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
+  await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
+  return true;
 }
 
 // NOTE(moderator-migration): getImageRatingRequests + getDownleveledImages (the image-rating-review and
@@ -7236,15 +7404,16 @@ export async function addImageTools({
     select: {
       id: true,
       url: true,
+      type: true,
     },
   });
 
-  if (updated.length > 0) {
-    await ingestImageBulk({
-      images: updated,
-      lowPriority: true,
-    });
-  }
+  enqueueImageIngestion({
+    images: updated,
+    name: 'add-image-tools',
+    userId: user.id,
+    lowPriority: true,
+  });
 
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
@@ -7741,8 +7910,7 @@ export async function queueImageSearchIndexUpdate({
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 
   if (action === SearchIndexUpdateQueueAction.Delete) {
-    // Bust the thumbnail cache for deleted images
-    await thumbnailCache.refresh(ids);
+    await refreshThumbnailCache(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
       ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
@@ -7860,6 +8028,41 @@ export async function getImageResourcesFromImageId({
   return computed;
 }
 
+type ImageResourceRow = Awaited<ReturnType<typeof getImageResourcesFromImageId>>[number];
+
+// A version id taken as-is from meta.civitaiResources: the only branch of get_image_resources that
+// yields a detected version with no hash to have matched it through.
+const isMetaAssertedResource = (r: ImageResourceRow) => r.detected && !r.hash && !!r.modelversionid;
+
+async function withoutUnviewableMetaVersions({
+  imageId,
+  resources,
+  dbClient,
+  inTransaction,
+}: {
+  imageId: number;
+  resources: ImageResourceRow[];
+  dbClient: Prisma.TransactionClient;
+  inTransaction: boolean;
+}) {
+  const assertedIds = uniq(resources.filter(isMetaAssertedResource).map((r) => r.modelversionid!));
+  if (!assertedIds.length) return resources;
+
+  const image = await dbClient.image.findUnique({
+    where: { id: imageId },
+    select: { user: { select: { id: true, isModerator: true } } },
+  });
+  const versions = await dbClient.modelVersion.findMany({
+    where: { id: { in: assertedIds } },
+    select: modelVersionVisibilitySelect,
+  });
+  const viewable = image?.user
+    ? await filterViewableModelVersions(versions, image.user, { checkGrants: !inTransaction })
+    : [];
+  const allowed = new Set(viewable.map((v) => v.id));
+  return resources.filter((r) => !isMetaAssertedResource(r) || allowed.has(r.modelversionid!));
+}
+
 export async function createImageResources({
   imageId,
   tx,
@@ -7868,8 +8071,12 @@ export async function createImageResources({
   tx?: Prisma.TransactionClient;
 }) {
   const dbClient = tx ?? dbWrite;
-  // Read the resources based on complex metadata and hash matches
-  const resources = await getImageResourcesFromImageId({ imageId, tx });
+  const resources = await withoutUnviewableMetaVersions({
+    imageId,
+    resources: await getImageResourcesFromImageId({ imageId, tx }),
+    dbClient,
+    inTransaction: !!tx,
+  });
   if (!resources.length) return null;
 
   const withModelVersionId = resources
@@ -7944,6 +8151,8 @@ export async function createImageResources({
 
 export const getMyImages = async ({
   mediaTypes,
+  publishedOnly,
+  includeEntryDrafts,
   userId,
   limit,
   cursor = 0,
@@ -7952,14 +8161,33 @@ export const getMyImages = async ({
 
   try {
     const media = await dbRead.image.findMany({
-      select: { id: true, url: true, meta: true, createdAt: true, type: true },
+      // `metadata` carries a video's duration, which the crucible picker needs to grey out clips
+      // over a crucible's maxClipSeconds before the user spends a click on them.
+      select: {
+        id: true,
+        url: true,
+        meta: true,
+        metadata: true,
+        createdAt: true,
+        type: true,
+        nsfwLevel: true,
+        ingestion: true,
+      },
       where: {
         userId,
         type: {
           in: allowedMediaTypes.length ? allowedMediaTypes : [MediaType.image, MediaType.video],
         },
         postId: { not: null },
-        ingestion: ImageIngestionStatus.Scanned,
+        // Published-only callers render still-scanning images as pending rather than hiding them.
+        ingestion: publishedOnly
+          ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
+          : ImageIngestionStatus.Scanned,
+        ...(publishedOnly && includeEntryDrafts
+          ? publishedOrEntryDraftImageWhere()
+          : publishedOnly
+          ? publishedImageWhere()
+          : {}),
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

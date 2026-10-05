@@ -28,6 +28,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: h.createBuzzTransactionMany,
   getMultipliersForUser: h.getMultipliersForUser,
+  getTransactionByExternalId: vi.fn(async () => null),
 }));
 
 import { remixAcceptReward } from '~/server/rewards/active/remixAccept.reward';

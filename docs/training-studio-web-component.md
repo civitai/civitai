@@ -46,6 +46,29 @@ interface TrainingStudioHost {
     signalsEndpoint: string | null;
     civitaiUrl: string;           // publish/model links
     orchestratorMode: 'dev' | 'prod';
+    /** The host page's Buzz color (green domain vs yellow). When set, the component locks its
+     *  Buzz spend mode to it — the user toggle hides and nothing is persisted to localStorage.
+     *  Omit (standalone) to leave the user's own yellow⇄green toggle in charge. */
+    buzzMode?: 'yellow' | 'green';
+    /** Whether this user may generate with UNPUBLISHED training results — the main app gates
+     *  that on membership (`isMember || isModerator`). Pass `false` for a non-member: the
+     *  per-epoch Generate affordance disables with a membership explanation (linking
+     *  `pricingUrl`) instead of silently doing nothing. Omit when the host has no membership
+     *  knowledge (e.g. the standalone shell) — the affordance then behaves as before. */
+    canGenerateUnpublished?: boolean;
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
+     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
+     *  the host doesn't know. */
+    isPaidMember?: boolean;
+    /** The host's membership-plans page, linked from the `canGenerateUnpublished` explanation. Same URL semantics as
+     *  `generateUrl` (relative = same-tab, absolute = new tab). Omit to render the explanation
+     *  without a link. */
+    pricingUrl?: string;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see. The standalone shell
+     *  evaluates them server-side in `/new`'s load; the element has no server, so the host must
+     *  evaluate them and pass the enabled keys (the main app maps them in
+     *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model is hidden. */
+    enabledModelFlags?: string[];
   };
 
   /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps
@@ -54,6 +77,39 @@ interface TrainingStudioHost {
    *  everywhere (e.g. Buzz was just spent). Already implemented — see `src/lib/host.ts`. */
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
+
+  /** Open the host page's own generator in place, seeded with an epoch's trained weights — no
+   *  navigation (the main app opens its sidebar generation panel). Preferred over `generateUrl`
+   *  when both are provided. */
+  generate?(req: { air: string; workflowId: string; name: string }): void;
+
+  /** URL for the main app's `/generate` deep link primed with an epoch's trained weights
+   *  (`?air=<blob AIR>&workflowId=…&name=…`). Optional — omit both this and `generate` to hide
+   *  the per-epoch Generate affordance. The component navigates same-tab for a relative URL,
+   *  new-tab for an absolute one. */
+  generateUrl?(req: { air: string; workflowId: string; name: string }): string;
+
+  /** URL for the main app's publish entry (`/models/train/from-orchestrator?workflowId=…&epoch=…`),
+   *  which builds a Draft model from the run's checkpoint and drops the user into the model wizard.
+   *  Ownership is enforced there by re-fetching the workflow with the caller's own orchestrator
+   *  token. Optional — omit to hide the Publish affordance. Same URL semantics as `generateUrl`:
+   *  relative navigates same-tab, absolute opens a new tab. */
+  publishUrl?(req: { workflowId: string; epoch: number }): string;
+
+  /** URL for the run's model page, draft or published. The main app stamps
+   *  `{ modelId, modelVersionId }` into the workflow's metadata when the publish entry creates the
+   *  draft, and adds `published: true` when the model actually publishes; runs carrying a modelId
+   *  render a "View draft" / "View your model page" link through this. Optional — omit to hide
+   *  the affordance. Same URL semantics as `generateUrl`. */
+  modelPageUrl?(req: { modelId: number }): string;
+
+  /** Open the host's own model picker for the Custom training base (the main app's
+   *  resource-select modal). The component passes the run's orchestrator ecosystem so a host
+   *  that can map it pre-filters to compatible checkpoints. Resolves the picked model's
+   *  checkpoint AIR (`urn:air:<eco>:checkpoint:civitai:<modelId>@<versionId>`) plus a display
+   *  name; resolves null when the user cancels. Optional — omit and the component keeps its
+   *  paste-an-AIR input alone. */
+  pickModel?(req: { ecosystem?: string }): Promise<{ air: string; name?: string } | null>;
 }
 
 type StudioLocation = { view: 'home' } | { view: 'new' } | { view: 'run'; workflowId: string };
@@ -106,10 +162,11 @@ allowlist before the component works there.
 - **Component**: the four-step flow, My trainings, run detail (live progress, epochs, train
   further, remix), label editor — everything under `src/routes/*.svelte` + `[id]/` today.
 - **Shell (standalone host)**: hooks auth gate, closed-beta page, header chrome (avatar,
-  logout), favicon, and the three host callbacks above backed by the existing
-  `lib/server/{orchestrator-token,signals,buzz}.ts`.
+  logout), favicon, the per-model catalog gates (`allowedModelFlags` in `/new`'s load), and the
+  three host callbacks above backed by the existing `lib/server/{orchestrator-token,signals,buzz}.ts`.
 - **Main app (embedded host)**: implements the same three callbacks with its existing
-  orchestrator/buzz infra; mounts the element on a page/route it owns.
+  orchestrator/buzz infra, evaluates the per-model catalog gates into `config.enabledModelFlags`,
+  and mounts the element on a page/route it owns.
 
 ## Packaging notes
 

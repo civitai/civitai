@@ -1,6 +1,6 @@
 import type { SearchIndexKey } from '~/components/Search/search.types';
 
-export type BrowsingLevelAttribute = 'nsfwLevel' | 'combinedNsfwLevel';
+export type BrowsingLevelAttribute = 'nsfwLevel';
 
 // An attribute the index doesn't declare filterable makes Meilisearch reject the whole query with
 // a 400, so `tools` and `users` are omitted deliberately — their indexes have no browsing level.

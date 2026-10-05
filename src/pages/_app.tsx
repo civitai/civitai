@@ -1,5 +1,10 @@
 // src/pages/_app.tsx
 
+// Side-effect import: starts the bounded console/network snapshot a bug report attaches. FIRST,
+// and deliberately so — `console.error` leaves no buffer to replay, so anything React logs before
+// this module evaluates (a hydration mismatch above all, which is the case the feature exists for)
+// is unrecoverable. It is a no-op under SSR. See the file for the rest.
+import '~/utils/feedback/startBrowserErrorLog';
 import dynamic from 'next/dynamic';
 // Side-effect import: globally disables next/link route prefetching. Must run
 // before any <Link> mounts — see the file for rationale.
@@ -11,7 +16,9 @@ import { resolveAuthGuard } from '~/server/auth/route-guard';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
+import { serializeJsonLd } from '@civitai/shared/json-ld';
 import type { ReactElement } from 'react';
+import { useState } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
@@ -88,6 +95,7 @@ import { applyNodeOverrides } from '~/utils/node-override';
 import type { RegionInfo } from '~/server/utils/region-blocking';
 import { getRegion } from '~/server/utils/region-blocking';
 import type { ColorDomain, ServerDomains } from '~/shared/constants/domain.constants';
+import { getSiteSchema } from '~/components/Meta/site-schema';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import type { VerifiedBot } from '~/server/utils/bot-detection/verify-bot';
 
@@ -126,7 +134,7 @@ type CustomAppProps = {
   chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
-  region: RegionInfo;
+  region?: RegionInfo;
   domain: ColorDomain;
   host: string;
   serverDomains: ServerDomains;
@@ -166,6 +174,8 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
+  const [siteSchema] = useState(() => getSiteSchema({ domain, serverDomains }));
+
   // // Standalone pages bypass all providers and render directly
   // if ('standalone' in Component && Component.standalone) {
   //   return <Component {...pageProps} />;
@@ -183,6 +193,7 @@ function MyApp(props: CustomAppProps) {
                 left={Component.left}
                 right={Component.right}
                 subNav={Component.subNav}
+                pageNav={Component.pageNav}
                 scrollable={Component.scrollable}
                 header={Component.header}
                 footer={Component.footer}
@@ -221,10 +232,21 @@ function MyApp(props: CustomAppProps) {
     >
       <Head>
         <title>Civitai | Share your models</title>
+        {siteSchema && (
+          <script
+            type="application/ld+json"
+            dangerouslySetInnerHTML={{ __html: serializeJsonLd(siteSchema) }}
+            key="site-schema"
+          />
+        )}
       </Head>
       <ThemeProvider colorScheme={colorScheme}>
+        {/* 🔴 DO NOT pass `region` here. It is an SSR-ONLY prop (see the FaroProvider note
+            below) and this provider re-evaluates on every render, so threading it made the
+            consent gate DISAPPEAR on the first client-side navigation — fail-open, silently
+            re-enabling third-party analytics/ads for a CA visitor who had rejected them.
+            It reads the frozen `useAppContext().region` instead; see the file's own header. */}
         <ThirdPartyConsentProvider
-          region={region}
           initialConsent={cookies.consent}
           loggedIn={!!session || hasAuthCookie}
         >
@@ -253,8 +275,31 @@ function MyApp(props: CustomAppProps) {
                   <RouterTransition />
                   {/* <ChadGPT isAuthed={!!session} /> */}
                   <FeatureFlagsProvider flags={flags} userFlags={userFeatureFlags}>
-                    {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on */}
-                    <FaroProvider />
+                    {/* Faro RUM bootstrap — dark until the `faro` flag + build-args are on.
+                        `region` is the SAME SSR-derived country code AppProvider is seeded with
+                        above (getRegion → cf-ipcountry/cf-region-code/x-isuk), threaded in as a
+                        prop so RUM beacons carry a geography dimension (→ Loki
+                        session_attr_region / session_attr_timezone). See
+                        src/utils/faro/geoAttributes.ts.
+                        🔴 THE CONSENT GATE MAY NOT READ IT THIS WAY AND FaroProvider MAY — the
+                        difference is re-evaluation, not correctness of the value. ONCE
+                        INITIALISED, FaroProvider never re-reads `region`: its `faroInitStarted`
+                        module guard makes `initFaro` a no-op and its effect depends only on
+                        `enabled` (see FaroProvider.tsx). The residual case is `enabled` flipping
+                        false→true mid-session, which that file documents as rare and which is
+                        its own pre-existing concern, not this one. ThirdPartyConsentProvider
+                        re-evaluates on EVERY render, so it reads the frozen
+                        `useAppContext().region` instead.
+                        🔴 OPTIONAL-CHAIN IT. `region` is an SSR-ONLY prop: `getInitialProps`
+                        early-returns before `getRegion(request)` on a CLIENT-SIDE navigation
+                        (no `req`), so `region` is `undefined` on every route transition even
+                        though `CustomAppProps` types it non-optional. A bare `region.countryCode`
+                        throws inside the ROOT error boundary and white-screens the app — that is
+                        exactly what shipped in v5.1.117 (#5001), surfacing in v5.1.118.
+                        `FaroProvider` accepts `undefined | null`
+                        by design; pinned by
+                        src/tests/pages/app-region-optional-chain.test.ts. */}
+                    <FaroProvider region={region?.countryCode} />
                     <GoogleAnalytics />
                     <AccountProvider>
                       <CivitaiSessionProvider disableHidden={cookies.disableHidden}>

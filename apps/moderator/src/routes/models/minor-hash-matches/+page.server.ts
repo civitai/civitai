@@ -6,7 +6,10 @@ import {
   getAutoFlaggedMinorModels,
   getMinorFlagAppealsForReview,
   getMinorHashMatchesForReview,
+  getModelMinorState,
+  type MinorSearch,
 } from '$lib/server/minor-hash.service';
+import { MAX_INT4 } from '$lib/server/users.service';
 import {
   confirmMinorFlag,
   dismissMinorHashMatch,
@@ -20,6 +23,7 @@ const querySchema = z.object({
   tab: z.enum(['pending', 'auto', 'appeals']).catch('pending'),
   limit: z.coerce.number().int().min(10).max(200).catch(50),
   page: z.coerce.number().int().min(1).max(500).catch(1),
+  q: z.string().trim().max(100).catch(''),
 });
 
 /**
@@ -33,17 +37,26 @@ const querySchema = z.object({
  * through should re-read page 1 after acting rather than paging forward.
  */
 export const load: PageServerLoad = async ({ url }) => {
-  const { tab, limit, page } = parseQuery(url, querySchema);
+  const { tab, limit, page, q } = parseQuery(url, querySchema);
   const offset = (page - 1) * limit;
 
-  const queue =
-    tab === 'auto'
-      ? await getAutoFlaggedMinorModels({ limit, offset })
-      : tab === 'appeals'
-      ? await getMinorFlagAppealsForReview({ limit, offset })
-      : await getMinorHashMatchesForReview({ limit, offset });
+  const numeric = /^\d+$/.test(q) ? Number(q) : null;
+  const search: MinorSearch | undefined = !q
+    ? undefined
+    : numeric !== null
+    ? { modelOrUserId: numeric > MAX_INT4 ? 0 : numeric }
+    : { username: q };
 
-  return { tab, limit, page, offset, tabs: TABS, ...queue, wide: true };
+  const [queue, lookup] = await Promise.all([
+    tab === 'auto'
+      ? getAutoFlaggedMinorModels({ limit, offset, search })
+      : tab === 'appeals'
+      ? getMinorFlagAppealsForReview({ limit, offset, search })
+      : getMinorHashMatchesForReview({ limit, offset, search }),
+    numeric !== null && numeric <= MAX_INT4 ? getModelMinorState(numeric) : null,
+  ]);
+
+  return { tab, limit, page, offset, q, lookup, tabs: TABS, ...queue, wide: true };
 };
 
 const modelIdFrom = async (event: RequestEvent) => {

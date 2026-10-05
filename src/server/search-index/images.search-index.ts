@@ -117,7 +117,6 @@ type BaseImage = {
   width: number | null;
   metadata: Prisma.JsonValue;
   nsfwLevel: NsfwLevel;
-  aiNsfwLevel: NsfwLevel;
   nsfwLevelLocked: boolean;
   postId: number | null;
   needsReview: string | null;
@@ -199,9 +198,6 @@ const transformData = async ({
         ...imageRecord,
         id,
         nsfwLevel,
-        combinedNsfwLevel: nsfwLevelLocked
-          ? nsfwLevel
-          : Math.max(nsfwLevel, imageRecord.aiNsfwLevel),
         createdAtUnix: imageRecord.createdAt.getTime(),
         aspectRatio:
           !imageRecord.width || !imageRecord.height
@@ -247,6 +243,15 @@ const transformData = async ({
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
+  // Retired: the `images_v6` Meilisearch index is no longer served (the /search/images page
+  // redirects and the `imageSearch` flag is off by default). All writes and syncs no-op, so the
+  // call sites that still queue image updates cost nothing. Restoring image search means clearing
+  // this and re-running a reset to rebuild the index. See ticket 868m4c2dn.
+  // NOTE: the ban-purge flow (processUserContentRemovalQueue in server/meilisearch/util.ts)
+  // intentionally has NO entry for this index anymore — with it retired, that flow's
+  // getOrCreateIndex re-created the index bare and its delete tasks all failed. Re-add the
+  // images entry there as part of the same change as the restoration reset.
+  retired: true,
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,
@@ -319,7 +324,6 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."name",
         i."url",
         i."nsfwLevel",
-        i."aiNsfwLevel",
         i."nsfwLevelLocked",
         i."meta"->'prompt' as "prompt",
         i."hash",

@@ -45,16 +45,15 @@ export type { WorkflowCategory };
 /** SD family ecosystem IDs */
 const SD_FAMILY_IDS = [ECO.SD1, ECO.SDXL, ECO.Pony, ECO.Illustrious, ECO.NoobAI];
 
-/** Ecosystem IDs that support draft mode (SD family + Flux1) */
-const DRAFT_IDS = [...SD_FAMILY_IDS, ECO.Flux1];
-
 /** Image ecosystems that support image:edit (accept optional/required images for editing) */
 const EDIT_IMG_IDS = [
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen21,
   ECO.Qwen3,
   ECO.Seedream,
   ECO.NanoBanana,
+  ECO.Flux3,
   ECO.OpenAI,
   ECO.Flux2,
   ECO.Flux2Klein_9B,
@@ -68,9 +67,11 @@ const EDIT_IMG_IDS = [
   ECO.MAI,
   ECO.Boogu,
   ECO.Reve,
+  ECO.Ideogram,
   ECO.MuseImage,
   ECO.MageFlow,
   ECO.Krea2,
+  ECO.Ming,
 ];
 
 /** Image ecosystems that support image:create */
@@ -87,6 +88,7 @@ const TXT2IMG_IDS = [
   ECO.Flux1Kontext,
   ECO.Flux2,
   ECO.Flux2Klein_9B,
+  ECO.Flux3,
   ECO.Flux2Klein_9B_base,
   ECO.Flux2Klein_4B,
   ECO.Flux2Klein_4B_base,
@@ -95,6 +97,7 @@ const TXT2IMG_IDS = [
   ECO.Chroma,
   ECO.Qwen,
   ECO.Qwen2,
+  ECO.Qwen21,
   ECO.Qwen3,
   ECO.HiDream,
   ECO.HiDreamO1,
@@ -116,6 +119,7 @@ const TXT2IMG_IDS = [
   ECO.Reve,
   ECO.MuseImage,
   ECO.MageFlow,
+  ECO.Ming,
 ];
 
 /** Video ecosystems that support video:create */
@@ -183,7 +187,7 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Draft',
     description: 'Fast generation for quick iterations',
     category: 'image',
-    ecosystemIds: DRAFT_IDS,
+    ecosystemIds: [...SD_FAMILY_IDS, ECO.Flux1],
   },
 
   'txt2img:face-fix': {
@@ -405,9 +409,8 @@ export const workflowConfigs: WorkflowConfigs = {
     modeLabel: 'Text to Music',
     description: 'Generate music from text description and lyrics',
     category: 'audio',
-    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3],
+    ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3, ECO.YuE2, ECO.Sonilo],
     stepDisplay: 'separate',
-    memberOnly: true,
   },
 
   // ===========================================================================

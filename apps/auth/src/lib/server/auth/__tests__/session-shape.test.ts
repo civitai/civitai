@@ -227,7 +227,7 @@ describe('shapeSessionUser — client-only fields (D parity)', () => {
   });
 });
 
-describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', () => {
+describe('shapeSessionUser — allowAds from settings (D)', () => {
   it('honors an explicit allowAds in settings over the tier default', () => {
     // free user defaults to allowAds=true, but an explicit false wins
     expect(shape({ settings: { allowAds: false } }).allowAds).toBe(false);
@@ -240,9 +240,12 @@ describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', (
     expect(shape({ settings: {} }, [sub()]).allowAds).toBe(false); // member → no ads
   });
 
-  it('honors redBrowsingLevel from settings, else undefined', () => {
-    expect(shape({ settings: { redBrowsingLevel: 31 } }).redBrowsingLevel).toBe(31);
-    expect(shape({ settings: {} }).redBrowsingLevel).toBeUndefined();
+  // The browsing level is one User column on every domain; a leftover red-only copy in settings
+  // must not reach the session, or a reader could be added back for a value nothing writes.
+  it('does not project a stored red-domain browsing level', () => {
+    const u = shape({ settings: { redBrowsingLevel: 3 }, browsingLevel: 31 });
+    expect(u.browsingLevel).toBe(31);
+    expect('redBrowsingLevel' in u).toBe(false);
   });
 
   it('treats a null / garbage / mistyped settings blob as no settings (tier default)', () => {
@@ -250,7 +253,6 @@ describe('shapeSessionUser — allowAds / redBrowsingLevel from settings (D)', (
     expect(shape({ settings: 'nope' }).allowAds).toBe(true);
     // a mistyped allowAds (wrong type) is ignored → tier default, not a throw
     expect(shape({ settings: { allowAds: 'yes' } }).allowAds).toBe(true);
-    expect(shape({ settings: { redBrowsingLevel: 'high' } }).redBrowsingLevel).toBeUndefined();
   });
 });
 
@@ -282,11 +284,10 @@ describe('shapeSessionUser — isEarlyAdopter from settings', () => {
   });
 
   it('does not disturb the neighbouring settings-derived fields', () => {
-    // Same focused parse feeds allowAds/redBrowsingLevel; adding a key to it must
+    // Same focused parse feeds allowAds; adding a key to it must
     // not change how those resolve.
-    const u = shape({ settings: { isEarlyAdopter: true, allowAds: false, redBrowsingLevel: 31 } });
+    const u = shape({ settings: { isEarlyAdopter: true, allowAds: false } });
     expect(u.allowAds).toBe(false);
-    expect(u.redBrowsingLevel).toBe(31);
     expect(u.isEarlyAdopter).toBe(true);
   });
 });

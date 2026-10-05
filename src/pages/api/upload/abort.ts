@@ -8,6 +8,32 @@ import {
   getB2ImageS3Client,
 } from '~/utils/s3-utils';
 import { logToAxiom } from '~/server/logging/client';
+import { sanitizeRelayFallbackOutcome } from '~/utils/relay-fallback-outcome';
+
+/**
+ * Sanitize the caller-supplied failure object before it reaches the event stream.
+ *
+ * The multipart clients send a bounded shape (`PartFailureReason` in
+ * `~/utils/upload-retry`), but this is unauthenticated-body input on a POST route, so it
+ * is rebuilt from scratch: only the three known keys pass, with bounded values, and
+ * everything else — including a JSON body's own `__proto__` key — is dropped rather than
+ * spread. An empty or malformed object becomes `undefined`, which the log sites omit.
+ */
+function sanitizeClientFailure(input: unknown): Record<string, unknown> | undefined {
+  if (!input || typeof input !== 'object') return undefined;
+  const o = input as Record<string, unknown>;
+  const failure: Record<string, unknown> = {};
+  if (typeof o.kind === 'string' && o.kind.length > 0 && o.kind.length <= 32) failure.kind = o.kind;
+  if (
+    Number.isInteger(o.partNumber) &&
+    (o.partNumber as number) >= 1 &&
+    (o.partNumber as number) <= 10_000
+  )
+    failure.partNumber = o.partNumber;
+  if (Number.isInteger(o.status) && (o.status as number) >= 100 && (o.status as number) <= 599)
+    failure.status = o.status;
+  return Object.keys(failure).length > 0 ? failure : undefined;
+}
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
@@ -20,7 +46,11 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
-  const { bucket, key, type, uploadId, backend } = req.body;
+  const { bucket, key, type, uploadId, backend, failure, relayOutcome } = req.body;
+  const clientFailure = sanitizeClientFailure(failure);
+  // Logged unconditionally, unlike `failure` above: a conditional spread would drop the
+  // `unknown` row the sanitiser exists to mint.
+  const clientRelayOutcome = sanitizeRelayFallbackOutcome(relayOutcome);
   try {
     let s3;
     if (backend === 'backblaze') {
@@ -36,7 +66,16 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
     // uncontained throw would unwind into the catch below and re-answer a request that
     // already succeeded. Not silent — @civitai/axiom reports its own ingest failures.
     try {
-      await logToAxiom({ name: 's3-upload-abort', userId, type, key, uploadId, backend });
+      await logToAxiom({
+        name: 's3-upload-abort',
+        userId,
+        type,
+        key,
+        uploadId,
+        backend,
+        ...(clientFailure ? { failure: clientFailure } : {}),
+        relayOutcome: clientRelayOutcome,
+      });
     } catch {
       /* contained — see above */
     }
@@ -57,15 +96,15 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
       if (errorClass === 'not-found') {
         // Aborting an upload that is already gone (completed/aborted) is IDEMPOTENT:
         // the desired end-state — the upload no longer exists — already holds, so this
-        // is a success, not a conflict. 204 stops the client retry loop cleanly. (The
-        // sole caller, s3-upload.store.ts, fire-and-forgets abort and ignores the
-        // response, so 204 is safe and terminal.)
+        // is a success, not a conflict. 204 stops the client retry loop cleanly. (Both
+        // callers — s3-upload.store.ts and useS3Upload.tsx — ignore the response
+        // entirely, so 204 is safe and terminal.)
         res.status(204).end();
       } else if (errorClass === 'invalid-parts') {
         // A parts-manifest fault (400-class) surfaced on the abort path — terminal, the
         // client must stop retrying and re-upload. 422 Unprocessable Entity mirrors the
-        // complete handler. no-store so nothing caches the failure. (The sole caller
-        // fire-and-forgets abort and ignores the body, so the status alone is safe.)
+        // complete handler. no-store so nothing caches the failure. (Neither caller reads
+        // the body, so the status alone is safe.)
         res.setHeader('Cache-Control', 'no-store');
         res.status(422).json({ error: 'Upload parts invalid or incomplete — please re-upload' });
       } else if (errorClass === 'transient') {
@@ -86,6 +125,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
           key,
           uploadId,
           backend,
+          ...(clientFailure ? { failure: clientFailure } : {}),
+          relayOutcome: clientRelayOutcome,
           error: error.message,
           errorClass,
         });

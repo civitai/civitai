@@ -49,6 +49,20 @@ describe('get_image_resources.sql', () => {
     expect(sql, 'never filters on mf.type').toMatch(/mf\.type\s+NOT\s+IN/i);
   });
 
+  it('breaks a shared-hash tie toward the earliest published version', () => {
+    // A hash on files owned by several people is in practice a re-upload, so the ordering
+    // decides whether the original creator or the re-uploader gets the image. ASCENDING
+    // version_date is what picks the original. The TypeScript mirror read this backwards
+    // until 2026-09-15 — same rule, two languages, opposite winners — so pin the direction
+    // here and the mirror's in generation/__tests__/prefers-hash-match.
+    const ordering = sql.match(/ORDER BY IIF\(irh\.detected[^)]*\)[^\n]*/)?.[0] ?? '';
+    expect(ordering, 'no shared-hash tie-break ordering found').toContain('version_published');
+    expect(ordering, 'version_date is no longer ascending, so the LATEST upload now wins').toMatch(
+      /version_date,\s*file_id/
+    );
+    expect(ordering, 'version_date was made descending').not.toMatch(/version_date\s+DESC/i);
+  });
+
   it('survives the db:program splitter', () => {
     // scripts/prisma-prepare-programmability.mjs splits every file on the literal `---` and runs
     // each part as its own statement, so one in a comment cuts the function in half at deploy time.

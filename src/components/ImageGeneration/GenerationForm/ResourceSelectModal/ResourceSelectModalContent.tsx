@@ -27,32 +27,18 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CategoryTagFilters } from './CategoryTagFilters';
-import { InlineRail } from './PickerRail';
 import { ResourceHitList } from './ResourceHitList';
 
 /** Each role says what it is and what it is judged against. */
 const ROLE_COPY = {
-  checkpoint: {
-    title: 'Select checkpoint',
-    subtitle: 'The base model everything else is judged against',
-  },
   resource: {
     title: 'Add resources',
     subtitle: 'LoRAs, embeddings and VAEs layered on your checkpoint',
   },
 } as const;
 
-export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentType }) {
-  const {
-    title,
-    onClose,
-    selectSource,
-    tab,
-    setTab,
-    footer: Footer,
-    role,
-    resources,
-  } = useResourceSelectContext();
+export function ResourceSelectModalContent() {
+  const { title, onClose, selectSource, tab, setTab, role, resources } = useResourceSelectContext();
   const dialog = useDialogContext();
   const isMobile = useIsMobile({ type: 'media' });
   const currentUser = useCurrentUser();
@@ -127,8 +113,6 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1">
-        {Rail && <Rail />}
-
         {/* `min-w-0` is load-bearing: a flex item defaults to `min-width: auto`,
             which refuses to shrink below its content's intrinsic width. The
             catalog's toolbar and grid are intrinsically wide, so without this
@@ -155,12 +139,14 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
                 // Autofocus opens the on-screen keyboard over half the catalog
                 // before anything has been browsed.
                 autoFocus={!isMobile}
+                // React's autoFocus alone loses the race: Mantine's focus trap
+                // runs a tick after mount and focuses the first focusable node —
+                // the close button — unless something claims data-autofocus.
+                data-autofocus={!isMobile ? true : undefined}
               />
             </div>
 
             <CategoryTagFilters />
-
-            <MobileRailStep Rail={Rail} />
           </div>
 
           {/* `overflow-y-scroll`, not `auto`: the gutter is reserved whether or
@@ -180,11 +166,6 @@ export function ResourceSelectModalContent({ Rail }: { Rail?: React.ComponentTyp
 
       <div className="flex-none">
         <StagedTray />
-        {Footer && (
-          <div className="border-t border-gray-3 dark:border-dark-4">
-            <Footer />
-          </div>
-        )}
       </div>
     </div>
   );
@@ -229,43 +210,6 @@ function CatalogTabs({
           {t}
         </UnstyledButton>
       ))}
-    </div>
-  );
-}
-
-/**
- * The rail's mobile half. A 224px column beside a catalog does not fit in
- * 390px, so below @md the rail collapses to this bar and the picker opens on
- * the CATALOG: swapping within a family is the common move and stays one tap,
- * while changing family — rarer, and destructive — sits one level up.
- */
-function MobileRailStep({ Rail }: { Rail?: React.ComponentType }) {
-  const [opened, setOpened] = useState(false);
-  // The label assumes the rail is the ecosystem one, which is the only rail any
-  // caller supplies.
-  if (!Rail) return null;
-
-  return (
-    <div className="md:hidden">
-      {opened ? (
-        <div className="rounded-lg border border-gray-3 dark:border-dark-4">
-          <div className="flex items-center gap-2 border-b border-gray-3 p-2 dark:border-dark-4">
-            <Button variant="subtle" size="compact-sm" onClick={() => setOpened(false)}>
-              Back
-            </Button>
-            <Text size="sm" fw={600}>
-              Change model family
-            </Text>
-          </div>
-          <InlineRail>
-            <Rail />
-          </InlineRail>
-        </div>
-      ) : (
-        <Button variant="default" fullWidth onClick={() => setOpened(true)}>
-          Change model family
-        </Button>
-      )}
     </div>
   );
 }

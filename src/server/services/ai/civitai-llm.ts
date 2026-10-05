@@ -33,10 +33,12 @@ type ChatCompletionResponse = {
   }>;
 };
 
-// Orchestrator's /v1/chat/completions only accepts `string` content (not the
-// OpenAI multimodal array form). Flatten text-only arrays to a single string;
-// pass arrays that contain images through unchanged so any vision support added
-// later still works (and surfaces a clear server error if it doesn't yet).
+// Vision works. The orchestrator's /v1/chat/completions accepts the OpenAI
+// multimodal array form and the model genuinely tokenises the image: on the
+// Civitai-hosted abliterated Qwen3 vision model a single 512px image took
+// prompt_tokens from 34 to 292, and the reply described detail present only in
+// the pixels, at every nsfwLevel. So image arrays pass through unchanged; only
+// text-only arrays are flattened.
 function normalizeMessage(msg: SimpleMessage): SimpleMessage {
   if (typeof msg.content === 'string') return msg;
   const hasImage = msg.content.some((c) => c.type === 'image_url');
@@ -49,11 +51,12 @@ function normalizeMessage(msg: SimpleMessage): SimpleMessage {
 }
 
 // Opt-in helper for models that emit chain-of-thought before JSON (e.g. Qwen3
-// thinking variants). The instruction-based approach is the only reliable
-// switch today — the soft `/no_think` token is ignored by the current
-// orchestrator proxy, and `chat_template_kwargs: { enable_thinking: false }`
-// trips a 500 there. Callers enable this via `suppressThinking: true` on a
-// per-request basis.
+// thinking variants). This instruction only trims the preamble; it does not stop
+// the reasoning. Neither does `chat_template_kwargs: { enable_thinking: false }`,
+// which the proxy accepts but which changed nothing measurable on the abliterated
+// Qwen3 model; `response_format: { type: 'json_object' }` does return bare JSON.
+// Numbers in docs/features/civitai-llm-client.md. Callers opt into this
+// instruction via `suppressThinking: true` on a per-request basis.
 const NO_PREAMBLE_INSTRUCTION =
   '\n\nIMPORTANT: Respond with ONLY the raw JSON object. Do NOT include any analysis, planning, thinking steps, markdown fences, or preamble before or after the JSON. Begin your response with `{` and end with `}`.';
 

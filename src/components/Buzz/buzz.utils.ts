@@ -7,7 +7,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
-import type { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';
 import { getClientStripe } from '~/utils/get-client-stripe';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { QS } from '~/utils/qs';

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { attachUploadSettlement } from '~/utils/upload-settlement';
+import { attachUploadSettlement, relayImageFallback } from '~/utils/upload-settlement';
 import type { SettlementXhr } from '~/utils/upload-settlement';
+import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
 
 // AUDIT-F1 regression guard — the defect the first draft of the upload relay shipped,
 // and the one nothing in the tree could see.
@@ -308,5 +309,221 @@ describe('attachUploadSettlement', () => {
     expect(cb.onAborted).toHaveBeenCalledTimes(1);
     expect(cb.onError).not.toHaveBeenCalled();
     expect(cb.onSuccess).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `relayImageFallback` is the multipart upload's execution half of the relay rescue —
+ * the POST to `/api/v1/image-upload/relay` (with its 429-shed retry), returning the
+ * relay-minted key or the reason the rescue did not produce one. The DECISION to call it
+ * lives in `shouldRelayOnPartFailure` (~/utils/upload-retry), pinned there; this function is
+ * what runs when the decision is yes, extracted from `useS3Upload` so the fallback can be
+ * driven directly and can never mask the original failure it is rescuing.
+ *
+ * 🔴 `ok: false` is the contract for EVERY failure — a rejected relay, a non-ok response, a
+ * mid-relay cancel. The caller falls through to the normal terminal-error path, so a
+ * broken fallback must degrade to "upload failed" (the pre-existing outcome), never to a
+ * thrown error that replaces the user's real diagnosis. The `reason` beside it is telemetry;
+ * each case below pins the one it carries.
+ */
+describe('relayImageFallback', () => {
+  const opts = () => ({
+    signal: new AbortController().signal,
+    sleep: vi.fn().mockResolvedValue(undefined),
+    defaultRetryAfterSeconds: 2,
+  });
+  const file = () => new File([new Uint8Array(10)], 'pic.png', { type: 'image/png' });
+
+  it('POSTs the whole file to the relay and resolves its minted key', async () => {
+    const f = file();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'RELAY-KEY' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await relayImageFallback(f, opts());
+
+    expect(result).toEqual({ ok: true, id: 'RELAY-KEY' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/image-upload/relay',
+      expect.objectContaining({
+        method: 'POST',
+        // 🔴 EXACT, not `objectContaining`. The producer header is what lets the server
+        // attribute a rescue to THIS path; an `objectContaining` here would pass with it
+        // missing, which is the defect the discriminator exists to make impossible. The
+        // exact match also pins the VALUE, so a mutant sending `single_put` from this
+        // caller — the most damaging one available, since it silently re-creates the
+        // attribution error under the appearance of a fix — fails here. (A separate test
+        // asserting exactly that was removed as strictly subsumed by this line.)
+        headers: {
+          'Content-Type': 'image/png',
+          [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart',
+        },
+        body: f,
+      })
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it('falls back to octet-stream when the File carries no type', async () => {
+    const f = new File([new Uint8Array(10)], 'pic');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'RELAY-KEY' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await relayImageFallback(f, opts());
+
+    expect(fetchMock.mock.calls[0][1].headers['Content-Type']).toBe('application/octet-stream');
+    vi.unstubAllGlobals();
+  });
+
+  it('retries the 429 shed once through relayWithRetry, then resolves', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: { get: (n: string) => (n === 'Retry-After' ? '2' : null) },
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'RELAY-KEY' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const result = await relayImageFallback(file(), { ...opts(), sleep });
+
+    expect(result).toEqual({ ok: true, id: 'RELAY-KEY' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(2000);
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['a 500 from the relay', 500],
+    ['a 413 over the relay cap', 413],
+  ])('reports non_2xx on %s, without retrying', async (_name, status) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status, json: async () => ({ error: 'nope' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await relayImageFallback(file(), opts());
+
+    expect(result).toEqual({ ok: false, reason: 'non_2xx' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('reports bad_body on a relay id-less 200 rather than inventing a key', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'bad_body',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports bad_body, not transport_error, on a 2xx whose body will not parse', async () => {
+    // 🔴 A 2xx we cannot parse is not a request that never arrived, and classifying it as a
+    // transport failure would say exactly that.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected end of JSON input');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'bad_body',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports transport_error when the relay itself cannot be reached', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'transport_error',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports aborted, not transport_error, when the POST is cancelled mid-flight', async () => {
+    // A cancel reaches the same `catch` as a dead network, and the two are different facts:
+    // one is a person changing their mind, the other is an upload nobody rescued.
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new DOMException('The operation was aborted.', 'AbortError'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'aborted',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    [
+      'the body read rejects with an AbortError',
+      () => new DOMException('The operation was aborted.', 'AbortError'),
+    ],
+    // 🔴 THE CASE A SHAPE-ONLY CLASSIFIER CANNOT SEE. `abort(reason)` rejects the body read
+    // with that reason VERBATIM, so a cancel carrying a plain `Error` — an ordinary idiom —
+    // reads as a 2xx we could not parse. That is `bad_body`, the one bucket this field exists
+    // to measure, so a future cancel button would inflate exactly the figure being read.
+    ['the cancel carries a non-DOMException reason', () => new Error('cancelled')],
+  ])('reports aborted, not bad_body, when %s', async (_why, makeReason) => {
+    // The relay answered 2xx and the cancel lands while the body is being read, so it is the
+    // INNER catch that sees it — the only abort classifier used to be in the outer one.
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        controller.abort(makeReason());
+        throw makeReason();
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      relayImageFallback(file(), { ...opts(), signal: controller.signal })
+    ).resolves.toEqual({ ok: false, reason: 'aborted' });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports aborted, and does not retry, when the signal aborts during a shed wait', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: { get: (n: string) => (n === 'Retry-After' ? '2' : null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const sleep = vi.fn(async () => {
+      controller.abort();
+    });
+
+    const result = await relayImageFallback(file(), {
+      signal: controller.signal,
+      sleep,
+      defaultRetryAfterSeconds: 2,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'aborted' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
   });
 });

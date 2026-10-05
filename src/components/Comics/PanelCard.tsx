@@ -537,7 +537,7 @@ export function PanelCard({
           ) : imageUrl ? (
             <>
               <img
-                src={getEdgeUrl(imageUrl, { width: 450 })}
+                src={getEdgeUrl(imageUrl, { width: 450, optimized: true })}
                 alt={prompt}
                 className={styles.panelImage}
               />
@@ -557,6 +557,7 @@ export function PanelCard({
                             openSetBrowsingLevelModal({
                               imageId: panel.imageId,
                               nsfwLevel: panel.image.nsfwLevel as NsfwLevel,
+                              isOwner: true,
                               onSubmit: () => onRatingChange?.(),
                             });
                           }

@@ -89,9 +89,13 @@ checked. This step is what makes the pass real.
 - [ ] Log in as a moderator who is **not** `moderator:admin`.
 - [ ] User Lookup ▸ Chat (DMs) shows the header's chat links and the "every chat this account has
       posted in" link resolving for a non-admin. *(The P0 this was filed under is closed and was
-      scope, not permissions — the panel is deliberately moderator-contact only. What is unverified
-      is whether Chat Audit itself is granted: the links go to `/retool/chat-audit`, a separate page
-      grant.)*
+      scope, not permissions. The panel is no longer moderator-contact only: it also renders the
+      newest messages the account SENT. What is unverified is whether Chat Audit itself is granted:
+      the links go to `/retool/chat-audit`, a separate page grant.)*
+- [ ] **Cross-page gate:** a moderator holding `/retool/user-lookup` but NOT `/retool/chat-audit`
+      sees the Chat section WITHOUT the "What they said" panel, and `/api/user-chat-messages/<id>`
+      refuses them. This is the only place in the app where one page's grant gates a panel on
+      another page, so an admin-only check proves nothing.
 - [ ] `reportedUser` on the reports page no longer renders greyed out. *(Open P1, suspected downstream of
       User Lookup access. If it does not clear once granted, it is its own defect — say so, and it goes
       back on the list as one.)*

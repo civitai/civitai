@@ -27,7 +27,15 @@ export function CivitaiSessionProvider({
   const { data, update, status } = useSession();
   const user = data?.user;
   const { allowMatureContent, region, verifiedBot } = useAppContext();
-  const isRestricted = isRegionRestricted(region) && !user?.isModerator;
+  // `AppContext.region` is optional because _app's `region` PROP is SSR-only. This CONTEXT
+  // read is not: AppProvider freezes its value in a `useState` initializer at mount, so it
+  // holds the SSR region for the tab's lifetime. The guard is the type requirement, and a
+  // runtime no-op today — `getRegionEffectiveDate` null-guards its argument (`region || {}`),
+  // so `isRegionRestricted(undefined)` already answered `false`. 🔴 Note it FAILS OPEN on an
+  // absent region (exactly as before, so this changes nothing), which is safe only because
+  // that freeze holds and because restriction is independently enforced server-side by
+  // `regionRestrictionMiddleware`. Removing the freeze would silently un-clamp this.
+  const isRestricted = !!region && isRegionRestricted(region) && !user?.isModerator;
   useDomainSync();
   const { data: settings } = trpc.user.getSettings.useQuery(undefined, {
     enabled: !!user,

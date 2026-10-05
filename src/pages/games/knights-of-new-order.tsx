@@ -34,7 +34,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NewOrderImageRatings } from '~/components/Games/NewOrder/NewOrderImageRatings';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { RankUp } from '~/components/Games/LevelProgress/RankUp';
-import { newOrderConfig } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH, newOrderConfig } from '~/server/common/constants';
 import { NewOrderBetaBanner } from '~/components/Games/NewOrder/NewOrderBetaBanner';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { useIsTabActive } from '~/hooks/useIsTabActive';
@@ -236,7 +236,7 @@ export default Page(
                               onLoad={() => setImageStatus('idle')}
                               onError={() => setImageStatus('error')}
                               contain
-                              original
+                              width={DEFAULT_EDGE_IMAGE_WIDTH}
                             />
                             {currentUser?.isModerator && (
                               <LegacyActionIcon

@@ -21,9 +21,8 @@ import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
  * bucket (a tiny PNG is written each run — harmless).
  *
  * Scope ceiling (honest): asserts the upload + attach + PUBLISH DB path. It does NOT
- * assert public-feed visibility — image ingestion/scan is unreachable in preview
- * (placeholder IMAGE_SCANNING_ENDPOINT), so the row stays ingestion:Pending. That does
- * NOT block row creation, attach, or publish.
+ * assert public-feed visibility — image ingestion never completes in preview, so the row
+ * stays ingestion:Pending. That does NOT block row creation, attach, or publish.
  *
  * Role: tester (free member, passes the gate; guardedProcedure cleared via onboarding=15).
  */

@@ -13,7 +13,25 @@ import { Flags } from '~/shared/utils/flags';
  *   - `visible` — scanned clean, unflagged, AND within THIS viewer's browsing-
  *     level ceiling → the host returns the moderated projection (incl. a gated
  *     edge url).
- *   - `hidden`  — withheld from this viewer (not-yet-scanned, unrated, flagged,
+ *   - `pending` — NO RATING EXISTS YET. The scan is still in flight (a
+ *     non-terminal ingestion) or has not written a level. Distinct from `hidden`
+ *     because the two mean opposite things and the caller cannot tell them apart
+ *     from one token: `hidden` says "a rating exists and it is not for you",
+ *     `pending` says "nothing has been decided". Collapsing them is what made a
+ *     freshly-published, never-scanned image render as *"rated mature"* — a
+ *     rating claim about an image nothing had rated. Carries NO url of its own;
+ *     the caller decides who may see the bytes (see the OWNER note below).
+ *
+ *     🔴 `pending` IS AN INTERNAL VERDICT AND IS NEVER PUT ON THE WIRE. The one
+ *     caller that acts on it (`getBlockGatedImagesByIds`) turns it into
+ *     `visible` + `ratingPending` for the image's OWN AUTHOR and into `hidden`
+ *     for everyone else, so a block still receives exactly the two statuses it
+ *     received before. That is deliberate: telling a NON-author "this one is
+ *     merely unscanned" would make the remaining `hidden` cells a positive
+ *     assertion that a rating exists and is above their ceiling — an
+ *     enumeration bit nobody asked for. Every other caller must keep refusing
+ *     anything that is not `visible`.
+ *   - `hidden`  — withheld from this viewer (flagged, hard-blocked, scan-refused,
  *     or above their browsing ceiling). The host returns NO url — the block
  *     renders a blurred/placeholder cell. This is the cross-user moderation
  *     boundary: an unclamped edge url NEVER crosses to a viewer who can't see it.
@@ -26,13 +44,29 @@ import { Flags } from '~/shared/utils/flags';
  * `tosViolation`) — the same fail-closed posture as the block image-upload gate,
  * because these images are shown PUBLICLY with no per-image mod review.
  *
- * DELIBERATELY STRICTER than "excluded for non-owners": there is NO owner bypass
- * here — an unscanned/flagged image is `hidden` for EVERYONE (including its
- * author) until it clears. That is a safe over-restriction (it never LEAKS), and
- * it keeps the decision a pure function of the row + the viewer's ceiling with no
- * identity branch to get wrong.
+ * 🔴 `pending` IS NOT A WEAKENING OF THAT BOUNDARY, AND THE ORDER BELOW IS WHAT
+ * MAKES THAT TRUE. Every moderation flag, the hard block, and the two TERMINAL
+ * scan refusals (`Blocked` = the scanner rejected the bytes, `NotFound` = it
+ * could not fetch them) are decided BEFORE the pending branch, so a flagged or
+ * scan-refused row can never come back `pending`. What remains `pending` is
+ * exactly "the scanner has not answered yet" — which is why the discriminant
+ * mirrors the sibling upload gate (`classifyBlockImageUploadScan`) verbatim
+ * rather than inventing a second reading of the same enum.
+ *
+ * 🔴 THIS FUNCTION STILL HAS NO IDENTITY BRANCH, DELIBERATELY. It does not know
+ * who is asking, so it cannot grant an owner bypass and cannot get one wrong. A
+ * caller that wants to show a viewer their OWN not-yet-rated image does that at
+ * the projection, against the row's `userId` — see `getBlockGatedImagesByIds`.
+ * Every caller that is NOT that one must keep treating anything other than
+ * `visible` as a refusal; `resolveAppPublishedImages` (the public-Post adoption
+ * gate) does, and the seam test in
+ * `src/server/services/blocks/__tests__/block-gated-images.seam.test.ts` pins the
+ * whole call-site ledger so a new caller cannot quietly join without deciding.
  */
-export type GatedImageVerdict = { status: 'visible' } | { status: 'hidden' };
+export type GatedImageVerdict =
+  | { status: 'visible' }
+  | { status: 'pending' }
+  | { status: 'hidden' };
 
 /**
  * Pure gate decision for ONE image against a viewer's browsing-level flag.
@@ -58,15 +92,12 @@ export function classifyGatedImageForViewer(
 ): GatedImageVerdict {
   const { ingestion, nsfwLevel } = image;
 
-  // Must be terminally Scanned — Pending / Error / Blocked / NotFound all hide.
-  if (ingestion !== ImageIngestionStatus.Scanned) return { status: 'hidden' };
-
-  // An unscanned/unrated level (0) carries no maturity signal → never cross it
-  // to another viewer (mirrors getAllImages' `nsfwLevel != 0`).
-  if (nsfwLevel === 0) return { status: 'hidden' };
-
-  // Any moderation flag → hidden (public, un-mod-reviewed image fails closed).
-  // `blockedFor` is the hard-block reason (a Scanned row can still be blocked).
+  // 🔴 MODERATION FIRST — ahead of the pending branch, not after it. These flags
+  // are set at/after scan WITHOUT flipping `ingestion`, so a row can carry one
+  // while still reading `Pending`. Deciding them first is what guarantees a
+  // flagged or hard-blocked row can never be reported `pending` (and so can never
+  // reach the owner-projection that hands `pending` a url). `blockedFor` is the
+  // hard-block reason (a Scanned row can still be blocked).
   if (
     image.needsReview != null ||
     image.poi === true ||
@@ -78,9 +109,48 @@ export function classifyGatedImageForViewer(
     return { status: 'hidden' };
   }
 
-  // Per-viewer browsing-level clamp: the image's level must intersect the
-  // viewer's ceiling, else it's above what THIS viewer may see → hidden.
-  if (!Flags.intersects(nsfwLevel, browsingLevel)) return { status: 'hidden' };
+  // TERMINAL scan refusals — the scanner answered, and the answer was no
+  // (`Blocked`: prohibited bytes) or it never got the bytes (`NotFound`). Neither
+  // is "not decided yet", so neither is `pending`. Same split, same enum values,
+  // as `classifyBlockImageUploadScan`.
+  if (ingestion === ImageIngestionStatus.Blocked || ingestion === ImageIngestionStatus.NotFound) {
+    return { status: 'hidden' };
+  }
+
+  // 🔴 AN EMPTY CEILING HIDES EVERYTHING — INCLUDING AN UNRATED IMAGE. Stated
+  // separately from the clamp below because the clamp cannot express it: with no
+  // level to compare there is nothing for `Flags.intersects` to reject, so an
+  // unrated row would fall through to `pending` and reach the owner projection.
+  // The caller fails a malformed ceiling closed to the public floor and never
+  // passes 0, so this is defence in depth — but the docstring promises "a
+  // `0`/empty ceiling here hides everything", and a promise a branch does not
+  // keep is worse than no promise.
+  if (browsingLevel === 0) return { status: 'hidden' };
+
+  // 🔴 A LEVEL THAT EXISTS IS ENFORCED WHATEVER THE INGESTION STATE SAYS, and
+  // this ordering is the whole guard. `Rescan` (and any other non-terminal state
+  // reached by a row that was ALREADY rated) is not `Scanned`, so a clamp placed
+  // after the pending branch would never run for it: a previously-rated mature
+  // image going back through the scanner would be reported "not decided yet" and
+  // the owner projection would hand out its url, bypassing the domain ceiling a
+  // SFW block is minted with. Rated first, pending second.
+  if (nsfwLevel !== 0 && !Flags.intersects(nsfwLevel, browsingLevel)) {
+    return { status: 'hidden' };
+  }
+
+  // Still scanning — any other non-`Scanned` state is a poll-able pending, and
+  // an UNKNOWN ingestion value lands here too (fail-safe: `pending` carries no
+  // url of its own, so an unrecognised state can only ever under-share).
+  if (ingestion !== ImageIngestionStatus.Scanned) return { status: 'pending' };
+
+  // Scanned, but no level was written: the scan has not produced a rating. This
+  // is the SAME state as a non-terminal ingestion as far as a caller is
+  // concerned — "nothing has been decided" — so it is `pending`, not `hidden`.
+  // (It was `hidden` before, which is what taught the grid to call an unrated
+  // image mature.) The cross-user posture is unchanged: `pending` still carries
+  // no url, so `getAllImages`' `nsfwLevel != 0` conjunct is still honoured for
+  // everyone but the image's own author.
+  if (nsfwLevel === 0) return { status: 'pending' };
 
   return { status: 'visible' };
 }

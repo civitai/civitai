@@ -75,11 +75,10 @@ import {
   ImageIngestionStatus,
   PoolTrigger,
   PrizeMode,
+  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
-import {
-  enqueueImageIngestion,
-  imagesForModelVersionsCache,
-} from '~/server/services/image.service';
+import { enqueueImageIngestion } from '~/server/services/image.service';
+import { getEligibleModels } from '~/server/services/eligible-models.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import {
   amIBlockedByUser,
@@ -109,7 +108,7 @@ import {
   challengeCreatorBlockSql,
 } from '~/server/services/challenge-block.service';
 import {
-  buildWinnerPayoutTransactions,
+  buildWinnerPrizes,
   chargeInitialPrize,
   refundUserChallengeFunds,
   reportPoolFundingShortfall,
@@ -182,6 +181,7 @@ import {
   getTransactionByExternalId,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
+import { createPrizes, voidPrizes } from '~/server/services/prize.service';
 import { sendChallengeResultsNotification } from '~/server/services/challenge-engagement.service';
 import { withRetries } from '~/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
@@ -891,44 +891,7 @@ async function buildChallengeDetail(
     getCosmeticsForUsers([createdById]),
   ]);
 
-  // Get model info for all modelVersionIds
-  let models: ChallengeDetail['models'] = [];
-  if (challenge.modelVersionIds.length > 0) {
-    const versions = await dbRead.modelVersion.findMany({
-      where: { id: { in: challenge.modelVersionIds } },
-      select: {
-        id: true,
-        name: true,
-        baseModel: true,
-        model: { select: { id: true, name: true } },
-      },
-    });
-
-    // Batch-fetch images for all versions via cache (keyed by modelVersionId)
-    const imageCache = await imagesForModelVersionsCache.fetch(challenge.modelVersionIds);
-
-    models = versions.map((v) => {
-      const img = imageCache[v.id]?.images?.[0] ?? null;
-      return {
-        id: v.model.id,
-        name: v.model.name,
-        versionId: v.id,
-        versionName: v.name,
-        baseModel: v.baseModel,
-        image: img
-          ? {
-              id: img.id,
-              url: img.url,
-              nsfwLevel: img.nsfwLevel,
-              hash: img.hash,
-              width: img.width,
-              height: img.height,
-              type: img.type,
-            }
-          : null,
-      };
-    });
-  }
+  const models = await getEligibleModels(challenge.modelVersionIds);
 
   // Fetch cover image
   const coverImage = challenge.coverImageId
@@ -2837,14 +2800,13 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // (challenge-winner-prize-{cid}-{uid}-place-{n}) keeps retries idempotent.
     // Built OUTSIDE the retry closure — see the matching note on the cron path. The builder emits
     // the duplicate-pick counter on its drop branch, and `withRetries` re-invokes up to 4 times.
-    const winnerPayoutTransactions = buildWinnerPayoutTransactions({
+    const winnerPrizes = buildWinnerPrizes({
       challengeId,
       title: challenge.title,
-      buzzType: challenge.buzzType,
       winners: winningEntries,
     });
-    await withRetries(() => createBuzzTransactionMany(winnerPayoutTransactions));
-    log('Prizes sent');
+    const awardedPrizes = await withRetries(() => createPrizes(winnerPrizes));
+    log('Prizes awarded');
 
     // Send entry participation prizes to all eligible users
     // Hoisted so it's still in scope for sendChallengeResultsNotification's excludeUserIds below,
@@ -2961,10 +2923,9 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
     // Completing reset can never retry it and the count would otherwise be lost forever), and both
     // helpers are never-throw no-ops for business logic, so nothing outside telemetry changes.
     //
-    // Prize amount is Buzz ATTEMPTED for winner prizes, not confirmed-settled:
-    // `createBuzzTransactionMany` silently drops any non-success, non-conflict result (e.g.
-    // insufficientFunds) from both result arrays, so a leg that never moved money is invisible here
-    // and is still counted. Entry-participation prizes are a separate blue-Buzz reward, not counted.
+    // Prize amount is winner Buzz AWARDED, not paid: each winner claims theirs later, in the
+    // currency they pick, so `buzzType` here is the pool's. Entry-participation prizes are a
+    // separate blue-Buzz reward, not counted.
     recordChallengeCompleted({ source: challenge.source });
     recordChallengePrizePaidBuzz({
       source: challenge.source,
@@ -2984,6 +2945,7 @@ export async function endChallengeAndPickWinners(challengeId: number): Promise<E
           challengeName: challenge.title,
           position: entry.position,
           prize: entry.prize,
+          prizeId: awardedPrizes.find((prize) => prize.userId === entry.userId)?.id,
         },
       });
     }
@@ -3124,6 +3086,10 @@ export async function voidChallenge(
     }
     log('Challenge status updated to Cancelled');
   }
+
+  // A completion that awarded prizes and then failed is reset to Active, so it can still be voided
+  // here; the pool is refunded below, so what it awarded must not also be claimable.
+  await voidPrizes(PrizeSourceType.Challenge, challengeId);
 
   // Close the collection if exists
   await closeChallengeCollection(challenge);

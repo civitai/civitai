@@ -1,8 +1,10 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 /**
- * Server-side fixed-window rate limits for App Blocks SHARED storage writes
- * (`apps.shared.append` / `apps.shared.vote` / `apps.shared.unvote`).
+ * Server-side fixed-window rate limits for App Blocks SHARED storage writes —
+ * `apps.shared.append` / `.update` (append bucket), `.vote` / `.unvote` (vote
+ * bucket), `.report`, and `.withdraw`. That is now EVERY write op on the shared
+ * surface: `withdraw` was the last one without a bucket.
  *
  * WHY (hardened design H4 — "weaponized users"): shared storage opens the app
  * datastore to cross-user PUBLIC writes for the first time. A trusted-but-hostile
@@ -47,6 +49,29 @@ export const SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS = 60;
 // vector) from a single user. Matches the append daily-window shape.
 export const SHARED_REPORT_RATE_LIMIT_MAX = 20;
 export const SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS = 24 * 60 * 60;
+
+// WITHDRAW: W withdrawals/min/app/user. `apps.shared.withdraw` was the ONE write
+// op on this surface with NO bucket at all — every sibling (append, update, vote,
+// unvote, report) has one. It is a DELETE of the caller's OWN shared_kv row, so it
+// grows nothing; what each call does spend is a pooled connection, a real
+// transaction, an FK cascade across votes/counters/reports and a quota trigger —
+// i.e. the cost profile of `vote`, not of `append`.
+//
+// So it takes the VOTE shape (30/min) rather than the append/report daily shape,
+// and deliberately its OWN sub-namespace rather than sharing the vote bucket:
+//   - the DAILY shape is wrong here. With a per-user shared_kv row cap of 50, a
+//     user legitimately clearing their own history can need dozens of withdrawals
+//     in one sitting; a 20/day ceiling would strand rows they have every right to
+//     delete — a worse failure than the flood it bounds.
+//   - SHARING the vote bucket is wrong for the mirror-image reason: browsing and
+//     up-voting a feed is the highest-velocity legitimate action on this surface,
+//     and it must never be able to starve a user's ability to delete their own
+//     content (nor a cleanup sweep starve their voting).
+// 30/min bounds a scripted append/withdraw churn loop while sitting far above any
+// human rate. Fail-open like every other bucket here — defence in depth, never the
+// authorization boundary.
+export const SHARED_WITHDRAW_RATE_LIMIT_MAX = 30;
+export const SHARED_WITHDRAW_RATE_LIMIT_WINDOW_SECONDS = 60;
 
 export type SharedStorageRateLimitResult =
   | { allowed: true }
@@ -98,12 +123,21 @@ export async function checkSharedVoteRateLimit(
   userId: number,
   appBlockId: string
 ): Promise<SharedStorageRateLimitResult> {
+  const key = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:shared-vote:${appBlockId}:${userId}` as const;
+  return checkFixedWindow(key, SHARED_VOTE_RATE_LIMIT_MAX, SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS);
+}
+
+/** One `withdraw` against the (user, app) per-minute bucket (own sub-namespace). */
+export async function checkSharedWithdrawRateLimit(
+  userId: number,
+  appBlockId: string
+): Promise<SharedStorageRateLimitResult> {
   const key =
-    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:shared-vote:${appBlockId}:${userId}` as const;
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:shared-withdraw:${appBlockId}:${userId}` as const;
   return checkFixedWindow(
     key,
-    SHARED_VOTE_RATE_LIMIT_MAX,
-    SHARED_VOTE_RATE_LIMIT_WINDOW_SECONDS
+    SHARED_WITHDRAW_RATE_LIMIT_MAX,
+    SHARED_WITHDRAW_RATE_LIMIT_WINDOW_SECONDS
   );
 }
 

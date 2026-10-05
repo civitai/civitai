@@ -19,7 +19,17 @@ const preparing = (air: string, extra: Record<string, unknown> = {}) => ({
   workflowId: '7-123',
   name: 'prepare-resource',
   status: 'preparing',
-  preparation: { resource: air, queuePosition: 0, progress: 0.5, etaSeconds: 120, ...extra },
+  preparation: [
+    {
+      resource: air,
+      sizeBytes: 1,
+      lane: 'low',
+      queuePosition: 0,
+      progress: 0.5,
+      etaSeconds: 120,
+      ...extra,
+    },
+  ],
 });
 
 describe('toResourceLoadProgress', () => {
@@ -62,6 +72,32 @@ describe('toResourceLoadProgress', () => {
 
   it('ignores an AIR that does not resolve to a version', () => {
     expect(toResourceLoadProgress(preparing('not-an-air'))).toBeNull();
+  });
+
+  it('takes the gating resource (the first) from the list', () => {
+    const update = toResourceLoadProgress({
+      workflowId: '7-123',
+      name: 'prepare-resource',
+      status: 'preparing',
+      preparation: [
+        {
+          resource: 'urn:air:sdxl:checkpoint:civitai:42@501',
+          sizeBytes: 1,
+          lane: 'low',
+          queuePosition: 2,
+          etaSeconds: 600,
+        },
+        { resource: 'urn:air:sdxl:vae:civitai:7@8', sizeBytes: 1, lane: 'low', queuePosition: 1 },
+      ],
+    });
+
+    expect(update).toMatchObject({ modelVersionId: 501, queuePosition: 2, etaSeconds: 600 });
+  });
+
+  it('ignores an empty list — nothing is downloading', () => {
+    expect(
+      toResourceLoadProgress({ workflowId: '7-123', status: 'preparing', preparation: [] })
+    ).toBeNull();
   });
 
   it('ignores a payload of an entirely different shape', () => {

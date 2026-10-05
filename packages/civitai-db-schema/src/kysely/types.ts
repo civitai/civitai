@@ -20,6 +20,7 @@ import type {
   LinkType,
   ModelType,
   ImportStatus,
+  HuggingFaceImportStatus,
   ModelStatus,
   TrainingStatus,
   CommercialUse,
@@ -132,6 +133,10 @@ import type {
   ShopifyMerchOrderStatus,
   OutboxEntity,
   UserHubSourceType,
+  CrucibleStatus,
+  CrucibleIngestionStatus,
+  CrucibleEngagementType,
+  PrizeSourceType,
 } from './enums';
 
 export type Account = {
@@ -179,6 +184,11 @@ export type Announcement = {
    * Profile-only rows never enter the announcements feed and never notify.
    */
   profileOnly: Generated<boolean>;
+};
+export type AnnouncementDismissal = {
+  announcementId: number;
+  userId: number;
+  dismissedAt: Generated<Timestamp>;
 };
 export type AnnouncementReport = {
   announcementId: number;
@@ -405,6 +415,39 @@ export type AppListing = {
   cover_id: number | null;
   category: string | null;
   status: Generated<string>;
+  /**
+   * Per-listing cohort gate: private|moderators|testers|public, or NULL.
+   *
+   * NULLABLE WITH NO DEFAULT, and NULL is NOT the `private` level — it means the owner
+   * has expressed no choice, so the pre-feature rule for the row's `status` applies
+   * (approved is visible, non-approved is not). That is what lets a level be
+   * authoritative on an `approved` listing without a new approval -- of which there are
+   * eight scattered writes and no chokepoint -- minting a row that vanishes from the
+   * store. A level that IS set binds at every eligible status, `approved` included, so
+   * an owner can restrict a live listing (discovery-only: hidden from the store, still
+   * runnable by slug).
+   *
+   * Free-text `text` like `status`; the allowed set is a DB CHECK that lives ONLY in the
+   * migration .sql (canonical code set = APP_LISTING_VISIBILITIES), and NULL passes that
+   * CHECK by design. Always an AND with the surface flags, never an override.
+   *
+   * 🔴 THE no-type ANNOTATION ON THE FIELD LINE STRIPS IT FROM THE GENERATED CLIENT ON
+   * PURPOSE, AND THAT
+   * IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
+   * declares in its default SELECT/RETURNING, so while this was an ordinary field every
+   * `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
+   * on this tree, 17 of them WRITES — and during the manual-apply window that is
+   * `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
+   * delist all 500d on the PR preview. Stripping the field makes every one of those sites
+   * immune by construction. The column is reached ONLY by raw SQL, in
+   * `app-listing-visibility.service.ts` (read) and `-write.service.ts` (write). Re-adding it
+   * to the client re-opens the outage; `app-listing-visibility.no-prisma-field` is the guard.
+   *
+   * MANUAL-APPLY, like every migration here. Read it ONLY through
+   * `app-listing-visibility.service.ts` and never add it to a shared `select`: a
+   * `select` naming a missing column throws P2022 for the WHOLE query, which on the
+   * grid's shared select is a public-store outage.
+   */
   content_rating: string | null;
   external_url: string | null;
   source_repo_url: string | null;
@@ -581,6 +624,33 @@ export type AppUserScopeGrant = {
   granted_scopes: Generated<string[]>;
   granted_at: Generated<Timestamp>;
   revoked_at: Timestamp | null;
+  /**
+   * PER-SCOPE REVOCATION — the SUPPRESSION LIST, not the absence of a grant.
+   *
+   * 🔴 A REVOKE CANNOT BE MODELLED AS REMOVAL FROM `granted_scopes`, AND THAT IS
+   * THE WHOLE REASON THIS COLUMN EXISTS. `BlockRegistry.recordInstallConsent`
+   * passes the app's ENTIRE consent-gated effective set into `recordScopeGrant`,
+   * which UNIONS it into `granted_scopes` — so a revoke expressed only as removal
+   * is silently undone by the user's next install or subscribe of that app, with
+   * no consent prompt anywhere. A scope listed here is subtracted at every read
+   * (`getGrantedScopes`), so a union that puts it back grants nothing.
+   *
+   * Cleared ONLY by an explicit prompted re-consent (`blocks.grantScopes` →
+   * `recordScopeGrant({ clearRevocations: true })`), and then only for the scopes
+   * that consent actually covered — never wholesale, or re-consenting to scope A
+   * would resurrect a revoked scope B.
+   */
+  revoked_scopes: Generated<string[]>;
+  /**
+   * When the MOST RECENT per-scope revoke happened for this (user, app).
+   *
+   * ⚠️ NOT A PER-SCOPE TIMESTAMP, and deliberately not: `revoked_scopes` is a
+   * TEXT[] with no room for one, and a per-scope time would need a child table.
+   * Two revokes a week apart leave ONE value here — the later. So it is honest as
+   * an APP-LEVEL "permissions last changed", and a UI must not render it beside an
+   * individual scope as though it dated that scope's revoke.
+   */
+  revoked_scopes_at: Timestamp | null;
   /**
    * The per-UTC-day Buzz ceiling the VIEWER set for THIS app at consent time.
    * NULL = the user set no budget, and the app spends under the platform's own
@@ -872,6 +942,68 @@ export type BlockAttributionPayout = {
   row_count: number;
   created_at: Generated<Timestamp>;
 };
+export type BlockAuthorFeeAccrual = {
+  id: string;
+  /**
+   * Orchestrator workflow id — the idempotency anchor. A resubmit of the same
+   * workflow must never charge or accrue twice.
+   */
+  workflow_id: string;
+  app_id: string;
+  app_block_id: string;
+  /**
+   * 🔴 Resolved at WRITE time, never at settlement. An app that changes hands
+   * must not retroactively move earnings already accrued to the previous owner
+   * (`app-ownership-transfer.service.ts` is the precedent). Resolving the owner
+   * in the settlement query would do exactly that.
+   */
+  app_owner_user_id: number;
+  /**
+   * The viewer who paid. What the self-dealing exclusion is measured against,
+   * and what slice 2b's refund path will join on to reverse a fee.
+   */
+  viewer_user_id: number;
+  /**
+   * 🔴 D6 — a viewer spending blue Buzz pays in blue and the author receives
+   * blue (non-withdrawable). The settlement job groups by this and never
+   * coerces to yellow; defaulting it would silently convert non-withdrawable
+   * Buzz into withdrawable earnings. No `@default` for that reason.
+   */
+  buzz_type: string;
+  /**
+   * Whole Buzz owed to the author, always > 0 — pinned by a CHECK. There is no
+   * negative row: the clawback was retired in round 0 (zero production callers,
+   * and its carry-forward arm unreachable until something had settled). Slice 2b
+   * adds it together with the refund path that drives it.
+   */
+  fee_buzz: number;
+  /**
+   * The pricing inputs, kept so a disputed charge can be explained without
+   * re-deriving it from a workflow that may no longer exist.
+   */
+  base_generation_buzz: number;
+  flat_leg_buzz: number;
+  pct_leg_buzz: number;
+  governing_leg: string;
+  /**
+   * The resolved '<coarse>' or '<coarse>:<subtype>' the fee was priced under.
+   * NULL when the type could not be resolved — the fee still applies, falling
+   * to the app's default (see `resolveBlockAuthorFeeParams`).
+   */
+  generation_type: string | null;
+  /**
+   * 'accrued' | 'settled'.
+   */
+  status: Generated<string>;
+  /**
+   * The externalTransactionId this row settled under, so a row traces to the
+   * exact mint. NULL until settled; a CHECK keeps it and `settledAt` in step
+   * with `status`.
+   */
+  settlement_key: string | null;
+  accrued_at: Generated<Timestamp>;
+  settled_at: Timestamp | null;
+};
 export type BlockBuzzAttribution = {
   id: string;
   user_id: number;
@@ -906,6 +1038,99 @@ export type BlockedImage = {
   hash: string;
   reason: Generated<BlockImageReason>;
   createdAt: Generated<Timestamp>;
+};
+export type BlockGoodEntitlement = {
+  id: string;
+  user_id: number;
+  app_block_id: string;
+  good_id: string;
+  /**
+   * 'good' | 'app_unlock' — see BLOCK_GOOD_KINDS.
+   */
+  kind: Generated<string>;
+  /**
+   * The opaque app payload, snapshotted from the manifest at purchase.
+   */
+  payload: Generated<unknown>;
+  /**
+   * The purchase that granted it. One-to-one: a purchase grants exactly one
+   * entitlement, and an entitlement always has a purchase behind it.
+   */
+  purchase_id: string;
+  granted_at: Generated<Timestamp>;
+  /**
+   * Set when the purchase is refunded or the good is taken down. A revoked
+   * entitlement is kept, never deleted — the row is the audit trail for a
+   * reversal.
+   */
+  revoked_at: Timestamp | null;
+  revoke_reason: string | null;
+};
+export type BlockGoodPurchase = {
+  id: string;
+  /**
+   * The buyer. Always the verified block-token subject, never a body field.
+   */
+  user_id: number;
+  app_id: string;
+  app_block_id: string;
+  /**
+   * NOT an FK and NULLABLE, for the same reason the attribution tables give:
+   * synthetic instance ids (`bus_pub_*`, `page_*`, `ephemeral-*`) resolve to no
+   * row. NULL means the instance could not be resolved — the purchase still
+   * happened and is still attributed to the app; only the install context is
+   * unknown. A purchase must never fail because attribution could not.
+   */
+  block_instance_id: string | null;
+  /**
+   * The manifest `goods[].id` bought, and the manifest `version` it was bought
+   * under. Together they explain a disputed price without needing the manifest
+   * that was live at the time (a later approved version may have repriced it).
+   */
+  good_id: string;
+  manifest_version: string;
+  /**
+   * What the viewer was charged, in whole Buzz. Always > 0 (CHECK).
+   */
+  price_buzz: number;
+  /**
+   * How much of `price_buzz` came out of the BLUE (granted) account. Drives
+   * the proportional colour split of the payout, so a viewer paying blue does
+   * not turn non-withdrawable Buzz into withdrawable earnings.
+   */
+  blue_paid_buzz: Generated<number>;
+  app_owner_user_id: number;
+  app_owner_share_buzz: number;
+  platform_share_buzz: number;
+  /**
+   * The deterministic `externalTransactionIdPrefix` the buyer's debit was
+   * made under. UNIQUE — this is the LEDGER-backed half of idempotency: a
+   * retry after the Redis sentinel expired collides here instead of charging
+   * twice.
+   */
+  buzz_transaction_id: string;
+  /**
+   * What was actually paid, per recipient and colour, with each payout's own
+   * ledger transaction id: `[{ userId, amount, color, transactionId? }]`.
+   * Empty until the payout leg runs. A refund reads THIS, never a re-derived
+   * split.
+   */
+  payouts: Generated<unknown>;
+  /**
+   * 'pending' | 'paid' | 'refunded'. A row is INSERTED as `pending` BEFORE the
+   * buyer is charged — the UNIQUE `buzzTransactionId` is what serialises
+   * concurrent attempts, so exactly one can reach the charge. A surviving
+   * `pending` row is the reconciliation record for a charge whose outcome is
+   * unknown.
+   *
+   * `refunded` also marks a charge that was reversed before any entitlement
+   * was granted: that row is kept, not deleted, because its `buzzTransactionId`
+   * stays occupied in the Buzz ledger and the next attempt supersedes it.
+   */
+  status: Generated<string>;
+  refund_reason: string | null;
+  refunded_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
 };
 export type Blocklist = {
   id: Generated<number>;
@@ -947,10 +1172,22 @@ export type BlockScopeInvocation = {
    */
   oauth_client_id: string | null;
   /**
-   * Discriminates the token population that made the call: `'app-block'` (an App
-   * Block block-token, the historical default) vs `'external-oauth'` (a standard
-   * external OAuth access token verified at `enforceTokenScope`). Additive:
-   * existing rows backfill to `'app-block'`.
+   * Discriminates the token population that made the call. THREE values, and this
+   * comment is the single source for the generated type docs, so keep it complete:
+   * * `'app-block'`      — an App Block block-token, the historical default.
+   * * `'external-oauth'` — a standard external OAuth access token verified at
+   * `enforceTokenScope`; carries no `app_block_id`.
+   * * `'private-run'`    — a block-token minted for a PRIVATE RUN: a moderator, the
+   * owner, or an accepted listing collaborator running a
+   * delisted/suspended app's deployed bundle. It carries the
+   * app's REAL id, and this value is the ONLY thing keeping the
+   * row out of that app owner's analytics, so it is a
+   * load-bearing discriminator rather than a label. Written
+   * only from the verified `privateRun` token claim; see
+   * `scope-activity-predicate.ts`.
+   * Free-text with NO CHECK constraint — the value space is enforced in TypeScript
+   * (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
+   * backfill to `'app-block'` via the column DEFAULT.
    */
   source: Generated<string>;
   scope: string;
@@ -987,9 +1224,19 @@ export type BlockSpendAttribution = {
   app_block_id: string;
   block_instance_id: string;
   model_id: number | null;
+  /**
+   * Always the 'unrated' sentinel — the write path hardcodes it. No rate card
+   * is applied to a spend row, and nothing re-stamps it (the backpay that would
+   * have is removed). Measured in production 2026-09-18: a
+   * `GROUP BY rate_card_version` over the whole table returned a single
+   * 'unrated' group — self-discriminating, since any other stamped version
+   * would have been a second group. Re-measure before relying on it.
+   */
   rate_card_version: string;
   /**
-   * The spend rev-share percentage stamped at write time.
+   * Always 0. This was the spend rev-share percentage stamped at write time,
+   * for the removed platform-funded bounty; the write path now hardcodes 0 and
+   * the column is retained only to keep the row shape + CHECK constraints.
    */
   spend_share_pct: number;
   app_owner_share_cents: number;
@@ -1010,10 +1257,57 @@ export type BlockSpendAttribution = {
    * (bounded, app-owned). NULL when the app supplied none.
    */
   shared_content_key: string | null;
+  /**
+   * The APP-FACING generation type this spend paid for, as `<coarse>` or
+   * `<coarse>:<subtype>` — e.g. `textToImage:img2img-edit`,
+   * `customComfy:seamless-pano-360`, `customComfy:inline`, a bare registered
+   * STEP ID (`convert-image`, `chat-completion`), or `step:<orchestrator $type>`
+   * on the PASS-THROUGH step arm.
+   *
+   * 🔴 EVERY VALUE IS AN APP-FACING ID AND NEVER THE ORCHESTRATOR'S INTERNAL
+   * `$type` — EXCEPT UNDER THE `step` COARSE KEY, WHICH IS EXACTLY THAT, AND IS
+   * CALLER-SUPPLIED. The pass-through arm (`kind:'step'` with a bare `$type` and
+   * no registry id) has no app-facing id at all: the `$type` IS the contract the
+   * app wrote, it is validated against nothing but the platform-internal
+   * denylist, and it is bounded here only by SHAPE (≤64 chars of
+   * `[A-Za-z0-9._-]`). The `step:` prefix is what keeps that visible and keeps it
+   * out of the other keys' namespaces — `textToImage` and `customComfy` are
+   * themselves real orchestrator `$type`s, so a bare one would be indistinguishable
+   * from a genuine image submit. Every other arm's value is server-owned.
+   *
+   * 🔴 THE COARSE KEY IS EVERYTHING BEFORE THE FIRST COLON, and a value carries
+   * at most one. A per-generation-type author fee keys on the coarse key, so
+   * `split_part(generation_type, ':', 1)` is the stable grouping no matter how
+   * the subtype axis grows — and on `step:` rows it is also the ONLY safe
+   * grouping, because the subtype is app-chosen. Do not key a fee, a rate or a
+   * payout on the full value. A registry step id implies `kind: 'step'` and
+   * carries no subtype, so one column still covers the whole axis with no
+   * companion `kind`.
+   *
+   * Deliberately unconstrained TEXT — no CHECK, no enum. Both the step and
+   * recipe registries are designed to grow additively (register an entry, not
+   * a schema change), and a CHECK would make every new step or recipe a
+   * migration. The bound is enforced in code against those registries
+   * (`resolveBlockGenerationType` / `isBlockGenerationType`, in
+   * `src/server/services/blocks/generation-type.ts`) and re-checked at the
+   * write.
+   *
+   * NULL on rows written before this column existed (no backfill is possible —
+   * the type was never recorded) and on any submit whose type could not be
+   * resolved. Resolution is fail-open: an unresolvable SUB-axis degrades to the
+   * bare coarse key, and an unresolvable body to NULL, rather than throwing on
+   * the fire-and-forget spend path.
+   */
+  generation_type: string | null;
   status: Generated<string>;
   /**
    * 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
    * refund path, so this is never 'refund'/'chargeback'.
+   * 'manual_review' carries TWO senses on this table: an operator void, and a
+   * PRIVATE RUN of a delisted app (the value is reused rather than adding a
+   * 'private_run' member, which would need a hand-applied migration). A
+   * cross-table query cannot tell them apart here; the private-run mint's audit
+   * line is what discriminates. Nothing pays out of this table either way.
    */
   voided_reason: string | null;
   attributed_at: Generated<Timestamp>;
@@ -2117,6 +2411,10 @@ export type Cosmetic = {
   pHashHex: string | null;
   pHashVersion: string | null;
   pHashFailedAt: Timestamp | null;
+  /**
+   * Bitwise `CosmeticFlag` (src/shared/constants/cosmetic-flags.constants.ts). Moderator-owned; creator edits never write it.
+   */
+  flags: Generated<number>;
 };
 export type CosmeticShopItem = {
   id: Generated<number>;
@@ -2162,6 +2460,77 @@ export type CosmeticShopSectionItem = {
 export type CoveredCheckpoint = {
   model_id: number;
   version_id: number;
+};
+export type CreatorGalleryHiddenUser = {
+  creatorId: number;
+  userId: number;
+  note: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type CreatorMilestone = {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: Generated<boolean>;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  sortOrder: Generated<number>;
+};
+export type Crucible = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  heroImageId: number | null;
+  buzzType: Generated<string>;
+  nsfwLevel: Generated<number>;
+  contentType: Generated<MediaType>;
+  entryFee: Generated<number>;
+  seededPrizePool: Generated<number>;
+  prizePool: Generated<number>;
+  entryLimit: Generated<number>;
+  freeEntriesPerUser: Generated<number>;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: Generated<unknown>;
+  allowedResources: unknown | null;
+  allowedBaseModels: Generated<string[]>;
+  duration: Generated<number>;
+  startAt: Timestamp | null;
+  endAt: Timestamp | null;
+  status: Generated<CrucibleStatus>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+  ingestion: Generated<CrucibleIngestionStatus>;
+  scannedAt: Timestamp | null;
+  textNsfw: Generated<boolean>;
+};
+export type CrucibleEngagement = {
+  userId: number;
+  crucibleId: number;
+  type: CrucibleEngagementType;
+  createdAt: Generated<Timestamp>;
+};
+export type CrucibleEntry = {
+  id: Generated<number>;
+  crucibleId: number;
+  userId: number;
+  imageId: number | null;
+  score: Generated<number>;
+  voteCount: Generated<number>;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type CrucibleReport = {
+  crucibleId: number;
+  reportId: number;
 };
 export type CryptoDeposit = {
   paymentId: string;
@@ -2351,7 +2720,14 @@ export type GenerationBaseModel = {
 export type GenerationCoverage = {
   modelId: number;
   modelVersionId: number;
+  /**
+   * The live rule. A row exists when EITHER column is true, so test the column, not existence.
+   */
   covered: boolean;
+  /**
+   * The staged rule: community checkpoints qualify on their own and load on demand.
+   */
+  coveredNext: boolean;
 };
 export type GenerationPreset = {
   id: Generated<number>;
@@ -2368,6 +2744,13 @@ export type GenerationServiceProvider = {
   name: string;
   schedulers: GenerationSchedulers[];
 };
+export type GenerationSizePreset = {
+  id: Generated<number>;
+  userId: number;
+  width: number;
+  height: number;
+  createdAt: Generated<Timestamp>;
+};
 export type HomeBlock = {
   id: Generated<number>;
   createdAt: Generated<Timestamp | null>;
@@ -2378,6 +2761,64 @@ export type HomeBlock = {
   type: HomeBlockType;
   permanent: Generated<boolean>;
   sourceId: number | null;
+};
+export type HuggingFaceImport = {
+  id: Generated<number>;
+  repo: string;
+  /**
+   * Commit sha, never a branch name — an import must name the exact bytes it took.
+   */
+  revision: string;
+  filename: string;
+  /**
+   * What a moderator calls this batch, defaulting to the repo's own name. Never appears in a
+   * storage key — the key is the ordinary upload shape — so this is free to be corrected.
+   */
+  groupName: string;
+  sourceUrl: string;
+  /**
+   * Both come from the HF tree API before any bytes move: size, and lfs.oid which is the content
+   * sha256 for LFS files. The sha is what lets us skip a file we already store under the same hash;
+   * the transfer itself is not verified against it.
+   */
+  sizeBytes: string | null;
+  sourceSha256: string | null;
+  status: Generated<HuggingFaceImportStatus>;
+  bytesTransferred: Generated<string>;
+  /**
+   * The resume point. A transfer is a sequence of ranged reads from HF written as multipart parts,
+   * and `uploadId` + `parts` is what lets a LATER job run continue one an earlier run left unfinished
+   * instead of starting the file again.
+   */
+  uploadId: string | null;
+  partSize: number | null;
+  parts: unknown | null;
+  bucket: string | null;
+  key: string | null;
+  url: string | null;
+  error: string | null;
+  attempts: Generated<number>;
+  nextAttemptAt: Timestamp | null;
+  userId: number | null;
+  modelVersionId: number | null;
+  modelFileId: number | null;
+  /**
+   * Where this file is headed, recorded before the bytes move so the transfer job can attach it
+   * itself. `modelVersionId` cannot carry this: it means "attached to", and detaching clears it.
+   */
+  attachVersionId: number | null;
+  attachType: string | null;
+  /**
+   * Worker lease. A transfer outlives any one job run, so a claim plus a heartbeat is what stops two
+   * runs moving the same file and what lets the next run tell "in flight" from "abandoned".
+   */
+  claimedBy: string | null;
+  claimedAt: Timestamp | null;
+  heartbeatAt: Timestamp | null;
+  startedAt: Timestamp | null;
+  completedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
 };
 export type Image = {
   id: Generated<number>;
@@ -2431,6 +2872,11 @@ export type ImageFlag = {
   imageId: number;
   promptNsfw: Generated<boolean>;
   resourcesNsfw: Generated<boolean>;
+};
+export type ImageMetaFlags = {
+  imageId: number;
+  hasMeta: boolean;
+  onSite: boolean;
 };
 export type ImageModHelper = {
   imageId: number;
@@ -2497,7 +2943,6 @@ export type ImageTag = {
   tagId: number;
   tagName: string;
   tagType: TagType;
-  tagNsfw: NsfwLevel;
   tagNsfwLevel: number;
   automated: boolean;
   confidence: number | null;
@@ -2542,6 +2987,7 @@ export type JobQueue = {
   entityType: EntityType;
   entityId: number;
   createdAt: Generated<Timestamp>;
+  data: unknown | null;
 };
 export type KeyValue = {
   key: string;
@@ -2936,6 +3382,7 @@ export type ModelVersion = {
   usageControl: Generated<ModelUsageControl>;
   earlyAccessTimeFrame: Generated<number>;
   flags: Generated<number>;
+  generatorLoaded: Generated<boolean>;
   licensingFee: string | null;
   licensingFeeType: Generated<LicensingFeeType | null>;
   licensingFeeSettlementCurrency: Generated<LicensingFeeSettlementCurrency | null>;
@@ -3417,6 +3864,24 @@ export type PricingSlot = {
   ownerId: number;
   createdAt: Generated<Timestamp>;
 };
+export type Prize = {
+  id: Generated<number>;
+  userId: number;
+  sourceType: PrizeSourceType;
+  sourceId: number;
+  subjectId: number | null;
+  position: number | null;
+  amount: number;
+  title: string;
+  externalTransactionId: string;
+  createdAt: Generated<Timestamp>;
+  autoClaimAt: Timestamp;
+  claimedAt: Timestamp | null;
+  buzzType: string | null;
+  autoClaimed: Generated<boolean>;
+  paidAt: Timestamp | null;
+  voidedAt: Timestamp | null;
+};
 export type Product = {
   id: string;
   active: boolean;
@@ -3451,6 +3916,18 @@ export type Purchase = {
   priceId: string | null;
   status: string | null;
   createdAt: Generated<Timestamp>;
+};
+export type PushSubscription = {
+  id: Generated<number>;
+  userId: number;
+  endpoint: string;
+  p256dh: string;
+  auth: string;
+  userAgent: string | null;
+  createdAt: Generated<Timestamp>;
+  lastSeenAt: Generated<Timestamp>;
+  lastSuccessAt: Timestamp | null;
+  failureCount: Generated<number>;
 };
 export type Question = {
   id: Generated<number>;
@@ -3597,6 +4074,18 @@ export type ReportAutomated = {
   metadata: Generated<unknown>;
   createdAt: Generated<Timestamp>;
 };
+export type ResourceInsight = {
+  modelVersionId: number;
+  role: string;
+  styleFamily: string;
+  contentTypes: string[];
+  qualityScore: number;
+  confidence: number;
+  specHash: string;
+  model: string;
+  createdAt: Generated<Timestamp>;
+  stale: Generated<boolean>;
+};
 export type ResourceOverride = {
   hash: string;
   modelVersionId: number;
@@ -3727,12 +4216,19 @@ export type ShopifyMerchOrder = {
 export type Tag = {
   id: Generated<number>;
   name: string;
+  /**
+   * Casing for display, where capitalising `name` gets it wrong ("LoRA", "ComfyUI").
+   */
+  displayName: string | null;
   color: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
   target: TagTarget[];
   type: Generated<TagType>;
-  nsfw: Generated<NsfwLevel>;
+  /**
+   * Whether the TERM itself is adult; `nsfwLevel` rates the content it marks.
+   */
+  nsfwTerm: Generated<boolean>;
   nsfwLevel: Generated<number>;
   unlisted: Generated<boolean>;
   unfeatured: Generated<boolean>;
@@ -4050,6 +4546,12 @@ export type UserCosmeticShopPurchases = {
   refunded: boolean;
   meta: unknown | null;
 };
+export type UserCreatorMilestone = {
+  userId: number;
+  milestoneKey: string;
+  achievedAt: Generated<Timestamp>;
+  seenAt: Timestamp | null;
+};
 export type UserEngagement = {
   userId: number;
   targetUserId: number;
@@ -4084,6 +4586,7 @@ export type UserHubSource = {
   enabled: Generated<boolean>;
   exclude: Generated<boolean>;
   index: Generated<number>;
+  groupKey: number | null;
 };
 export type UserLink = {
   id: Generated<number>;
@@ -4153,6 +4656,11 @@ export type UserPurchasedRewards = {
   meta: Generated<unknown>;
   code: string;
 };
+export type UserPushSetting = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
+};
 export type UserRank = {
   userId: number;
   leaderboardRank: number | null;
@@ -4219,6 +4727,29 @@ export type UserStat = {
   thumbsUpCountAllTime: number;
   thumbsDownCountAllTime: number;
   reactionCountAllTime: number;
+};
+export type UserStorageRollup = {
+  userId: number;
+  imagesRequestedAt: Timestamp | null;
+  imagesStartedAt: Timestamp | null;
+  imagesComputedAt: Timestamp | null;
+};
+export type UserStorageSnapshot = {
+  userId: number;
+  date: Timestamp;
+  kind: string;
+  fileCount: number;
+  bytes: string;
+};
+export type UserStorageUsage = {
+  userId: number;
+  kind: string;
+  publicStatus: string;
+  baseModel: Generated<string>;
+  month: Timestamp;
+  fileCount: number;
+  bytes: string;
+  computedAt: Generated<Timestamp>;
 };
 export type UserStrike = {
   id: Generated<number>;
@@ -4322,6 +4853,7 @@ export type DB = {
   Account: Account;
   AdToken: AdToken;
   Announcement: Announcement;
+  AnnouncementDismissal: AnnouncementDismissal;
   AnnouncementReport: AnnouncementReport;
   AnnouncementSpend: AnnouncementSpend;
   AnnouncementUser: AnnouncementUser;
@@ -4361,7 +4893,10 @@ export type DB = {
   Bid: Bid;
   BidRecurring: BidRecurring;
   block_attribution_payout: BlockAttributionPayout;
+  block_author_fee_accrual: BlockAuthorFeeAccrual;
   block_buzz_attribution: BlockBuzzAttribution;
+  block_good_entitlement: BlockGoodEntitlement;
+  block_good_purchase: BlockGoodPurchase;
   block_scope_invocations: BlockScopeInvocation;
   block_spend_attribution: BlockSpendAttribution;
   block_subscription_attribution: BlockSubscriptionAttribution;
@@ -4449,6 +4984,12 @@ export type DB = {
   CosmeticShopSection: CosmeticShopSection;
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
+  CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
+  CreatorMilestone: CreatorMilestone;
+  Crucible: Crucible;
+  CrucibleEngagement: CrucibleEngagement;
+  CrucibleEntry: CrucibleEntry;
+  CrucibleReport: CrucibleReport;
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
@@ -4470,11 +5011,14 @@ export type DB = {
   GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
+  GenerationSizePreset: GenerationSizePreset;
   HomeBlock: HomeBlock;
+  HuggingFaceImport: HuggingFaceImport;
   Image: Image;
   ImageConnection: ImageConnection;
   ImageEngagement: ImageEngagement;
   ImageFlag: ImageFlag;
+  ImageMetaFlags: ImageMetaFlags;
   ImageModHelper: ImageModHelper;
   ImageRatingRequest: ImageRatingRequest;
   ImageReaction: ImageReaction;
@@ -4552,9 +5096,11 @@ export type DB = {
   PressMention: PressMention;
   Price: Price;
   PricingSlot: PricingSlot;
+  Prize: Prize;
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
+  PushSubscription: PushSubscription;
   Question: Question;
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
@@ -4567,6 +5113,7 @@ export type DB = {
   ReferralReward: ReferralReward;
   Report: Report;
   ReportAutomated: ReportAutomated;
+  ResourceInsight: ResourceInsight;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;
@@ -4615,6 +5162,7 @@ export type DB = {
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
+  UserCreatorMilestone: UserCreatorMilestone;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;
@@ -4626,6 +5174,7 @@ export type DB = {
   UserPaymentConfiguration: UserPaymentConfiguration;
   UserProfile: UserProfile;
   UserPurchasedRewards: UserPurchasedRewards;
+  UserPushSetting: UserPushSetting;
   UserRank: UserRank;
   UserReferral: UserReferral;
   UserReferralCode: UserReferralCode;
@@ -4633,6 +5182,9 @@ export type DB = {
   UserRestriction: UserRestriction;
   UserRole: UserRole;
   UserStat: UserStat;
+  UserStorageRollup: UserStorageRollup;
+  UserStorageSnapshot: UserStorageSnapshot;
+  UserStorageUsage: UserStorageUsage;
   UserStrike: UserStrike;
   Vault: Vault;
   VaultItem: VaultItem;

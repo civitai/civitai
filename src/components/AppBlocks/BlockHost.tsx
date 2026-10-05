@@ -11,13 +11,42 @@ interface BlockHostProps {
 /**
  * Dispatches a single block install to the correct host implementation.
  *
- * In v1 every approved block has `trustTier='unverified'`, so the dispatcher
- * always routes to IframeHost. The InlineHost code path is in the file tree
- * so v2 can light it up without a structural refactor.
+ * ⚠️ RETRACTED (#5209): this used to claim "in v1 every approved block has
+ * `trustTier='unverified'`", and the codebase itself refutes it. See
+ * `~/server/services/blocks/app-cap-limits.constants.ts`, which records a live-DB
+ * measurement from 2026-07-31: **3 rows at `trust_tier='internal'`** against 18
+ * `unverified`. The tier is not uniform and never was.
+ *
+ * The dispatcher always routes to IframeHost regardless, because the InlineHost
+ * path is not lit up yet — that is the real reason, and it is unrelated to the
+ * tier. The InlineHost code path is in the file tree so v2 can light it up
+ * without a structural refactor.
+ *
+ * Why the correction matters rather than being pedantry: `internal`/`verified`
+ * tiers get `allow-same-origin` (`intersectSandbox`), so such a frame runs at a
+ * REAL origin with cookies. Anyone reasoning about what a link, a popup or a
+ * postMessage transport can do in a block frame gets the opposite answer for
+ * those 3 rows, and the retracted sentence said there were none.
  */
 export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
-  const { token, expiresAt, terminal, pending, missingScopes, domain, maxBrowsingLevel, refresh } =
-    useBlockToken(blockInstall, slotContext);
+  const {
+    token,
+    expiresAt,
+    kind,
+    terminal,
+    pending,
+    missingScopes,
+    // 🔴 THE MINT ALREADY REPORTED THIS AND NOTHING HERE READ IT. `useBlockToken`
+    // has surfaced `needsConsent` since A6, but this dispatcher destructured every
+    // sibling field and dropped this one — so the model slot's host had no
+    // server-side verdict to key a consent affordance on, and its ONLY route back to
+    // consent was the block choosing to send REQUEST_CONSENT. A field that exists on
+    // a DTO is not a guard; a consumer BRANCHING on it is.
+    needsConsent,
+    domain,
+    maxBrowsingLevel,
+    refresh,
+  } = useBlockToken(blockInstall, slotContext);
 
   // TERMINAL token-mint failure → collapse (render null, take no space) rather
   // than show a visible "authorization error" card. Matches the IframeHost
@@ -64,13 +93,21 @@ export function BlockHost({ blockInstall, slotContext }: BlockHostProps) {
   // the block's REQUEST_CONSENT — opening the consent modal on the action click
   // (e.g. Generate), not on load. On grant we re-mint via `refresh` so the new
   // scopes reach the iframe through TOKEN_REFRESH and the block retries.
+  //
+  // (c) — and `needsConsent` so the host can offer consent WITHOUT the block asking.
+  // (a) and (b) both depend on the block doing something: (a) only informs it, and
+  // (b) only fires if it calls `requestGrants`. Neither is a route the viewer has
+  // when the block never asks — an older SDK, or block UI that simply does not make
+  // the call. This is the term that makes the host recoverable on its own.
   return (
     <IframeHost
       install={blockInstall}
       context={slotContext}
       token={token}
       expiresAt={expiresAt}
+      tokenKind={kind}
       missingScopes={missingScopes}
+      needsConsent={needsConsent}
       domain={domain}
       maxBrowsingLevel={maxBrowsingLevel}
       onConsentGranted={() => {

@@ -76,9 +76,15 @@ export type EcosystemSeoConfig = {
   /** Display name for the H1 / title. */
   name: string;
   /**
-   * ~150–160 char SERP meta description — unique per page, condensed from the grounded
-   * hero/overview copy (no new claims). Controls the search snippet; front-load the name +
-   * "Civitai" + the core value. Falls back to nothing if omitted, so keep it populated.
+   * `<title>` override, ≤60 chars once tokens resolve. Name the version people search for
+   * ("Illustrious XL", "Pony Diffusion V6 XL") — bare-name queries click through worst.
+   * Omitted → "{name} AI Models & Generator | Civitai". Accepts `{loras:Key}`.
+   */
+  seoTitle?: string;
+  /**
+   * ≤155 char SERP meta description once tokens resolve, grounded in the page's own copy (no new
+   * claims). Front-load what the searcher came for — downloads, LoRAs, generating online — since
+   * the brand already sits in the title. Accepts `{loras:Key}`.
    */
   metaDescription: string;
   /** Primary media type — drives featured-model covers, the funnel, and the default example type. */
@@ -322,10 +328,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   SDXL: {
     key: 'SDXL',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'SDXL',
+    seoTitle: 'SDXL Models & {loras:SDXL} LoRAs, Download or Generate | Civitai',
     metaDescription:
-      "Generate with SDXL on Civitai — Stability AI's high-res open model behind the largest LoRA ecosystem in open image generation. Browse checkpoints, LoRAs & prompts.",
+      "Download SDXL checkpoints and {loras:SDXL} LoRAs, or generate online. Stability AI's high-res open model, and the base of Pony, Illustrious and NoobAI.",
     modality: 'image',
     hero: {
       intro:
@@ -474,10 +481,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Illustrious: {
     key: 'Illustrious',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Illustrious',
+    seoTitle: 'Illustrious XL Models & {loras:Illustrious} LoRAs | Civitai',
     metaDescription:
-      'Generate with Illustrious on Civitai — the SDXL-based anime model built for booru-tag prompting, character consistency, and clean linework. Browse LoRAs & prompts.',
+      'Download Illustrious XL checkpoints and {loras:Illustrious} LoRAs, or generate online. The SDXL anime model for booru-tag prompts and consistent characters.',
     modality: 'image',
     hero: {
       intro:
@@ -630,10 +638,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   NoobAI: {
     key: 'NoobAI',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'NoobAI',
+    seoTitle: 'NoobAI-XL Models & {loras:NoobAI} LoRAs, Online Generator | Civitai',
     metaDescription:
-      'Generate with NoobAI-XL on Civitai — an Illustrious-based anime checkpoint with deep character knowledge and strong booru-tag prompting. Browse LoRAs & prompts.',
+      'Download NoobAI-XL, including v-pred, and {loras:NoobAI} LoRAs, or generate online. The Illustrious-based anime checkpoint with deep character knowledge.',
     modality: 'image',
     hero: {
       intro:
@@ -940,10 +949,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   Pony: {
     key: 'Pony',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Pony',
+    seoTitle: 'Pony Diffusion V6 XL Models & {loras:Pony} LoRAs | Civitai',
     metaDescription:
-      'Generate with Pony Diffusion V6 XL on Civitai — the SDXL fine-tune for characters, anime, and stylized art via score_ tag prompts. Browse top LoRAs & prompts.',
+      'Download Pony Diffusion V6 XL and {loras:Pony} LoRAs, or generate online. The SDXL fine-tune for characters, anime and stylized art, prompted with score_ tags.',
     modality: 'image',
     hero: {
       intro:
@@ -1097,21 +1107,22 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   SD1: {
     key: 'SD1',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     slug: 'stable-diffusion',
     name: 'Stable Diffusion',
+    seoTitle: 'Stable Diffusion 1.5 Checkpoints & {loras:SD1} LoRAs | Civitai',
     metaDescription:
-      'Generate with Stable Diffusion (SD 1.5) on Civitai — the fast, lightweight original with the largest LoRA library anywhere. Browse checkpoints, LoRAs & prompts.',
+      'Download Stable Diffusion 1.5 checkpoints and {loras:SD1} LoRAs, or generate online. The fast, lightweight original with the deepest ControlNet support.',
     modality: 'image',
     hero: {
       intro:
-        'Stable Diffusion is the open model that kicked off the AI-art community — and its 1.5 release is still the fastest, lightest, and most widely supported version to generate with. SD 1.5 renders in seconds on almost any hardware and is backed by the largest LoRA and fine-tune library anywhere. Generate from a text prompt with no GPU and no install — run SD 1.5 and thousands of its checkpoints and LoRAs right here on Civitai.',
+        'Stable Diffusion is the open model that kicked off the AI-art community — and its 1.5 release is still the fastest, lightest, and most widely supported version to generate with. SD 1.5 renders in seconds on almost any hardware and is backed by one of the largest LoRA and fine-tune libraries anywhere. Generate from a text prompt with no GPU and no install — run SD 1.5 and thousands of its checkpoints and LoRAs right here on Civitai.',
       badges: ['Text-to-Image', 'By Runway / Stability AI', 'Open weights'],
     },
     overview: [
       'SD 1.5 is the original open-weights Stable Diffusion release from Runway and Stability AI, and it is the model that started the community. It is a latent diffusion model built on the CLIP text encoder with a native resolution of 512×512, which is why it is tiny to run and lightning-fast — it fits comfortably on GPUs with well under 10GB of VRAM, or none at all when you run it here. Rather than reading long natural-language descriptions, it works from short, comma-separated tag prompts, the same style that shaped years of community workflows.',
       'Almost nobody runs the raw base checkpoint today — the ecosystem lives in its fine-tunes. The default hosted here is DreamShaper, a long-running community model whose author set out to build "a better Stable Diffusion," a versatile "swiss-knife" checkpoint aimed first at art and illustration. Around SD 1.5 sits the deepest support stack of any open model: textual inversions, LoRAs, ControlNet, negative embeddings like the DreamShaper author’s "Bad Dream," and img2img / highres-fix upscaling pipelines that push its 512-native output to higher resolutions.',
-      'Choose SD 1.5 when speed, low hardware cost, and sheer breadth of styles matter more than raw prompt fidelity — it renders in a second or two and has the largest LoRA and fine-tune library anywhere. For higher native resolution and cleaner anatomy, the SDXL-based ecosystems (SDXL, Pony, Illustrious) are the natural step up, and FLUX.1 leads on prompt adherence and in-image text. But for fast iteration, stylized art, and reusing a decade of community resources, SD 1.5 remains the lightest and most flexible starting point.',
+      'Choose SD 1.5 when speed, low hardware cost, and sheer breadth of styles matter more than raw prompt fidelity — it renders in a second or two and has one of the largest LoRA and fine-tune libraries anywhere. For higher native resolution and cleaner anatomy, the SDXL-based ecosystems (SDXL, Pony, Illustrious) are the natural step up, and FLUX.1 leads on prompt adherence and in-image text. But for fast iteration, stylized art, and reusing a decade of community resources, SD 1.5 remains the lightest and most flexible starting point.',
     ],
     promptTips: [
       'Prompt in tags, not sentences — short, comma-separated keywords following the pattern [quality tags], [subject], [scene], [lighting], [camera/lens], [style]. Front-load the most important concepts, since SD 1.5 weights early tokens more heavily.',
@@ -1225,7 +1236,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: 'Why use SD 1.5 when newer models exist?',
-        a: 'It is the fastest and lightest option, and it has the largest catalog of community LoRAs and fine-tunes by far. For quick iteration and niche styles it is still unbeaten — try it on Civitai.',
+        a: 'It is the fastest and lightest option, and it has one of the largest catalogs of community LoRAs and fine-tunes. For quick iteration and niche styles it is still unbeaten — try it on Civitai.',
       },
       {
         q: 'Can I train my own SD 1.5 LoRA?',
@@ -1576,28 +1587,30 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
   },
   Krea2: {
     key: 'Krea2',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Krea 2',
+    seoTitle: 'Krea 2 (Krea2) Models, LoRAs & Online Generator | Civitai',
     metaDescription:
-      "Generate with Krea 2 on Civitai — Krea AI's model for sharp photorealism, strong aesthetics, and dependable prompt adherence. Browse checkpoints, LoRAs & prompts.",
+      "Browse {loras:Krea2} Krea 2 LoRAs and checkpoints, or generate and edit images with Krea2 online. Krea AI's model for sharp photorealism and strong prompt adherence.",
     modality: 'image',
     isNew: true,
     hero: {
       intro:
-        "Krea 2 is Krea AI's in-house text-to-image model, built for sharp photorealism, strong aesthetics, and dependable prompt adherence. Describe a scene and get a polished, high-resolution image in seconds — no GPU, no install. Run every Krea 2 variant right here on Civitai.",
-      badges: ['Text-to-Image', 'By Krea', 'Open weights + API'],
+        "Krea 2 is Krea AI's in-house image model, built for sharp photorealism, strong aesthetics, and dependable prompt adherence. Describe a scene and get a polished, high-resolution image in seconds, or edit an existing image — no GPU, no install. Run every Krea 2 variant right here on Civitai.",
+      badges: ['Text-to-Image', 'Image Editing', 'By Krea', 'Open weights + API'],
     },
     overview: [
-      "Krea 2 is Krea AI's first foundation image model, trained from scratch to prioritize how an image feels — its mood, lighting, and texture — rather than just what it contains. It's served on Civitai through the official fal.ai API partnership, so you can generate with the closed-weights hosted build directly on-site with no GPU or install. The model is designed around aesthetic control: style references with per-reference strength, moodboards, and a tunable creativity dial (raw, low, medium, high) that governs how far the model may drift from your inputs, making the prompt only one input among several.",
+      "Krea 2 is Krea AI's first foundation image model, trained from scratch to prioritize how an image feels — its mood, lighting, and texture — rather than just what it contains. It's served on Civitai through the official fal.ai API partnership, so you can generate with the closed-weights hosted build directly on-site with no GPU or install. The hosted build is designed around aesthetic control: style references with per-reference strength and a tunable creativity dial (raw, low, medium, high) that governs how far the model may drift from your inputs, making the prompt only one input among several.",
       "The hosted model ships in two sizes. Large is the bigger build, with softer post-training that leaves more of the raw base character intact; it's the pick for photorealism of humans and animals, motion blur, film grain, low dynamic range, and imperfect lighting that reads as a real photograph. Medium is smaller, faster, and cheaper, with heavier post-training that pushes it toward illustration, anime, painting, and other stylized aesthetics with clean line work. Alongside these, Krea released two open-weight checkpoints on Hugging Face: Raw, the undistilled full-guidance build (Krea recommends ~52 steps at CFG 3.5) that carries the highest quality ceiling and is the intended target for fine-tuning and LoRA training; and Turbo, an 8-step distilled build of Raw that runs without classifier-free guidance for fast inference at 1K–2K resolution (up to 2048×2048).",
       'Choose Krea 2 when you want photoreal grit or a defined illustration style with minimal fuss — it has a noticeable edge on the hard cases other models fight you on: lens flares, chrome and metallic surfaces, motion blur, glitter and iridescent textures, film grain, and starburst highlights. Reach for Large for chrome, lens flares, and photographic realism; Medium for clean stylized art; Raw when you want the maximum quality ceiling or a predictable base for training; and Turbo when you want Krea 2 aesthetics at a fraction of the compute. LoRAs trained on Raw carry over to Turbo, so you can train once on the full model and run inference fast on the distilled build.',
+      "Krea 2 also edits images. Pick the image edit workflow in the generator, add up to four source images, and describe the change; editing runs on Turbo (the default) or Raw together with Krea 2's identity-edit LoRA, so the hosted Large and Medium tiers aren't offered there.",
     ],
     promptTips: [
       'Write in natural, descriptive language — Krea 2 was trained to interpret how an image should feel, so adjectives about mood, lighting, material, and texture carry real weight. A useful order is subject and action, setting and composition, lighting and atmosphere, material and texture, then aesthetic or film-stock reference.',
       'Skip weight syntax — (word:1.5), [word], and ((word)) are read as literal text and ignored as weights. Emphasize by describing what you want more vividly instead.',
-      'Steer with what you DO want, not negatives — negative prompts have minimal effect here. Krea 2 is built around style references, moodboards, and the creativity dial (raw/low/medium/high) rather than a "what to avoid" channel.',
+      'Steer with what you DO want, not negatives — Raw and Turbo accept a negative prompt, but it has minimal effect. On Large and Medium, steer with style references and the creativity dial (raw/low/medium/high) instead.',
       'Lean into its strengths with specific language — for lens flares, chrome, motion blur, glitter, iridescence, film grain, or starburst highlights, name the exact look rather than describing it generically.',
-      'Keep prompts around 300 words as the practical sweet spot — there is no published token limit, but longer prompts stop adding signal past that. Aesthetic direction lives outside the text: attach a style reference or moodboard if your prompt is style-light, and pick Large (photoreal) vs. Medium (illustration) via the variant selector, not the prompt.',
+      'Keep prompts around 300 words as the practical sweet spot — there is no published token limit, but longer prompts stop adding signal past that. Aesthetic direction lives outside the text: on Large or Medium, attach a style reference if your prompt is style-light, and pick Large (photoreal) vs. Medium (illustration) via the variant selector, not the prompt.',
     ],
     generatorVersionId: 2983022,
     featuredModels: [
@@ -1606,7 +1619,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
         versionId: 2983022,
         imageId: 137356834,
         displayName: 'Krea 2 (Large)',
-        note: 'Civitai-hosted · default',
+        note: 'Civitai-hosted · photoreal',
       },
       {
         modelId: 2732656,
@@ -1707,7 +1720,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     faq: [
       {
         q: 'What is Krea 2?',
-        a: "Krea 2 is Krea AI's in-house text-to-image model, tuned for photorealism and clean aesthetics. You can generate with it on Civitai — no GPU or install required.",
+        a: "Krea 2 is Krea AI's in-house image model, tuned for photorealism and clean aesthetics. You can generate and edit images with it on Civitai — no GPU or install required.",
       },
       {
         q: 'How much does it cost to generate with Krea 2?',
@@ -1715,7 +1728,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: "What's the difference between Krea 2, Turbo, and Raw?",
-        a: 'The default Large/Medium tiers balance quality and cost, Turbo trades a little detail for faster generations, and Raw is the base checkpoint. Try each in the generator and keep the one that fits your shot.',
+        a: "Large and Medium are the Civitai-hosted tiers, with style references and a creativity dial; Large leans photoreal and Medium leans illustration. Raw is the open-weight base checkpoint and the generator's default, and Turbo is its faster 8-step distilled build. Raw and Turbo are the builds that run LoRAs and image editing. Try each in the generator and keep the one that fits your shot.",
+      },
+      {
+        q: 'Can I edit images with Krea 2?',
+        a: "Yes. Choose the image edit workflow in the generator, add up to four source images, and describe the change you want. Editing runs on the Turbo or Raw build with Krea 2's identity-edit LoRA.",
       },
       {
         q: 'Can I run Krea 2 locally or train a LoRA?',
@@ -1732,10 +1749,11 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
 
   Anima: {
     key: 'Anima',
-    updatedAt: '2026-07-23',
+    updatedAt: '2026-09-16',
     name: 'Anima',
+    seoTitle: 'Anima Anime Model & {loras:Anima} LoRAs, Online Generator | Civitai',
     metaDescription:
-      "Generate with Anima on Civitai — CircleStone Labs' open anime model for clean linework, expressive characters, and vivid color. Browse top Anima LoRAs & prompts.",
+      "Download the Anima model and {loras:Anima} LoRAs, or generate online. CircleStone Labs' open anime model for clean linework, expressive characters and vivid color.",
     modality: 'image',
     hero: {
       intro:
@@ -2548,7 +2566,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
     },
     overview: [
       "Seedance 2.0 is a hosted multimodal video generator from ByteDance's Seed team. It's built on a Dual-branch DiT (Diffusion Transformer) architecture that jointly generates the visuals, dialogue, lip-sync, and ambient sound in one pipeline, natively fusing text, image, and audio inputs rather than treating audio as a separate post step. Weights aren't published — the ByteDance-Seed org is on Hugging Face, but Seedance runs as a hosted model, which on Civitai means you generate it through the on-site generator instead of downloading it.",
-      'Two variants are available on Civitai: Seedance 2.0, the full-quality model set as the generator default, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run from 480p up to 4K native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
+      'Two variants are available on Civitai: Seedance 2.0, the full-quality model, and Seedance 2.0 Fast, a speed-optimized variant that trades some fidelity for quicker turnaround. Both do text-to-video and image-to-video and both produce synchronized audio. Clips run from 480p up to 4K native, and the model can take reference inputs — up to nine images plus short audio and video clips — to steer a generation. Because it is API-only there are no LoRAs or local runs; you prompt it directly in the generator.',
       'Choose Seedance when you want video and matching audio in a single generation — synchronized speech, sound effects, and ambience without a separate audio pass. Against a polished closed API like Kling or a fast one like Hailuo you get the joint audio-plus-video pipeline; against open-weight Wan you trade downloadable models and a LoRA ecosystem for that one-pass audio and ByteDance hosting. It runs right here on Civitai either way.',
     ],
     promptTips: [
@@ -2658,7 +2676,7 @@ export const ECOSYSTEM_SEO: Record<string, EcosystemSeoConfig> = {
       },
       {
         q: "What's the difference between Seedance 2.0 and 2.0 Fast?",
-        a: 'Seedance 2.0 is the full-quality model and the generator default; 2.0 Fast is a speed-optimized variant that returns clips more quickly and costs less Buzz, trading a little fidelity. Run the same prompt on each and compare — both are available on Civitai.',
+        a: 'Seedance 2.0 is the full-quality model; 2.0 Fast is a speed-optimized variant that returns clips more quickly and costs less Buzz, trading a little fidelity. Run the same prompt on each and compare — both are available on Civitai.',
       },
       {
         q: 'Can I use my own image or reference clips with Seedance?',
@@ -4072,15 +4090,17 @@ export const getEcosystemSeoConfig = (key: string): EcosystemSeoConfig | undefin
 export const getEcosystemSeoSlug = (config: EcosystemSeoConfig): string =>
   config.slug ?? config.key.toLowerCase();
 
-/** Matches a `{loras:Key}` token in a comparison value. Global — use with `.replace`/`matchAll`. */
+/** Matches a `{loras:Key}` token. Global — use with `.replace`/`matchAll`. */
 export const LORA_COUNT_TOKEN = /\{loras:([A-Za-z0-9_]+)\}/g;
 
-/** ECOSYSTEM_SEO keys whose live LoRA count this page's comparison table needs. */
-export const getComparisonLoraCountKeys = (config: EcosystemSeoConfig): string[] => [
+/** ECOSYSTEM_SEO keys whose live LoRA count this page needs, from every field that takes the token. */
+export const getLoraCountKeys = (config: EcosystemSeoConfig): string[] => [
   ...new Set(
-    config.comparison.rows
-      .flatMap((row) => row.values)
-      .flatMap((value) => [...value.matchAll(LORA_COUNT_TOKEN)].map((m) => m[1]))
+    [
+      ...config.comparison.rows.flatMap((row) => row.values),
+      config.seoTitle ?? '',
+      config.metaDescription,
+    ].flatMap((value) => [...value.matchAll(LORA_COUNT_TOKEN)].map((m) => m[1]))
   ),
 ];
 

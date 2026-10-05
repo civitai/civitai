@@ -173,8 +173,8 @@ describe('🔴 a verdict is not an action — the conflation regression', () => 
   it('recording a verdict leaves `actioned` and `action` untouched', async () => {
     // The single most likely future bug on this table, named in the schema's own comment: the two
     // pairs of columns look alike and mean opposite things. `actioned` is what the DETECTOR did;
-    // `verdict` is whether a human thinks it was right. A finding the detector acted on, later ruled
-    // a false positive, must still record that the action happened.
+    // `verdict` is a human's judgement of the ACCOUNT. A finding the detector acted on, later ruled
+    // `fp` — the account is fine — must still record that the action happened.
     const d = await db();
     const runId = await seedRun(d, 'bot-account-detection', '2026-09-03T03:20:00Z');
     const acted = await seedFinding(d, { runId, userId: 1, actioned: true, action: 'exclude' });

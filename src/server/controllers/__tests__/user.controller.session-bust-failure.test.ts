@@ -83,7 +83,7 @@ vi.mock('~/server/services/user.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
-  ingestImage: vi.fn(),
+  ingestImageById: vi.fn(),
   deleteImageById: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: mockQueueUpdate } }));

@@ -38,16 +38,28 @@ const run = async (fn: () => Promise<unknown>) => {
 
 describe('bulk image sources that build their IN list as raw SQL', () => {
   it('parenthesises the model union so Postgres can parse it', async () => {
-    for (const statement of await run(() => getImagesForModel(2877758, 200, 0))) {
+    for (const statement of await run(() => getImagesForModel(2877758, { limit: 200 }))) {
       expect(statement).toContain('in (');
       expect(statement).not.toMatch(/in\s+SELECT/i);
     }
   });
 
   it('parenthesises the model-version union too', async () => {
-    for (const statement of await run(() => getImagesForModelVersion(3252190, 200, 0))) {
+    for (const statement of await run(() => getImagesForModelVersion(3252190, { limit: 200 }))) {
       expect(statement).toContain('in (');
       expect(statement).not.toMatch(/in\s+SELECT/i);
     }
+  });
+});
+
+describe('the removed filter', () => {
+  it('narrows the count as well as the rows, so paging and the total describe the same set', async () => {
+    const statements = await run(() => getImagesForModel(2877758, { removed: 'only' }));
+    for (const statement of statements) expect(statement).toMatch(/"i"\."ingestion" = \$\d+/);
+  });
+
+  it('adds no predicate when unset', async () => {
+    for (const statement of await run(() => getImagesForModel(2877758, {})))
+      expect(statement).not.toMatch(/"i"."ingestion" (=|!=|<>) /);
   });
 });

@@ -90,6 +90,7 @@ export function ResourceReviewCarousel({
                                 type={image.type}
                                 width={800}
                                 hiDpi={features.hiDpiPreviews}
+                                sourceWidth={image.width}
                                 placeholder="empty"
                                 style={{ width: '100%', objectPosition: 'top' }}
                               />
@@ -99,6 +100,7 @@ export function ResourceReviewCarousel({
                             entityId={image.id}
                             entityType="image"
                             reactions={image.reactions}
+                            metricsUnknown={image.stats?.statsUnknown}
                             metrics={{
                               likeCount: image.stats?.likeCountAllTime,
                               dislikeCount: image.stats?.dislikeCountAllTime,

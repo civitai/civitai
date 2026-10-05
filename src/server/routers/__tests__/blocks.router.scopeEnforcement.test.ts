@@ -139,7 +139,13 @@ vi.mock('~/server/utils/block-gen-idempotency', async (importActual) => {
 vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
   recordScopeInvocation: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/middleware/block-scope.middleware', () => ({
+// Spread the ORIGINAL rather than replacing the module: `blocks.router.ts` also
+// imports `blockPerCallBudget` from here, and every submit gate's budget
+// comparison goes through it. Stubbing the module wholesale drops that export,
+// so each gate would compare against `undefined` — and `x > undefined` is
+// always false, i.e. the budget gate silently stops rejecting anything.
+vi.mock('~/server/middleware/block-scope.middleware', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   verifyBlockToken: mockVerifyBlockToken,
   parseSubjectUserId: (...args: unknown[]) => mockParseSubjectUserId(...args),
 }));
@@ -652,20 +658,142 @@ describe('per-(user, app) consent budget', () => {
     expect(mockGrantFindUnique).not.toHaveBeenCalled();
   });
 
-  // INVARIANT GUARD — green at both, vacuously at base for the same reason as the dev
-  // test above. A revoked grant reports no budget, mirroring getGrantedScopes: a revoked
-  // grant carries no spend scope, so there is nothing for a budget to bound and enforcing
-  // a stale one would be enforcing against nothing.
-  it('a REVOKED grant contributes no consent budget', async () => {
-    mockGrantFindUnique.mockResolvedValue({ buzzBudgetPerDay: 1, revokedAt: new Date() });
+  // ─────────────────────────────────────────────────────────────────────────────
+  // 🔴 REVOKED CONSENT **REFUSES** THE SPEND — IT NO LONGER FALLS THROUGH.
+  //
+  // ⚠️ THIS BLOCK REPLACES A TEST THAT ASSERTED THE OPPOSITE, AND THE OLD TEST WAS AN
+  // ACCURATE DESCRIPTION OF A DEFECT. It read:
+  //
+  //     it('a REVOKED grant contributes no consent budget', …)
+  //       expect(result.snapshot.workflowId).toBe('wf_real');   // the spend SUCCEEDED
+  //       expect(anyKeyUnder(CONSENT_PREFIX)).toBe(false);
+  //
+  // with the rationale *"a revoked grant carries no spend scope, so there is nothing for a
+  // budget to bound"*. That rationale is true only at the NEXT MINT. Block tokens are JWTs
+  // with a 900s default lifetime (4h for dev), so an already-signed token keeps the scope —
+  // and `getConsentBuzzBudget` returning `null` for a revoked grant was indistinguishable
+  // from "no budget set", so `reserveBlockBuzzSpendForClaims` dropped the viewer's OWN
+  // per-app ceiling and let the app carry on under the platform's 50,000/day alone. The
+  // revoke LOOSENED spend before it removed the scope. `resolveConsentSpendPosture` makes
+  // the two states distinguishable and the reserve path now throws.
+  //
+  // It was also labelled an INVARIANT GUARD on the grounds that no code path could produce a
+  // non-null `revoked_at`. That is retracted too: `revokeScopes` writes one.
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  /**
+   * 🔴 REGRESSION (this is the assertion that was INVERTED at base). A whole-grant revoke
+   * refuses the submit outright.
+   *
+   * MUTATION THAT MUST KILL IT: in `reserveBlockBuzzSpendForClaims`, replace the
+   * `posture.kind === 'revoked'` throw with `return { ...platform, consent: null }` — i.e.
+   * restore the fall-through.
+   */
+  it('a REVOKED grant REFUSES the spend instead of falling back to the platform cap', async () => {
+    mockGrantFindUnique.mockResolvedValue({
+      buzzBudgetPerDay: 1,
+      revokedAt: new Date(),
+      grantedScopes: [],
+      revokedScopes: [],
+    });
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    orchestratorQuoting(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody() }),
+      'a revoked grant did not refuse the spend. At base this returned a SUCCESSFUL ' +
+        'workflow under the platform ceiling alone — the revoke removed the user’s own ' +
+        'cap before it removed the scope.'
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    // No real submit — only the whatIf quote ran.
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+    // And no consent counter was created for a spend that was refused.
+    expect(anyKeyUnder(CONSENT_PREFIX)).toBe(false);
+  });
+
+  /**
+   * 🔴 THE SAME REFUSAL FOR A PARTIAL REVOKE of just the spend scope — the shape the new
+   * feature actually produces most often. `revoked_at` is NULL here, so a guard that keyed
+   * only on that column would serve this one.
+   *
+   * MUTATION THAT MUST KILL IT: drop the `revokedScopes.includes(CONSENT_SPEND_SCOPE)`
+   * branch from `resolveConsentSpendPosture`.
+   */
+  it('a PARTIAL revoke of ai:write:budgeted refuses too, with revokedAt still NULL', async () => {
+    mockGrantFindUnique.mockResolvedValue({
+      buzzBudgetPerDay: null,
+      revokedAt: null,
+      grantedScopes: ['posts:write:self'],
+      revokedScopes: ['ai:write:budgeted'],
+    });
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    orchestratorQuoting(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * 🔴 THE REFUND, AND IT IS THE CORRECTNESS REQUIREMENT THIS EXIT SHARES WITH EVERY OTHER
+   * NON-COMMITTED ONE. The platform reservation is taken BEFORE the consent read, so a
+   * refusal that keeps it permanently burns the viewer's 50,000/day allowance for a
+   * generation that never ran — and this is the exit most likely to be hit repeatedly, by a
+   * client that keeps retrying against a permission the user has withdrawn.
+   *
+   * MUTATION THAT MUST KILL IT: delete the `await refundBlockBuzzSpend(key, cost)` from the
+   * `posture.kind === 'revoked'` branch.
+   */
+  it('the refusal REFUNDS the platform daily reservation', async () => {
+    mockGrantFindUnique.mockResolvedValue({
+      buzzBudgetPerDay: null,
+      revokedAt: null,
+      grantedScopes: [],
+      revokedScopes: ['ai:write:budgeted'],
+    });
+    seeds.push([DAILY_PREFIX, 300]); // 300 already spent today across all apps
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    orchestratorQuoting(25);
+
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await expect(
+      caller.submitWorkflow({ blockToken: 'tok', body: validBody() })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+
+    const dailyKey = keyUnder(DAILY_PREFIX);
+    // BACK TO THE PRE-ATTEMPT VALUE — not merely "below the cap".
+    expect(counters.get(dailyKey)).toBe(300);
+    // And it genuinely round-tripped rather than never being reserved: without this pair the
+    // assertion above would also pass if the reservation had been skipped entirely.
+    expect(mockSysRedis.incrBy).toHaveBeenCalledWith(dailyKey, 25);
+    expect(mockSysRedis.decrBy).toHaveBeenCalledWith(dailyKey, 25);
+  });
+
+  /**
+   * 🔴 THE CONTROL FOR THE WHOLE BLOCK. A revoke of a DIFFERENT scope must not touch
+   * spending. Without it, an implementation that refused whenever `revoked_scopes` is
+   * non-empty passes all three tests above while breaking every app whose viewer withdrew an
+   * unrelated permission.
+   */
+  it('CONTROL: a revoke of an UNRELATED scope leaves spending working', async () => {
+    mockGrantFindUnique.mockResolvedValue({
+      buzzBudgetPerDay: 100,
+      revokedAt: null,
+      grantedScopes: ['ai:write:budgeted'],
+      revokedScopes: ['posts:write:self'],
+    });
     mockVerifyBlockToken.mockResolvedValue(validClaims());
     orchestratorQuoting(25);
 
     const caller = blocksRouter.createCaller(fakeCtx() as never);
     const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
-
     expect(result.snapshot.workflowId).toBe('wf_real');
-    expect(anyKeyUnder(CONSENT_PREFIX)).toBe(false);
+    // The viewer's own ceiling is still enforced, not dropped.
+    expect(counters.get(keyUnder(CONSENT_PREFIX))).toBe(25);
   });
 
   // REGRESSION (red at origin/main). Fail CLOSED: a budget that cannot be READ must not

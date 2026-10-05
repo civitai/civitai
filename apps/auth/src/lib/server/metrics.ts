@@ -53,11 +53,21 @@ export const blockedEmailDomainSignupsTotal = new Counter({
   registers: [register],
 });
 
-/** Turnstile captcha verification outcomes, by result. Not counted when captcha is disabled. */
+/**
+ * Turnstile captcha verification outcomes, by result and by which widget produced the token.
+ * Not counted when captcha is disabled.
+ *
+ * `mode` must be supplied on EVERY inc, `success` included: prom-client silently emits a series with
+ * the label absent rather than throwing, so an omission is invisible until the query returns nothing.
+ *
+ * Read `mode` as CORROBORATED only on `success` — there it required a token that verified against
+ * that widget's secret. On a reject it is the client's own claim about which widget it was using, so
+ * `no_token{mode="managed"}` says a submit ASSERTED the fallback, not that the fallback ever rendered.
+ */
 export const captchaVerificationsTotal = new Counter({
   name: 'hub_captcha_verifications_total',
-  help: 'Turnstile captcha verifications by result (success / reject reason).',
-  labelNames: ['result'] as const,
+  help: 'Turnstile captcha verifications by result (success / reject reason) and widget mode.',
+  labelNames: ['result', 'mode'] as const,
   registers: [register],
 });
 

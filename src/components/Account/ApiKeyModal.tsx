@@ -7,7 +7,6 @@ import {
   Button,
   Checkbox,
   Code,
-  CopyButton,
   Group,
   Modal,
   NumberInput,
@@ -17,7 +16,6 @@ import {
   Table,
   Text,
 } from '@mantine/core';
-import { IconCheck, IconClipboard } from '@tabler/icons-react';
 import type * as z from 'zod';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -31,7 +29,10 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
+import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
 
 const schema = addApiKeyInputSchema;
 
@@ -146,23 +147,31 @@ export function ApiKeyModal({ initialName, initialTokenScope, ...props }: Props)
       {apiKey ? (
         <Stack gap={4}>
           <Text fw={500}>Here is your API Key:</Text>
-          <CopyButton value={apiKey}>
-            {({ copied, copy }) => (
-              <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                <Code block color={copied ? 'green' : undefined}>
-                  {copied ? 'Copied' : apiKey}
-                </Code>
-                <LegacyActionIcon
-                  className="absolute right-2 top-1/2 -translate-y-1/2"
-                  right={10}
-                  variant="transparent"
-                  color="gray"
-                >
-                  {copied ? <IconCheck /> : <IconClipboard />}
-                </LegacyActionIcon>
-              </Box>
+          {/* 🔴 THE ACCESSIBLE NAME IS THE POINT OF ROUTING THIS THROUGH `CopyAffordance`,
+              NOT THE DE-DUPLICATION. This was a hand-rolled copy of that component's shell
+              whose `ActionIcon` carried no `aria-label` and no text, so the one control that
+              puts a live API key on the clipboard announced itself to a screen reader as
+              "button". `CopyAffordance`'s `label` is a required prop with no default, which
+              is what keeps the next copy of this block from shipping the same way. */}
+          <CopyAffordance value={apiKey} label="Copy your API key">
+            {({ copied }) => (
+              // `paddingRight`: the control is a SIBLING of this body — `CopyAffordance`
+              // renders `<Box pos="relative">{children}<LegacyActionIcon …/></Box>`, so the
+              // control is positioned against that wrapper and merely OVERLAPS this body. It
+              // could not be inside it: `Code` computes `overflow: auto`, so a control
+              // genuinely inside would scroll away with the text. The overlap is why the body
+              // reserves the control's width. Measured without it, the key's last characters
+              // sat 26px under the clipboard icon at 390 and at 360. See
+              // `COPY_BODY_PADDING_RIGHT` for what the clearance does and does not cover.
+              <Code
+                block
+                color={copied ? 'green' : undefined}
+                style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+              >
+                {copied ? 'Copied' : apiKey}
+              </Code>
             )}
-          </CopyButton>
+          </CopyAffordance>
           <Text size="xs" c="dimmed">
             {`Be sure to save this, you won't be able to see it again.`}
           </Text>

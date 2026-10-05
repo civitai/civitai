@@ -52,12 +52,39 @@ export function createClickhouseClient(
 
   console.log('Creating ClickHouse client');
   const client = createClient({
-    host: config.host,
+    url: config.host,
     username: config.username,
     password: config.password,
-    // Without the retry, a keep-alive socket the server closed while idle is handed to the next
-    // request and fails with ECONNRESET ("socket hang up") instead of reconnecting.
-    keep_alive: { enabled: true, socket_ttl: 2500, retry_on_expired_socket: true },
+    // 2.5s is the client default and stays under the server's 10s keep_alive_timeout, so an idle
+    // socket is retired before the server closes it out from under the next request.
+    //
+    // 🔴 `eagerly_destroy_stale_sockets` is NOT a pin — it is a deliberate non-default, and
+    // 0.2.x had no equivalent. With `retry_on_expired_socket: true`, which this client set, 0.2.x
+    // checked socket age at ASSIGNMENT and retried up to 3 times behind that check; 1.x removed
+    // that option and the retry with it, and stamps the clock at RELEASE, so the age it measures
+    // excludes the query's own duration and is strictly more permissive. This sweep is the closest
+    // 1.x offers, not a restoration: leaving it false would ship less socket protection than
+    // production had, and `false` is no more neutral than `true`. So any change in the socket
+    // hang-up rate after the upgrade is the version and this flag together.
+    keep_alive: { enabled: true, idle_socket_ttl: 2500, eagerly_destroy_stale_sockets: true },
+    // The three values below are pins: 0.2.x resolved each to exactly this and 1.x resolves it to
+    // something else, so setting them keeps the upgrade a transport change and nothing else.
+    //
+    // 1.x defaults to 10. Prod measures ~4 concurrent connections per pod at the busiest second of
+    // the day, so 10 would not bind today — but a request queued behind a full pool gets no timer
+    // at all (`socket.setTimeout` is attached only once a socket is assigned), so a bound turns a
+    // slow request into a hung one.
+    max_open_connections: Infinity,
+    // 1.x defaults to 30_000. 0.2.x resolved 300_000 at runtime, which its own JSDoc contradicted
+    // (`client-common/dist/client.js` read `config.request_timeout ?? 300000`). Held for parity,
+    // not need: some job paths here set no bound of their own, but prod ran no app query past 20s
+    // in the 24h measured before the upgrade. The hot feed read has its own much tighter bound
+    // (CLICKHOUSE_IMAGE_METRICS_TIMEOUT_MS). Above 60_000 and without
+    // `send_progress_in_http_headers`, 1.x warns at construction that a long request_timeout can
+    // itself surface as a socket hang up past a load balancer's idle timeout.
+    request_timeout: 300_000,
+    // 1.x normalizes an unset value to disabled; 0.2.x defaulted it on.
+    compression: { response: true },
     clickhouse_settings: {
       async_insert: 1,
       wait_for_async_insert: 0,

@@ -33,9 +33,16 @@ const SRC = path.join(REPO_ROOT, 'src');
 const HELPER = '@civitai/shared/generation-eligibility';
 
 /**
- * Files under `src/` allowed to name `isBaseModelGenerationSupported`. Empty on purpose: the only
- * legitimate caller is `isGenerationEligible`, which lives in `packages/civitai-shared`. Adding a
- * line here is the change that must be visible in review.
+ * The constants-side halves of the derivation. Both answer a question the view cannot:
+ * which model TYPES an ecosystem generates, and whether it pins the checkpoint to its own
+ * versions. Each is read only by `isGenerationEligible`.
+ */
+const GATE_HELPERS = ['isBaseModelGenerationSupported', 'isModelLockedBaseModel'];
+
+/**
+ * Files under `src/` allowed to name a `GATE_HELPERS` entry. Empty on purpose: the only legitimate
+ * caller is `isGenerationEligible`, which lives in `packages/civitai-shared`. Adding a line here is
+ * the change that must be visible in review.
  */
 const ALLOWLIST: readonly string[] = [];
 
@@ -63,7 +70,7 @@ function scan() {
     // Tests may call it directly — they are asserting on it, not deriving a gate from it.
     if (rel.includes('__tests__') || /\.test\.tsx?$/.test(rel)) continue;
     const source = fs.readFileSync(file, 'utf8');
-    if (source.includes('isBaseModelGenerationSupported')) directCallers.push(rel);
+    if (GATE_HELPERS.some((name) => source.includes(name))) directCallers.push(rel);
     if (source.includes(HELPER)) helperImporters.push(rel);
   }
 
@@ -71,7 +78,7 @@ function scan() {
 }
 
 describe('canGenerate is derived in one place', () => {
-  it('nothing under src/ calls isBaseModelGenerationSupported directly', () => {
+  it('nothing under src/ calls the constants-side gate helpers directly', () => {
     const { directCallers } = scan();
     expect(
       directCallers.filter((f) => !ALLOWLIST.includes(f)),
@@ -98,6 +105,7 @@ describe('canGenerate is derived in one place', () => {
     expect(
       isGenerationEligible({
         covered: true,
+        coveredLive: true,
         baseModel: 'Flux.1 D',
         modelType: ModelType.DoRA,
         flags: 0,
@@ -109,6 +117,7 @@ describe('canGenerate is derived in one place', () => {
     expect(
       isGenerationEligible({
         covered: true,
+        coveredLive: true,
         baseModel: 'Flux.1 D',
         modelType: ModelType.LORA,
         flags: 0,
@@ -120,10 +129,70 @@ describe('canGenerate is derived in one place', () => {
     expect(
       isGenerationEligible({
         covered: false,
+        coveredLive: false,
         baseModel: 'Flux.1 D',
         modelType: ModelType.LORA,
         flags: 0,
       })
     ).toBe(false);
+  });
+});
+
+/**
+ * The second half of the same rule: an ecosystem that pins its checkpoint gets no staged expansion.
+ *
+ * `createCheckpointGraph` rewrites a checkpoint id outside the workflow's own list back to the
+ * default, on the SERVER parse as well as in the form, so a community checkpoint on one of those
+ * ecosystems reaches no handler however it was selected — and the staged rule was offering it as a
+ * paid load anyway. Held to the live rule instead, which admits a checkpoint only through
+ * `EcosystemCheckpoints`, the auction, or file-less API coverage.
+ *
+ * A revert shows up as a Qwen community checkpoint reading eligible, not as a count moving.
+ */
+describe('a model-locked ecosystem gets no staged expansion', () => {
+  const qwenCheckpoint = { baseModel: 'Qwen', modelType: ModelType.Checkpoint, flags: 0 };
+
+  it('refuses a checkpoint the staged rule covers and the live rule does not', () => {
+    expect(isGenerationEligible({ ...qwenCheckpoint, covered: true, coveredLive: false })).toBe(
+      false
+    );
+  });
+
+  it('keeps one the live rule covers — the ecosystem defaults ride on that column', () => {
+    expect(isGenerationEligible({ ...qwenCheckpoint, covered: true, coveredLive: true })).toBe(
+      true
+    );
+  });
+
+  it('leaves non-checkpoints on the same ecosystem alone — their handlers do pass resource AIRs', () => {
+    expect(
+      isGenerationEligible({
+        covered: true,
+        coveredLive: false,
+        baseModel: 'Qwen',
+        modelType: ModelType.LORA,
+        flags: 0,
+      })
+    ).toBe(true);
+  });
+
+  it('leaves an unlocked ecosystem alone — this is what the expansion is for', () => {
+    expect(
+      isGenerationEligible({
+        covered: true,
+        coveredLive: false,
+        baseModel: 'Illustrious',
+        modelType: ModelType.Checkpoint,
+        flags: 0,
+      })
+    ).toBe(true);
+  });
+
+  it('fails CLOSED when the live answer is missing, not back to the staged one', () => {
+    // The tempting fix for a call site that cannot easily supply the column is `coveredLive ??
+    // covered`, which re-opens the hole wherever it is reached. An absent live answer must refuse.
+    expect(isGenerationEligible({ ...qwenCheckpoint, covered: true, coveredLive: undefined })).toBe(
+      false
+    );
   });
 });

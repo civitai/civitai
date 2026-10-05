@@ -6,6 +6,7 @@ import {
   freshFeedbackDb,
   freshPreMigrationDb,
   readFeedback,
+  seedBug,
   seedFeedback,
   seedUser,
 } from './feedback-pglite.harness';
@@ -108,6 +109,61 @@ describe('triageFeedback', () => {
     });
 
     expect(result).toEqual({ ok: false, reason: 'gone' });
+  });
+
+  /**
+   * 🔴 AN ABSENT NOTE LEAVES THE COLUMN STANDING; A BLANK ONE CLEARS IT. The panel's note box was
+   * removed and the status buttons now post no `note` field at all, so a `SET "triageNote" = NULL`
+   * on every status click would blank the column with the save reporting success — and nothing in
+   * this app could put it back: no second copy is stored, and `ModActivity` has no column for it.
+   *
+   * ⚠️ Measured: production holds 47 `Feedback` rows and `triageNote` is non-null on ZERO of them.
+   * The column has no writer left, so this pins the CONTRACT for whatever writes it next rather
+   * than protecting text that exists.
+   *
+   * Asserted against a ROW rather than against the call, because the defect is what the UPDATE
+   * WRITES. A mocked builder can only be asked what it was told, and `undefined` handed to a `.set()`
+   * is exactly the value whose meaning a builder decides.
+   *
+   * Both halves in one case so neither can pass alone: the status HAS to move — a guard that
+   * preserved the note by writing nothing at all would be a different and worse defect.
+   *
+   * ⚠️ THIS IS AN INVARIANT GUARD, NOT REGRESSION COVERAGE, AND THE DIFFERENCE IS WORTH THE LINE.
+   * Measured against the pre-change service: it passes there too, because Kysely already drops
+   * `undefined` values from a `.set()` — what the old signature did was make `undefined`
+   * unexpressible, so the ACTION collapsed an absent field to `null` before the service ever saw it.
+   * The red→green half of this pair therefore lives in
+   * `routes/feedback/__tests__/feedback-actions.test.ts`. What this case pins is the behaviour that
+   * action now DEPENDS on — a Kysely upgrade that started emitting `SET "triageNote" = NULL` for an
+   * undefined value would break the guarantee with nothing else to notice.
+   */
+  it('leaves an existing triageNote untouched when no note is given, and clears it when one is blank', async () => {
+    const id = await seedFeedback(db, { userId: reporter, triageNote: 'dupe of #1187' });
+
+    const absent = await service.triageFeedback({
+      id,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      moderatorId: moderator,
+    });
+
+    expect(absent).toEqual({ ok: true, changed: true });
+    const afterAbsent = await readFeedback(db, id);
+    expect(afterAbsent.status).toBe('reviewed');
+    expect(afterAbsent.triageNote).toBe('dupe of #1187');
+    expect(afterAbsent.handledById).toBe(moderator);
+
+    // The control. `null` is a caller saying "clear it", and it must still mean that — otherwise
+    // this test passes over a service that has simply stopped writing the column at all.
+    await service.triageFeedback({
+      id,
+      status: 'actioned',
+      expectedStatus: 'reviewed',
+      note: null,
+      moderatorId: moderator,
+    });
+
+    expect((await readFeedback(db, id)).triageNote).toBeNull();
   });
 
   /**
@@ -300,12 +356,73 @@ describe('promoteFeedbackToBug', () => {
   });
 
   /**
+   * 🔴 AGAINST THE REAL COLUMN, NOT A MOCK, AND THAT IS THE POINT OF PUTTING IT HERE. The action
+   * test already pins that the URL reaches this service — but "the service was called with it" and
+   * "the column holds it" are different claims, and only the second one is what the main app's
+   * ClickUp webhook reads. `resolveBugsByClickupTaskId` finds the entry to close by matching this
+   * column, so an insert that dropped the field would leave an issue that can never auto-close,
+   * and every mock-level test would still be green.
+   */
+  it('persists the ClickUp URL on the real column the completion webhook matches', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'Sort resets on back',
+      summary: 'The store loses ?sort on Back.',
+      clickupUrl: 'https://app.clickup.com/t/8459928/868kfwm3j',
+      moderatorId: moderator,
+    });
+
+    const bug = await db.query<{ clickupUrl: string | null }>('SELECT "clickupUrl" FROM "Bug"');
+    expect(bug.rows[0].clickupUrl).toBe('https://app.clickup.com/t/8459928/868kfwm3j');
+  });
+
+  /**
+   * The other half, and it is not the same test: a promotion with no task linked must leave the
+   * column NULL rather than an empty string, so "no task" has one spelling on the column the
+   * webhook reads.
+   *
+   * Both spellings of "no task", because the parameter is optional and a caller may write either.
+   *
+   * ⚠️ THEY DO NOT REACH THE COLUMN BY DIFFERENT ROUTES, AND AN EARLIER VERSION OF THIS DOCSTRING
+   * CLAIMED THEY DID. Kysely omits an `undefined` column from the INSERT entirely, so with or
+   * without the `?? null` default both spellings end as NULL — measured by deleting the default
+   * and watching all three ClickUp tests stay green. So this pair pins the OBSERVABLE (either way
+   * of saying "no task" lands as NULL, never ''), and pins the default itself NOT AT ALL. Said
+   * plainly rather than left implicit: a reader who believed the old sentence would think the
+   * default was covered.
+   */
+  it.each([
+    ['omitted entirely', {}],
+    ['passed as an explicit null', { clickupUrl: null }],
+  ])('leaves the ClickUp column NULL when the task link is %s', async (_label, extra) => {
+    const id = await seedFeedback(db, { userId: reporter });
+
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      ...extra,
+      moderatorId: moderator,
+    });
+
+    const bug = await db.query<{ clickupUrl: string | null }>('SELECT "clickupUrl" FROM "Bug"');
+    expect(bug.rows[0].clickupUrl).toBeNull();
+  });
+
+  /**
    * 🔴 `AND "bugId" IS NULL` makes double-promotion impossible — and the Bug insert must roll back
    * WITH it, or a second click leaves an orphan row on the table the public board reads.
    */
   it('refuses a second promotion and leaves no orphan Bug behind', async () => {
     const id = await seedFeedback(db, { userId: reporter });
-    await service.promoteFeedbackToBug({ id, title: 'a', summary: 'b', moderatorId: moderator });
+    await service.promoteFeedbackToBug({
+      id,
+      title: 'a',
+      summary: 'b',
+      moderatorId: moderator,
+    });
 
     const result = await service.promoteFeedbackToBug({
       id,
@@ -575,5 +692,69 @@ describe('reads', () => {
     const [row] = (await service.getFeedbackList({ statuses: [] })).items;
     expect(row.bugTitle).toBe('Sort resets');
     expect(row.bugStatus).toBe('Complete');
+  });
+});
+
+/**
+ * 🔴 THE READ HALF OF THE SEAM BOTH ROUTES SIT ON. `/feedback` and `/feedback/<id>` render the same
+ * panel, so both have to satisfy its prerequisites — and this is the shape of divergence typecheck
+ * cannot see: a missing prop fails at the call site, a diverged CONDITION does not. The conditions
+ * live here, once, and are exercised against real rows here rather than restated against a mock in
+ * either route's suite.
+ */
+describe('feedbackPanelExtras', () => {
+  // `as const`, so the value is `true` and not `boolean` — `PermissionSet` is keyed to the literal.
+  const withGrant = { 'feedback.bug.promote': true } as const;
+
+  it('loads the picker’s options for an UNLINKED row held by someone who may promote', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await seedBug(db, 'attachments 500 on upload');
+
+    const row = await service.getFeedbackRow(id);
+    const extras = await service.feedbackPanelExtras(row!, withGrant);
+
+    expect(extras.knownIssues.map((i) => i.title)).toEqual(['attachments 500 on upload']);
+    expect(extras.siblings).toEqual([]);
+  });
+
+  /**
+   * The attach form is not rendered without the grant, so its options are a `Bug` query for a
+   * control nobody can see — on every report view, on both routes.
+   */
+  it('loads nothing for a caller who may not promote', async () => {
+    const id = await seedFeedback(db, { userId: reporter });
+    await seedBug(db, 'attachments 500 on upload');
+
+    const row = await service.getFeedbackRow(id);
+
+    expect(await service.feedbackPanelExtras(row!, {})).toEqual({
+      siblings: [],
+      knownIssues: [],
+    });
+    // The control: the same row and the same `Bug` DO produce options once the grant is held, so
+    // the empty result above is the grant and not an empty table.
+    expect((await service.feedbackPanelExtras(row!, withGrant)).knownIssues).toHaveLength(1);
+  });
+
+  /**
+   * 🔴 THE TWO READS ARE MUTUALLY EXCLUSIVE BY CONSTRUCTION, and asserting both directions is what
+   * stops a "simplification" that loads both unconditionally. A LINKED row cannot be attached to a
+   * second issue (`linkInTransaction` requires `bugId IS NULL`), so its picker options are dead; an
+   * UNLINKED row has no siblings, because a sibling is defined by sharing its issue.
+   */
+  it('gives a LINKED row its siblings and no picker options', async () => {
+    const bugId = await seedBug(db, 'attachments 500 on upload');
+    const id = await seedFeedback(db, { userId: reporter, bugId });
+    const siblingId = await seedFeedback(db, {
+      userId: reporter,
+      bugId,
+      message: 'same thing on mobile',
+    });
+
+    const row = await service.getFeedbackRow(id);
+    const extras = await service.feedbackPanelExtras(row!, withGrant);
+
+    expect(extras.knownIssues).toEqual([]);
+    expect(extras.siblings.map((s) => s.id)).toEqual([siblingId]);
   });
 });

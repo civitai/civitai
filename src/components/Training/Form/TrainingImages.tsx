@@ -46,7 +46,7 @@ import {
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
 import { saveAs } from 'file-saver';
-import { capitalize, isEqual, uniq } from 'lodash-es';
+import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
@@ -67,6 +67,7 @@ import type {
   SelectedImage,
 } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
+import { auditTrainingLabels } from '~/components/Training/Form/training-label-audit';
 import {
   blankTagStr,
   labelDescriptions,
@@ -102,7 +103,6 @@ import {
 import type { TrainingModelData } from '~/types/router';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
-import { auditPrompt } from '~/utils/metadata/audit';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -1317,91 +1317,87 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      const issues: string[] = [];
+      const audit = auditTrainingLabels({
+        triggerWord,
+        labels: imageList.map((i) => ({ key: getShortNameFromUrl(i), label: i.label })),
+        checkProfanity: isGreen,
+      });
 
-      const { blockedFor, success } = auditPrompt(triggerWord, undefined, isGreen);
-      if (!success) {
-        issues.push(...blockedFor);
-        if (!triggerWordInvalid) {
-          setTriggerWordInvalid(model.id, thisMediaType, true);
-        }
-      } else {
-        if (triggerWordInvalid) {
-          setTriggerWordInvalid(model.id, thisMediaType, false);
-        }
+      if (triggerWordInvalid !== audit.triggerWordInvalid) {
+        setTriggerWordInvalid(model.id, thisMediaType, audit.triggerWordInvalid);
       }
-
+      const invalidKeys = new Set(audit.invalidKeys);
       imageList.forEach((i) => {
-        if (i.label.length > 0) {
-          // Validate each tag individually to avoid cross-tag false positives
-          // (e.g. "school_uniform, 1girl" matching composed "school...girl" pattern)
-          const tags = i.label
-            .split(',')
-            .map((t) => t.trim())
-            .filter(Boolean);
-          let hasInvalid = false;
-          for (const tag of tags) {
-            const { blockedFor, success } = auditPrompt(tag, undefined, isGreen);
-            if (!success) {
-              issues.push(...blockedFor);
-              hasInvalid = true;
-            }
-          }
-          if (hasInvalid) {
-            if (!i.invalidLabel) {
-              updateImage(model.id, thisMediaType, {
-                matcher: getShortNameFromUrl(i),
-                invalidLabel: true,
-              });
-            }
-          } else {
-            if (i.invalidLabel) {
-              updateImage(model.id, thisMediaType, {
-                matcher: getShortNameFromUrl(i),
-                invalidLabel: false,
-              });
-            }
-          }
-        } else {
-          if (i.invalidLabel) {
-            updateImage(model.id, thisMediaType, {
-              matcher: getShortNameFromUrl(i),
-              invalidLabel: false,
-            });
-          }
+        const matcher = getShortNameFromUrl(i);
+        const invalidLabel = invalidKeys.has(matcher);
+        if (!!i.invalidLabel !== invalidLabel) {
+          updateImage(model.id, thisMediaType, { matcher, invalidLabel });
         }
       });
-      if (issues.length > 0) {
+
+      if (audit.severity === 'hard') {
         showNotification({
           icon: <IconX size={18} />,
           autoClose: false,
           color: 'red',
           title: 'Inappropriate labels',
-          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${uniq(
-            issues
-          ).join(', ')}`,
+          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${audit.offendingWords.join(
+            ', '
+          )}`,
         });
         return;
       }
 
-      // if no labels, warn
-      if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
+      const continueSubmit = async () => {
+        if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
+          return openConfirmModal({
+            title: (
+              <Group gap="xs">
+                <IconAlertTriangle color="gold" />
+                <Text size="lg">Missing labels</Text>
+              </Group>
+            ),
+            children:
+              'You have not provided any labels for your files. This can produce an inflexible model. We will also attempt to generate sample files, but they may not be what you are looking for. Are you sure you want to continue?',
+            labels: { cancel: 'Cancel', confirm: 'Continue' },
+            centered: true,
+            onConfirm: handleNextAfterCheck,
+          });
+        }
+        await handleNextAfterCheck();
+      };
+
+      if (audit.severity === 'soft') {
+        // A trigger-word-only hit marks no image card, so copy that says "labels" sends the
+        // creator hunting through labels that are all fine.
+        const subject = [
+          audit.invalidKeys.length ? 'labels' : undefined,
+          audit.triggerWordInvalid ? 'trigger word' : undefined,
+        ]
+          .filter(isDefined)
+          .join(' and ');
         return openConfirmModal({
           title: (
             <Group gap="xs">
               <IconAlertTriangle color="gold" />
-              <Text size="lg">Missing labels</Text>
+              <Text size="lg">{`Check your ${subject}`}</Text>
             </Group>
           ),
-          children:
-            'You have not provided any labels for your files. This can produce an inflexible model. We will also attempt to generate sample files, but they may not be what you are looking for. Are you sure you want to continue?',
-          labels: { cancel: 'Cancel', confirm: 'Continue' },
+          children: (
+            <Stack gap="xs">
+              <Text size="sm">
+                {`These look like they might be inappropriate: ${audit.offendingWords.join(', ')}.`}
+              </Text>
+              <Text size="sm">If they are legitimate for your dataset, you can continue.</Text>
+            </Stack>
+          ),
+          labels: { cancel: `Review ${subject}`, confirm: 'Continue anyway' },
           centered: true,
-          onConfirm: handleNextAfterCheck,
+          onConfirm: continueSubmit,
         });
-      } else {
-        await handleNextAfterCheck();
       }
+
+      await continueSubmit();
     } else {
       // no images given. could show a takeover or form inline error instead.
       showNotification({
@@ -1695,18 +1691,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
                     }
                     onBlur={() => {
-                      const { blockedFor, success } = auditPrompt(triggerWord, undefined, isGreen);
-                      if (!success) {
+                      const audit = auditTrainingLabels({
+                        triggerWord,
+                        labels: [],
+                        checkProfanity: isGreen,
+                      });
+                      if (audit.triggerWordInvalid) {
                         if (!triggerWordInvalid) {
                           setTriggerWordInvalid(model.id, thisMediaType, true);
+                          const soft = audit.severity === 'soft';
                           showNotification({
-                            icon: <IconX size={18} />,
+                            icon: soft ? <IconAlertTriangle size={18} /> : <IconX size={18} />,
                             autoClose: false,
-                            color: 'red',
-                            title: 'Inappropriate labels',
-                            message: `One or more trigger words have been blocked. Please review. Reason: ${blockedFor.join(
-                              ', '
-                            )}`,
+                            color: soft ? 'yellow' : 'red',
+                            title: soft ? 'Check this trigger word' : 'Inappropriate trigger word',
+                            message: soft
+                              ? `This trigger word looks like it might be inappropriate: ${audit.offendingWords.join(
+                                  ', '
+                                )}. You can still continue if it is legitimate.`
+                              : `This trigger word has been blocked. Please review. Reason: ${audit.offendingWords.join(
+                                  ', '
+                                )}`,
                           });
                         }
                       } else {

@@ -3,7 +3,10 @@
 // web-component host (direct @civitai/client calls — $lib/element/backend).
 import type { FromPrices, Media } from '$lib/data/trainingModels';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type { EpochArchive, TrainingWhatIfInput } from '$lib/orchestrator-core';
 import type { TrainingRunInput } from '$lib/train-core';
+
+export type { TrainingWhatIfInput } from '$lib/orchestrator-core';
 
 export type { TrainingItem } from '$lib/train-core';
 export type { AutoLabelItem, AutoLabelMode, AutoLabelResult } from '$lib/autolabel-core';
@@ -39,6 +42,10 @@ export interface StudioBackend {
   ): Promise<{ done: boolean; results: AutoLabelResult[] }>;
   submitTraining(runs: TrainingRunPayload[]): Promise<string[]>;
   rename(workflowId: string, name: string): Promise<void>;
+  /** A signed streaming URL for a zip of every ready checkpoint (weights + samples). */
+  epochArchive(workflowId: string): Promise<EpochArchive>;
+  /** Refused unless `canDeleteRun` holds for the run's current state. */
+  deleteTraining(workflowId: string): Promise<void>;
   continueQuote(
     workflowId: string,
     fromEpoch: number,
@@ -52,6 +59,10 @@ export interface StudioBackend {
   ): Promise<string>;
   /** The new-flow per-card "from" quotes. */
   getFromPrices(): Promise<FromPrices>;
+  /** Real whatif for ONE run's exact config (steps/epochs/base) — what the Review step's Final
+   *  price shows. Orchestrator pricing has a base fee and per-epoch terms, so scaling the "from"
+   *  quote misprices; only this number matches what Start will charge. Null = unpriced. */
+  quoteRun(input: TrainingWhatIfInput): Promise<number | null>;
   /** Spendable balances; null when unavailable (the header keeps its last value). */
   getBuzz(): Promise<{ yellow: number; green: number; blue: number } | null>;
 }

@@ -1,5 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { getClickhouse } from './clickhouse';
+import { clickhouseDate } from './clickhouse-date';
 import { SYSTEM_USER_ID, isInt4Id, usernameExists } from './users.service';
 
 // The PAGE LOAD half of Chat Audit (Retool's "Chat Audit" app) — search, the chat list, a transcript and
@@ -10,17 +12,37 @@ import { SYSTEM_USER_ID, isInt4Id, usernameExists } from './users.service';
 // READS PRIVATE DIRECT MESSAGES. Access is grant-based, so the page is admin-only until someone grants
 // it on /admin — the right default here, and it should stay deliberate.
 //
-// `ChatMessage` is 4.2M rows indexed only on (id) and (chatId, userId): nothing on `content`,
+// `ChatMessage` is 4.2M rows indexed only on (id) and (chatId, id): nothing on `content`,
 // `createdAt` or `userId` alone, so anything not chat-scoped is a sequential scan.
+
+/** Carries the id, not just the name: every username on this page links to that account's lookup, and
+ *  a name alone cannot be resolved back to one — usernames are reusable, and ~8.5k accounts have none. */
+export type ChatMemberSummary = { userId: number; username: string | null };
 
 export type ChatSummary = {
   chatId: number;
   ownerId: number | null;
   owner: string | null;
   ownerBannedAt: Date | null;
-  members: string[];
+  members: ChatMemberSummary[];
   messages: number;
   lastAt: Date | null;
+  /** One message, so the row can be judged without opening it. Retool showed an excerpt and this list
+   *  did not, so confirming spam or harassment meant opening every result in turn. */
+  excerpt: ChatExcerpt | null;
+};
+
+export type ChatExcerpt = {
+  content: string;
+  createdAt: Date;
+  username: string | null;
+  userId: number;
+  /** Whether this is the matched message or just the latest, so the panel does not imply a match it
+   *  cannot show — a username search matches the sender, not any particular message. */
+  matched: boolean;
+  /** Deleted messages are eligible: excluding them meant a content search that matched a since-removed
+   *  message showed that chat with no excerpt at all, which is the case worth reading. */
+  deleted: boolean;
 };
 
 export type ChatMessageRow = {
@@ -30,6 +52,35 @@ export type ChatMessageRow = {
   username: string | null;
   bannedAt: Date | null;
   content: string;
+  /** Set when the sender rewrote the message. The ORIGINAL text is not kept on the row — an edit
+   *  overwrites `content` — so it comes from the audit log instead; see `getMessageEdits`. */
+  editedAt: Date | null;
+  /** Deleted messages are hidden from both participants but retained for exactly this. A report is
+   *  usually filed about a message the sender then removed, so omitting them hid the evidence. */
+  deletedAt: Date | null;
+};
+
+/**
+ * ONE edit, from the `chatAuditEvents` log — the only place a superseded version survives.
+ *
+ * A message carries a LIST of these, oldest first, because 144 of the 1,025 edited messages on the
+ * site were edited more than once and one was edited 21 times. Collapsing them to first-and-last
+ * dropped every intermediate version, and pinned the original's text to the newest edit's timestamp —
+ * so the panel dated text to a moment it did not exist at, on the screen that answers "what did this
+ * say when it was reported".
+ */
+export type MessageEdit = {
+  /** ISO, already normalised out of ClickHouse's zoneless format. When THIS edit happened. */
+  at: string;
+  /** The text this edit replaced. `oldValue` of the first edit is what the message was written with. */
+  oldValue: string;
+  /** The text it left behind — equal to the next edit's `oldValue`, and on the last edit to the
+   *  message's current `content`. Verified to chain with no gaps across every multi-edit message. */
+  newValue: string;
+  /** The log caps each value at 4,000 chars. */
+  truncated: boolean;
+  /** `moderator` when someone other than the sender rewrote it. */
+  actorRole: string;
 };
 
 export type ChatMessageWithChat = ChatMessageRow & { chatId: number };
@@ -124,7 +175,7 @@ export async function searchChats(rawTerm: string): Promise<ChatSearch | null> {
     slow: mode === 'content',
     contentSearchDays: CONTENT_SEARCH_DAYS,
     ambiguousUsername: mode === 'chat' && (await usernameExists(term)),
-    chats: ids.length ? await summariseChats(ids) : [],
+    chats: ids.length ? await summariseChats(ids, mode, term) : [],
   };
 }
 
@@ -177,7 +228,11 @@ async function findChatIds(
 
 // Retool's FindChats joined member names with string_agg and split on ',', which corrupts any username
 // containing a comma. A real array avoids inventing a delimiter.
-async function summariseChats(chatIds: number[]): Promise<ChatSummary[]> {
+async function summariseChats(
+  chatIds: number[],
+  mode: SearchMode,
+  term: string
+): Promise<ChatSummary[]> {
   const rows = await dbRead
     .selectFrom('ChatMember as cm')
     .leftJoin('User as u', 'u.id', 'cm.userId')
@@ -186,17 +241,18 @@ async function summariseChats(chatIds: number[]): Promise<ChatSummary[]> {
       sql<number | null>`max(case when cm."isOwner" then cm."userId" end)`.as('ownerId'),
       sql<string | null>`max(case when cm."isOwner" then u.username end)`.as('owner'),
       sql<Date | null>`max(case when cm."isOwner" then u."bannedAt" end)`.as('ownerBannedAt'),
-      // Two things are load-bearing here.
+      // `::text` — username is citext; casting keeps the JSON value a plain string.
       //
-      // `::text` — username is citext, and node-pg has no parser for citext[], so the driver returns
-      // the raw Postgres literal as a STRING and the panel's .join() throws on it.
-      //
-      // `coalesce` — 8,589 users with a NULL username hold 34,147 membership rows. Dropping them made
-      // the chat list and the member panel disagree about who was in a conversation: a chat with a
-      // purged counterparty rendered with no "with ..." clause at all.
-      sql<string[]>`coalesce(
-        array_agg(coalesce(u.username::text, '#' || cm."userId")) filter (where not cm."isOwner"),
-        '{}'
+      // A NULL username is kept rather than filtered: 8,589 such users hold 34,147 membership rows, and
+      // dropping them made the chat list and the member panel disagree about who was in a conversation
+      // — a chat with a purged counterparty rendered with no "with ..." clause at all. The panel falls
+      // back to the id, which is why the id travels.
+      sql<ChatMemberSummary[]>`coalesce(
+        jsonb_agg(
+          jsonb_build_object('userId', cm."userId", 'username', u.username::text)
+          order by u.username nulls last, cm."userId"
+        ) filter (where not cm."isOwner"),
+        '[]'
       )`.as('members'),
     ])
     .where('cm.chatId', 'in', chatIds)
@@ -217,6 +273,7 @@ async function summariseChats(chatIds: number[]): Promise<ChatSummary[]> {
     .groupBy('chatId')
     .execute();
   const byChat = new Map(counts.map((c) => [c.chatId, c]));
+  const excerpts = await chatExcerpts(chatIds, mode, term);
 
   return rows
     .map((r) => ({
@@ -227,24 +284,104 @@ async function summariseChats(chatIds: number[]): Promise<ChatSummary[]> {
       members: r.members ?? [],
       messages: Number(byChat.get(r.chatId)?.messages ?? 0),
       lastAt: byChat.get(r.chatId)?.lastAt ?? null,
+      excerpt: excerpts.get(r.chatId) ?? null,
     }))
     .sort((a, b) => (b.lastAt?.getTime() ?? 0) - (a.lastAt?.getTime() ?? 0));
 }
 
-// The transcript. Chat-scoped, so it rides the (chatId, userId) index.
+/** Longer than a list row shows; the panel clamps it. Bounded here so a 4,000-character message does
+ *  not travel 50 times per search. */
+const EXCERPT_CHARS = 400;
+
+/**
+ * One message per chat, for the list. On a content search this is the message that MATCHED, because
+ * "which of these 50 chats contains the thing I searched for" is the question; otherwise it is the
+ * latest.
+ *
+ * Ordered on `id`, not `createdAt`: both are monotonic within a chat, and only `id` is in the
+ * (chatId, id) index — ordering on `createdAt` costs a sort per group for the same row.
+ */
+async function chatExcerpts(
+  chatIds: number[],
+  mode: SearchMode,
+  term: string
+): Promise<Map<number, ChatExcerpt>> {
+  const matching = mode === 'content';
+  const filter = matching
+    ? sql`and cm.content ilike ${'%' + escapeLike(term) + '%'} escape '\\'`
+    : mode === 'user'
+    ? sql`and u.username = ${term.replace(/^@/, '')}`
+    : sql``;
+
+  const { rows } = await sql<{
+    chatId: number;
+    content: string;
+    createdAt: Date;
+    username: string | null;
+    userId: number;
+    deletedAt: Date | null;
+  }>`
+    select distinct on (cm."chatId")
+      -- Trimmed before the cut: the excerpt is clamped to three lines, and a message opening with
+      -- blank ones spends them saying nothing.
+      cm."chatId", left(btrim(cm.content), ${EXCERPT_CHARS}) as content, cm."createdAt", cm."userId",
+      cm."deletedAt", u.username::text as username
+    from "ChatMessage" cm
+    left join "User" u on u.id = cm."userId"
+    where cm."chatId" = any(${chatIds})
+      and cm."userId" != ${SYSTEM_USER_ID}
+      ${filter}
+    order by cm."chatId", cm.id desc
+  `.execute(dbRead);
+
+  return new Map(
+    rows.map((r) => [
+      r.chatId,
+      {
+        content: r.content,
+        createdAt: r.createdAt,
+        username: r.username,
+        userId: r.userId,
+        matched: matching,
+        deleted: r.deletedAt !== null,
+      },
+    ])
+  );
+}
+
+// The transcript. Chat-scoped, so it rides the (chatId, id) index.
 //
 // System rows are excluded: 274,106 of them are `contentType = 'Embed'` whose content is a raw JSON
 // blob, which rendered verbatim attributed to "civitai" and ate slots in the cap.
+//
+// Deleted rows are INCLUDED. `deletedAt` hides a message from both participants and keeps the row for
+// moderation, so a report filed about a message the sender then removed pointed at a transcript that
+// did not contain it.
 export async function getTranscript(
   chatId: number,
   limit = 300
-): Promise<{ rows: ChatMessageRow[]; truncated: boolean }> {
-  if (!isInt4Id(chatId)) return { rows: [], truncated: false };
+): Promise<{
+  rows: ChatMessageRow[];
+  truncated: boolean;
+  /** Every edit per message, oldest first. Null when the audit log could not be read — distinct from
+   *  an empty map, which says the log was read and holds nothing for these messages. */
+  edits: Record<number, MessageEdit[]> | null;
+}> {
+  if (!isInt4Id(chatId)) return { rows: [], truncated: false, edits: {} };
 
   const rows = await dbRead
     .selectFrom('ChatMessage as cm')
     .leftJoin('User as u', 'u.id', 'cm.userId')
-    .select(['cm.id', 'cm.createdAt', 'cm.userId', 'cm.content', 'u.username', 'u.bannedAt'])
+    .select([
+      'cm.id',
+      'cm.createdAt',
+      'cm.userId',
+      'cm.content',
+      'cm.editedAt',
+      'cm.deletedAt',
+      'u.username',
+      'u.bannedAt',
+    ])
     .where('cm.chatId', '=', chatId)
     .where('cm.userId', '!=', SYSTEM_USER_ID)
     // Newest first so the cap drops the OLDEST; reversed here for reading order.
@@ -253,7 +390,60 @@ export async function getTranscript(
     .execute();
 
   const truncated = rows.length > limit;
-  return { rows: rows.slice(0, limit).reverse(), truncated };
+  const page = rows.slice(0, limit).reverse();
+  const edited = page.filter((r) => r.editedAt).map((r) => r.id);
+
+  return { rows: page, truncated, edits: await getMessageEdits(chatId, edited) };
+}
+
+/**
+ * The text a message had BEFORE it was edited, from the `chatAuditEvents` ClickHouse log — Postgres
+ * keeps only the current version. Best-effort: the log being down must not take the transcript with it.
+ */
+async function getMessageEdits(
+  chatId: number,
+  messageIds: number[]
+): Promise<Record<number, MessageEdit[]> | null> {
+  if (!messageIds.length) return {};
+
+  try {
+    const rows = await getClickhouse().$query<{
+      messageId: string;
+      createdAt: string;
+      oldValue: string;
+      newValue: string;
+      truncated: number;
+      actorRole: string;
+    }>(`
+      SELECT messageId, createdAt, oldValue, newValue, truncated, actorRole
+      FROM default.chatAuditEvents
+      WHERE type = 'edit'
+        AND chatId = ${chatId}
+        AND messageId IN (${messageIds.join(',')})
+      -- Oldest first, so the list reads as the order the message was rewritten in.
+      ORDER BY createdAt ASC
+    `);
+
+    const byMessage: Record<number, MessageEdit[]> = {};
+    for (const r of rows) {
+      const id = Number(r.messageId);
+      (byMessage[id] ??= []).push({
+        at: clickhouseDate(r.createdAt),
+        oldValue: r.oldValue,
+        newValue: r.newValue,
+        truncated: r.truncated === 1,
+        actorRole: r.actorRole,
+      });
+    }
+    return byMessage;
+  } catch (e) {
+    // NULL, not `{}`. An empty map is a claim — "this message has no recorded original" — and the
+    // panel states it as one. A misnamed column here already produced exactly that: every edited
+    // message reporting its original unrecoverable, which reads like a gap in the log rather than a
+    // broken query, so nobody would report it.
+    console.error('[chat-audit] message edit history unavailable', e);
+    return null;
+  }
 }
 
 export async function getChatMembers(chatId: number): Promise<ChatMemberRow[]> {
@@ -277,10 +467,50 @@ export async function getChatMembers(chatId: number): Promise<ChatMemberRow[]> {
   return rows.map((r) => ({ ...r, status: String(r.status) }));
 }
 
-export async function getUserMessages(
-  username: string,
-  limit = 100
-): Promise<{ rows: ChatMessageWithChat[]; chats: number; truncated: boolean } | null> {
+export type UserMessages = { rows: ChatMessageWithChat[]; chats: number; truncated: boolean };
+
+/**
+ * `getUserMessages` keyed by id, for User Lookup — which has resolved the account already and must not
+ * re-resolve it by name. A rename between the two lookups would silently answer about whoever holds the
+ * old name now, and usernames are reusable.
+ */
+export async function getUserMessagesById(userId: number, limit = 50): Promise<UserMessages> {
+  if (!isInt4Id(userId)) return { rows: [], chats: 0, truncated: false };
+
+  const [rows, distinct] = await Promise.all([
+    dbRead
+      .selectFrom('ChatMessage as cm')
+      .leftJoin('User as u', 'u.id', 'cm.userId')
+      .select([
+        'cm.id',
+        'cm.createdAt',
+        'cm.userId',
+        'cm.content',
+        'cm.chatId',
+        'cm.editedAt',
+        'cm.deletedAt',
+        'u.username',
+        'u.bannedAt',
+      ])
+      .where('cm.userId', '=', userId)
+      .orderBy('cm.createdAt', 'desc')
+      .limit(limit + 1)
+      .execute(),
+    dbRead
+      .selectFrom('ChatMessage')
+      .select((eb) => eb.fn.count<string>('chatId').distinct().as('n'))
+      .where('userId', '=', userId)
+      .executeTakeFirst(),
+  ]);
+
+  return {
+    truncated: rows.length > limit,
+    chats: Number(distinct?.n ?? 0),
+    rows: rows.slice(0, limit),
+  };
+}
+
+export async function getUserMessages(username: string, limit = 100): Promise<UserMessages | null> {
   const name = username.replace(/^@/, '');
 
   // Null for an unresolved term, not an empty result. `USERNAME_SHAPE` matches things that are not
@@ -301,6 +531,8 @@ export async function getUserMessages(
         'cm.userId',
         'cm.content',
         'cm.chatId',
+        'cm.editedAt',
+        'cm.deletedAt',
         'u.username',
         'u.bannedAt',
       ])

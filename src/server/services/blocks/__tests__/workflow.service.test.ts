@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import type * as CoverageSource from '~/server/services/generation/coverage-source';
 
 /**
  * Pure-helper coverage for the block workflow service. Snapshot mapping and
@@ -16,6 +17,16 @@ const { mockDbRead } = vi.hoisted(() => ({
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 
+/**
+ * `nextCoverageEnabled` reads Flipt, so on a machine with FLIPT_URL set these fixtures answered
+ * under whichever rule was live remotely — the suite went red when the flag was turned on, with
+ * nothing in the diff to blame. Pin the live rule; the fixtures below state `covered` only.
+ */
+vi.mock('~/server/services/generation/coverage-source', async (importOriginal) => ({
+  ...(await importOriginal<typeof CoverageSource>()),
+  nextCoverageEnabled: async () => false,
+}));
+
 import {
   appBlockTag,
   assertCheckpointVersionSupportsWorkflow,
@@ -25,6 +36,7 @@ import {
   buildImageWorkflowInput,
   buildTextToImageInput,
   BLOCK_CUSTOM_COMFY_STEP_NAME,
+  BLOCK_STEP_NAME,
   BLOCK_IMAGE_WORKFLOW_TYPES,
   createBlockCustomComfyStep,
   isPageLoraResource,
@@ -126,10 +138,21 @@ describe('snapshotFromWorkflow', () => {
     expect(snap.imageUrls).toEqual(['https://cdn/ok.png']);
   });
 
-  it('emits a non-empty sentinel workflowId for whatif/estimate (no orchestrator id)', () => {
+  it('emits a non-empty sentinel workflowId when an orchestrator id is absent', () => {
     // The block SDK validator drops snapshots with an empty workflowId, which
-    // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55). A whatif
-    // workflow has no id, so the snapshot must carry a non-empty sentinel.
+    // strands ESTIMATE_RESULT until the 120s timeout (gotcha #55), so the
+    // fallback must be non-empty.
+    //
+    // 🔴 THE FIXTURE IS SYNTHETIC AND THE FALLBACK IS CURRENTLY UNREACHABLE.
+    // The orchestrator stamps a server-minted id on EVERY workflow it returns,
+    // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
+    // grain key BEFORE the estimate-only early return), so `workflow.id` is not
+    // observed absent on any path today. An earlier version of this test's name
+    // and comment asserted the opposite — that a whatif workflow has no id —
+    // and that was false. This pins the defensive floor, not an observed case:
+    // the orchestrator's OpenAPI declares `id` optional-and-nullable and its
+    // serializer omits nulls, so a regression would silently drop the field
+    // rather than error.
     const snap = snapshotFromWorkflow(fakeWorkflow({ id: undefined }) as never);
     expect(snap.workflowId).toBe('whatif');
     expect(snap.workflowId.length).toBeGreaterThan(0);
@@ -724,6 +747,7 @@ describe('resolveBlockVersionContext', () => {
         usageControl: undefined,
         baseModel: 'SDXL 1.0',
         covered: false,
+        coveredLive: false,
         modelUserId: undefined,
         modelType: 'Checkpoint',
         modelVersionAlias: null,
@@ -1067,6 +1091,7 @@ describe('resolvePageResourceContext', () => {
         usageControl: 'Download',
         baseModel: 'SDXL 1.0',
         covered: true,
+        coveredLive: true,
         modelUserId: 55,
         modelType: 'LORA',
         modelVersionAlias: null,
@@ -2426,6 +2451,12 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
   // An UNREGISTERED, non-native `$type` must still be skipped — the branch is
   // additive for registered steps only, not a wildcard that starts reading
   // arbitrary step outputs.
+  //
+  // 🔴 STILL TRUE AFTER THE PASS-THROUGH ARM LANDED, and that is not an accident:
+  // the pass-through branch is gated on the SERVER-STAMPED `BLOCK_STEP_NAME`,
+  // not on "the `$type` is unrecognised". A step this bridge did not submit —
+  // note `name: 'x'` below — is still dropped exactly as before. The sibling
+  // case beneath pins the other side of that gate.
   it('still skips an unregistered, non-native $type', () => {
     const wf = fakeWorkflow({
       id: 'wf_other',
@@ -2442,7 +2473,37 @@ describe('🔴 registered step output — surfaced on the snapshot AND the proje
       ],
     });
     expect(snapshotFromWorkflow(wf as never).imageUrls).toBeUndefined();
+    expect(snapshotFromWorkflow(wf as never).stepOutputs).toBeUndefined();
     expect(projectAppWorkflow(wf as never).images).toEqual([]);
+  });
+
+  // The other side of that gate: the SAME `$type` and the SAME output, submitted
+  // by this bridge's pass-through arm, IS extracted. Without this pair the name
+  // gate would read as "unregistered types are dropped", which is now only half
+  // the rule.
+  it('extracts the same $type when the step carries BLOCK_STEP_NAME', () => {
+    const wf = fakeWorkflow({
+      id: 'wf_pt',
+      createdAt: '2026-08-02T00:00:00.000Z',
+      status: 'succeeded',
+      steps: [
+        {
+          $type: 'imageBackgroundRemoval',
+          name: BLOCK_STEP_NAME,
+          status: 'succeeded',
+          metadata: {},
+          output: { blob: { id: 'b', url: 'https://cdn/nope.png', available: true } },
+        },
+      ],
+    });
+    expect(snapshotFromWorkflow(wf as never).imageUrls).toEqual(['https://cdn/nope.png']);
+    expect(projectAppWorkflow(wf as never).images).toEqual([
+      { url: 'https://cdn/nope.png', width: null, height: null, nsfwLevel: null },
+    ]);
+    // The blob is lifted OUT of the forwarded output, never duplicated into it.
+    expect(snapshotFromWorkflow(wf as never).stepOutputs).toEqual([
+      { $type: 'imageBackgroundRemoval', output: {} },
+    ]);
   });
 });
 
@@ -2725,5 +2786,85 @@ describe('resolveBlockPollWaitSeconds', () => {
     expect(MAX_BLOCK_POLL_WAIT_SECONDS).toBeLessThan(20);
     // …and to leave real slack for connect + response, not just one second.
     expect(20 - MAX_BLOCK_POLL_WAIT_SECONDS).toBeGreaterThanOrEqual(5);
+  });
+});
+
+/**
+ * `snapshotFromWorkflow`'s `additionalCostBuzz` — the App Blocks author fee's
+ * half of the viewer-facing price disclosure.
+ *
+ * 🔴 THIS SUITE EXISTS BECAUSE THE GUARDS IT DESCRIBES WERE UNTESTED WHILE A
+ * PRODUCTION COMMENT CLAIMED THEM. The comment at the implementation says a
+ * negative addition would "make the block show LESS than it will be charged —
+ * the one direction this whole change exists to remove", and that a non-finite
+ * one must not propagate. Neither was pinned: mutating `additional > 0` to
+ * `additional !== 0`, and deleting the `Number.isFinite` check, each left the
+ * entire 586-test battery green. A comment is a claim; these are the assertions
+ * behind it.
+ */
+describe('snapshotFromWorkflow — additionalCostBuzz', () => {
+  it('ADDS a positive addend to the reported total', () => {
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: 7 });
+    expect(snap.cost).toEqual({ total: 49 });
+  });
+
+  it('is a no-op when omitted — every existing caller is byte-identical', () => {
+    expect(snapshotFromWorkflow(fakeWorkflow() as never).cost).toEqual({ total: 42 });
+    expect(snapshotFromWorkflow(fakeWorkflow() as never, {}).cost).toEqual({ total: 42 });
+  });
+
+  it('🔴 IGNORES a NEGATIVE addend — it may never shrink the shown price', () => {
+    // The mutation this kills: `additional > 0` → `additional !== 0`, which would
+    // report 32 against a 42 debit. Showing less than the viewer is charged is
+    // precisely the defect the disclosure exists to remove, so the arithmetic
+    // must be one-directional rather than merely "additive".
+    expect(snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: -10 }).cost).toEqual(
+      { total: 42 }
+    );
+  });
+
+  it('🔴 IGNORES a non-finite or fractional addend rather than propagating it', () => {
+    // `42 + NaN` is `NaN`, which would travel to the block as a cost and render
+    // as a price.
+    //
+    // ⚠️ ONLY THE `Infinity` CASE KILLS THE `Number.isFinite` DELETION, AND THE
+    // COMMENT USED TO CLAIM BOTH DID. `NaN > 0` is already `false`, so the
+    // `additional > 0` leg rejects NaN whether or not `isFinite` is present — the
+    // NaN input is a second witness to the outcome, not a second mutation killed.
+    // Kept because the two failure modes read differently to whoever is here next,
+    // and labelled so it is not counted twice.
+    //
+    // 🔴 `2.5` IS THE CASE THAT KILLS THE `isInteger`→`isFinite` WEAKENING, AND IT
+    // IS THE ONLY ONE THAT CAN. Buzz is whole; the parameter's type is `number`
+    // and says nothing about it. A fractional addend is finite, positive, and
+    // would put `44.5` on the wire as a price — so it passes every other leg of
+    // the guard and is invisible to the two inputs above.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 2.5]) {
+      expect(
+        snapshotFromWorkflow(fakeWorkflow() as never, { additionalCostBuzz: bad }).cost,
+        `addend ${bad} reached the reported total`
+      ).toEqual({ total: 42 });
+    }
+  });
+
+  it('🔴 does NOT invent a cost when the orchestrator reported none', () => {
+    // Reporting a bare fee as if it were the price is worse than reporting
+    // nothing: `cost` is omitted entirely when the workflow carries no total, and
+    // a block reading an absent cost falls back to its own handling.
+    const snap = snapshotFromWorkflow(fakeWorkflow({ cost: undefined }) as never, {
+      additionalCostBuzz: 9,
+    });
+    expect(snap.cost).toBeUndefined();
+  });
+
+  it('composes with modelSubstitutions rather than replacing them', () => {
+    // Both live on the same `extra` bag; a mutant that read one and dropped the
+    // other would be invisible to either field's own test.
+    const snap = snapshotFromWorkflow(fakeWorkflow() as never, {
+      additionalCostBuzz: 3,
+      modelSubstitutions: [{ requested: 1, served: 2 }] as never,
+    });
+    expect(snap.cost).toEqual({ total: 45 });
+    expect(snap.modelSubstitutions).toHaveLength(1);
   });
 });

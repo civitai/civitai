@@ -3,7 +3,10 @@ import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import {
   ensureRegisterAppBlockRuntimeMetrics,
+  recordBlockConsentMarkerUnavailable,
   recordBlockRestApprovalVerdict,
+  recordConsentStrip,
+  recordBlockRevocationRefusal,
   statusToRequestResult,
   type AppBlockEndpoint,
 } from '~/server/metrics/app-block-runtime.metrics';
@@ -11,12 +14,43 @@ import { isAppBlocksRuntimeEnabled } from '~/server/services/app-blocks-flag';
 import { resolveRestApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
 import {
+  applyRevocations,
+  ConsentRevocation,
+  revokedScopesForToken,
+  shouldConsultMarker,
+} from '~/server/services/blocks/consent-revocation.service';
+// Static, not the dynamic `await import(...)` this file uses for `getGrantedScopes` further
+// down: `consent-revocation.service` above already pulls `scope-grant.service` into this
+// module's static graph, so naming one more pure predicate from it adds no edge and no cycle.
+//
+// ⚠️ AND THAT MEANS THE DYNAMIC FORM BELOW IS VESTIGIAL, NOT CYCLE-AVOIDANCE — do not read the
+// contrast as a warning. By the time it runs the module is already loaded; it is the same
+// lazy-load idiom that function uses two lines later for `server-domain`. Said explicitly
+// because leaving the contrast unexplained invites the next reader to "restore consistency" by
+// making this one dynamic too, for a reason that does not exist.
+import { isConsentExemptScope } from '~/server/services/blocks/scope-grant.service';
+import {
   BLOCK_TOKEN_AUDIENCE,
   BLOCK_TOKEN_ISSUER,
   DEV_TOKEN_LIFETIME_SECONDS,
   getBlockTokenVerificationKeysByKid,
 } from '~/server/services/block-token.service';
-import { isKnownBlockScope } from '~/shared/constants/block-scope.constants';
+import {
+  ANON_SUBJECT,
+  isValidSubject,
+  subjectForUserId,
+  USER_SUB_RE,
+} from '~/server/services/block-token-subject';
+import { effectiveBlockScopes } from '~/shared/constants/block-effective-scopes';
+import {
+  isKnownBlockScope,
+  isPrivateRunAudience,
+  type PrivateRunAudience,
+} from '~/shared/constants/block-scope.constants';
+import {
+  allBrowsingLevelsFlag,
+  domainBrowsingCeiling,
+} from '~/shared/constants/browsingLevel.constants';
 import {
   isBlockActionDetail,
   type BlockActionDetail,
@@ -29,6 +63,8 @@ import {
  * Behavior matrix:
  *   - No Authorization: Bearer header           → fall through to existing handler (session auth)
  *   - Authorization: Bearer <opaque API key>    → fall through (legacy API key path)
+ *   - Authorization: Bearer <hub OAuth token>   → if its OauthClient owns an AppBlock: build block
+ *                                                 claims from the viewer's grant, set req.blockClaims
  *   - Authorization: Bearer <RS256 block JWT>   → validate, bind to context, set req.blockClaims
  *
  * See docs/features/app-blocks.md for the overall architecture.
@@ -52,6 +88,16 @@ export interface BlockTokenClaims {
   blockInstanceId: string;
   ctx: Record<string, unknown>;
   scopes: string[];
+  /**
+   * The per-call generation ceiling the app declared (`page.buzzBudgetPerGen` /
+   * `settings.buzz_budget_per_gen`), clamped by the minting resolver.
+   *
+   * 🔴 A SUBMIT GATE READS IT ONLY THROUGH `blockPerCallBudget` — see that
+   * function for what the indirection is and is not doing today. The read
+   * surfaces that merely REPORT the number to the block (`/api/v1/blocks/me`,
+   * `blocks.getMyViewer`) project it directly and are ledgered as such in
+   * `src/server/services/__tests__/no-direct-block-budget-claim-read.test.ts`.
+   */
   buzzBudget?: number;
   /**
    * AUTHORITATIVE color-domain maturity ceiling (bitwise browsing-level flag,
@@ -67,9 +113,18 @@ export interface BlockTokenClaims {
   /** Advisory: the color domain the token was minted on (`green`|`blue`|`red`). */
   domain?: string;
   /**
-   * DEV-TOKEN marker — present (true) ONLY on tokens minted by the mod-gated
+   * DEV-TOKEN marker. ⚠️ THIS USED TO SAY "ONLY on tokens minted by the mod-gated
    * dev-token endpoint (`/api/v1/blocks/dev-token`) for the `dev:live` localhost
-   * harness. It selects the per-token-type max-age cap in `verifyBlockToken`
+   * harness", and that is wrong in the direction that matters: the claim is stamped
+   * unconditionally by `signDevScopedPageToken`, which is reached by SIX mint paths
+   * across `/api/v1/blocks/dev-token` (approved / pending / local-manifest),
+   * `/api/v1/block-tokens` (ephemeral tunnel / owner-non-approved tunnel) and the tRPC
+   * review-sandbox mint. So `dev === true` identifies a LIFETIME class, not a caller and
+   * not a capability — reading it as "the dev:live harness" is how a guard came to exempt
+   * all six from the approved-status check (clawgate #571). Anything deciding
+   * AUTHORIZATION on this claim must narrow it further; see
+   * `resolveAppBlockApprovalVerdict` for the population table.
+   * It selects the per-token-type max-age cap in `verifyBlockToken`
    * (4h for dev, 15min for every other token). The claim is only trustworthy
    * BECAUSE the signature (RS256, our kid) is verified before it's read — a
    * forged `dev:true` can't pass the signature gate. The claim is optional and
@@ -87,6 +142,178 @@ export interface BlockTokenClaims {
    * if present (a non-boolean is rejected outright; absent → treated as false).
    */
   reviewRunForReal?: boolean;
+  /**
+   * PRIVATE-RUN marker — present (true) ONLY on a token minted for a private run of
+   * a DELISTED / SUSPENDED app (owner, accepted listing collaborator, or moderator).
+   * The two MONEY arms read it: `recordSpendAttribution` voids the spend-attribution
+   * row, and `resolveBlockAuthorFeePayee` refuses the per-generation author fee
+   * before any debit. Trustworthy ONLY because the RS256 signature is verified
+   * before it is read. Optional; MUST be a boolean if present (a non-boolean is
+   * rejected outright; absent → treated as false, i.e. an ordinary chargeable run).
+   *
+   * 🔴 ABSENT MUST MEAN "CHARGE NORMALLY", NOT "SUPPRESS". Both arms test
+   * `=== true`, so a missing or garbage claim fails toward the pre-existing
+   * behaviour rather than silently disabling a live money rail for every token.
+   * ⚠️ What actually makes that safe is the TOKEN BOUNDARY, not the comparison:
+   * the guard below rejects any non-boolean outright, so neither arm can be
+   * reached with a truthy non-boolean in the first place. A third arm added later
+   * must not rely on truthiness on the strength of this paragraph.
+   *
+   * 🔴 TWO MONEY ARMS READ IT TODAY, BUT THAT IS NOT THE CLOSED SET OF READERS A
+   * PRIVATE RUN NEEDS, AND READING IT AS ONE IS THE EXPENSIVE MISTAKE. A private
+   * run serves a DELISTED / SUSPENDED app's bundle, so it must also pass
+   * `resolveAppBlockApprovalVerdict` (`blocks/block-approval.service.ts`) — the
+   * ONE place that decides which signed claim exempts a token from the
+   * approved-status decision, today only the `dev && reviewRunForReal` PAIR. The
+   * arm for a private run belongs THERE, keyed the same paired way, not
+   * open-coded as a status bypass in a new mint branch: that predicate is
+   * ledgered by `services/__tests__/no-unguarded-block-rest-token.test.ts`, and a
+   * second spelling of it is exactly what that ledger exists to prevent.
+   *
+   * 🔴 AND IT IS NOT THE CLOSED SET OF MONEY RAILS EITHER. `social:tip:self`
+   * (`pages/api/v1/blocks/tip.ts`) moves IRREVERSIBLE Buzz from the viewer to any
+   * `toUserId` the block's own code names, has no status check of its own, and is
+   * not in `PAGE_FORBIDDEN_SCOPES` — so it is refused on a delisted app ONLY by
+   * the approval verdict above. Widening that verdict for a private run admits
+   * this route in the same move. The sibling owner-crediting rail
+   * `goods:purchase:self` is already closed (it requires an approved block).
+   * ✅ BOTH ITEMS ABOVE ARE NOW CLOSED, and each is recorded where it landed so this
+   * docblock cannot go stale in the direction that matters (claiming an open hazard
+   * that is shut, which is how a guard gets "fixed" twice or deleted once):
+   *   - the approval-verdict arm is `resolveAppBlockApprovalVerdict`'s
+   *     `private_run_exempt` branch, keyed on the `privateRun` + `privateRunAudience`
+   *     PAIR exactly as this docblock asked;
+   *   - `social:tip:self` is stripped in `clampPrivateRunScopes` via
+   *     `PRIVATE_RUN_FORBIDDEN_SCOPES`, so the third rail is closed by scope rather
+   *     than by a third arm.
+   * The "two money arms" wording remains correct as a statement about the author-fee
+   * and attribution rails; the tip rail is closed by the clamp, not by an arm.
+   */
+  privateRun?: boolean;
+  /**
+   * WHICH audience a private run was admitted as: `owner`, `editor` or `moderator`.
+   *
+   * Present ONLY alongside `privateRun: true` (the signer refuses the lone form, and
+   * the shape guard below refuses it again on the consume side). Two readers, both of
+   * which BRANCH on it rather than merely carrying it:
+   *   - `resolveAppBlockApprovalVerdict` requires the PAIR to grant
+   *     `private_run_exempt`, so a status exemption is never one flipped bit wide;
+   *   - the runtime editor read-only belt in `blocks.router.ts` refuses a spend for
+   *     `'editor'`, behind the mint-time `ai:write:budgeted` strip.
+   *
+   * Validated against the closed `PRIVATE_RUN_AUDIENCES` set, not merely typeof-string:
+   * an unrecognised value would otherwise fail an `=== 'editor'` test and be treated as
+   * an owner, which is the wrong direction for a guard to fail in.
+   */
+  privateRunAudience?: PrivateRunAudience;
+}
+
+/**
+ * THE per-call Buzz ceiling a submit gate compares against.
+ *
+ * ── 🔴 IT IS A MONEY GATE. DO NOT INLINE `claims.buzzBudget` IN ITS PLACE. ───
+ * This section used to say "NOTHING A CALLER COULD NOT DO INLINE … a no-op on
+ * behaviour", and that was TRUE UNTIL THE PRIVATE-RUN SURFACE LANDED and is now
+ * FALSE. The body returns **0 for `privateRunAudience === 'editor'` even when a
+ * budget WAS minted** — that is the one place an accepted collaborator's
+ * read-only private run is enforced on the spend path. So it no longer returns
+ * `claims.buzzBudget`, and routing a gate through it is no longer behaviour-
+ * neutral.
+ *
+ * ⚠️ WHY THE STALE WORDING WAS WORSE THAN A MISSING COMMENT, AND HOW IT SURVIVED:
+ * it is the FIRST thing a reader meets, and it told them the helper was a pure
+ * consolidation. A fifth submit gate written on that understanding open-codes
+ * `claims.buzzBudget`, inherits no editor clamp, and silently gives an editor
+ * spend on a taken-down app — the exact failure the "IT IS ONE PLACE BECAUSE
+ * FOUR WOULD BE FOUR BUGS" argument below exists to prevent. It survived because
+ * the belt was added inside a file that ALSO moved on `main`: the paragraph is
+ * still verbatim upstream, where it is correct, so a clean `git merge` could not
+ * see the contradiction. Semantic conflict, zero textual conflict.
+ *
+ * Still true, and still the reason the helper exists: `pricesAuthorFee` does not
+ * change the number for a non-editor, and the four gates were four copies of one
+ * comparison.
+ *
+ * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
+ * The four gates spell the same comparison and are NOT interchangeable. Two of
+ * them add the per-generation author fee into the value they compare; two do not,
+ * because neither has a pre-submit `cost.base` to price a fee from (that split is
+ * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
+ * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
+ * Any future change to the ceiling is correct for at most one of those two
+ * populations, so it has to be made somewhere that knows which gate is which.
+ * This is that place; `pricesAuthorFee` is how each gate declares which it is.
+ *
+ * 🔴 THE FLAG IS CLASSIFICATION ONLY, AND HAS NO EFFECT. It changes no value, no
+ * branch reads it, and there is no ceiling decision behind it yet. A gate passing
+ * the "wrong" one is therefore not a defect today, because nothing consumes it.
+ * Do not read its presence as evidence that a difference exists. It is pinned
+ * against the fee call sites by
+ * `src/server/services/__tests__/no-direct-block-budget-claim-read.test.ts` so the
+ * classification cannot drift out of step with the fee before it becomes
+ * load-bearing — which it does the moment any branch reads it.
+ *
+ * 🔴 A RAISED CEILING WAS PROPOSED HERE AND WITHDRAWN. Minting `buzzBudget` ABOVE
+ * the declared ceiling so a fee fits underneath it is sound only where the fee is
+ * inside the compared value, and it was unsound in two ways at once. On the two
+ * fee-free gates the number that clears the gate is the number reserved and
+ * billed, so a raised ceiling spends real viewer Buzz above the ceiling the app's
+ * manifest declared. And on a fee-pricing gate it is equally unsound whenever the
+ * fee prices to zero — which it does for at least one generation type today — so
+ * the headroom is generation headroom no fee ever consumes. The manifest schema
+ * describes that declared number to authors as a safety ceiling against a
+ * compromised app draining the viewer's Buzz, so exceeding it is the one thing it
+ * must not do.
+ *
+ * So a future raised ceiling has to arrive as a SEPARATE claim whose name says it
+ * is granted, read only by a gate that prices the fee into its compared value —
+ * never by widening what `buzzBudget` means, which would hand the money-unsafe
+ * value to every gate written the obvious way.
+ *
+ * Returns 0 when no budget was minted, so a caller that skipped the
+ * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
+ */
+export function blockPerCallBudget(
+  claims: Pick<BlockTokenClaims, 'buzzBudget' | 'privateRunAudience'>,
+  // Classification only, read by no branch today — see the note above. Kept in
+  // the signature so each gate declares its population and the ledger can pin
+  // that declaration against the fee call sites. The directive must stay on the
+  // line immediately above the parameter: anything between them and it silently
+  // applies to the comment instead.
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  opts: { pricesAuthorFee: boolean }
+): number {
+  // 🔴 THE EDITOR READ-ONLY BELT — the SECOND layer behind the mint-time scope strip,
+  // and the reason it is HERE rather than at the four submit gates.
+  //
+  // An accepted listing collaborator on a private run of a delisted app is READ-ONLY by
+  // operator decision. That is delivered primarily by `clampPrivateRunScopes`, which
+  // strips `ai:write:budgeted` for `audience: 'editor'` so the token cannot satisfy a
+  // submit's scope requirement at all. This is the belt behind that brace, and the two
+  // are NOT redundant in the way they look: the clamp is a decision taken ONCE at issue
+  // time, while this is re-taken on every submit, so it also covers a token minted
+  // before a clamp regression and still inside its lifetime.
+  //
+  // 🔴 IT IS ONE PLACE BECAUSE FOUR WOULD BE FOUR BUGS. Four submit gates compare a cost
+  // against this ceiling, and `no-direct-block-budget-claim-read` already forces every
+  // one of them through this function rather than reading `claims.buzzBudget` directly
+  // — which is exactly the property that lets a ceiling decision be made once here and
+  // apply to all four. Open-coding an audience check at each gate would regenerate the
+  // same omission at every site, and the fifth gate would inherit nothing.
+  //
+  // Returning 0 rather than throwing: every caller already treats 0 as "no budget was
+  // minted" and fails CLOSED on it, so this reuses a refusal path that is proven rather
+  // than introducing a new error shape into four money gates. A refusal also must not
+  // be distinguishable from an unbudgeted token — an editor learning that their token
+  // was deliberately zeroed, versus merely unbudgeted, is a detail the app does not
+  // need.
+  //
+  // Keyed on the SIGNED audience claim, validated by the verifier against the closed
+  // `PRIVATE_RUN_AUDIENCES` set — so this equality test runs over three known values and
+  // an unrecognised audience can never slip past it as an owner.
+  if (claims.privateRunAudience === 'editor') return 0;
+  if (typeof claims.buzzBudget !== 'number') return 0;
+  return claims.buzzBudget;
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
@@ -154,8 +381,21 @@ export interface WithBlockScopeOpts {
   /**
    * The block scope this endpoint requires. When PRESENT, the middleware
    * enforces `claims.scopes.includes(requiredScope)` (403 on miss) AND runs
-   * `enforceContextBinding` for the token's scopes — the standard per-scope
+   * `enforceContextBinding` FOR THIS SCOPE — the standard per-scope
    * authorization path (me.ts, submit-version, settings, etc.).
+   *
+   * 🔴 It is the binding for THIS scope only, not for every scope the token
+   * carries (#5063). If a handler consults a SECOND scope off `claims.scopes`
+   * to widen what it returns — today only `collections:read:private`, in
+   * `blocks/collections/index.ts:614` and `blocks/collections/[id]/index.ts:132`
+   * — that scope's own binding is NOT run by the middleware and the handler
+   * owns it. Both of today's sites are safe for reasons that hold without any
+   * test: the scope is CONSENT-GATED (absent from `CONSENT_EXEMPT_SCOPES`) so
+   * the anon mint strips it, AND both routes require `collections:read:self`,
+   * whose non-anon binding does still run. A third such site must make its own
+   * argument rather than inherit theirs — see the note at the foot of
+   * `block-scope.required-scope-binding.test.ts`, which also records why the
+   * mechanical ledger that briefly lived there was deleted rather than patched.
    *
    * When OMITTED ("any valid block token" mode), the middleware STILL performs
    * the FULL token validation (RS256 signature + kid, iss/aud/exp, max-age,
@@ -596,6 +836,49 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
       if (claims.reviewRunForReal !== undefined && typeof claims.reviewRunForReal !== 'boolean') {
         return null;
       }
+      // PRIVATE-RUN marker shape guard. Optional (absent on every ordinary token);
+      // if PRESENT it MUST be a boolean — a forged/garbage value is rejected
+      // outright so the two money arms can trust it. A signature-valid
+      // `privateRun:true` is only producible by our own signer (the RS256
+      // signature was already verified above).
+      if (claims.privateRun !== undefined && typeof claims.privateRun !== 'boolean') {
+        return null;
+      }
+      // 🔴 THE `privateRun` + `dev` PAIR IS REFUSED HERE TOO, NOT ONLY AT THE SIGNER.
+      // The signer throws on the combination, but that is a PRODUCE-time guard for a
+      // CONSUME-time hazard: `reserveBlockBuzzSpendForClaims` takes an early return on
+      // `claims.dev === true` and skips the platform reservation, and a `dev` token
+      // lives 4h — so a token minted before a signer regression, or by any future
+      // second signer, would spend that whole window uncapped per app with nothing
+      // between mint and spend to stop it.
+      //
+      // This is the same treatment the age cap below already gets, for the same stated
+      // reason: it re-checks a property the signer is supposed to guarantee "so a
+      // signer bug emitting a too-long `exp` is still caught". Refusing the token
+      // outright (rather than dropping one claim) keeps the failure fail-CLOSED and
+      // indistinguishable from any other invalid token, so it leaks no oracle.
+      if (claims.privateRun === true && claims.dev === true) {
+        return null;
+      }
+      // PRIVATE-RUN AUDIENCE shape guard, in TWO parts — and the CLOSED-SET test is
+      // the one that matters. (This said "three parts" and listed two; the count was
+      // wrong, not the guard.)
+      //
+      // 🔴 `typeof === 'string'` WOULD NOT BE ENOUGH, AND THE FAILURE DIRECTION IS WHY.
+      // Two consumers branch on this value: the approval verdict requires a RECOGNISED
+      // audience to grant its status exemption, and the runtime belt refuses spend when
+      // the audience `=== 'editor'`. An unrecognised string ("Editor", "admin", "") is
+      // not `'editor'`, so it would sail past the read-only belt and be treated with
+      // owner/moderator power. Validating against the closed set at the verifier means
+      // every downstream `=== 'editor'` test is a test over three known values.
+      if (claims.privateRunAudience !== undefined) {
+        // (a) Never present without the marker. The signer refuses to produce this
+        //     shape; re-checked here because the signer is a produce-time guard for a
+        //     consume-time hazard, exactly as the `dev` pair above is.
+        if (claims.privateRun !== true) return null;
+        // (b) Must be a member of the closed set.
+        if (!isPrivateRunAudience(claims.privateRunAudience)) return null;
+      }
       // Per-token-type max-age belt (replaces the global maxTokenAge). `exp`
       // already enforced the real lifetime in jwtVerify; this re-checks the age
       // against the type-specific cap so a signer bug emitting a too-long `exp`
@@ -617,15 +900,14 @@ export async function verifyBlockToken(token: string): Promise<BlockTokenClaims 
   return null;
 }
 
-// M4: cap digit length to keep `user:<unbounded digits>` from sliding past
-// Number.MAX_SAFE_INTEGER and producing a silent mis-match against ctx.modelId.
-// 12 digits is well above any realistic civitai userId (~10 digits = 9.9B).
-const USER_SUB_RE = /^user:[1-9][0-9]{0,11}$/;
-
-/** True iff `sub` is one of the two valid shapes: `anon` or `user:<positive int>`. */
-export function isValidSubject(sub: string): boolean {
-  return sub === 'anon' || USER_SUB_RE.test(sub);
-}
+// ⚠️ `USER_SUB_RE` and `isValidSubject` MOVED to `~/server/services/block-token-subject`
+// — a zero-import leaf shared with the MINT (`block-token.service`), the revocation
+// writer and the approval guard, so the format has one spelling instead of one per
+// consumer. Re-exported here because this module is where every existing caller imports
+// it from. The regex's own rationale travels with it: capping the digit length keeps
+// `user:<unbounded digits>` from sliding past Number.MAX_SAFE_INTEGER and producing a
+// silent mis-match against ctx.modelId.
+export { isValidSubject };
 
 /**
  * Extracts the userId from a verified `sub` claim. Use AFTER isValidSubject.
@@ -634,7 +916,7 @@ export function isValidSubject(sub: string): boolean {
  * via isValidSubject won't see throws in practice.
  */
 export function parseSubjectUserId(sub: string): number | null {
-  if (sub === 'anon') return null;
+  if (sub === ANON_SUBJECT) return null;
   if (!USER_SUB_RE.test(sub)) {
     throw forbidden('malformed sub claim');
   }
@@ -661,8 +943,8 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
 }
 
 /**
- * Enforces context binding per scope type. Each scope can require
- * additional request-shape checks beyond having-the-scope:
+ * Enforces context binding for THE SCOPE THE ROUTE REQUIRES. Each scope can
+ * require additional request-shape checks beyond having-the-scope:
  *   - models:read:self   → query.id ≡ claims.ctx.modelId (integer match)
  *   - buzz:read:self     → claims.sub != 'anon'
  *   - social:tip:self    → claims.sub != 'anon'
@@ -670,17 +952,59 @@ function readBoundQueryString(req: NextApiRequest, name: string): string | undef
  *   - ai:write:budgeted  → claims.buzzBudget > 0
  *   - posts:write:self   → claims.sub != 'anon'
  *
+ * 🔴 THE BINDING SWITCH IS SCOPED TO `requiredScope`, NOT TO EVERY SCOPE ON THE
+ * TOKEN (#5063), and that is deliberate. A binding answers "is THIS request
+ * shaped correctly for the capability it is exercising" — it is a statement
+ * about a route, not about a token. Running every scope's binding on every
+ * request made two cases on this very switch contradict each other: the
+ * `apps:storage:shared:read` case below says anon reads ARE allowed, while the
+ * `apps:storage:shared:write` case one below it 403s the same anon token on
+ * that same read. Likewise `models:read:self`'s query binding cannot be
+ * satisfied by a buzz request that has no model in it, so a manifest declaring
+ * it 403'd every non-models block REST route.
+ *
+ * WHAT DID NOT NARROW, and must not:
+ *   - The unknown-scope deny-by-default below still sweeps the WHOLE token. An
+ *     unknown scope is never legitimate on any route, so that gate is not
+ *     route-specific.
+ *   - The caller (`withBlockScope`) still enforces
+ *     `claims.scopes.includes(requiredScope)` BEFORE calling this — which is
+ *     also what guarantees `requiredScope` reaches the switch already proven
+ *     known, so the `default:` arm below only ever sees an under-wired scope.
+ *   - The "every known scope has a binding case" property that the `default:`
+ *     arm used to police incidentally (by 403ing every request a token carrying
+ *     an unwired scope made) is now pinned STATICALLY, and therefore earlier and
+ *     louder, by `block-scope.required-scope-binding.test.ts`.
+ *   - Each route's own authorization is untouched: `resolveSharedContext`'s
+ *     min-trust gate + per-op `READ_OPS` check, the collections
+ *     visibility/ownership checks, the tip gates, etc.
+ *
  * Throws ForbiddenError on mismatch.
  */
-export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequest): void {
+export function enforceContextBinding(
+  claims: BlockTokenClaims,
+  req: NextApiRequest,
+  requiredScope: string
+): void {
+  // Deny-by-default, TOKEN-WIDE: tokens carrying scopes we don't know about are
+  // rejected here. The manifest validator is the registration-time gate;
+  // this is the runtime gate. Together they bound the trust surface even
+  // if a future scope ships without all its plumbing.
   for (const scope of claims.scopes) {
-    // Deny-by-default: tokens carrying scopes we don't know about are
-    // rejected here. The manifest validator is the registration-time gate;
-    // this is the runtime gate. Together they bound the trust surface even
-    // if a future scope ships without all its plumbing.
     if (!isKnownBlockScope(scope)) {
       throw forbidden(`unknown scope: ${scope}`);
     }
+  }
+
+  // The bare block + the `scope` alias are deliberate: they hold the switch at
+  // its original indentation and keep every `${scope}` in the error messages
+  // spelled the same, so the diff shows ONE semantic change — what the switch is
+  // fed — rather than a reindent-and-rename of the 140 lines around it.
+  {
+    // `requiredScope` is guaranteed to be one of `claims.scopes` by the caller's
+    // presence check, and every member of `claims.scopes` was just proven known
+    // — so reaching `default:` means an under-wired scope, never an unknown one.
+    const scope = requiredScope;
     switch (scope) {
       case 'models:read:self': {
         const modelIdStr = readBoundQueryString(req, 'id') ?? readBoundQueryString(req, 'modelId');
@@ -700,11 +1024,15 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
       }
       case 'buzz:read:self':
       case 'social:tip:self':
+      case 'goods:read:self':
+      case 'goods:purchase:self':
       case 'user:read:self': {
         // Every :self scope requires an authenticated subject — there's no
         // anonymous "self" to read/tip. user:read:self joined this set
-        // when /api/v1/blocks/me switched off buzz:read:self (audit I3).
-        if (claims.sub === 'anon') {
+        // when /api/v1/blocks/me switched off buzz:read:self (audit I3), and
+        // the goods pair joined it because an anonymous viewer has no balance
+        // to charge and no entitlements to hold.
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -724,7 +1052,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // actual KV read/write happens; this case exists so adding these
         // scopes to BLOCK_SCOPE_TO_OAUTH_BIT does NOT silently reintroduce the
         // fail-open the comment below warns about (audit fix 3 / L-M6).
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -742,7 +1070,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // anon subject here so wiring this scope can't silently fail open (mirrors
         // the apps:storage:write case). The trust gate itself is enforced in
         // `resolveSharedContext`.
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -759,7 +1087,7 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // the read:private scope) + the maturity clamp; the follow write is
         // self-bound to this subject. No request-shape binding is added here —
         // presence of the scope + a non-anon subject is the middleware check.
-        if (claims.sub === 'anon') {
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
@@ -771,30 +1099,192 @@ export function enforceContextBinding(claims: BlockTokenClaims, req: NextApiRequ
         // `blocks.createPostFromApp` (approval + revocation + write-trust +
         // per-source ownership/provenance + the host-chrome consent confirm).
         //
-        // 🔴 THIS CASE IS NOT OPTIONAL AND ITS ABSENCE IS NOT SCOPED TO POSTING.
-        // The loop walks EVERY scope on the token, and the `default:` arm below
-        // throws. A known scope with no case here therefore 403s every REST
-        // request the token makes — a models read, a catalog read, anything — so
-        // omitting it bricks the whole app and reads as a bug in an unrelated
-        // endpoint. It must land in the same commit as the
-        // BLOCK_SCOPE_TO_OAUTH_BIT entry.
-        if (claims.sub === 'anon') {
+        // 🔴 THIS CASE IS NOT OPTIONAL. The `default:` arm below throws, so a
+        // known scope with no case here 403s EVERY request to the route that
+        // declares it as `requiredScope` — the route is simply dead. It must
+        // land in the same commit as the BLOCK_SCOPE_TO_OAUTH_BIT entry, and
+        // `block-scope.required-scope-binding.test.ts` fails statically if it
+        // does not. (Before #5063 the damage was WIDER, not narrower: the switch
+        // ran for every scope on the token, so an unwired scope 403'd a models
+        // read and a catalog read too. That blast radius is gone; the
+        // requirement to wire the case is not.)
+        if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
         break;
       }
       default:
-        // Fail closed (L-M6). Reaching here means a scope passed the
-        // `isKnownBlockScope` gate above (it's in BLOCK_SCOPE_TO_OAUTH_BIT)
-        // but has no explicit binding case in this switch — i.e. someone
-        // added a scope to the constant without wiring its runtime binding.
-        // Rather than accept it with no contextual binding (the prior
-        // implicit fall-through), reject it. Every scope currently in
-        // BLOCK_SCOPE_TO_OAUTH_BIT has a case above, so this never fires for
-        // a valid token today; it only catches a future under-wired scope.
+        // Fail closed (L-M6). Reaching here means the ROUTE'S `requiredScope`
+        // passed the `isKnownBlockScope` gate above (it's in
+        // BLOCK_SCOPE_TO_OAUTH_BIT) but has no explicit binding case in this
+        // switch — i.e. someone added a scope to the constant, declared it on a
+        // route, and never wired its runtime binding. Rather than accept it with
+        // no contextual binding (the prior implicit fall-through), reject it.
+        // Every scope currently in BLOCK_SCOPE_TO_OAUTH_BIT has a case above —
+        // asserted statically in `block-scope.required-scope-binding.test.ts`,
+        // which is the gate that now catches an under-wired scope at CI time
+        // instead of leaving it to 403 in production.
         throw forbidden(`scope has no runtime binding: ${scope}`);
     }
   }
+}
+
+// Same instance id the page host mints under, so storage, rate-limit buckets and the
+// publisher-ban revocation sweep (`page_` prefix) line up whichever credential the block holds.
+const HUB_INSTANCE_PREFIX = 'page_';
+// Mirror of the mint's private per-gen clamp (block-tokens/index.ts BUZZ_BUDGET_DEFAULT / _CAP).
+const HUB_BUZZ_BUDGET_DEFAULT = 10;
+const HUB_BUZZ_BUDGET_CAP = 1000;
+
+function hubBuzzBudget(manifest: { page?: { buzzBudgetPerGen?: unknown } }): number {
+  const raw = manifest.page?.buzzBudgetPerGen;
+  const candidate =
+    typeof raw === 'number' && Number.isInteger(raw) ? raw : HUB_BUZZ_BUDGET_DEFAULT;
+  return Math.min(Math.max(candidate, 0), HUB_BUZZ_BUDGET_CAP);
+}
+
+/**
+ * Block claims for a hub-issued OAuth access token whose OauthClient owns an AppBlock.
+ * Null for anything else — a personal API key is never elevated. Scopes are what the
+ * JWT mint would sign for this viewer: manifest ∩ approved ∩ (granted ∪ consent-exempt).
+ * With several blocks on one client the oldest approved one is chosen.
+ */
+/**
+ * A hub token from an author's own dev tunnel: either the borrowed dev client of a
+ * never-submitted app, or the real client of an owned app that is not approved.
+ * The consent the mint wrote is what bounds the scopes.
+ */
+async function resolveDevTunnelHubClaims(args: {
+  userId: number;
+  clientId: string;
+  apiKeyId: number;
+}): Promise<BlockTokenClaims | null> {
+  const { userId, clientId, apiKeyId } = args;
+  const [{ parseDevTunnelClientId, scopesCoveredByConsent }, { getActiveDevTunnel }, { dbRead }] =
+    await Promise.all([
+      import('~/server/services/blocks/dev-tunnel-oauth.service'),
+      import('~/server/services/blocks/dev-tunnel.service'),
+      import('~/server/db/client'),
+    ]);
+
+  const dev = parseDevTunnelClientId(clientId);
+  if (dev && dev.userId !== userId) return null;
+  const owned = dev
+    ? null
+    : await dbRead.appBlock.findFirst({
+        where: { appId: clientId, app: { userId } },
+        select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+      });
+  if (!dev && !owned) return null;
+
+  const blockId = dev ? dev.slug : owned!.blockId;
+  const appBlockId = dev ? `${EPHEMERAL_APP_ID_PREFIX}${dev.slug}` : owned!.id;
+  const tunnel = await getActiveDevTunnel(userId, blockId);
+  if (!tunnel) return null;
+  const consent = await dbRead.oauthConsent.findUnique({
+    where: { userId_clientId: { userId, clientId } },
+    select: { scope: true },
+  });
+  if (!consent) return null;
+
+  const {
+    clampTunnelDeclaredScopes,
+    parseManifestBuzzBudget,
+    resolveDevBuzzBudget,
+    FORCED_SFW_CEILING,
+  } = await import('~/server/services/blocks/dev-scoped-mint.service');
+  const source = dev
+    ? tunnel.grantedScopes ?? []
+    : clampTunnelDeclaredScopes(owned!.approvedScopes ?? []);
+  const scopes = scopesCoveredByConsent(source, consent.scope);
+  const manifestBudget = owned
+    ? parseManifestBuzzBudget((owned.manifest as { page?: unknown } | null)?.page)
+    : undefined;
+  const buzzBudget = resolveDevBuzzBudget(scopes, undefined, manifestBudget);
+
+  const iat = Math.floor(Date.now() / 1000);
+  return {
+    iss: BLOCK_TOKEN_ISSUER,
+    aud: BLOCK_TOKEN_AUDIENCE,
+    sub: subjectForUserId(userId),
+    iat,
+    exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
+    jti: `hub_${apiKeyId}`,
+    blockId,
+    appId: clientId,
+    appBlockId,
+    blockInstanceId: `${HUB_INSTANCE_PREFIX}${appBlockId}`,
+    ctx: { entityType: 'none' },
+    scopes,
+    dev: true,
+    ...(buzzBudget !== undefined ? { buzzBudget } : {}),
+    maxBrowsingLevel: FORCED_SFW_CEILING,
+  };
+}
+
+const EPHEMERAL_APP_ID_PREFIX = 'ephemeral-';
+
+async function resolveHubTokenClaims(
+  bearer: string,
+  req: NextApiRequest
+): Promise<BlockTokenClaims | null> {
+  const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
+  const session = await getSessionFromBearerToken(bearer);
+  if (!session || session.subject.type !== 'oauth') return null;
+  const userId = session.user?.id;
+  if (typeof userId !== 'number') return null;
+  const clientId = session.subject.id;
+
+  const { dbRead } = await import('~/server/db/client');
+  const block = (await dbRead.appBlock.findFirst({
+    where: { appId: clientId, status: 'approved' },
+    orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    select: { id: true, blockId: true, manifest: true, approvedScopes: true },
+  })) as {
+    id: string;
+    blockId: string;
+    manifest: unknown;
+    approvedScopes: string[];
+  } | null;
+  if (!block) return resolveDevTunnelHubClaims({ userId, clientId, apiKeyId: session.apiKeyId });
+
+  const { getGrantedScopes, partitionByConsent } = await import(
+    '~/server/services/blocks/scope-grant.service'
+  );
+  const granted = await getGrantedScopes({ userId, appBlockId: block.id });
+  const manifest = (block.manifest ?? {}) as {
+    scopes?: unknown;
+    page?: { buzzBudgetPerGen?: unknown };
+  };
+  const declared = effectiveBlockScopes(manifest, block.approvedScopes).filter(isKnownBlockScope);
+  const scopes = partitionByConsent(declared, granted).signable;
+
+  const { getRequestDomainColor, isHostForColor } = await import('~/server/utils/server-domain');
+  const host = req.headers.host ?? '';
+  const domainColor = getRequestDomainColor(req);
+  const maxBrowsingLevel =
+    host !== '' && isHostForColor(host, 'red')
+      ? allBrowsingLevelsFlag
+      : domainBrowsingCeiling(domainColor);
+
+  const iat = Math.floor(Date.now() / 1000);
+  return {
+    iss: BLOCK_TOKEN_ISSUER,
+    aud: BLOCK_TOKEN_AUDIENCE,
+    sub: subjectForUserId(userId),
+    iat,
+    exp: iat + MAX_TOKEN_AGE_DEFAULT_SECONDS,
+    jti: `hub_${session.apiKeyId}`,
+    blockId: block.blockId,
+    appId: clientId,
+    appBlockId: block.id,
+    blockInstanceId: `${HUB_INSTANCE_PREFIX}${block.id}`,
+    ctx: { entityType: 'none' },
+    scopes,
+    ...(scopes.includes('ai:write:budgeted') ? { buzzBudget: hubBuzzBudget(manifest) } : {}),
+    ...(typeof domainColor === 'string' ? { domain: domainColor } : {}),
+    maxBrowsingLevel,
+  };
 }
 
 export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts): NextApiHandler {
@@ -807,13 +1297,15 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       ? authHeader.slice('bearer '.length).trim()
       : '';
 
-    // No block bearer present (or it's an opaque API key, not a 3-part JWS)
+    // No block bearer present (or it's an opaque API key, not a 3-part JWS,
+    // that does not resolve to a block's hub token below)
     // — hand off to the wrapped handler so it can run its own auth/CORS path.
     // This is what keeps pre-PR behavior (PublicEndpoint's ACAO:*,
     // AuthedEndpoint's allow-credentials path) intact for legacy callers.
-    if (!bearer || !isBlockJwt(bearer)) {
+    if (!bearer) {
       return handler(req, res);
     }
+    const isJwt = isBlockJwt(bearer);
 
     // Decision 4: gate block-JWT verification on the dedicated GLOBAL runtime
     // flag (`app-blocks-runtime-enabled`) rather than the global eval of the
@@ -839,8 +1331,18 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
       return handler(req, res);
     }
 
-    const claims = await verifyBlockToken(bearer);
+    // `let`, not `const`: the consent-revocation block below REPLACES this with a narrowed
+    // copy when the viewer has withdrawn a scope the token still carries. Everything after
+    // that point — the approval verdict, the required-scope check, context binding, the
+    // handler and the invocation audit row — must see the narrowed set, which is the whole
+    // reason the strip happens here rather than at each gate.
+    let claims = isJwt
+      ? await verifyBlockToken(bearer)
+      : env.APP_BLOCK_OAUTH_TOKENS_ENABLED
+      ? await resolveHubTokenClaims(bearer, req)
+      : null;
     if (!claims) {
+      if (!isJwt) return handler(req, res);
       res.status(401).json({ error: 'invalid block token' });
       return;
     }
@@ -901,13 +1403,265 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     res.on('finish', recordBlockMetric);
     res.on('close', recordBlockMetric);
 
-    // H-2: per-instance revocation check. Uninstall, toggleEnabled(false),
-    // and (Phase 2) publisher-ban all write a marker that lives for one
-    // full token lifetime. Tokens for revoked instances are rejected here
-    // before the wrapped handler runs. Fail-open on Redis incidents.
-    if (await BlockRevocation.isRevoked(claims.blockInstanceId)) {
-      res.status(403).json({ error: 'block instance revoked' });
+    // H-2: per-instance revocation check. Uninstall, toggleEnabled(false) and a
+    // publisher ban each write a marker that lives for one full token lifetime.
+    // Tokens for revoked instances are rejected here before the wrapped handler
+    // runs. Fail-open on Redis incidents.
+    //
+    // 🔴 THE BAN LEG IS NEW, AND OTHER FILES CITE THIS COMMENT AS THE AUTHORITY ON
+    // IT — keep the enumeration here honest or they all go stale together.
+    // History, because this line has been wrong in both directions: it once read
+    // "and (Phase 2) publisher-ban all write a marker" while NO ban writer existed,
+    // and was then corrected to say a ban writes none of the three. As of
+    // clawgate #618 the writer exists, so the correction is itself now stale.
+    // By enumeration, there are now TWO WRITERS over TWO KEYSPACES, and `isRevoked`
+    // refuses if either holds a marker. The INSTALL writer `revokeInstance` has two
+    // production call sites — `uninstallFromModel` and `toggleEnabled(false)`, both
+    // `block-registry.service.ts`. The BAN writer `revokeInstanceForBan` has one,
+    // `revokeBlockInstancesForPublisher` (`blocks/publisher-ban-revocation.service.ts`),
+    // which `toggleBan` (`user.service.ts`) calls in its ban fan-out.
+    //
+    // 🔴 THE SPLIT IS THE CONTROL. With one shared key, `toggleEnabled(false)` — an
+    // ordinary model owner, reachable over tRPC — overwrote a ban marker and
+    // `toggleEnabled(true)` then cleared it, putting a banned publisher's live token back
+    // into service. Separate keyspaces make that unrepresentable. Both ledgers are pinned
+    // by `blocks/__tests__/publisher-ban-revocation.namespaces.test.ts`.
+    //
+    // 🔴 WHAT THE BAN LEG COVERS IS NARROWER THAN "a banned user's tokens stop
+    // working". It marks every live instance of every block the banned user
+    // CANONICALLY owns — `resolveCanonicalListingOwner`, which is `AppListing.userId`
+    // for an offsite listing and NOT `app.userId`; deliberately not apps they merely
+    // hold a collaborator seat on, which would take down another account's product. It
+    // is asynchronous with respect to a request already in flight: a token minted
+    // before the ban is refused on its NEXT call here, not mid-call. And it is
+    // TIME-BOXED — the markers expire after one token lifetime; durability beyond that
+    // is clawgate #620, layered on top of this rather than replacing it.
+    //
+    // 🔴 THE `page_` PREFIX IS FIVE MINT SHAPES, AND ONE OF THEM IS UNCOVERED:
+    // `page_local_<slug>`, the dev mint's no-server-row path — nothing ties that slug to
+    // a user, so there is nothing to enumerate at ban time and its 4h token runs to
+    // natural `exp`. This line previously said "ONE SHAPE" while the writer said "THREE",
+    // and both undercounted; the authoritative enumeration, with which shapes are
+    // covered and why, lives on `revokeBlockInstancesForPublisher`. Do not restate a
+    // count here — read it there.
+    //
+    // `block-approval.service.ts` still never consults owner ban state — the
+    // approved-status gate below is a separate signal, and a ban does not flip
+    // `app_blocks.status`.
+    //
+    // Do not re-add a fourth cause to this list without adding its writer.
+    // `claims.sub` verbatim: the subject-scoped ban keyspace exists because
+    // `page_ephemeral-<slug>` is NOT globally unique across users, so a global marker
+    // there would refuse an innocent author's own tunnel. See `bannedSubjectKey`.
+    // 🔴 BOTH REVOCATION READS ARE ISSUED IN ONE TICK. The consent lookup is STARTED here,
+    // before the instance check is awaited, and awaited below — so they pipeline instead of
+    // serialising. ⚠️ NOT "the two GETs": `isRevoked` issues TWO through the `mGet` wrapper's
+    // `Promise.all(keys.map(get))` (three for a `page_ephemeral-*` subject), so this tick
+    // carries THREE or FOUR. Undercounting them is a documented repeat offence in this
+    // subsystem — see `block-bridge-auth.service.ts`, which says its own count "HAS NOW BEEN
+    // WRONG THREE TIMES". They remain two calls with two `catch`es because
+    // their postures are opposite (this one fails OPEN, that one fails CLOSED), which is
+    // what makes a shared `mGet` impossible: the wrapper's `Promise.all(keys.map(get))`
+    // rejects with the first error and the throw cannot be attributed to a key. Per-
+    // PRIMITIVE concurrency has no such problem, because each already owns its posture.
+    //
+    // 🔴 SAFE TO LEAVE UNAWAITED ON THE REFUSAL PATH BELOW: `ConsentRevocation.lookup`
+    // catches everything and resolves to a verdict, so an early `return` cannot strand a
+    // rejecting promise. If it is ever changed to throw, this becomes an unhandled
+    // rejection — which is why it catches.
+    // 🔴 THE ANY-TOKEN CATALOG ROUTES ARE SKIPPED, AND THIS SKIP WAS DELETED BY MISTAKE. The
+    // first cut had it; removing the route condition wholesale — the right move for the SCOPE
+    // test, which was the actual defect — took this with it. ⚠️ DERIVE THE COUNT, DO NOT QUOTE
+    // ONE: this comment said "five" while the guard already derived SIX, and the commit that
+    // added the guard said "seven" — which double-counted `blocks/me.ts`, a route that declares
+    // `requiredScope: 'user:read:self'` and is therefore not in this population at all. At the
+    // time of writing the derivation yields
+    // `blocks/{gated-images,generation-resources,images,models,tools,user-checkpoint/set}.ts`;
+    // `no-unguarded-block-rest-token.test.ts` re-derives it and the number here is prose. They declare no
+    // `requiredScope` and, enumerated, reference `claims.scopes` NOWHERE: they authorize on
+    // token validity alone and derive their only authority from `claims.maxBrowsingLevel`. So a
+    // marker read there can neither refuse nor usefully strip — it is pure cost on the routes
+    // that burst hardest (they have their own 120-req/10s bucket for exactly that reason), and
+    // it drags them into the fail-closed coupling they were deliberately outside.
+    //
+    // ⚠️ THIS IS A ROUTE CONDITION, WHICH IS THE SHAPE THAT CAUSED THE ORIGINAL HOLE — so it is
+    // narrow and ledgered, not a judgement about scopes. It keys on "this route exercises NO
+    // scope", not on WHICH scope; a route that names a `requiredScope` is always consulted, and
+    // `no-unguarded-block-rest-token.test.ts` asserts every route in that derived population
+    // still reads no scopes.
+    const consentUserId = parseSubjectUserId(claims.sub);
+    const consentLookup =
+      opts.requiredScope !== undefined &&
+      shouldConsultMarker({
+        userId: consentUserId,
+        scopes: claims.scopes,
+      })
+        ? ConsentRevocation.lookup({
+            // Non-null by `shouldConsultMarker`, which returns false for a null userId.
+            userId: consentUserId as number,
+            appBlockId: claims.appBlockId,
+          })
+        : null;
+
+    if (await BlockRevocation.isRevoked(claims.blockInstanceId, claims.sub)) {
+      // 🔴 THE ONLY SIGNAL THIS REFUSAL EMITS. `recordScopeInvocation` registers its
+      // `res.on('finish')` handler further down, AFTER this early return, so a revocation
+      // 403 has never been able to write a `block_scope_invocations` row — the audit
+      // surface a reader would assume covers it. Without this counter, "revocation fired"
+      // and "revocation is broken and silently serving" are the same observation.
+      recordBlockRevocationRefusal('rest', claims.blockInstanceId);
+      // `code` is the MACHINE-READABLE half, added alongside the human `error` string
+      // rather than replacing it — every shipped app reads `error`, so changing it would
+      // be a breaking change for zero gain. `code` lets an app distinguish "this install
+      // went away / the publisher was banned" from the consent refusal below and from an
+      // ordinary `insufficient_scope`, which are three different things for it to do.
+      res.status(403).json({ error: 'block instance revoked', code: 'instance_revoked' });
       return;
+    }
+
+    // ── PER-SCOPE CONSENT REVOCATION. The viewer withdrew a permission for this app, and
+    // the token in the caller's hand was minted before they did.
+    //
+    // 🔴 WHY A SECOND MECHANISM AT ALL. The grant table is read at MINT; this path then
+    // trusts `claims.scopes` verbatim (only `resolveHubTokenClaims` re-derives from the
+    // grant). So a Postgres revoke is invisible to an already-signed token for up to its
+    // remaining life — 900s default, 300s settings-scoped, 4h dev. `BlockRevocation`
+    // above cannot cover it: it is keyed per-`blockInstanceId` and knows nothing about
+    // `app_user_scope_grants`.
+    //
+    // 🔴 IT **STRIPS**, AND THE FIRST VERSION ONLY REFUSED — WHICH ENFORCED NOTHING FOR THE
+    // TWO MOST SENSITIVE SCOPES. That version asked "is `opts.requiredScope` revoked?".
+    // Review enumerated the declared scopes across `src/pages/api`: of the six
+    // consent-gated ones, only `ai:write:budgeted`, `social:tip:self`, `user:read:self` and
+    // `buzz:read:self` are ever a route's `requiredScope`. `posts:write:self` is authorized
+    // on the tRPC BRIDGE, which never reaches this function; `collections:read:private` is
+    // an IN-HANDLER sub-check under a route declaring the consent-EXEMPT
+    // `collections:read:self`. Both were unenforced, while this comment claimed "the
+    // refusal is as narrow as the revoke was" — it was NARROWER.
+    //
+    // So the revoked scopes are removed from `claims` here, once, and every downstream
+    // consumer — the `requiredScope` check below, `enforceContextBinding`, and every
+    // in-handler `claims.scopes.includes(...)` — honours the revoke with no per-gate list to
+    // keep current. `authorizeBlockBridgeToken` does the same for the bridge.
+    //
+    // 🔴 WHY IT FAILS **CLOSED** WHILE THE CHECK ABOVE FAILS **OPEN**. `isRevoked`
+    // swallows a Redis error so that a cache incident can never block an uninstall or a
+    // ban — operations with no user waiting on the refusal, whose exposure is already
+    // bounded by the token lifetime. This marker exists only because a USER asked for one
+    // permission to stop being granted, and was told it was done; "the cache was down so
+    // we kept granting it" is that promise not being kept rather than a degradation of
+    // it. The asymmetry is documented at the primitive too
+    // (`blocks/consent-revocation.service.ts`, `block-revocation.service.ts`).
+    //
+    // 🔴 THE TWO READS ARE ISSUED IN ONE TICK, NOT SERIALISED — see the `consentLookup`
+    // declaration above the instance check for the mechanism and for why a shared `mGet`
+    // cannot replace it.
+    //
+    // 🔴 THE PRICE: during a Redis outage every revokable scope is stripped and a route whose
+    // `requiredScope` is revokable refuses. Narrowed by `shouldConsultMarker` (anon tokens, and
+    // apps whose entire granted set is exempt) plus the any-token skip above.
+    //
+    // ⚠️ DO NOT RESTATE "20 of the 29 scope-bound routes" HERE — that figure is the FIRST
+    // version's saving, from testing the ROUTE's declared scope. `shouldConsultMarker` never
+    // reads a route: the mint signs the app's whole effective set, so an app declaring ANY gated
+    // scope is looked up on its exempt-scope routes too. Enumerated over the first-party
+    // manifests, 12 of 15 carry a gated scope, so the real coupling is WIDER than that figure
+    // suggests. See `shouldConsultMarker`'s own docblock for the honest population.
+    if (consentLookup !== null) {
+      const verdict = await consentLookup;
+
+      // 🔴 AN UNREADABLE MARKER IS A **RETRYABLE** REFUSAL, NOT `consent_revoked` — AND THIS SEAM
+      // WAS LEFT WITHOUT THIS BRANCH WHILE THE BRIDGE GOT ONE.
+      //
+      // Synthesising "every revokable scope is revoked" is the right FAIL-CLOSED answer, but
+      // reporting it as `consent_revoked` tells the app something false and actively harmful: the
+      // code's documented contract, twenty lines down, is that `consent_revoked` means the user
+      // took this away and the app "should stop asking". `workflows/poll.ts` declares
+      // `requiredScope: 'ai:write:budgeted'`, so a Redis blip made an already-PAID generation
+      // answer "the viewer revoked this" — the exact harm
+      // `block-catalog-rate-limit.ts` says never to inflict, and the harm the bridge's own
+      // 503 was added to remove. Fixing one seam and not the other is the shape this change
+      // keeps repeating.
+      //
+      // ⚠️ THE 503 BUYS AN HONEST MESSAGE, NOT AUTOMATIC RECOVERY. `client-safe-error.ts` passes
+      // a 503's message through (every other 5xx is replaced), and `utils/trpc.ts` retries
+      // QUERIES only — and the block host currently turns any poll throw into a terminal `failed`
+      // snapshot (`PageBlockHost.tsx`). So today this changes what the viewer is TOLD, not
+      // whether the SDK resumes; teaching the host to branch on 503 is client work and is NOT
+      // done here. Do not read this branch as delivering retry.
+      // 🔴 AND IT REFUSES ONLY WHEN THE ROUTE'S OWN SCOPE IS REVOKABLE. Placing this branch
+      // ahead of the `requiredScope` test made it refuse EVERY consulted request, including the
+      // 21 routes whose `requiredScope` is a `CONSENT_EXEMPT_SCOPES` member (5 `app-storage/*`,
+      // 13 `shared-storage/*`, 3 `collections/*`) — traffic no revoke could ever have touched,
+      // because `revokeScopes` refuses an exempt scope with a specific error. That is precisely
+      // the self-inflicted outage `revokedScopesForToken`'s own docblock argues against, and
+      // `shouldConsultMarker` reaches those routes constantly: the mint signs the app's whole
+      // effective set, so any app declaring one gated scope is consulted on its exempt routes too.
+      //
+      // ⚠️ THE TRIGGER IS NOT ONLY "REDIS IS DOWN". `lookup` returns `unavailable` for a marker
+      // value it cannot parse, so one malformed key for one (user, app) would have killed that
+      // viewer's storage and collections traffic until the TTL expired.
+      //
+      // Falling through is not a relaxation: `revokedScopesForToken` synthesises "every revokable
+      // scope this token carries is revoked" on an `unavailable` verdict, so the gated scopes are
+      // still stripped fail-CLOSED and an in-handler sub-check still cannot pass. The only thing
+      // that changes is that the exempt scope the route actually declared is served.
+      // Round-4 review; measured both ways on the same probe.
+      // ⚠️ THE `requiredScope` TEST IS `!== undefined`, NOT A `||` FALLBACK — AND THE DIFFERENCE
+      // IS INVISIBLE TODAY BY CONSTRUCTION. It was written as
+      // `(opts.requiredScope === undefined || !isConsentExemptScope(...))`, which is DEAD: the
+      // lookup is only started when `requiredScope !== undefined` (see its gate above), so the
+      // disjunct can never be true — round-5 review confirmed it by mutation, not by reading
+      // (replacing it with the bare exempt test SURVIVED all 264 tests, which is what proves
+      // unreachable rather than merely untested).
+      //
+      // 🔴 IT IS FIXED ANYWAY, BECAUSE THE DEAD BRANCH ENCODED THE WRONG DEFAULT. If the lookup
+      // gate is ever widened to any-token routes, `requiredScope === undefined` would make this
+      // condition TRUE and 503 exactly the six catalog routes the skip above exists to keep out
+      // of this coupling — the fail-closed answer for a population that reads no scopes at all.
+      // `!== undefined` makes a widened gate SERVE them, which is the posture that skip argues
+      // for. Defensive code should fail in the direction its own file already chose.
+      if (
+        verdict.kind === 'unavailable' &&
+        opts.requiredScope !== undefined &&
+        !isConsentExemptScope(opts.requiredScope)
+      ) {
+        recordBlockConsentMarkerUnavailable('rest');
+        res.status(503).json({
+          error: 'permission state is temporarily unavailable — retry shortly',
+          code: 'permission_state_unavailable',
+        });
+        return;
+      }
+
+      const revoked = revokedScopesForToken(verdict, claims.scopes);
+      if (opts.requiredScope !== undefined && revoked.has(opts.requiredScope)) {
+        // The SHARED emitter, so this seam and the bridge cannot report different things under
+        // one counter name. One increment per scope this token lost — here that is the route's
+        // own scope plus any other the marker names.
+        recordConsentStrip('rest', claims.scopes, revoked);
+        // A DISTINCT `code` from the missing-scope 403 further down, which is the whole
+        // point of adding codes: "you never had this" and "the user took this away" call
+        // for different app behaviour — the second one should stop asking and let the host
+        // re-prompt, the first is a manifest/approval problem.
+        res.status(403).json({
+          error: `consent revoked for scope: ${opts.requiredScope}`,
+          code: 'consent_revoked',
+        });
+        return;
+      }
+      // Not refused, but the token may still carry OTHER revoked scopes — an in-handler
+      // sub-check is exactly where `collections:read:private` is read. Strip them.
+      //
+      // 🔴 EMITTED HERE TOO, AND THIS BRANCH USED TO EMIT NOTHING. That made the counter blind
+      // to the very case the strip was built for — a `collections:read:private` withdrawal that
+      // refuses no route — while its help text claimed a flat zero meant no viewer had revoked a
+      // scope an in-flight token still carried.
+      recordConsentStrip('rest', claims.scopes, revoked);
+      // The `buzzBudget` clear that used to sit here MOVED INTO `applyRevocations`, because this
+      // seam had it and the bridge did not — so `blocks.getMyViewer`, the surface the comment here
+      // cited as harmed, kept publishing a ceiling for a stripped scope. One place, both seams.
+      claims = applyRevocations(claims, revoked);
     }
 
     // APPROVED-STATUS GATE. The whole argument, the `dev` exemption, how it reconciles
@@ -915,7 +1669,7 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // on `resolveRestApprovalVerdict` in
     // `~/server/services/blocks/block-approval.service` — one docblock, not two.
     //
-    // 🔴 WHICH VERDICTS REFUSE IS NOT UNIFORM ACROSS THE THREE, AND FOR ONE OF THEM IT IS
+    // 🔴 WHICH VERDICTS REFUSE IS NOT UNIFORM ACROSS THE FOUR, AND FOR ONE OF THEM IT IS
     // NOT UNIFORM ACROSS ROUTES EITHER.
     //
     //   `not_approved`  — ALWAYS 403, on every route. This branch carries the whole of the
@@ -932,8 +1686,19 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     //                     NO row is a HEALTHY app — a row deleted or re-keyed mid-session,
     //                     blockId drift, an id-minting bug — so refusing it would 404 a
     //                     live public endpoint in exchange for closing no takedown path.
+    //   `tunnel_lookup_failed`
+    //                   — ALWAYS 403, on every route, and 🔴 `onApprovalLookupFailure`
+    //                     DOES NOT COVER IT. That option is scoped to `lookup_failed`
+    //                     alone, deliberately: its argument is that a REPLICA read we
+    //                     cannot complete should not take down routes where refusing
+    //                     removes no exposure. This verdict is a CACHE read failing on the
+    //                     dev-tunnel re-check, and the app it guards is already
+    //                     NOT-approved — so serving it would not be tolerating an
+    //                     unknown, it would be serving a known non-approved app because a
+    //                     cache was down. If you are adding a route that wants
+    //                     lookup-failure tolerance, this is the row that does not bend.
     //
-    // All three are COUNTED regardless, before any of them branches. The counter is the
+    // All four are COUNTED regardless, before any of them branches. The counter is the
     // alerting signal and it must not depend on what the route then decided to do.
     //
     // 🔴 The revocation check above fails OPEN and `lookup_failed` here fails CLOSED. That
@@ -941,15 +1706,41 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // primitive (`BlockRevocation.isRevoked` swallows a Redis error and returns false), so
     // a "cleanup" here could not align them even if it wanted to.
     //
-    // ORDER MATTERS AND MIRRORS THE BRIDGE: revocation is a Redis GET and responds to a
-    // USER action within seconds, so it runs first and a revoked-AND-suspended instance
-    // is reported as revoked. This DB read runs second and only on instances that
-    // survived it.
+    // ORDER MATTERS: revocation is a Redis GET and responds to a USER action within seconds, so
+    // it runs first and a revoked-AND-suspended instance is reported as revoked. This DB read
+    // runs second and only on instances that survived it.
+    //
+    // ⚠️ THIS SAID "AND MIRRORS THE BRIDGE", WHICH IS FALSE FOR THE CONSENT LEG. Here the
+    // per-scope consent check runs BEFORE this DB read; on the bridge it runs AFTER
+    // `assertAppBlockApproved`. Both refuse, so there is no defect — but the bridge pays a
+    // replica `findUnique` before its cheaper Redis GET, and a reader trusting "mirrors" would
+    // draw the wrong conclusion about either side.
     const approval = await resolveRestApprovalVerdict(claims);
-    if (approval !== 'ok' && approval !== 'dev_exempt') {
+    // 🔴 `private_run_exempt` IS ADMITTED, AND IT HAD TO BE NAMED HERE EXPLICITLY. This
+    // chain's tail treats an unrecognised verdict as `not_found` and SERVES it (see the
+    // `satisfies 'not_found'` below) — the opposite default from the bridge, which fails
+    // closed. So adding a verdict to the shared union without touching this condition
+    // would have admitted it anyway, silently, and via the branch that logs an
+    // observe-only warning about a MISSING row for a token whose row plainly exists.
+    // Naming it in the allow-condition is what makes the admission deliberate and keeps
+    // it out of the counter's refusal series, where it would read as a failure.
+    if (approval !== 'ok' && approval !== 'dev_exempt' && approval !== 'private_run_exempt') {
       recordBlockRestApprovalVerdict(approval);
-      if (approval === 'not_approved') {
-        res.status(403).json({ error: 'app block is not approved' });
+      if (approval === 'not_approved' || approval === 'tunnel_lookup_failed') {
+        // 🔴 BOTH REFUSE 403, WITH THE SAME BODY — the split is for the COUNTER, which
+        // has already recorded the distinct `reason=` two lines above. A bearer learning
+        // that the dev-tunnel cache is down rather than that the app is not approved
+        // would be an infrastructure oracle with no benefit to it.
+        //
+        // ⚠️ NOT ROUTED THROUGH `lookup_failed`, which is the reuse that would look
+        // tidier: that verdict answers 503 and is SERVED on the routes declaring
+        // `onApprovalLookupFailure: 'serve'`. A non-approved app must not be served on
+        // any route because a CACHE read failed, and a cache fault must not be reported
+        // as a replica fault. Refusing here keeps both halves honest.
+        // `code` on EVERY 403 this wrapper emits, so an app can treat it as always-present
+        // rather than having to test for it. Review found it on 3 of 5; the two it was
+        // missing are this one and the context-binding refusal below.
+        res.status(403).json({ error: 'app block is not approved', code: 'app_not_approved' });
         return;
       }
       if (approval === 'lookup_failed') {
@@ -995,15 +1786,33 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
     // scope. See WithBlockScopeOpts.requiredScope.
     if (opts.requiredScope !== undefined) {
       if (!claims.scopes.includes(opts.requiredScope)) {
-        res.status(403).json({ error: `missing required scope: ${opts.requiredScope}` });
+        // `insufficient_scope` — the token never carried it. DISTINCT from the
+        // `consent_revoked` refusal above, which is a token that DOES carry it and a
+        // viewer who has since said no. An app that cannot tell those apart either keeps
+        // retrying a permission the user withdrew, or reports a consent problem for what
+        // is really a manifest/approval gap. The name mirrors RFC 6750's OAuth 2.0 Bearer
+        // Token error code, which is the vocabulary an app author already knows.
+        res.status(403).json({
+          error: `missing required scope: ${opts.requiredScope}`,
+          code: 'insufficient_scope',
+        });
         return;
       }
 
       try {
-        enforceContextBinding(claims, req);
+        // #5063: the binding runs for THIS ROUTE'S scope only. An unrelated
+        // scope the token also happens to carry (a declared `models:read:self`
+        // on a buzz read; a consent-exempt `apps:storage:shared:write` on an
+        // anon shared READ) no longer 403s a request that never invoked it.
+        enforceContextBinding(claims, req, opts.requiredScope);
       } catch (err) {
         if (err instanceof ForbiddenError) {
-          res.status(403).json({ error: err.message });
+          // `context_binding` — the token carries the scope and the REQUEST does not match
+          // what it was bound to (wrong modelId, anon subject on a self-bound scope, an
+          // array-form query param). A fourth distinct cause, and an app's remedy differs
+          // again: re-request the token for the right context rather than re-prompt for
+          // consent. `err.message` stays the human half, unchanged.
+          res.status(403).json({ error: err.message, code: 'context_binding' });
           return;
         }
         throw err;
@@ -1113,6 +1922,12 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
               // the nullable-appBlockId path instead of FK-failing + swallowing; a
               // real id persists normally.
               dev: claims.dev === true,
+              // 🔴 THE BROADEST OF THE NINE MARKER SITES — this write fires for EVERY
+              // scope-gated REST call a private-run token makes, so an omission here leaks
+              // the whole REST surface into the delisted app owner's analytics rather than
+              // one path. Threaded from the VERIFIED claim (the boolean-or-reject guard
+              // above is what makes `=== true` sufficient).
+              privateRun: claims.privateRun === true,
             })
           )
           .catch(() => {
@@ -1132,36 +1947,111 @@ export function withBlockScope(handler: NextApiHandler, opts: WithBlockScopeOpts
  * and nothing else. This is the allowlist `normalizeEndpoint` templates against.
  *
  * It is a CLOSED set by construction: Next.js only dispatches a request to a
- * wrapped handler when the URL matches one of the 12 route files verbatim except
- * for their `[id]` positions, so any segment not listed here arrived in a dynamic
- * position and is caller-supplied. Kept in lockstep with those route files by
+ * wrapped handler when the URL matches one of the wrapped route files verbatim
+ * except for their `[id]` positions, so any segment not listed here arrived in a
+ * dynamic position and is caller-supplied. (The count is deliberately not
+ * written here — it was stale at "12" while the population was 13, and it moved
+ * again when `blocks/buzz.ts` was restored. The drift test below is the
+ * authority.) Kept in lockstep with those route files by
  * `block-scope.normalize-endpoint.test.ts`, which derives the set by walking
  * `src/pages/api` for every page extension Next accepts and matching both the
  * direct and indirect `withBlockScope(` wrap, rather than trusting this
  * comment.
  *
- * Not listed on purpose: `submissions`, `submit-version`, `withdraw`,
- * `dev-token`, `block-tokens`. Those routes live under `/api/v1/blocks` too but
- * authenticate with an API key, not a block JWT — they never call this
- * middleware, so listing them would be an unfalsifiable claim about a path this
- * function cannot see.
+ * Not listed on purpose: `submissions`, `submit-version`, `dev-token`,
+ * `block-tokens`. Those routes live under `/api/v1/blocks` too but authenticate
+ * with an API key, not a block JWT — they never call this middleware, so listing
+ * them would be an unfalsifiable claim about a path this function cannot see.
+ *
+ * ⚠️ `withdraw` USED TO BE on that not-listed line and no longer is, which is a
+ * collision worth naming rather than silently resolving. There are now TWO
+ * routes whose last segment is `withdraw`: the API-key `blocks/withdraw` (still
+ * invisible to this middleware, still not a reason for the entry) and the
+ * block-JWT `blocks/shared-storage/withdraw`, which IS wrapped and is what the
+ * entry is for. The allowlist is a flat set of SEGMENTS, not of paths, so it
+ * cannot distinguish them — and it does not need to: the full normalized path is
+ * what lands in the `endpoint` column, and those two differ.
  */
 export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'api',
   'v1',
+  'append',
+  // The per-viewer app-storage surface. Note what is NOT here: a KEY. All five
+  // routes carry the key in the POST body precisely so it never becomes a path
+  // segment (it is one viewer's private data — see app-storage/get.ts), so there
+  // is no `:seg` position on this surface to lose and no per-key value that could
+  // fragment the `endpoint` column.
+  'app-storage',
   'blocks',
+  'buzz',
+  'cancel',
   'collections',
+  'counts',
+  'delete',
+  // `/api/v1/blocks/entitlements` — the viewer's owned-goods read. Static: the
+  // app and the viewer both come from the JWT and there is no per-good path
+  // segment, so this surface has no `:seg` position to lose.
+  'entitlements',
+  'estimate',
   'follow',
+  'get',
+  // `/api/v1/blocks/goods/purchase` — the digital-goods checkout. Static: the
+  // good id rides the POST body precisely so it never becomes a path segment
+  // and can never fragment the `endpoint` column.
+  'goods',
+  // The per-viewer gated image read. Note what is NOT here: an IMAGE ID. The ids
+  // ride the query string (`?ids=1,2,3`), which `normalizeEndpoint` strips
+  // wholesale, so this surface has no `:seg` position at all and nothing that
+  // could fragment the `endpoint` column.
+  'gated-images',
   'generation-resources',
   'images',
   'increment',
+  'item',
+  'list',
   'me',
   'models',
+  'poll',
+  // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
+  // the prompt and every parameter ride the POST body, so there is no `:seg`
+  // position on this route and nothing that could fragment the `endpoint` column.
+  'resource-intent',
+  // The second segment of `/api/v1/blocks/goods/purchase`. See `goods` above.
+  'purchase',
+  // `/api/v1/blocks/workflows/query` — the app-subqueue read. Static: the paging
+  // cursor and page size ride the POST body, so there is no `:seg` position on
+  // this route and nothing per-viewer that could fragment the `endpoint` column.
+  'query',
+  'quota',
+  'report',
+  'set',
   'shared-storage',
+  'submit',
   'tip',
   'tip-allowance',
   'tools',
   'top',
+  'unvote',
+  'update',
+  // The per-viewer checkpoint override write. Like `app-storage`, nothing
+  // identifying is in the path: the install and the viewer both come from the
+  // JWT, and the only body field is a bounded integer — so there is no `:seg`
+  // position on this surface to lose. Without this entry the audit row records
+  // `/api/v1/blocks/:seg/set`, which loses the route's name in the
+  // `topEndpoints` rollup and leaves `AppActivityPanel`'s label arm — an exact
+  // `===` on the literal path — with nothing to match, so the row renders the
+  // raw `(any-token)` scope sentinel to the viewer.
+  //
+  // ⚠ An earlier version of this comment said the templated form COLLIDES with
+  // `app-storage/set.ts`. That was FALSE and is retracted: `'app-storage'` is
+  // itself in this set (above), so that route normalises to the literal
+  // `/api/v1/blocks/app-storage/set` and never to `:seg/set`. There is no other
+  // unlisted segment to collide with either. The entry is still required — for
+  // the naming reason above — but not for that reason.
+  'user-checkpoint',
+  'vote',
+  'withdraw',
+  'workflows',
 ]);
 
 /**

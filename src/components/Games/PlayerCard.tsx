@@ -70,7 +70,7 @@ export function PlayerCard({
           <div className="flex items-center gap-2">
             <UserAvatar user={user} size="md" radius={999} />
             {rank.iconUrl && (
-              <EdgeMedia2 src={rank.iconUrl} className="size-6" type="image" width={32} />
+              <EdgeMedia2 src={rank.iconUrl} className="size-6" type="image" width={32} optimized />
             )}
             <p className="text-lg font-medium">{rank.name}</p>
             {rankExplanation && !user.isModerator && (

@@ -102,7 +102,6 @@
     "src/server/services/blocks/__tests__/app-access.nav-pending-invites.test.ts",
     "src/server/services/blocks/__tests__/app-access.service.test.ts",
     "src/server/services/blocks/__tests__/app-analytics.service.test.ts",
-    "src/server/services/blocks/__tests__/app-bounty-cap.service.test.ts",
     "src/server/services/blocks/__tests__/app-cap-limits-degrade-signal.test.ts",
     "src/server/services/blocks/__tests__/app-cap-limits.service.test.ts",
     "src/server/services/blocks/__tests__/app-collaborator-earnings.service.test.ts",

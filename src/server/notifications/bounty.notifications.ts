@@ -1,6 +1,7 @@
 import { milestoneNotificationFix } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 
 const reactionMilestones = [5, 10, 20, 50, 100] as const;
 
@@ -147,7 +148,13 @@ export const bountyNotifications = createNotificationProcessor({
       }" has reached ${details.reactionCount.toLocaleString()} reactions`,
       url: `/bounties/${details.bountyId}/entries/${details.bountyEntryId}`,
     }),
-    prepareQuery: async ({ lastSent }) => `
+    prepareQuery: async ({ lastSent, excludedUserIds }) => {
+      // Same rule as the displayed bounty-entry count, and the lenient reader for the
+      // same reason as the article milestone: degrade to the pre-exclusion number rather
+      // than to silence. The reaction table is aliased `r` because that is the alias
+      // `excludedReactorFilter` emits.
+      const excludedFilter = excludedReactorFilter(excludedUserIds ?? []);
+      return `
       WITH milestones AS (
         SELECT * FROM (VALUES ${reactionMilestones.map((x) => `(${x})`).join(', ')}) m(value)
       ), affected AS (
@@ -157,11 +164,11 @@ export const bountyNotifications = createNotificationProcessor({
         WHERE "createdAt" > '${lastSent}'
       ), affected_value AS (
         SELECT
-          br."bountyEntryId",
+          r."bountyEntryId",
           COUNT(*) "reaction_count"
         FROM affected a
-        JOIN "BountyEntryReaction" br ON br."bountyEntryId" = a."bountyEntryId"
-        GROUP BY br."bountyEntryId"
+        JOIN "BountyEntryReaction" r ON r."bountyEntryId" = a."bountyEntryId" ${excludedFilter}
+        GROUP BY r."bountyEntryId"
       ), data AS (
         SELECT DISTINCT
           be."userId" "ownerId",
@@ -186,7 +193,8 @@ export const bountyNotifications = createNotificationProcessor({
         details
       FROM data
       WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = "ownerId" AND type = 'bounty-reaction-milestone')
-    `,
+    `;
+    },
   },
   // Moveable
   'bounty-entry': {

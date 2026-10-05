@@ -2,13 +2,17 @@ import { getResource, queryResources } from '@civitai/client';
 import { chunk } from 'lodash-es';
 import type * as z from 'zod';
 import { env } from '~/env/server';
+import { dbWrite } from '~/server/db/client';
 import { getCurrentLSN } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import type { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
-import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { createOrchestratorClient } from '~/server/services/orchestrator/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { modelVersionToAir } from '~/server/utils/resource-air';
+import {
+  modelVersionAirSelect,
+  modelVersionToAir,
+  type ModelVersionAirInput,
+} from '~/server/utils/resource-air';
 
 export async function getModelClient({
   token,
@@ -56,17 +60,29 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
   if (!Array.isArray(versionIds)) versionIds = [versionIds];
   if (!env.ORCHESTRATOR_ENDPOINT || !env.ORCHESTRATOR_ACCESS_TOKEN) return;
 
-  const resources = await resourceDataCache.fetch(versionIds);
-  if (!resources.length) return;
+  const versions = (await dbWrite.modelVersion.findMany({
+    where: { id: { in: versionIds } },
+    select: modelVersionAirSelect,
+  })) as ModelVersionAirInput[];
+  if (!versions.length) return;
+
+  // The orchestrator caches per AIR string, and a Checkpoint whose generation file is a diffusion
+  // model or UNet is reachable under both its file-kind AIR and the plain `checkpoint` one.
+  const airs = [
+    ...new Set(
+      versions.flatMap((version) => [
+        modelVersionToAir(version),
+        modelVersionToAir({ ...version, files: undefined }),
+      ])
+    ),
+  ];
 
   const etag = await getCurrentLSN();
   const failures: string[] = [];
 
-  const tasks = chunk(resources, 100).map((batch) => async () => {
+  const tasks = chunk(airs, 100).map((batch) => async () => {
     await Promise.all(
-      batch.map(async (resource) => {
-        const air = modelVersionToAir(resource);
-
+      batch.map(async (air) => {
         try {
           await invalidateOrchestratorResource(air, etag, userId);
         } catch (error) {
@@ -82,7 +98,7 @@ export async function bustOrchestratorModelCache(versionIds: number | number[], 
     logToAxiom({
       name: 'bust-orchestrator-model-cache',
       type: 'error',
-      message: `${failures.length}/${resources.length} resource invalidations failed`,
+      message: `${failures.length}/${airs.length} resource invalidations failed`,
       details: failures.slice(0, 10),
     }).catch(() => undefined);
 }

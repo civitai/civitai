@@ -275,6 +275,40 @@ export const computePackOwnershipDiscount = ({
 };
 
 /**
+ * A member the buyer created, listed by someone else.
+ *
+ * The buyer is neither charged for it, paid for it, nor granted it — charging
+ * and then paying them back through the bank would cost them the platform's cut
+ * to buy their own work, and a creator cannot buy their own cosmetic at all (see
+ * purchaseCosmeticShopItem). The charge and the grant derive from here; while
+ * the grant read its own rule, a subtracted member was still granted, and a pack
+ * of the buyer's own uncapped stickers minted free top-ups indefinitely.
+ *
+ * `computePackPayouts` states the rule a third time and is deliberately NOT
+ * routed through this: its filter runs where `buyerId` may be absent, and `0`
+ * is a real account id there, so the two disagree on a falsy buyer. Widen one
+ * and you must widen the other by hand.
+ */
+export const isSelfAuthoredPackMember = (
+  member: { createdById: number | null },
+  buyerId: number | undefined,
+  packCreatorId: number | null
+) => !!buyerId && member.createdById === buyerId && member.createdById !== packCreatorId;
+
+/**
+ * How many of the members a pack was built with it can no longer deliver; only
+ * zero is purchasable. The purchase refuses on it and the detail view disables
+ * the button on it, so the two cannot disagree about a short pack.
+ *
+ * Measured against `meta.packMemberCount`, never the join rows: deleting a member
+ * Cosmetic cascades its row away, so a live count shrinks with the pack and
+ * agrees with itself. A pack with no recorded count cannot be shown whole, so it
+ * counts as short rather than falling back to the rows.
+ */
+export const packMembersMissing = (packMemberCount: number | undefined, deliverableCount: number) =>
+  packMemberCount == null ? 1 : Math.abs(packMemberCount - deliverableCount);
+
+/**
  * What a specific viewer owes for a pack.
  *
  * Shared deliberately: the detail view quotes this and the purchase charges it.
@@ -300,12 +334,9 @@ export const computePackAmountDue = ({
     members,
     ownedCosmeticIds,
   });
-  // A member the buyer created is theirs already; charging for it and paying
-  // them back through the bank would cost them the platform's cut to buy their
-  // own work. They are excluded from the payout for the same reason.
   const selfAuthored = buyerId
     ? members
-        .filter((m) => m.createdById === buyerId && m.createdById !== packCreatorId)
+        .filter((m) => isSelfAuthoredPackMember(m, buyerId, packCreatorId))
         .reduce((sum, m) => sum + m.listPrice, 0)
     : 0;
 
@@ -366,7 +397,7 @@ export const cosmeticImageRequirements = (type: CosmeticType): CosmeticImageRequ
 
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 
-// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:9".
+// Human-readable aspect ratio, e.g. 144×144 -> "1:1", 450×144 -> "25:8".
 export const aspectRatioLabel = (width: number, height: number): string => {
   const g = gcd(width, height) || 1;
   return `${width / g}:${height / g}`;

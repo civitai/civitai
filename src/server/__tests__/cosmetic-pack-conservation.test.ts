@@ -174,6 +174,27 @@ const SHAPES: Shape[] = [
     owned: [1001],
   },
   {
+    // Distinct balances, so the grant property's per-member `uses` lookup can
+    // disagree with reading one member's balance for all of them. With every
+    // fixture on the same number that assertion cannot fail.
+    name: 'two consumable members with different balances',
+    price: 6300,
+    members: [
+      // Durable FIRST, so the consumable sublist is offset from `members` and a
+      // grant indexing one by the other's position reads this one's balance.
+      mkMember(),
+      mkMember({ cosmeticId: 1002, type: CosmeticType.Sticker, data: { uses: 45 } }),
+      mkMember({
+        cosmeticId: 1003,
+        type: CosmeticType.Sticker,
+        data: { uses: 60 },
+        createdById: OTHER_CREATOR,
+        addedById: OTHER_CREATOR,
+        floorAmount: 2900,
+      }),
+    ],
+  },
+  {
     name: 'a member with no creator at all',
     price: 6300,
     members: [
@@ -342,7 +363,7 @@ describe.each(SHAPES)(
             { accountType: 'yellow', amount: Math.max(0, amount - blueShare) },
           ],
         }));
-      await purchaseCosmeticPack({
+      const result = await purchaseCosmeticPack({
         userId: buyerId,
         shopItem: {
           ...shopItem(price, members.length),
@@ -363,8 +384,15 @@ describe.each(SHAPES)(
             externalTransactionId: string;
           }
       );
-      return { charged, payouts };
+      return { charged, payouts, result };
     };
+
+    // One derivation for the two assertions below that need it. Still hand-written
+    // rather than imported from src — that is what lets them disagree with
+    // isSelfAuthoredPackMember — but two character-identical copies over the same
+    // array caught nothing and could drift apart silently.
+    const membersPaidFor = () =>
+      members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
 
     // Computed from the shape, not by calling the code under test: every other
     // property bounds outflow by inflow, so a defect that charged everyone zero
@@ -466,6 +494,74 @@ describe.each(SHAPES)(
       for (const id of owned ?? []) expect(granted).not.toContain(id);
     });
 
+    // A member the buyer authored is subtracted from the price, so granting it
+    // hands over a balance nobody paid for — and an uncapped consumable never
+    // sells out, so the same pack mints another one every time it is bought.
+    // Set equality rather than containment: the defect is an EXTRA member in the
+    // grant, which `toContain` cannot see.
+    it('grants only the members the buyer was charged for', async () => {
+      await setup();
+      const consumableGrants = executeRaw.mock.calls.map((call) => {
+        // INSERT ... VALUES (${userId}, ${cosmeticId}, ${claimKey}, ${uses}).
+        // The neighbours are asserted so a reordered template cannot slide this
+        // onto another field and still read as a plausible cosmetic id.
+        const [, grantedTo, cosmeticId, claimKey, uses] = call as [
+          unknown,
+          number,
+          number,
+          string,
+          number
+        ];
+        expect(grantedTo).toBe(buyerId);
+        expect(claimKey).toMatch(/^cosmetic-pack-/);
+        // Nothing else in either pack suite pins the balance, so a purchase that
+        // sold a 10x top-up at the same price would otherwise print nothing.
+        // Looked up per member rather than compared to a constant, which only
+        // discriminates because the consumable shapes carry distinct `uses`.
+        const member = members.find((m) => m.cosmeticId === cosmeticId);
+        expect(member).toBeDefined();
+        expect(uses).toBe((member?.data as { uses?: number } | undefined)?.uses);
+        return cosmeticId;
+      });
+      // Every call, not `calls[0]`: a second grant call added beside the first —
+      // the shape a merge tidy-up reintroduces this bug in — leaves the first
+      // one correct and would otherwise print nothing.
+      expect(createManyUserCosmetic.mock.calls.length).toBeLessThanOrEqual(1);
+      const durableGrants: number[] = createManyUserCosmetic.mock.calls.flatMap(
+        (call) =>
+          (call[0]?.data ?? []).map((row: { cosmeticId: number }) => row.cosmeticId) as number[]
+      );
+      // Derived from the shape rather than from the code under test, like
+      // expectedCharge above. The withholding rule is spelled out here and in
+      // four other assertions on purpose: importing isSelfAuthoredPackMember
+      // would make all five agree with whatever it becomes, which is the one
+      // change they exist to catch. Do not consolidate them.
+      const ownedSet = new Set(owned ?? []);
+      const expected = members
+        .filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId))
+        .filter((m) => isConsumableCosmeticType(m.type) || !ownedSet.has(m.cosmeticId))
+        .map((m) => m.cosmeticId);
+      const byValue = (a: number, b: number) => a - b;
+      expect([...consumableGrants, ...durableGrants].sort(byValue)).toEqual(expected.sort(byValue));
+    });
+
+    // Its own case, because when it fails the claim that broke is the modal's,
+    // not the grant's. It reads the return value where the property above reads
+    // the database fake, and the defect it exists for was the two disagreeing.
+    it('tells the buyer only what they were charged for', async () => {
+      const { result } = await setup();
+      const byValue = (a: number, b: number) => a - b;
+      // Deliberately WITHOUT the owned-durable exclusion the grant expectation
+      // applies: a durable the buyer already held is named here and not granted.
+      // That is what the code does, pinned so changing it is a decision.
+      expect(result.granted.map((g) => g.cosmeticId).sort(byValue)).toEqual(
+        members
+          .filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId))
+          .map((m) => m.cosmeticId)
+          .sort(byValue)
+      );
+    });
+
     it('never pays out more than the creator share of what it collected', async () => {
       const { charged, payouts } = await setup();
       const paid = payouts.reduce((sum, p) => sum + p.amount, 0);
@@ -505,25 +601,59 @@ describe.each(SHAPES)(
       expect(new Set(ids).size).toBe(ids.length);
     });
 
-    it('accounts for every member — granted, topped up, or already held', async () => {
+    it('accounts for every member the buyer paid for — granted, topped up, or already held', async () => {
       await setup();
       const granted: number[] = (createManyUserCosmetic.mock.calls[0]?.[0]?.data ?? []).map(
         (row: { cosmeticId: number }) => row.cosmeticId
       );
+      // A member the buyer authored is subtracted from the price and not
+      // delivered, so it is outside what this accounts for. Narrowing the
+      // population rather than tolerating a miss: an unaccounted member the
+      // buyer DID pay for still fails.
+      const paidFor = membersPaidFor();
       const toppedUp = executeRaw.mock.calls.length;
-      const consumables = members.filter((m) => m.type === CosmeticType.Sticker);
+      const consumables = paidFor.filter((m) => m.type === CosmeticType.Sticker);
       expect(toppedUp).toBe(consumables.length);
-      const durable = members
+      const durable = paidFor
         .filter((m) => m.type !== CosmeticType.Sticker)
         .map((m) => m.cosmeticId);
       const accountedFor = new Set([...granted, ...(owned ?? [])]);
       for (const id of durable) expect(accountedFor.has(id)).toBe(true);
     });
 
-    it('writes one purchase component per member', async () => {
+    it('writes one purchase component per member the buyer paid for', async () => {
       await setup();
+      // Every call, not `calls[0]`: a second createMany beside the first writes
+      // the withheld member's row and spends its edition, and reading only the
+      // first call prints nothing. The grant write next to it is guarded the
+      // same way, for the same merge-shaped reason.
+      expect(createManyComponents.mock.calls.length).toBeLessThanOrEqual(1);
       const rows = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
-      expect(rows).toHaveLength(members.length);
+      expect(rows).toHaveLength(membersPaidFor().length);
+    });
+
+    // Identity, where the assertion above is only a count: a write that keeps the
+    // row count and records the wrong cosmetic passes the count on every shape
+    // and fails this on 13.
+    //
+    // It does NOT see a member recorded without being granted — it is one
+    // directional, and that direction is the count's. Do not read this as cover
+    // for narrowing the count above.
+    it('records a purchase component for everything it granted', async () => {
+      await setup();
+      const componentIds: number[] = (createManyComponents.mock.calls[0]?.[0]?.data ?? []).map(
+        (row: { cosmeticId: number }) => row.cosmeticId
+      );
+      const grantedIds: number[] = [
+        ...executeRaw.mock.calls.map((call) => (call as [unknown, number, number])[2]),
+        ...createManyUserCosmetic.mock.calls.flatMap(
+          (call) =>
+            (call[0]?.data ?? []).map((row: { cosmeticId: number }) => row.cosmeticId) as number[]
+        ),
+      ];
+      // Named difference rather than a containment loop, so a failure prints the
+      // id that was granted without being recorded.
+      expect(grantedIds.filter((id) => !componentIds.includes(id))).toEqual([]);
     });
 
     it('does not refund a purchase that succeeded', async () => {
@@ -532,6 +662,56 @@ describe.each(SHAPES)(
     });
   }
 );
+
+/**
+ * The edition cap, which is the consequence the component row actually has.
+ *
+ * getPackMembers counts these rows into a member's `soldCount`, and
+ * assertPackPurchasable refuses every pack containing that member once the count
+ * reaches its listing's `availableQuantity`. A member the buyer authored is
+ * neither charged for nor delivered, so recording one spends an edition of their
+ * own work on a sale that did not happen — and once spent, the refusal lands on
+ * everyone else's packs too.
+ *
+ * Asserted by cosmetic id rather than by row count: a count says how many were
+ * recorded, never which, and the defect is a specific member being recorded.
+ */
+describe('purchaseCosmeticPack — what a purchase records as sold', () => {
+  const SELF_AUTHORED = 1002;
+  const members = [
+    mkMember(),
+    mkMember({
+      cosmeticId: SELF_AUTHORED,
+      createdById: BUYER,
+      addedById: PACK_CREATOR,
+      floorAmount: 2900,
+    }),
+  ];
+
+  it('records no sale of a member it withheld, leaving that edition cap untouched', async () => {
+    await purchaseCosmeticPack({
+      userId: BUYER,
+      shopItem: shopItem(6300, members.length),
+      members,
+      stickersEnabled: true,
+    });
+    expect(createManyComponents.mock.calls.length).toBeLessThanOrEqual(1);
+    const rows: { cosmeticId: number; unitAmount: number; buzzTransactionId: string }[] =
+      createManyComponents.mock.calls[0]?.[0]?.data ?? [];
+    const recorded = rows.map((row) => row.cosmeticId);
+    // The row is only counted as stock while its `purchase` relation resolves,
+    // so a transaction id pointing anywhere else silently stops every sale
+    // counting — and the attribution is what a takedown reconciles against.
+    for (const row of rows) {
+      expect(row.buzzTransactionId).toMatch(/^cosmetic-pack-/);
+      expect(row.unitAmount).toBeGreaterThan(0);
+    }
+    // Both halves: the withheld member absent, and the paid one still present —
+    // recording nothing at all would satisfy the first on its own.
+    expect(recorded).not.toContain(SELF_AUTHORED);
+    expect(recorded).toEqual([1001]);
+  });
+});
 
 // The failure path, which every property above assumes never runs. Round one's
 // review found this shape unguarded: a refund that throws used to discard the
@@ -615,6 +795,90 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
     expect(spend).not.toHaveBeenCalled();
   });
 
+  // Wording no other refusal on this path produces, asserted as such: every one
+  // of them throws the same error type, so a substring shared with a neighbour
+  // lets this pass on the wrong branch. `no longer available` was shared with
+  // three.
+  // A pack with no members left refuses through the same branch as a pack of
+  // only the buyer's own work, and is told it IS their own work. The refusal is
+  // right and the reason is fiction. Reachable: purchaseCosmeticShopItem falls
+  // back to `_count.members` when meta.packMemberCount is absent, so a pack
+  // whose member cosmetics were all deleted arrives here with both at zero.
+  it('refuses an empty pack for being empty, not for being the buyers own work', async () => {
+    await expect(buy({ price: 1500, members: [] })).rejects.toThrow(
+      /^This pack has nothing left in it$/
+    );
+    expect(spend).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+    expect(createManyUserCosmetic).not.toHaveBeenCalled();
+  });
+
+  // The ordering case, and the only one that can see it: priced AT the floor
+  // both refusals fire, and the price one would tell a buyer they already own
+  // members they may hold none of. The case below prices ABOVE the floor and so
+  // never enters the overlap — on its own it leaves the order unpinned.
+  it('tells an at-floor all-own pack the accurate reason, not the price one', async () => {
+    const floorAmounts = [500, 500];
+    const price = floorAmounts.reduce((a, b) => a + b, 0);
+    await expect(
+      buy({
+        price,
+        members: [
+          mkMember({
+            cosmeticId: 1001,
+            createdById: BUYER,
+            addedById: PACK_CREATOR,
+            floorAmount: floorAmounts[0],
+          }),
+          mkMember({
+            cosmeticId: 1002,
+            createdById: BUYER,
+            addedById: PACK_CREATOR,
+            floorAmount: floorAmounts[1],
+          }),
+        ],
+      })
+    ).rejects.toThrow(/nothing here for you to buy/i);
+    expect(spend).not.toHaveBeenCalled();
+  });
+
+  // Named for the decision, because the obvious reading of the code is that the
+  // price guard already covers this. It does not: withholding self-authored
+  // members means a pack of nothing else delivers nothing, and priced ABOVE the
+  // floor it still charges. Deleting this leaves money moving for no goods.
+  it('refuses a pack of only the buyers own work, even priced above the floor', async () => {
+    const price = 1500;
+    const floorAmounts = [500, 500];
+    // The whole point of the case, asserted rather than described: priced AT the
+    // snapshot sum it refuses through the zero-price branch instead, and the new
+    // one silently stops being tested. Editing either number has to fail here.
+    expect(price).toBeGreaterThan(floorAmounts.reduce((a, b) => a + b, 0));
+    await expect(
+      buy({
+        price,
+        members: [
+          mkMember({
+            cosmeticId: 1001,
+            createdById: BUYER,
+            addedById: PACK_CREATOR,
+            floorAmount: floorAmounts[0],
+          }),
+          mkMember({
+            cosmeticId: 1002,
+            createdById: BUYER,
+            addedById: PACK_CREATOR,
+            floorAmount: floorAmounts[1],
+          }),
+        ],
+      })
+      // Its own message, not the zero-price one: the buyer may hold none of
+      // these. Asserting the wording is what stops the two branches collapsing.
+    ).rejects.toThrow(/nothing here for you to buy/i);
+    expect(spend).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+    expect(createManyUserCosmetic).not.toHaveBeenCalled();
+  });
+
   // The sharp edge: free purchases were repeatable, and each one consumed a
   // member's quantity — which is how a creator could make everyone else's packs
   // containing their work refuse.
@@ -625,7 +889,10 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
         buyerId: PACK_CREATOR,
         members: [mkMember(), mkMember({ cosmeticId: 1002, floorAmount: 1000 })],
       })
-    ).rejects.toThrow();
+      // Matched, because `buyerId` is the lister: this refuses at the pack-creator
+      // guard and never reaches pricing. Unmatched it read as a test of the
+      // zero-price branch and would have passed with that branch deleted.
+    ).rejects.toThrow(/your own pack/i);
     expect(spend).not.toHaveBeenCalled();
     expect(createManyUserCosmetic).not.toHaveBeenCalled();
     expect(executeRaw).not.toHaveBeenCalled();
@@ -655,7 +922,9 @@ describe('purchaseCosmeticPack — purchases that must not complete', () => {
         ],
         buyerId: PACK_CREATOR,
       })
-    ).rejects.toThrow();
+      // Same: the lister is refused before pricing. Three refusals share an
+      // error type here, so an unmatched one pins none of them.
+    ).rejects.toThrow(/your own pack/i);
     expect(executeRaw).not.toHaveBeenCalled();
   });
 });
@@ -777,7 +1046,13 @@ describe('purchaseCosmeticPack — generated member combinations', () => {
     const granted: number[] = (createManyUserCosmetic.mock.calls[0]?.[0]?.data ?? []).map(
       (row: { cosmeticId: number }) => row.cosmeticId
     );
-    const consumables = members.filter((m) => isConsumableCosmeticType(m.type));
+    const consumables = members.filter(
+      (m) =>
+        isConsumableCosmeticType(m.type) &&
+        // Subtracted from the price, so not delivered — see the grant property
+        // in the shape-driven block above.
+        !(m.createdById === BUYER && m.createdById !== PACK_CREATOR)
+    );
     expect(executeRaw.mock.calls).toHaveLength(consumables.length);
     for (const id of owned) expect(granted).not.toContain(id);
     expect(new Set(granted).size).toBe(granted.length);

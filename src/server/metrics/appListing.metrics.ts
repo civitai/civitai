@@ -248,9 +248,7 @@ async function chCancellableQuery<T extends object>(
     format: 'JSONEachRow',
     abort_signal: controller.signal,
   });
-  // `ResultSet.json<T>()` resolves to `T` itself, not `T[]` — the row type has to
-  // be passed as the array.
-  return await response.json<T[]>();
+  return await response.json<T>();
 }
 
 /**

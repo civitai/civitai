@@ -32,6 +32,9 @@ export const AI_MODELS = {
   QWEN_FLASH: 'qwen/qwen3.7-flash',
   GPT_5_6_LUNA: 'openai/gpt-5.6-luna',
   QWEN_35B: 'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
+  // Bounded-judgment vendor model (Choice/Score/Noul only — see services/ai/jev.ts).
+  // Numbered pin on purpose: `jev-latest` is scratch-only and must never ship here.
+  JEV: 'typesafe/jev-1.13',
 
   // Fallback chains
   VISION_PRIMARY: 'openai/gpt-4o',
@@ -59,24 +62,80 @@ type GetJsonCompletionInput = {
   retries?: number;
 };
 
-export type TokenUsage = { promptTokens: number; completionTokens: number };
+/**
+ * `costUsd` is the vendor's OWN reported spend for the call, present only where
+ * the transport reports one — see `extractUsage` below, which is the single
+ * place that decides. Optional rather than defaulted because absent and `0` are
+ * different facts.
+ *
+ * 🔴 TWO THINGS DO NOT SEE IT, and both are deliberate for now rather than
+ * oversights:
+ *  - `sumUsage` below does not ADD it. Safe only while nothing that populates it
+ *    goes through `sumUsage` — its sole caller is the chat-only
+ *    `getJsonCompletionWithUsage` retry path. If a chat transport starts
+ *    reporting cost, `sumUsage` must learn to add it.
+ *  - `estimateBuzzCost` (`server/games/daily-challenge/generative-content.ts`)
+ *    is this repo's pricing function and prices from the hand-maintained
+ *    `MODEL_BUZZ_RATES` table, so for a model with no row it returns 0 even when
+ *    the authoritative figure is sitting in this very object. That is the exact
+ *    failure `server/services/__tests__/no-unpriced-default-model.test.ts`
+ *    records (113 challenges recorded spend 0; the vendor bill was the only
+ *    signal). Nothing routes a decisions-model call through it today, so this is
+ *    a hazard rather than a defect — but a `usage.costUsd ?? table lookup`
+ *    preference there would close the class for every transport that reports a
+ *    real figure.
+ */
+export type TokenUsage = { promptTokens: number; completionTokens: number; costUsd?: number };
 
-// The OpenRouter SDK's parsed `ChatResponse.usage` is camelCase (its zod schema
-// remaps the wire format), but the raw OpenRouter/OpenAI-compatible REST API
-// (and this codebase's cost-tracking contract) use snake_case. Accept both so
-// this stays correct whether it's fed an SDK response or a raw API payload.
-type UsageLike = {
-  prompt_tokens?: number;
-  completion_tokens?: number;
-  promptTokens?: number;
-  completionTokens?: number;
-};
-
-export function extractUsage(resp: { usage?: UsageLike | null }): TokenUsage {
-  const usage = resp?.usage;
+/**
+ * The ONE place that knows how a vendor spells token usage. Three spellings so
+ * far, and the whole point of this function is that there is one of it:
+ *
+ *  - `prompt_tokens` / `completion_tokens` — the raw OpenAI-compatible REST API,
+ *    and this codebase's cost-tracking contract.
+ *  - `promptTokens` / `completionTokens` — the OpenRouter SDK's parsed
+ *    `ChatResponse.usage`, whose zod schema remaps the wire format.
+ *  - `input_tokens` / `output_tokens` / `cost` — `POST /api/alpha/decisions`
+ *    (see `services/ai/jev.ts`). Added here rather than as a second parser in
+ *    that module: a sibling copy is how the next field lands in one of the two.
+ *    (A fourth exists upstream and has no caller yet: the SDK's
+ *    `OpenResponsesUsage` spells them `inputTokens` / `outputTokens` + `cost`.)
+ *
+ * ⚠️ READING `cost` APPLIES TO EVERY CALLER, chat paths included, and the reason that is
+ * currently inert is worth keeping written down because it is one vendor flag from false:
+ * the SDK's `chat.send` usage is a plain zod object with no `passthrough`, so it STRIPS an
+ * unknown `cost` before `extractUsage` ever sees it. OpenRouter's chat API can report one.
+ * The moment it survives the parse, `getJsonCompletionWithUsage`'s retry path starts
+ * discarding the first call's cost in `sumUsage` — see `TokenUsage` above. A caller that
+ * hands this a RAW REST payload instead of an SDK response arms the same thing today.
+ *
+ * `cost` is the vendor's OWN reported spend for the call and becomes `costUsd`.
+ * 🔴 `>= 0` and finite, because it is a money input by construction — the same
+ * guard the sibling writer of that field name applies
+ * (`src/pages/api/internal/blocks/agent-report-callback.ts`). A nonsense figure
+ * becomes "not reported" rather than a negative meter entry, and never fails the
+ * call: a bad cost must not discard a result that otherwise succeeded. Absent is
+ * not `0` — "free" and "not reported" are different facts, and whatever meters
+ * this needs to tell them apart.
+ *
+ * The parameter is deliberately `unknown`-shaped: every caller hands it a
+ * different vendor's response object, and narrowing inside beats a cast at each
+ * call site.
+ */
+export function extractUsage(resp: { usage?: unknown } | null | undefined): TokenUsage {
+  const usage = (resp?.usage ?? {}) as Record<string, unknown>;
+  const finite = (value: unknown) =>
+    typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+  const cost = finite(usage.cost);
   return {
-    promptTokens: usage?.prompt_tokens ?? usage?.promptTokens ?? 0,
-    completionTokens: usage?.completion_tokens ?? usage?.completionTokens ?? 0,
+    promptTokens:
+      finite(usage.prompt_tokens) ?? finite(usage.promptTokens) ?? finite(usage.input_tokens) ?? 0,
+    completionTokens:
+      finite(usage.completion_tokens) ??
+      finite(usage.completionTokens) ??
+      finite(usage.output_tokens) ??
+      0,
+    ...(cost !== undefined && cost >= 0 ? { costUsd: cost } : {}),
   };
 }
 

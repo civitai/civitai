@@ -1,3 +1,4 @@
+import { SponsoredBadge } from '~/components/Promotion/SponsoredBadge';
 import { Button, Group, LoadingOverlay, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import { IconRocketOff } from '@tabler/icons-react';
@@ -12,6 +13,8 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createDialogTrigger } from '~/components/Dialog/dialogStore';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { trpc } from '~/utils/trpc';
 
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'), {
   ssr: false,
@@ -37,6 +40,15 @@ export function AssociatedModels({
     type,
   });
 
+  // The card query is filtered by the viewer's settings, so an empty result can't tell
+  // "none set" from "all hidden". Same key as the manage modal, so this shares its cache.
+  const { data: savedResources, isLoading: loadingSaved } =
+    trpc.model.getAssociatedResourcesSimple.useQuery(
+      { fromId, type, browsingLevel: allBrowsingLevelsFlag },
+      { enabled: isOwnerOrModerator && !isLoading && !recommendedResources.length }
+    );
+  const allHiddenByFilters = !!savedResources?.length;
+
   const handleManageClick = () => {
     openAssociateModelsModal({ props: { fromId, type, ownerId } });
   };
@@ -55,7 +67,7 @@ export function AssociatedModels({
               </Button>
             )}
           </Group>
-          {isLoading ? (
+          {isLoading || loadingSaved ? (
             <div style={{ position: 'relative', height: 310 }}>
               <LoadingOverlay visible />
             </div>
@@ -65,12 +77,20 @@ export function AssociatedModels({
               data={recommendedResources}
               render={({ data, ...props }) =>
                 data.resourceType === 'model' ? (
-                  <ModelCard
-                    {...props}
-                    data={data}
-                    data-activity="follow-suggestion:model"
-                    forceInView
-                  />
+                  <div className="relative">
+                    {data.sponsored && (
+                      <SponsoredBadge
+                        kind="model"
+                        className="absolute left-1/2 top-2 -translate-x-1/2"
+                      />
+                    )}
+                    <ModelCard
+                      {...props}
+                      data={data}
+                      data-activity="follow-suggestion:model"
+                      forceInView
+                    />
+                  </div>
                 ) : (
                   <ArticleCard {...props} data={data} data-activity="follow-suggestion:article" />
                 )
@@ -83,7 +103,9 @@ export function AssociatedModels({
                 <IconRocketOff />
               </ThemeIcon>
               <Text size="lg" c="dimmed">
-                {`You aren't suggesting any other resources yet...`}
+                {allHiddenByFilters
+                  ? 'All suggested resources are hidden by your current content filters.'
+                  : `You aren't suggesting any other resources yet...`}
               </Text>
             </Group>
           )}

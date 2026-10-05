@@ -1,8 +1,12 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { Email } from '~/server/email/templates';
 import * as templates from '~/server/email/templates';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-export default async function emailPreviewer(req: NextApiRequest, res: NextApiResponse) {
+export default WebhookEndpoint(async function emailPreviewer(
+  req: NextApiRequest,
+  res: NextApiResponse
+) {
   const { template } = req.query;
   const key = template + 'Email';
   const email = (templates as Record<string, Email>)[key];
@@ -20,4 +24,4 @@ export default async function emailPreviewer(req: NextApiRequest, res: NextApiRe
     email.send(testData);
     console.log('sent email');
   }
-}
+});

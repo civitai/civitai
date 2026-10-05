@@ -152,8 +152,8 @@ path. REST endpoints refuse on their own and carry no marker.
 | Depicting Real People · Real person model not marked | 9.6(a) |
 | Minor in mature context · Realistic minor · NSFW minor in school environment | 9.6(b) |
 | Bestiality · Rape/Forced Sex · Graphic Violence/Gore | 9.6(c) |
-| Mind-altered NSFW | 9.6(e) |
-| Scat/Fecal matter | 9.6(f) |
+| Mind-altered NSFW | 9.6(d) — drugs in a sexual context; drunk, hypnosis and mind control are no longer prohibited |
+| Scat/Fecal matter | 9.6(e) |
 | Likeness/DMCA | 9.3(b)(i) and 12 — not cited, as it is not the prohibited-content list |
 | **Non AI content** | **none — the ToS never requires uploads to be AI-generated** |
 

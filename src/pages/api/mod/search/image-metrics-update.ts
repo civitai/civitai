@@ -49,7 +49,6 @@ const addFields = async () => {
         publishedAt?: Date;
         sortAt: Date;
         nsfwLevel: NsfwLevel;
-        aiNsfwLevel: NsfwLevel;
         nsfwLevelLocked: boolean;
       };
 
@@ -62,7 +61,6 @@ const addFields = async () => {
           p."publishedAt",
           GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
           i."nsfwLevel",
-          i."aiNsfwLevel",
           i."nsfwLevelLocked"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
@@ -80,7 +78,6 @@ const addFields = async () => {
       console.time(consoleTransformKey);
       const documents = records.map(({ publishedAt, nsfwLevelLocked, ...r }) => ({
         ...r,
-        combinedNsfwLevel: nsfwLevelLocked ? r.nsfwLevel : Math.max(r.nsfwLevel, r.aiNsfwLevel),
         publishedAtUnix: publishedAt?.getTime(),
         sortAtUnix: r.sortAt.getTime(),
       }));

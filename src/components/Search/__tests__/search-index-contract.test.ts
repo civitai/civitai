@@ -12,7 +12,6 @@ import { BROWSING_LEVEL_ATTRIBUTE } from '~/components/Search/search-index-filte
 import { buildBrowsingLevelClause } from '~/components/Search/search-filters';
 import type { SearchIndexKey } from '~/components/Search/search.types';
 import { searchIndexMap } from '~/components/Search/search.types';
-import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { filterableAttributesByIndex } from '~/server/search-index/filterable-attributes';
 import {
   bountiesSortableAttributes,
@@ -44,10 +43,6 @@ describe('BROWSING_LEVEL_ATTRIBUTE', () => {
     );
 
     expect(unmapped).toEqual([]);
-  });
-
-  it('the images override attribute is filterable', () => {
-    expect(filterableAttributesByIndex[IMAGES_SEARCH_INDEX]).toContain('combinedNsfwLevel');
   });
 });
 
@@ -133,10 +128,37 @@ describe('the models index sort contract', () => {
   // pointing the client at the new name in the same release leaves the client asking for something
   // the live index has never heard of, and every sorted model search 400s until someone runs a
   // reset. Update these two lists only together with a reset that has actually shipped.
-  it('declares exactly the sortable attributes the live models index is provisioned with', () => {
+  // 🔴 ONE ENTRY IN THE LIST BELOW IS NOT YET PROVISIONED ON THE LIVE INDEX, so this assertion is
+  // no longer purely a read-back of it. `insight.qualityScore` was added ahead of the reset that
+  // provisions it — which the sibling comment above permits for an ADDITION ("takes effect
+  // whenever a reset next happens") but which leaves a real window: until
+  // `search-index-sync-models-reset` has run, the live `models_v9` has never heard of this
+  // attribute, so ANY client that sorts on it gets `Attribute ... is not sortable` and the query
+  // 400s.
+  //
+  // Today exactly one client sorts on it — `searchShortlistModels` in
+  // ~/server/services/resource-intent-matcher.service.ts — and it is unreachable in production
+  // while the resource-intent Flipt flag is off. That flag is the ONLY thing closing this window.
+  // 🔴 So: do not enable that flag until the reset has shipped. Flipping it first turns every
+  // shortlist query into a 400.
+  //
+  // ⚠ It is not the only attribute waiting on that reset: `sortMetrics` is in the same state for a
+  // different reason, recorded at src/components/Search/parsers/model.parser.ts:21-24 (declared
+  // nowhere yet, so the client still sorts on `metrics.*`). An earlier version of this comment
+  // claimed "nothing else in either repo records this", which was wrong.
+  //
+  // ⚠ There is deliberately NO machine-readable pending-set here. One was tried and removed in the
+  // same PR that added it: every assertion it could make was either already made by the
+  // whole-list `toEqual` below (deleting the attribute fails that), or vacuous once the set was
+  // emptied (`[].every(...)` is `true`). Nothing in this repo can observe whether the reset has
+  // actually run, so no guard at this level can distinguish "provisioned" from "still pending" —
+  // which is precisely what such a set would have to read to be worth anything.
+  it('declares exactly the sortable attributes the models index is provisioned with', () => {
     expect(modelsSortableAttributes.slice().sort()).toEqual([
       'createdAt',
       'id',
+      // 🔴 NOT YET PROVISIONED ON THE LIVE INDEX — see the comment above.
+      'insight.qualityScore',
       'metrics.collectedCount',
       'metrics.commentCount',
       'metrics.downloadCount',

@@ -6,6 +6,7 @@ import { DatabaseError } from 'pg';
 import { TRPCError } from '@trpc/server';
 import type { TRPC_ERROR_CODE_KEY } from '@trpc/server/rpc';
 import { isProd } from '~/env/other';
+import { clickhouseFailSoftCounter } from '~/server/prom/client';
 import { logToAxiom } from '../logging/client';
 import type { PrismaClientKnownRequestError } from '@prisma/client/runtime/library';
 import { parse as parseStackTrace } from 'stacktrace-parser';
@@ -417,6 +418,52 @@ export function isUpstreamServerOrNetworkError(args: {
   return false;
 }
 
+// Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
+// SUBSET of isUpstreamNetworkError's set — only true transport faults, no
+// DNS-resolution-style codes.)
+const TRANSPORT_SYSCALL_CODES = new Set([
+  'ECONNRESET',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+// ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
+// or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
+// overload. Strings, because ClickHouseError.code is a string.
+const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
+
+// Lowercased, anchored patterns for the same syscall codes, for the message-only match in
+// isClickHouseConnectionError. The boundary class excludes two different kinds of
+// character, and each exclusion rejects a case the other does not:
+//
+// (c) IDENTIFIER characters. A bare `includes` treats these codes as substrings, and
+//     ordinary camelCase identifiers embed them — `epipe` inside `sourcePipeline`,
+//     `etimedout` inside `responseTimedOut` (this repo already spells `deadlineTimedOut`
+//     in `src/pages/api/health.ts`). A `Code: 47` missing-column error naming such a
+//     column would otherwise classify as a transport fault and be swallowed. `a-z0-9_`
+//     also stops `UND_ERR_SOCKET` matching inside `some_und_err_socket_thing`.
+//
+// (d) QUOTE characters — `'`, `"` and a backtick. A token flanked by one of these is a
+//     SQL string literal or a quoted identifier, not a syscall name in a transport
+//     message: ClickHouse renders both that way inside its own exception text (`Cannot
+//     parse string 'EPIPE' as UInt64`, `Syntax error: failed at position 9 ('reason =
+//     'ETIMEDOUT'')`). Exclusion (c) alone does NOT reject these — a quote is already a
+//     non-identifier character, so a whole-word token between quotes matches the same as
+//     one between spaces. Node's syscall spellings are space-flanked — `read ECONNRESET`,
+//     `write EPIPE`, `connect ETIMEDOUT <addr>` — so none of them loses its match.
+const TRANSPORT_SYSCALL_MESSAGE_PATTERNS = [...TRANSPORT_SYSCALL_CODES].map(
+  (code) => new RegExp(`(?:^|[^a-z0-9_'"\`])${code.toLowerCase()}(?:$|[^a-z0-9_'"\`])`)
+);
+
+// Verbatim prefix and SQL separator that packages/civitai-clickhouse/src/client.ts
+// `$query` builds its rethrow from: `ClickHouse query failed: <original>\nQuery: <sql>`.
+const CH_QUERY_WRAPPER_PREFIX = 'clickhouse query failed:';
+const CH_QUERY_SQL_SEPARATOR = '\nquery:';
+
 /**
  * True ONLY for a TRANSIENT ClickHouse CONNECTION / TRANSPORT failure — the kind
  * that flaps when reaching ClickHouse Cloud (a socket reset / broken pipe / all
@@ -445,37 +492,41 @@ export function isUpstreamServerOrNetworkError(args: {
  *     for — a momentary CH Cloud overload, retryable, NOT a code bug). Query/schema
  *     codes (`60`, `349`, …) are NOT in the set.
  *  3. Our own `$query` wrapper flattens both of the above into a plain
- *     `Error('ClickHouse query failed: <original message>')`, losing `.code`, so we
- *     also string-match the transient signatures in the message (`Code: 279`/`210`/
- *     `209`/`202`, `socket hang up`, `broken pipe`, `all connection tries failed`,
- *     `too many simultaneous queries`). The message match is still transient-ONLY —
- *     `Code: 60` / `unknown table` never match.
+ *     `Error('ClickHouse query failed: <original message>\nQuery: <sql>')`, losing
+ *     `.code`, so we also string-match the transient signatures in the message
+ *     (`Code: 279`/`210`/`209`/`202`, `socket hang up`, `broken pipe`, `all connection
+ *     tries failed`, `too many simultaneous queries`, and — under the four narrowing rules
+ *     below — every `TRANSPORT_SYSCALL_CODES` spelling).
+ *
+ * 🔴 THE MESSAGE THAT SHAPE 3 MATCHES CONTAINS QUERY TEXT, FROM TWO SOURCES. `$query`
+ * appends `\nQuery: <sql>`, and ClickHouse re-embeds fragments of the failing query and
+ * its string literals inside its own exception text. An unrestricted substring match
+ * would let either one decide the classification — the exact inversion of what this
+ * predicate is for. Four narrowing rules apply to the syscall-spelling match: (a) drop the
+ * `\nQuery:` tail `$query` appended, (b) require our own wrapper prefix, (c) reject a
+ * token embedded in an identifier, (d) reject a token flanked by a quote character. Each
+ * is documented at the code that applies it, and each has a case only it rejects in
+ * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`.
+ *
+ * 🔴 WHAT REMAINS UNCOVERED: a syscall token that ClickHouse re-embeds into its exception
+ * text WITHOUT quoting it is rejected by none of the four and is still classified
+ * transient, so a genuine query/schema fault fails soft instead of surfacing as the 500
+ * this predicate exists to preserve. Only reads through `$query` are exposed, because rule
+ * (b) requires that wrapper's prefix — a raw `client.insert` or `SimpleClickhouse.query`
+ * error carries none, so it stays a 500. Rule (a) cannot see the token (it is before the
+ * separator), and rule (d) cannot (it is not quoted). Pinned by two tests in
+ * `src/server/utils/__tests__/errorHandling.clickhouse-classify.test.ts`.
+ * 🔴 Nor can a rule keyed on ClickHouse's own `DB::Exception:` marker — that is inert
+ * here, because `parseError` sets `.message` to the text BETWEEN `Exception: ` and the
+ * `(TYPE)` marker, so a well-formed server error reaches `$query` with the marker already
+ * stripped. The literal-phrase matches above get (a) only: they run on the truncated
+ * message, but carry no prefix, identifier or quote boundary.
  *
  * Walks the `.cause` chain so a wrapped error (tRPC `TRPCError{ cause }`, undici
  * `TypeError{ cause }`) is still classified.
  */
 export function isClickHouseConnectionError(e: unknown): boolean {
-  // Syscall codes for a dropped/refused/reset TCP connection. (Intentionally a
-  // SUBSET of isUpstreamNetworkError's set — only true transport faults, no
-  // DNS-resolution-style codes that wouldn't apply to a pooled CH connection.)
-  const TRANSPORT_SYSCALL_CODES = new Set([
-    'ECONNRESET',
-    'EPIPE',
-    'ETIMEDOUT',
-    'ECONNREFUSED',
-    'EHOSTUNREACH',
-    'ENETUNREACH',
-    'UND_ERR_SOCKET',
-    'UND_ERR_CONNECT_TIMEOUT',
-  ]);
-  // ClickHouse server error codes that are TRANSIENT INFRA brownouts (never a query
-  // or schema fault). 279/210/209 = connection/transport; 202 = momentary capacity
-  // overload. Strings, because ClickHouseError.code is a string.
-  const TRANSIENT_CH_CODES = new Set(['279', '210', '209', '202']);
-
-  let cur = e as
-    | { name?: string; message?: string; code?: unknown; cause?: unknown }
-    | undefined;
+  let cur = e as { name?: string; message?: string; code?: unknown; cause?: unknown } | undefined;
   for (let depth = 0; depth < 5 && cur && typeof cur === 'object'; depth++) {
     const code = cur.code;
     if (typeof code === 'string') {
@@ -483,10 +534,25 @@ export function isClickHouseConnectionError(e: unknown): boolean {
       if (TRANSPORT_SYSCALL_CODES.has(code)) return true;
       if (TRANSIENT_CH_CODES.has(code)) return true;
     }
-    const msg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    // `$query` APPENDS `\nQuery: <sql>` to the message it throws, so the raw string
+    // carries the query text as well as the failure. Match only the part BEFORE that
+    // separator, so a token that appears ONLY in that appended tail cannot decide the
+    // classification: a `Code: 60` UNKNOWN_TABLE thrown for `… WHERE tag = 'ECONNRESET'`
+    // would otherwise read as a transport blip and get swallowed.
+    //
+    // 🔴 This strips the appended tail and nothing else — ClickHouse re-embeds query
+    // fragments inside its own exception text, which sits before the separator and
+    // survives. See the docblock for what that leaves uncovered.
+    const rawMsg = typeof cur.message === 'string' ? cur.message.toLowerCase() : '';
+    const sqlAt = rawMsg.indexOf(CH_QUERY_SQL_SEPARATOR);
+    const msg = sqlAt === -1 ? rawMsg : rawMsg.slice(0, sqlAt);
     if (msg) {
-      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — these
-      // never appear in an UNKNOWN_TABLE / NULL-insert / syntax error message.
+      // Shape 3: the $query-wrapped string. Transient-infra signatures ONLY — multi-word
+      // phrases and `Code: NNN` prefixes that a ClickHouse query/schema error does not
+      // emit. Every one contains a space or a colon, so no identifier can embed them and
+      // they need no anchoring. Unlike the syscall spellings below they are not scoped to
+      // our wrapper prefix, and query text reaches them only where ClickHouse re-embeds
+      // it in its own exception text — an accepted limit, not a covered case.
       if (
         msg.includes('socket hang up') ||
         msg.includes('broken pipe') ||
@@ -494,13 +560,29 @@ export function isClickHouseConnectionError(e: unknown): boolean {
         msg.includes('connection refused') ||
         msg.includes('connection reset') ||
         msg.includes('too many simultaneous queries') ||
-        // The `Code: NNN` prefix our $query wrapper preserves, transient codes only.
+        // A `Code: NNN` prefix survives only when parseError's regex fails and it rethrows
+        // verbatim; a parsed error arrives as inner text (`All connection tries failed. `,
+        // 1.23.1), which the phrases above catch for 279/210/202 but NOT 209 — no phrase
+        // here is a socket-timeout signature. Neither half covers the other.
         msg.includes('code: 279') ||
         msg.includes('code: 210') ||
         msg.includes('code: 209') ||
         msg.includes('code: 202')
       ) {
         return true;
+      }
+      // Reads through $query arrive as a plain Error, so for those the .code branch never
+      // fires and the syscall name survives only as text. Restricted to OUR wrapper's
+      // message: a raw syscall error from any other dependency still carries `.code`, so
+      // nothing is lost — while an unrelated upstream's TEXT (a Redis
+      // `connect ECONNREFUSED` in a bare message) must not be reported as a ClickHouse
+      // brownout, or the fail-soft counter attributes the wrong dependency's outage here.
+      // Scoped to the text route only: an error OBJECT carrying `.code` is matched by
+      // shape 1 above regardless of which dependency raised it.
+      if (msg.includes(CH_QUERY_WRAPPER_PREFIX)) {
+        for (const pattern of TRANSPORT_SYSCALL_MESSAGE_PATTERNS) {
+          if (pattern.test(msg)) return true;
+        }
       }
     }
     cur = cur.cause as typeof cur;
@@ -525,15 +607,49 @@ export function isClickHouseConnectionError(e: unknown): boolean {
  * `clickhouse.$query` client boundary, which also serves inserts + background/cron
  * reads where a tRPC-typed 503 would be semantically wrong; classification stays a
  * narrow, transient-only allowlist (see {@link isClickHouseConnectionError}).
+ *
+ * `path` is a Prometheus label on `clickhouseFailSoftCounter`, so it must be a
+ * per-call-site constant — anything request-derived multiplies the series.
+ *
+ * 🔴 THE `logToAxiom` CALL IS NOT REDUNDANT WITH THE COUNTER, AND NOT OPTIONAL. The
+ * central tRPC error handler (`src/pages/api/trpc/[trpc].ts`) returns EARLY on
+ * `SERVICE_UNAVAILABLE` and skips the Axiom ingest entirely, deliberately — a 503 wave is
+ * exactly when per-reject stringify+ingest costs the most. So re-mapping a transient CH
+ * read to a 503 converts a logged `ClickHouse query failed: …` line into a SILENT
+ * degradation. The counter records THAT it happened and where; only this line carries the
+ * message — which, for a `$query` read, is the one that embeds the failing SQL. The same
+ * counter+log pairing is at `image.service`'s `image-feed` fail-soft.
+ *
+ * Fire-and-forget with an explicit no-op rejection handler: telemetry must never change
+ * what this function throws, and must never delay it. `logToAxiom` already contains its
+ * own failures, so this handler is belt-and-braces — but a bare `.catch()` (no argument)
+ * would NOT contain one, since it passes the rejection straight through. (The
+ * `image-feed` site spells it `.catch()`; that is the shape to avoid, not to copy.)
  */
 export async function runClickHouseRead<T>(
   fn: () => Promise<T>,
-  message = 'This service is temporarily unavailable. Please try again.'
+  options: { path: string; message?: string }
 ): Promise<T> {
   try {
     return await fn();
   } catch (e) {
-    if (isClickHouseConnectionError(e)) throwServiceUnavailableError(message, e);
+    if (isClickHouseConnectionError(e)) {
+      clickhouseFailSoftCounter.inc({ path: options.path });
+      logToAxiom(
+        {
+          type: 'warning',
+          name: 'clickhouse-failsoft',
+          message: 'ClickHouse transport error on an instrumented read — served 503',
+          path: options.path,
+          error: e instanceof Error ? e.message : String(e),
+        },
+        'clickhouse'
+      ).catch(() => undefined);
+      throwServiceUnavailableError(
+        options.message ?? 'This service is temporarily unavailable. Please try again.',
+        e
+      );
+    }
     throw e;
   }
 }
@@ -579,6 +695,208 @@ export function withRetries<T>(
 }
 
 /**
+ * How many distinct frame files one `applySourceMaps` call may resolve.
+ *
+ * 10 is sized from the half that can be established here. On V8 — Node, and Chromium browsers —
+ * `Error.stackTraceLimit` defaults to 10, and nothing in `src/` or `next.config.mjs` assigns it,
+ * so an Error captured under this app carries at most 10 frames and therefore at most 10 distinct
+ * files. `Error.stackTraceLimit` is a V8 extension, and this endpoint takes stacks from every
+ * browser: how many frames a non-V8 engine sends is not a claim this file can make, which is why
+ * the cap is written as a bound on work rather than as a ceiling nothing reaches.
+ *
+ * What it bounds is input that is not a stack at all. `stack` arrives at `/api/application-error`
+ * as free-form text from an unauthenticated caller, and each additional distinct file that names a
+ * build chunk costs a read of the chunk, a read of its map and a `SourceMapConsumer` build — all
+ * `await`ed on the pool that serves pages. Without a bound, how many of those one request asks for
+ * is set by the request.
+ *
+ * Frames past the cap are left exactly as they arrived: unresolved, never dropped, never an error,
+ * and the report is delivered either way. The cap is spent on frames that can actually be
+ * resolved — see the candidate loop in `applySourceMaps` — so a stack topped with foreign frames
+ * (an extension, an analytics script, a payment iframe) does not spend it on work that was never
+ * going to happen.
+ */
+const MAX_RESOLVED_FRAME_FILES = 10;
+
+/**
+ * How many parsed source maps stay resident between calls.
+ *
+ * This cache used to be declared inside `applySourceMaps`, so every call paid the full read and
+ * parse even for a chunk the previous call had just parsed — and reports cluster hard on a few
+ * chunks (framework, main, and whichever page is broken), which is exactly the shape a cache
+ * serves. Bounded because each entry is a parsed map held for the life of the process.
+ *
+ * DERIVED from the cap, not chosen, because the two interact and a cache below the cap is worse
+ * than no cache: one call may resolve `MAX_RESOLVED_FRAME_FILES` distinct chunks, so a smaller
+ * cache cannot hold even a single call's own working set — the tail of that call evicts its own
+ * head, and the next report naming the same chunks re-reads and re-parses every one of them at a
+ * 0% hit rate while still paying the memory. Deriving it is what stops a later edit to either
+ * number silently re-creating that; `does not re-read any chunk of a repeated full-width stack` in
+ * `errorHandling.applySourceMaps.test.ts` is the behavioural half of the same guard.
+ */
+const MAX_CACHED_SOURCE_MAPS = MAX_RESOLVED_FRAME_FILES;
+
+/**
+ * A cached consumer plus the bookkeeping that makes eviction safe.
+ *
+ * 🔴 THE POINT OF `refs`/`evicted` IS A LEAK, NOT A WRONG ANSWER. Plain LRU — evict, `destroy()`,
+ * done — cannot corrupt a result here, because `source-map@0.7.6`'s `destroy()` frees the mappings
+ * and zeroes `_mappingsPtr` (`lib/source-map-consumer.js`) and `originalPositionFor` goes through
+ * `_getMappingsPtr()`, which RE-PARSES when the pointer is zero. A call holding a destroyed
+ * consumer therefore still gets the correct location. What it does NOT get is a second free: that
+ * re-parse allocates a fresh copy of the mappings into the process-wide wasm heap — `lib/wasm.js`
+ * caches one `WebAssembly.Instance` for the whole process — and by then the consumer has already
+ * left the cache, so nothing will ever `destroy()` it again. `WebAssembly.Memory` never shrinks
+ * and JS GC cannot reclaim a Rust-side allocation, so every one of those re-parses is permanent.
+ *
+ * That is not a rare interleaving. `MAX_CACHED_SOURCE_MAPS === MAX_RESOLVED_FRAME_FILES`, so the
+ * cache is sized for ONE call's working set; under C concurrent calls it is C times too small and
+ * the calls evict each other's live consumers. `applySourceMaps` awaits every
+ * `new SourceMapConsumer(...)`, so concurrent requests genuinely interleave inside the build loop.
+ *
+ * `refs` counts the in-flight calls holding an entry and `evicted` records that it has left the
+ * cache; the free happens at whichever of the two comes last. Measured through the real
+ * `applySourceMaps` path, the difference is a plateau versus linear growth — see
+ * `holding a consumer across its eviction does not grow the wasm heap without bound` in
+ * `errorHandling.applySourceMaps.test.ts`, which fails if this bookkeeping is removed.
+ */
+type CachedSourceMap = { consumer: SourceMapConsumer; refs: number; evicted: boolean };
+
+/** Keyed by resolved absolute chunk path, so two frame spellings of one chunk share an entry. */
+const sourceMapCache = new Map<string, CachedSourceMap>();
+
+/** Takes an entry out of service; frees it now if nothing is using it, else on the last release. */
+function retireConsumer(entry: CachedSourceMap) {
+  entry.evicted = true;
+  if (entry.refs <= 0) entry.consumer.destroy();
+}
+
+/**
+ * Borrows a cached consumer, marking it most-recently-used. The caller must hand the entry back to
+ * `releaseConsumer`, which is why `applySourceMaps` collects them and releases in a `finally`.
+ *
+ * NOT named `use…`: `react-hooks/rules-of-hooks` keys off that prefix and reports any such
+ * function called in a loop as a misplaced React hook, which is an eslint error in this repo.
+ */
+function retainConsumer(key: string): CachedSourceMap | undefined {
+  const entry = sourceMapCache.get(key);
+  if (!entry) return undefined;
+  // A Map iterates in insertion order, so re-inserting moves this entry to the young end and the
+  // eviction in `storeConsumer` always takes the least recently used.
+  sourceMapCache.delete(key);
+  sourceMapCache.set(key, entry);
+  entry.refs += 1;
+  return entry;
+}
+
+/** Caches a freshly built consumer, already borrowed by the caller, and evicts down to the bound. */
+function storeConsumer(key: string, consumer: SourceMapConsumer): CachedSourceMap {
+  // Two calls can miss on the same key concurrently and both build one. Retire the loser rather
+  // than dropping the reference, or its wasm mappings are never freed. No `existing !== consumer`
+  // arm: this is the only call site and it is only ever reached with a consumer built two lines
+  // earlier, so an entry already under this key can never be the one being stored.
+  const existing = sourceMapCache.get(key);
+  if (existing) {
+    sourceMapCache.delete(key);
+    retireConsumer(existing);
+  }
+
+  const entry: CachedSourceMap = { consumer, refs: 1, evicted: false };
+  sourceMapCache.set(key, entry);
+
+  while (sourceMapCache.size > MAX_CACHED_SOURCE_MAPS) {
+    const oldestKey = sourceMapCache.keys().next().value as string;
+    const oldest = sourceMapCache.get(oldestKey);
+    sourceMapCache.delete(oldestKey);
+    if (oldest) retireConsumer(oldest);
+  }
+
+  return entry;
+}
+
+/** Returns a borrowed consumer; frees it if it was evicted while this call held it. */
+function releaseConsumer(entry: CachedSourceMap) {
+  entry.refs -= 1;
+  if (entry.refs <= 0 && entry.evicted) entry.consumer.destroy();
+}
+
+/** The build directory, and the only directory this resolver may read from. */
+function nextBuildDir(): string {
+  return path.resolve(process.cwd(), '.next');
+}
+
+/** True when `target` is a path strictly underneath `dir`. Compares text, resolves nothing. */
+function isInsideDir(dir: string, target: string): boolean {
+  const relative = path.relative(dir, target);
+  return relative !== '' && !relative.startsWith('..') && !path.isAbsolute(relative);
+}
+
+/**
+ * Turns a `.next`-relative path taken from a stack frame into an absolute path under the build
+ * directory, or `null` if it does not name one.
+ *
+ * The relative part comes out of the frame's file, which on `/api/application-error` is a string
+ * the caller supplies, so it is not trusted to stay inside `.next`. Resolving it first and then
+ * requiring the result to be under the build directory is what keeps this naming build artifacts:
+ * resolution collapses the path to the file it actually names, and the check is made against that.
+ *
+ * LEXICAL ONLY — it has to be, because it runs over every distinct frame file to pick which ones
+ * the cap is spent on, and that count is set by the caller. It is a filter, not the guard: nothing
+ * may be READ on the strength of this result alone. `containedRealPath` below is what the reads
+ * are gated on.
+ *
+ * `null` means the caller skips the frame — an unresolvable frame is normal here (a chunk from an
+ * older build, a map that was not emitted), so it is not a reason to fail the report.
+ */
+function resolveBuildArtifact(relativePath: string): string | null {
+  const buildDir = nextBuildDir();
+  const resolved = path.resolve(buildDir, relativePath);
+  return isInsideDir(buildDir, resolved) ? resolved : null;
+}
+
+/**
+ * Containment as the filesystem will apply it: on the file that gets opened, not on its spelling.
+ *
+ * `path.relative` compares strings and `fs.readFileSync` follows symlinks, so a lexically
+ * contained path can still name a file anywhere on disk — a symlink under `.next` is enough.
+ * Resolving with `realpathSync` before the check is what makes "the only directory this resolver
+ * may read from" true of the read rather than of the text. BOTH sides are resolved: the build
+ * directory itself can sit behind a symlink, and comparing a resolved target against an unresolved
+ * root would then reject every legitimate chunk.
+ *
+ * Returns the real path, or `null` when the file does not exist or resolves outside the build
+ * directory. Both mean the caller skips that frame — a missing chunk is the ordinary case (an
+ * older build, a map that was not emitted), so this never throws.
+ *
+ * `realRoot` is resolved ONCE PER CALL by `realBuildRoot` and threaded in, rather than re-resolved
+ * here. This guard runs on every path the resolver is about to open, so re-resolving the root made
+ * a fully-cached ten-frame report perform twenty synchronous `realpathSync` calls on the
+ * page-serving event loop where it previously performed no IO at all. The guard's behaviour is
+ * unchanged: the build directory cannot move mid-call, and a root that does not resolve is still
+ * the same "read nothing" outcome, decided once instead of per path.
+ */
+function containedRealPath(realRoot: string, target: string): string | null {
+  try {
+    const realTarget = fs.realpathSync(target);
+    return isInsideDir(realRoot, realTarget) ? realTarget : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The build directory as the filesystem resolves it, or `null` when it does not exist — which on
+ * this path means the resolver reads nothing, exactly as a per-path `realpathSync` failure did.
+ */
+function realBuildRoot(): string | null {
+  try {
+    return fs.realpathSync(nextBuildDir());
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Extracts the relative path from a stack trace file path.
  * Handles both /app/.next/... and .../_next/... formats.
  */
@@ -595,8 +913,8 @@ function extractNextPath(filePath: string): string | null {
 }
 
 /**
- * Loads the source-map content for a built chunk, given its `.next`-relative path
- * (e.g. `static/chunks/abc.js`).
+ * Loads the source-map content for a built chunk, given its absolute path — which the caller must
+ * already have put through `containedRealPath`.
  *
  * Webpack names a chunk's map after the chunk itself (`abc.js` -> `abc.js.map`),
  * but Turbopack (the default bundler in Next 16) gives the map a *different* hash
@@ -605,9 +923,7 @@ function extractNextPath(filePath: string): string | null {
  * its `sourceMappingURL` when present, and fall back to the webpack convention so
  * this keeps working on either bundler.
  */
-function loadSourceMapContent(relativePath: string): string | null {
-  const chunkPath = path.join(process.cwd(), '.next', relativePath);
-
+function loadSourceMapContent(realRoot: string, chunkPath: string): string | null {
   // Preferred: follow the chunk's own sourceMappingURL (covers Turbopack + webpack).
   try {
     const chunkContent = fs.readFileSync(chunkPath, 'utf-8');
@@ -618,18 +934,22 @@ function loadSourceMapContent(relativePath: string): string | null {
         const base64 = url.match(/;base64,(.*)$/);
         if (base64) return Buffer.from(base64[1], 'base64').toString('utf-8');
       } else {
-        const mapPath = path.resolve(path.dirname(chunkPath), url);
-        if (fs.existsSync(mapPath)) return fs.readFileSync(mapPath, 'utf-8');
+        // The URL is read out of a file that a frame selected, so it gets the same containment
+        // rule the frame did — it is no more trusted than the path that led here. `null` covers
+        // both "escapes the build directory" and "does not exist", so no `existsSync` is needed.
+        const mapPath = containedRealPath(realRoot, path.resolve(path.dirname(chunkPath), url));
+        if (mapPath) return fs.readFileSync(mapPath, 'utf-8');
       }
     }
   } catch {
     // Chunk not readable; fall through to the convention-based lookup.
   }
 
-  // Fallback: webpack convention `<chunk>.map` next to the chunk.
+  // Fallback: webpack convention `<chunk>.map` next to the chunk. Contained-checked too: the
+  // sibling of a legitimate chunk is still a path, and a path can still be a symlink.
   try {
-    const fallbackPath = `${chunkPath}.map`;
-    if (fs.existsSync(fallbackPath)) return fs.readFileSync(fallbackPath, 'utf-8');
+    const fallbackPath = containedRealPath(realRoot, `${chunkPath}.map`);
+    if (fallbackPath) return fs.readFileSync(fallbackPath, 'utf-8');
   } catch {
     // Ignore; no map available.
   }
@@ -658,22 +978,64 @@ function normalizeSourcePath(source: string): string {
  * @returns The stack trace with original source locations
  */
 export async function applySourceMaps(stack: string): Promise<string> {
+  // Every cache entry this call borrowed, released in `finally` so an early return or a throw
+  // cannot leave one pinned — a pinned entry is never freed, which is the leak this bookkeeping
+  // exists to close.
+  const borrowed: CachedSourceMap[] = [];
   try {
     const parsedStack = parseStackTrace(stack);
     const lines = stack.split('\n');
 
-    // Build a map of relative paths to their source map consumers
-    const sourceMapConsumers = new Map<string, SourceMapConsumer>();
-    const filesToProcess = [...new Set(parsedStack.map((x) => x.file).filter(Boolean))] as string[];
+    // Resolved ONCE for the whole call, not per path. See `containedRealPath`.
+    const realRoot = realBuildRoot();
+    if (!realRoot) return stack;
 
-    for (const file of filesToProcess) {
+    // 🔴 SPEND THE CAP ON FRAMES THAT CAN ACTUALLY BE RESOLVED. Slicing the raw distinct-file list
+    // would let a frame the resolver is always going to reject — a browser extension, an analytics
+    // or payment script, anything not under the build directory — take a cap slot from a real app
+    // chunk further down, which then comes back minified. That is not a corner case: the stacks
+    // that reach this function are the ones a browser caller of `reportApplicationError` sent as
+    // the error's OWN stack, and a browser stack whose top frames belong to injected third-party
+    // code is ordinary. (The error-boundary path is not one of those callers — it sends either a
+    // React componentStack or `resolveStack: false` — so this is about the ones that are.)
+    //
+    // Both filters below are pure path work — a regex and `path.resolve`/`path.relative`, no IO —
+    // so running them over the distinct files costs nothing worth bounding, and the loop stops as
+    // soon as the cap is full. Containment is re-checked against the real path at read time; see
+    // `containedRealPath`.
+    const resolvableFrames: { file: string; chunkPath: string }[] = [];
+    for (const file of [...new Set(parsedStack.map((x) => x.file).filter(Boolean))] as string[]) {
       const relativePath = extractNextPath(file);
       if (!relativePath) continue;
 
+      const chunkPath = resolveBuildArtifact(relativePath);
+      if (!chunkPath) continue;
+
+      resolvableFrames.push({ file, chunkPath });
+      if (resolvableFrames.length >= MAX_RESOLVED_FRAME_FILES) break;
+    }
+
+    // Build a map of relative paths to their source map consumers
+    const sourceMapConsumers = new Map<string, SourceMapConsumer>();
+
+    for (const { file, chunkPath: candidatePath } of resolvableFrames) {
       try {
-        const sourceMapContent = loadSourceMapContent(relativePath);
+        // The guard the reads are gated on. `resolveBuildArtifact` compared text; this compares
+        // the paths the filesystem will actually open.
+        const chunkPath = containedRealPath(realRoot, candidatePath);
+        if (!chunkPath) continue;
+
+        const cached = retainConsumer(chunkPath);
+        if (cached) {
+          borrowed.push(cached);
+          sourceMapConsumers.set(file, cached.consumer);
+          continue;
+        }
+
+        const sourceMapContent = loadSourceMapContent(realRoot, chunkPath);
         if (sourceMapContent) {
           const smc = await new SourceMapConsumer(sourceMapContent);
+          borrowed.push(storeConsumer(chunkPath, smc));
           sourceMapConsumers.set(file, smc);
         }
       } catch {
@@ -701,14 +1063,16 @@ export async function applySourceMaps(stack: string): Promise<string> {
       }
     }
 
-    // Clean up source map consumers
-    for (const smc of sourceMapConsumers.values()) {
-      smc.destroy();
-    }
+    // Consumers are NOT destroyed here — they belong to the cache, which frees each one at
+    // whichever comes last of its eviction and the last call releasing it. Destroying one here
+    // would hand the next call a consumer whose mappings have to be re-parsed, and that re-parse
+    // is what allocates wasm memory nothing will ever free.
 
     return lines.join('\n');
   } catch {
     // If source map parsing fails, return the original stack
     return stack;
+  } finally {
+    for (const entry of borrowed) releaseConsumer(entry);
   }
 }

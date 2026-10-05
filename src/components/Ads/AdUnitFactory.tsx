@@ -122,7 +122,13 @@ function AdWrapper({
   const content = (
     <>
       {useDirectAds ? (
-        <CivitaiAdUnit adUnit={adUnit} id={id} />
+        adSizes !== undefined && (
+          <CivitaiAdUnit
+            adUnit={adUnit}
+            id={id}
+            maxHeight={getDirectAdMaxHeight(adSizes, maxHeight)}
+          />
+        )
       ) : inView && ready && adSizes !== undefined ? (
         <AdUnitContent
           // key={key}
@@ -229,6 +235,12 @@ function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: n
   const filteredSizes = maxWidth ? sizes.filter(([w]) => w <= maxWidth) : sizes;
   const height = Math.max(...filteredSizes.map(([_, height]) => Math.max(height)));
   return maxHeight ? Math.min(maxHeight, height) : height;
+}
+
+// [1, 1] and [8, 1] are Snigel fluid markers, not creative sizes the direct ad server can match.
+function getDirectAdMaxHeight(sizes: AdSize[] | null, maxHeight?: number) {
+  const heights = (sizes ?? []).map(([, h]) => h).filter((h) => h > 1);
+  return heights.length ? Math.max(...heights) : maxHeight;
 }
 
 function useAdSizes({
@@ -354,7 +366,7 @@ const AdunitSizesStyles = forwardRef<
 AdunitSizesStyles.displayName = 'AdunitSizesStyles';
 
 const civitaiAdvertisingUrl = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
-function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
+function CivitaiAdUnit(props: { adUnit: string; id?: string; maxHeight?: number }) {
   const [id, setId] = useState(props.id);
   const [imgLoaded, setImgLoaded] = useState(false);
   const { nodeRef } = useContainerContext();
@@ -390,6 +402,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
     const searchParams = new URLSearchParams(
       `placement=${id}&name=${type}&container=${containerWidthRef.current}&browsingLevel=${browsingLevel}`
     );
+    if (props.maxHeight) searchParams.append('maxHeight', String(props.maxHeight));
     if (traceRef.current) searchParams.append('trace', traceRef.current);
     fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
       credentials: 'include',
@@ -409,7 +422,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
         fetchingRef.current = false;
         impressionRef.current = false;
       });
-  }, [browsingLevel, props.adUnit, props.id]);
+  }, [browsingLevel, props.adUnit, props.id, props.maxHeight]);
 
   const interval = usePausableInterval(handleServe, 30 * 1000);
 

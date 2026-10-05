@@ -1,9 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '../hub.graph';
+import { fluxVersionIds } from '../image/flux.graph';
 import {
   deriveSelectorsFromModel,
   deriveWorkflowFromModel,
   effectiveEcosystemOf,
+  FLUX_DRAFT_ID,
+  FLUX_MODE_IDS,
   reconcileSelectors,
 } from '../reconcile';
 import type { GenerationCtx } from '~/shared/data-graph/generation/context';
@@ -25,6 +28,7 @@ const CTX: GenerationCtx = {
 
 const SD15_MODEL = { id: 128713, baseModel: 'SD 1.5' };
 const LTXV23_MODEL = { id: 2749948, baseModel: 'LTXV 2.3' };
+const FLUX2_KLEIN_4B_MODEL = { id: 2612557, baseModel: 'Flux.2 Klein 4B' };
 
 describe('deriveSelectorsFromModel', () => {
   it('moves the ecosystem when the workflow survives the switch', () => {
@@ -54,10 +58,7 @@ describe('deriveSelectorsFromModel', () => {
     expect(fromImage?.workflow).toBeDefined();
   });
 
-  it('a locked slot beats a cross-family model (flux draft, wan, ltx)', () => {
-    expect(
-      deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'Flux1', workflow: 'txt2img:draft' })
-    ).toBeUndefined();
+  it('a locked slot beats a cross-family model (wan, ltx)', () => {
     expect(
       deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'LTXV2', workflow: 'txt2vid' })
     ).toBeUndefined();
@@ -70,6 +71,14 @@ describe('deriveSelectorsFromModel', () => {
     expect(
       deriveSelectorsFromModel(LTXV23_MODEL, { ecosystem: 'LTXV2', workflow: 'txt2vid' })
     ).toEqual({ ecosystem: 'LTXV23' });
+    // Klein's four variants are four ecosystems, and each one is model-locked,
+    // so its version buttons ARE this switch — refuse it and they do nothing.
+    expect(
+      deriveSelectorsFromModel(FLUX2_KLEIN_4B_MODEL, {
+        ecosystem: 'Flux2Klein_9B',
+        workflow: 'txt2img',
+      })
+    ).toEqual({ ecosystem: 'Flux2Klein_4B' });
   });
 });
 
@@ -91,6 +100,29 @@ describe('deriveWorkflowFromModel', () => {
     // unregistered families never move
     expect(
       deriveWorkflowFromModel({ id: 2983023 }, { ecosystem: 'Krea2', workflow: 'txt2img' })
+    ).toBeUndefined();
+  });
+});
+
+describe('flux draft', () => {
+  it("reconcile's inlined flux ids match the graph's", () => {
+    expect(FLUX_DRAFT_ID).toBe(fluxVersionIds.draft);
+    expect([...FLUX_MODE_IDS].sort()).toEqual(Object.values(fluxVersionIds).sort());
+  });
+
+  it('the draft build moves a txt2img parse into the draft workflow', () => {
+    expect(
+      deriveWorkflowFromModel({ id: FLUX_DRAFT_ID }, { ecosystem: 'Flux1', workflow: 'txt2img' })
+    ).toEqual({ workflow: 'txt2img:draft' });
+    // leaving draft is click-only: at parse the graph forces the draft build instead
+    expect(
+      reconcileSelectors({ ecosystem: 'Flux1', workflow: 'txt2img:draft', model: 691639 }).note
+    ).toBeUndefined();
+  });
+
+  it('draft locks the flux picker against a cross-family model', () => {
+    expect(
+      deriveSelectorsFromModel(SD15_MODEL, { ecosystem: 'Flux1', workflow: 'txt2img:draft' })
     ).toBeUndefined();
   });
 });
@@ -145,6 +177,20 @@ describe('store rule', () => {
       CTX
     );
     expect(parsed.success && (parsed.data as Record<string, unknown>).ecosystem).toBe('SD1');
+  });
+
+  it('picking the flux Draft build moves txt2img to the draft workflow, and back', () => {
+    const store = generationHub.createStore({
+      ext: CTX,
+      defaults: { workflow: 'txt2img', ecosystem: 'Flux1' },
+    });
+    const state = () => store.getSnapshot().state as Record<string, unknown>;
+
+    store.set({ model: { id: 699279, baseModel: 'Flux.1 D' } });
+    expect(state().workflow).toBe('txt2img:draft');
+
+    store.set({ model: { id: 691639, baseModel: 'Flux.1 D' } });
+    expect(state().workflow).toBe('txt2img');
   });
 
   it('does not fire for a same-ecosystem pick', () => {

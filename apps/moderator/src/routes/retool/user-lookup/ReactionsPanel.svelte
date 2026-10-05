@@ -8,11 +8,15 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
+  import { browser } from '$app/environment';
   import { LINK_CLASS, num } from '$lib/format';
   import { MIN_FLAGGED } from '$lib/reactions';
-  import type { Account, Reactions } from './user-account';
+  import { fetchReactions, type Reactions } from './reactions';
 
-  let { account }: { account: Promise<Account> | null } = $props();
+  let { userId }: { userId: number } = $props();
+
+  // Its own fetch — see `/api/user-reactions`.
+  const reactions = $derived(browser ? fetchReactions(userId) : null);
 
   type Target = Reactions['targets'][number];
 
@@ -41,11 +45,13 @@
 </script>
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
-  {#await account}
-    <p class="text-sm text-dark-2">Loading reactions…</p>
-  {:then result}
-    {#if result}
-      {@const reactions = result.reactions}
+  {#await reactions}
+    <p class="text-sm text-dark-2">
+      Loading reactions… on a high-volume account this counts every reaction ever given and can take
+      a while.
+    </p>
+  {:then reactions}
+    {#if reactions}
       <h3 class="mb-1 text-sm font-semibold text-white">
         Image reactions given ({num(reactions.total)})
       </h3>
@@ -55,8 +61,32 @@
         and Dislike aimed at one creator is what a harassment report looks like, while the same volume
         of Heart and Like is an audience. Images only — article and comment reactions are not counted.
       </p>
+      {#if reactions.removed === null}
+        <p class="mb-3 text-sm text-amber-300">
+          Could not read the reaction event log — withdrawn reactions are unknown here, not zero.
+        </p>
+      {:else if reactions.removed.removed > 0}
+        {@const r = reactions.removed}
+        <div class="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 p-2 text-sm text-amber-200">
+          Took back {num(r.removed)} of {num(r.given)} reactions given in the last {r.days} days, across
+          {num(r.creators)} {r.creators === 1 ? 'creator' : 'creators'}.
+          {#if r.pairs > 0}
+            {@const fast = Math.round((100 * r.removedWithinAMinute) / r.pairs)}
+            {#if fast >= 50}
+              {fast}% were undone within a minute{r.medianHeldSeconds !== null
+                ? `, typically after ${num(r.medianHeldSeconds)}s`
+                : ''} — earned Buzz is not reversed when a reaction is.
+            {/if}
+          {/if}
+          A withdrawn reaction leaves no row behind, so the table below cannot show it.
+        </div>
+      {/if}
+
       {#if reactions.targets.length === 0}
-        <p class="text-sm text-dark-2">None.</p>
+        <p class="text-sm text-dark-2">
+          No reaction is live on any image right now.{#if reactions.removed && reactions.removed.removed > 0}
+            Every one was taken back — see above.{/if}
+        </p>
       {:else}
         <Table>
           <TableHeader>

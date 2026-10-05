@@ -42,17 +42,23 @@ export type AbuseDetectionTables = {
     reason: string;
     /**
      * 🔴 THE PRODUCER's self-report of what IT did — NOT a moderator's judgement. `verdict` below is
-     * the judgement, and the two are independent: `actioned: false` + `verdict: 'tp'` (left alone,
-     * and rightly flagged) is the commonest combination of them. Nothing may read one to infer the
-     * other, and recording a verdict must leave these two untouched.
+     * the judgement, and it is about the ACCOUNT rather than about this column: the two are
+     * independent, and `actioned: false` + `verdict: 'tp'` (the detector left it alone; a moderator
+     * says the account IS abusing the site) is the commonest combination of them. Nothing may read one
+     * to infer the other, and recording a verdict must leave these two untouched.
      */
     actioned: boolean;
     action: string | null;
     created_at: Generated<Timestamp>;
     /**
-     * The MODERATOR's ruling — `tp` / `fp` / `skip`, or NULL for unruled. Constrained by a CHECK in
+     * The MODERATOR's ruling ON THE ACCOUNT — `tp` = abusing the site, `fp` = fine, `skip` = looked
+     * and not calling it, NULL = unruled. Constrained by a CHECK in
      * `apps/moderator/abuse-detection/schema.sql`; typed as the union here so a call site cannot
      * write a fourth value the database would then reject at runtime.
+     *
+     * 🔴 THE CODES ARE NAMED AFTER THE DETECTOR'S CORRECTNESS AND THE MEANING IS NOT — see
+     * `apps/moderator/src/lib/abuse-verdicts.ts` for the inversion that reading produced on a
+     * `confidence = 0` finding. Do not derive "the detector was right" from a `tp`.
      *
      * 🔴 These four are added by the DDL and the DDL is applied BY HAND, so a deployment exists in
      * which the tables are present and these columns are not. Every read of them goes through a

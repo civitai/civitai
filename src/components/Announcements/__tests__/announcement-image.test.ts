@@ -9,19 +9,15 @@ vi.mock('~/env/client', () => ({
   },
 }));
 
-// `useEdgeUrl` is the REAL render path and the thing the monitor must agree with. It is
-// a hook only in the sense that it calls `useCurrentUser()`; with that stubbed it is a
-// pure function, so it can be exercised directly from the node suite. Stub it to a
-// signed-out viewer — the default, and the one whose `filePreferences` cannot mask a
-// threshold change by forcing `optimized` on independently.
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// `useEdgeUrl` is the REAL render path and the thing the monitor must agree with. With
+// `useCurrentUser` stubbed it is a pure function, exercisable from the node suite.
+const viewer = vi.hoisted(() => ({ current: null as null | Record<string, unknown> }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => viewer.current }));
 vi.mock('~/providers/BrowserSettingsProvider', () => ({ useBrowsingSettings: () => false }));
-
 // Imported under a non-`use` alias on purpose: it is a hook only by naming convention
-// (its single hook call, `useCurrentUser`, is stubbed above), and the rules-of-hooks
+// (its only hook calls resolve through `useCurrentUser`, stubbed above), and the rules-of-hooks
 // lint would otherwise reject calling it inside the width-ladder loop below.
 import { getEdgeUrl, useEdgeUrl as resolveRenderedUrl } from '~/client-utils/cf-images-utils';
-import { OPTIMIZED_WIDTH_THRESHOLD, shouldForceOptimized } from '~/client-utils/edge-url';
 import {
   ANNOUNCEMENT_IMAGE_WIDTH,
   announcementImageFormSchema,
@@ -34,7 +30,7 @@ const KEY = '7171bdc6-8007-492c-84ad-f607e4dbd320';
 
 describe('getAnnouncementImageUrl', () => {
   it('reproduces the variant the banner actually renders', () => {
-    // 200 snaps up the common-size ladder to 320, and widths <= 450 force optimized.
+    // 200 snaps up the common-size ladder to 320; `optimized` comes from the call site.
     expect(getAnnouncementImageUrl(KEY)).toBe(
       `https://image.test/${KEY}/width=320,optimized=true/${KEY}.jpeg`
     );
@@ -59,45 +55,36 @@ describe('getAnnouncementImageUrl', () => {
     expect(getAnnouncementImageUrl(KEY)).not.toBe(getEdgeUrl(KEY, { original: true }));
   });
 
-  it('keeps the render width inside the range that forces optimized', () => {
-    // The helper derives `optimized` from the same predicate the render path uses, so a
-    // threshold change can no longer desync them — but a width above the threshold would
-    // still change which variant users load, so pin the relationship explicitly.
-    expect(ANNOUNCEMENT_IMAGE_WIDTH).toBeLessThanOrEqual(OPTIMIZED_WIDTH_THRESHOLD);
-    expect(shouldForceOptimized(ANNOUNCEMENT_IMAGE_WIDTH)).toBe(true);
+  it('matches the variant the render path produces, flag and all', () => {
+    // If the helper and the render path disagree, `announcement-media-check` probes a URL nobody
+    // loads and calls a 404ing banner healthy.
+    const rendered = resolveRenderedUrl(KEY, {
+      width: ANNOUNCEMENT_IMAGE_WIDTH,
+      optimized: true,
+    });
+    expect(rendered.url).toContain('optimized=true');
+    expect(getAnnouncementImageUrl(KEY)).toBe(rendered.url);
   });
 
   it('equals the URL the render path actually produces, not a hand-rolled mirror', () => {
-    // 🔴 The binding test. `Announcement.tsx` renders
-    // `<EdgeMedia src={key} width={ANNOUNCEMENT_IMAGE_WIDTH} />`, and EdgeMedia resolves
-    // its src through `useEdgeUrl`. Compare against that function's real output rather
-    // than against `getEdgeUrl(..., { optimized: true })`, which would re-assert the
-    // helper's own assumption. Fails if the optimized threshold, the width ladder, the
-    // 1800 cap, the type/extension inference or the param order ever change under it —
-    // any of which would make the monitor probe a variant nobody loads and then emit a
-    // false `announcement-image-render-failed` on a healthy banner.
-    const rendered = resolveRenderedUrl(KEY, { width: ANNOUNCEMENT_IMAGE_WIDTH });
+    // Pins the helper against `useEdgeUrl`'s real output: the width ladder, the 1800 cap, the
+    // type/extension inference and the param order. That the CARD passes `optimized` is a separate
+    // fact a node test cannot see — `AnnouncementCard.browser.test.tsx` covers that half.
+    const rendered = resolveRenderedUrl(KEY, {
+      width: ANNOUNCEMENT_IMAGE_WIDTH,
+      optimized: true,
+    });
     expect(getAnnouncementImageUrl(KEY)).toBe(rendered.url);
   });
 
   it('tracks the render path across the whole width ladder, not just the current width', () => {
-    // Generalises the binding: for any width the banner could plausibly be given, the
-    // helper's construction and the render path agree. Guards a future edit to
-    // ANNOUNCEMENT_IMAGE_WIDTH as well as to the ladder/threshold.
+    // Generalises the binding across the ladder, so an edit to ANNOUNCEMENT_IMAGE_WIDTH is covered
+    // too.
     for (const width of [96, 200, 320, 450, 451, 512, 800, 2400]) {
-      const expected = resolveRenderedUrl(KEY, { width }).url;
-      const actual = getEdgeUrl(KEY, {
-        width,
-        optimized: shouldForceOptimized(width) ? true : undefined,
-      });
+      const expected = resolveRenderedUrl(KEY, { width, optimized: true }).url;
+      const actual = getEdgeUrl(KEY, { width, optimized: true });
       expect(actual, `width=${width}`).toBe(expected);
     }
-  });
-
-  it('drops the optimized flag entirely above the threshold (never optimized=false)', () => {
-    const wide = OPTIMIZED_WIDTH_THRESHOLD + 1;
-    expect(shouldForceOptimized(wide)).toBe(false);
-    expect(resolveRenderedUrl(KEY, { width: wide }).url).not.toContain('optimized');
   });
 });
 

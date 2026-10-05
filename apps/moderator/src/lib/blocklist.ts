@@ -55,5 +55,8 @@ export const BLOCKLIST_DESCRIPTIONS: Partial<Record<BlocklistType, string>> = {
     'Same as Prompt Benign Phrase, but matched against the negative prompt — e.g. "mature content". Use for boilerplate negatives that trip the minor audit.' +
     PHRASE_GAP_RULE,
   ProfanityBenignWord:
-    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry, not a phrase. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies to search; the generation gate still uses the shipped list.',
+    'Single words that innocently contain a profanity token — "spreadsheet" contains "spread", "cockpit" contains "cock". The whole word is exempted from the profanity filter. One word per entry, not a phrase. This list REPLACES the one shipped with the site (it was seeded from it), so removing an entry here really does remove it. Applies to search; the generation gate still uses the shipped list.' +
+    ' A few tokens are also exempt in code regardless of this list, because' +
+    " obscenity's own patterns match them more broadly than the word they stand for (see LIBRARY_OVERMATCH_TOKENS)." +
+    ' That exemption covers flagging, not the censoring of already-published text, and cannot be changed from here.',
 };

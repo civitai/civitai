@@ -96,11 +96,11 @@ export const BadgeDisplay = ({
             filter,
           }}
         >
-          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
+          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} optimized />
         </div>
       ) : (
         <div style={{ display: 'flex', zIndex, filter }}>
-          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} />
+          <EdgeMedia src={badge.data.url} alt={badge.name} width={badgeSize} optimized />
         </div>
       )}
     </Tooltip>

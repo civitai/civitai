@@ -26,18 +26,18 @@ pages currently serving no ads or very low CPMs.
 ## Scope is narrower than it first looks
 
 **`Gated` already does its job for in-page units.** `side_1`, `side_2`, and `incontent_*`
-live inside `{children}` ([`Gated.tsx:218`](../src/components/Gated/Gated.tsx#L218) only
-renders children for `state === 'page'`), so on a gated page they are never defined as GPT
-slots and never auctioned. The control page defines three slots; the gated page defines one.
+live inside `{children}` ([`Gated.tsx`](../src/components/Gated/Gated.tsx) only renders
+children for `state === 'page'`), so on a gated page they are never defined as GPT slots and
+never auctioned. The control page defines three slots; the gated page defines one.
 
 The sole leak is **`adhesive`**, rendered from
-[`AppLayout.tsx:95`](../src/components/AppLayout/AppLayout.tsx#L95) — *outside* `{children}`,
-so the gate cannot reach it:
+[`AppLayout.tsx`](../src/components/AppLayout/AppLayout.tsx) — *outside* `{children}`, so the
+gate cannot reach it:
 
 ```tsx
-{children}          // line 85  ← Gated lives in here
+{children}                       // ← Gated lives in here
 ...
-{footer && <AdhesiveFooter />}   // line 95  ← not gated
+{footer && <AdhesiveFooter />}   // ← not gated
 ```
 
 Since a prebid auction only runs for a defined slot, removing the adhesive slot removes both

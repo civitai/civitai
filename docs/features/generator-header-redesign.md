@@ -4,6 +4,22 @@ Implements the ["Above the Prompt"](https://claude.ai/code/artifact/01a73589-85d
 proposal, scoped to the **form-graph** generation forms. `GenerationFormV2` (the data-graph lane) and
 every other `ResourceSelectModal` consumer keep today's behaviour.
 
+> **Header fully reverted (2026-09-23).** Decisions 2 and 3 and phases 01 and 04 are undone — the
+> form-graph header is now `generation_v2`'s `WorkflowInput` beside `BaseModelInput`, with
+> `SelectedWorkflowDisplay` and the `getWorkflowModes` mode strip beneath, the same as the data-graph
+> lane. `WorkflowPicker` and its browser test are deleted; `workflow-visibility.ts` stays, since
+> `WorkflowInput` was moved onto it.
+>
+> The flat list was the reason: it showed every workflow regardless of ecosystem, so `img2img`
+> ("Image Variations", SD-family only) appeared while Qwen 2.1 was selected, badged "Switches model".
+> The mode strip is ecosystem-filtered, so it offers only the keys the current ecosystem supports.
+>
+> Decision 2 and phase 04 were undone earlier (2026-09-16): testers found family switching took extra
+> steps. The model field is `ResourceSelectInput` with no `role` — so its cards show the in-card
+> version dropdown again, alongside `VersionGroupSelector` (decision 1 now only half holds).
+> `role: 'checkpoint'`, the modal's `rail`/`footer` slots, `PickerRail` and `setOptionsOverride` were
+> removed with it. Phases 02–03 stand.
+
 ## Why this scope is safe
 
 `GenerationTabs` mounts `FormGraphGenerator` when `formGraphGenerator` is on and `GenerationFormV2`
@@ -17,13 +33,12 @@ Three kinds of code are involved, and they get different treatment:
 | Layer | Files | Treatment |
 |---|---|---|
 | Shell / header | `src/components/form-graph/generation/BaseGenerationForm.tsx` | Already form-graph-local. Edit freely. |
-| Header inputs | `generation_v2/inputs/WorkflowInput`, `BaseModelInput` | **Fork** into `form-graph/generation/inputs/`. Shared with the v2 lane; the redesign changes their contract, not their styling. |
+| Header inputs | `generation_v2/inputs/WorkflowInput`, `BaseModelInput` | Both used as-is from `generation_v2` — the `WorkflowPicker` fork is gone. |
 | Picker internals | `ImageGeneration/GenerationForm/ResourceSelect*` | **Extend additively.** Shared with App Blocks, Challenge, Apps settings, wildcards, `Resource/Files`. New props default to today's behaviour. |
 
 The picker internals are the expensive half to rebuild and the ones the proposal explicitly wants to
 keep (catalog query, cards, filters, infinite list). Forking them would double the surface that has to
-stay correct; forking the two header inputs costs ~1.7k lines of divergence that dies when the v2 lane
-does.
+stay correct.
 
 ## Decisions taken (the artifact's three open questions)
 
@@ -32,22 +47,16 @@ does.
    in `form-graph/generation/form-helpers.tsx` is already form-graph-local and already renders under the
    model row — it stays, and the in-card segmented control stops being the mechanism. This absorbs the
    hierarchical case rather than leaving it parallel.
-2. **The rail replaces the pill.** `BaseModelInput` comes out of the header entirely in the form-graph
-   lane. Keeping both would put one axis in two places, which is the problem this started from.
-3. **Input switching costs a click.** The mode strip folds into the workflow picker as a filter. No
-   telemetry gate first — the lane is mod-only, so the click cost is observable directly by the people
-   who can undo it.
+2. **~~The rail replaces the pill.~~** Reverted — see the note at the top.
+3. **~~Input switching costs a click.~~** Reverted — see the note at the top.
 
 ## Phases
 
-All four are implemented. Ordering below is the order they landed, not a remaining plan.
+Phases 02–03 are implemented. 01 and 04 were implemented and then removed.
 
-### 01 — Fold the mode strip into the workflow picker
-- New `form-graph/generation/inputs/WorkflowPicker.tsx`: every workflow listed once, input type
-  (`from text` / `from image` / `from video`) shown per row, with an All / From-text / From-image
-  filter across the top.
-- `BaseGenerationForm.tsx`: drop the `ButtonGroupInput` mode strip and its `getWorkflowModes()` call.
-- `getWorkflowModes` stays exported (the v2 lane still uses it); only the form-graph call site goes.
+### 01 — Fold the mode strip into the workflow picker (removed)
+One flat workflow list with an input-type filter, in place of the four-segment picker and the mode
+strip. Shipped and removed 2026-09-23; see git history before that date.
 
 ### 02 — Teach the picker its role
 - `ResourceSelectProvider` gains `role?: 'checkpoint' | 'resource'` (default `undefined` = today).
@@ -71,33 +80,15 @@ All four are implemented. Ordering below is the order they landed, not a remaini
   dead. **No price column** — `TransformedModel` carries no cost data, so "N per second" is deferred
   rather than faked.
 
-### 04 — The rail and the consequence footer
-- Ecosystem selection moves into the picker as a left rail with search, replacing `BaseModelInput` in
-  the form-graph header. **No output-type scope control in the rail** — `BaseModelListContent` already
-  carries its compatible/recent/all tabs, and two scope controls is the duplication being removed.
-- The footer counts the resources a switch will actually drop, by real compatibility check, while the
-  choice is still cancellable — `ResourceAlerts` information, moved before the commit.
-- These two ship together: the point of moving the control is making the switching cost visible at the
-  moment of switching.
-- Mobile splits the panes into two screens and opens on the **catalog**, not the ecosystem list.
-- Cards get no "picked" check overlay and no Early Access badge; the mode strip's `modeLabel` copy
-  ("Text to Image") stops rendering in this lane — the picker shows the workflow `label` plus a
-  per-row input line instead.
+### 04 — The rail and the consequence footer (removed)
+Ecosystem rail and consequence footer in the checkpoint picker. Shipped and removed 2026-09-16; see git
+history before that date.
 
-## How the rail reaches the catalog
+## What is left
 
-The shared modal gained two slots — `rail` and `footer` — typed as components, not nodes, so they
-render inside `ResourceSelectProvider` and can call `setOptionsOverride`. The modal itself contains
-no ecosystem concept; `openCheckpointPicker` in the form-graph lane fills both slots.
-
-Selecting in the rail is a **pending** choice: it re-aims the catalog at that family via
-`getResourceSelectOptions(ecosystemKey, types)` (pure, keyed by ecosystem, so no store write is
-needed to preview a family) and the footer counts what a commit would drop. It commits when you press
-Use, or when you pick a checkpoint — the latter writes the ecosystem first so the model write is the
-one that survives reconciliation.
-
-Pending state lives in `checkpoint-picker.store.ts` because the rail and footer render into two
-different slots and have no common ancestor to hold it.
+Phases 02 and 03 — the picker's `resource` role (compatibility badging, multi-select, the staging
+tray) and the catalog-or-roster branch — plus the shared modal chrome those landed with. The header
+itself is back to the data-graph lane's.
 
 ## Not in scope
 

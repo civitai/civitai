@@ -19,7 +19,6 @@ import {
   getImagesByUserIdForModeration,
   getImagesForModelVersionCache,
   getMyImages,
-  ingestArticleCoverImages,
   ingestImageById,
   removeImageResource,
   removeImageTechniques,
@@ -95,10 +94,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 
 // TODO.cleanup - remove unused router methods
 export const imageRouter = router({
-  ingestArticleImages: protectedProcedure
-    .meta({ requiredScope: TokenScope.MediaWrite })
-    .input(z.array(z.object({ imageId: z.number(), articleId: z.number() })))
-    .mutation(({ input }) => ingestArticleCoverImages(input)),
   moderate: moderatorProcedure.input(imageModerationSchema).mutation(moderateImageHandler),
   delete: verifiedProcedure
     .meta({ requiredScope: TokenScope.MediaDelete })

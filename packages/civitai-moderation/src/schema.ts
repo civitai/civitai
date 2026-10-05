@@ -9,6 +9,7 @@ import { z } from 'zod';
 export const MOD_ACTION = {
   imageModerate: 'image-moderate',
   abuseReport: 'abuse-report',
+  relabelBuildBatch: 'relabel-build-batch',
 } as const;
 export type ModActionName = (typeof MOD_ACTION)[keyof typeof MOD_ACTION];
 
@@ -189,3 +190,76 @@ export const abuseReportInput = z
       });
   });
 export type AbuseReportInput = z.infer<typeof abuseReportInput>;
+
+// relabel.buildBatch — one daily batch of the removal-label relabel set. Like abuseReport, the caller
+// is a scheduled job, so there is no acting moderator.
+export const MAX_RELABEL_BATCH_ITEMS = 500;
+/** One less than the blocked-image retention, which this zod-only package does not import. */
+export const MAX_RELABEL_WINDOW_DAYS = 6;
+/** The daily batch's per-stratum caps and removal window, shared by the job and the CLI. */
+export const RELABEL_DAILY_CAPS = { removed: 100, notRemoved: 40 };
+export const RELABEL_WINDOW_DAYS = 5;
+export const relabelBuildBatchInput = z.object({
+  /** The UTC day. It names the batch, which is what makes a second run that day add nothing. */
+  batch: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  /** Caps on what the batch holds per stratum, not on what one run adds. */
+  removed: z.number().int().min(0).max(MAX_RELABEL_BATCH_ITEMS),
+  notRemoved: z.number().int().min(0).max(MAX_RELABEL_BATCH_ITEMS),
+  days: z.number().int().min(1).max(MAX_RELABEL_WINDOW_DAYS),
+  dryRun: z.boolean(),
+});
+export type RelabelBuildBatchInput = z.infer<typeof relabelBuildBatchInput>;
+
+type Strata<T> = { removed: T; notRemoved: T };
+
+/** What the `relabel-build-batch` action returns. Built by the spoke, read by the main-app job. */
+export type RelabelBuildSummary = {
+  batch: string;
+  dryRun: boolean;
+  modelOnly: boolean;
+  /** Set when the run wrote nothing because the CSAM exclusion could not complete. */
+  skipped: 'csam exclusion timed out' | null;
+  notRemovedSkipped: 'bands unset' | 'bands invalid' | null;
+  candidates: Strata<number>;
+  csamExcluded: Strata<number>;
+  alreadyInSet: number;
+  alreadyInBatch: Strata<number>;
+  picked: Strata<number>;
+  /** Picked per `<stratum> <stratumKey>`. A list, so new strata never add log fields. */
+  strata: { key: string; n: number }[];
+  inserted: number;
+  promoted: number;
+  /** Picked but already present when written: another batch's run took the image first. */
+  alreadyPresent: number;
+};
+
+/** The body `/api/mod/[action]` responds with. The one place its shape is written. */
+export const modActionResponse = <T>(result: T) => ({ ok: true as const, result });
+
+export type RelabelBuildShortfall =
+  | NonNullable<RelabelBuildSummary['skipped']>
+  | 'bands invalid'
+  | 'no summary';
+
+/**
+ * Whether a relabel run is logged as an error, and why: `null` when it is not. The one rule for
+ * that, on both sides of the wire. Unset bands are not a shortfall: removed-only is the expected
+ * state until the bands are configured. Nor is a stratum short of candidates; read the counts.
+ */
+export function relabelSummaryShortfall(
+  summary: RelabelBuildSummary
+): RelabelBuildShortfall | null {
+  if (summary.skipped) return summary.skipped;
+  if (summary.notRemovedSkipped === 'bands invalid') return 'bands invalid';
+  return null;
+}
+
+/**
+ * `relabelSummaryShortfall` read from the action's response. Typed against `modActionResponse`
+ * but not validated at runtime, so a body without a summary counts as a shortfall, never a pass.
+ */
+export function relabelBuildShortfall(response: unknown): RelabelBuildShortfall | null {
+  const summary = (response as Partial<ReturnType<typeof modActionResponse<RelabelBuildSummary>>>)
+    ?.result;
+  return summary ? relabelSummaryShortfall(summary) : 'no summary';
+}

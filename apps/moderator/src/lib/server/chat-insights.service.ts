@@ -140,6 +140,8 @@ export async function getNewestMessages(limit = 100): Promise<NewestMessage[]> {
       'cm.userId',
       'cm.content',
       'cm.createdAt',
+      'cm.editedAt',
+      'cm.deletedAt',
       'u.username',
       'u.bannedAt',
     ])

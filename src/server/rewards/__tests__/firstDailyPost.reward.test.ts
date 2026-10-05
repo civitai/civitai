@@ -16,6 +16,7 @@ vi.mock('~/server/prom/client', () => ({
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransactionMany: vi.fn(),
   getMultipliersForUser: vi.fn(async () => ({ rewardsMultiplier: 1 })),
+  getTransactionByExternalId: vi.fn(async () => null),
 }));
 
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';

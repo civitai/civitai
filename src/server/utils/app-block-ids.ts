@@ -91,16 +91,37 @@ export function newBlockBuzzAttributionId(): string {
   return `bba_${newUlid()}`;
 }
 
-export function newBlockAttributionPayoutId(): string {
-  return `bba_payout_${newUlid()}`;
-}
-
 export function newBlockSpendAttributionId(): string {
   return `bsa_${newUlid()}`;
 }
 
 export function newBlockSubscriptionAttributionId(): string {
   return `bsu_${newUlid()}`;
+}
+
+/**
+ * App Blocks per-generation AUTHOR FEE accrual (slice 2).
+ *
+ * Distinct prefix from `bsa_` (spend attribution) on purpose: the two tables
+ * describe the same generation and an id pasted into the wrong lookup should
+ * miss loudly rather than resolve to an unrelated row.
+ */
+export function newBlockAuthorFeeAccrualId(): string {
+  return `bafa_${newUlid()}`;
+}
+
+/**
+ * App Blocks DIGITAL GOODS. Two prefixes, not one, because the purchase (money)
+ * and the entitlement (what the viewer owns) are separate rows with separate
+ * lifetimes — a refund keeps the purchase and revokes the entitlement — and an
+ * id pasted into the wrong lookup should miss loudly.
+ */
+export function newBlockGoodPurchaseId(): string {
+  return `bgp_${newUlid()}`;
+}
+
+export function newBlockGoodEntitlementId(): string {
+  return `bge_${newUlid()}`;
 }
 
 export function newAppUserScopeGrantId(): string {

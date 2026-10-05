@@ -10,11 +10,12 @@ import {
 import {
   IconAlertTriangle,
   IconBolt,
-  IconBrush,
   IconChevronLeft,
   IconChevronRight,
   IconClock,
 } from '@tabler/icons-react';
+import { acceptsBlueBuzz } from '@civitai/buzz';
+import { paidAccessBuzzBackground } from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -24,8 +25,14 @@ import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
 import classes from './ModelVersionList.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import { ModelUsageControl } from '~/shared/utils/prisma/enums';
+import {
+  isAdditionalResourceFeeWaived,
+  isEvictable,
+  isGenerationDisabled,
+} from '~/shared/constants/model-version-flags.constants';
+import { LoadedMark } from '~/components/ResourceLoad/ResourceResidency';
+import { generatorReadiness } from '~/shared/generation/generator-readiness';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -139,8 +146,12 @@ export function ModelVersionList({
               key={`early-access-${version.id}`}
               radius="sm"
               size="sm"
-              color="yellow.7"
               style={{
+                // Coloured by the Buzz the gate takes, like the price chips on the buttons.
+                background: paidAccessBuzzBackground({
+                  isGreen: features.isGreen,
+                  acceptsBlueBuzz: acceptsBlueBuzz(version.paidAccess?.terms),
+                }),
                 width: 20,
                 height: 26,
                 borderTopLeftRadius: 0,
@@ -153,7 +164,7 @@ export function ModelVersionList({
                   : {}),
               }}
             >
-              <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+              <IconBolt style={{ fill: theme.white }} color="white" size={16} />
             </ThemeIcon>
           );
 
@@ -210,20 +221,9 @@ export function ModelVersionList({
               }
             >
               <Group gap={8} wrap="nowrap">
-                {features.imageGeneration &&
-                  version.canGenerate &&
-                  version.status !== ModelStatus.Draft && (
-                    <ThemeIcon
-                      title="This version is available for image generation"
-                      color="cyan"
-                      variant="light"
-                      radius="xl"
-                      size="sm"
-                      style={{ backgroundColor: 'transparent' }}
-                    >
-                      <IconBrush size={16} stroke={2.5} />
-                    </ThemeIcon>
-                  )}
+                {features.imageGeneration && generatorReadiness(version) !== 'cold' && (
+                  <LoadedMark readiness={generatorReadiness(version)} />
+                )}
                 {version.name}
               </Group>
             </Button>
@@ -249,6 +249,8 @@ export function ModelVersionList({
                 published={published}
                 canGenerate={version.canGenerate}
                 generationDisabled={isGenerationDisabled(version.flags ?? 0)}
+                evictable={isEvictable(version.flags ?? 0)}
+                additionalResourceFeeWaived={isAdditionalResourceFeeWaived(version.flags ?? 0)}
                 showToggleCoverage={showToggleCoverage}
               />
             </Button.Group>

@@ -9,10 +9,10 @@ import {
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
-function useMuteControl(creatorId: number, muted: boolean) {
+function useMuteControl(creatorId: number, muted: boolean, creatorName?: string | null) {
   const currentUser = useCurrentUser();
   const enabled = useCreatorAnnouncementsFeature();
-  const { toggle, isLoading } = useToggleAnnouncementMute(creatorId);
+  const { toggle, isLoading } = useToggleAnnouncementMute(creatorId, creatorName);
 
   return {
     isLoading,
@@ -21,9 +21,15 @@ function useMuteControl(creatorId: number, muted: boolean) {
   };
 }
 
-export function AnnouncementMuteToggle({ creatorId }: { creatorId: number }) {
+export function AnnouncementMuteToggle({
+  creatorId,
+  creatorName,
+}: {
+  creatorId: number;
+  creatorName?: string | null;
+}) {
   const muted = useIsCreatorMuted(creatorId);
-  const { isLoading, handleToggle, visible } = useMuteControl(creatorId, muted);
+  const { isLoading, handleToggle, visible } = useMuteControl(creatorId, muted, creatorName);
   if (!visible) return null;
 
   const label = muted ? 'Unmute announcements' : 'Mute announcements';
@@ -54,7 +60,7 @@ export function AnnouncementMuteMenuItem({
   creatorName?: string | null;
   muted: boolean;
 }) {
-  const { handleToggle, visible } = useMuteControl(creatorId, muted);
+  const { handleToggle, visible } = useMuteControl(creatorId, muted, creatorName);
   if (!visible) return null;
 
   const who = creatorName ? ` from ${creatorName}` : '';

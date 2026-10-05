@@ -112,10 +112,14 @@ const createUserCapCache = () => {
           END DESC;
       `);
 
-      // Generation tips reach creators inside the daily `compensation` payout (deliver-creator-compensation
-      // mints a separate transaction only for licenseFee), so a system-minted `tip` row is not an earning —
-      // it is a manual support credit (remediation, goodwill refund, delivery fix) and must not raise a cap.
-      // Matches the earnedCache predicate in buzz.service.ts, which these two queries had drifted apart on.
+      // The daily deliver-creator-compensation job mints two bankable earning types: `compensation`
+      // (which also carries generation tips) and a separate `licenseFee` transaction — both are real
+      // creator earnings and both must raise the cap. A system-minted `tip` row, by contrast, is a
+      // manual support credit (remediation, goodwill refund, delivery fix), not an earning, so it must
+      // not raise a cap. Only this cap query counts licenseFee; the pool/earnings estimates that share
+      // this predicate shape (getPoolForecast below; earnedCache and getPoolForecast in buzz.service.ts)
+      // still exclude it, and nothing pins the three together — count it there too if forecasts should
+      // reflect license-fee income.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
@@ -123,7 +127,7 @@ const createUserCapCache = () => {
           SUM(amount) as earned
         FROM buzzTransactions
         WHERE (
-          (type IN ('compensation')) -- Generation Comp
+          (type IN ('compensation', 'licenseFee')) -- Generation Comp + License Fees
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
         AND toAccountType IN (${buzzBankTypesSql})

@@ -1,12 +1,16 @@
 import * as z from 'zod';
+import { preparationSchema } from '~/shared/orchestrator/download-preparation';
 
 /**
  * `ResourceInfo.availability` as the orchestrator actually returns it. The generated SDK types it as
  * `{ status: string }` with the four shapes declared separately, so it is parsed here rather than
  * asserted.
  *
- * 🔴 `queuePosition` lives on `unavailable`, not on `loading` — "in the queue" and "not loaded at
- * all" are the same status, told apart only by whether the position is null.
+ * 🔴 Two generations of the queued shape both parse. Before the orchestrator's beta.105 a queued
+ * resource was `unavailable` with a `queuePosition`; from beta.105 it is `queued`, and `unavailable`
+ * means nothing is pulling it. Dropping the old shape breaks the site until that deploy lands.
+ *
+ * `lane` is a plain string so a lane added later does not turn a known status into `unknown`.
  */
 export const resourceAvailabilitySchema = z.discriminatedUnion('status', [
   z.object({ status: z.literal('available'), workers: z.number() }),
@@ -17,6 +21,17 @@ export const resourceAvailabilitySchema = z.discriminatedUnion('status', [
     startedAt: z.string().nullish(),
     lastProgressAt: z.string().nullish(),
     etaSeconds: z.number().nullish(),
+    lane: z.string().nullish(),
+    bytesPerSecond: z.number().nullish(),
+    rateLimitBytesPerSecond: z.number().nullish(),
+  }),
+  z.object({
+    status: z.literal('queued'),
+    queuePosition: z.number(),
+    lane: z.string(),
+    etaSeconds: z.number().nullish(),
+    boostedEtaSeconds: z.number().nullish(),
+    rateLimitBytesPerSecond: z.number().nullish(),
   }),
   z.object({ status: z.literal('unavailable'), queuePosition: z.number().nullish() }),
   z.object({ status: z.literal('unsupported') }),
@@ -24,12 +39,27 @@ export const resourceAvailabilitySchema = z.discriminatedUnion('status', [
 
 export type ResourceAvailability = z.infer<typeof resourceAvailabilitySchema>;
 
+export type ResourceLoadAvailability =
+  | ResourceAvailability
+  /**
+   * The orchestrator answered with a shape this build does not know — a new status, or no
+   * `availability` at all. Deliberately not folded into `unsupported`: the purchase path refuses
+   * both, but only one of them is the cluster saying it can never host the resource.
+   */
+  | { status: 'unknown' }
+  /** Substituted from `usageControl`, never parsed — the orchestrator's union has no such state. */
+  | { status: 'external' };
+
 /**
- * What the site reports when the orchestrator answered with a shape this build does not know — a
- * new status, or no `availability` at all. Deliberately not folded into `unsupported`: the purchase
- * path refuses both, but only one of them is the cluster saying it can never host the resource.
+ * Waiting in the download queue, in either orchestrator shape — the pre-beta.105 shape is told apart
+ * from "nothing is pulling it" only by the queue position.
  */
-export type ResourceLoadAvailability = ResourceAvailability | { status: 'unknown' };
+export function isQueuedAvailability(availability: ResourceLoadAvailability) {
+  return (
+    availability.status === 'queued' ||
+    (availability.status === 'unavailable' && availability.queuePosition != null)
+  );
+}
 
 /**
  * Why a version cannot be loaded. The two are different things to tell a user: an API model has
@@ -47,6 +77,17 @@ export const UNLOADABLE_MESSAGES: Record<UnloadableReason, string> = {
 
 export const getResourceLoadStateSchema = z.object({
   modelVersionIds: z.array(z.number()).min(1).max(100),
+});
+
+export const RESIDENCY_MAX_IDS = 50;
+export const getResourceResidencySchema = z.object({
+  modelVersionIds: z.array(z.number()).min(1).max(RESIDENCY_MAX_IDS),
+});
+
+/** One queue card's models. Uncached, so the cap is small. */
+export const DOWNLOAD_STATUS_MAX_IDS = 10;
+export const getDownloadStatusSchema = z.object({
+  modelVersionIds: z.array(z.number()).min(1).max(DOWNLOAD_STATUS_MAX_IDS),
 });
 
 /** Capped well under the orchestrator's own max: each item costs it two grain calls. */
@@ -74,17 +115,7 @@ export const resourceLoadSignalSchema = z.object({
   workflowId: z.string().nullish(),
   name: z.string().nullish(),
   status: z.string().nullish(),
-  preparation: z
-    .object({
-      /** AIR of the resource holding the step back — the only thing identifying WHICH load this is. */
-      resource: z.string(),
-      /** Downloads ahead of this one. Zero means it is transferring now. */
-      queuePosition: z.number(),
-      /** 0..1, null while still queued. */
-      progress: z.number().nullish(),
-      etaSeconds: z.number().nullish(),
-    })
-    .nullish(),
+  preparation: preparationSchema.nullish(),
 });
 
 export type ResourceLoadSignal = z.infer<typeof resourceLoadSignalSchema>;

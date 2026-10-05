@@ -4,6 +4,7 @@
 // (the shell-only signals token) and trace.ts (its dev-only trace proxy).
 import type { AutoLabelResult, StudioBackend, TrainingRunPayload } from '$lib/backend';
 import type { GenerationItem, TrainingDetail, TrainingRow } from '$lib/data/trainingRows';
+import type { EpochArchive } from '$lib/orchestrator-core';
 import { UploadError, uploadProblem } from '$lib/upload';
 
 /** Pull `message` out of a SvelteKit error body, falling back to a status-tagged default. */
@@ -103,6 +104,21 @@ export const shellBackend: StudioBackend = {
     if (!res.ok) throw new Error(await messageOf(res, `Could not rename (${res.status})`));
   },
 
+  epochArchive: async (workflowId) => {
+    const res = await fetch(`/api/epoch-archive?id=${encodeURIComponent(workflowId)}`, {
+      method: 'POST',
+    });
+    if (!res.ok) throw new Error(await messageOf(res, "Couldn't build the archive."));
+    return (await res.json()) as EpochArchive;
+  },
+
+  deleteTraining: async (workflowId) => {
+    const res = await fetch(`/api/trainings?id=${encodeURIComponent(workflowId)}`, {
+      method: 'DELETE',
+    });
+    if (!res.ok) throw new Error(await messageOf(res, `Could not delete (${res.status})`));
+  },
+
   continueQuote: async (workflowId, fromEpoch, addEpochs) => {
     const res = await fetch(
       `/api/continue-training?id=${encodeURIComponent(
@@ -130,6 +146,16 @@ export const shellBackend: StudioBackend = {
   // users) — only the web-component host quotes browser-side.
   getFromPrices: () =>
     Promise.reject(new Error('from-prices come from the /new server load in the shell')),
+
+  quoteRun: async (input) => {
+    const res = await fetch('/api/quote', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok) return null;
+    return ((await res.json()) as { cost: number | null }).cost;
+  },
 
   getBuzz: async () => {
     const res = await fetch('/api/buzz');

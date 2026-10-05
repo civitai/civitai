@@ -65,7 +65,11 @@ type UserModActivity = {
     | 'reactionAbuseUnexclude'
     // `UserStrike` is the record of the strike; this is the record that a moderator issued one, which
     // is the question the account-history panel answers. `userId` is the issuer, -1 for an auto-strike.
-    | 'strike';
+    | 'strike'
+    // A moderator closed the account FOR its owner, which in practice means a data-subject erasure
+    // request from someone who cannot sign in to do it themselves. Distinct from `removeContent`,
+    // which strips what an account owns and leaves the account itself identifiable.
+    | 'deleteAccount';
 };
 
 type ComicProjectModActivity = {

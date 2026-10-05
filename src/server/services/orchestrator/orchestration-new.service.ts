@@ -28,9 +28,17 @@ import type {
 } from '@civitai/client';
 // The pinned @civitai/client predates preprocessVideo; this comes from
 // orchestration-client.
-import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
-import { TimeSpan } from '@civitai/client';
+import type {
+  Priority as DownloadPriority,
+  PreprocessVideoStepTemplate,
+} from '@civitai/orchestration-client';
+import type { DownloadPreparation } from '~/shared/orchestrator/download-preparation';
+import {
+  attachEstimatedPreparation,
+  normalizePreparation,
+} from '~/shared/orchestrator/download-preparation';
 import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
+import { collectStepWarnings } from './step-warnings';
 import {
   generationGraph,
   type GenerationGraphTypes,
@@ -76,19 +84,39 @@ import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/gen
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
 import {
   getWorkflow,
+  setWorkflowDownloadPriority,
   submitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
 } from '~/server/services/orchestrator/workflows';
-import { assertWorkflowOwner } from '~/server/services/orchestrator/assert-workflow-owner';
+import {
+  assertWorkflowOwner,
+  workflowOwnerId,
+} from '~/server/services/orchestrator/assert-workflow-owner';
+import {
+  getAirEcosystem,
+  getEcosystemByAirSegment,
+  isRawAirResource,
+  parseRawAirResourceUrn,
+  rawAirGenerationResource,
+  rawAirResourceId,
+  type RawAirResource,
+} from '~/shared/utils/air';
 import type { WorkflowUpdateSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { CacheTTL } from '~/server/common/constants';
+import { canGenerateWithEpoch } from '~/server/common/model-helpers';
+import {
+  isActiveTrainingStepStatus,
+  trainingWorkflowEpochBlobs,
+} from '~/server/services/orchestrator/training/training-epoch-blobs';
 import { mapDataToGraphInput } from './legacy-metadata-mapper';
 import { getHighestTierSubscription } from '~/server/services/subscriptions.service';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { sleep, throwBadRequestError } from '~/server/utils/errorHandling';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { getOrchestratorCallbacks } from '~/server/orchestrator/orchestrator.utils';
 import { BuzzTypes, type BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
+import { getResourceResidency } from '~/server/services/resource-residency.service';
 import { WORKFLOW_TAGS, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import { includesPoi } from '~/utils/metadata/audit';
 import { BlocklistType } from '~/server/common/enums';
@@ -173,6 +201,7 @@ export type GenerationContext = {
 export type GenerateOptions = {
   input: Record<string, unknown>;
   externalCtx: GenerationCtx;
+  downloadPriority?: DownloadPriority;
 } & GenerationContext;
 
 /** Options for what-if requests */
@@ -184,12 +213,13 @@ export type WhatIfOptions = {
   experimental?: boolean;
   token: string;
   currencies?: BuzzSpendType[];
+  downloadPriority?: DownloadPriority;
 };
 
 /**
  * Step input returned by step creators.
  * Based on WorkflowStepTemplate with required $type and input.
- * Allows optional overrides for priority, timeout, metadata at the creator level.
+ * Allows optional overrides for priority and metadata at the creator level.
  *
  * Step creators that need per-step source metadata (e.g., upscale, remove-bg,
  * or chained workflows) should call `buildResolvedSource` and set the
@@ -200,14 +230,6 @@ type StepInput = WorkflowStepTemplate & {
   /** Pre-computed source metadata from step creators via `buildResolvedSource`. */
   resolvedSource?: { metadata: Record<string, unknown>; imageMetadata: string };
 };
-
-const DEFAULT_STEP_TIMEOUT_MINUTES = 20;
-const VIDEO_STEP_TIMEOUT_MINUTES = 40;
-const VIDEO_STEP_TYPES = new Set(['videoGen', 'videoInterpolation']);
-
-function buildStepTimeout(minutes: number) {
-  return new TimeSpan(0, minutes, 0).toString(['hours', 'minutes', 'seconds']);
-}
 
 /** Ecosystem workflows - GenerationGraphOutput where ecosystem is defined */
 type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }>;
@@ -406,10 +428,14 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
   }
   if ('resources' in data && data.resources) {
     refs.push(
-      ...data.resources.map((r) => ({
-        id: r.id,
-        epoch: 'epochDetails' in r ? r.epochDetails?.epochNumber : undefined,
-      }))
+      // Raw-AIR resources (negative synthetic ids) have no ModelVersion row —
+      // they're validated separately in validateRawAirResources.
+      ...data.resources
+        .filter((r) => !isRawAirResource(r))
+        .map((r) => ({
+          id: r.id,
+          epoch: 'epochDetails' in r ? r.epochDetails?.epochNumber : undefined,
+        }))
     );
   }
   if ('upscaler' in data && data.upscaler?.id) {
@@ -428,9 +454,154 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
 /** Enriched resource with air string (always populated by getResourceData) */
 type EnrichedResource = GenerationResource & { air: string };
 
+/** Raw orchestrator-blob AIR resources present in the graph output (negative ids). */
+function collectRawAirResources(data: GenerationGraphOutput): RawAirResource[] {
+  if (!('resources' in data) || !data.resources) return [];
+  return data.resources.filter(isRawAirResource).map((r) => ({
+    id: r.id,
+    air: r.air,
+    workflowId: r.workflowId,
+    strength: r.strength,
+    name: r.name,
+  }));
+}
+
+/**
+ * Validates raw orchestrator-blob AIR resources — training epochs referenced
+ * directly by blob key, with no ModelVersion row.
+ *
+ * Ownership is the load-bearing check: the blob key is unguessable but that is
+ * NOT authorization, so each resource must name the training workflow it came
+ * from, that workflow is fetched with the CALLER'S orchestrator token (the
+ * orchestrator scopes reads to the token's consumer — a stranger's workflowId
+ * 404s), and the AIR's blob key must match one of the workflow's epoch blobs.
+ *
+ * NSFW/POI/canGenerate gates deliberately don't apply here: there is no model
+ * row to read flags from, and the content is the caller's own training output —
+ * the ownership + ecosystem checks replace the DB-side canGenerate derivation.
+ */
+async function validateRawAirResources({
+  resources,
+  user,
+  orchestratorToken,
+  requestEcosystem,
+}: {
+  resources: RawAirResource[];
+  user?: { id?: number; isModerator?: boolean };
+  orchestratorToken?: string;
+  requestEcosystem?: string;
+}): Promise<void> {
+  if (resources.length === 0) return;
+  if (!user?.id) throw throwBadRequestError('You must be logged in to use epoch resources.');
+  if (!orchestratorToken)
+    throw throwBadRequestError('Epoch resources are not supported on this generation path.');
+
+  const requestAirEcosystem = requestEcosystem ? getAirEcosystem(requestEcosystem) : undefined;
+  const byWorkflow = new Map<string, { blobKey: string; label: string; airEcoKey: string }[]>();
+  // The pairing check below makes a duplicate id imply a duplicate AIR — except through an FNV
+  // collision between two different AIRs, which would silently overwrite in the AIR map.
+  const airById = new Map<number, string>();
+  for (const resource of resources) {
+    const label = resource.name ?? resource.air;
+    const parsed = parseRawAirResourceUrn(resource.air);
+    if (!parsed) throw throwBadRequestError(`Invalid epoch resource: ${label}`);
+    // The id must be THE id for this AIR: two resources claiming one id but different AIRs
+    // would silently overwrite each other in the AIR map after validation.
+    if (resource.id !== rawAirResourceId(resource.air)) {
+      throw throwBadRequestError(`Epoch resource "${label}" has a mismatched resource id.`);
+    }
+    const priorAir = airById.get(resource.id);
+    if (priorAir !== undefined && priorAir !== resource.air) {
+      throw throwBadRequestError(`Epoch resource "${label}" conflicts with another resource.`);
+    }
+    airById.set(resource.id, resource.air);
+    // The AIR segment can be a root OR child ecosystem key ('sdxl',
+    // 'flux2klein'); compare root-to-root against the request's ecosystem.
+    const airEco = getEcosystemByAirSegment(parsed.ecosystem);
+    if (!airEco) {
+      throw throwBadRequestError(
+        `Epoch resource "${label}" references an unknown ecosystem "${parsed.ecosystem}".`
+      );
+    }
+    if (requestAirEcosystem && getAirEcosystem(airEco.key) !== requestAirEcosystem) {
+      throw throwBadRequestError(
+        `Epoch resource "${label}" is not compatible with the selected ecosystem.`
+      );
+    }
+    if (!resource.workflowId) {
+      throw throwBadRequestError(
+        `Epoch resource "${label}" must reference the training workflow it came from.`
+      );
+    }
+    // Owner check on the `<userId>-<timestamp>` id shape. An unreadable owner is a rejection,
+    // not a fall-through — every real workflow id parses, and assertBlockWorkflowMintedForViewer
+    // set that rule for request-supplied workflow ids (the orchestrator has resolved a correct
+    // token to the wrong user before). The token-scoped fetch below stays the authoritative guard.
+    const claimedOwner = workflowOwnerId(resource.workflowId);
+    if (claimedOwner === null || claimedOwner !== user.id) {
+      throw throwBadRequestError(`You do not have access to epoch resource "${label}".`);
+    }
+    const list = byWorkflow.get(resource.workflowId) ?? [];
+    list.push({ blobKey: parsed.blobKey, label, airEcoKey: airEco.key });
+    byWorkflow.set(resource.workflowId, list);
+  }
+
+  const userId = user.id;
+  await Promise.all(
+    [...byWorkflow].map(async ([workflowId, entries]) => {
+      // The userId segment scopes the cached ownership proof to the user whose
+      // token fetched it. fetchThroughCache does not cache rejections, so a
+      // NOT_FOUND for a deleted or not-owned workflow (the orchestrator scopes
+      // the read to the caller's token) is re-checked every time.
+      const cacheKey = `${REDIS_KEYS.CACHES.TRAINING_EPOCH_BLOBS}:${userId}:${workflowId}` as const;
+      const { blobKeys, completedAt, stepStatus, ecosystem } = await fetchThroughCache(
+        cacheKey,
+        async () => {
+          const workflow = await getWorkflow({ token: orchestratorToken, path: { workflowId } });
+          return trainingWorkflowEpochBlobs(workflow);
+        },
+        { ttl: CacheTTL.xs * 5 }
+      );
+      const availableBlobKeys = new Set(blobKeys);
+      // The AIR's ecosystem segment is caller-supplied: without this, an owned blob could be
+      // relabeled under a different ecosystem and routed through the wrong handler. Unknown
+      // workflow ecosystem (older runs, pre-field cache entries) skips the check — the request
+      // ecosystem match above still applies.
+      const trainedEco = ecosystem ? getEcosystemByAirSegment(ecosystem) : undefined;
+      const trainedEcoRoot = trainedEco ? getAirEcosystem(trainedEco.key) : undefined;
+      for (const entry of entries) {
+        if (!availableBlobKeys.has(entry.blobKey)) {
+          throw throwBadRequestError(
+            `Epoch resource "${entry.label}" does not belong to the referenced training workflow.`
+          );
+        }
+        if (trainedEcoRoot && getAirEcosystem(entry.airEcoKey) !== trainedEcoRoot) {
+          throw throwBadRequestError(
+            `Epoch resource "${entry.label}" does not match the ecosystem its training run used.`
+          );
+        }
+      }
+      // Same 15-day window as ModelVersion-backed epochs. A null completion
+      // date is trusted only while the step is still active (mid-training —
+      // window not started); a terminal step without one (a canceled/failed/
+      // expired run) is treated as expired, or canceling a run would keep its
+      // last epoch generatable forever.
+      const epochExpired = completedAt
+        ? !canGenerateWithEpoch(completedAt)
+        : !isActiveTrainingStepStatus(stepStatus);
+      if (epochExpired) {
+        throw throwBadRequestError(
+          'One of the epochs you are trying to generate with has expired. Make it a private model to continue using it.'
+        );
+      }
+    })
+  );
+}
+
 /** Result of resource validation */
 type ResourceValidationResult = {
   enrichedResources: EnrichedResource[];
+  rawAirResources: RawAirResource[];
   isPrivateGeneration: boolean;
   hasPoiResource: boolean;
 };
@@ -447,11 +618,18 @@ type ResourceValidationResult = {
  */
 async function validateAndEnrichResources(
   resourceRefs: ResourceRef[],
-  user?: { id?: number; isModerator?: boolean }
+  user?: { id?: number; isModerator?: boolean; tier?: string },
+  rawAir?: {
+    resources: RawAirResource[];
+    orchestratorToken?: string;
+    requestEcosystem?: string;
+  }
 ): Promise<ResourceValidationResult> {
-  if (resourceRefs.length === 0) {
+  const rawAirResources = rawAir?.resources ?? [];
+  if (resourceRefs.length === 0 && rawAirResources.length === 0) {
     return {
       enrichedResources: [],
+      rawAirResources: [],
       isPrivateGeneration: false,
       hasPoiResource: false,
     };
@@ -459,15 +637,31 @@ async function validateAndEnrichResources(
 
   // Span localizes the gen-path park: resource resolution is the heavy lookup
   // inside validateAndEnrichResources (delegates to getResourceData, which has
-  // its own finer-grained sub-spans).
-  const resources = await withSpan('gen:validateResources:getResourceData', () =>
-    getResourceData(resourceRefs, { user })
-  );
+  // its own finer-grained sub-spans). Raw-AIR validation is an independent
+  // orchestrator read, so the two run concurrently.
+  const [resources] = await Promise.all([
+    resourceRefs.length > 0
+      ? withSpan('gen:validateResources:getResourceData', () =>
+          getResourceData(resourceRefs, { user })
+        )
+      : Promise.resolve([] as Awaited<ReturnType<typeof getResourceData>>),
+    rawAirResources.length > 0
+      ? withSpan('gen:validateResources:rawAir', () =>
+          validateRawAirResources({
+            resources: rawAirResources,
+            user,
+            orchestratorToken: rawAir?.orchestratorToken,
+            requestEcosystem: rawAir?.requestEcosystem,
+          })
+        )
+      : Promise.resolve(),
+  ]);
 
-  // Check for private/epoch resources requiring subscription
-  const hasPrivateOrEpoch = resources.some(
-    (r) => r.availability === Availability.Private || !!r.epochDetails
-  );
+  // Check for private/epoch resources requiring subscription. Raw-AIR resources
+  // ARE epoch resources — same subscription gate as the ModelVersion-backed kind.
+  const hasPrivateOrEpoch =
+    rawAirResources.length > 0 ||
+    resources.some((r) => r.availability === Availability.Private || !!r.epochDetails);
 
   if (hasPrivateOrEpoch && user?.id && !user?.isModerator) {
     // Span localizes the gen-path park: subscription lookup for private/epoch use.
@@ -501,6 +695,7 @@ async function validateAndEnrichResources(
 
   return {
     enrichedResources,
+    rawAirResources,
     isPrivateGeneration: hasPrivateOrEpoch,
     hasPoiResource: resources.some((r) => r.model.poi),
   };
@@ -1037,7 +1232,6 @@ function buildResolvedSource(
  * - Resource validation (subscription, expired epochs, canGenerate, POI)
  * - POI prompt detection
  * - Private generation detection
- * - Timeout calculation (base 20 min + 1 min per additional resource)
  */
 export async function createWorkflowStepsFromGraph({
   data,
@@ -1049,6 +1243,7 @@ export async function createWorkflowStepsFromGraph({
   remixOfId,
   sourceImageIds,
   isGreen,
+  orchestratorToken,
 }: {
   data: GenerationGraphOutput;
   /**
@@ -1058,7 +1253,7 @@ export async function createWorkflowStepsFromGraph({
    */
   computedKeys?: Set<string>;
   isWhatIf?: boolean;
-  user?: { id?: number; isModerator?: boolean };
+  user?: { id?: number; isModerator?: boolean; tier?: string };
   sourceMetadata?: SourceMetadataInput;
   sourceMetadataMap?: Record<string, SourceMetadataInput>;
   remixOfId?: number;
@@ -1075,6 +1270,13 @@ export async function createWorkflowStepsFromGraph({
    * NSFW content to SFW users.
    */
   isGreen?: boolean;
+  /**
+   * The caller's orchestrator token. Required to accept raw-AIR (training
+   * epoch blob) resources — it is what the ownership check fetches the source
+   * training workflow with. Paths that don't thread it (e.g. the App Blocks
+   * bridge) reject raw-AIR resources.
+   */
+  orchestratorToken?: string;
 }): Promise<{
   steps: WorkflowStepTemplate[];
   workflowMetadata?: Record<string, unknown>;
@@ -1089,10 +1291,14 @@ export async function createWorkflowStepsFromGraph({
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
   // Span localizes the gen-path park: resource validation/enrichment sub-step.
-  const { enrichedResources, isPrivateGeneration, hasPoiResource } = await withSpan(
-    'gen:createSteps:validateResources',
-    () => validateAndEnrichResources(resourceIds, user)
-  );
+  const { enrichedResources, rawAirResources, isPrivateGeneration, hasPoiResource } =
+    await withSpan('gen:createSteps:validateResources', () =>
+      validateAndEnrichResources(resourceIds, user, {
+        resources: collectRawAirResources(data),
+        orchestratorToken,
+        requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+      })
+    );
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -1115,8 +1321,11 @@ export async function createWorkflowStepsFromGraph({
     );
   }
 
-  // Build AIR map from enriched resources for handlers
+  // Build AIR map from enriched resources for handlers. Raw-AIR resources join
+  // it under their synthetic negative ids, so handlers' `airs.getOrThrow(r.id)`
+  // resolves them with no handler changes.
   const airs = new StrictAirMap(enrichedResources.map((r) => [r.id, r.air]));
+  for (const r of rawAirResources) airs.set(r.id, r.air);
   const handlerCtx: GenerationHandlerCtx = {
     airs,
     user: { id: user?.id ?? 0, isModerator: !!user?.isModerator },
@@ -1134,12 +1343,6 @@ export async function createWorkflowStepsFromGraph({
     // deserialization. MAX_RANDOM_SEED keeps the default within Int32 range.
     seed: 'seed' in data && data.seed != null ? data.seed : randomInt(MAX_RANDOM_SEED),
   };
-
-  // Calculate timeout: base (20 minutes, 40 for video steps) + 1 minute per
-  // additional resource
-  const extraResourceMinutes = Math.max(0, enrichedResources.length - 1);
-  const timeout = buildStepTimeout(DEFAULT_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
-  const videoTimeout = buildStepTimeout(VIDEO_STEP_TIMEOUT_MINUTES + extraResourceMinutes);
 
   // Convert graph output to legacy {resources, params} format for storage.
   // This is the TEMPLATE snapshot — `params.prompt`/`negativePrompt` still
@@ -1244,7 +1447,7 @@ export async function createWorkflowStepsFromGraph({
       steps.push(...variantSteps);
     }
 
-    // Wrap with request-level concerns: priority, timeout, outputFormat
+    // Wrap with request-level concerns: priority, outputFormat
     // isPrivateGeneration lives on workflow.metadata, not per-step.
     // `remixOfId` is ALSO copied onto each step's metadata: the orchestrator's
     // `WorkflowStepHandler.GenerateJobsAsync` reads `workflowStep.Metadata["remixOfId"]`
@@ -1265,9 +1468,6 @@ export async function createWorkflowStepsFromGraph({
         outputFormat: (step.input as { outputFormat?: string }).outputFormat ?? data.outputFormat,
       },
       priority: data.priority,
-      // A handler-set timeout wins, so a slow ecosystem can ask for more than the
-      // per-step-type default.
-      timeout: step.timeout ?? (VIDEO_STEP_TYPES.has(step.$type) ? videoTimeout : timeout),
       metadata: isWhatIf
         ? undefined
         : ({
@@ -1369,7 +1569,7 @@ export async function createWorkflowStepsFromGraphInput({
   const { steps, workflowMetadata } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
-    user,
+    user: user && { ...user, tier: externalCtx.user.tier },
     isWhatIf,
     sourceImageIds,
     isGreen,
@@ -1542,6 +1742,31 @@ function extractInputImageUrls(data: Record<string, unknown>): string[] | undefi
   return urls.length ? urls : undefined;
 }
 
+/** Long enough for a healthy whatIf, short enough that a slow one never delays a generation. */
+const DOWNLOAD_ESTIMATE_TIMEOUT_MS = 2_000;
+
+/**
+ * Whether a download is already moving for one of this submit's models — the only case where a whatIf
+ * can produce a queue position and an ETA worth showing.
+ *
+ * Deliberately NOT `unavailable`: that is "nothing is pulling it", which is the resting state for most
+ * of the catalogue, so triggering on it would price a second workflow on a large share of all submits
+ * to produce an estimate the orchestrator has no queue for.
+ */
+async function hasQueuedDownloads(data: unknown) {
+  const { model, vae, resources } = data as {
+    model?: { id?: number } | null;
+    vae?: { id?: number } | null;
+    resources?: { id?: number }[] | null;
+  };
+  const ids = [model, vae, ...(resources ?? [])]
+    .map((r) => r?.id)
+    .filter((id): id is number => typeof id === 'number');
+  if (!ids.length) return false;
+  const residency = await getResourceResidency(ids).catch(() => []);
+  return residency.some(({ availability }) => ['loading', 'queued'].includes(availability.status));
+}
+
 /**
  * Submits a generation workflow using generation-graph input.
  *
@@ -1572,30 +1797,36 @@ export async function generateFromGraph({
   track,
   externalId,
   acknowledgedSoftBlock,
+  downloadPriority,
 }: GenerateOptions) {
   const { data, computedKeys } = validateInput(input, externalCtx);
 
   const inputImages = extractInputImageUrls(data as unknown as Record<string, unknown>);
+  // One read for both consumers below, so the provenance check and the prompt
+  // audit cannot disagree about what was submitted.
+  const prompt = 'prompt' in data && typeof data.prompt === 'string' ? data.prompt : undefined;
+
   // Both routes, because neither covers the other — see `unionSourceImageIds`.
   // The short version: the form re-uploads a remix's on-site source as an
   // orchestrator blob before submit, so the URL route alone reports nothing for
   // the flow the Remix menu drives (measured: 98 on-site URLs survived out of
   // 2,526 on the engine that button picks).
-  const sourceImageIds = unionSourceImageIds({
+  const sourceImageIds = await unionSourceImageIds({
     urlSourceImageIds: await resolveSourceImageIds(inputImages),
     tokens: sourceProvenance,
     userId,
+    prompt,
   });
 
   // Audit prompt before generation
-  if ('prompt' in data && typeof data.prompt === 'string' && data.prompt.trim()) {
+  if (prompt?.trim()) {
     const negativePrompt = 'negativePrompt' in data ? (data.negativePrompt as string) : undefined;
     const inputVideo = (
       'video' in data ? (data.video as { url?: string } | null | undefined) : undefined
     )?.url;
     try {
       await auditPromptServer({
-        prompt: data.prompt,
+        prompt,
         negativePrompt,
         userId,
         isGreen: !!isGreen,
@@ -1623,7 +1854,7 @@ export async function generateFromGraph({
       createXGuardModerationRequest({
         mode: 'prompt',
         entityType: 'prompt',
-        positivePrompt: data.prompt,
+        positivePrompt: prompt,
         negativePrompt,
         userId,
         recordForReview: true,
@@ -1670,12 +1901,13 @@ export async function generateFromGraph({
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
-    user: { id: userId, isModerator },
+    user: { id: userId, isModerator, tier: externalCtx.user.tier },
     sourceMetadata,
     sourceMetadataMap,
     remixOfId,
     sourceImageIds,
     isGreen,
+    orchestratorToken: token,
   });
 
   // Determine workflow tags
@@ -1726,6 +1958,34 @@ export async function generateFromGraph({
         }
       : workflowMetadata;
 
+  const priceDownloads = () =>
+    submitWorkflow({
+      token,
+      body: {
+        steps,
+        experimental,
+        // @ts-ignore - BuzzSpendType is properly supported
+        currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+      },
+      query: { whatif: true },
+    }).catch(() => undefined);
+
+  // A download boost is a fixed fee, so it is only sent when a whatIf shows something waiting to
+  // download. If that check fails the generation still goes out, unboosted and unbilled for it.
+  const boostWhatIf = downloadPriority ? await priceDownloads() : undefined;
+  const boostDownloads = !!boostWhatIf?.steps?.some((step) => readPreparation(step));
+  // The submit reply predates the orchestrator queueing any download, so the queue card's first
+  // render has nothing to show. A whatIf of the same steps does, and runs alongside the submit.
+  //
+  // 🔴 Never let the ESTIMATE hold the reply: a generation that is accepted is the headline property,
+  // and this only buys the card a head start on numbers its own poll fetches seconds later. A boosted
+  // submit does wait, because the fee is only charged when its whatIf shows something to download.
+  const downloadWhatIf =
+    boostWhatIf ??
+    ((await hasQueuedDownloads(data))
+      ? Promise.race([priceDownloads(), sleep(DOWNLOAD_ESTIMATE_TIMEOUT_MS).then(() => undefined)])
+      : Promise.resolve(undefined));
+
   // Submit workflow to orchestrator
   const workflow = (await submitWorkflow({
     token,
@@ -1758,6 +2018,7 @@ export async function generateFromGraph({
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
       externalId,
+      ...(boostDownloads ? { downloadPriority } : {}),
     },
   })) as TextToImageResponse;
 
@@ -1765,6 +2026,14 @@ export async function generateFromGraph({
 
   // Format and return response
   const [formatted] = await formatGenerationResponse2([workflow], { id: userId } as any);
+  const priced = await downloadWhatIf;
+  attachEstimatedPreparation(
+    formatted.steps,
+    (priced?.steps ?? []).map((step) => ({ name: step.name, preparation: readPreparation(step) })),
+    // What the workflow BECAME, not what was asked for: restating an estimate as Express on a
+    // workflow the orchestrator left in the free lane shows the payer a boost they did not get.
+    readDownloadPriority(workflow) === 'high'
+  );
 
   // 🔴 ALSO ON THE REPLY, and deliberately not only via the metadata round-trip.
   // The formatter recovers substitutions from `workflow.metadata`, but only when
@@ -1804,6 +2073,7 @@ export async function whatIfFromGraph({
   experimental,
   token,
   currencies,
+  downloadPriority,
 }: WhatIfOptions) {
   // Provide fallback for fields that don't affect cost estimation.
   // The client excludes content fields (prompt/negativePrompt for image/video,
@@ -1813,7 +2083,7 @@ export async function whatIfFromGraph({
     prompt: 'cost-estimation',
     negativePrompt: '',
     musicDescription: 'cost-estimation',
-    lyrics: '',
+    lyrics: 'cost-estimation',
     ...input,
   };
   const { data, computedKeys } = validateInput(whatIfInput, externalCtx);
@@ -1821,7 +2091,8 @@ export async function whatIfFromGraph({
     data,
     computedKeys,
     isWhatIf: true,
-    user: userId ? { id: userId, isModerator } : undefined,
+    user: userId ? { id: userId, isModerator, tier: externalCtx.user.tier } : undefined,
+    orchestratorToken: token,
   });
 
   // Submit what-if request to orchestrator
@@ -1832,6 +2103,7 @@ export async function whatIfFromGraph({
       experimental,
       // @ts-ignore - BuzzSpendType is properly supported
       currencies: currencies ? BuzzTypes.toOrchestratorType(currencies) : undefined,
+      ...(downloadPriority ? { downloadPriority } : {}),
     },
     query: {
       whatif: true,
@@ -1843,6 +2115,7 @@ export async function whatIfFromGraph({
     const support = workflowStep.queuePosition?.support;
     if (support && support !== 'available') ready = false;
   }
+  const preparation = workflow.steps?.map(readPreparation).find(isDefined);
 
   // Silent checkpoint substitutions from the validation above (#3520 / #3665).
   //
@@ -1856,17 +2129,21 @@ export async function whatIfFromGraph({
   // Nothing is persisted on this path, so unlike the submit path the reply is
   // the only carrier; there is no metadata round-trip to fall back on.
   const modelSubstitutions = projectModelSubstitutions(externalCtx.modelSubstitutions);
+  const warnings = collectStepWarnings(workflow.steps);
 
   return {
     allowMatureContent: workflow.allowMatureContent,
     transactions: workflow.transactions?.list,
     cost: workflow.cost,
     ready,
-    // Additive and OMITTED when empty, matching the App Blocks snapshot contract.
-    // 🔴 Consequence a client must know: absence means "no substitution" OR "a
-    // server that predates this field" — the two are indistinguishable. Callers
-    // that need to tell them apart should probe a known-bad version id once.
+    preparation,
+    // Both additive and OMITTED when empty, matching the App Blocks snapshot contract.
+    // 🔴 Consequence a client must know: an absent `modelSubstitutions` means "no
+    // substitution" OR "a server that predates this field" — the two are
+    // indistinguishable. Callers that need to tell them apart should probe a
+    // known-bad version id once.
     ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
+    ...(warnings.length ? { warnings } : {}),
   };
 }
 
@@ -2074,6 +2351,11 @@ export type StepMetadataTransformation = {
   resources?: Record<string, unknown>[];
 };
 
+const readPreparation = (step: WorkflowStep) =>
+  normalizePreparation((step as { preparation?: unknown }).preparation);
+const readDownloadPriority = (workflow: Workflow) =>
+  (workflow as { downloadPriority?: DownloadPriority | null }).downloadPriority ?? undefined;
+
 /** Normalized workflow step */
 export interface NormalizedStep {
   $type: string;
@@ -2082,6 +2364,7 @@ export interface NormalizedStep {
   timeout?: string | null;
   completedAt?: string | null;
   queuePosition?: WorkflowStepQueuePosition;
+  preparation?: DownloadPreparation;
   /** Metadata with resolved params/resources */
   metadata: NormalizedStepMetadata;
   /** Output items (image / video / audio) */
@@ -2144,6 +2427,7 @@ export interface NormalizedWorkflow {
   cost: WorkflowCost;
   tags: string[];
   allowMatureContent?: boolean | null;
+  downloadPriority?: DownloadPriority;
   duration?: number;
   /** Workflow-level metadata — the form input snapshot for replay. */
   metadata?: NormalizedWorkflowMetadata;
@@ -2346,7 +2630,8 @@ export function normalizeStepOutput(step: StepWithOutput): NormalizedBlobItem[] 
         return [{ ...(output.blob as VideoBlob), type: 'video' as const }];
       return [{ ...(output.blob as AudioBlob), type: 'audio' as const }];
     case 'miniMaxMusic3':
-      // Always audio-only — MiniMaxMusic3Output has no cover-image variant.
+    case 'yuE2':
+    case 'soniloAudioGen':
       return output.blob ? [{ ...(output.blob as AudioBlob), type: 'audio' as const }] : [];
     case 'polyGen':
       // Bundle every PolyGen sibling onto a single item — the format step
@@ -2745,6 +3030,7 @@ function formatStep(
     timeout: step.timeout,
     completedAt: step.completedAt,
     queuePosition: step.queuePosition,
+    preparation: readPreparation(step),
     metadata: {
       ...removeEmpty({
         params: finalParams,
@@ -2805,6 +3091,9 @@ export async function formatGenerationResponse2(
     const wfResources = wfMeta.resources as ResourceData[] | undefined;
     if (wfResources) {
       for (const r of wfResources) {
+        // Raw-AIR resources (negative synthetic ids) have no ModelVersion row
+        // to hydrate — they render from their stored fields below.
+        if (isRawAirResource(r)) continue;
         allResourceRefs.push({ id: r.id, epoch: r.epochDetails?.epochNumber });
       }
     }
@@ -2848,6 +3137,10 @@ export async function formatGenerationResponse2(
       const wfRawResources = rawWfMeta.resources as ResourceData[] | undefined;
       const wfResources: GenerationResource[] = [];
       for (const r of wfRawResources ?? []) {
+        if (isRawAirResource(r)) {
+          wfResources.push(rawAirGenerationResource(r));
+          continue;
+        }
         const enriched = enrichedResources.find((ar) => ar.id === r.id);
         if (enriched) {
           wfResources.push({ ...enriched, strength: r.strength ?? enriched.strength });
@@ -2918,6 +3211,7 @@ export async function formatGenerationResponse2(
       cost: workflow.cost,
       tags: workflow.tags ?? [],
       allowMatureContent: workflow.allowMatureContent,
+      downloadPriority: readDownloadPriority(workflow),
       duration:
         workflow.startedAt && workflow.completedAt
           ? Math.round(
@@ -3153,6 +3447,7 @@ export async function getWorkflowStatusUpdate({
     return {
       id: workflowId,
       status: result.status!,
+      downloadPriority: readDownloadPriority(result),
       steps: result.steps?.map((step) => {
         const metadata = (step.metadata ?? {}) as Record<string, unknown>;
 
@@ -3176,6 +3471,7 @@ export async function getWorkflowStatusUpdate({
           status: step.status,
           completedAt: step.completedAt,
           queuePosition: step.queuePosition,
+          preparation: readPreparation(step),
           output,
           // TEMPORARY: dual-emit under the legacy `images` key for pre-rename clients.
           images: output,
@@ -3184,4 +3480,48 @@ export async function getWorkflowStatusUpdate({
       }),
     };
   }
+}
+
+/** The price of boosting, or null when the orchestrator reports no download fee. */
+export async function getWorkflowBoostCost({
+  token,
+  workflowId,
+}: {
+  token: string;
+  workflowId: string;
+}) {
+  const priced = await setWorkflowDownloadPriority({ token, workflowId, whatif: true });
+  return { cost: priced?.cost?.fixed?.downloadPriority ?? null };
+}
+
+/**
+ * Charges only at the price the user confirmed: the orchestrator's update takes no expected price,
+ * so the boost is re-priced first and refused when the price moved — or when there is nothing left
+ * to boost, which a workflow already in the high lane reports as no download fee.
+ */
+export async function boostWorkflow({
+  token,
+  workflowId,
+  expectedCost,
+  user,
+}: {
+  token: string;
+  workflowId: string;
+  expectedCost: number;
+  user?: SessionUser;
+}) {
+  const { cost } = await getWorkflowBoostCost({ token, workflowId });
+  if (cost == null || cost !== expectedCost) return { boosted: false as const, cost };
+
+  // The update's own reply is the boosted workflow — its lane, position and ETA are the orchestrator's
+  // answer for this boost, so the card never has to infer them. The charge has already gone through,
+  // so a failed read must not report it as a failure.
+  const updated = await setWorkflowDownloadPriority({ token, workflowId });
+  const workflow = await Promise.resolve(
+    updated?.steps?.length ? updated : getWorkflow({ token, path: { workflowId } })
+  )
+    .then((result) => formatGenerationResponse2([result as Workflow], user))
+    .then(([formatted]) => formatted)
+    .catch(() => null);
+  return { boosted: true as const, workflow };
 }

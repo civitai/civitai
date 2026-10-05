@@ -7,16 +7,18 @@ import { logToAxiom } from '~/server/logging/client';
 import { deleteWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwInternalServerError } from '~/server/utils/errorHandling';
 
-/** How long to wait for the teardown of a mis-attributed workflow before giving up on it. Sized well
- *  under the module's 20s read backstops: this runs on the submit path with the user waiting, and the
- *  throw below does not depend on the delete succeeding. */
-const DELETE_TIMEOUT_MS = 5_000;
-
 /**
- * The orchestrator names a workflow `<owning userId>-<timestamp>`, so the id it returns from a
- * submit reports which consumer it authenticated the request as. Returns null when the id carries
- * no numeric prefix — an id shape this app does not control must not be able to reject a
- * legitimate generation.
+ * The orchestrator names a workflow `<owning userId>-<timestamp>`, server-side, on every submit
+ * path — so the id reports which consumer it authenticated the request as. Returns null when the id
+ * carries no numeric prefix.
+ *
+ * 🔴 WHAT TO DO WITH THAT NULL IS THE CALLER'S DECISION, NOT THIS FUNCTION'S, and the two callers
+ * decide it OPPOSITELY — see `assertWorkflowOwner` below and
+ * `~/server/services/blocks/block-workflow-access.ts`. The rule that separates them is the id's
+ * provenance: an id the orchestrator just minted for a submit is not the same kind of claim as an
+ * id that arrived in a request body. This docstring used to state one caller's default as though it
+ * were a property of the id shape, which is exactly how the second caller would have inherited the
+ * wrong one.
  */
 export function workflowOwnerId(workflowId: string | undefined | null): number | null {
   if (!workflowId) return null;
@@ -27,6 +29,11 @@ export function workflowOwnerId(workflowId: string | undefined | null): number |
   const parsed = Number(prefix);
   return Number.isSafeInteger(parsed) ? parsed : null;
 }
+
+/** How long to wait for the teardown of a mis-attributed workflow before giving up on it. Sized well
+ *  under the module's 20s read backstops: this runs on the submit path with the user waiting, and the
+ *  throw below does not depend on the delete succeeding. */
+const DELETE_TIMEOUT_MS = 5_000;
 
 /**
  * Refuse a workflow the orchestrator attributed to someone other than the user who submitted it.
@@ -58,6 +65,11 @@ export async function assertWorkflowOwner(
 
   const ownerId = workflowOwnerId(workflow?.id);
   if (ownerId === null) {
+    // FAIL-OPEN, and the reason is specific to THIS call site rather than to the parser: the id
+    // here was just minted by the orchestrator for a submit this app made, so an unrecognised
+    // shape means the orchestrator named it in a way this app does not control — rejecting would
+    // kill a legitimate generation the user has already been charged for. A call site whose id
+    // arrives from a CLIENT has the opposite default; see `block-workflow-access.ts`.
     observeConsumerUnverifiable();
     return;
   }

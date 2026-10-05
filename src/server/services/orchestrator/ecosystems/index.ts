@@ -6,7 +6,7 @@
  * the appropriate orchestrator step input format.
  *
  * Handler files follow the {name}.handler.ts naming convention:
- * - stable-diffusion.handler.ts → stable-diffusion-graph.ts (SD1, SD2, SDXL, Pony, Illustrious, NoobAI)
+ * - stable-diffusion.handler.ts → stable-diffusion-graph.ts (SD1, SDXL, Pony, Illustrious, NoobAI)
  * - flux.handler.ts → flux-graph.ts (Flux1, FluxKrea)
  * - flux2.handler.ts → flux2-graph.ts
  * - flux-kontext.handler.ts → flux-kontext-graph.ts
@@ -21,13 +21,15 @@ import type {
   ImageGenStepTemplate,
   PreprocessImageStepTemplate,
   PromptEnhancementStepTemplate,
-  TextToImageStepTemplate,
   VideoGenStepTemplate,
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
-import type { PreprocessVideoStepTemplate } from '@civitai/orchestration-client';
+import type {
+  PreprocessVideoStepTemplate,
+  SoniloAudioGenStepTemplate,
+  YuE2StepTemplate,
+} from '@civitai/orchestration-client';
 import { maxRandomSeed } from '~/server/common/constants';
-import { usesComfyEngine } from '~/shared/constants/generation.constants';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
@@ -35,6 +37,7 @@ import type { GenerationHandlerCtx } from '../orchestration-new.service';
 import { createStableDiffusionInput } from './stable-diffusion.handler';
 import { createFluxInput } from './flux.handler';
 import { createFlux2Input } from './flux2.handler';
+import { createFlux3Input } from './flux3.handler';
 import { createFlux2KleinInput } from './flux2-klein.handler';
 import { createFluxKontextInput } from './flux-kontext.handler';
 import { createQwenInput } from './qwen.handler';
@@ -50,6 +53,7 @@ import { createLensInput } from './lens.handler';
 import { createKrea2Input } from './krea2.handler';
 import { createMAIInput } from './mai.handler';
 import { createReveInput } from './reve.handler';
+import { createMingInput } from './ming.handler';
 import { createMuseImageInput } from './muse-image.handler';
 import { createMageFlowInput } from './mage-flow.handler';
 import { createZImageInput } from './z-image.handler';
@@ -61,6 +65,8 @@ import { createPonyV7Input } from './pony-v7.handler';
 // Audio ecosystem handlers
 import { createAceAudioInput } from './ace-audio.handler';
 import { createMiniMaxMusicInput } from './minimax-music.handler';
+import { createYuE2Input } from './yue2.handler';
+import { createSoniloInput } from './sonilo.handler';
 
 // 3D model ecosystem handlers
 import { createPolyGenInput } from './polygen-graph.handler';
@@ -90,13 +96,14 @@ import { createFlux3VideoInput } from './flux3-video.handler';
 
 /** Step input for orchestrator - union of all possible step types */
 export type StepInput =
-  | TextToImageStepTemplate
   | ComfyStepTemplate
   | ImageGenStepTemplate
   | VideoGenStepTemplate
   | VideoInterpolationStepTemplate
   | AceStepAudioStepTemplate
   | MiniMaxMusic3StepTemplate
+  | YuE2StepTemplate
+  | SoniloAudioGenStepTemplate
   | ChatCompletionStepTemplate
   | PromptEnhancementStepTemplate
   | PreprocessImageStepTemplate
@@ -109,16 +116,18 @@ export type EcosystemGraphOutput = Extract<GenerationGraphTypes['Ctx'], { ecosys
 
 /** SD family context */
 export type SDFamilyCtx = EcosystemGraphOutput & {
-  ecosystem: 'SD1' | 'SD2' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
+  ecosystem: 'SD1' | 'SDXL' | 'Pony' | 'Illustrious' | 'NoobAI';
 };
 
-/** Flux family context (Flux1/FluxKrea - textToImage) */
+/** Flux family context (Flux1/FluxKrea) */
 export type FluxCtx = EcosystemGraphOutput & {
   ecosystem: 'Flux1' | 'FluxKrea';
 };
 
 /** Flux2 context */
 export type Flux2Ctx = EcosystemGraphOutput & { ecosystem: 'Flux2' };
+/** Flux.3 (FLUX 3 Image) context */
+export type Flux3Ctx = EcosystemGraphOutput & { ecosystem: 'Flux3' };
 
 /** Flux2 Klein context */
 export type Flux2KleinCtx = EcosystemGraphOutput & {
@@ -166,6 +175,9 @@ export type PonyV7Ctx = EcosystemGraphOutput & { ecosystem: 'PonyV7' };
 
 /** Ernie context */
 export type ErnieCtx = EcosystemGraphOutput & { ecosystem: 'Ernie' };
+
+/** Ming Image Design context */
+export type MingCtx = EcosystemGraphOutput & { ecosystem: 'Ming' };
 
 /** Ideogram context */
 export type IdeogramCtx = EcosystemGraphOutput & { ecosystem: 'Ideogram' };
@@ -253,6 +265,7 @@ export type MiniMaxMusic3Ctx = EcosystemGraphOutput & { ecosystem: 'MiniMaxMusic
 export { createStableDiffusionInput } from './stable-diffusion.handler';
 export { createFluxInput } from './flux.handler';
 export { createFlux2Input } from './flux2.handler';
+export { createFlux3Input } from './flux3.handler';
 export { createFlux2KleinInput } from './flux2-klein.handler';
 export { createFluxKontextInput } from './flux-kontext.handler';
 export { createQwenInput } from './qwen.handler';
@@ -273,12 +286,15 @@ export { createLensInput } from './lens.handler';
 export { createKrea2Input } from './krea2.handler';
 export { createMAIInput } from './mai.handler';
 export { createReveInput } from './reve.handler';
+export { createMingInput } from './ming.handler';
 export { createMuseImageInput } from './muse-image.handler';
 export { createMageFlowInput } from './mage-flow.handler';
 
 // Audio ecosystems
 export { createAceAudioInput } from './ace-audio.handler';
 export { createMiniMaxMusicInput } from './minimax-music.handler';
+export { createYuE2Input } from './yue2.handler';
+export { createSoniloInput } from './sonilo.handler';
 
 // 3D model ecosystems
 export { createPolyGenInput } from './polygen-graph.handler';
@@ -334,24 +350,7 @@ export async function createEcosystemStepInput(
     seed: dataSeed ?? Math.floor(Math.random() * maxRandomSeed),
   };
 
-  const steps = await createEcosystemStep(normalizedData, handlerCtx);
-
-  if (
-    usesComfyEngine({
-      ecosystem: data.ecosystem,
-      modelId: 'model' in data ? (data as { model?: { id?: number } }).model?.id : undefined,
-      enhancedCompatibility:
-        'enhancedCompatibility' in data ? (data.enhancedCompatibility as boolean) : undefined,
-    })
-  ) {
-    for (const step of steps) {
-      if (step.$type === 'textToImage') {
-        (step as { input: Record<string, unknown> }).input.engine = 'comfyui';
-      }
-    }
-  }
-
-  return steps;
+  return createEcosystemStep(normalizedData, handlerCtx);
 }
 
 async function createEcosystemStep(
@@ -362,12 +361,11 @@ async function createEcosystemStep(
 
   switch (ecosystem) {
     // =========================================================================
-    // Image Ecosystems - textToImage step type
+    // Image Ecosystems
     // =========================================================================
 
     // SD Family
     case 'SD1':
-    case 'SD2':
     case 'SDXL':
     case 'Pony':
     case 'Illustrious':
@@ -408,13 +406,13 @@ async function createEcosystemStep(
     case 'PonyV7':
       return createPonyV7Input(normalizedData, handlerCtx);
 
-    // =========================================================================
-    // Image Ecosystems - imageGen step type
-    // =========================================================================
-
     // Flux2
     case 'Flux2':
       return createFlux2Input(normalizedData, handlerCtx);
+
+    // Flux.3 (FLUX 3 Image, fal)
+    case 'Flux3':
+      return createFlux3Input(normalizedData, handlerCtx);
 
     // Flux2 Klein Family
     case 'Flux2Klein_9B':
@@ -430,6 +428,7 @@ async function createEcosystemStep(
     // Qwen family
     case 'Qwen':
     case 'Qwen2':
+    case 'Qwen21':
     case 'Qwen3':
       return createQwenInput(normalizedData, handlerCtx);
 
@@ -453,7 +452,7 @@ async function createEcosystemStep(
     case 'Ernie':
       return createErnieInput(normalizedData, handlerCtx);
 
-    // Ideogram 4 (comfy)
+    // Ideogram 4.0 (comfy) and 4.5 (fal)
     case 'Ideogram':
       return createIdeogramInput(normalizedData, handlerCtx);
 
@@ -472,6 +471,10 @@ async function createEcosystemStep(
     // Reve (Reve AI, FAL engine)
     case 'Reve':
       return createReveInput(normalizedData, handlerCtx);
+
+    // Ming Image Design (Comfy)
+    case 'Ming':
+      return createMingInput(normalizedData, handlerCtx);
 
     // Muse Image (Meta, FAL engine)
     case 'MuseImage':
@@ -558,7 +561,7 @@ async function createEcosystemStep(
     }
 
     // =========================================================================
-    // Audio Ecosystems - aceStepAudio / miniMaxMusic3 step types
+    // Audio Ecosystems
     // =========================================================================
 
     case 'Ace':
@@ -566,6 +569,12 @@ async function createEcosystemStep(
 
     case 'MiniMaxMusic3':
       return createMiniMaxMusicInput(normalizedData, handlerCtx);
+
+    case 'YuE2':
+      return createYuE2Input(normalizedData, handlerCtx);
+
+    case 'Sonilo':
+      return createSoniloInput(normalizedData, handlerCtx);
 
     // =========================================================================
     // 3D Model Ecosystems — polyGen step (Meshy via Fal)

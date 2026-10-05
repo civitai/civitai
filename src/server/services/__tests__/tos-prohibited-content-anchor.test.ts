@@ -20,12 +20,12 @@ const CONTENT_ROOT = join(process.cwd(), 'src', 'static-content');
 const tosFiles = readdirSync(CONTENT_ROOT).filter((f) => /^tos(\.[\w-]+)?\.md$/.test(f));
 
 /**
- * What `getTosMeta` advertised before the anchor was added — the identity users have already
- * accepted. It must keep advertising these, or everyone is asked to re-accept.
+ * The identity users have accepted. It must keep advertising these, or everyone is asked to
+ * re-accept.
  */
 const ACCEPTED_IDENTITY: Record<string, string> = {
-  blue: '31f28b3e38065449f2ea1e9a342e64e79f3c1bcbe10d6185cad484f4ceebce6f',
-  red: '31f28b3e38065449f2ea1e9a342e64e79f3c1bcbe10d6185cad484f4ceebce6f', // no tos.red.md — falls back to tos.md
+  blue: 'b5db388c235f268791f1aaee484913af94544c6ce1b1b5b8487d5dc1307f8b4e',
+  red: 'b5db388c235f268791f1aaee484913af94544c6ce1b1b5b8487d5dc1307f8b4e', // no tos.red.md — falls back to tos.md
   green: '978c839dea33653f13bce7440d91f4024e886e93557d4deb5718086c904ce0b5',
 };
 

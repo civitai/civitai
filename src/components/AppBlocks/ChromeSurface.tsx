@@ -3,6 +3,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { cloneElement, createContext, useContext, useMemo } from 'react';
 
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
 
 /**
  * F3 — THE ONE ADAPTIVE FLOATING SURFACE THE APP-BLOCK CHROME USES.
@@ -157,9 +158,9 @@ export function ChromeSurface({
           onClose={() => onChange(false)}
           position="bottom"
           title={title}
-          // Above the chrome bar and above the app iframe. 400 is what `SelectMenuV2`
-          // uses for the same job; the chrome has no z-index of its own to clear.
-          zIndex={400}
+          // Above the chrome bar and above the app iframe; the chrome has no z-index
+          // of its own to clear. Same tier as every other bottom sheet.
+          zIndex={mobileMenuSheetZIndex}
           closeButtonProps={{ 'aria-label': `Close ${title}` }}
           styles={{
             // Size to the content instead of Mantine's fixed `size="md"`, capped so a

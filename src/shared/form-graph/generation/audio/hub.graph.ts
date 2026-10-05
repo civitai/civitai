@@ -4,6 +4,8 @@ import { ecosystemFieldSchemas, type RootCtx } from '../shared';
 
 import { ace } from './ace.graph';
 import { minimaxMusic } from './minimax-music.graph';
+import { yue2 } from './yue2.graph';
+import { sonilo } from './sonilo.graph';
 
 /**
  * The AUDIO hub: ecosystem selection scoped to audio output, then the family
@@ -31,7 +33,8 @@ export const audioHub = defineGraph<RootCtx>()
       ...ecosystemFieldSchemas(
         _ext.workflow,
         hiddenEcosystems,
-        ecosystemStates.map((e) => e.key)
+        ecosystemStates.map((e) => e.key),
+        usableEcosystems
       ),
       default: defaultValue,
       // v1 stores the ecosystem selection per OUTPUT type
@@ -48,6 +51,8 @@ export const audioHub = defineGraph<RootCtx>()
     branch('ecosystem', [
       [['Ace'], ace],
       [['MiniMaxMusic3'], minimaxMusic],
+      [['YuE2'], yue2],
+      [['Sonilo'], sonilo],
     ] as const)
   );
 

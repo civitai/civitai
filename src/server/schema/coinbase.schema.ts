@@ -4,7 +4,11 @@ import { CryptoTransactionStatus } from '~/shared/utils/prisma/enums';
 
 export type CreateBuzzCharge = z.infer<typeof createBuzzChargeSchema>;
 export const createBuzzChargeSchema = z.object({
-  unitAmount: z.number(),
+  // No `.min`/`.max` here, unlike the Stripe route: a negative or a 1e15 `unitAmount` parses.
+  // Keep `.int()` — the service's `unitAmount !== buzzAmount / 10` check compares two
+  // client-supplied values against each other, so a consistent fractional pair passes it and
+  // reaches `createCharge` as a sub-cent `local_price.amount` like "10.004".
+  unitAmount: z.number().int('The transaction amount must be a whole number of cents'),
   buzzAmount: z.number(),
 });
 

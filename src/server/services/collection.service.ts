@@ -738,6 +738,7 @@ const inputToCollectionType = {
   articleId: CollectionType.Article,
   imageId: CollectionType.Image,
   postId: CollectionType.Post,
+  model3dId: CollectionType.Model3D,
 } as const;
 
 /**
@@ -917,6 +918,11 @@ export const saveItemInCollections = async ({
     }
   }
 
+  // validateContestCollectionEntry has no model3dIds leg, so an entry would skip every contest gate.
+  if (itemKey === 'model3dId' && collections.some((c) => c.mode === CollectionMode.Contest)) {
+    throw throwBadRequestError('3D models cannot be entered into contest collections');
+  }
+
   // Every collection this request touches, in one lookup — the adds need it to spot no-op re-submissions
   // (below) and the removes need each item's id and author. Keyed on the item column alone: `input` also
   // carries `note`, and spreading it into the filter made a save-with-note silently match nothing.
@@ -1045,10 +1051,18 @@ export const saveItemInCollections = async ({
           followCollectionIds.push(collectionId);
         }
 
+        const status = submissionStatus(permission);
+        // The review queue (getAllCollectionItems) has no Model3D variant, so a pending entry could never be actioned.
+        if (itemKey === 'model3dId' && status === CollectionItemStatus.REVIEW) {
+          throw throwBadRequestError(
+            '3D models cannot be submitted to collections that review entries'
+          );
+        }
+
         return {
           addedById: userId,
           collectionId,
-          status: submissionStatus(permission),
+          status,
           [itemKey]: input[itemKey],
           tagId,
         };
@@ -1508,6 +1522,11 @@ export const upsertCollection = async ({
 
   if (write && write !== CollectionWriteConfiguration.Private && !isMember && !isModerator) {
     throw throwAuthorizationError('A membership is required to open a collection to submissions.');
+  }
+
+  // The initial item below is written directly, skipping saveItemInCollections' contest refusal.
+  if (type === CollectionType.Model3D && mode === CollectionMode.Contest) {
+    throw throwBadRequestError('3D model collections cannot be contests');
   }
 
   // TODO allow cover image
@@ -2089,11 +2108,13 @@ async function getEntityOwnerId({
   imageId,
   articleId,
   postId,
+  model3dId,
 }: {
   modelId?: number;
   imageId?: number;
   articleId?: number;
   postId?: number;
+  model3dId?: number;
 }): Promise<number | null> {
   const select = { userId: true };
   if (modelId) {
@@ -2112,6 +2133,10 @@ async function getEntityOwnerId({
     const article = await dbRead.article.findUnique({ where: { id: articleId }, select });
     return article?.userId ?? null;
   }
+  if (model3dId) {
+    const model3d = await dbRead.model3D.findUnique({ where: { id: model3dId }, select });
+    return model3d?.userId ?? null;
+  }
   return null;
 }
 
@@ -2120,7 +2145,7 @@ export const getUserCollectionItemsByItem = async ({
 }: {
   input: GetUserCollectionItemsByItemSchema & { userId: number; isModerator?: boolean };
 }) => {
-  const { userId, isModerator, modelId, imageId, articleId, postId } = input;
+  const { userId, isModerator, modelId, imageId, articleId, postId, model3dId } = input;
 
   const userCollections = await getUserCollectionsWithPermissions({
     input: {
@@ -2135,7 +2160,7 @@ export const getUserCollectionItemsByItem = async ({
 
   if (userCollections.length === 0) return [];
 
-  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId });
+  const entityOwnerId = await getEntityOwnerId({ modelId, imageId, articleId, postId, model3dId });
   const ownsEntity = entityOwnerId !== null && entityOwnerId === userId;
 
   const collectionItems = await dbRead.collectionItem.findMany({
@@ -2154,7 +2179,7 @@ export const getUserCollectionItemsByItem = async ({
       collectionId: {
         in: userCollections.map((c) => c.id),
       },
-      OR: [{ modelId }, { imageId }, { postId }, { articleId }],
+      OR: [{ modelId }, { imageId }, { postId }, { articleId }, { model3dId }],
     },
   });
 
@@ -2595,10 +2620,10 @@ export const updateCollectionItemsStatus = async ({
  * it; it samples instead (`getCollectionPlayableSample`).
  *
  * 🔴 THIS FUNCTION IS NOT IMAGE-ONLY, AND THE CLAMP MUST NOT MAKE IT SO. The row
- * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId`,
- * so model / post / article collections are counted here too. `nsfwLevel` lives on
- * `Image`, so an INNER `JOIN "Image"` would silently return 0 for every one of
- * those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
+ * filter keeps anything with an `imageId` OR `modelId` OR `postId` OR `articleId` OR
+ * `model3dId`, so model / post / article / 3D model collections are counted here
+ * too. `nsfwLevel` lives on `Image`, so an INNER `JOIN "Image"` would silently
+ * return 0 for every one of those collections. Hence a LEFT JOIN plus an explicit `ci."imageId" IS NULL`
  * escape: a non-image item has no image maturity to test and is kept
  * unconditionally.
  *
@@ -2644,7 +2669,7 @@ export function getCollectionItemCount({
     FROM "CollectionItem" ci
     ${join}
     WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
-      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL)
+      AND (ci."imageId" IS NOT NULL OR ci."modelId" IS NOT NULL OR ci."postId" IS NOT NULL OR ci."articleId" IS NOT NULL OR ci."model3dId" IS NOT NULL)
     GROUP BY ci."collectionId"
   `;
 }
@@ -2661,6 +2686,10 @@ export function getContributorCount({ collectionIds: ids }: { collectionIds: num
     GROUP BY "collectionId"
   `;
 }
+
+// Every challenge lookup behind an entry gate reads a missing row as "no rule applies", so it must
+// not come from a replica that can lag the challenge's creation or a status change.
+const challengeGateDb = dbWrite;
 
 // Charge the active user-challenge entry fee for `imageIds` on this collection, if any.
 // Idempotent per (challenge, image) — see chargeEntryFees. No-op for empty input or collections
@@ -2686,7 +2715,7 @@ const chargeContestEntryFeesForCollection = async ({
   // returning every image as paid — so behavior is unchanged for the caller, which still commits
   // when unpaidImageIds is empty). System/Mod (daily) + community-contest collections have no
   // source=User row → null → undefined (unchanged, no metric).
-  const feeChallenge = await dbRead.challenge.findFirst({
+  const feeChallenge = await challengeGateDb.challenge.findFirst({
     where: { collectionId, source: 'User', status: 'Active' },
     select: { id: true, entryFee: true, buzzType: true },
   });
@@ -2756,7 +2785,7 @@ export const validateContestCollectionEntry = async ({
   // The source=User challenge (if any) that owns this collection. One lookup, reused by the flag
   // gate, the block gate, and the accepting-entries timing gate below — System/Mod (daily) and
   // community-contest collections have no such row, so this is null for them.
-  const userChallenge = await dbRead.challenge.findFirst({
+  const userChallenge = await challengeGateDb.challenge.findFirst({
     where: { collectionId, source: ChallengeSource.User },
     select: { id: true, createdById: true, status: true },
   });
@@ -2772,7 +2801,7 @@ export const validateContestCollectionEntry = async ({
   // lookup: it filters on createdById across ANY source, so it also catches a System/Mod challenge
   // the viewer created — which the source=User lookup above would miss.
   if (!isModerator) {
-    const ownChallenge = await dbRead.challenge.findFirst({
+    const ownChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, createdById: userId },
       select: { id: true },
     });
@@ -2797,14 +2826,20 @@ export const validateContestCollectionEntry = async ({
   // challenge collections (target has a linked Challenge) so community contests are
   // unaffected. Scoped to genuine re-adds: an image still present as an entry is excluded,
   // so editing a post that re-saves its images doesn't fail.
-  if (imageIds.length > 0 && !isModerator) {
+  const isChallengeCollection =
+    imageIds.length > 0 &&
+    !isModerator &&
+    !!(await challengeGateDb.challenge.findFirst({
+      where: { collectionId },
+      select: { id: true },
+    }));
+  if (isChallengeCollection) {
     const alreadyJudged = await dbRead.$queryRaw<{ imageId: number }[]>`
       SELECT DISTINCT th."imageId"
       FROM "Thread" th
       JOIN "CommentV2" cm ON cm."threadId" = th.id
       JOIN "ChallengeJudge" cj ON cj."userId" = cm."userId"
       WHERE th."imageId" IN (${Prisma.join(imageIds)})
-        AND EXISTS (SELECT 1 FROM "Challenge" ch WHERE ch."collectionId" = ${collectionId})
         AND NOT EXISTS (
           SELECT 1 FROM "CollectionItem" ci
           WHERE ci."collectionId" = ${collectionId}
@@ -3034,7 +3069,7 @@ export const validateContestCollectionEntry = async ({
   // existing participants may keep adding entries up to maxEntriesPerUser. Checked before any
   // charge so a capped-out user is never charged.
   if (!isModerator) {
-    const cappedChallenge = await dbRead.challenge.findFirst({
+    const cappedChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, status: 'Active', maxParticipants: { not: null } },
       select: { maxParticipants: true },
     });
@@ -3061,7 +3096,7 @@ export const validateContestCollectionEntry = async ({
   // promotion, after the fee already ran, and entry fees are never refunded (see
   // challenge-funding.ts) — so an off-resource submission was charged then silently rejected.
   if (imageIds.length > 0 && !isModerator) {
-    const resourceChallenge = await dbRead.challenge.findFirst({
+    const resourceChallenge = await challengeGateDb.challenge.findFirst({
       where: { collectionId, status: 'Active', modelVersionIds: { isEmpty: false } },
       select: { modelVersionIds: true },
     });
@@ -3541,9 +3576,27 @@ export const getCollectionCoverImages = async ({
               AND i."needsReview" IS NULL
       ) t
       WHERE t.rn = 1
-    ), articleItemImage as MATERIALIZED (
-        SELECT a.id, a.cover image FROM "Article" a
-        WHERE a.id IN (SELECT "articleId" FROM target)
+    ), articleItemImage AS MATERIALIZED (
+        SELECT
+          a.id,
+          ${imageSql}
+        FROM "Article" a
+        JOIN "Image" i ON i.id = a."coverId"
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
+    ), articleItemSrc AS MATERIALIZED (
+        SELECT a.id, a.cover src FROM "Article" a
+        WHERE a.id IN (SELECT "articleId" FROM target WHERE "articleId" IS NOT NULL)
+    ), model3dItemImage AS MATERIALIZED (
+        SELECT
+          m3.id,
+          ${imageSql}
+        FROM "Model3D" m3
+        JOIN "Image" i ON i.id = m3."thumbnailImageId"
+        WHERE m3.id IN (SELECT "model3dId" FROM target WHERE "model3dId" IS NOT NULL)
+          AND i."ingestion" = 'Scanned'
+          AND i."needsReview" IS NULL
     )
     SELECT
         target."collectionId" id,
@@ -3551,9 +3604,11 @@ export const getCollectionCoverImages = async ({
           (SELECT image FROM imageItemImage iii WHERE iii.id = target."imageId"),
           (SELECT image FROM postItemImage pii WHERE pii.id = target."postId"),
           (SELECT image FROM modelItemImage mii WHERE mii.id = target."modelId"),
+          (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId"),
+          (SELECT image FROM model3dItemImage m3i WHERE m3i.id = target."model3dId"),
           NULL
         ) image,
-        (SELECT image FROM articleItemImage aii WHERE aii.id = target."articleId") src
+        (SELECT src FROM articleItemSrc ais WHERE ais.id = target."articleId") src
     FROM target
   `
       : [];
@@ -3635,6 +3690,8 @@ export const removeCollectionItem = async ({
       ? 'Image'
       : permissions.collectionType === CollectionType.Post
       ? 'Post'
+      : permissions.collectionType === CollectionType.Model3D
+      ? 'Model3D'
       : null;
 
   if (!tableKey) throw throwNotFoundError('Unable to determine collection type');
@@ -3734,6 +3791,8 @@ export async function checkUserOwnsCollectionAndItem({
       ? 'Image'
       : collection.type === CollectionType.Post
       ? 'Post'
+      : collection.type === CollectionType.Model3D
+      ? 'Model3D'
       : null;
 
   if (!tableKey) throw throwNotFoundError('Unable to determine collection type');

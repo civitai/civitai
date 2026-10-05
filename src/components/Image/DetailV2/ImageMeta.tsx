@@ -100,13 +100,15 @@ export function ImageMeta({ imageId }: { imageId: number }) {
             </div>
             <div className="flex items-center gap-1">
               <CopyButton value={prompt}>
-                {({ copy, Icon, color }) => (
-                  <LegacyActionIcon onClick={copy} color={color}>
-                    <Icon size={16} />
-                  </LegacyActionIcon>
+                {({ copy, copied, Icon, color }) => (
+                  <Tooltip label={copied ? 'Copied' : 'Copy prompt'}>
+                    <LegacyActionIcon onClick={copy} color={color}>
+                      <Icon size={16} />
+                    </LegacyActionIcon>
+                  </Tooltip>
                 )}
               </CopyButton>
-              <Tooltip label={copiedAll ? 'Copied' : 'Copy all metadata'} withArrow>
+              <Tooltip label={copiedAll ? 'Copied' : 'Copy all metadata'}>
                 <LegacyActionIcon onClick={copyAll} color={copiedAll ? 'teal' : undefined}>
                   {copiedAll ? <IconCheck size={16} /> : <IconCopy size={16} />}
                 </LegacyActionIcon>
@@ -132,10 +134,12 @@ export function ImageMeta({ imageId }: { imageId: number }) {
           <div className="flex items-center justify-between">
             <Text className="font-semibold">Negative prompt</Text>
             <CopyButton value={negativePrompt}>
-              {({ copy, Icon, color }) => (
-                <LegacyActionIcon onClick={copy} color={color}>
-                  <Icon size={16} />
-                </LegacyActionIcon>
+              {({ copy, copied, Icon, color }) => (
+                <Tooltip label={copied ? 'Copied' : 'Copy negative prompt'}>
+                  <LegacyActionIcon onClick={copy} color={color}>
+                    <Icon size={16} />
+                  </LegacyActionIcon>
+                </Tooltip>
               )}
             </CopyButton>
           </div>
