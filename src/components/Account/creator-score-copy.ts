@@ -16,4 +16,4 @@ export const creatorScoreSources = {
   },
 } as const;
 
-export const creatorScorePenalty = 'Content removed for breaking our rules takes points away.';
+export const creatorScorePenalty = 'Images removed for breaking our rules take points away.';

@@ -21,7 +21,9 @@ export function CreatorScoreExplainer() {
           </List.Item>
         ))}
       </List>
-      <Text size="sm">{creatorScorePenalty}</Text>
+      <Text size="sm">
+        {creatorScorePenalty} If people unfollow you or remove a reaction, those points go too.
+      </Text>
       <Text size="xs" c="dimmed">
         Your score updates once a day, so today&apos;s activity shows up tomorrow. It never resets
         or expires.
