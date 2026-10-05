@@ -221,6 +221,13 @@ describe('GET /api/v1/posts/[id]', () => {
     expect((await call({ id: '55288' })).statusCode).toBe(200);
   });
 
+  it('404s a post mixing safe and mature images in a restricted region', async () => {
+    mockIsRegionRestricted.mockReturnValue(true);
+    mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: 1 | 4 }));
+
+    expect((await call({ id: '55288' })).statusCode).toBe(404);
+  });
+
   it('404s a post whose every image is Blocked', async () => {
     mockGetPostDetail.mockResolvedValue(post({ nsfwLevel: NsfwLevel.Blocked }));
 

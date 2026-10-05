@@ -29,6 +29,14 @@ describe('refreshThumbnailCache', () => {
     expect(refresh).toHaveBeenCalledWith([12]);
   });
 
+  it('skips a row whose parent cannot be read', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ parentId: null }]);
+
+    await refreshThumbnailCache([12]);
+
+    expect(refresh).toHaveBeenCalledWith([12]);
+  });
+
   it('does nothing for an empty list', async () => {
     await refreshThumbnailCache([]);
 

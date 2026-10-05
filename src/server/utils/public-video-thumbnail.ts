@@ -1,4 +1,4 @@
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import { getEdgeUrl, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -22,12 +22,21 @@ type CustomThumbnail = {
 export type PublicVideoThumbnail = { url: string; width: number | null; height: number | null };
 
 /**
- * A still for a video, for public API consumers that cannot render one themselves.
- *
- * `original=false` is load-bearing on both branches: with no width, `getEdgeUrl` otherwise asks for
- * the original, which is the MP4 whatever the filename says. The cacher returns the source's native
- * size, so the dimensions are the source's own.
+ * `getEdgeUrl` turns a width-less request into `original=true`, which serves the MP4 whatever the
+ * filename says. Passing `original: false` prevents that; the cacher treats it the same as no
+ * `original` at all, so it is dropped from the published URL. With no width the cacher returns the
+ * source's native size.
  */
+function getStillUrl(src: string, skip?: number) {
+  return getEdgeUrl(src, {
+    ...videoStillEdgeOptions,
+    skip,
+    original: false,
+    optimized: true,
+  }).replace('original=false,', '');
+}
+
+/** A still for a video, for public API consumers that cannot render one themselves. */
 export function getPublicVideoThumbnail({
   image,
   customThumbnail,
@@ -43,25 +52,14 @@ export function getPublicVideoThumbnail({
   const allowed = Flags.intersection(browsingLevel, allBrowsingLevelsFlag);
   if (customThumbnail?.nsfwLevel && Flags.intersects(customThumbnail.nsfwLevel, allowed)) {
     return {
-      url: getEdgeUrl(customThumbnail.url, {
-        original: false,
-        optimized: true,
-        type: MediaType.image,
-      }),
+      url: getStillUrl(customThumbnail.url),
       width: customThumbnail.width ?? null,
       height: customThumbnail.height ?? null,
     };
   }
 
   return {
-    url: getEdgeUrl(image.url, {
-      anim: false,
-      transcode: true,
-      original: false,
-      optimized: true,
-      skip: getSkipValue({ type: image.type, metadata: image.metadata }),
-      type: MediaType.image,
-    }),
+    url: getStillUrl(image.url, getSkipValue({ type: image.type, metadata: image.metadata })),
     width: image.width ?? null,
     height: image.height ?? null,
   };

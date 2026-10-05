@@ -1,4 +1,4 @@
-import { getEdgeUrl } from '~/client-utils/edge-url';
+import { getEdgeUrl, videoStillEdgeOptions } from '~/client-utils/edge-url';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -60,7 +60,7 @@ export function buildOgCoverEdgeUrl(
     height: dims.height,
     fit: 'cover',
     quality: 90,
-    ...(isVideo ? { type: MediaType.image, anim: false, transcode: true } : {}),
+    ...(isVideo ? videoStillEdgeOptions : {}),
   });
 }
 
@@ -76,7 +76,10 @@ export type FetchImageAsDataUriOptions = {
  */
 export async function fetchImageAsDataUri(
   url: string,
-  { timeoutMs = OG_IMAGE_FETCH_TIMEOUT_MS, maxBytes = OG_IMAGE_MAX_BYTES }: FetchImageAsDataUriOptions = {}
+  {
+    timeoutMs = OG_IMAGE_FETCH_TIMEOUT_MS,
+    maxBytes = OG_IMAGE_MAX_BYTES,
+  }: FetchImageAsDataUriOptions = {}
 ): Promise<string | null> {
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });

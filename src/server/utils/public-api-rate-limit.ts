@@ -15,10 +15,10 @@ export { resolveClientIp };
 
 /**
  * Conservative per-client fixed-window rate limit for the PUBLIC REST endpoints
- * that expose articles + collections (`/api/v1/articles[/:id]`,
- * `/api/v1/collections[/:id]`).
+ * that expose articles, collections and posts (`/api/v1/articles[/:id]`,
+ * `/api/v1/collections[/:id]`, `/api/v1/posts/:id`).
  *
- * WHY: these routes make articles/collections publicly REST-accessible for the
+ * WHY: these routes make articles/collections/posts publicly REST-accessible for the
  * first time — a brand-new origin-exposure surface. The pre-existing public
  * endpoints (models/images) ship with NO per-endpoint ceiling; for a NEW surface
  * we start deliberately CAUTIOUS (easy to loosen later once real traffic shape is

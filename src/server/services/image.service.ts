@@ -658,9 +658,13 @@ export const deleteImageById = async ({
 
     const image = await dbWrite.image.delete({
       where: { id },
-      select: { url: true, postId: true, nsfwLevel: true, userId: true },
+      select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
     });
     if (!image) return;
+
+    // A custom video thumbnail is cached under its video, and the row that names the video is
+    // now gone, so `refreshThumbnailCache` can no longer find it.
+    const thumbnailParentId = (image.metadata as { parentId?: number } | null)?.parentId;
 
     const invalidateExistence = invalidateManyImageExistence([id]);
 
@@ -682,6 +686,7 @@ export const deleteImageById = async ({
       imageMetadataCache.refresh(id),
       userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
+      ...(thumbnailParentId ? [thumbnailCache.refresh(thumbnailParentId)] : []),
     ]);
 
     return image;
@@ -778,13 +783,21 @@ export async function deleteImages(
     });
 
     const results = await dbWrite.$queryRaw<
-      { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
+      {
+        id: number;
+        url: string;
+        postId: number | null;
+        nsfwLevel: number;
+        userId: number;
+        parentId: number | null;
+      }[]
     >`
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(ids)})
-      RETURNING id, url, "postId", "nsfwLevel", "userId"
+      RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
+    const thumbnailParentIds = uniq(results.map((x) => x.parentId).filter(isDefined));
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
     const invalidateExistence = invalidateManyImageExistence(imageIds);
@@ -802,6 +815,8 @@ export async function deleteImages(
       imageMetadataCache.refresh(imageIds),
       userImageVideoCountCaches.bust(uniq(results.map((x) => x.userId))),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
+      // Custom video thumbnails are cached under their video; see deleteImageById.
+      ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -7026,7 +7041,7 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await imageMetadataCache.refresh(id);
+    await Promise.all([imageMetadataCache.refresh(id), refreshThumbnailCache(id)]);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);

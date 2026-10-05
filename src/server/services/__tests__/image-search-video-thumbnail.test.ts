@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest } from 'next';
+import type * as Caches from '~/server/redis/caches';
 
 vi.mock('~/server/services/feature-flags.service', () => ({
   getFeatureFlags: vi.fn(() => ({ canViewNsfw: true, datapacketRead: false })),
@@ -11,10 +12,14 @@ vi.mock('~/server/flipt/client', () => ({
 }));
 
 const thumbnailFetch = vi.fn<(ids: number[]) => Promise<Record<number, unknown>>>(async () => ({}));
-vi.mock('~/server/redis/caches', () => ({
-  imageMetaCache: { fetch: vi.fn(async () => ({})) },
-  thumbnailCache: { fetch: (ids: number[]) => thumbnailFetch(ids) },
-}));
+vi.mock('~/server/redis/caches', async (importOriginal) => {
+  const actual = await importOriginal<typeof Caches>();
+  return {
+    ...actual,
+    imageMetaCache: { ...actual.imageMetaCache, fetch: vi.fn(async () => ({})) },
+    thumbnailCache: { ...actual.thumbnailCache, fetch: (ids: number[]) => thumbnailFetch(ids) },
+  };
+});
 
 const feedSearch = vi.fn(async () => ({ items: [] as unknown[], nextCursor: undefined }));
 vi.mock('~/server/services/image.service', () => ({
@@ -78,10 +83,11 @@ describe('runImageSearch: video thumbnails', () => {
 
     const [, video] = await search([item(1, 'image'), item(2, 'video')]);
 
+    expect(thumbnailFetch).toHaveBeenCalledTimes(1);
     expect(thumbnailFetch).toHaveBeenCalledWith([2]);
     expect(video.thumbnail).toEqual({
       url: expect.stringMatching(
-        /(^|\/)thumb-uuid\/original=false,optimized=true\/thumb-uuid\.jpeg$/
+        /(^|\/)thumb-uuid\/anim=false,transcode=true,optimized=true\/thumb-uuid\.jpeg$/
       ),
       width: 832,
       height: 1216,
@@ -96,9 +102,7 @@ describe('runImageSearch: video thumbnails', () => {
     const [video] = await search([item(2, 'video')], 1);
 
     expect(video.thumbnail).toEqual({
-      url: expect.stringMatching(
-        /(^|\/)uuid-2\/anim=false,transcode=true,original=false,optimized=true\//
-      ),
+      url: expect.stringMatching(/(^|\/)uuid-2\/anim=false,transcode=true,optimized=true\//),
       width: 1280,
       height: 704,
     });
