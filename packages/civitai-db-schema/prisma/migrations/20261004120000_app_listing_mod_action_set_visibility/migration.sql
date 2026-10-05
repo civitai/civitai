@@ -69,10 +69,20 @@
 -- 🔴 ORDERING — timing-sharp, and sharper than its predecessors for the reason above:
 --   * Apply to the DEV CLONE **before** a PR preview exercises
 --     `appListings.setListingVisibilityAsModerator`, or the mod proc 500s on the constraint
---     for every call (preview-DB-drift -> smoke-500 trap). ⚠️ This read "the preview changes
---     a level and 500s on the constraint with no audit row", the same retracted claim as
---     above: the transaction rolls the level back, so the preview is broken but not
---     inconsistent. The ordering requirement is unchanged either way.
+--     for every moderator visibility CHANGE (preview-DB-drift -> smoke-500 trap). ⚠️ This
+--     read "the preview changes a level and 500s on the constraint with no audit row", the
+--     same retracted claim as above: the transaction rolls the level back, so the preview is
+--     broken but not inconsistent. The ordering requirement is unchanged either way.
+--     ⚠️ AND IT READ "for every call", WHICH IS WIDER THAN THE CODE — corrected in round 5
+--     to match the header's own wording above. `setListingVisibilityAsModerator` returns at
+--     the `if (!applied.changed) return applied;` short-circuit, so an IDEMPOTENT NO-OP
+--     (the requested level already stored) never reaches the event INSERT, never hits 23514,
+--     and returns 200 whether or not this DDL is applied.
+--     🔴 SO A NO-OP IS NOT A VALID SMOKE PROBE FOR THIS WIDEN. Now that the widen HAS been
+--     applied to both environments, "the mod proc 500s" is no longer a live observable
+--     either — and a reader using it as the check would read a 200 off a no-op as proof the
+--     DDL landed. Probe by reading the constraint itself (`\d+ app_listing_moderation_events`
+--     / `pg_get_constraintdef`), not by calling the proc.
 --   * Apply to PROD nvme0 **before** this ships (main -> release). The OWNER path is
 --     unaffected — it writes no event — so only the moderator proc is gated on this.
 --   * ⚠️ The dev clone is re-created weekly from prod barman backups

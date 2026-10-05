@@ -39,9 +39,20 @@
  * ⚠️ AND IT IS NOT "THE ONE MANUAL DDL" EITHER, which this paragraph also used to claim. The
  * `visibility` COLUMN is manual-apply too (`20261001170000_app_listing_visibility`). The
  * distinction worth drawing is not how they are applied but whether their absence is
- * HANDLED: a missing column is a designed refusal (`readListingVisibility` → P2022 →
+ * HANDLED: a missing column is a designed refusal (`readListingVisibility` → 42703 →
  * `assertVisibilityWritable` → VISIBILITY_UNAVAILABLE_MESSAGE), while a missing action CHECK
  * is an unhandled 23514 surfacing as a 500.
+ *
+ * ⚠️ THE CODE IS 42703, AND THIS SENTENCE SAID `P2022` UNTIL ROUND 5. `readListingVisibility`
+ * reads EXCLUSIVELY through `$queryRaw`, and the raw path surfaces the Postgres
+ * `undefined_column` 42703 — which is what the column's own migration, the sibling
+ * `app-listing-source-repo.service.ts` and the `$transaction` docblock below all say.
+ * `P2022` is the DELEGATE-path spelling, and no delegate can name this column at all (it is
+ * `// @no-type`). Harmless only because `isMissingColumnError` matches BOTH codes (verified
+ * at `app-listing-source-repo.service.ts`, which returns true for `P2022` and `42703`, on
+ * `code` or `meta.code`); the hazard is someone narrowing that predicate while trusting this
+ * line as the authority for the write path, dropping the 42703 arm and turning the designed
+ * refusal into an unhandled 500 in exactly the un-migrated environment it exists for.
  *
  * 🔴 EACH IS ITS OWN EXPORTED FUNCTION — never an `asModerator` flag
  * on this one. A boolean that selects between "resolve the caller's role" and "trust the
@@ -196,10 +207,13 @@ async function applyVisibility(
   // through a replication-lag window would be gated on a stale status — in both
   // directions. Same argument `resolvePrivateRunAccess` makes for threading its pool.
   //
-  // `columnAvailable` carries the manual-apply answer out of the SAME read, so the level
-  // needs no separate lookup. A missing column makes the whole select raise P2022, which is
-  // caught below and reported as "not available on this environment" — the honest answer for
-  // a write, and the reason this function may name the column at all.
+  // ⚠️ THIS SELECT DOES NOT CARRY THE LEVEL, AND THIS COMMENT CLAIMED IT DID UNTIL ROUND 5
+  // ("`columnAvailable` carries the manual-apply answer out of the SAME read, so the level
+  // needs no separate lookup"). There is no such field here and there cannot be: the
+  // `visibility` column is `// @no-type`, so it is absent from the generated client and this
+  // delegate cannot name it. The level and its availability come from the SEPARATE raw read
+  // below (`readListingVisibility`) — that lookup is required, not redundant, and a reader
+  // who believed this comment would delete it.
   const listing = await db.appListing.findUnique({
     where: { id: appListingId },
     select: {

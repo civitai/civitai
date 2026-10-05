@@ -91,8 +91,23 @@ export type ListListingReportsInput = z.infer<typeof listListingReportsSchema>;
  * entry here and no widen migration: nothing failed, because all three of this repo's gates
  * for this class (`UnclassifiedModerationAction`, the partition test, the agreement test)
  * fire on REGISTERING an action, and an unregistered one is invisible to every one of them.
- * Measured on prod: the insert was rejected with 23514 while the level write had already
- * committed. Registering the action is what ARMS those gates — so add the tuple member and
+ * Measured on prod AGAINST THE REVISION THAT SHIPPED, in which the level `UPDATE` and its
+ * event INSERT were TWO SEPARATE ROUND TRIPS: the insert was rejected with 23514 while the
+ * level write had already committed, leaving a changed audience with no audit row.
+ *
+ * ⚠️ THAT MEASUREMENT IS HISTORY, NOT CURRENT BEHAVIOUR, AND THIS SITE DID NOT SAY SO UNTIL
+ * ROUND 5 OF THE AUDIT — the two sites in `app-listing-visibility-write.service.ts` that
+ * carry the same measurement each open with the scoping qualifier and this one did not, in a
+ * different file, so a reader arriving here had none of that context. NOW:
+ * `setListingVisibilityAsModerator` runs both halves on ONE interactive transaction, so a
+ * rejected event ABORTS the transaction and the `UPDATE` rolls back with it — the proc 500s
+ * and NOTHING is written: no level change, no audit row. The scope is spelled out rather
+ * than left to the reader because the stale version INVERTS THE REMEDIATION: whoever
+ * registers the next action is the same person who deploys without the DDL, and read as
+ * current this sentence sends them to plan a data reconciliation over
+ * `app_listings.visibility` for orphaned level changes that cannot exist.
+ *
+ * Registering the action is what ARMS those gates — so add the tuple member and
  * the migration TOGETHER, and reference a named constant at the create site rather than a
  * literal, or the next one is invisible in exactly the same way.
  *
