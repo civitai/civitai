@@ -1,6 +1,8 @@
 import type { NextApiRequest } from 'next';
 import type { SessionUser } from '~/types/session';
 import { resolveClientIpOrNull } from '~/server/utils/client-ip';
+import { INT4_MAX } from '~/server/schema/base.schema';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
@@ -103,6 +105,20 @@ export type ShapedImage = {
   tags?: Array<{ id: number; name: string }>;
 };
 
+// The feed emits `${offset}|${sortAtUnix}` and reads only the offset, via `parseInt(...) || 0`
+// (event-engine-common/feeds/base.ts), so anything else silently restarts at page one.
+const FEED_OFFSET_CURSOR = /^(-?\d+)(?:\|[^|]*)?$/;
+
+function assertFeedOffsetCursor(cursor: RunImageSearchInput['cursor']) {
+  if (cursor === undefined || cursor === '') return;
+  const value = cursor instanceof Date ? cursor.toISOString() : String(cursor);
+  const match = FEED_OFFSET_CURSOR.exec(value);
+  if (!match) return throwBadRequestError(`Invalid cursor: not a feed offset "${value}"`);
+  const offset = Number(match[1]);
+  if (offset < 0 || offset > INT4_MAX)
+    throwBadRequestError(`Invalid cursor: out of range "${value}"`);
+}
+
 /**
  * Run the image search and shape the response. Behavior-preserving extraction
  * of the body of `/api/v1/images/index.ts`. The caller owns: param parsing,
@@ -165,6 +181,8 @@ export async function runImageSearch(
       ? true
       : !!(data as { modelId?: unknown }).modelId &&
         !(data as { modelVersionId?: unknown }).modelVersionId;
+
+  if (!useLegacyMethod) assertFeedOffsetCursor(cursor);
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
