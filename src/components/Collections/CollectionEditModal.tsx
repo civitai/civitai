@@ -15,13 +15,10 @@ import {
 import { IconBolt, IconCalendar } from '@tabler/icons-react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
-// 🔴 `~/env/client`, NOT `process`. This read used to be `import { env } from 'process'`, the
-// only one of its kind in a client component (the repo's four other `from 'process'` imports
-// are all server-side). Next inlines the LITERAL text `process.env.NEXT_PUBLIC_*` into the
-// client bundle; a destructured `env` binding is not that text, so `env.NEXT_PUBLIC_BASE_URL`
-// read off the browser's `process` shim — i.e. `undefined`, making `joinUrl` below `''`
-// unconditionally. `NEXT_PUBLIC_BASE_URL` is declared in `src/env/client-schema.ts` and every
-// other client consumer of it reads from here.
+// 🔴 `~/env/client`, NOT `process` — which is what this was, uniquely among client components.
+// Next inlines the LITERAL text `process.env.NEXT_PUBLIC_*`; a destructured `env` binding is
+// not that text, so this read the browser's `process` shim and `joinUrl` below was `''`
+// unconditionally. `NEXT_PUBLIC_BASE_URL` is declared in `src/env/client-schema.ts`.
 import { env } from '~/env/client';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';

@@ -826,8 +826,8 @@ describe('🔒 the collection invite-link body reserves the control`s width', ()
    * describe records the whole arc: `COPY_BODY_PADDING_RIGHT` as a plain `36` measured 0.00px
    * at R=16 and −9px at R=20, invisible to two viewports that agreed with each other at both.
    *
-   * ONE RENDER, R VARIED ON THE MOUNTED TREE, so the measurement differs from the blocks above
-   * in the root font size and in nothing else — no second mount and no second fixture.
+   * ONE RENDER, R VARIED ON THE MOUNTED TREE, so this differs from the two viewport cases above
+   * it in the root font size and in nothing else — same fixture, same 390x844, no second mount.
    */
   test('the clearance survives a 20px root font size', async () => {
     const ROOT_FONT_SIZE = '20px';
@@ -854,19 +854,12 @@ describe('🔒 the collection invite-link body reserves the control`s width', ()
           `${getComputedStyle(control.element()).right} from the edge at ` +
           `${box(control.element()).width}px wide`
       ).toBeGreaterThanOrEqual(0);
-      // ⚠️ NO "THE PADDING TRACKED R" ASSERTION HERE, AND ONE WAS WRITTEN AND THEN DELETED.
-      // It compared the reserved padding at R=20 against its R=16 reading times 1.25, and was
-      // documented as "THE DISCRIMINATING CLAIM, not a restatement of the clearance" — which
-      // the mutants refute. Measured: a de-rem-ified padding (a fixed `38px`, byte-identical at
-      // R=16) is caught HERE, by the clearance, at −9.5px; a padding that is too LARGE is
-      // caught by the POSITIVE CONTROL's derivation above, at R=16. No mutant could be
-      // constructed in which the tracking assertion was the one that reported: with the
-      // derivation pinning the padding to 38 at R=16, any px spelling drives the clearance
-      // negative here and the clearance runs first. Unlike `AgentOnboardingCard`'s prose panel
-      // — where a `.panel` wrapper's 1px border lands the gap on exactly 0.00px at R=20 and the
-      // tracking check is the only thing that fires — this body has no such term. An assertion
-      // nobody can watch fail reads as coverage while providing none, so it is gone rather than
-      // reworded.
+      // ⚠️ NO "THE PADDING TRACKED R" ASSERTION HERE — one was written, then deleted, because no
+      // mutant makes it report. A de-rem-ified padding (fixed `38px`) is caught by the clearance
+      // above at −9.5px, and an oversized one by the POSITIVE CONTROL's derivation at R=16; with
+      // that derivation pinning 38px at R=16, no px spelling leaves this clearance non-negative.
+      // `AgentOnboardingCard`'s prose panel does need its equivalent — a `.panel` 1px border
+      // lands its gap on exactly 0.00px at R=20 — and this body has no such term.
     } finally {
       document.documentElement.style.removeProperty('font-size');
     }
