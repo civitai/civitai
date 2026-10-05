@@ -783,9 +783,9 @@ export default function CrucibleSubmitEntryModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [images, awaitingScan, remainingEntries, ineligibleReasonsById]);
 
-  // Submit entries mutation
+  // A refused submit means the page's entry count disagrees with the server's, so resync on failure too.
   const submitEntryMutation = trpc.crucible.submitEntry.useMutation({
-    onSuccess: () => {
+    onSettled: () => {
       queryUtils.crucible.getById.invalidate({ id: crucibleId });
       queryUtils.crucible.getEntries.invalidate({ crucibleId });
     },
