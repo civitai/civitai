@@ -78,6 +78,7 @@ import {
 } from '~/server/utils/creator-program.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
+  MIN_CREATOR_SCORE,
   MIN_WITHDRAWAL_AMOUNT,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
@@ -339,7 +340,7 @@ const JoinCreatorProgramCard = () => {
           <CreatorProgramRequirement
             isMet={hasEnoughCreatorScore}
             title={`Have a Creator Score higher than ${abbreviateNumber(
-              requirements?.score.min ?? 10000
+              requirements?.score.min ?? MIN_CREATOR_SCORE
             )}`}
             content={
               <p className="my-0">
