@@ -142,7 +142,7 @@ Mockup: [docs/working/mockups/prompt-snippets-mobile/r2-slim-bottom-drawer.html]
 
 ## Submission payload
 
-Extend the `generateFromGraph` call ([generationRequestHooks.ts:216-237](../../src/components/ImageGeneration/utils/generationRequestHooks.ts#L216-L237)) so the **graph itself carries a new `snippets` node** alongside the existing prompt, negativePrompt, and other nodes. The submission's outer shape is unchanged — the snippets data lives inside `input` (the serialized generation-graph / ecosystem-graph), not as a sibling field.
+Extend the `generateFromGraph` call ([generationRequestHooks.ts:216-237](../../src/components/ImageGeneration/utils/generationRequestHooks.ts#L216-L237)) so the **graph itself carries a new `snippets` node** alongside the existing prompt, negativePrompt, and other nodes. The submission's outer shape is unchanged — the snippets data lives inside `input` (the serialized generation hub input), not as a sibling field.
 
 ```ts
 type SnippetReference = {

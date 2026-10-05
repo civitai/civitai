@@ -85,8 +85,8 @@ User-driven follow-ups from card/mod review + generator surfacing:
 
 **Open follow-ups from W** (intentional, not blockers):
 - `BaseModelRecord.type` for PolyGen is `'image'` because Prisma `MediaType` enum has no `'model3d'` variant. The record is `hidden: true` so it never surfaces in pickers. Future migration could extend the enum.
-- `WORKFLOW_TAGS` has no `'model3d'` tag. Orchestration would mis-tag PolyGen submissions as `'vid'`, but the dispatcher in `createEcosystemStep` throws before reaching that code (PolyGen submits via `generate3D`, not `generateFromGraph`). Add the tag if the unified path is ever wired.
-- The empty `polyGenGraph` means PolyGen contributes zero form nodes through the unified graph (intentional — the standalone form IS the workflow body). If a future workstream wants graph-driven PolyGen inputs, build out the nodes + a handler entry in `createEcosystemStep`.
+- `WORKFLOW_TAGS` has no `'model3d'` tag. Orchestration would mis-tag PolyGen submissions as `'vid'`, but the dispatcher (`createStep` in `orchestrator/form-graph/index.ts`) throws before reaching that code (PolyGen submits via `generate3D`, not `generateFromGraph`). Add the tag if the unified path is ever wired.
+- The empty `polyGenGraph` means PolyGen contributes zero form nodes through the unified graph (intentional — the standalone form IS the workflow body). If a future workstream wants graph-driven PolyGen inputs, build out the fields + a handler entry in `createStep` (`orchestrator/form-graph/index.ts`).
 
 
 ## Active agents — Wave 2.5 (continuation) — DONE

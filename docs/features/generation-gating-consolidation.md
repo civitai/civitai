@@ -65,10 +65,10 @@ Every gate threads the same value through these layers:
 5. **Router schema** — `ecosystemConfigInputSchema` / `setSelfHostedStatus` input in
    [generation.router.ts](../../src/server/routers/generation.router.ts).
 6. **Graph context type** — a field on `GenerationCtx`
-   ([context.ts](../../src/shared/data-graph/generation/context.ts)).
+   ([context.ts](../../src/shared/generation/context.ts)).
 7. **Server ext builder** — `buildGenerationContext`
    ([orchestration-new.service.ts](../../src/server/services/orchestrator/orchestration-new.service.ts)).
-8. **Client ext builder** — `GenerationFormProvider` externalContext memo.
+8. **Client ext builder** — `BaseGenerationForm`'s `ext` memo ([BaseGenerationForm.tsx](../../src/components/form-graph/generation/BaseGenerationForm.tsx)).
 9. **Client default** — `DEFAULT_GENERATION_CONFIG` in
    [generation.utils.ts](../../src/components/ImageGeneration/GenerationForm/generation.utils.ts).
 10. **Client hook** — `useGatedEcosystems` / `useSelfHostedDisabledEcosystems` /
@@ -105,9 +105,10 @@ This alone makes the surface legible without changing behavior.
 
 These remove literal duplication with no architectural change:
 
-- **`gatedStringSchema(disabledList, message)`** — the
-  `list?.length ? z.string().refine(v => !list.includes(v), { message }) : z.string()`
-  block is copy-pasted in the ecosystem node and the workflow node. One helper.
+- ~~**`gatedStringSchema(disabledList, message)`**~~ — **closed by `feat/remove-data-graph`.**
+  The duplicate lived in the data-graph ecosystem node; one copy remains
+  (`workflowOutput` in `src/shared/form-graph/generation/hub.graph.ts`), so there is nothing
+  to share.
 - **Picker "disabled option" primitive** — `BaseModelInput.renderItem` and
   `WorkflowInput.WorkflowMenuItem` both implement: grey + `cursor-not-allowed`,
   block `onClick`, `<Badge>Disabled</Badge>`, tooltip. Extract a shared
@@ -117,7 +118,7 @@ These remove literal duplication with no architectural change:
   field reads over `useGenerationConfig`. Replace with a single
   `useGenerationConfig().<field>` access or one tiny `useGenerationGate(field)`.
 - **Shared `GenerationCtx` builder** — `buildGenerationContext` (server) and
-  `GenerationFormProvider` (client) assemble the _same_ gating fields from the
+  `BaseGenerationForm`'s `ext` memo (client) assemble the _same_ gating fields from the
   _same_ resolved config. Extract a `toGenerationExt(config, user)` used by both
   so they can't drift (today they're maintained in parallel).
 

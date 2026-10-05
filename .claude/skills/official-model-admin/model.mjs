@@ -24,7 +24,7 @@ const BASE_MODEL_TAG = { id: 1237, name: 'base model' };
 const FP_VALUES = [
   'fp32', 'fp16', 'bf16', 'mxfp8', 'fp8_mixed', 'fp8_scaled', 'fp8', 'int8', 'nf4', 'nvfp4', 'int4',
 ];
-const ECOSYSTEMS_DIR = resolve(projectRoot, 'src/server/services/orchestrator/ecosystems');
+const HANDLERS_DIR = resolve(projectRoot, 'src/server/services/orchestrator/form-graph');
 // Mirrors LOADABLE_FILE_TYPES in src/utils/file-display-helpers.ts, which checkLoadable applies.
 const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
 // Closed models reachable only through their provider's API, plus fal, which hosts third-party models.
@@ -179,24 +179,66 @@ async function transfer() {
 // ---------------------------------------------------------------------------
 // Versions: API-only (the provider runs it, no files) or hosted weights (we run it from files)
 
+/**
+ * Which handlers the form-graph dispatcher routes an ecosystem to, by reading its source.
+ *
+ * Three shapes have to be matched, and missing any of them reports the wrong handler for a
+ * family that has one — wrong evidence for the API-only/hosted-weights call this script
+ * exists to make, in the one direction nobody checks.
+ *
+ * 1. A `case` may carry a trailing brace (`case 'Grok': {`).
+ * 2. A whole family may be routed by a predicate ahead of the switch, with no line naming
+  *    the key at all. Such a predicate is named for the family prefix (`isWanEcosystem` ←
+  *    `Wan22`), which is the only link a text scan has to it, so `via` reports how the match
+ *    was made rather than leaving the inference invisible to whoever reads the evidence.
+ * 3. An arm may dispatch to SEVERAL handlers, and the choice can matter to the answer — Grok
+ *    forks image vs video, and a family can be API-only for one and hosted for the other.
+ *    Reading just the first one found also used to run PAST the end of the block, because
+  *    Grok's `return` is a multi-line ternary: it reported the NEXT case's handler.
+ */
 function handlerFor(ecosystemKey) {
-  const index = readFileSync(join(ECOSYSTEMS_DIR, 'index.ts'), 'utf-8').split('\n');
-  const start = index.findIndex((line) => line.trim() === `case '${ecosystemKey}':`);
-  if (start === -1) return null;
-  const fn = index
-    .slice(start)
-    .map((line) => line.match(/return (create\w+Input)\(/)?.[1])
-    .find(Boolean);
-  if (!fn) return null;
-  const file = readdirSync(ECOSYSTEMS_DIR)
-    .filter((f) => f.endsWith('.handler.ts'))
-    .find((f) => readFileSync(join(ECOSYSTEMS_DIR, f), 'utf-8').includes(`export const ${fn}`));
-  if (!file) return { fn, file: null, engines: [] };
-  const source = readFileSync(join(ECOSYSTEMS_DIR, file), 'utf-8');
-  const engines = [...new Set([...source.matchAll(/engine: ['"]([\w-]+)['"]/g)].map((m) => m[1]))];
-  return { fn, file, engines };
-}
+  const index = readFileSync(join(HANDLERS_DIR, 'index.ts'), 'utf-8').split('\n');
+  const isLabel = (line) => /^(case '|default:)/.test(line.trim());
 
+  let via = `case '${ecosystemKey}'`;
+  let start = index.findIndex(
+    (line) => /^case '([^']+)':\s*\{?$/.exec(line.trim())?.[1] === ecosystemKey
+  );
+  let end = -1;
+
+  if (start === -1) {
+    start = index.findIndex((line) => {
+      const guard = /^if \(is(\w+)Ecosystem\(/.exec(line.trim());
+      if (!guard || !ecosystemKey.toLowerCase().startsWith(guard[1].toLowerCase())) return false;
+      via = `the is${guard[1]}Ecosystem guard, matched on the family prefix — confirm ${ecosystemKey} is in its set`;
+      return true;
+    });
+    if (start === -1) return null;
+    end = start + 1;
+  } else {
+    // Skip the fall-through labels this arm shares, then stop at the next one.
+    let i = start;
+    while (i + 1 < index.length && isLabel(index[i + 1])) i++;
+    end = index.findIndex((line, j) => j > i && isLabel(line));
+    if (end === -1) end = index.length;
+  }
+
+  const block = index.slice(start, end).join(String.fromCharCode(10));
+  const fns = [...new Set([...block.matchAll(/\b(create\w+(?:Input|Steps))\(/g)].map((m) => m[1]))];
+  if (!fns.length) return null;
+
+  const arms = fns.map((fn) => {
+    const file = readdirSync(HANDLERS_DIR)
+      .filter((f) => f.endsWith('.handler.ts'))
+      .find((f) => readFileSync(join(HANDLERS_DIR, f), 'utf-8').includes(`export const ${fn}`));
+    if (!file) return { fn, file: null, engines: [] };
+    const source = readFileSync(join(HANDLERS_DIR, file), 'utf-8');
+    const engines = [...new Set([...source.matchAll(/engine: ['"]([\w-]+)['"]/g)].map((m) => m[1]))];
+    return { fn, file, engines };
+  });
+
+  return { via, arms };
+}
 function classifyEngine(engine) {
   if (engine === 'comfy' || engine.endsWith('-comfy')) return 'hosted-weights';
   if (EXTERNAL_ENGINES.includes(engine)) return 'api-only';
@@ -212,18 +254,23 @@ async function evidence() {
   if (flags.ecosystem) {
     const handler = handlerFor(flags.ecosystem);
     if (!handler) {
-      console.log(`Handler: none for ecosystem "${flags.ecosystem}" in ecosystems/index.ts (new ecosystem?).`);
+      console.log(`Handler: none for ecosystem "${flags.ecosystem}" in form-graph/index.ts (new ecosystem?).`);
       console.log('  Check @civitai/orchestration-client instead: a Comfy* input type means hosted weights;');
       console.log('  a provider-specific input with a provider engine means API-only.');
     } else {
-      console.log(`Handler: ${handler.file ?? '(file not found)'} (${handler.fn})`);
-      for (const engine of handler.engines) {
-        const kind = classifyEngine(engine);
-        votes.add(kind);
-        console.log(`  engine '${engine}' → ${kind === 'unclear' ? 'unclear (a model-family engine; runs either way)' : kind}`);
+      console.log(`Routed via ${handler.via}`);
+      if (handler.arms.length > 1)
+        console.log(`  ${handler.arms.length} handlers on this arm — it forks (image vs video, or by version), and a family can be API-only for one and hosted for the other.`);
+      for (const arm of handler.arms) {
+        console.log(`Handler: ${arm.file ?? '(file not found)'} (${arm.fn})`);
+        for (const engine of arm.engines) {
+          const kind = classifyEngine(engine);
+          votes.add(kind);
+          console.log(`  engine '${engine}' → ${kind === 'unclear' ? 'unclear (a model-family engine; runs either way)' : kind}`);
+        }
+        if (arm.engines.length > 1)
+          console.log('  Several engines: the handler branches by version, so the answer depends on which branch this version takes.');
       }
-      if (handler.engines.length > 1)
-        console.log('  Several engines: the handler branches by version, so the answer depends on which branch this version takes.');
     }
   }
 
