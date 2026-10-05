@@ -549,8 +549,24 @@ describe('approval stamp on re-entry', () => {
       TemplateStringsArray,
       ...unknown[]
     ];
-    expect(sql.join('?')).toMatch(/'\{trainingStudioModerationApproved\}', 'true'::jsonb/);
+    expect(sql.join('$1').replace(/\s+/g, ' ').trim()).toBe(
+      `UPDATE "Model" SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb) WHERE id = $1`
+    );
     expect(values).toEqual([77]);
+  });
+
+  it('still returns the draft when the stamp write fails', async () => {
+    mockFindFirst.mockResolvedValue({ id: 77, meta: null, modelVersions: [{ id: 88 }] });
+    dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(new Error('db down'));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await expect(
+      createDraftModelFromWorkflow({
+        user: USER,
+        workflow: studioWorkflow(),
+        selectedEpochNumber: 3,
+      })
+    ).resolves.toMatchObject({ modelId: 77, modelVersionId: 88 });
+    consoleSpy.mockRestore();
   });
 
   it('does not write when the draft already carries the stamp', async () => {

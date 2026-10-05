@@ -273,13 +273,19 @@ export async function createDraftModelFromWorkflow({
   });
   if (existing?.modelVersions[0]) {
     // A draft materialized before the approval stamp existed gets it here: the run was just
-    // checked above. Set as one key, so a concurrent meta write is not overwritten.
-    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
-      await dbWrite.$executeRaw`
-        UPDATE "Model"
-        SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
-        WHERE id = ${existing.id}
-      `;
+    // checked above. Set as one key, so a concurrent meta write is not overwritten. Best-effort: a
+    // failed write leaves the draft unstamped, which only matters once its workflow is gone.
+    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true) {
+      try {
+        await dbWrite.$executeRaw`
+          UPDATE "Model"
+          SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
+          WHERE id = ${existing.id}
+        `;
+      } catch (error) {
+        console.error(`approval stamp backfill failed (model ${existing.id}):`, error);
+      }
+    }
     return {
       modelId: existing.id,
       modelVersionId: existing.modelVersions[0].id,
