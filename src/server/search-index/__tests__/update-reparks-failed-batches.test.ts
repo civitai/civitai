@@ -232,6 +232,27 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
     expect(await remainingQueuedIds()).toEqual(QUEUED_IDS);
   });
 
+  it('names a bounded, sorted sample of the re-queued ids so a recurring set is recognisable', async () => {
+    // 25 ids, all in one failing batch, seeded out of order: the line must name the 10 LOWEST,
+    // sorted, plus the range — and nothing beyond the 10th.
+    const ids = [
+      517, 503, 525, 509, 501, 522, 506, 514, 511, 520, 504, 524, 508, 502, 519, 513, 507, 523, 505,
+      516, 510, 521, 512, 518, 515,
+    ];
+    seedUpdateQueue(ids);
+    const index = buildIndex({
+      transformData: async () => {
+        throw new Error('Server has closed the connection.');
+      },
+    });
+
+    await index.processQueues({ processUpdates: true }, {} as never);
+
+    expect(vi.mocked(console.error).mock.calls.map((c) => c[0])).toContain(
+      `createSearchIndexUpdateProcessor :: processQueues :: ${INDEX} :: re-queued 25 ids from batches that exhausted their retries (lowest: 501, 502, 503, 504, 505, 506, 507, 508, 509, 510; min 501, max 525)`
+    );
+  });
+
   it('parks the ids in Postgres and says so when Redis refuses the re-queue', async () => {
     seedUpdateQueue(QUEUED_IDS);
     // The run's only sAdd is the re-queue: the seed bypasses addToQueue.

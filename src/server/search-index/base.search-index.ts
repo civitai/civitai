@@ -223,14 +223,29 @@ const requeueFailedIds = async (indexName: string, caller: string, queue: TaskQu
     items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
   });
   const prefix = `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName}`;
+  const sample = describeIdSample(ids);
   if (queued)
     console.error(
-      `${prefix} :: re-queued ${ids.length} ids from batches that exhausted their retries`
+      `${prefix} :: re-queued ${ids.length} ids from batches that exhausted their retries ${sample}`
     );
   else
     console.error(
-      `${prefix} :: could not re-queue ${ids.length} ids from failed batches to Redis; attempted the search-index-queue-fallback parking lot (a failure or cap there is logged under that name)`
+      `${prefix} :: could not re-queue ${ids.length} ids from failed batches to Redis ${sample}; attempted the search-index-queue-fallback parking lot (a failure or cap there is logged under that name)`
     );
+};
+
+/** Ids named in the re-queue log line: enough to recognise the same set recurring across runs. */
+export const REQUEUE_LOG_SAMPLE_SIZE = 10;
+
+/**
+ * A bounded, order-independent fingerprint of an id set — the lowest ids plus the range — so
+ * consecutive runs re-queueing the SAME ids read identically in the log while a fresh backlog
+ * does not. Sorted because `failedIds` is in task-completion order, which varies run to run.
+ */
+const describeIdSample = (ids: number[]) => {
+  const ascending = [...ids].sort((a, b) => a - b);
+  const lowest = ascending.slice(0, REQUEUE_LOG_SAMPLE_SIZE).join(', ');
+  return `(lowest: ${lowest}; min ${ascending[0]}, max ${ascending[ascending.length - 1]})`;
 };
 
 /**
