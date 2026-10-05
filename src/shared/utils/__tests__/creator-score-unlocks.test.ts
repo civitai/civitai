@@ -172,6 +172,21 @@ describe('creatorScoreGateState', () => {
     expect(gate(CHALLENGE_MIN_CREATOR_SCORE - 1, CHALLENGE_MIN_CREATOR_SCORE).kind).not.toBe('met');
   });
 
+  // Near and met measure against the gate, so they state the gate's own score, not the total.
+  it('states the compared score, not the total, when near or past an aggregate gate', () => {
+    const at = (score: number) =>
+      creatorScoreGateState({
+        score,
+        total: 30_000,
+        required: 50_000,
+        unlocks,
+        tiers: seededTiers,
+      });
+
+    expect(at(45_000)).toEqual({ kind: 'near', score: 45_000, gap: 5_000 });
+    expect(at(52_000)).toEqual({ kind: 'met', score: 52_000 });
+  });
+
   // The monetize gate clamps a negative score to 0 before it reaches the message.
   it('does not call a clamped negative score "no score yet"', () => {
     const state = creatorScoreGateState({
