@@ -65,6 +65,12 @@ Every one is cheap to catch mechanically and expensive to hit.
    Lines that apply only to some files, explain setup, or record incident history are a finding: name
    where they belong (a path-scoped `.claude/rules/` file, `docs/dev/`, `docs/features/`, a skill, or the
    commit message) and give the one-line instruction, if any, that should stay.
+9. **Check the public API reference.** If the diff changes what a `/api/v1` endpoint accepts or returns
+   (params, response fields, auth, rate limits, error statuses, region gates), including through a
+   service that builds the response, the hand-written page in `civitai/civitai-developer-docs`
+   (`site/reference/`) is now wrong. It lives outside this repo, so name the page and what it is
+   missing, and say a docs PR is needed. A new public endpoint with no page is a finding, despite the
+   restraint rule against proposing new docs. Rules: `.claude/rules/public-api.md`.
 
 ## Concision
 
