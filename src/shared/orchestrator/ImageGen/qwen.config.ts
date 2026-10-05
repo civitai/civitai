@@ -6,7 +6,7 @@ import {
   seedSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { ImageGenConfig } from '~/shared/orchestrator/ImageGen/ImageGenConfig';
-import { qwenVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { qwenVersionIds } from '~/shared/generation/version-ids';
 
 const engine = 'qwen';
 

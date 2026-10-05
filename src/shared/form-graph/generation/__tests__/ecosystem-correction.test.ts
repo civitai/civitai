@@ -40,7 +40,7 @@ describe('an ecosystem the workflow does not support', () => {
 });
 
 describe('the redirect target', () => {
-  // v1 picked its default from the usable set; `getDefaultEcosystemForWorkflow` is
+  // The default comes from the usable set; `getDefaultEcosystemForWorkflow` is
   // `ecosystemIds[0]` and cannot see the gate, so without this the redirect can land
   // on a disabled ecosystem the output schema then refuses.
   it('skips a gated ecosystem instead of landing on it', () => {

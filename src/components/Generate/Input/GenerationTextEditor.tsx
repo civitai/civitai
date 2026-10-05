@@ -10,18 +10,17 @@ import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { openWildcardPreview } from '~/components/Dialog/triggers/wildcard-preview';
 import { editPromptAttentionRange } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import type { SnippetReference, SnippetsNodeValue } from '~/shared/data-graph/generation/common';
+import type { SnippetReference, SnippetsNodeValue } from '~/shared/generation/values';
 import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 import { SnippetCategory } from './SnippetCategory';
 import type { SnippetCategoryItem } from './SnippetCategoryList';
 import { createSnippetCategorySuggestion } from './snippetCategorySuggestion';
 import { useSnippetCategories } from './useSnippetCategories';
-import { useSnippetsGraph } from './useSnippetsGraph';
+import { useSnippetsForm } from './useSnippetsForm';
 
 /**
- * Tiptap-based textarea-style input for the GenerationForm. Pairs with
- * `createTextEditorGraph` from the data-graph layer — the form passes the
- * editor node's meta straight through (`snippets`, `triggerWords`), no
+ * Tiptap-based textarea-style input for the GenerationForm. The form passes the
+ * text field's meta straight through (`snippets`, `triggerWords`), with no
  * intermediate hooks.
  *
  * Mostly a dumb component:
@@ -31,13 +30,13 @@ import { useSnippetsGraph } from './useSnippetsGraph';
  *   - Optional `onPaste` observer.
  *
  * The one feature that breaks the headless contract is `snippets`:
- *   - When `snippets` is `undefined` (the editor's subgraph didn't merge
- *     `snippetsGraph`), the component is purely headless — no graph
+ *   - When `snippets` is `undefined` (the editor's block was built with
+ *     `snippets: false`), the component is purely headless — no form
  *     subscriptions, no trpc queries.
- *   - When `snippets` is defined (even `[]`), the component pulls graph
+ *   - When `snippets` is defined (even `[]`), the component pulls form
  *     context internally to fetch the loaded category list and resolves
  *     orphan chips. The `SnippetReference[]` array itself is forwarded for
- *     future per-target picker work and otherwise unused in v1.
+ *     future per-target picker work and otherwise unused.
  *
  * Form value is always a plain `string` round-tripped through Tiptap's
  * `getText()`. Snippet chips render `#${id}` so the serialized text matches
@@ -92,8 +91,8 @@ export type GenerationTextEditorProps = {
   /** Enable mod+ArrowUp / mod+ArrowDown attention-weight editing. Default false. */
   attentionEdit?: boolean;
   /**
-   * Surfaced from `createTextEditorGraph`'s `meta.snippets`. `undefined` when
-   * the subgraph didn't merge `snippetsGraph` (feature off); an array
+   * Surfaced from the text field's `meta.snippets`. `undefined` when the field
+   * was built with `snippets: false` (feature off); an array
    * (possibly empty) when it did (feature on). When defined, the component
    * loads the `SnippetCategory` extension, opens the `#`-trigger popover,
    * runs the orphan-chip scanner, and fetches the active wildcard-set
@@ -103,7 +102,7 @@ export type GenerationTextEditorProps = {
   snippets?: SnippetReference[];
   /**
    * Trigger words for the active model/resources, surfaced from
-   * `createTextEditorGraph`'s `meta.triggerWords`. Currently received but
+   * the text field's `meta.triggerWords`. Currently received but
    * not rendered — placeholder for future in-editor surfacing (chip strip,
    * inline insertion shortcut, etc.). Pass-through is harmless when empty.
    */
@@ -134,7 +133,7 @@ function SnippetsAwareEditor(props: GenerationTextEditorProps) {
   // modal writes a new seed back into `snippets.seed`. `snippets` is
   // undefined when the active subgraph doesn't have a snippets node —
   // that's fine, the footer just won't render below.
-  const { snippets: snippetsValue, getState, setSnippets } = useSnippetsGraph();
+  const { snippets: snippetsValue, getState, setSnippets } = useSnippetsForm();
   const currentSeed = snippetsValue?.seed;
 
   // The Preview button lives on every snippets-aware editor but opens the

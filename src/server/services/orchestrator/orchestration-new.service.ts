@@ -37,27 +37,23 @@ import {
   attachEstimatedPreparation,
   normalizePreparation,
 } from '~/shared/orchestrator/download-preparation';
-import { createVideoPreprocessStep } from './ecosystems/video-preprocess.handler';
+import { createVideoPreprocessStep } from './handlers/video-preprocess.handler';
 import { collectStepWarnings } from './step-warnings';
-import {
-  generationGraph,
-  type GenerationGraphTypes,
-  type GenerationGraphValues,
-} from '~/shared/data-graph/generation/generation-graph';
+import type { GenerationData, LooseGenerationData } from './form-graph/types';
 import {
   getInputTypeForWorkflow,
   isWorkflowAvailable,
   workflowConfigByKey,
-} from '~/shared/data-graph/generation/config/workflows';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { resourceSchema, type ResourceData } from '~/shared/data-graph/generation/common';
+} from '~/shared/generation/config/workflows';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { resourceSchema, type ResourceData } from '~/shared/generation/values';
 import {
   getGateRules,
   resolveTestingAccess,
   getResourceData,
   getSelfHostedDisabledEcosystems,
 } from '~/server/services/generation/generation.service';
-import { applicableRulesFor, gatedSelectionRefusal } from '~/shared/data-graph/generation/gates';
+import { applicableRulesFor, gatedSelectionRefusal } from '~/shared/generation/gates';
 import { emitModelSubstitutions } from '~/server/metrics/emit-model-substitutions';
 import {
   createModelSubstitutionCollector,
@@ -66,8 +62,8 @@ import {
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
   type GenerationSurface,
   type PersistedModelSubstitution,
-} from '~/shared/data-graph/generation/model-substitution';
-import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
+} from '~/shared/generation/model-substitution';
+import { classifyModelSubstitutionReason } from '~/shared/generation/workflow-capability';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import {
   redis,
@@ -136,9 +132,11 @@ import { expandSnippetsToTargets } from '~/server/services/wildcard-set-resolver
 import { parsePromptSnippetReferences } from '~/utils/prompt-helpers';
 
 // Ecosystem handlers - unified router
-import { createEcosystemStepInput } from './ecosystems';
-import { recordShadowComparison, runHubParse } from './form-graph/shadow-parse';
-import { createComfyInput, resourcesToImageMetadataResources } from './ecosystems/comfy-input';
+import { createFormGraphStepInput } from './form-graph';
+import { substitutionsFromNotes } from '~/shared/generation/model-substitution';
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
+import { createComfyInput, resourcesToImageMetadataResources } from './handlers/comfy-input';
 import { extractStepErrors, sanitizeProviderError } from './provider-errors';
 import { resolveSourceImageIds, signProvenance, unionSourceImageIds } from './remix-provenance';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -146,9 +144,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 // =============================================================================
 // Types
 // =============================================================================
-
-/** Validated output from the generation graph */
-export type GenerationGraphOutput = GenerationGraphTypes['Ctx'];
 
 /** Context provided by the router */
 export type GenerationContext = {
@@ -231,8 +226,8 @@ type StepInput = WorkflowStepTemplate & {
   resolvedSource?: { metadata: Record<string, unknown>; imageMetadata: string };
 };
 
-/** Ecosystem workflows - GenerationGraphOutput where ecosystem is defined */
-type EcosystemGraphOutput = Extract<GenerationGraphOutput, { ecosystem: string }>;
+/** The ecosystem-bearing arms of the parsed payload. */
+type EcosystemGraphOutput = Extract<GenerationData, { ecosystem: string }>;
 
 /**
  * A Map that throws an error when getting a value that doesn't exist.
@@ -417,7 +412,7 @@ type ResourceRef = { id: number; epoch?: number };
  * Collects all resource references from generation graph output.
  * Returns IDs with epoch info from model, resources, and vae fields where present.
  */
-function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
+function collectResourceIds(data: GenerationData): ResourceRef[] {
   const refs: ResourceRef[] = [];
 
   if ('model' in data && data.model?.id) {
@@ -455,7 +450,7 @@ function collectResourceIds(data: GenerationGraphOutput): ResourceRef[] {
 type EnrichedResource = GenerationResource & { air: string };
 
 /** Raw orchestrator-blob AIR resources present in the graph output (negative ids). */
-function collectRawAirResources(data: GenerationGraphOutput): RawAirResource[] {
+function collectRawAirResources(data: GenerationData): RawAirResource[] {
   if (!('resources' in data) || !data.resources) return [];
   return data.resources.filter(isRawAirResource).map((r) => ({
     id: r.id,
@@ -791,42 +786,33 @@ function normalizeInput(input: Record<string, unknown>): Record<string, unknown>
  * can strip them from anything that gets persisted as form-input metadata
  * (computed values like `triggerWords` are derived, not user input).
  */
-function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
+export function validateInput(input: Record<string, unknown>, externalCtx: GenerationCtx) {
   const normalized = normalizeInput(input);
-  const result = generationGraph.safeParse(normalized, externalCtx);
+  // `reconcileSelectors` first: it settles the model/workflow/ecosystem trio before the
+  // hub dispatches on them.
+  const result = generationHub.parse(reconcileSelectors(normalized).raw, externalCtx);
 
-  // form-graph cutover: every parse runs both engines and records the
-  // comparison; the hub result is served for users with the cutover flag on.
-  // The v1 parse above always runs — it feeds the substitution metrics and
-  // the reverse comparison. Flag, comparison, and the whole shadow-parse
-  // module go away in the delete-data-graph change.
-  const serveHub = externalCtx.flags?.formGraphGenerator === true;
-  const hubResult = runHubParse(normalized, externalCtx);
-  recordShadowComparison(result, hubResult, String(normalized.workflow ?? 'unknown'));
-
-  // Issue #3520 — count silent checkpoint substitutions. This is the single
-  // choke point every SERVER-side graph validation passes through (submit,
-  // whatIf, and the App Blocks bridge), so one emit here covers all of them.
-  // Runs regardless of `result.success`: a parse that substituted and THEN
-  // failed on some other node still substituted, and dropping those would bias
-  // the number toward "this never happens".
+  // Issue #3520 — count silent checkpoint substitutions. This is the single choke point every
+  // SERVER-side validation passes through (submit, whatIf, and the App Blocks bridge), so one
+  // emit here covers all of them.
   //
-  // `void` is safe by contract — `emitModelSubstitutions` resolves on every
-  // path and never rejects (see its module note). It is deliberately NOT
-  // awaited: this function is synchronous and on the submit path.
-  void emitModelSubstitutions(externalCtx.modelSubstitutions);
-
-  if (serveHub && hubResult.ok !== null) {
-    if (!hubResult.ok) {
-      const errorMessages = Object.entries(hubResult.errors)
-        .map(([key, error]) => `${key}: ${error.message}`)
-        .join(', ');
-      throw throwBadRequestError(`Validation failed: ${errorMessages}`);
-    }
-    const data = hubResult.data as GenerationGraphOutput;
-    refuseGatedSelection(data, externalCtx);
-    return { data, computedKeys: new Set(hubResult.computedKeys) };
+  // The hub does not write to the external context — it returns a correction note per
+  // substitution — so the events are derived from the notes and fed to the collector, which
+  // carries the `surface` tag this function cannot otherwise tell apart. Runs regardless of
+  // success: a parse that substituted and then failed elsewhere still substituted, and dropping
+  // those would bias the number toward "this never happens".
+  const resolved = (result.success ? result.state : undefined) as
+    | { ecosystem?: string; workflow?: string }
+    | undefined;
+  for (const event of substitutionsFromNotes(result.notes, {
+    ecosystem: resolved?.ecosystem ?? (normalized.ecosystem as string | undefined),
+    workflow: resolved?.workflow ?? (normalized.workflow as string | undefined),
+  })) {
+    externalCtx.modelSubstitutions?.record(event);
   }
+  // `void` is safe by contract — `emitModelSubstitutions` resolves on every path and never
+  // rejects. Deliberately not awaited: this is on the submit path.
+  void emitModelSubstitutions(externalCtx.modelSubstitutions);
 
   if (!result.success) {
     const errorMessages = Object.entries(result.errors)
@@ -835,16 +821,12 @@ function validateInput(input: Record<string, unknown>, externalCtx: GenerationCt
     throw throwBadRequestError(`Validation failed: ${errorMessages}`);
   }
 
-  const computedKeys = new Set<string>();
-  for (const node of Object.values(result.nodes)) {
-    if (node.kind === 'computed') computedKeys.add(node.key);
-  }
-
-  refuseGatedSelection(result.data, externalCtx);
-  return { data: result.data, computedKeys };
+  const data = result.data as GenerationData;
+  refuseGatedSelection(data, externalCtx);
+  return { data, computedKeys: new Set(result.computedKeys ?? []) };
 }
 
-function refuseGatedSelection(data: GenerationGraphOutput, externalCtx: GenerationCtx) {
+function refuseGatedSelection(data: GenerationData, externalCtx: GenerationCtx) {
   const refusal = gatedSelectionRefusal(externalCtx.gateRules ?? [], {
     ecosystem: 'ecosystem' in data ? (data.ecosystem as string | undefined) : undefined,
     workflow: data.workflow,
@@ -860,9 +842,7 @@ function refuseGatedSelection(data: GenerationGraphOutput, externalCtx: Generati
 /**
  * Handle vid2vid:interpolate workflow
  */
-function createVideoInterpolationInput(
-  data: Extract<GenerationGraphOutput, { workflow: 'vid2vid:interpolate' }>
-): StepInput {
+function createVideoInterpolationInput(data: LooseGenerationData): StepInput {
   if (!data.video?.url) {
     throw throwBadRequestError('Video URL is required for video interpolation');
   }
@@ -879,9 +859,7 @@ function createVideoInterpolationInput(
 /**
  * Handle vid2vid:upscale workflow
  */
-function createVideoUpscaleInput(
-  data: Extract<GenerationGraphOutput, { workflow: 'vid2vid:upscale' }>
-): StepInput {
+function createVideoUpscaleInput(data: LooseGenerationData): StepInput {
   const { video, scaleFactor } = data;
 
   if (!video?.url) {
@@ -902,14 +880,16 @@ function createVideoUpscaleInput(
  * Returns an array of step inputs — one per non-excluded image in the batch.
  */
 async function createImageUpscaleSteps(
-  data: Extract<GenerationGraphOutput, { workflow: 'img2img:upscale' }>,
+  data: LooseGenerationData,
   handlerCtx: GenerationHandlerCtx,
   sourceCtx?: SourceCtx
 ): Promise<StepInput[]> {
   const images = data.images ?? [];
-  const targetDimensions = data.targetDimensions ?? [];
+  const targetDimensions = Array.isArray(data.targetDimensions) ? data.targetDimensions : [];
 
-  // Resolve upscaler AIR from the resource data
+  // Guarded rather than typed: these builders take the loose bag because the hub omits the
+  // `workflowKind` discriminant from emitted data, so the standalone arms are not narrowable.
+  if (!data.upscaler) throw throwBadRequestError('An upscaler is required for img2img:upscale');
   const upscalerAir = handlerCtx.airs.getOrThrow(data.upscaler.id);
 
   // Build steps for non-null entries (images that can be upscaled)
@@ -951,7 +931,7 @@ async function createImageUpscaleSteps(
  * Handle img2img:remove-background workflow
  */
 async function createImageRemoveBackgroundInput(
-  data: Extract<GenerationGraphOutput, { workflow: 'img2img:remove-background' }>,
+  data: LooseGenerationData,
   sourceCtx?: SourceCtx
 ): Promise<StepInput> {
   const sourceImage = data.images?.[0];
@@ -981,7 +961,7 @@ async function createImageRemoveBackgroundInput(
  * The orchestrator validates the resulting shape against the typed union.
  */
 async function createImagePreprocessInput(
-  data: Extract<GenerationGraphOutput, { workflow: 'img2img:preprocess' }>,
+  data: LooseGenerationData,
   sourceCtx?: SourceCtx
 ): Promise<StepInput> {
   const sourceImage = data.images?.[0];
@@ -1046,7 +1026,7 @@ type StepMetadataCtx = {
  * metadata is applied generically using `buildImageMetadata`.
  */
 async function createStepInputs(
-  data: GenerationGraphOutput,
+  data: GenerationData,
   handlerCtx: GenerationHandlerCtx,
   metadataCtx: StepMetadataCtx
 ): Promise<StepInput[]> {
@@ -1055,27 +1035,37 @@ async function createStepInputs(
   // Route to step creator
   switch (data.workflow) {
     case 'vid2vid:interpolate':
-      rawResult = createVideoInterpolationInput(data);
+      rawResult = createVideoInterpolationInput(data as LooseGenerationData);
       break;
 
     case 'vid2vid:upscale':
-      rawResult = createVideoUpscaleInput(data);
+      rawResult = createVideoUpscaleInput(data as LooseGenerationData);
       break;
 
     case 'img2img:upscale':
-      rawResult = await createImageUpscaleSteps(data, handlerCtx, metadataCtx.sourceCtx);
+      rawResult = await createImageUpscaleSteps(
+        data as LooseGenerationData,
+        handlerCtx,
+        metadataCtx.sourceCtx
+      );
       break;
 
     case 'img2img:remove-background':
-      rawResult = await createImageRemoveBackgroundInput(data, metadataCtx.sourceCtx);
+      rawResult = await createImageRemoveBackgroundInput(
+        data as LooseGenerationData,
+        metadataCtx.sourceCtx
+      );
       break;
 
     case 'img2img:preprocess':
-      rawResult = await createImagePreprocessInput(data, metadataCtx.sourceCtx);
+      rawResult = await createImagePreprocessInput(
+        data as LooseGenerationData,
+        metadataCtx.sourceCtx
+      );
       break;
 
     case 'vid2vid:preprocess':
-      rawResult = createVideoPreprocessStep(data) as StepInput;
+      rawResult = createVideoPreprocessStep(data as never) as StepInput;
       break;
 
     default: {
@@ -1083,7 +1073,7 @@ async function createStepInputs(
       if (!('ecosystem' in data) || !data.ecosystem) {
         throw throwBadRequestError('ecosystem is required for ecosystem workflows');
       }
-      rawResult = await createEcosystemStepInput(data as EcosystemGraphOutput, handlerCtx);
+      rawResult = await createFormGraphStepInput(data as EcosystemGraphOutput, handlerCtx);
       break;
     }
   }
@@ -1245,7 +1235,7 @@ export async function createWorkflowStepsFromGraph({
   isGreen,
   orchestratorToken,
 }: {
-  data: GenerationGraphOutput;
+  data: GenerationData;
   /**
    * Computed-node keys from the generation-graph branch. Stripped from
    * `stepMetadata.params` so derived values (e.g. `triggerWords`) don't
@@ -1595,14 +1585,14 @@ type ParsedTargetsSnapshot = Record<string, Array<{ category: string; selections
  *   workflow step. Always non-empty — `[{}]` (a single empty overlay) when
  *   there's nothing to expand, so the orchestrator loop runs uniformly.
  * - `parsedTargets`: `{ targetKey -> [{ category, selections: [] }, ...] }`
- *   built server-side from the templates. v1 keeps `selections` empty (no
- *   per-value picker); the orchestrator overwrites `snippets.targets` with
+ *   built server-side from the templates. `selections` is always empty today (there
+ *   is no per-value picker); the orchestrator overwrites `snippets.targets` with
  *   this snapshot at persistence time.
  * - `expanded`: true when the resolver actually ran (drives the `wildcards`
  *   tag, persisted-snippets shape, etc.).
  *
  * Target keys come from `snippets.targets` (declared by the ecosystem
- * subgraph via `snippetsGraph([...keys])`). Targets that aren't present on
+ * text block's `snippets` set). Targets that aren't present on
  * `resolvedData` (e.g. `negativePrompt` declared but the active branch
  * doesn't have one) are silently skipped.
  *
@@ -1631,7 +1621,7 @@ async function getSnippetOverlays({
   const snippets = (resolvedData as { snippets?: SnippetsPayloadShape }).snippets;
   if (!snippets) return trivial;
 
-  // Targets declared by the active subgraph (via `snippetsGraph([...])`).
+  // Targets declared by the active branch's text blocks.
   // We iterate these — NOT a hardcoded list — so each ecosystem controls its
   // own snippet-eligible editors.
   const declaredTargetKeys = Object.keys(snippets.targets ?? {});
@@ -2286,7 +2276,7 @@ export interface NormalizedStepMetadata {
    * Source generation params (for steps with source lineage — e.g., upscale, remove-bg).
    * Undefined for standard generation steps (use workflow.metadata.params instead).
    */
-  params?: Partial<GenerationGraphValues> & Record<string, unknown>;
+  params?: Partial<LooseGenerationData> & Record<string, unknown>;
   /**
    * When true, `params` is a partial DELTA (e.g. a wildcard/snippet variant's substituted
    * `prompt`/`negativePrompt`) rather than a complete snapshot. The client (`StepData.params`)
@@ -2468,9 +2458,8 @@ function getResourceRefsFromStep(
     });
   }
 
-  // Fall back to metadata.resources (ResourceData format from data-graph)
-  // Enhancement steps store resources via resourcesToImageMetadataResources which uses
-  // { modelVersionId } instead of { id }, so check both fields.
+  // Enhancement steps store resources via `resourcesToImageMetadataResources`, which keys them
+  // `modelVersionId` rather than `id` — so both fields are read.
   const metadataResources = metadata.resources as
     | Array<ResourceData & { modelVersionId?: number }>
     | undefined;
@@ -3066,7 +3055,6 @@ function formatStep(
 
 /**
  * Simplified formatGenerationResponse.
- * Replaces the complex switch-based formatting in common.ts.
  */
 /** Update a workflow and return the normalized response. */
 export async function updateWorkflow({
@@ -3233,7 +3221,6 @@ export type GeneratedImageWorkflowModel = NormalizedWorkflow;
 
 /**
  * Simplified queryGeneratedImageWorkflows.
- * Replaces the version in common.ts.
  */
 // Short-TTL cache in front of the user's generated-images feed. On every
 // SignalR reconnect the client invalidates `orchestrator.queryGeneratedImages`

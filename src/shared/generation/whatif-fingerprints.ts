@@ -1,0 +1,90 @@
+/**
+ * WhatIf Fingerprints
+ *
+ * Per-node value projections used to decide whether a graph change should
+ * trigger a `whatIf` (cost-estimation) refetch.
+ *
+ * Each entry is keyed by the node key. The function projects the node's
+ * value to the slice that actually affects cost. Return `undefined` to
+ * drop the node from change detection entirely.
+ *
+ * To opt a new node into custom whatIf change detection, add an entry here
+ * keyed by its node key. Nodes without an entry are compared by their raw
+ * value (the default).
+ *
+ * Not in the form library: `form-graph` is generic and knows nothing about whatIf or
+ * cost estimation.
+ */
+
+import type {
+  ControlNetsNodeValue,
+  ControlVideoNodeValue,
+  ResourceData,
+} from '~/shared/generation/values';
+
+export type WhatIfFingerprint = (value: unknown) => unknown;
+
+export const whatIfFingerprints: Record<string, WhatIfFingerprint> = {
+  // Strength changes don't affect cost; only the set of resource ids does.
+  //
+  // `model` is optional-chained because these run over the RAW node value, where a resource may still
+  // be the bare `{ id }` its input schema accepts. A throw here reaches the graph's watcher loop,
+  // which does not isolate its callbacks — it would take out the remaining watchers and, because the
+  // throw lands before the revision bumps, freeze the quoted cost at the previous selection.
+  resources: (value) => {
+    const resources = value as ResourceData[] | undefined;
+    return resources?.map((r) => ({ id: r.id, type: r.model?.type })) ?? [];
+  },
+
+  // Weight / startStep / endStep changes don't affect cost — only the
+  // preprocessor + reference image do (and counts toward # of controlnets).
+  controlNets: (value) => {
+    const entries = value as ControlNetsNodeValue | undefined;
+    return (
+      entries?.map((entry) => ({
+        preprocessor: entry.preprocessor,
+        imageUrl: entry.image?.url,
+      })) ?? []
+    );
+  },
+
+  // Strength / start / end percent don't affect cost — only whether a control
+  // video is attached and which preprocessor runs over it.
+  controlVideo: (value) => {
+    const entry = value as ControlVideoNodeValue | undefined;
+    return entry ? { preprocessor: entry.preprocessor, videoUrl: entry.video?.url } : undefined;
+  },
+
+  // Content fields don't affect cost (site identity determines buzz type;
+  // prompt moderation happens at submission time). Returning `undefined`
+  // drops the key from the whatIf comparison entirely.
+  prompt: () => undefined,
+  negativePrompt: () => undefined,
+  seed: () => undefined,
+  musicDescription: () => undefined,
+  lyrics: () => undefined,
+  // A supplied score skips the billed score-planning stage.
+  yue2Abc: (value) => typeof value === 'string' && value.trim().length > 0,
+};
+
+/**
+ * Apply registered fingerprints to a graph snapshot. Keys without a
+ * fingerprint pass through unchanged; keys whose fingerprint returns
+ * `undefined` are dropped from the result.
+ */
+export function applyWhatIfFingerprints(
+  snapshot: Record<string, unknown>
+): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(snapshot)) {
+    const fingerprint = whatIfFingerprints[key];
+    if (fingerprint) {
+      const fp = fingerprint(value);
+      if (fp === undefined) continue;
+      result[key] = fp;
+    } else {
+      result[key] = value;
+    }
+  }
+  return result;
+}

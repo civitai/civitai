@@ -3,11 +3,11 @@ import {
   getOutputTypeForWorkflow,
   workflowConfigByKey,
   workflowConfigs,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 
 /**
  * The per-output reset predicate for `store.prune` — the form-graph
- * counterpart of v1's `clearStorageForOutput` + `graph.reset`: clears only
+ * Clears only
  * the buckets belonging to ONE output type, so resetting the image form
  * leaves video/audio/3D settings intact.
  *
@@ -18,7 +18,7 @@ import {
  *   - a family bucket — an ecosystem key or group id, optionally with a
  *     per-model segment (`steps@LTXV23/12345`)
  *
- * Bare keys always clear (v1's reset clears them), except the caller's
+ * Bare keys always clear, except the caller's
  * `exclude` list (output preferences like outputFormat/priority). A family
  * bucket serving several outputs (Grok spans image and video) clears on any
  * of its outputs' resets — the storage is genuinely shared there.

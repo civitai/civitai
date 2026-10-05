@@ -4,13 +4,11 @@ import { img2imgImages, SEED, aspectRatioDef, sliderDef } from '../defs';
 import { versionModeOf, familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Flux.1 Kontext (pro + max modes), ported from `flux-kontext-graph.ts`.
+ * Flux.1 Kontext (pro + max modes).
  * Primarily img2img; no LoRAs, negative prompt, sampler, steps, or CLIP skip.
  * Both modes expose the same fields, so the mode is just a version pick — no
  * branch needed.
  */
-
-// ---- copied from flux-kontext-graph.ts, which dies with the data-graph engine
 
 export type FluxKontextMode = 'pro' | 'max';
 
@@ -35,8 +33,6 @@ const fluxKontextAspectRatios = [
   { label: '9:16', value: '9:16', width: 1008, height: 1792 },
   { label: '9:21', value: '9:21', width: 1008, height: 2352 },
 ];
-
-// ---- end of flux-kontext-graph.ts copies ------------------------------------
 
 export const fluxKontext = defineGraph<FamilyExt>({ scope: familyScope })
   .field('images', img2imgImages({}))

@@ -20,11 +20,8 @@ import {
   type WorkflowCategory,
   getEcosystemsForWorkflow,
   bulkWorkflowLimits,
-} from '~/shared/data-graph/generation/config/workflows';
-import {
-  getWorkflowsForMediaType,
-  workflowHasNode,
-} from '~/shared/data-graph/generation/generation-graph';
+} from '~/shared/generation/config/workflows';
+import { getWorkflowsForMediaType, workflowHasField } from '~/shared/generation/workflow-media';
 import {
   openCompatibilityConfirmModal,
   buildWorkflowPendingChange,
@@ -263,7 +260,7 @@ async function applyWorkflowToForm({
 
   const isImageType = image.mediaType === 'image';
   const acceptsImages =
-    inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
+    inputType === 'image' || (isImageType && workflowHasField(workflowId, 'images'));
 
   let images: { url: string; width: number; height: number }[] | undefined;
   if (acceptsImages) {
@@ -351,7 +348,7 @@ export async function applyWorkflowWithCheck({
     const inputType = getInputTypeForWorkflow(workflowId);
     const isImageType = image.mediaType === 'image';
     const acceptsImages =
-      inputType === 'image' || (isImageType && workflowHasNode(workflowId, 'images'));
+      inputType === 'image' || (isImageType && workflowHasField(workflowId, 'images'));
 
     let images: { url: string; width: number; height: number }[] | undefined;
     if (acceptsImages) {

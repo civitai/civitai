@@ -53,7 +53,7 @@ import {
 } from '~/server/services/orchestrator/workflows';
 import { enhancePrompt } from '~/server/services/orchestrator/promptEnhancement';
 import { promptEnhancementSchema } from '~/server/schema/orchestrator/promptEnhancement.schema';
-import { getRequiredFeatureFlagForWorkflow } from '~/shared/data-graph/generation/config/workflows';
+import { getRequiredFeatureFlagForWorkflow } from '~/shared/generation/config/workflows';
 import { patchWorkflowSteps } from '~/server/services/orchestrator/workflowSteps';
 import {
   guardedProcedure,

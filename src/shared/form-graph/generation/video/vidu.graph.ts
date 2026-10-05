@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
-import { viduVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
+import { viduVersionIds } from '~/shared/generation/version-ids';
 import { checkpointDef } from '../checkpoint';
 import {
   SEED,
@@ -16,17 +16,15 @@ import {
 import { familyScope, modelIdOf, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Vidu (Q1 + Q3), ported from `vidu-graph.ts`. Q1 exposes style, movement
+ * Vidu (Q1 + Q3). Q1 exposes style, movement
  * amplitude and the prompt enhancer; Q3 swaps those for resolution-scaled
  * ratios, duration, draft and audio toggles. Image-driven workflows emit NO
- * aspect ratio (v1 hides the node; the handler derives it from the source).
+ * aspect ratio — the handler derives it from the source.
  * Q3 on ref2vid rewrites the workflow to img2vid — that rule lives in
  * `../reconcile.ts`.
  */
 
 export { viduVersionIds };
-
-// ---- copied from vidu-graph.ts, which dies with the data-graph engine -------
 
 const viduVersionOptions = [
   { label: 'Q1', value: viduVersionIds.q1 },
@@ -76,8 +74,6 @@ function getViduQ3AspectRatios(resolution: string): AspectRatioOption[] {
   ];
 }
 
-// ---- end of vidu-graph.ts copies --------------------------------------------
-
 const isQ3 = (model: unknown) => modelIdOf(model) === viduVersionIds.q3;
 
 export const vidu = defineGraph<FamilyExt>({ scope: familyScope })
@@ -115,7 +111,7 @@ export const vidu = defineGraph<FamilyExt>({ scope: familyScope })
   .field('resolution', ({ model }) =>
     isQ3(model) ? enumDef({ options: viduQ3Resolutions, default: '720p' }) : null
   )
-  // image-driven workflows emit NO ratio: v1 hides the node and the handler
+  // image-driven workflows emit NO ratio: the handler
   // derives it from the source image
   .field('aspectRatio', ({ model, resolution, _ext }) => {
     const img2vid = isWorkflowOrVariant(_ext.workflow, 'img2vid');

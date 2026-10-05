@@ -6,7 +6,7 @@
 import type { SeedanceVideoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { seedanceVersionIds } from '~/shared/form-graph/generation/video/seedance.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 const versionIdToModel = new Map<number, SeedanceVideoGenInput['model']>(

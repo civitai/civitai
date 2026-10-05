@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { StorageAdapter } from 'form-graph';
 import { generationHub } from '../hub.graph';
 import { familyScope } from '../shared';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
- * The persistence scope layout (v1's storage-adapter groups, as per-graph
+ * The persistence scope layout (per-graph
  * scopes): family fields bucket per ecosystem group, prompt/seed/controlNets
  * stay global, the ecosystem selection buckets per output type, images per
  * workflow, and turbo-variant families refine cfg/steps per model version.

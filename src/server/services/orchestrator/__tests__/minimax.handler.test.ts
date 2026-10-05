@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { createMiniMaxInput } from '../ecosystems/minimax.handler';
+import { createMiniMaxInput } from '../form-graph/minimax.handler';
 import {
   MINIMAX_DEFAULT_ASPECT_RATIO,
   minimaxComfyAspectRatios,
   minimaxVersionIds,
-} from '~/shared/data-graph/generation/minimax-graph';
+} from '~/shared/form-graph/generation/video/minimax.graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
 const ctx = {

@@ -4,12 +4,9 @@ import {
   isBaseModelGenerationSupported,
   isSelfHostedEcosystem,
 } from '@civitai/shared/basemodel.constants';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-import { getEcosystemStates } from '~/shared/data-graph/generation/ecosystem-graph';
-import { getEcosystemStates as getFormEcosystemStates } from '~/shared/form-graph/generation/ecosystem-gates';
-import { createEcosystemStepInput } from '../ecosystems';
+import type { GenerationCtx } from '~/shared/generation/context';
+import { getEcosystemStates } from '~/shared/form-graph/generation/ecosystem-gates';
 import { createFormGraphStepInput } from '../form-graph';
 import { formatStepOutputs, type GenerationHandlerCtx } from '../orchestration-new.service';
 import { mapDataToGraphInput } from '../legacy-metadata-mapper';
@@ -39,18 +36,10 @@ const base = {
   seed: 42,
 };
 
-describe.each([
-  {
-    name: 'data-graph',
-    parse: (input: Record<string, unknown>) => generationGraph.safeParse(input, ext),
-    dispatch: createEcosystemStepInput,
-  },
-  {
-    name: 'form-graph',
-    parse: (input: Record<string, unknown>) => generationHub.parse(input, ext),
-    dispatch: createFormGraphStepInput,
-  },
-])('YuE2 $name', ({ parse, dispatch }) => {
+const parse = (input: Record<string, unknown>) => generationHub.parse(input, ext);
+const dispatch = createFormGraphStepInput;
+
+describe('YuE2', () => {
   it('opens the official model card in the music generator with v2 selected', () => {
     const model = {
       id: 3337846,
@@ -215,7 +204,8 @@ describe.each([
   });
 });
 
-describe.each([getEcosystemStates, getFormEcosystemStates])('YuE2 visibility', (getStates) => {
+describe('YuE2 visibility', () => {
+  const getStates = getEcosystemStates;
   it('is offered without a feature flag alongside the other music generators', () => {
     const states = getStates('txt2music', { ...ext, flags: {} });
     expect(states.hiddenEcosystems).not.toContain('YuE2');
@@ -226,7 +216,7 @@ describe.each([getEcosystemStates, getFormEcosystemStates])('YuE2 visibility', (
 
   // Gate rules are the ONLY mechanism that hides an ecosystem now that the
   // feature-flag gate is gone, and this is the only absolute assertion that the
-  // fold runs at all — deleting it from both lanes otherwise breaks no test.
+  // fold runs at all — deleting it otherwise breaks no test.
   it('hides an ecosystem a gate rule targets, and leaves its siblings alone', () => {
     const gateRules = [
       {

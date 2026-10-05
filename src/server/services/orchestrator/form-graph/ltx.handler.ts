@@ -1,7 +1,6 @@
 /**
- * LTX handler for the form-graph lane (LTXV2 + LTXV23 + LTXV25). Converts
- * `generationHub.parse().data` into @civitai/client steps — same routing as
- * the data-graph handler it mirrors:
+ * LTX handler (LTXV2 + LTXV23 + LTXV25). Converts `generationHub.parse().data`
+ * into @civitai/client steps:
  * - LTXV2 / txt2vid → ltx2 createVideo; img2vid → firstLastFrameToVideo
  * - LTXV23 / txt2vid (+ ref2vid) → ltx2.3 createVideo; img2vid →
  *   firstLastFrameToVideo; vid2vid:edit → editVideo; vid2vid:extend → extendVideo
@@ -29,8 +28,8 @@ import {
   DISTILLED_IDS,
   SULPHUR2_IDS,
 } from '~/shared/form-graph/generation/video/ltx.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
-import type { GenerationHandlerCtx, StepInput } from '../ecosystems';
+import { defineHandler } from '../handlers/handler-factory';
+import type { GenerationHandlerCtx, StepInput } from '../handlers';
 import { createChainedPromptEnhancementStep } from '~/server/services/orchestrator/promptEnhancement';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';

@@ -26,7 +26,7 @@ import { describe, expect, it, vi } from 'vitest';
  *
  * So this file deliberately does the one thing the others don't: it takes the
  * context `buildGenerationContext` actually returns and runs the real
- * `generationGraph.safeParse` against it.
+ * `validateInput` against it.
  *
  * The mock preamble mirrors `orchestration-new.air-map.test.ts` — it only keeps
  * the heavy DB/redis module graph inert so the module imports.
@@ -70,10 +70,12 @@ vi.mock('~/server/services/image.service', () => ({
   imagesForModelVersionsCache: {},
 }));
 
-import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import { GENERATION_SURFACES } from '~/shared/data-graph/generation/model-substitution';
-import { getWorkflowCapability } from '~/shared/data-graph/generation/workflow-capability';
+import {
+  buildGenerationContext,
+  validateInput,
+} from '~/server/services/orchestrator/orchestration-new.service';
+import { GENERATION_SURFACES } from '~/shared/generation/model-substitution';
+import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const USER = { id: 1, isModerator: false };
@@ -129,14 +131,14 @@ describe('buildGenerationContext attaches a substitution collector', () => {
 });
 
 describe('the attached collector is WIRED TO THE REAL CLAMP', () => {
-  it('🔴 a real safeParse on the real context records a real substitution', async () => {
+  it('🔴 a real validateInput on the real context records a real substitution', async () => {
     // 🔴 THE POINT OF THIS FILE. Asserting the property EXISTS is not the same
-    // as asserting the graph can reach it — a collector attached under a key the
-    // clamp does not read would satisfy the tests above and record nothing. So
-    // this drives the actual validator with the actual context object.
+    // as asserting the validator can reach it — a collector attached under a key
+    // `validateInput` does not write to would satisfy the tests above and record
+    // nothing. So this drives the actual validator with the actual context object.
     const externalCtx = await ctxFor('api');
 
-    const result = generationGraph.safeParse(
+    const { data } = validateInput(
       {
         workflow: 'txt2img',
         ecosystem: 'Qwen',
@@ -147,13 +149,12 @@ describe('the attached collector is WIRED TO THE REAL CLAMP', () => {
         steps: 25,
         quantity: 1,
         priority: 'low',
-      } as never,
+      },
       externalCtx
-    ) as { success: boolean; data?: { model?: { id?: number } } };
+    );
 
     // Behaviour is unchanged — the substitution still happens and still wins.
-    expect(result.success).toBe(true);
-    expect(result.data?.model?.id).toBe(QWEN_DEFAULT);
+    expect((data as { model?: { id?: number } }).model?.id).toBe(QWEN_DEFAULT);
 
     // …and it was OBSERVED, which is the whole of #3520.
     expect(externalCtx.modelSubstitutions?.list()).toEqual([
@@ -169,7 +170,7 @@ describe('the attached collector is WIRED TO THE REAL CLAMP', () => {
 
   it('records nothing when the requested version is valid', async () => {
     const externalCtx = await ctxFor('api');
-    generationGraph.safeParse(
+    validateInput(
       {
         workflow: 'txt2img',
         ecosystem: 'Qwen',
@@ -180,7 +181,7 @@ describe('the attached collector is WIRED TO THE REAL CLAMP', () => {
         steps: 25,
         quantity: 1,
         priority: 'low',
-      } as never,
+      },
       externalCtx
     );
     expect(externalCtx.modelSubstitutions?.list()).toEqual([]);

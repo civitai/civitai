@@ -12,10 +12,7 @@ import clsx from 'clsx';
 
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import {
-  workflowOptionById,
-  getEcosystemsForWorkflow,
-} from '~/shared/data-graph/generation/config/workflows';
+import { workflowOptionById, getEcosystemsForWorkflow } from '~/shared/generation/config/workflows';
 import {
   ecosystemById,
   ecosystemByKey,
@@ -25,7 +22,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { ResourceItemContent } from '~/components/generation_v2/inputs/ResourceItemContent';
 import { ResidencyBatchProvider } from '~/components/ResourceLoad/ResourceResidency';
-import { getLastUsedCheckpointIdForEcosystem } from '~/components/generation_v2/GenerationFormProvider';
+import { getLastUsedCheckpointIdForEcosystem } from '~/components/Generation/form-helpers';
 import { useResourceDataStore } from '~/store/resource-data.store';
 
 // =============================================================================

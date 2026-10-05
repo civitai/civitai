@@ -15,7 +15,7 @@ import {
   type VersionGroup,
   type VersionOption,
 } from '~/shared/form-graph/generation/checkpoint';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
+import type { ResourceData } from '~/shared/generation/values';
 import type { SnippetsValue } from '~/shared/form-graph/generation/defs';
 import type { GenerationResource } from '~/shared/types/generation.types';
 import { trpc } from '~/utils/trpc';

@@ -10,21 +10,15 @@ import {
   getEcosystemsForWorkflow,
   isWorkflowAvailable,
   workflowGroups,
-} from '~/shared/data-graph/generation/config';
+} from '~/shared/generation/config';
 import {
   pickStrongerGate,
   rulesToStates,
   type GateItemState,
   type GateResolution,
   type GateState,
-} from '~/shared/data-graph/generation/gates';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
-
-/**
- * Copied from `ecosystem-graph.ts` (which dies with the data-graph engine at
- * the end of the migration — the port must not import from it). The
- * differential suite pins the copy against the original while both live.
- */
+} from '~/shared/generation/gates';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 type EcosystemGateExt = Pick<
   GenerationCtx,
@@ -66,10 +60,10 @@ export function getEcosystemStates(
 }
 
 /**
- * v1's workflow→ecosystem sync effect as a pure function: an ecosystem that
- * doesn't support the workflow REDIRECTS to the workflow's configured default
- * (txt2img + WanVideo30 parses as SD1 in the oracle — probed 2026-09-01).
- * Returns the value unchanged when it's fine, when it's unknown (v1's effect
+ * The workflow→ecosystem sync, as a pure function: an ecosystem that doesn't
+ * support the workflow REDIRECTS to the workflow's configured default (txt2img +
+ * WanVideo30 resolves to SD1).
+ * Returns the value unchanged when it's fine, when it's unknown (the sync
  * bails on unknown keys), or when a workflow-group override lets the family
  * handle the switch internally (wan's T2V↔I2V variants).
  */
@@ -97,7 +91,7 @@ export function resolveCompatibleEcosystem(
     if (eco && (!usable || usable.includes(eco.key))) return eco.key;
   }
   if (usable?.length) return usable[0];
-  return 'SDXL'; // v1's ultimate fallback
+  return 'SDXL'; // the ultimate fallback
 }
 
 /** Whether the ecosystem/model pair surfaces the `enhancedCompatibility` toggle. */

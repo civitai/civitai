@@ -377,11 +377,18 @@ function discoverWriterFiles(): {
   // appending `&& !file.includes('/.')` to the walk's predicate left the whole 864-test gate
   // green with an unmarked writer live in `src/pages/api/.well-known/`.
   //
-  // So the dot region is globbed explicitly. `src/**/*` does not match a leading dot at any
-  // segment, which is why the second pattern is needed rather than a flag.
+  // So the dot region is globbed explicitly, AND AT FIXED DEPTHS. `src/**/*` does not match a
+  // leading dot at any segment, and a flag does not exist — but neither does `src/**/.*/**`
+  // work, because `**` never pairs with a dot segment: measured, `src/**/.well-known/*.ts`
+  // returns 0 for a file `src/pages/api/.well-known/*.ts` returns. A pattern per depth is the
+  // only form that reaches them; (b)'s two-way comparison is what reports a depth going unreached.
+  const dotPatterns = Array.from(
+    { length: 8 },
+    (_, depth) => `src/${'*/'.repeat(depth)}.*/**/*.{ts,tsx}`
+  ).flatMap((pattern) => [pattern, pattern.replace('/**/', '/')]);
   const globbed = [
     ...globSync('src/**/*.{ts,tsx}', { cwd: process.cwd() }),
-    ...globSync('src/**/.*/**/*.{ts,tsx}', { cwd: process.cwd() }),
+    ...dotPatterns.flatMap((pattern) => globSync(pattern, { cwd: process.cwd() })),
   ]
     .map((f) => f.replace(/\\/g, '/'))
     .filter(

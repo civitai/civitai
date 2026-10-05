@@ -4,13 +4,11 @@ import { aspectRatioDef, img2imgImages } from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Muse Image (Meta, fal engine), ported from `muse-image-graph.ts`. Locked
+ * Muse Image (Meta, fal engine). Locked
  * single version; no LoRAs, negative prompt, cfg, steps, or seed — the
  * orchestrator input type accepts none of them. txt2img picks an aspect
  * ratio; edit takes up to 4 reference images and derives the ratio from them.
  */
-
-// ---- copied from muse-image-graph.ts, which dies with the data-graph engine -
 
 export const museImageVersionId = 3291238;
 
@@ -31,8 +29,6 @@ const museImageAspectRatios = [
 ];
 
 const museImagePriorityRatios = ['16:9', '4:3', '1:1', '3:4', '9:16'];
-
-// ---- end of muse-image-graph.ts copies --------------------------------------
 
 export const museImage = defineGraph<FamilyExt>({ scope: familyScope })
   .field('model', ({ _ext }) =>

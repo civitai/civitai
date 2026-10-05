@@ -2,7 +2,7 @@
 
 import type { MochiVideoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 export const createMochiInput = defineHandler<EcosystemData<'Mochi'>, [VideoGenStepTemplate]>(

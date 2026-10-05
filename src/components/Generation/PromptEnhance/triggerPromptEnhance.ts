@@ -1,7 +1,7 @@
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import type { ResourceData } from '~/shared/data-graph/generation/common';
-import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
+import type { ResourceData } from '~/shared/generation/values';
+import type { SnippetReferenceValue } from '~/shared/generation/schemas/snippet-schema';
 import { usePromptEnhanceStore, type PromptEnhanceImage } from './promptEnhanceStore';
 
 const PromptEnhanceDrawer = dynamic(

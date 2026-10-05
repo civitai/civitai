@@ -82,9 +82,6 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValu
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/search-index', () => ({ modelsSearchIndex: {} }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: vi.fn() }));
-vi.mock('~/server/services/orchestrator/ecosystems/wan.handler', () => ({
-  wanBaseModelGroupIdMap: {},
-}));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   // Only reached for resources needing substitutes; returns no candidate versions.
