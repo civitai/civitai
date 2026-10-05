@@ -31,7 +31,10 @@ export function ratingReviewLevels(entityType: RatingReviewEntityType): number[]
 }
 
 // Raising a challenge runs the void/refund escalation, which only the main app can do.
-export function ratingReviewOwnerLevels(entityType: RatingReviewEntityType, currentLevel: number): number[] {
+export function ratingReviewOwnerLevels(
+  entityType: RatingReviewEntityType,
+  currentLevel: number
+): number[] {
   const levels = ratingReviewLevels(entityType);
   return entityType === 'Challenge' ? levels.filter((l) => l < currentLevel) : levels;
 }

@@ -9,7 +9,12 @@ describe('ownerRatingButtonState', () => {
   });
 
   it('is pending while a review is pending, whatever the server says about resubmit', () => {
-    expect(ownerRatingButtonState({ status: 'Pending', createdAt: at, resolvedAt: null, modComment: null }, true)).toEqual({
+    expect(
+      ownerRatingButtonState(
+        { status: 'Pending', createdAt: at, resolvedAt: null, modComment: null },
+        true
+      )
+    ).toEqual({
       kind: 'pending',
       createdAt: at,
     });
@@ -17,8 +22,15 @@ describe('ownerRatingButtonState', () => {
 
   it('shows the last outcome until an edit reopens it', () => {
     const review = { status: 'Unactioned', createdAt: at, resolvedAt: at, modComment: 'no' };
-    expect(ownerRatingButtonState(review, false)).toEqual({ kind: 'resolved', label: 'declined', resolvedAt: at, modComment: 'no' });
+    expect(ownerRatingButtonState(review, false)).toEqual({
+      kind: 'resolved',
+      label: 'declined',
+      resolvedAt: at,
+      modComment: 'no',
+    });
     expect(ownerRatingButtonState(review, true)).toEqual({ kind: 'open' });
-    expect(ownerRatingButtonState({ ...review, status: 'Actioned' }, false)).toMatchObject({ label: 'approved' });
+    expect(ownerRatingButtonState({ ...review, status: 'Actioned' }, false)).toMatchObject({
+      label: 'approved',
+    });
   });
 });

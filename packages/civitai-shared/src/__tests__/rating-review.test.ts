@@ -49,12 +49,16 @@ describe('rating-review constants', () => {
   });
 
   it('reads the nsfw reason only from a text-scan result, which is the one that carries a version', () => {
-    expect(textScanNsfwReason({ version: 1, labels: { nsfw: { level: 'r', reason: 'fake reason' } } })).toBe(
-      'fake reason'
-    );
-    expect(textScanNsfwReason({ version: 1, labels: { nsfw: { level: 'r', reason: '  ' } } })).toBeNull();
+    expect(
+      textScanNsfwReason({ version: 1, labels: { nsfw: { level: 'r', reason: 'fake reason' } } })
+    ).toBe('fake reason');
+    expect(
+      textScanNsfwReason({ version: 1, labels: { nsfw: { level: 'r', reason: '  ' } } })
+    ).toBeNull();
     expect(textScanNsfwReason({ labels: [{ label: 'nsfw', score: 0.9 }] })).toBeNull();
-    expect(textScanNsfwReason({ labels: { nsfw: { level: 'r', reason: 'fake reason' } } })).toBeNull();
+    expect(
+      textScanNsfwReason({ labels: { nsfw: { level: 'r', reason: 'fake reason' } } })
+    ).toBeNull();
     expect(textScanNsfwReason(null)).toBeNull();
   });
 

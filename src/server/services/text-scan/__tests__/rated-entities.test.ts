@@ -209,7 +209,10 @@ describe('applyRatingFloor → pending dispute', () => {
   });
 
   it('offers it even when the scan returned no nsfw verdict, since the scan is no longer in flight', async () => {
-    await applyRatingFloor('Bounty', { ...args(4, true), outcome: { triggeredLabels: [], nsfwLevel: null } });
+    await applyRatingFloor('Bounty', {
+      ...args(4, true),
+      outcome: { triggeredLabels: [], nsfwLevel: null },
+    });
     expect(maybeAutoResolveRatingDisputeAfterScan).toHaveBeenCalledWith('Bounty', 7);
   });
 

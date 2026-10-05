@@ -351,7 +351,7 @@ describe('repayBountyAward', () => {
     );
   });
 
-  it('resends a failed payout under the award\'s original externalTransactionId', async () => {
+  it("resends a failed payout under the award's original externalTransactionId", async () => {
     buzz.createBuzzTransactionMany.mockRejectedValueOnce(new Error('buzz down'));
     await expect(awardBountyEntry({ id: 10, userId: 5 })).rejects.toThrow('buzz down');
     const [firstAttempt] = buzz.createBuzzTransactionMany.mock.calls[0];

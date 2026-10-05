@@ -70,7 +70,15 @@ describe('loadRatingReviewSubject', () => {
   });
 
   it('marks a poi or minor model restricted, but not one its creator made SFW-only', async () => {
-    const row = { userId: 3, nsfw: false, updatedAt: at, name: 'm', deletedAt: null, poi: false, minor: false };
+    const row = {
+      userId: 3,
+      nsfw: false,
+      updatedAt: at,
+      name: 'm',
+      deletedAt: null,
+      poi: false,
+      minor: false,
+    };
     for (const flag of ['poi', 'minor'] as const) {
       dbMock.dbRead.model.findUnique.mockResolvedValueOnce({ ...row, [flag]: true });
       expect((await loadRatingReviewSubject('Model', 1))?.flagRestricted).toBe(true);
