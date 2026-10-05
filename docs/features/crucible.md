@@ -6,10 +6,10 @@ Crucible is separate from the Challenges platform and its judging engine.
 
 ## Lifecycle
 
-1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on one Buzz type (yellow or green) and lives only on that currency's site; a green crucible is limited to PG and PG-13.
+1. **Create.** The creator sets up the crucible and pays the setup cost and any seeded pool. It starts right away, or at a scheduled time up to 30 days out. A crucible runs on the Buzz of the site it is created on (green on civitai.com, yellow on civitai.red) and lives only on that site; a green crucible is limited to PG and PG-13.
 2. **Review.** The name, description and cover are checked automatically before anyone else can see the crucible. Until then only its creator and moderators can open it.
 3. **Enter.** While the crucible is active, entrants submit published media from their library, or generate or upload it from the submit dialog. Media added from the dialog stays an unpublished draft until it is entered, and entering schedules its post for the crucible's end; an entry that is refused, or not saved and refunded, leaves it a draft, and the dialog keeps offering it in later visits. Each entry pays the entry fee in the Buzz of the site the entrant is on, except the free entries the creator offers.
-4. **Judge.** Signed-in users are shown two entries side by side and pick one. Every vote updates both entries' ratings.
+4. **Judge.** Signed-in users with a creator score of at least 500 (and moderators) are shown two entries side by side and pick one. Every vote updates both entries' ratings.
 5. **Finish.** At the end time the crucible closes, final positions are fixed by rating, and each winner is awarded a prize to claim.
 
 ### Cancelling
@@ -26,9 +26,8 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 
 | Option | What it does | Cost |
 |---|---|---|
-| Duration | 8 hours, 24 hours, 3 days or 7 days | Free, 500, 1,000, 2,000 Buzz |
+| Duration | 24 hours, 3 days or 7 days | Free, Free, 1,000 Buzz |
 | Start date | Schedule the start instead of opening immediately | Free |
-| Buzz type | Yellow or green | Free |
 | Content type | Image or video entries | Free |
 | Content rating | Which content levels entries may have | Free |
 | Entry fee | Paid by each entry; feeds the prize pool | Free |
@@ -37,6 +36,7 @@ A moderator can remove an entry while the crucible runs. The entry fee is refund
 | Seeded prize pool | Buzz the creator adds to the pool up front | The seeded amount |
 | Prize distribution | Custom split across positions (default 50 / 30 / 20) | 500 Buzz |
 | Resource requirements | Entries must be made with one of up to 10 chosen models. If a chosen model is limited to PG and PG-13, so are the crucible and every entry | 500 Buzz |
+| Base models | Entries must be made with a checkpoint of one of up to 10 base models; applies on top of any resource requirement. Not in the creation form yet | Free |
 | Minimum view time *(video only)* | Judges must watch this long of both clips before voting | Free |
 | Maximum clip length *(video only)* | Longer clips are refused at submission | Free |
 
@@ -51,6 +51,10 @@ At the end, entries need a minimum share of votes to place; ties go to the earli
 The discovery page's Prize Pool sort uses the same pool. Whenever upcoming crucibles are listed alongside running ones, every running crucible comes first, whatever the sort.
 
 Prizes are plain Buzz. A winner claims theirs from the link in their results notification (or the banner on the crucible page): on civitai.com it is paid in green, and on civitai.red the winner picks green or yellow. A prize nobody claims is paid in green after 30 days. A banned winner's prize is held, neither claimable nor auto-paid, until the ban is lifted. Claiming is shared with challenge winner prizes; see `src/server/services/prize.service.ts`.
+
+## Your crucible stats
+
+The crucible welcome panel shows each creator their Avg Finish and Prizes Won. Avg Finish is the mean placement percentile ("Top X%") over completed crucibles where they placed and at least 5 creators placed, ranked by their best entry; crucibles where they did not place are left out, and it shows a dash until 3 crucibles count. Prizes Won counts only places that paid Buzz.
 
 ## Judging
 
