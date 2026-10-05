@@ -20,12 +20,14 @@ const { default: LeavingCivitaiPage } = await import('~/pages/leaving');
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.restoreAllMocks();
   document.body.innerHTML = '';
 });
 
 describe('/leaving, mounted', () => {
   it('does not navigate anywhere on its own, however long it is left open', async () => {
     vi.useFakeTimers();
+    const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     const before = window.location.href;
     const container = document.createElement('div');
     document.body.appendChild(container);
@@ -50,6 +52,7 @@ describe('/leaving, mounted', () => {
     );
     expect(router.push).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
     expect(window.location.href).toBe(before);
     expect(document.querySelector('meta[http-equiv="refresh" i]')).toBeNull();
 

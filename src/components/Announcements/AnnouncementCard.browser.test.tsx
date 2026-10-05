@@ -186,6 +186,7 @@ describe('AnnouncementCard actions', () => {
     );
 
     await page.getByRole('link', { name: 'See the model' }).click();
+    expect(onActionClick).toHaveBeenCalledTimes(1);
     expect(onActionClick).toHaveBeenCalledWith(action, 0);
   });
 

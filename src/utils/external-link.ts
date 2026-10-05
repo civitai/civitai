@@ -16,24 +16,32 @@ const normalizeHost = (host: string) =>
  * unparseable href on the site.
  */
 export function isExternalHref(href: string, internalHosts: readonly string[]): boolean {
-  const value = href.trim();
-  if (!value) return false;
+  const url = resolveHttpHref(href);
+  if (!url) return false;
 
+  const host = normalizeHost(url.hostname);
+  return !internalHosts.some((internal) => normalizeHost(internal) === host);
+}
+
+/**
+ * `href` as an absolute http(s) URL with a real host, or null. Shared by `isExternalHref` and
+ * `externalLinkInterstitialHref` because they must agree: a link the first calls external has to
+ * reach `/leaving` as a destination the page accepts.
+ */
+function resolveHttpHref(href: string): URL | null {
   // `new URL` resolves a scheme-relative `//evil.com` against the base, so the base has to be
   // a host that can never be in `internalHosts`, or the answer would depend on the base.
   const url = (() => {
     try {
-      return new URL(value, 'https://invalid.');
+      return new URL(href.trim(), 'https://invalid.');
     } catch {
       return null;
     }
   })();
 
-  if (!url || !['http:', 'https:'].includes(url.protocol)) return false;
-  if (url.hostname === 'invalid.') return false;
-
-  const host = normalizeHost(url.hostname);
-  return !internalHosts.some((internal) => normalizeHost(internal) === host);
+  if (!url || !['http:', 'https:'].includes(url.protocol)) return null;
+  if (url.hostname === 'invalid.') return null;
+  return url;
 }
 
 const EXTERNAL_LINK_INTERSTITIAL_PATH = '/leaving';
@@ -61,18 +69,9 @@ export function parseExternalDestination(value: unknown): string | null {
  *
  * `:` and `/` are legal unescaped in a query value, and leaving them readable is what lets the
  * hover preview show where the link goes.
- *
- * Resolved the way `isExternalHref` resolves it, because the page accepts only an absolute URL
- * and a scheme-relative `//host/x` would otherwise arrive there with no destination.
  */
 export function externalLinkInterstitialHref(destination: string): string {
-  const absolute = (() => {
-    try {
-      return new URL(destination.trim(), 'https://invalid.').href;
-    } catch {
-      return destination;
-    }
-  })();
+  const absolute = resolveHttpHref(destination)?.href ?? destination;
   const encoded = encodeURIComponent(absolute).replace(/%3A/gi, ':').replace(/%2F/gi, '/');
   return `${EXTERNAL_LINK_INTERSTITIAL_PATH}?url=${encoded}`;
 }
