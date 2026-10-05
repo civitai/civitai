@@ -110,6 +110,7 @@ import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums
 import type { RouterOutput } from '~/types/router';
 import {
   baseModelMakesMediaType,
+  CRUCIBLE_ONE_PRIZE_RULE,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
   getCrucibleUrl,
   getFreeEntriesLabel,
@@ -367,14 +368,19 @@ export function CrucibleUpsertWizard(props: Props) {
     freeEntriesPerUser,
   });
   const prizePoolNote = (
-    <Text size="xs" c="dimmed" mt="xs">
-      {freeEntriesPerUser > 0
-        ? 'The prize pool is your seed plus every paid entry fee; free entries add nothing.'
-        : 'The prize pool is your seed plus every entry fee, so what each place wins grows with the number of entries.'}
-      {freeEntriesPerUser > 0 &&
-        !values.seededPrizePool &&
-        ' With no seed, winners only share what paid entries bring in.'}
-    </Text>
+    <>
+      <Text size="xs" c="dimmed" mt="xs">
+        {freeEntriesPerUser > 0
+          ? 'The prize pool is your seed plus every paid entry fee; free entries add nothing.'
+          : 'The prize pool is your seed plus every entry fee, so what each place wins grows with the number of entries.'}
+        {freeEntriesPerUser > 0 &&
+          !values.seededPrizePool &&
+          ' With no seed, winners only share what paid entries bring in.'}
+      </Text>
+      <Text size="xs" c="dimmed" mt={4}>
+        {CRUCIBLE_ONE_PRIZE_RULE}
+      </Text>
+    </>
   );
 
   const canAddPrizePosition = placeCount < placeLimit;

@@ -19,7 +19,6 @@ import {
   IconBrush,
   IconCube,
   IconUpload,
-  IconBook,
   IconPencil,
   IconX,
   IconTrophy,
@@ -54,6 +53,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
+import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CrucibleStartJudgingButton } from '~/components/Crucible/CrucibleStartJudgingButton';
@@ -554,7 +554,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </>
               )}
 
-              <RulesPanel
+              <CrucibleRulesPanel
                 rules={[
                   {
                     label: 'Entries Per Person',
@@ -837,31 +837,6 @@ const countdownStat = (crucible: Pick<CrucibleDetail, 'status' | 'startAt' | 'en
       : undefined,
   };
 };
-
-function RulesPanel({ rules }: { rules: { label: string; value: string; visible?: boolean }[] }) {
-  return (
-    <Paper className="rounded-lg p-6" bg="dark.6">
-      <Title order={5} className="mb-4 flex items-center gap-2 uppercase tracking-wider text-white">
-        <IconBook size={16} />
-        Rules
-      </Title>
-      <Stack gap="md">
-        {rules
-          .filter((rule) => rule.visible !== false)
-          .map((rule) => (
-            <div key={rule.label}>
-              <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
-                {rule.label}
-              </Text>
-              <Text size="sm" fw={600} c="white">
-                {rule.value}
-              </Text>
-            </div>
-          ))}
-      </Stack>
-    </Paper>
-  );
-}
 
 function EligibleModelsPanel({
   crucibleId,

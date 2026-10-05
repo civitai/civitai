@@ -288,6 +288,9 @@ export type CruciblePrizeWinner = {
 };
 export type CrucibleDisplayPrize = Omit<CruciblePrizeWinner, 'userId'>;
 
+export const CRUCIBLE_ONE_PRIZE_RULE =
+  'Each creator can win at most one prize. If you place more than once, your best entry counts and the next creator moves up.';
+
 /**
  * A creator takes at most one prize: their best-placed entry. Prize places go to creators in
  * placing order, so a creator's other entries keep their positions but the next creator moves up

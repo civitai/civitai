@@ -183,3 +183,15 @@ describe('CrucibleUpsertWizard — creation limits', () => {
     expect(document.body.textContent).toContain('at most 5 in any 24 hours');
   });
 });
+
+describe('CrucibleUpsertWizard — prizes', () => {
+  test('tells the host a creator wins at most one prize', async () => {
+    renderWithProviders(<Harness values={valuesOnStep(3)} />);
+
+    await vi.waitFor(() =>
+      expect(document.body.textContent).toContain(
+        'Each creator can win at most one prize. If you place more than once, your best entry counts and the next creator moves up.'
+      )
+    );
+  });
+});

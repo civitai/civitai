@@ -641,9 +641,11 @@ describe('getCrucibles — status for an unfiltered feed', () => {
   });
 
   it('shows only running and upcoming crucibles until a status is picked', async () => {
-    expect((await whereFor({ sort: CrucibleSort.Newest })).status).toEqual({
-      in: [CrucibleStatus.Active, CrucibleStatus.Pending],
-    });
+    await whereFor({ sort: CrucibleSort.Newest });
+    expect(findMany.mock.calls.map(([args]) => args!.where!.status)).toEqual([
+      { in: [CrucibleStatus.Active] },
+      { in: [CrucibleStatus.Pending] },
+    ]);
   });
 
   it('shows every picked status together', async () => {
@@ -682,6 +684,67 @@ describe('getCrucibles — status for an unfiltered feed', () => {
     });
 
     expect(findMany.mock.calls.at(-1)![0].where.userId).toEqual({ notIn: [7, 8] });
+  });
+});
+
+describe('getCrucibles — running crucibles lead upcoming ones', () => {
+  const rows = [
+    { id: 1, status: CrucibleStatus.Pending, prizePool: 50_000 },
+    { id: 2, status: CrucibleStatus.Active, prizePool: 100 },
+    { id: 3, status: CrucibleStatus.Completed, prizePool: 90_000 },
+    { id: 4, status: CrucibleStatus.Active, prizePool: 500 },
+  ];
+
+  // Prisma's status filter, prize sort, inclusive cursor and take: all that getCrucibles leans on.
+  beforeEach(() => {
+    dbMock.dbRead.crucible.findMany.mockImplementation((async ({
+      where,
+      cursor,
+      take,
+    }: {
+      where: { status: { in: CrucibleStatus[] } };
+      cursor?: { id: number };
+      take: number;
+    }) => {
+      const sorted = rows
+        .filter((row) => where.status.in.includes(row.status))
+        .sort((a, b) => b.prizePool - a.prizePool || b.id - a.id);
+      const from = cursor ? sorted.findIndex((row) => row.id === cursor.id) : 0;
+      return from < 0 ? [] : sorted.slice(from, from + take).map(({ id }) => ({ id }));
+    }) as never);
+    dbMock.dbRead.crucible.findUnique.mockImplementation(
+      (async ({ where }: { where: { id: number } }) =>
+        rows.find((row) => row.id === where.id) ?? null) as never
+    );
+  });
+
+  const ids = async (input: { limit: number; status?: CrucibleStatus[]; cursor?: number }) => {
+    const page = await getCrucibles({
+      input: { sort: CrucibleSort.PrizePool, ...input },
+      select: { id: true },
+    });
+    return { ids: page.items.map(({ id }) => id), nextCursor: page.nextCursor };
+  };
+
+  it('ranks an upcoming crucible with a bigger prize below every running one', async () => {
+    expect((await ids({ limit: 10 })).ids).toEqual([4, 2, 1]);
+  });
+
+  it('keeps the chosen sort among the statuses picked alongside', async () => {
+    const all = [CrucibleStatus.Active, CrucibleStatus.Pending, CrucibleStatus.Completed];
+    expect((await ids({ limit: 10, status: all })).ids).toEqual([4, 2, 3, 1]);
+  });
+
+  it('pages across the boundary without repeating or skipping one', async () => {
+    const seen: number[] = [];
+    let cursor: number | undefined;
+    for (let page = 0; page < 10; page++) {
+      const next = await ids({ limit: 1, cursor });
+      seen.push(...next.ids);
+      cursor = next.nextCursor;
+      if (cursor === undefined) break;
+    }
+    expect(seen).toEqual([4, 2, 1]);
   });
 });
 
