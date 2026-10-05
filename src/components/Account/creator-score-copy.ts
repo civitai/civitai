@@ -1,5 +1,4 @@
 export const CREATOR_SCORE_ANCHOR = 'creator-score';
-export const CREATOR_SCORE_EXPLAINER_HREF = `/user/account#${CREATOR_SCORE_ANCHOR}`;
 
 // Categories and activities only: no weights, no numbers, and no "counts more" ordering.
 // Weights are tunable config and may change; anything stated here would go stale with them.
