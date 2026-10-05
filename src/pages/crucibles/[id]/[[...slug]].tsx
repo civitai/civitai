@@ -19,7 +19,6 @@ import {
   IconBrush,
   IconCube,
   IconUpload,
-  IconBook,
   IconPencil,
   IconX,
   IconTrophy,
@@ -52,7 +51,9 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
+import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
 import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
+import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CrucibleStartJudgingButton } from '~/components/Crucible/CrucibleStartJudgingButton';
@@ -65,6 +66,7 @@ import {
   Currency,
   ImageIngestionStatus,
   MediaType,
+  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -366,11 +368,13 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
         />
 
         {crucible.status === CrucibleStatus.Completed && (
+          <PrizeClaimBanner sourceType={PrizeSourceType.Crucible} sourceId={crucible.id} />
+        )}
+
+        {crucible.status === CrucibleStatus.Completed && (
           <CruciblePodium
-            entries={loadedEntries}
-            prizePositions={prizePositions}
-            entryCount={crucible.placedEntryCount ?? entryCount}
-            totalPrizePool={totalPrizePool}
+            entries={entriesData?.pages[0]?.podium ?? []}
+            prizeWinners={crucible.prizeWinners}
             buzzType={CRUCIBLE_PRIZE_BUZZ_TYPE}
           />
         )}
@@ -529,7 +533,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <CrucibleLeaderboard
                   entries={loadedEntries.filter(hasScore)}
                   totalCount={entryCount}
-                  placedCount={crucible.placedEntryCount}
+                  prizeWinners={crucible.prizeWinners}
                   hasMore={!!hasMoreEntries}
                   onLoadMore={loadMoreEntries}
                   prizePositions={prizePositions}
@@ -550,7 +554,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 </>
               )}
 
-              <RulesPanel
+              <CrucibleRulesPanel
                 rules={[
                   {
                     label: 'Entries Per Person',
@@ -833,31 +837,6 @@ const countdownStat = (crucible: Pick<CrucibleDetail, 'status' | 'startAt' | 'en
       : undefined,
   };
 };
-
-function RulesPanel({ rules }: { rules: { label: string; value: string; visible?: boolean }[] }) {
-  return (
-    <Paper className="rounded-lg p-6" bg="dark.6">
-      <Title order={5} className="mb-4 flex items-center gap-2 uppercase tracking-wider text-white">
-        <IconBook size={16} />
-        Rules
-      </Title>
-      <Stack gap="md">
-        {rules
-          .filter((rule) => rule.visible !== false)
-          .map((rule) => (
-            <div key={rule.label}>
-              <Text size="xs" c="dimmed" tt="uppercase" mb={4}>
-                {rule.label}
-              </Text>
-              <Text size="sm" fw={600} c="white">
-                {rule.value}
-              </Text>
-            </div>
-          ))}
-      </Stack>
-    </Paper>
-  );
-}
 
 function EligibleModelsPanel({
   crucibleId,

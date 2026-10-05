@@ -31,7 +31,6 @@ import {
   IconEdit,
   IconRefresh,
   IconCheck,
-  IconClipboard,
   IconCalendar,
   IconKey,
   IconHash,
@@ -42,6 +41,10 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
 import {
   TokenScope,
   TokenScopePresets,
@@ -158,7 +161,15 @@ function ScopeSelector({
   );
 }
 
-function SecretDisplay({
+/**
+ * The post-registration panel. Props-only — no hooks, no tRPC.
+ *
+ * EXPORTED FOR `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`, which
+ * measures that its two credential bodies reserve the copy control's width. Nothing else
+ * imports it. The alternative was a fixture re-typing this JSX, which would have measured the
+ * fixture; the other two bodies in this family sit behind a tRPC mutation and are not mounted.
+ */
+export function SecretDisplay({
   clientId,
   clientSecret,
   onClose,
@@ -177,22 +188,33 @@ function SecretDisplay({
         <Text size="sm" fw={500} mb={4}>
           Client ID
         </Text>
-        <CopyButton value={clientId}>
-          {({ copied, copy }) => (
-            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-              <Code block color={copied ? 'green' : undefined}>
-                {copied ? 'Copied' : clientId}
-              </Code>
-              <LegacyActionIcon
-                className="absolute right-2 top-1/2 -translate-y-1/2"
-                variant="transparent"
-                color="gray"
-              >
-                {copied ? <IconCheck /> : <IconClipboard />}
-              </LegacyActionIcon>
-            </Box>
+        {/* Three hand-rolled copies of `CopyAffordance`'s shell lived in this file — this
+            one, the client secret below, and the rotated secret at the bottom — and all
+            three rendered an `ActionIcon` with no `aria-label` and no text. Two of them
+            copy a credential. See `CopyAffordance`'s header for why the fix is the
+            component's required `label` rather than three hand-written attributes. */}
+        <CopyAffordance value={clientId} label="Copy the client ID">
+          {({ copied }) => (
+            // `paddingRight` on all three bodies in this file: the control is a SIBLING of the
+            // body, not inside it — `CopyAffordance` renders
+            // `<Box pos="relative">{children}<LegacyActionIcon …/></Box>`, so the control is
+            // positioned against that wrapper and merely OVERLAPS the body. It could not be
+            // inside it: `Code` computes `overflow: auto`, so a control genuinely inside would
+            // scroll away with the text. The overlap is why the body reserves the control's
+            // width. Measured without it, the value's last characters sat 26px under the
+            // clipboard icon at 390 and at
+            // 360. `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx` measures
+            // this one and the secret below; the rotated secret further down is the same
+            // spelling and is not separately mounted.
+            <Code
+              block
+              color={copied ? 'green' : undefined}
+              style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+            >
+              {copied ? 'Copied' : clientId}
+            </Code>
           )}
-        </CopyButton>
+        </CopyAffordance>
       </Box>
       {isPublic ? (
         <Box>
@@ -226,22 +248,17 @@ function SecretDisplay({
             <Text size="sm" fw={500} mb={4}>
               Client Secret
             </Text>
-            <CopyButton value={clientSecret}>
-              {({ copied, copy }) => (
-                <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                  <Code block color={copied ? 'green' : undefined}>
-                    {copied ? 'Copied' : clientSecret}
-                  </Code>
-                  <LegacyActionIcon
-                    className="absolute right-2 top-1/2 -translate-y-1/2"
-                    variant="transparent"
-                    color="gray"
-                  >
-                    {copied ? <IconCheck /> : <IconClipboard />}
-                  </LegacyActionIcon>
-                </Box>
+            <CopyAffordance value={clientSecret} label="Copy the client secret">
+              {({ copied }) => (
+                <Code
+                  block
+                  color={copied ? 'green' : undefined}
+                  style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+                >
+                  {copied ? 'Copied' : clientSecret}
+                </Code>
               )}
-            </CopyButton>
+            </CopyAffordance>
           </Box>
           <Text size="xs" fw={500} c="red.5">
             Save the client secret now — you will not be able to see it again.
@@ -951,22 +968,17 @@ export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
       >
         {rotatedSecret && (
           <Stack>
-            <CopyButton value={rotatedSecret}>
-              {({ copied, copy }) => (
-                <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                  <Code block color={copied ? 'green' : undefined}>
-                    {copied ? 'Copied' : rotatedSecret}
-                  </Code>
-                  <LegacyActionIcon
-                    className="absolute right-2 top-1/2 -translate-y-1/2"
-                    variant="transparent"
-                    color="gray"
-                  >
-                    {copied ? <IconCheck /> : <IconClipboard />}
-                  </LegacyActionIcon>
-                </Box>
+            <CopyAffordance value={rotatedSecret} label="Copy the new client secret">
+              {({ copied }) => (
+                <Code
+                  block
+                  color={copied ? 'green' : undefined}
+                  style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+                >
+                  {copied ? 'Copied' : rotatedSecret}
+                </Code>
               )}
-            </CopyButton>
+            </CopyAffordance>
             <Text size="xs" c="red.5" fw={500}>
               Save the new client secret now — you will not be able to see it again.
             </Text>

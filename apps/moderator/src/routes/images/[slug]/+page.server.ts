@@ -12,8 +12,8 @@ import {
 import {
   acceptImage,
   blockImage,
+  closedAppellants,
   resolveImageAppeal,
-  getPendingImageAppealAppellants,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
@@ -206,7 +206,17 @@ export const actions: Actions = {
         .trim()
         .slice(0, 1000) || undefined;
 
-    await resolveImageAppeal({ imageId, status, resolvedMessage, userId: locals.user.id });
+    const closed = await resolveImageAppeal({
+      imageId,
+      status,
+      resolvedMessage,
+      userId: locals.user.id,
+    });
+    if (!closed)
+      return fail(409, {
+        error: 'Another moderator already resolved this appeal. Reload.',
+        imageId,
+      });
     return { success: true, imageId };
   },
 
@@ -277,14 +287,13 @@ export const actions: Actions = {
     const imageIds = parseIds(form.get('imageIds'));
     const reportIds = parseIds(form.get('reportIds'));
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
-    // Snapshot any appeal appellants before resolving, then email each once (deduped) instead of per-image.
-    const appellants = await getPendingImageAppealAppellants(imageIds);
-    await Promise.all(
+    // Emails only the appeals this request closed, once per appellant instead of per image.
+    const closed = await Promise.all(
       imageIds.map((imageId) =>
         acceptImage({ imageId, removeMinorFlag, userId: locals.user.id, deferAppealEmail: true })
       )
     );
-    await sendBulkAppealEmails(appellants, true);
+    await sendBulkAppealEmails(closedAppellants(imageIds, closed), true);
     await Promise.all(
       reportIds.map((id) =>
         setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })
@@ -316,13 +325,12 @@ export const actions: Actions = {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
-    const appellants = await getPendingImageAppealAppellants(imageIds);
-    await Promise.all(
+    const closed = await Promise.all(
       imageIds.map((imageId) =>
         resolveImageAppeal({ imageId, status, userId: locals.user.id, deferAppealEmail: true })
       )
     );
-    await sendBulkAppealEmails(appellants, status === 'Approved');
+    await sendBulkAppealEmails(closedAppellants(imageIds, closed), status === 'Approved');
     return { success: true };
   },
 };

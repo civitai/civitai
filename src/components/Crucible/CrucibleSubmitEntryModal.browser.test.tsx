@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 import type * as CurrentUserModule from '~/hooks/useCurrentUser';
 import type * as DialogProviderModule from '~/components/Dialog/DialogProvider';
@@ -18,8 +19,21 @@ import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
  */
 
 const mocks = vi.hoisted(() => ({
-  images: [] as { id: number }[],
+  images: [] as { id: number; [key: string]: unknown }[],
+  myImagesInputs: [] as Record<string, unknown>[],
+  createEntryPost: vi.fn(),
+  upload: vi.fn(),
+  downloadGeneratorImages: vi.fn(),
+  submitEntry: vi.fn(),
+  uploadOnComplete: undefined as undefined | ((props: unknown, context: unknown) => void),
+  addImageOnSuccess: undefined as undefined | ((image: { id: number }) => void),
+  showErrorNotification: vi.fn(),
   reasonsById: {} as Record<number, string[]>,
+}));
+
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
+  showErrorNotification: mocks.showErrorNotification,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -27,22 +41,34 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
   return {
     ...(await importOriginal<typeof TrpcModule>()),
     trpc: {
-      useUtils: () => ({}),
+      useUtils: () => ({ image: { getMyImages: { invalidate: vi.fn() } } }),
       image: {
         getMyImages: {
-          useInfiniteQuery: () => ({
-            data: { pages: [{ items: mocks.images }] },
-            isLoading: false,
-            hasNextPage: false,
-            fetchNextPage: vi.fn(),
-            isFetchingNextPage: false,
-          }),
+          useInfiniteQuery: (input: Record<string, unknown>) => {
+            mocks.myImagesInputs.push(input);
+            return {
+              data: { pages: [{ items: mocks.images }] },
+              isLoading: false,
+              hasNextPage: false,
+              fetchNextPage: vi.fn(),
+              isFetchingNextPage: false,
+            };
+          },
         },
       },
-      post: { addImage: { useMutation: mutation } },
+      post: {
+        addImage: {
+          useMutation: (opts: { onSuccess: (image: { id: number }) => void }) => {
+            mocks.addImageOnSuccess = opts.onSuccess;
+            return mutation();
+          },
+        },
+      },
       crucible: {
-        createEntryPost: { useMutation: mutation },
-        submitEntry: { useMutation: mutation },
+        createEntryPost: {
+          useMutation: () => ({ ...mutation(), mutateAsync: mocks.createEntryPost }),
+        },
+        submitEntry: { useMutation: () => ({ ...mutation(), mutateAsync: mocks.submitEntry }) },
         getMinVotesToPlace: { useQuery: () => ({ data: undefined }) },
         getById: { useQuery: () => ({ data: { viewerEntries: [] } }) },
         checkEntryEligibility: {
@@ -70,7 +96,10 @@ vi.mock('~/components/Dialog/DialogProvider', async (importOriginal) => ({
 
 vi.mock('~/hooks/useMediaUpload', async (importOriginal) => ({
   ...(await importOriginal<typeof MediaUploadModule>()),
-  useMediaUpload: () => ({ upload: vi.fn(), files: [], progress: 0, canAdd: true, loading: false }),
+  useMediaUpload: ({ onComplete }: { onComplete: typeof mocks.uploadOnComplete }) => {
+    mocks.uploadOnComplete = onComplete;
+    return { upload: mocks.upload, files: [], progress: 0, canAdd: true, loading: false };
+  },
 }));
 
 vi.mock('~/components/EntrySubmit/GeneratorMediaPicker', async (importOriginal) => ({
@@ -92,6 +121,13 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async (importOriginal) => ({
   EdgeMedia: ({ src }: { src: string }) => <span data-testid="entry-media" data-src={src} />,
 }));
 
+vi.mock('~/utils/generator-import', () => ({
+  downloadGeneratorImages: mocks.downloadGeneratorImages,
+}));
+
+const { useGeneratorSelectionStore } = await import(
+  '~/components/EntrySubmit/GeneratorMediaPicker'
+);
 const { default: CrucibleSubmitEntryModal } = await import(
   '~/components/Crucible/CrucibleSubmitEntryModal'
 );
@@ -146,6 +182,18 @@ const plainSubmit = () =>
 
 beforeEach(() => {
   mocks.images = [image(1), image(2)];
+  mocks.myImagesInputs = [];
+  mocks.showErrorNotification.mockReset();
+  mocks.upload.mockReset();
+  mocks.submitEntry.mockReset().mockResolvedValue({ id: 1 });
+  let postId = 300;
+  mocks.createEntryPost.mockReset().mockImplementation(async () => ({ id: postId++ }));
+  mocks.downloadGeneratorImages
+    .mockReset()
+    .mockImplementation(async (selected: unknown[]) =>
+      selected.map((_, i) => ({ file: new File(['x'], `gen-${i}.png`) }))
+    );
+  useGeneratorSelectionStore.setState({ selected: [] });
   mocks.reasonsById = {};
 });
 
@@ -207,5 +255,226 @@ describe('CrucibleSubmitEntryModal — base model requirement', () => {
 
     await vi.waitFor(() => expect(buzzButton()?.textContent).toContain('Submit 1 Entry'));
     expect(buzzButton()?.dataset.amount).toBe('50');
+  });
+});
+
+describe('CrucibleSubmitEntryModal — from the generator', () => {
+  const generated = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({ url: `gen-${i}`, type: MediaType.image })) as never[];
+  const openGeneratorTab = async () => {
+    const tab = await vi.waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+        (button) => button.textContent?.includes('From Generator')
+      );
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    tab.click();
+  };
+
+  test('submits straight to the crucible, never offering to add to a library', async () => {
+    useGeneratorSelectionStore.setState({ selected: generated(1) });
+    renderModal();
+    await openGeneratorTab();
+
+    await vi.waitFor(() => expect(plainSubmit()?.textContent).toContain('Submit 1 Entry'));
+    expect(document.body.textContent).not.toMatch(/to library/i);
+  });
+
+  test('puts each generated image in its own unpublished post', async () => {
+    useGeneratorSelectionStore.setState({ selected: generated(2) });
+    renderModal({ freeEntriesPerUser: 3 });
+    await openGeneratorTab();
+    await vi.waitFor(() => expect(plainSubmit()?.textContent).toContain('Submit 2 Entries'));
+
+    plainSubmit()!.click();
+
+    await vi.waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
+    expect(mocks.upload.mock.calls.map(([, context]) => context)).toEqual([
+      { postId: 300 },
+      { postId: 301 },
+    ]);
+  });
+
+  // Uploads that were never entered stay unpublished; they must still be pickable after the modal
+  // closes and reopens, so the very first library query asks for them.
+  test('lists the caller entry-modal drafts from the first query, before anything is uploaded', async () => {
+    renderModal();
+
+    await vi.waitFor(() => expect(mocks.myImagesInputs.length).toBeGreaterThan(0));
+    expect(mocks.myImagesInputs[0]).toMatchObject({
+      publishedOnly: true,
+      includeEntryDrafts: true,
+    });
+  });
+});
+
+describe('CrucibleSubmitEntryModal — generator picks enter once scanned', () => {
+  test('enters each picked image as soon as its scan settles, with no second click', async () => {
+    useGeneratorSelectionStore.setState({
+      selected: [{ url: 'gen-0', type: MediaType.image }] as never[],
+    });
+    mocks.images = [];
+    const view = await renderModal();
+    const tab = await vi.waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+        (button) => button.textContent?.includes('From Generator')
+      );
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    tab.click();
+    await vi.waitFor(() => expect(plainSubmit()?.textContent).toContain('Submit 1 Entry'));
+
+    plainSubmit()!.click();
+    await vi.waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(1));
+    expect(mocks.submitEntry).not.toHaveBeenCalled();
+
+    // The upload lands and the image is added to its draft, still scanning.
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.images = [{ ...image(77), ingestion: ImageIngestionStatus.Pending }];
+    await view.rerender(
+      <CrucibleSubmitEntryModal
+        crucibleId={1}
+        crucibleName="Free first"
+        entryFee={50}
+        entryLimit={3}
+        freeEntriesPerUser={1}
+        nsfwLevel={1}
+        contentType={MediaType.image}
+        currentEntryCount={0}
+      />
+    );
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(mocks.submitEntry, 'still scanning').not.toHaveBeenCalled();
+
+    mocks.images = [image(77)];
+    await view.rerender(
+      <CrucibleSubmitEntryModal
+        crucibleId={1}
+        crucibleName="Free first"
+        entryFee={50}
+        entryLimit={3}
+        freeEntriesPerUser={1}
+        nsfwLevel={1}
+        contentType={MediaType.image}
+        currentEntryCount={0}
+      />
+    );
+
+    await vi.waitFor(() =>
+      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
+    );
+    expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CrucibleSubmitEntryModal — a batch from the generator', () => {
+  const props = {
+    crucibleId: 1,
+    crucibleName: 'Free first',
+    entryFee: 50,
+    entryLimit: 3,
+    freeEntriesPerUser: 3,
+    nsfwLevel: 1,
+    contentType: MediaType.image,
+    currentEntryCount: 0,
+  };
+  const startBatch = async () => {
+    useGeneratorSelectionStore.setState({
+      selected: [
+        { url: 'gen-0', type: MediaType.image },
+        { url: 'gen-1', type: MediaType.image },
+      ] as never[],
+    });
+    mocks.images = [];
+    const view = await renderWithProviders(<CrucibleSubmitEntryModal {...props} />);
+    const tab = await vi.waitFor(() => {
+      const found = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')].find(
+        (button) => button.textContent?.includes('From Generator')
+      );
+      expect(found).toBeTruthy();
+      return found!;
+    });
+    tab.click();
+    await vi.waitFor(() => expect(plainSubmit()?.textContent).toContain('Submit 2 Entries'));
+    plainSubmit()!.click();
+    await vi.waitFor(() => expect(mocks.upload).toHaveBeenCalledTimes(2));
+    return { rerender: () => view.rerender(<CrucibleSubmitEntryModal {...props} />) };
+  };
+
+  test('waits for every scan before entering any of them', async () => {
+    const { rerender } = await startBatch();
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.addImageOnSuccess!({ id: 78 });
+    mocks.images = [image(77), { ...image(78), ingestion: ImageIngestionStatus.Pending }];
+    await rerender();
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(mocks.submitEntry, 'one scan is still pending').not.toHaveBeenCalled();
+
+    mocks.images = [image(77), image(78)];
+    await rerender();
+
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(2));
+    expect(mocks.submitEntry.mock.calls.map(([input]) => input.imageId).sort()).toEqual([77, 78]);
+  });
+
+  // A scan that sends an upload to review drops it from the library rather than settling it.
+  test('counts an upload that leaves the library mid-scan as failed, and enters the rest', async () => {
+    const { rerender } = await startBatch();
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.addImageOnSuccess!({ id: 78 });
+    mocks.images = [
+      { ...image(77), ingestion: ImageIngestionStatus.Pending },
+      { ...image(78), ingestion: ImageIngestionStatus.Pending },
+    ];
+    await rerender();
+
+    mocks.images = [image(77)];
+    await rerender();
+
+    await vi.waitFor(() =>
+      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
+    );
+    expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(mocks.showErrorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "1 couldn't be entered" })
+      )
+    );
+  });
+
+  test('does not count an upload as failed before it first appears in the library', async () => {
+    const { rerender } = await startBatch();
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.addImageOnSuccess!({ id: 78 });
+    mocks.images = [image(77)];
+    await rerender();
+
+    mocks.images = [image(77), image(78)];
+    await rerender();
+
+    await vi.waitFor(() => expect(mocks.submitEntry).toHaveBeenCalledTimes(2));
+    expect(mocks.showErrorNotification).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: expect.stringMatching(/couldn't be entered/) })
+    );
+  });
+
+  test('enters the rest when one upload is blocked', async () => {
+    const { rerender } = await startBatch();
+    mocks.uploadOnComplete!({ status: 'blocked', blockedFor: 'test' }, { postId: 301 });
+    mocks.addImageOnSuccess!({ id: 77 });
+    mocks.images = [image(77)];
+    await rerender();
+
+    await vi.waitFor(() =>
+      expect(mocks.submitEntry).toHaveBeenCalledWith({ crucibleId: 1, imageId: 77 })
+    );
+    expect(mocks.submitEntry).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(mocks.showErrorNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ title: "1 couldn't be entered" })
+      )
+    );
   });
 });

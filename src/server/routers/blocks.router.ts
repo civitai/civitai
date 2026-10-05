@@ -2513,6 +2513,9 @@ export const blocksRouter = router({
         return await startAgentReview({
           publishRequestId: input.publishRequestId,
           modUserId: ctx.user.id,
+          // Optional targeted re-run (one failed analysis instead of all three).
+          // `undefined` ⇒ a full run, exactly as before this field existed.
+          sections: input.sections,
         });
       } catch (err) {
         // Preserve a typed TRPCError's CODE (the service raises CONFLICT — "a

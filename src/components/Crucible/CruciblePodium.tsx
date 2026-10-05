@@ -2,43 +2,29 @@ import { Container, Group, Stack, Title } from '@mantine/core';
 import { IconTrophy } from '@tabler/icons-react';
 import { WinnerPodiumCard, type WinnerPodiumData } from '~/components/Challenge/WinnerPodiumCard';
 import type { RouterOutput } from '~/types/router';
-import { getCruciblePrizeAmount, type PrizePosition } from '~/utils/crucible-helpers';
+import type { CrucibleDisplayPrize } from '~/utils/crucible-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function CruciblePodium({
   entries,
-  prizePositions,
-  entryCount,
-  totalPrizePool,
+  prizeWinners,
   buzzType,
 }: {
-  entries: RouterOutput['crucible']['getEntries']['items'];
-  prizePositions: PrizePosition[];
-  entryCount: number;
-  totalPrizePool: number;
+  entries: RouterOutput['crucible']['getEntries']['podium'];
+  prizeWinners: CrucibleDisplayPrize[];
   buzzType: 'green' | 'yellow';
 }) {
-  const winners: WinnerPodiumData[] = entries
-    .filter((entry) => entry.position !== null && entry.position <= 3)
-    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
-    .map((entry) => {
-      const place = entry.position ?? 0;
-      return {
-        place,
-        userId: entry.userId,
-        username: entry.user.username ?? '',
-        imageId: entry.imageId,
-        imageUrl: entry.image.url,
-        imageNsfwLevel: entry.image.nsfwLevel,
-        buzzAwarded: getCruciblePrizeAmount({
-          position: place,
-          prizePositions,
-          entryCount,
-          totalPrizePool,
-        }),
-        profilePicture: entry.user.profilePicture,
-      };
-    });
+  const prizeByEntryId = new Map(prizeWinners.map((w) => [w.entryId, w.prizeAmount]));
+  const winners: WinnerPodiumData[] = entries.map((entry) => ({
+    place: entry.prizePlace,
+    userId: entry.userId,
+    username: entry.user.username ?? '',
+    imageId: entry.imageId,
+    imageUrl: entry.image.url,
+    imageNsfwLevel: entry.image.nsfwLevel,
+    buzzAwarded: prizeByEntryId.get(entry.id) ?? 0,
+    profilePicture: entry.user.profilePicture,
+  }));
 
   if (!winners.length) return null;
 

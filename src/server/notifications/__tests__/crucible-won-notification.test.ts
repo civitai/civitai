@@ -24,6 +24,23 @@ describe('crucible-won notification message', () => {
     expect(msg!.message).toContain('1,500 Buzz');
   });
 
+  // A creator holds one prize, so 4th place can take 2nd prize; naming the position confuses it.
+  it('names the prize won, not the position, when the prize place is known', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 4,
+        prizePlace: 2,
+        prizeAmount: 1000,
+      },
+    });
+
+    expect(msg!.message).toBe(
+      'Congrats! You took 2nd prize in the crucible "Neon" and won 1,000 Buzz.'
+    );
+  });
+
   it('says why an entry without enough votes was not placed, instead of "position null"', () => {
     const msg = def.prepareMessage({
       details: { crucibleId: 7, crucibleName: 'Neon', position: null, prizeAmount: 0 },
@@ -33,12 +50,58 @@ describe('crucible-won notification message', () => {
     expect(msg!.message).toContain('enough votes');
     expect(msg!.url).toBe('/crucibles/7');
   });
+
+  it('sends a winner to the claim screen for their prize', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 4,
+        prizePlace: 2,
+        prizeAmount: 1500,
+        prizeId: 42,
+        prizeCount: 1,
+      },
+    });
+
+    expect(msg!.url).toBe('/prizes/42');
+    expect(msg!.message).toBe(
+      'Congrats! You took 2nd prize in the crucible "Neon" and won 1,500 Buzz. Claim your prize!'
+    );
+  });
+
+  it('sends a winner of several prizes to their prize list', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 1,
+        prizeAmount: 1500,
+        prizeCount: 2,
+      },
+    });
+
+    expect(msg!.url).toBe('/prizes');
+  });
+
+  it('keeps an already-paid winner, notified before prizes were claimable, on the crucible', () => {
+    const msg = def.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', position: 1, prizeAmount: 1500 },
+    });
+
+    expect(msg!.url).toBe('/crucibles/7');
+    expect(msg!.message).not.toContain('Claim');
+  });
 });
 
 describe('crucible notifications without a name', () => {
   it.each([
     ['crucible-ended', { crucibleId: 7, crucibleName: null, totalEntries: 3, prizePool: 900 }],
     ['crucible-won', { crucibleId: 7, crucibleName: null, position: 1, prizeAmount: 1500 }],
+    [
+      'crucible-won',
+      { crucibleId: 7, crucibleName: null, position: 4, prizePlace: 2, prizeAmount: 1500 },
+    ],
     ['crucible-won', { crucibleId: 7, crucibleName: null, position: 2, prizeAmount: 0 }],
     ['crucible-won', { crucibleId: 7, crucibleName: null, position: null, prizeAmount: 0 }],
     ['crucible-entry-submitted', { crucibleId: 7, crucibleName: null, entrantUsername: 'kai' }],

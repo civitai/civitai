@@ -145,8 +145,9 @@ export async function saveAnswer(
     if (Number(result.numInsertedOrUpdatedRows ?? 0) === 0) return { ok: false, reason: 'missing' };
     return { ok: true };
   } catch (e) {
-    const code = (e as { code?: string }).code;
-    if (code === '23514') return { ok: false, reason: 'full' };
+    const { code, constraint } = e as { code?: string; constraint?: string };
+    // The trigger raises a bare check_violation; a named CHECK constraint failing is a real error.
+    if (code === '23514' && !constraint) return { ok: false, reason: 'full' };
     if (code === '23503') return { ok: false, reason: 'missing' };
     throw e;
   }

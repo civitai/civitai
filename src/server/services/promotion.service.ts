@@ -21,7 +21,7 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
+  modelBrowsingLevelLimit,
 } from '~/shared/constants/browsingLevel.constants';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Flags } from '~/shared/utils/flags';
@@ -100,9 +100,8 @@ const isShowableModel = (
   model.mode !== ModelModifier.TakenDown &&
   model.mode !== ModelModifier.Archived;
 
-/** The platform's lock on a page: a minor or SFW-only model shows PG/PG-13 only. */
 export const platformPromotionLevel = (model: Pick<HostModel, 'minor' | 'sfwOnly'>) =>
-  model.minor || model.sfwOnly ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  modelBrowsingLevelLimit(model);
 
 /**
  * The highest browsing level the host's page accepts a promotion at. The host

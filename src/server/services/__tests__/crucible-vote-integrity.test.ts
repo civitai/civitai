@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -28,9 +29,7 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   },
 }));
 
-const { getJudgingPair, submitVote, CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } = await import(
-  '~/server/services/crucible.service'
-);
+const { getJudgingPair, submitVote } = await import('~/server/services/crucible.service');
 
 const JUDGE = 42;
 const JUDGE_ENTRY_VOTES_KEY = `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:1:${JUDGE}`;
@@ -84,8 +83,13 @@ const useFakeRedis = () => {
   return { judgeVotes };
 };
 
+let fetchMock: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // File-wide: every vote tracks to ClickHouse, and an unstubbed send retries into a later test.
+  fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }));
+  vi.stubGlobal('fetch', fetchMock);
   dbMock.dbRead.crucible.findUnique.mockResolvedValue({
     id: 1,
     userId: 500,
@@ -106,6 +110,7 @@ beforeEach(() => {
   // Every pair counts as served unless a test says otherwise.
   redisMock.sysRedis.eval.mockResolvedValue(1);
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe('submitVote — a vote needs two different entries', () => {
   it('is refused by the input schema', () => {
@@ -327,5 +332,25 @@ describe('submitVote — per-judge cap on each entry', () => {
     await expect(vote()).rejects.toThrow('rating script failed');
 
     expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
+  });
+});
+
+describe('submitVote — the ClickHouse vote row', () => {
+  // The vote path builds its Tracker without a request or session, so the voter has to be
+  // passed in: the actor's userId on such a Tracker is 0, and every row read 0 until it was.
+  it('records the judge who voted, not the anonymous actor', async () => {
+    await vote(10, 20);
+    await new Promise((r) => setImmediate(r));
+
+    const rows = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith('/track/crucible_votes'))
+      .map(([, init]) => JSON.parse((init as { body: string }).body));
+    expect(rows, 'crucible_votes rows sent').toHaveLength(1);
+    expect(rows[0], 'crucible_votes row').toMatchObject({
+      userId: JUDGE,
+      crucibleId: 1,
+      winnerEntryId: 10,
+      loserEntryId: 20,
+    });
   });
 });

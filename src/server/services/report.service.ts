@@ -813,20 +813,22 @@ type AppealFeeRef = {
   buzzTransactionId: string;
 };
 
-function refundAppealFee(appeal: AppealFeeRef) {
-  return withRetries(async () => {
-    if (isAppealPrefix(appeal.buzzTransactionId)) {
-      await refundMultiAccountTransaction({
+async function refundAppealFee(appeal: AppealFeeRef) {
+  if (isAppealPrefix(appeal.buzzTransactionId)) {
+    // A timed-out refund may still land, so only a request that never reached Buzz is retried.
+    await refundMultiAccountTransaction(
+      {
         externalTransactionIdPrefix: appeal.buzzTransactionId,
         description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
-      });
-    } else {
-      await refundTransaction(
-        appeal.buzzTransactionId,
-        `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-      );
-    }
-  });
+      },
+      { shouldRetry: isSafeToRetry }
+    );
+  } else {
+    await refundTransaction(
+      appeal.buzzTransactionId,
+      `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+    );
+  }
 }
 
 /**
@@ -893,8 +895,11 @@ export async function resolveEntityAppeal({
   refundBuzz,
   userId,
 }: ResolveAppealInput & { userId?: number }) {
-  const appeals = await dbRead.appeal.findMany({
+  // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
+  // back for it, so only one of them refunds.
+  const appeals = await dbWrite.appeal.updateManyAndReturn({
     where: { entityId: { in: ids }, status: AppealStatus.Pending, entityType },
+    data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
     select: {
       id: true,
       entityId: true,
@@ -905,13 +910,7 @@ export async function resolveEntityAppeal({
       userId: true,
     },
   });
-  const affectedIds = appeals.map((a) => a.id);
-  if (affectedIds.length === 0) return [];
-
-  await dbWrite.appeal.updateMany({
-    where: { id: { in: affectedIds } },
-    data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
-  });
+  if (appeals.length === 0) return [];
 
   const approved = status === AppealStatus.Approved;
 
@@ -972,9 +971,16 @@ export async function resolveEntityAppeal({
       try {
         await refundAppealFee({ ...appeal, buzzTransactionId: appeal.buzzTransactionId });
       } catch (e) {
-        // Log but don't block appeal resolution if refund fails
-        // (e.g., old transactions may no longer exist in buzz service)
-        console.error(`Failed to refund buzz for appeal ${appeal.id}: ${e}`);
+        // The appeal is already closed, so this is the only record that the fee is still owed.
+        logToAxiom({
+          type: 'error',
+          name: 'resolve-entity-appeal',
+          message: 'Failed to refund appeal fee',
+          appealId: appeal.id,
+          userId: appeal.userId,
+          buzzTransactionId: appeal.buzzTransactionId,
+          error: (e as Error).message,
+        });
       }
     }
 

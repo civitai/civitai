@@ -22,7 +22,7 @@ export function getCrucibleSlug(name: string) {
 export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
   value === 'green' ? 'green' : 'yellow';
 
-/** Every prize is paid in this until winners can choose their currency. */
+/** How a prize is displayed. It is paid in whichever Buzz the winner picks when claiming. */
 export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
 
 /** An entrant pays in the currency of the site they enter on. */
@@ -277,6 +277,57 @@ export function getCruciblePrizeAmount({
   const filled = sumOf(filledPositions);
   if (!filled) return Math.floor(((configured / 100) * totalPrizePool) / filledPositions.length);
   return Math.floor((prize.percentage / 100) * totalPrizePool * (configured / filled));
+}
+
+export type CruciblePrizeWinner = {
+  entryId: number;
+  userId: number;
+  position: number;
+  prizePlace: number;
+  prizeAmount: number;
+};
+export type CrucibleDisplayPrize = Omit<CruciblePrizeWinner, 'userId'>;
+
+export const CRUCIBLE_ONE_PRIZE_RULE =
+  'Each creator can win at most one prize. If you place more than once, your best entry counts and the next creator moves up.';
+
+/**
+ * A creator takes at most one prize: their best-placed entry. Prize places go to creators in
+ * placing order, so a creator's other entries keep their positions but the next creator moves up
+ * a prize. Placings below the prize places don't change the result, so `placed` may be cut short
+ * after the last prize place's creator.
+ */
+export function getCruciblePrizeWinners({
+  placed,
+  prizePositions,
+  totalPrizePool,
+}: {
+  placed: { entryId: number; userId: number; position: number }[];
+  prizePositions: PrizePosition[];
+  totalPrizePool: number;
+}): CruciblePrizeWinner[] {
+  const lastPrizePlace = Math.max(0, ...prizePositions.map((p) => p.position));
+  const creatorsBest: { entryId: number; userId: number; position: number }[] = [];
+  const seen = new Set<number>();
+  for (const entry of [...placed].sort((a, b) => a.position - b.position)) {
+    if (creatorsBest.length >= lastPrizePlace) break;
+    if (seen.has(entry.userId)) continue;
+    seen.add(entry.userId);
+    creatorsBest.push({ entryId: entry.entryId, userId: entry.userId, position: entry.position });
+  }
+
+  return creatorsBest
+    .map((entry, index) => ({ ...entry, prizePlace: index + 1 }))
+    .filter(({ prizePlace }) => prizePositions.some((p) => p.position === prizePlace))
+    .map((winner) => ({
+      ...winner,
+      prizeAmount: getCruciblePrizeAmount({
+        position: winner.prizePlace,
+        prizePositions,
+        entryCount: creatorsBest.length,
+        totalPrizePool,
+      }),
+    }));
 }
 
 export const CRUCIBLE_MIN_VOTES_PERCENT = 75;
