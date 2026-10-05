@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { getHighestBrowsingLevelBit, NsfwLevel, nsfwBrowsingLevelsFlag } from '@civitai/shared';
+import { getHighestBrowsingLevelBit, NsfwLevel } from '@civitai/shared';
+import { collectionRatingLevel } from '@civitai/shared/rating-review';
 import {
   challengeDerivedNsfwLevel,
   type DerivedNsfwEntityType,
@@ -29,7 +30,7 @@ export async function computeRatedEntityDerivedNsfwLevel(
       where: { id: entityId },
       select: { nsfwLevel: true },
     });
-    return row ? (row.nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG) : null;
+    return row ? collectionRatingLevel(row.nsfwLevel) : null;
   }
   if (entityType === 'Challenge') {
     const row = await dbWrite.challenge.findUnique({

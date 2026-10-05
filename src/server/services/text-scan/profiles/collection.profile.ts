@@ -1,20 +1,14 @@
 import { dbWrite } from '~/server/db/client';
+import { VISIBLE_COLLECTION_WHERE } from '~/server/services/text-scan/collection-visibility';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
-import { Availability, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { removeTags } from '~/utils/string-helpers';
-
-// The set updateCollectionsNsfwLevels rates; anything else has no audience to protect.
-const VISIBLE = {
-  availability: Availability.Public,
-  read: { in: [CollectionReadConfiguration.Public, CollectionReadConfiguration.Unlisted] },
-};
 
 registerTextScanProfile({
   entityType: 'Collection',
   labels: ['nsfw'],
   load: async (ids) => {
     const rows = await dbWrite.collection.findMany({
-      where: { id: { in: ids }, ...VISIBLE },
+      where: { id: { in: ids }, ...VISIBLE_COLLECTION_WHERE },
       select: { id: true, userId: true, name: true, description: true, nsfwLevel: true },
     });
     return new Map(

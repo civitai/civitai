@@ -4,6 +4,7 @@ import {
   buildRatingReviewNotification,
   isRatingReviewEntityType,
   ratingReviewEntityLabels,
+  collectionRatingLevel,
   modelRatingLevel,
   ratingReviewEntityPath,
   ratingReviewLevelLabel,
@@ -45,6 +46,10 @@ describe('rating-review constants', () => {
     expect(ratingReviewLevels('Post')).toEqual([1, 2, 4, 8, 16]);
     expect(modelRatingLevel(true)).toBe(NsfwLevel.R);
     expect(modelRatingLevel(false)).toBe(NsfwLevel.PG);
+    expect(collectionRatingLevel(NsfwLevel.PG | NsfwLevel.PG13)).toBe(NsfwLevel.PG);
+    expect(collectionRatingLevel(NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX)).toBe(NsfwLevel.R);
+    expect(collectionRatingLevel(NsfwLevel.XXX)).toBe(NsfwLevel.R);
+    expect(collectionRatingLevel(0)).toBe(NsfwLevel.PG);
     expect(ratingReviewLevelLabel('Model', NsfwLevel.R)).toBe('NSFW');
     expect(ratingReviewLevelLabel('Model', NsfwLevel.PG)).toBe('SFW');
     expect(ratingReviewLevelLabel('Post', NsfwLevel.PG13)).toBe('PG-13');

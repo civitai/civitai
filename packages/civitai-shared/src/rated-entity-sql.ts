@@ -85,9 +85,11 @@ export function ratedEntityDerivedNsfwLevelText(entityType: DerivedNsfwEntityTyp
     : content;
 }
 
-// A model's flag and a collection's bucket only move at R, so a PG-13 verdict raises neither.
+// A model's flag, a collection's bucket and a crucible's escalation only move at R, so a PG-13
+// verdict raises none of them.
+const RAISED_AT_R: readonly string[] = ['Model', 'Collection', 'Crucible'];
 export function textScanRaisedMinLevel(entityType: string) {
-  return entityType === 'Model' || entityType === 'Collection' ? NsfwLevel.R : NsfwLevel.PG13;
+  return RAISED_AT_R.includes(entityType) ? NsfwLevel.R : NsfwLevel.PG13;
 }
 
 export function isTextScanRaised(row: {

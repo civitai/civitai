@@ -2,6 +2,7 @@ import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { VISIBLE_COLLECTION_WHERE } from '~/server/services/text-scan/collection-visibility';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
@@ -69,7 +70,7 @@ export const CLAVATA_TARGETS: Readonly<Record<CutoverEntityType, ClavataTarget>>
     ids(
       await dbRead.collection.findMany({
         ...recent,
-        where: { availability: 'Public', read: { in: ['Public', 'Unlisted'] } },
+        where: VISIBLE_COLLECTION_WHERE,
       })
     )
   ),

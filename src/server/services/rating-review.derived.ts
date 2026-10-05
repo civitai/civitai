@@ -27,9 +27,7 @@ const OVERRIDE_ENTITY_TYPES = new Set<string>([
 export const isOverrideEntityType = (t: string): t is OverrideEntityType =>
   OVERRIDE_ENTITY_TYPES.has(t);
 
-// Resolving these writes more than the level (a challenge's allowed mask and collection gate, a
-// crucible's textNsfw, a collection's bucket recompute), which only the spoke's resolve does, so their
-// disputes always go to a moderator.
+// A dispute on one of these is never auto-approved: a moderator always resolves it, in the spoke.
 export type ModeratorOnlyEntityType = 'Challenge' | 'Crucible' | 'Collection';
 const MODERATOR_ONLY = new Set<string>(['Challenge', 'Crucible', 'Collection']);
 export const isModeratorOnlyEntityType = (t: string): t is ModeratorOnlyEntityType =>

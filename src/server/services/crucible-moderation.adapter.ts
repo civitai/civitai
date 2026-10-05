@@ -11,11 +11,12 @@ import {
 import { buildCrucibleModerationText } from '~/server/services/crucible.service';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { applyCrucibleTextScan } from '~/server/services/text-scan/actions/crucible';
+import {
+  applyCrucibleTextScan,
+  settleSkippedCrucibleScan,
+} from '~/server/services/text-scan/actions/crucible';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { CrucibleIngestionStatus } from '~/shared/utils/prisma/enums';
-
-export { applyCrucibleNsfwEscalation };
 
 export const crucibleModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
@@ -26,10 +27,13 @@ export const crucibleModerationAdapter: ModerationAdapter = {
     return new Map(rows.map((r) => [r.id, buildCrucibleModerationText(r)]));
   },
 
+  // Only the retry cron calls submit.
   submit: ({ entityId, content }) =>
     submitTextModerationOrScan({
       entityType: 'Crucible',
       entityId,
+      fromRetry: true,
+      onActiveSkip: (reason) => settleSkippedCrucibleScan(entityId, reason),
       xguard: () =>
         submitTextModeration({
           entityType: 'Crucible',

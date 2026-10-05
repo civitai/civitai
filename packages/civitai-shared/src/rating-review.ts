@@ -1,4 +1,9 @@
-import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from './browsing-levels';
+import {
+  browsingLevels,
+  getBrowsingLevelLabel,
+  NsfwLevel,
+  nsfwBrowsingLevelsFlag,
+} from './browsing-levels';
 
 export const RATING_REVIEW_ENTITY_TYPES = [
   'Article',
@@ -29,6 +34,10 @@ export const ratingReviewEntityLabels: Record<RatingReviewEntityType, string> = 
 
 // A Model's rating override is its `nsfw` flag, not a level, so it is represented as PG (off) / R (on).
 export const modelRatingLevel = (nsfw: boolean): number => (nsfw ? NsfwLevel.R : NsfwLevel.PG);
+
+// Any NSFW bit in a collection's bucket reads as R.
+export const collectionRatingLevel = (nsfwLevel: number): number =>
+  nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG;
 
 // A collection's nsfwLevel is a bucket (SFW or every NSFW bit), so it has no level finer than PG/R.
 export function ratingReviewLevels(entityType: RatingReviewEntityType): number[] {

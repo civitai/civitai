@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as RedisCaches from '~/server/redis/caches';
-import type * as NsfwLevels from '~/server/services/nsfwLevels.service';
 import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDbRead = dbMock.dbRead;
@@ -26,13 +25,12 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   scanEntityInBackground: vi.fn(),
 }));
 
-vi.mock('~/server/services/nsfwLevels.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof NsfwLevels>()),
-  updateCollectionsNsfwLevels: vi.fn(async () => []),
+vi.mock('~/server/services/job-queue.service', () => ({
+  enqueueJobs: vi.fn(async () => undefined),
 }));
 
 const { upsertCollection } = await import('~/server/services/collection.service');
-const { updateCollectionsNsfwLevels } = await import('~/server/services/nsfwLevels.service');
+const { enqueueJobs } = await import('~/server/services/job-queue.service');
 const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 
 const COLLECTION_ID = 10;
@@ -305,6 +303,9 @@ describe('upsertCollection authorization', () => {
     vi.mocked(scanEntityInBackground).mockImplementation(() => {
       expect(committed).toBe(true);
     });
+    vi.mocked(enqueueJobs).mockImplementation(async () => {
+      expect(committed).toBe(true);
+    });
 
     await upsertCollection({
       input: { id: COLLECTION_ID, name: 'Mine', read: 'Public', userId: OWNER_ID, isMember: true },
@@ -314,10 +315,13 @@ describe('upsertCollection authorization', () => {
       entityType: 'Collection',
       entityId: COLLECTION_ID,
     });
-    expect(updateCollectionsNsfwLevels).toHaveBeenCalledWith([COLLECTION_ID]);
+    // Queued, not run inline: the recompute can time out on a huge collection.
+    expect(enqueueJobs).toHaveBeenCalledWith([
+      { entityType: 'Collection', entityId: COLLECTION_ID, type: 'UpdateNsfwLevel' },
+    ]);
   });
 
-  it('saves a Private → Public flip even when the recompute fails', async () => {
+  it('saves a Private → Public flip even when queueing the recompute fails', async () => {
     arrange({ actorId: OWNER_ID });
     mockDbWrite.collection.findUnique.mockResolvedValue({
       id: COLLECTION_ID,
@@ -341,7 +345,7 @@ describe('upsertCollection authorization', () => {
       mode: null,
       image: null,
     });
-    vi.mocked(updateCollectionsNsfwLevels).mockRejectedValueOnce(new Error('db down'));
+    vi.mocked(enqueueJobs).mockRejectedValueOnce(new Error('db down'));
 
     await expect(
       upsertCollection({
@@ -357,7 +361,7 @@ describe('upsertCollection authorization', () => {
     expect(scanEntityInBackground).toHaveBeenCalled();
   });
 
-  it('scans a text edit of a visible collection without recomputing here', async () => {
+  it('scans a text edit of a visible collection without queueing a recompute', async () => {
     arrange({ actorId: OWNER_ID, currentWrite: 'Public' });
     const visible = { description: null, read: 'Public', availability: 'Public' };
     mockDbWrite.collection.findUnique.mockResolvedValue({
@@ -387,7 +391,7 @@ describe('upsertCollection authorization', () => {
       entityType: 'Collection',
       entityId: COLLECTION_ID,
     });
-    expect(updateCollectionsNsfwLevels).not.toHaveBeenCalled();
+    expect(enqueueJobs).not.toHaveBeenCalled();
   });
 
   it('does not scan an edit that leaves text and visibility alone', async () => {

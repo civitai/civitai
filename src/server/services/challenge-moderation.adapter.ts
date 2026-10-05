@@ -3,7 +3,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { createNotification } from '~/server/services/notification.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
-import { applyChallengeTextScan } from '~/server/services/text-scan/actions/challenge';
+import {
+  applyChallengeTextScan,
+  settleSkippedChallengeScan,
+} from '~/server/services/text-scan/actions/challenge';
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { buildChallengeModerationText } from '~/server/games/daily-challenge/challenge-helpers';
 import {
@@ -32,7 +35,14 @@ export const challengeModerationAdapter: ModerationAdapter = {
   resolveContent: async (ids) => {
     const rows = await dbRead.challenge.findMany({
       where: { id: { in: ids } },
-      select: { id: true, title: true, theme: true, description: true, invitation: true, metadata: true },
+      select: {
+        id: true,
+        title: true,
+        theme: true,
+        description: true,
+        invitation: true,
+        metadata: true,
+      },
     });
     return new Map(
       rows.map((r) => [
@@ -45,10 +55,13 @@ export const challengeModerationAdapter: ModerationAdapter = {
     );
   },
 
+  // Only the retry cron calls submit.
   submit: ({ entityId, content }) =>
     submitTextModerationOrScan({
       entityType: 'Challenge',
       entityId,
+      fromRetry: true,
+      onActiveSkip: (reason) => settleSkippedChallengeScan(entityId, reason),
       xguard: () =>
         submitTextModeration({
           entityType: 'Challenge',

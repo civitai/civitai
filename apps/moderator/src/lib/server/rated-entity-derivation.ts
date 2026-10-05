@@ -1,13 +1,13 @@
 import type { Kysely, Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { NsfwLevel, nsfwBrowsingLevelsFlag } from '@civitai/shared';
 import {
   articleModerationFloorText,
   challengeDerivedNsfwLevel,
   ratedEntityContentNsfwLevelText,
   type DerivedNsfwEntityType,
 } from '@civitai/shared/rated-entity-sql';
+import { collectionRatingLevel } from '@civitai/shared/rating-review';
 
 export async function computeArticleDerivedNsfwLevel(
   db: Kysely<DB> | Transaction<DB>,
@@ -68,7 +68,7 @@ export async function computeRatedEntityDerivedNsfwLevel(
       .select('nsfwLevel')
       .where('id', '=', entityId)
       .executeTakeFirst();
-    return row ? (row.nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG) : null;
+    return row ? collectionRatingLevel(row.nsfwLevel) : null;
   }
   if (entityType === 'Challenge') {
     const row = await db

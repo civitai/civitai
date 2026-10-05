@@ -2,6 +2,7 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
 import type { ApplyTextScanArgs } from '~/server/services/text-scan/actions/types';
+import { isVisibleCollection } from '~/server/services/text-scan/collection-visibility';
 import { notifyTextScanRatingRaised } from '~/server/services/text-scan/notify';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
@@ -12,17 +13,15 @@ type CollectionShape = {
   availability: string;
 };
 
-const visible = (c: CollectionShape) =>
-  c.availability === 'Public' && (c.read === 'Public' || c.read === 'Unlisted');
+// Drives the save-time nsfwLevel recompute: the recompute skips hidden collections.
+export const collectionBecameVisible = (before: CollectionShape, after: CollectionShape) =>
+  !isVisibleCollection(before) && isVisibleCollection(after);
 
 // Becoming visible rescans unchanged text: a stored verdict reads as `unchanged`, and one the
 // profile never saw is scanned for the first time.
-export const collectionBecameVisible = (before: CollectionShape, after: CollectionShape) =>
-  !visible(before) && visible(after);
-
 export function shouldScanCollection(before: CollectionShape | null, after: CollectionShape) {
-  if (!visible(after)) return false;
-  if (!before || !visible(before)) return true;
+  if (!isVisibleCollection(after)) return false;
+  if (!before || !isVisibleCollection(before)) return true;
   return before.name !== after.name || (before.description ?? '') !== (after.description ?? '');
 }
 

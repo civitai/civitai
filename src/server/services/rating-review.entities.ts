@@ -1,10 +1,6 @@
+import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit } from '@civitai/shared';
 import {
-  allBrowsingLevelsFlag,
-  getHighestBrowsingLevelBit,
-  NsfwLevel,
-  nsfwBrowsingLevelsFlag,
-} from '@civitai/shared';
-import {
+  collectionRatingLevel,
   modelRatingLevel,
   textScanNsfwReason,
   textScanResultTextHash,
@@ -179,7 +175,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
     return (
       c && {
         ownerId: c.userId,
-        currentLevel: c.nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG,
+        currentLevel: collectionRatingLevel(c.nsfwLevel),
         updatedAt: c.updatedAt,
         title: c.name,
         parentId: null,

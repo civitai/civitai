@@ -37,9 +37,8 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   scanEntity: vi.fn(),
 }));
 
-const { crucibleModerationAdapter, applyCrucibleNsfwEscalation } = await import(
-  '~/server/services/crucible-moderation.adapter'
-);
+const { crucibleModerationAdapter } = await import('~/server/services/crucible-moderation.adapter');
+const { applyCrucibleNsfwEscalation } = await import('~/server/services/crucible-nsfw-escalation');
 const { applyCrucibleTextScan } = await import('~/server/services/text-scan/actions/crucible');
 const { scanCrucible } = await import('~/server/services/crucible.service');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
@@ -464,9 +463,24 @@ describe('submit', () => {
       entityType: 'Crucible',
       entityId: ID,
       force: undefined,
+      fromRetry: true,
     });
     expect(submitTextModeration).not.toHaveBeenCalled();
     expect(result).toEqual({ id: 'ts-1' });
+  });
+
+  it('settles a retry the scan skips, so the crucible does not stay Pending', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValueOnce('active');
+    vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'skipped', reason: 'too-short' });
+    findForEscalation.mockResolvedValue({ ...crucible(), name: 'Neon', description: null });
+
+    const result = await crucibleModerationAdapter.submit({ entityId: ID, content: 'Neon' });
+
+    expect(result).toBeNull();
+    expect(update).toHaveBeenCalledWith({
+      where: { id: ID },
+      data: { ingestion: 'Scanned', scannedAt: expect.any(Date) },
+    });
   });
 
   // The retry cron re-submits through this adapter; a flag flipped off mid-flight hands the

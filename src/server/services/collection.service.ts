@@ -72,7 +72,7 @@ import { bustOrchestratorModelCache } from '~/server/services/orchestrator/model
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
-import { updateCollectionsNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { enqueueJobs } from '~/server/services/job-queue.service';
 import {
   collectionBecameVisible,
   shouldScanCollection,
@@ -100,8 +100,10 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  EntityType,
   HomeBlockType,
   ImageIngestionStatus,
+  JobQueueType,
   MetricTimeframe,
   ModelStatus,
   TagTarget,
@@ -1516,12 +1518,19 @@ export const upsertCollection = async ({
     await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     // Recomputes skip hidden collections, so anything that changed while it was hidden (a verdict
-    // landing, a moderator rating, an item) only reaches nsfwLevel here; the scan may skip as unchanged.
+    // landing, a moderator rating, an item) only reaches nsfwLevel here; the scan may skip as
+    // unchanged. Queued rather than inline: the recompute can time out on a huge collection.
     if (collectionBecameVisible(currentCollection, updated))
-      await updateCollectionsNsfwLevels([updated.id]).catch((error) =>
+      await enqueueJobs([
+        {
+          entityType: EntityType.Collection,
+          entityId: updated.id,
+          type: JobQueueType.UpdateNsfwLevel,
+        },
+      ]).catch((error) =>
         logToAxiom({
           type: 'error',
-          name: 'collection-nsfw-recompute-failed',
+          name: 'collection-nsfw-recompute-enqueue-failed',
           message: error instanceof Error ? error.message : String(error),
           collectionId: updated.id,
         }).catch(() => null)

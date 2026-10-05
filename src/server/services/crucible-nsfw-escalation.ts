@@ -52,7 +52,8 @@ export async function applyCrucibleNsfwEscalation({
   if (!crucible) return;
 
   // textNsfw is left alone: a raise is sticky across a later clean rescan, as a challenge's is.
-  // A moderator's rating is final for this text, so a rescan only settles visibility.
+  // Once a moderator has rated it, a later verdict never raises it, whatever the text; a rescan
+  // only settles visibility.
   if (!isNsfw || crucible.moderatorNsfwLevel != null) {
     await dbWrite.crucible.update({
       where: { id: entityId },

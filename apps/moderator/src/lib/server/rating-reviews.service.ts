@@ -4,6 +4,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { getHighestBrowsingLevelBit, NsfwLevel, nsfwBrowsingLevelsFlag } from '@civitai/shared';
 import { challengeDerivedNsfwLevel, isTextScanRaised } from '@civitai/shared/rated-entity-sql';
 import {
+  collectionRatingLevel,
   isRatingReviewEntityType,
   ratingReviewEntityPath,
   ratingReviewModeratorLevels,
@@ -189,7 +190,7 @@ async function loadSummaries(
           ...base,
           id: r.id,
           title: r.name,
-          nsfwLevel: r.nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG,
+          nsfwLevel: collectionRatingLevel(r.nsfwLevel),
           override: r.moderatorNsfwLevel,
         });
       break;
