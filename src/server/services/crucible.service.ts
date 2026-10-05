@@ -129,6 +129,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { settleSkippedCrucibleScan } from '~/server/services/text-scan/actions/crucible';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
 import { createPrizes, voidPrizes } from '~/server/services/prize.service';
@@ -477,13 +479,20 @@ export async function scanCrucible(crucibleId: number, { forceRescan = false } =
   if (!crucible) return;
 
   try {
-    await submitTextModeration({
+    await submitTextModerationOrScan({
       entityType: 'Crucible',
       entityId: crucibleId,
-      content: buildCrucibleModerationText(crucible),
-      labels: [...CHALLENGE_MODERATION_LABELS],
-      priority: 'low',
-      forceRescan,
+      force: forceRescan,
+      onActiveSkip: (reason) => settleSkippedCrucibleScan(crucibleId, reason),
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Crucible',
+          entityId: crucibleId,
+          content: buildCrucibleModerationText(crucible),
+          labels: [...CHALLENGE_MODERATION_LABELS],
+          priority: 'low',
+          forceRescan,
+        }),
     });
   } catch (e) {
     // A failed submit leaves a Failed EntityModeration row that the retry cron picks up; creating
