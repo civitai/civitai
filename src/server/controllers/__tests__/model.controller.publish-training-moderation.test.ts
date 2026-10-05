@@ -63,11 +63,15 @@ function trainingRun(moderationStatus: string | undefined): Workflow {
   } as unknown as Workflow;
 }
 
-const publish = () =>
+const MODERATOR_ID = 999;
+
+const publish = (
+  user: { id: number; isModerator: boolean } = { id: OWNER_ID, isModerator: false }
+) =>
   publishModelHandler({
     input: { id: MODEL_ID, versionIds: [] },
     ctx: {
-      user: { id: OWNER_ID, isModerator: false },
+      user,
       track: { modelEvent: vi.fn().mockResolvedValue(undefined) },
     },
   } as never);
@@ -105,6 +109,22 @@ describe('publishModelHandler — training moderation gate', () => {
       expect(mockPublishModelById).not.toHaveBeenCalled();
     }
   );
+
+  it('reads the run with the OWNER token when a moderator publishes, and still refuses a rejected run', async () => {
+    // A moderator's own token cannot see the owner's workflow; reading with it would 404, which
+    // the gate lets through as past-retention. The owner id must reach the token mint.
+    mockGetWorkflow.mockResolvedValue(trainingRun('rejected'));
+    await expect(publish({ id: MODERATOR_ID, isModerator: true })).rejects.toThrow(
+      /dataset has not been approved/
+    );
+    expect(mockGetToken).toHaveBeenCalledWith(OWNER_ID, undefined, { bypassCache: true });
+    expect(mockGetToken).not.toHaveBeenCalledWith(
+      MODERATOR_ID,
+      expect.anything(),
+      expect.anything()
+    );
+    expect(mockPublishModelById).not.toHaveBeenCalled();
+  });
 
   it('publishes when the run is past the orchestrator retention window (NOT_FOUND)', async () => {
     mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));

@@ -83,7 +83,8 @@ const TRAINING_NOT_APPROVED_MESSAGE =
  * Throws unless the run's training step reports an `approved` training-data moderation status. Both
  * step types carry the same four values (`evaluating`, `underReview`, `approved`, `rejected`), so the
  * comparison is against the one approved value: every other status, and a step with no status at all,
- * is refused. The one check for every path that turns a training workflow into a model.
+ * is refused. Shared by `createDraftModelFromWorkflow` and `assertWorkflowPublishable`, so the two
+ * cannot disagree about what counts as approved.
  */
 export function assertTrainingModerationApproved(workflow: Workflow): void {
   const { step } = getTrainingStep(workflow);

@@ -843,8 +843,8 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    // A model materialized from a training workflow publishes only if that run's training data
-    // is approved — checked again here, at the step that makes it public.
+    // Re-check the training moderation status of the workflow this model was materialized from,
+    // before publishing or scheduling it.
     if (modelMeta?.trainingStudioWorkflowId)
       await assertWorkflowPublishable({
         ownerId: model.userId,
