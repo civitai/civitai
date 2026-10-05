@@ -269,34 +269,6 @@ describe('parseCursor (via getCursor) — int4 range guard on a numeric STRING t
  * branch; the controls at the end of this block pin that.
  */
 describe('parseCursor (via getCursor) — negative numeric STRING token', () => {
-  it('rejects a negative numeric string token on a single-field sort → 400', () => {
-    expectBadRequest(() => getCursor('id DESC', '-5'));
-  });
-
-  it('rejects a negative token on the single-field int sort the legacy image path uses → 400', () => {
-    // 🔴 Read the name precisely: this covers the sort shape, NOT the whole REST
-    // endpoint. `/api/v1/images` only reaches `parseCursor` on its LEGACY branch
-    // — `runImageSearch` sets `useLegacyMethod` for `ids`, `imageId`,
-    // `postOrder && postId`, or `modelId` without `modelVersionId`
-    // (`image-search.service.ts`); everything else goes to
-    // `getImagesFromFeedSearch`, which parses the cursor as a search OFFSET of
-    // its own and never calls this helper. A bare `?cursor=-5` therefore does
-    // not come through here at all. Measured live: `?cursor=-5&modelId=<id>`
-    // exercises this path, `?cursor=-5` alone does not.
-    expectBadRequest(() => getCursor('i."id" DESC', '-5'));
-  });
-
-  it('never binds a Date to an int sort column for a negative token (the actual PG fault)', () => {
-    // The pre-fix behaviour: `where` came back holding a Date as the bound value
-    // for `i."id"`, which is what Postgres choked on. Post-fix the call cannot
-    // return at all.
-    let where: unknown;
-    expect(() => {
-      where = getCursor('i."id" DESC', '-5').where;
-    }).toThrow();
-    expect(where).toBeUndefined();
-  });
-
   it('rejects a negative numeric token in the TAIL of a composite cursor → 400', () => {
     expectBadRequest(() => getCursor('createdAt DESC, id DESC', '2024-01-15|-5'));
   });

@@ -202,17 +202,6 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // everything else numeric; that needs the formats a real
     // `CONCAT(timestamp, '|', id)` actually emits, which has not been observed
     // against a database — guessing them would turn a 500 into broken pagination.
-    //
-    // 🔴 Also note WHICH callers reach this. `/api/v1/images` only does so on its
-    // LEGACY branch (`useLegacyMethod` in `image-search.service.ts`: `ids`,
-    // `imageId`, `postOrder && postId`, or `modelId` without `modelVersionId`).
-    // Every other shape goes to `getImagesFromFeedSearch`, which parses the
-    // cursor as its own search offset and never calls this function — so a bare
-    // `?cursor=-5` 500 has a different cause and is NOT fixed here.
-    // `includes('-')` is tested FIRST only because it is the cheaper operand: a
-    // plain positive id (the common case) short-circuits without running the
-    // regex at all. `&&` over two pure predicates commutes, so the
-    // classification is identical either way.
     if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
       const parsed = dayjs.utc(value);
       if (!parsed.isValid())

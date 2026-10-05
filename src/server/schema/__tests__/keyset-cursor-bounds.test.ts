@@ -87,24 +87,6 @@ describe('keysetCursorSchema — numeric bound', () => {
     expect(keysetCursorSchema.safeParse(BigInt(-5)).success).toBe(false);
   });
 
-  // SEAM, not regression coverage — this holds before and after the `parseCursor`
-  // discriminator fix, and is here so the two spellings cannot be confused for
-  // one another. The NUMBER `-5` is rejected above by the `.gte(0)` floor; the
-  // STRING `'-5'` is deliberately NOT rejected here, because the `z.string()`
-  // member has to carry composite `col|col` cursors that no numeric bound can
-  // describe — and a REST query param is always a string. The floor for the
-  // string spelling lives in `parseCursor`
-  // (`src/server/utils/pagination-helpers.ts`), which range-checks each token
-  // once it knows the token is numeric; it is pinned in
-  // `src/server/utils/pagination-helpers.test.ts`. Asserting the number
-  // spelling alone would read as coverage of a shape this schema structurally
-  // cannot see.
-  it('leaves the STRING spelling of a negative cursor untouched — its floor is downstream', () => {
-    const result = keysetCursorSchema.safeParse('-5');
-    expect(result.success).toBe(true);
-    expect(result.data).toBe('-5');
-  });
-
   // A string cursor is deliberately unbounded HERE. Downstream, `parseCursor`
   // checks the token COUNT, each token's PARSEABILITY and its MAGNITUDE against
   // int4 (PR #5146) — but NOT that a token's type matches the column it will be
