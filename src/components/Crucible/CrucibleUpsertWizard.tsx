@@ -367,14 +367,20 @@ export function CrucibleUpsertWizard(props: Props) {
     freeEntriesPerUser,
   });
   const prizePoolNote = (
-    <Text size="xs" c="dimmed" mt="xs">
-      {freeEntriesPerUser > 0
-        ? 'The prize pool is your seed plus every paid entry fee; free entries add nothing.'
-        : 'The prize pool is your seed plus every entry fee, so what each place wins grows with the number of entries.'}
-      {freeEntriesPerUser > 0 &&
-        !values.seededPrizePool &&
-        ' With no seed, winners only share what paid entries bring in.'}
-    </Text>
+    <>
+      <Text size="xs" c="dimmed" mt="xs">
+        {freeEntriesPerUser > 0
+          ? 'The prize pool is your seed plus every paid entry fee; free entries add nothing.'
+          : 'The prize pool is your seed plus every entry fee, so what each place wins grows with the number of entries.'}
+        {freeEntriesPerUser > 0 &&
+          !values.seededPrizePool &&
+          ' With no seed, winners only share what paid entries bring in.'}
+      </Text>
+      <Text size="xs" c="dimmed" mt={4}>
+        Each creator can win at most one prize. A creator who places more than once is paid for
+        their best entry, and the next creator moves up.
+      </Text>
+    </>
   );
 
   const canAddPrizePosition = placeCount < placeLimit;

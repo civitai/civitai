@@ -1380,7 +1380,6 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     : [CrucibleStatus.Active, CrucibleStatus.Pending];
   const statuses = isModerator ? picked : picked.filter((s) => s !== CrucibleStatus.Cancelled);
   if (!statuses.length) return { items: [], nextCursor: undefined };
-  where.status = { in: statuses };
   if (contentType) where.contentType = contentType;
 
   if (excludedUserIds.length > 0) {
@@ -1410,16 +1409,39 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   // across that boundary can skip or repeat them.
   orderBy.push({ id: 'desc' });
 
+  // A running crucible leads an upcoming one whatever the sort, so a bigger upcoming prize can't
+  // bury the ones open now. No single direction of the status enum orders Active ahead of both
+  // Pending and Completed, so each segment is its own query under the chosen sort.
+  const segments =
+    statuses.includes(CrucibleStatus.Active) && statuses.includes(CrucibleStatus.Pending)
+      ? [[CrucibleStatus.Active], statuses.filter((s) => s !== CrucibleStatus.Active)]
+      : [statuses];
+  let segmentIndex = 0;
+  if (cursor && segments.length > 1) {
+    const at = await dbRead.crucible.findUnique({
+      where: { id: cursor },
+      select: { status: true },
+    });
+    segmentIndex = Math.max(
+      0,
+      segments.findIndex((segment) => at && segment.includes(at.status))
+    );
+  }
+
   // One row beyond the page is how "is there more?" gets answered. Asking for exactly `take`
   // leaves the caller guessing, and the guess it made — a non-empty page always has more — meant
   // the feed never ended.
-  const rows = await dbRead.crucible.findMany({
-    take: take + 1,
-    cursor: cursor ? { id: cursor } : undefined,
-    where,
-    orderBy,
-    select,
-  });
+  const rows: Awaited<ReturnType<typeof dbRead.crucible.findMany<{ select: TSelect }>>> = [];
+  for (let i = segmentIndex; i < segments.length && rows.length <= take; i++) {
+    const page = await dbRead.crucible.findMany({
+      take: take + 1 - rows.length,
+      cursor: cursor && i === segmentIndex ? { id: cursor } : undefined,
+      where: { ...where, status: { in: segments[i] } },
+      orderBy,
+      select,
+    });
+    rows.push(...page);
+  }
 
   // Prisma's cursor is INCLUSIVE, so the extra row's id is exactly the right cursor: the next
   // page starts AT it, and it has not been served yet. Handing back the last SERVED row's id
