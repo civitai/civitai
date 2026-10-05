@@ -6,16 +6,16 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 
 ## Pieces
 
-| piece | where |
-|---|---|
-| Scan profiles (which fields, which labels, the entity's declared state) | `src/server/services/text-scan/profiles/` |
-| Prompt storage (append-only table, cached; content is never in the repo) | `TextScanPrompt`, `text-scan/prompt.ts` |
-| Model and input-size config | sysRedis `system:text-scan:config` |
-| Submit, dedup (`contentHash`), external id | `text-scan/submit.ts` |
-| Callback | `/api/webhooks/text-scan-result` |
-| Retry of failed scans | the `retry-failed-text-moderation` job (shared with XGuard) |
-| Row retention | the `text-scan-retention` job |
-| Actions per label | `text-scan/actions/` and each entity's moderation adapter |
+| piece                                                                    | where                                                       |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Scan profiles (which fields, which labels, the entity's declared state)  | `src/server/services/text-scan/profiles/`                   |
+| Prompt storage (append-only table, cached; content is never in the repo) | `TextScanPrompt`, `text-scan/prompt.ts`                     |
+| Model and input-size config                                              | sysRedis `system:text-scan:config`                          |
+| Submit, dedup (`contentHash`), external id                               | `text-scan/submit.ts`                                       |
+| Callback                                                                 | `/api/webhooks/text-scan-result`                            |
+| Retry of failed scans                                                    | the `retry-failed-text-moderation` job (shared with XGuard) |
+| Row retention                                                            | the `text-scan-retention` job                               |
+| Actions per label                                                        | `text-scan/actions/` and each entity's moderation adapter   |
 
 ## Entities
 
