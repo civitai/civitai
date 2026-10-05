@@ -143,7 +143,7 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       minScore: inputs.saleMinScore,
       label: 'Run sales on your model versions',
       surface: 'monetization',
-      scoreKind: 'aggregate',
+      scoreKind: 'total',
       source: 'keyValue',
     },
     ...numericRungs(EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock).map(
@@ -213,21 +213,28 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
 }
 
 /**
- * The unlocks at the lowest threshold above `score`, which is what a refusal or a progress bar points at
- * next. Empty past the top rung. The articles tiers are measured on a different number, so they are only
- * candidates when `score` is an articles score.
+ * The unlocks not yet reached that have the lowest threshold, which is what a refusal or a progress bar
+ * points at next. Each gate is judged against its own kind of score: `aggregate` falls back to `total`
+ * when absent, and the articles tiers are left out unless an articles score is passed. Empty when every
+ * comparable unlock is reached.
  */
 export function nextCreatorScoreUnlocks(
   unlocks: CreatorScoreUnlock[],
-  score: number,
-  kind: CreatorScoreKind = 'total'
+  scores: { total: number; aggregate?: number; articles?: number }
 ): CreatorScoreUnlock[] {
-  const comparable = unlocks.filter(
-    (u) => (u.scoreKind === 'articles') === (kind === 'articles') && u.minScore > score
-  );
-  if (comparable.length === 0) return [];
-  const next = Math.min(...comparable.map((u) => u.minScore));
-  return comparable.filter((u) => u.minScore === next);
+  const scoreFor = (kind: CreatorScoreKind) =>
+    kind === 'articles'
+      ? scores.articles
+      : kind === 'aggregate'
+      ? scores.aggregate ?? scores.total
+      : scores.total;
+  const pending = unlocks.filter((u) => {
+    const score = scoreFor(u.scoreKind);
+    return score != null && score < u.minScore;
+  });
+  if (pending.length === 0) return [];
+  const next = Math.min(...pending.map((u) => u.minScore));
+  return pending.filter((u) => u.minScore === next);
 }
 
 async function getSaleMinScore() {
