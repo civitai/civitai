@@ -326,7 +326,7 @@ describe('handleTextScanCallback', () => {
     ['a workflow without an entity', { metadata: { mode: 'active' }, tags: TAGS, steps: [] }],
     [
       'an unknown entity type',
-      { metadata: { ...metadata, entityType: 'Collection' }, tags: TAGS, steps: [] },
+      { metadata: { ...metadata, entityType: 'Tag' }, tags: TAGS, steps: [] },
     ],
   ])('ignores %s without writing or throwing', async (_name, data) => {
     vi.mocked(getWorkflow).mockResolvedValue({ data } as any);

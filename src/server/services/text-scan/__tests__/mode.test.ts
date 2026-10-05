@@ -47,8 +47,12 @@ describe('getTextScanMode', () => {
     const flags = entityTypes.map(textScanFlag);
     expect(flags.every((flag) => flag?.startsWith('text-scan-'))).toBe(true);
     expect(new Set(flags).size).toBe(flags.length);
-    expect(flags).toHaveLength(12);
-    expect(entityTypes).not.toContain('Collection');
+    expect(flags).toHaveLength(14);
+  });
+
+  it('maps Crucible and Collection to their own flags', () => {
+    expect(textScanFlag('Crucible')).toBe('text-scan-crucible');
+    expect(textScanFlag('Collection')).toBe('text-scan-collection');
   });
 });
 
@@ -56,7 +60,9 @@ describe('isTextScanEntityType', () => {
   it.each([
     ['Post', true],
     ['UserProfile', true],
-    ['Collection', false],
+    ['Collection', true],
+    ['Crucible', true],
+    ['Tag', false],
     ['Post:shadow', false],
     ['constructor', false],
     ['toString', false],

@@ -6,7 +6,7 @@ import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
-export type CutoverEntityType = Exclude<TextScanEntityType, 'Challenge'> | 'Collection';
+export type CutoverEntityType = Exclude<TextScanEntityType, 'Challenge' | 'Crucible'>;
 type ProbedEntityType = Exclude<CutoverEntityType, 'Collection'>;
 
 type ClavataTarget = {

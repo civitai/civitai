@@ -26,7 +26,9 @@ export type TextScanEntityType =
   | 'CommentV2'
   | 'ResourceReview'
   | 'User'
-  | 'UserProfile';
+  | 'UserProfile'
+  | 'Crucible'
+  | 'Collection';
 
 export type TextScanField = { heading: string; text: string | null | undefined };
 

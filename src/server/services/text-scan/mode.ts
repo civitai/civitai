@@ -16,6 +16,8 @@ export const TEXT_SCAN_FLAG_KEY = {
   ResourceReview: 'TEXT_SCAN_RESOURCE_REVIEW',
   User: 'TEXT_SCAN_USER',
   UserProfile: 'TEXT_SCAN_USER_PROFILE',
+  Crucible: 'TEXT_SCAN_CRUCIBLE',
+  Collection: 'TEXT_SCAN_COLLECTION',
 } as const satisfies Record<TextScanEntityType, keyof typeof FLIPT_FEATURE_FLAGS>;
 
 export function textScanFlag(entityType: TextScanEntityType): FLIPT_FEATURE_FLAGS {
