@@ -371,7 +371,15 @@ describe('AC-1 — a ban refuses the publisher’s already-minted token on its N
 
     const after = await driveRest(token);
     expect(after.res.statusCode).toBe(403);
-    expect(after.res.body).toEqual({ error: 'block instance revoked' });
+    expect(after.res.body).toEqual({
+      error: 'block instance revoked',
+      // `code` is new and additive — a stable machine-readable discriminator beside the
+      // human string, so an app can tell this refusal apart from `consent_revoked` (the
+      // viewer withdrew a permission) and `insufficient_scope` (the token never had it).
+      // Kept as a whole-object `toEqual`: the 403 body is an app-facing contract, and a
+      // `toMatchObject` would let a future field in without anyone reviewing it.
+      code: 'instance_revoked',
+    });
     expect(after.handler).not.toHaveBeenCalled();
   });
 
@@ -480,7 +488,15 @@ describe('AC-2 — EVERY live instance of EVERY block the publisher owns', () =>
       `${instanceId} still authenticates after its publisher was banned — this namespace ` +
         `is not reached by revokeBlockInstancesForPublisher`
     ).toBe(403);
-    expect(after.res.body).toEqual({ error: 'block instance revoked' });
+    expect(after.res.body).toEqual({
+      error: 'block instance revoked',
+      // `code` is new and additive — a stable machine-readable discriminator beside the
+      // human string, so an app can tell this refusal apart from `consent_revoked` (the
+      // viewer withdrew a permission) and `insufficient_scope` (the token never had it).
+      // Kept as a whole-object `toEqual`: the 403 body is an app-facing contract, and a
+      // `toMatchObject` would let a future field in without anyone reviewing it.
+      code: 'instance_revoked',
+    });
   });
 
   /**
@@ -732,7 +748,15 @@ describe('F1 — a consumer toggling an install off and on cannot undo a ban', (
         "publisher's live token back into service — the ban marker was overwritten by " +
         'the install write and then cleared by the install clear'
     ).toBe(403);
-    expect(after.res.body).toEqual({ error: 'block instance revoked' });
+    expect(after.res.body).toEqual({
+      error: 'block instance revoked',
+      // `code` is new and additive — a stable machine-readable discriminator beside the
+      // human string, so an app can tell this refusal apart from `consent_revoked` (the
+      // viewer withdrew a permission) and `insufficient_scope` (the token never had it).
+      // Kept as a whole-object `toEqual`: the 403 body is an app-facing contract, and a
+      // `toMatchObject` would let a future field in without anyone reviewing it.
+      code: 'instance_revoked',
+    });
     expect(after.handler).not.toHaveBeenCalled();
   });
 

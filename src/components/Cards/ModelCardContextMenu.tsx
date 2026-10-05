@@ -21,7 +21,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
 import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[number] }) {
@@ -156,10 +156,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
     contextMenuItems.unshift({
       key: 'lookup-model',
       component: (
-        <ModeratorLookupMenuItem
-          key="lookup-model"
-          path={moderatorBulkImageManagerPath('model', data.id)}
-        >
+        <ModeratorLookupMenuItem key="lookup-model" path={moderatorModelLookupPath(data.id)}>
           Lookup Model
         </ModeratorLookupMenuItem>
       ),

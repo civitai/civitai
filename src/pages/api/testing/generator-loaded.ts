@@ -16,7 +16,8 @@
  *   mark   - {modelVersionIds}  Set it — the sync job clears it next cycle unless actually resident
  *   clear  - {modelVersionIds}  Unset it — the sync job restores it next cycle if actually resident
  *
- * `mark` and `clear` queue a models search-index update, as the sync job does.
+ * `mark` and `clear` queue a models search-index update and bust the residency caches
+ * (`bustGeneratorLoadedCaches`), as the sync job does.
  * Changes are scoped to explicit version ids, capped at 200 per call, with no
  * unscoped wipe, so a misuse never cascades across the DB.
  */
@@ -25,8 +26,12 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { uniq } from 'lodash-es';
 import * as z from 'zod';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { modelsSearchIndex } from '~/server/search-index';
+import {
+  bustGeneratorLoadedCaches,
+  setGeneratorLoaded,
+} from '~/server/services/generator-loaded.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({
@@ -67,12 +72,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     });
   }
 
-  // Raw SQL, as in the sync job, so a debug write does not bump ModelVersion."updatedAt".
-  const updated = await dbWrite.$executeRaw`
-    UPDATE "ModelVersion" SET "generatorLoaded" = ${action === 'mark'}
-    WHERE id = ANY(${ids}::int[])
-  `;
+  const updated = await setGeneratorLoaded(ids, action === 'mark');
   const modelsQueued = await queueModelsFor(ids);
+  await bustGeneratorLoadedCaches(ids);
 
   return res.status(200).json({ action, updated, modelsQueued });
 });

@@ -1,6 +1,8 @@
 import {
   moderatorBulkImageManagerPath,
   moderatorImageLookupPath,
+  moderatorModelLookupPath,
+  moderatorModelVersionLookupPath,
   moderatorUserLookupPath,
 } from '@civitai/shared/moderator-paths';
 
@@ -19,6 +21,8 @@ const ENTITY_PATH: Record<string, string> = {
   resourcereview: 'reviews',
   comicproject: 'comics',
   model3d: '3d-models',
+  crucible: 'crucibles',
+  challenge: 'challenges',
 };
 
 // Callers disagree on casing — ModActivity stores 'image', the report joins label rows 'Image', and
@@ -63,6 +67,8 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 export const userLookupUrl = moderatorUserLookupPath;
 export const bulkImageManagerUrl = moderatorBulkImageManagerPath;
 export const imageLookupUrl = moderatorImageLookupPath;
+export const modelLookupUrl = moderatorModelLookupPath;
+export const modelVersionLookupUrl = moderatorModelVersionLookupPath;
 
 export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
 

@@ -57,7 +57,6 @@ const DEFAULT_TEST_CARD = {
     platform_default: 0,
     viewer_global: 0,
   },
-  spendSharePct: 0,
   subscriptionSharePct: 20,
   internalAppOwnerUserIds: [] as number[],
   effectiveFrom: '2026-06-18',

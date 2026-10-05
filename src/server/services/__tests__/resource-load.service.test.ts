@@ -31,9 +31,12 @@ import {
   estimateResourceLoad,
   getResourceLoadQueue,
   getResourceLoadState,
-  getResourceResidency,
   submitResourceLoad,
 } from '~/server/services/resource-load.service';
+import {
+  bustResourceResidency,
+  getResourceResidency,
+} from '~/server/services/resource-residency.service';
 
 const version = {
   id: 501,
@@ -66,8 +69,9 @@ beforeEach(() => {
   vi.clearAllMocks();
   installAirCodec();
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([version]);
-  // The coverage lookup — covered by default.
-  dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelVersionId: 501 }]);
+  // Covered under both rules. A fixture that sets only `audience` refuses every model-locked
+  // checkpoint.
+  dbMock.dbRead.$queryRaw.mockResolvedValue([{ modelVersionId: 501, audience: true, live: true }]);
   // A cache miss that wins the stampede lock; losing it makes fetchThroughCache sleep and retry.
   redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
 });
@@ -185,6 +189,30 @@ describe('getResourceResidency', () => {
   });
 });
 
+describe('bustResourceResidency', () => {
+  it('leaves a cached answer stale at once, so the next read refreshes it', async () => {
+    redisMock.redis.packed.mGet.mockResolvedValue([
+      { modelVersionId: 501, availability: { status: 'unavailable' }, cachedAt: new Date() },
+    ]);
+
+    await bustResourceResidency([501]);
+
+    const [key, value] = redisMock.redis.packed.set.mock.calls.at(-1) as [
+      string,
+      { cachedAt: Date }
+    ];
+    expect(key).toMatch(/:501$/);
+    // The default debounce would backdate it only 20s, leaving the old answer fresh for 10 more.
+    expect(new Date(value.cachedAt).getTime()).toBeLessThanOrEqual(Date.now() - 30_000);
+  });
+
+  it('touches nothing for an empty list', async () => {
+    await bustResourceResidency([]);
+
+    expect(redisMock.redis.packed.mGet).not.toHaveBeenCalled();
+  });
+});
+
 describe('getResourceLoadQueue', () => {
   it('drops rows whose AIR does not resolve to a model version on this site', async () => {
     queryResources.mockResolvedValue({
@@ -236,7 +264,11 @@ describe('the purchase path refuses before it submits', () => {
 
   it('refuses a resource the site cannot generate with, whatever the cluster says', async () => {
     orchestratorReturns({ status: 'unavailable', queuePosition: null });
-    dbMock.dbRead.$queryRaw.mockResolvedValue([]); // not covered
+    // The reshaped query returns a row per requested id and gates in JS, so the realistic uncovered
+    // case is a row whose audience flag is false — not an absent row.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: false, live: true },
+    ]);
 
     await expect(
       submitResourceLoad({ modelVersionId: 501, userId: 7, token: 'user-token', currencies: [] })
@@ -469,5 +501,58 @@ describe('estimateResourceLoad', () => {
     });
 
     expect(result).toMatchObject({ cost: 250, priced: true });
+  });
+});
+
+/**
+ * The reshaped coverage query returns both answers and gates in JS, so which Set feeds which
+ * argument is now a code decision rather than a SQL one. A locked ecosystem is the only shape that
+ * can tell them apart — every other fixture here is a LoRA on SDXL, where `isGenerationEligible`
+ * returns before it ever looks at `coveredLive`.
+ */
+describe('a model-locked ecosystem is held to the live rule', () => {
+  const lockedCheckpoint = {
+    ...version,
+    baseModel: 'Qwen',
+    model: { ...version.model, type: 'Checkpoint' },
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([lockedCheckpoint]);
+  });
+
+  it('refuses a community checkpoint the staged rule covers and the live rule does not', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: true, live: false },
+    ]);
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+    expect(state.eligible).toBe(false);
+  });
+
+  it('keeps one the live rule covers — the ecosystem defaults ride on that column', async () => {
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: true, live: true },
+    ]);
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+    expect(state.eligible).toBe(true);
+  });
+
+  it('still reads the audience answer for a non-checkpoint on the same ecosystem', async () => {
+    // `covered` has to stay wired to the audience Set: a locked ecosystem's LoRAs do run, so they
+    // keep the staged expansion. Only `live: false` distinguishes this from the checkpoint above.
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { ...lockedCheckpoint, model: { ...version.model, type: 'LORA' } },
+    ]);
+    orchestratorReturns({ status: 'unavailable', queuePosition: null });
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      { modelVersionId: 501, audience: true, live: false },
+    ]);
+
+    const [state] = await getResourceLoadState([501], MEMBER);
+    expect(state.eligible).toBe(true);
   });
 });

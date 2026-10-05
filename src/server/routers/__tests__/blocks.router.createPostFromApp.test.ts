@@ -411,9 +411,8 @@ describe('the shared preamble — createPostFromApp', () => {
 
     it('is OBSERVABLE — the refusal increments a scraped counter, not just a log line', async () => {
       // 🔴 CRITERION 4, AND IT IS READ OFF THE REAL DEFAULT REGISTRY BY METRIC NAME.
-      // Application-container stdout is not collected for this deployment, so a
-      // `console.error` here would be unreadable to any later investigator — the
-      // emitter is the only surface that exists. Looked up by STRING rather than by
+      // The refusal branch emits nothing but this counter, so the counter is the only
+      // surface that exists for it. Looked up by STRING rather than by
       // importing the new symbol, deliberately: that keeps this case runnable against
       // the pre-change tree, where it fails on a `undefined` registry lookup instead
       // of on a module-resolution error.

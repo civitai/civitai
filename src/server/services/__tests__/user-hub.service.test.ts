@@ -604,11 +604,16 @@ describe('resolveHubSources source expansion', () => {
  */
 describe('tag sources are restricted to the browsable vocabulary', () => {
   const findTags = dbMock.dbRead.tag.findMany;
+  // A tag the tagger never marked image-targeted — `target` is {Model,Post} — yet
+  // carried by real images. This is the class the gate now admits by usage; the old
+  // `target hasEvery [Image]` rule refused it. Illustrative only: the mock ignores
+  // `where`, so acceptance is proved by the query-shape assertions below, not by this.
   const imageTag = (over: Record<string, unknown> = {}) => ({
     id: 77,
     name: 'dragon',
     type: TagType.UserGenerated,
-    target: [TagTarget.Image],
+    target: [TagTarget.Model, TagTarget.Post],
+    metrics: [{ imageCount: 4200 }],
     unlisted: false,
     adminOnly: false,
     ...over,
@@ -624,7 +629,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
     dbMock.dbWrite.userHub.create.mockResolvedValue({ id: 7, metadata: {}, sources: [] });
   });
 
-  it('accepts a listed image tag', async () => {
+  it('accepts a listed tag the images carry, whatever its target', async () => {
     // The negative control for every refusal below. Without it a guard that throws
     // on every tag passes this whole block while shipping no tag sources at all.
     findTags.mockResolvedValue([imageTag()]);
@@ -650,7 +655,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
         id: { in: [77] },
         unlisted: false,
         adminOnly: false,
-        target: { hasEvery: [TagTarget.Image] },
+        metrics: { some: { timeframe: MetricTimeframe.AllTime, imageCount: { gt: 0 } } },
         type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
@@ -671,7 +676,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
       name: { contains: 'drag', mode: 'insensitive' },
       unlisted: false,
       adminOnly: false,
-      target: { hasEvery: [TagTarget.Image] },
+      metrics: { some: { timeframe: MetricTimeframe.AllTime, imageCount: { gt: 0 } } },
       type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
     });
   });
@@ -690,7 +695,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
 
   it('refuses a tag the query did not return, whatever the reason', async () => {
     // The behavioural half: whether a row was withheld for being unlisted, admin-only,
-    // the wrong type or the wrong target, the service sees the same thing — an id it
+    // the wrong type or unused on images, the service sees the same thing — an id it
     // asked about and did not get back — and must refuse it.
     findTags.mockResolvedValue([]);
 
@@ -717,7 +722,7 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
   });
 
   it('refuses a REPLACED tag, which the index would never match', async () => {
-    // A replaced tag is listed, image-targeted and the right type — it passes every
+    // A replaced tag is listed, used on images and the right type — it passes every
     // other clause. The index carries its replacement's id, so as a source it matches
     // nothing and as an exclusion it keeps nothing out.
     findTags.mockResolvedValue([imageTag()]);
@@ -734,13 +739,13 @@ describe('tag sources are restricted to the browsable vocabulary', () => {
 
     await expect(upsertUserHub(withTag(true))).rejects.toThrow(/not found/i);
     // All four clauses, not just `type`. Pinning one caught a drift on the vocabulary
-    // I happened to name and missed a drift that dropped `unlisted`, `adminOnly` or
-    // `target` — the three that hide moderation labels.
+    // I happened to name and missed a drift that dropped `unlisted`, `adminOnly` or the
+    // `metrics` usage clause — the ones that keep non-browsable and unused tags out.
     expect(findTags.mock.calls[0][0].where).toEqual({
       id: { in: [77] },
       unlisted: false,
       adminOnly: false,
-      target: { hasEvery: [TagTarget.Image] },
+      metrics: { some: { timeframe: MetricTimeframe.AllTime, imageCount: { gt: 0 } } },
       type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
     });
   });
@@ -1111,7 +1116,7 @@ describe('resolving a pasted link', () => {
         name: { equals: 'dragon' },
         unlisted: false,
         adminOnly: false,
-        target: { hasEvery: [TagTarget.Image] },
+        metrics: { some: { timeframe: MetricTimeframe.AllTime, imageCount: { gt: 0 } } },
         type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
@@ -1134,7 +1139,7 @@ describe('resolving a pasted link', () => {
         id: 5499,
         unlisted: false,
         adminOnly: false,
-        target: { hasEvery: [TagTarget.Image] },
+        metrics: { some: { timeframe: MetricTimeframe.AllTime, imageCount: { gt: 0 } } },
         type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
       });
     });
@@ -1153,7 +1158,7 @@ describe('resolving a pasted link', () => {
         expect.objectContaining({
           unlisted: false,
           adminOnly: false,
-          target: { hasEvery: [TagTarget.Image] },
+          metrics: { some: { timeframe: MetricTimeframe.AllTime, imageCount: { gt: 0 } } },
           type: { in: [TagType.UserGenerated, TagType.Label, TagType.Moderation] },
         })
       );

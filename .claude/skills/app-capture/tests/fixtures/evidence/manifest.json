@@ -1,0 +1,170 @@
+{
+  "_readme": [
+    "REAL captures from a live, logged-in App Block run on 2026-08-17, taken through",
+    "the browser bridge against custom-generators.civit.ai and model-benchmarking.civit.ai",
+    "inside civitai.com/apps/run/<slug>.",
+    "",
+    "🔴 DO NOT REGENERATE THESE FROM evidence.py. A fixture emitted by the code under",
+    "test makes every case valid by construction: the analyser would be graded against",
+    "its own output and a wrong parser would agree with itself. That exact mistake was",
+    "made once already in this skill's P2/P3 gates (a synthesised `observed` fixture),",
+    "and the killing mutation passed the whole suite. To refresh, re-capture live:",
+    "  browser --instance work open https://civitai.com/apps/run/<slug> --wake=4000",
+    "  browser --tab <t> frames                         # the id CHANGES every load",
+    "  browser --tab <t> --frame <f> js \"$(evidence.py probe-js install)\"",
+    "  browser --tab <t> --frame <f> html --max-bytes 0 > <name>.dom.json",
+    "  browser --tab <t> --frame <f> js \"$(evidence.py probe-js drain)\" > <name>.probe.json",
+    "",
+    "PROVENANCE OF THE CONSOLE/NETWORK CONTENT, stated plainly: the DOM captures are",
+    "untouched app output, but the console messages and the failed request in",
+    "cg-explainer.probe.json were INDUCED during capture by injecting an inline",
+    "<script> that logged, threw, and fetched a nonexistent host. They are real",
+    "captured probe output of real browser events — they are NOT app defects, and no",
+    "gate may read them as such. cg-discover.probe.json is an untouched drain and is",
+    "genuinely empty, which is what makes it the paired zero case.",
+    "",
+    "The a11y ZEROES below are real: these two apps use the shared @civitai/blocks-react",
+    "control pack and pass all four checks. That is why the suite mutates a COPY of the",
+    "real DOM to build each check's positive control — see gate E4."
+  ],
+  "capturedAt": "2026-08-17",
+  "bridgeHtmlDefaultCap": 32768,
+  "captures": [
+    {
+      "dom": "cg-explainer.dom.json",
+      "probe": "cg-explainer.probe.json",
+      "slug": "custom-generators",
+      "state": "explainer",
+      "domBytes": 38606,
+      "domSha256": "415fc52a4c39f1a35b8bbf1729500d3869931c3f19b01fe3b85b4fec136a1d85",
+      "elements": 81,
+      "console": { "error": 2, "warn": 1, "log": 0, "info": 0, "debug": 0 },
+      "consoleTotal": 3,
+      "network": { "observed": 4, "ok": 2, "failed": 1, "unknown": 1 },
+      "a11y": { "interactive-name": 0, "img-alt": 0, "control-label": 0, "heading-order": 0 },
+      "testidCount": 25,
+      "testidUnique": 22,
+      "emptyState": { "verdict": "populated", "defect": false, "primary": "discover-list", "items": 2 }
+    },
+    {
+      "dom": "cg-discover.dom.json",
+      "probe": "cg-discover.probe.json",
+      "slug": "custom-generators",
+      "state": "discover",
+      "domBytes": 35556,
+      "domSha256": "489faad1c84dcec15c0f2b7e04e961c3755ae8db59765ff7d25e5a28b569a96e",
+      "elements": 58,
+      "console": { "error": 0, "warn": 0, "log": 0, "info": 0, "debug": 0 },
+      "consoleTotal": 0,
+      "network": { "observed": 0, "ok": 0, "failed": 0, "unknown": 0 },
+      "a11y": { "interactive-name": 0, "img-alt": 0, "control-label": 0, "heading-order": 0 },
+      "testidCount": 15,
+      "testidUnique": 15,
+      "emptyState": { "verdict": "populated", "defect": false, "primary": "discover-list", "items": 1 }
+    }
+  ],
+  "domOnly": [
+    { "dom": "mb-combos.dom.json", "slug": "model-benchmarking", "elements": 52,
+      "testidCount": 12, "testidUnique": 12 }
+  ],
+  "emptyStateProbes": {
+    "_readme": [
+      "🔴 THE CORPUS CONTAINS NO EMPTY SCREEN — every real capture has at least one",
+      "card — so the empty-state check's silence on it is not evidence that it works.",
+      "Each probe below therefore EXCISES a real element from a real capture, with",
+      ".claude/skills/app-capture/tests/fixtures/domsurgery.py: an independent tag-depth scanner that",
+      "shares no code with evidence.py's parser, asserts the opening tag occurs exactly",
+      "once, and asserts the extracted span is tag-balanced. Nothing here is invented",
+      "markup — `cut` only removes what the app really rendered, and `duplicate` only",
+      "repeats it.",
+      "",
+      "`expect` is what the check MUST say about the edited DOM; the UNEDITED file is",
+      "the paired arm and must say `populated` with defect false."
+    ],
+    "empty-with-next-action": {
+      "dom": "mb-combos.dom.json",
+      "cut": ["<div data-testid=\"matchup-card\""],
+      "expect": { "verdict": "empty", "defect": false, "primary": "matchups-list",
+                  "nextActionScope": "in-section", "nextActionName": "Submit combination",
+                  "missingKind": "data" },
+      "note": "the list empties; the Submit CTA one level up is still there, so this is a finding, not a defect"
+    },
+    "empty-with-no-next-action": {
+      "dom": "mb-combos.dom.json",
+      "cut": ["<div data-testid=\"matchup-card\"", "<button type=\"button\" data-testid=\"submit-matchup\""],
+      "expect": { "verdict": "empty", "defect": true, "primary": "matchups-list",
+                  "nextActionScope": "none", "missingKind": "data" },
+      "note": "nothing to look at and nothing to do — the reportable UX defect"
+    },
+    "empty-names-the-missing-input": {
+      "dom": "cg-discover.dom.json",
+      "cut": ["<div data-testid=\"published-card\""],
+      "expect": { "verdict": "empty", "defect": false, "primary": "discover-list",
+                  "nextActionScope": "in-collection", "missingKind": "input",
+                  "missingInputTestid": "discover-search",
+                  "missingInputPlaceholder": "Search generators…" },
+      "note": "an emptied list whose search box is unfilled — the check names the input rather than guessing why the list is empty"
+    }
+  },
+  "occurrenceProbe": {
+    "_readme": [
+      "🔴 THE DIFF BLINDNESS THIS EXISTS TO CLOSE. A grid going 24 -> 39 testid",
+      "OCCURRENCES reported `unchanged: 15` on the first live run, because the id SET",
+      "never moved. Duplicating one REAL card twice reproduces exactly that shape:",
+      "same 15 ids, 15 -> 31 occurrences."
+    ],
+    "dom": "cg-discover.dom.json",
+    "duplicate": "<div data-testid=\"published-card\"",
+    "times": 2,
+    "countBefore": 15,
+    "countAfter": 31,
+    "uniqueUnchanged": 15,
+    "repeatedId": "published-card"
+  },
+  "a11yProbes": {
+    "_readme": [
+      "One entry per check. Each is a MINIMAL, mechanical edit to a REAL captured DOM",
+      "that MUST make exactly that check fire, and MUST move no other check's count.",
+      "",
+      "`find` must occur EXACTLY ONCE in the named capture — the suite asserts that",
+      "before replacing. A count=1 replace that lands on an occurrence you did not",
+      "picture makes a guard look real when it is not; that has already happened in",
+      "this skill's mutation battery, so the count is checked rather than assumed.",
+      "",
+      "`violating` is the edit that must produce exactly one violation of this check.",
+      "`clean` is the paired arm that must produce ZERO. Where `clean` is absent the",
+      "UNEDITED capture is the clean arm — the same file through the same parser.",
+      "",
+      "🔴 img-alt is the honest exception: the real corpus contains NO <img> ELEMENT AT",
+      "ALL (the one `<img` in mb-combos sits inside a CSS comment in a <style> block).",
+      "So this check's silence on the untouched corpus is NOT evidence it works, and",
+      "both of its arms therefore INSERT an img — one without alt (must fire) and one",
+      "with alt=\"\" (must not). Stated here so nobody reads the zero as coverage."
+    ],
+    "interactive-name": {
+      "dom": "cg-explainer.dom.json",
+      "find": "data-size=\"sm\">Got it</button>",
+      "violating": "data-size=\"sm\"></button>",
+      "note": "the real 'Got it' button, stripped of its only accessible name"
+    },
+    "img-alt": {
+      "dom": "mb-combos.dom.json",
+      "find": "</body>",
+      "violating": "<img src=\"/probe.png\"></body>",
+      "clean": "<img src=\"/probe.png\" alt=\"\"></body>",
+      "note": "no <img> exists in the real corpus — both arms insert one; see _readme"
+    },
+    "control-label": {
+      "dom": "cg-explainer.dom.json",
+      "find": "aria-label=\"Search generators\"",
+      "violating": "data-was-labelled=\"yes\"",
+      "note": "the real search input keeps its placeholder, so this also pins that a placeholder is NOT a label"
+    },
+    "heading-order": {
+      "dom": "cg-explainer.dom.json",
+      "find": "<h1",
+      "violating": "<h1 data-probe=\"1\"></h1><h4",
+      "note": "h1 -> h4 skips two levels"
+    }
+  }
+}

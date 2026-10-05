@@ -83,6 +83,7 @@ export const trainingRouter = router({
         ...input,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
+        ctx,
       })
     ),
   // Live state for one run, for the epoch-selection screen. Separate from `model.getById` — which

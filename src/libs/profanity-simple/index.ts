@@ -24,7 +24,7 @@ import {
 
 import { getCachedNsfwWords } from './word-processor';
 import { customLeetSpeakTransformer } from './custom-transformers';
-import whitelistWords from '~/utils/metadata/lists/whitelist-words.json';
+import { whitelistWords } from '@civitai/mod-utils/profanity/lists';
 import { removeTags } from '~/utils/string-helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';

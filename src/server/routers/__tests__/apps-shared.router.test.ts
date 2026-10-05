@@ -28,13 +28,43 @@ const {
   mockIsRevoked,
   mockLogToAxiom,
 } = vi.hoisted(() => {
+  // 🔴 THE SIGNATURE IS DECLARED VIA THE GENERIC, NOT AS UNUSED PARAMETERS. `pg`'s
+  // `query(sql, params)` is what the router calls, and `vi.fn(async () => …)` infers a
+  // ZERO-ARG signature — so every `mockImplementation(async (sql, params) => …)` below
+  // was a TS2345 under `tsconfig.tests.json` (which `pnpm typecheck` does not cover,
+  // because `tsconfig.json` excludes `src/**/__tests__/**`). Declaring it here fixes
+  // that class at its one source rather than at each call site.
+  //
+  // ⚠️ `vi.fn(async (_sql, _params) => …)` also works for the TYPE, and was the first
+  // version of this — but it introduces two `no-unused-vars` warnings per site, because
+  // `.eslintrc.js` sets that rule with no `argsIgnorePattern`, so the `_` prefix buys
+  // nothing here. The generic carries the signature with a zero-arg body, which is the
+  // same trick the behaviour suite uses on `mockIsRevoked` for the same reason.
+  type QueryFn = (
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{
+    rows: unknown[];
+    rowCount: number;
+  }>;
+  // The rate limiters' real shape: `(userId, appBlockId) => { allowed, retryAfterSeconds? }`.
+  // 🔴 DECLARED AT THE SOURCE, for the same reason as `QueryFn`. `vi.fn(async () => ({
+  // allowed: true }))` infers BOTH a zero-arg signature AND a return type without
+  // `retryAfterSeconds` — which is why forwarding two arguments was a TS2554 and every
+  // `mockResolvedValueOnce({ allowed: false, retryAfterSeconds: 60 })` was a TS2353.
+  // Typing the passthroughs instead of the mocks only moved the first error class
+  // (TS2556 -> TS2554); the callee is where it actually lives.
+  type RateLimitFn = (
+    userId: number,
+    appBlockId: string
+  ) => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
   const mockClient = {
-    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
     release: vi.fn(),
   };
   const mockPool = {
     connect: vi.fn(async () => mockClient),
-    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
   };
   return {
     mockVerifyBlockToken: vi.fn(),
@@ -44,14 +74,30 @@ const {
     mockPool,
     mockClient,
     mockGetSessionUser: vi.fn(),
-    mockCheckAppendRl: vi.fn(async () => ({ allowed: true })),
-    mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
-    mockCheckReportRl: vi.fn(async () => ({ allowed: true })),
-    mockCheckWithdrawRl: vi.fn(async () => ({ allowed: true })),
-    mockThrowOnBlockedUserContent: vi.fn(async () => undefined),
-    mockAuditPromptServer: vi.fn(async () => undefined),
-    mockIsRevoked: vi.fn(async () => false),
-    mockLogToAxiom: vi.fn(async () => undefined),
+    mockCheckAppendRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockCheckVoteRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockCheckReportRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    mockCheckWithdrawRl: vi.fn<RateLimitFn>(async () => ({ allowed: true })),
+    // Same source-level typing as `QueryFn` / `RateLimitFn` above: the signature lives on
+    // the mock, so the passthroughs below can forward real arguments instead of spreading
+    // an `unknown[]` into a zero-arg inference.
+    // 🔴 ARITY TWO, deliberately. The real `throwOnBlockedUserContent` is
+    // `(content, { isModerator, surface, onBlocked })` — blocklist.service.ts:620-628 — and
+    // shared-content-safety.ts:119 calls it with both. Declaring this arity-ONE silently
+    // DROPPED the options object before it reached the mock (measured: `mock.calls[0].length`
+    // 2 → 1), which made `onBlocked` unreachable from this suite — i.e. the link-vs-pattern
+    // distinction that shared-content-safety.ts:110-112 keeps exact could not be guarded at
+    // all. No test failed, which is what made it invisible. Keep the second parameter.
+    mockThrowOnBlockedUserContent: vi.fn<(content: unknown, options?: unknown) => Promise<void>>(
+      async () => undefined
+    ),
+    mockAuditPromptServer: vi.fn<(args: unknown) => Promise<void>>(async () => undefined),
+    mockIsRevoked: vi.fn<(blockInstanceId: string, sub?: string) => Promise<boolean>>(
+      async () => false
+    ),
+    mockLogToAxiom: vi.fn<(payload: unknown, stream?: string) => Promise<void>>(
+      async () => undefined
+    ),
   };
 });
 
@@ -67,24 +113,36 @@ vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...a: unknown[]) => mockGetSessionUser(...a) },
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => mockPool }));
+// 🔴 THE PASSTHROUGHS FORWARD EXPLICIT ARGUMENTS, not `(...a: unknown[])`. Spreading an
+// `unknown[]` into a mock whose own signature `vi.fn()` inferred as zero-arg is a TS2556
+// under `tsconfig.tests.json` — the same root cause as the `pg` query mocks above, in a
+// second shape, and it accounted for 8 of this file's remaining type errors. Each
+// forward below declares what its real callee is actually called with.
 vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
-  checkSharedAppendRateLimit: (...a: unknown[]) => mockCheckAppendRl(...a),
-  checkSharedVoteRateLimit: (...a: unknown[]) => mockCheckVoteRl(...a),
-  checkSharedReportRateLimit: (...a: unknown[]) => mockCheckReportRl(...a),
-  checkSharedWithdrawRateLimit: (...a: unknown[]) => mockCheckWithdrawRl(...a),
+  checkSharedAppendRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckAppendRl(userId, appBlockId),
+  checkSharedVoteRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckVoteRl(userId, appBlockId),
+  checkSharedReportRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckReportRl(userId, appBlockId),
+  checkSharedWithdrawRateLimit: (userId: number, appBlockId: string) =>
+    mockCheckWithdrawRl(userId, appBlockId),
 }));
 // Keep the content-safety belt REAL; mock only its redis-backed deps.
 vi.mock('~/server/services/blocklist.service', () => ({
-  throwOnBlockedUserContent: (...a: unknown[]) => mockThrowOnBlockedUserContent(...a),
+  throwOnBlockedUserContent: (content: unknown, options?: unknown) =>
+    mockThrowOnBlockedUserContent(content, options),
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
-  auditPromptServer: (...a: unknown[]) => mockAuditPromptServer(...a),
+  auditPromptServer: (args: unknown) => mockAuditPromptServer(args),
 }));
 vi.mock('~/server/services/block-revocation.service', () => ({
-  BlockRevocation: { isRevoked: (...a: unknown[]) => mockIsRevoked(...a) },
+  BlockRevocation: {
+    isRevoked: (blockInstanceId: string, sub?: string) => mockIsRevoked(blockInstanceId, sub),
+  },
 }));
 vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
+  logToAxiom: (payload: unknown, stream?: string) => mockLogToAxiom(payload, stream),
 }));
 // NOTE: `report` no longer fires a mod-Discord webhook — it was redundant with the
 // Axiom emit below, so it and its reporter-free-text hardening (`sanitizeDiscordText`)
@@ -179,13 +237,66 @@ beforeEach(() => {
   mockLogToAxiom.mockResolvedValue(undefined);
 });
 
+/**
+ * Stand in for the `stored_size_bytes` column the quota SELECT projects — the
+ * `octet_length(value::text)` Postgres would store for the value about to be
+ * written, which is the unit `quota.used_bytes` is accounted in.
+ *
+ * 🔴 DELIBERATELY NOT THE WIRE SIZE, so the two units are DISTINGUISHABLE here. `2n + 1`
+ * is not jsonb's real expansion — that identity is asserted against a real server in
+ * `src/server/routers/__tests__/apps-shared.router.quota.stored-units.behavior.test.ts`.
+ *
+ * ⚠️ WHAT THIS DOES NOT BUY, measured rather than assumed. An earlier draft of this
+ * comment claimed the choice means "a wire-unit term cannot satisfy a stored-unit
+ * expectation by coincidence" in this suite. It does not, and the margins are why:
+ * every quota case here leaves thousands of bytes between the value size and the
+ * remaining budget, so `n` and `2n + 1` land on the same verdict. Measured against this
+ * file as it stood before the NULL-probe test below was added, restoring the wire term
+ * on EITHER write path left it **146/146 green**. The unit question is settled by the
+ * behaviour suite named above, NOT here.
+ *
+ * What `2n + 1` DOES buy is that a case added later with a margin BETWEEN `n` and
+ * `2n + 1` would discriminate, and — unintentionally but usefully — that reading
+ * `params[1]` makes this suite sensitive to the two SQL parameters being swapped, which
+ * it previously could not see.
+ *
+ * ⚠️ TWO NARROWER GUARDS DO EXIST in this file, and they are worth stating exactly
+ * because the shape is easy to over- and under-read. Measured, per mutant:
+ *
+ *   - dropping the `requireStoredSize` CALL takes exactly one test red (the NULL-probe
+ *     test), on EITHER write path;
+ *   - a wire-unit term reintroduced while the now-dead probe call is LEFT IN PLACE takes
+ *     exactly one test red on the APPEND path (the counter test, via its exactly-on-the-
+ *     cap arm, which overrides `stored_size_bytes` and so is blind to a gate that reads
+ *     the wire size) — and leaves this file FULLY GREEN on the UPDATE path.
+ *
+ * So: the probe CALL is defended on both paths; a wire-unit TERM is caught on append and
+ * not on update. The unit as such is still only fully observable in the behaviour suite.
+ *
+ * (Stated as per-mutant red counts rather than as `n/total`: three successive revisions
+ * of this paragraph were wrong. Two carried a total the same commit had invalidated by
+ * adding tests here — a ratio rots on every added test. The third replaced the ratio with
+ * "fully green on both paths", which the SAME commit falsified by adding the arm that
+ * catches the append case: the proposition rotted where the ratio had. Name the mutant
+ * and the path, and the claim can only rot if the code changes.)
+ *
+ * `$2` is the serialized value on both write paths (`$1` is the app block id).
+ */
+function fixtureStoredSize(params?: unknown[]) {
+  return Buffer.byteLength(String((params ?? [])[1] ?? ''), 'utf8') * 2 + 1;
+}
+
 // Helper: the append data path needs the row-count + quota SELECTs to resolve so a
 // trusted write reaches the INSERT.
 function mockAppendDataPath() {
-  mockPool.query.mockImplementation(async (sql: string) => {
+  mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
     if (sql.includes('author_user_id') && sql.includes('count(*)'))
       return { rows: [{ n: '0' }], rowCount: 1 };
-    if (sql.includes('.quota')) return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+    if (sql.includes('.quota'))
+      return {
+        rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+        rowCount: 1,
+      };
     return { rows: [], rowCount: 0 };
   });
 }
@@ -270,11 +381,14 @@ describe('H3 min-trust gate (write + vote)', () => {
 
   it('ALLOWS a trusted writer (reaches the data path)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id') && sql.includes('count(*)'))
         return { rows: [{ n: '0' }], rowCount: 1 };
       if (sql.includes('.quota'))
-        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
       return { rows: [], rowCount: 0 };
     });
     const out = await caller().append({ blockToken: 't', value: { title: 'idea' } });
@@ -474,11 +588,14 @@ describe('trust gate is independent of the (now-exempt) shared:write scope', () 
 describe('C1 cross-user overwrite', () => {
   it('append SERVER-generates the key (client key never used)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id') && sql.includes('count(*)'))
         return { rows: [{ n: '0' }], rowCount: 1 };
       if (sql.includes('.quota'))
-        return { rows: [{ used_bytes: '0', row_count: '0' }], rowCount: 1 };
+        return {
+          rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
       return { rows: [], rowCount: 0 };
     });
     // Even if a caller smuggles `key`, zod strips it and the server ULID is used.
@@ -586,6 +703,17 @@ describe('C3 content safety (blocking on append)', () => {
     await expect(
       caller().append({ blockToken: 't', value: { title: 'visit http://bad.example' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    // 🔴 PINS THE MOCK'S ARITY, because narrowing it is silent. The passthrough above once
+    // declared this callee arity-ONE, which dropped the options object before it reached the
+    // mock — `mock.calls[0].length` went 2 → 1 — and NO test failed, so `onBlocked` (the
+    // link-vs-pattern discriminator that shared-content-safety.ts:110-112 keeps exact) became
+    // unguardable. Watched red at the one-arg passthrough: `expected 1 to be 2`, 1 failed /
+    // 148 passed. Assert the KEYS too, not just the count: a second positional argument of the
+    // wrong shape would satisfy a bare length check.
+    expect(mockThrowOnBlockedUserContent.mock.calls[0]?.length).toBe(2);
+    expect(Object.keys((mockThrowOnBlockedUserContent.mock.calls[0]?.[1] ?? {}) as object)).toEqual(
+      expect.arrayContaining(['isModerator', 'surface', 'onBlocked'])
+    );
   });
 
   // FIX 2: escape-at-rest removed — text is stored RAW. XSS is contained at the
@@ -980,6 +1108,86 @@ describe('item 3 viewerVoted (per-viewer vote flag on list)', () => {
   });
 });
 
+// civitai/civitai#5354 Q3 — `mine`, an author filter on `list`. It is a BOOLEAN,
+// never a user id: the author it filters on is the same resolved subject ($4) that
+// `viewerVoted` keys on. These tests exist to pin that property structurally, not
+// just to show the happy path works — a later change that accepts an author from
+// the caller would keep every behavioural assertion green.
+describe('#5354 Q3 `mine` author filter on list', () => {
+  it('is INERT by default: $5 is false and the guard short-circuits the predicate', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't' });
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)');
+    expect(params[4]).toBe(false);
+  });
+
+  // 🔴 There is deliberately NO test here using the DEFAULT fixture subject
+  // (user:42). It would assert the same two things as the PER-VIEWER case below
+  // and be strictly weaker: a mutant that hardcoded the default uid would survive
+  // it. The non-default subject is the only version that is a real control.
+  it('🔴 the ONLY author comparison in the list SQL binds $4 — never a caller-supplied param', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't', mine: true });
+    const [sql] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    // Structural, not behavioural: `author_user_id = $6` fed from input would pass
+    // every other test in this block while turning `mine` into an arbitrary-user
+    // enumeration primitive. This is the assertion that fails on that change.
+    expect(sql.match(/author_user_id\s*=\s*\$\d+/g)).toEqual(['author_user_id = $4']);
+    // And nothing in the list path may reach for an input-shaped author at all.
+    expect(sql).not.toMatch(/author_user_id\s*=\s*\$(1|2|3|5|6|7|8|9)\b/);
+  });
+
+  it('an ANON caller asking for mine gets an empty page, not the whole board', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'anon' }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't', mine: true });
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    // $4 is NULL for anon, and the predicate is a bare equality — `x = NULL` is
+    // UNKNOWN, so it matches nothing. The failure mode this guards against is a
+    // refactor to COALESCE($4, s.author_user_id), which would make `mine` return
+    // the ENTIRE board to an anonymous caller while every count-based test stays
+    // green. Assert the SHAPE, because the behaviour is identical either way
+    // against an empty fixture.
+    expect(params[3]).toBeNull();
+    expect(params[4]).toBe(true);
+    expect(sql).toContain('s.author_user_id = $4::int');
+    expect(sql).not.toMatch(/COALESCE\s*\(\s*\$4/i);
+  });
+
+  it('is PER-VIEWER: a different subject filters on a different author', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims({ sub: 'user:99' }));
+    mockGetSessionUser.mockResolvedValueOnce(trustedUser({ id: 99 }));
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({ blockToken: 't', mine: true });
+    const [, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(params[3]).toBe(99);
+    expect(params[4]).toBe(true);
+  });
+
+  it('composes with prefix + cursor rather than replacing them', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await caller().list({
+      blockToken: 't',
+      mine: true,
+      prefix: 'grid:',
+      cursor: Buffer.from('K9', 'utf8').toString('base64'),
+    });
+    const [sql, params] = mockPool.query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain("s.key LIKE $1 ESCAPE '\\'");
+    expect(sql).toContain('($2::text IS NULL OR s.key < $2)');
+    expect(sql).toContain('($5::boolean IS NOT TRUE OR s.author_user_id = $4::int)');
+    expect(params[0]).toBe('grid:%');
+    expect(params[1]).toBe('K9');
+    expect(params[4]).toBe(true);
+    // Keyset order is untouched — the filter must not change pagination semantics.
+    expect(sql).toContain('ORDER BY s.key DESC');
+  });
+});
+
 // Item 6 — single-row fetch-by-key for `?g=` deep links. READ op (anon-allowed),
 // same per-viewer visibility gate (`hidden_at IS NULL`) as `list`.
 describe('item 6 apps.shared.get (single-row fetch-by-key)', () => {
@@ -1258,18 +1466,312 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     expect(mockClient.query).not.toHaveBeenCalled();
   });
 
+  /**
+   * 🔴 THE PROBE'S FAILURE ARM, which only a mocked pool can reach.
+   *
+   * `requireStoredSize` rejects a null `stored_size_bytes` BEFORE coercing, and throws
+   * rather than absorbing it into a 0. Its own docblock calls both choices load-bearing,
+   * and both were unpinned: a mutation sweep found that dropping the `raw == null` term
+   * (leaving only `Number.isFinite`, which `Number(null) === 0` passes) and replacing
+   * the throw with `return 0` each SURVIVED the entire suite — 152 tests at the time,
+   * being this file's 146 plus the behaviour file's 6, NOT a count of this file. Either
+   * mutant
+   * reopens the bypass through the guard instead of around it — a zero-byte charge on
+   * append, and a non-positive delta on update, which the non-increasing exemption then
+   * waves through.
+   *
+   * The arm is unreachable via the real SQL (a FROM-less `SELECT octet_length(...)`
+   * always yields one non-null row), so there is no behavioural fixture for it — which
+   * is exactly why it needs this test rather than none. Asserted on the MESSAGE, so a
+   * guard that throws for some other reason does not satisfy it, and on no row being
+   * written.
+   */
+  it('refuses the write loudly when the stored-size probe comes back NULL', async () => {
+    // 🔴 NaN AND Infinity ARE IN THIS LOOP DELIBERATELY. `null` and `undefined` are both
+    // caught by
+    // the guard's FIRST half (`raw == null`), so without a NaN case the second half
+    // (`!Number.isFinite(...)`) never decides anything and could be deleted with
+    // nothing going red — measured, that mutant SURVIVED the whole suite. NaN is
+    // type-valid for `number | null | undefined`, and with the finiteness half gone it
+    // fails open through BOTH gates: append gets `usedBytes + NaN > CAP` (false) and
+    // update gets `netDelta = NaN`, where `NaN <= 0` and `NaN > CAP` are both false, so
+    // the write is ACCEPTED.
+    //
+    // ⚠️ "Accepted", NOT "charged nothing" — an earlier revision said the latter and the
+    // trigger DDL contradicts it. `kv_quota_trigger` charges from the GENERATED column on
+    // both paths — `used_bytes + NEW.size_bytes` on INSERT and
+    // `used_bytes + (NEW.size_bytes - OLD.size_bytes)` on UPDATE — and never sees
+    // `storedByteSize`, so the counter still moves by the true stored size. The harm is that the CEILING stopped binding, not
+    // that the accounting broke — which is worse, because the counter keeps looking
+    // healthy. Same reasoning that justified pinning the structurally-unreachable null
+    // arm.
+    //
+    // `Infinity` closes the other half of the same asymmetry, and it is here because a
+    // sibling guard's docstring started arguing against exactly this: `NaN` alone pins
+    // the finiteness check only against DELETION, not against the weakening
+    // `!Number.isFinite` -> `Number.isNaN`, which `Infinity` does not satisfy. Measured,
+    // that weakening survived the whole suite until this value was added.
+    for (const probeValue of [null, undefined, NaN, Infinity, -Infinity]) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('author_user_id') && sql.includes('count(*)'))
+          return { rows: [{ n: '0' }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [{ used_bytes: '0', row_count: '0', stored_size_bytes: probeValue }],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+      await expect(
+        caller().append({ blockToken: 't', value: { title: 'ok', data: [1, 2, 3] } })
+      ).rejects.toThrow('stored-size probe returned no usable value');
+      // No row was written: the throw lands before the transaction opens.
+      expect(mockClient.query).not.toHaveBeenCalled();
+    }
+
+    // The mirror case on the UPDATE path, where absorbing a null to 0 would make the
+    // delta NEGATIVE and the exemption would then skip the ceiling entirely.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 9000 }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return { rows: [{ used_bytes: '0', stored_size_bytes: null }], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: [1, 2, 3] },
+      })
+    ).rejects.toThrow('stored-size probe returned no usable value');
+    expect(mockClient.query).not.toHaveBeenCalled();
+
+    // 🔴 POSITIVE CONTROL for the whole test: with a USABLE probe value and the same
+    // mocks otherwise, the write goes through. Without this the assertions above are
+    // also satisfied by a router that refuses every append.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    await expect(
+      caller().append({ blockToken: 't', value: { title: 'ok', data: [1, 2, 3] } })
+    ).resolves.toMatchObject({ key: expect.any(String) });
+    expect(mockClient.query).toHaveBeenCalled();
+  });
+
+  /**
+   * 🔴 THE OTHER TERM OF THE SAME SUBTRACTION, in its own test rather than appended to
+   * the NULL-probe case above — that title says "probe" and "NULL", and this is neither,
+   * so a maintainer chasing the failure would be sent to `requireStoredSize` instead of
+   * to the `oldBytes` guard that actually failed.
+   *
+   * `oldBytes` comes from the generated `shared_kv.size_bytes` column, so a non-numeric
+   * value is unreachable with the current DDL (`integer`, non-null, generated over a
+   * `jsonb NOT NULL` column) and only a mocked pool can produce one. It is pinned anyway
+   * because a NaN there fails open through BOTH arms of the gate — `NaN <= 0` is false
+   * so no exemption fires, and `NaN > CAP` is false so no refusal fires — which is the
+   * same shape as the probe's null, on the term the probe's guard does not cover.
+   *
+   * Asserted on this guard's OWN message: the fail-open path reaches the UPDATE, matches
+   * no row, and surfaces as the lost-race `request not found`, so a test that only
+   * asserted "it throws" would pass against the removed guard.
+   */
+  it('refuses the write loudly when the stored row size is not numeric', async () => {
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 'not-a-number' }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: [1, 2, 3] },
+      })
+    ).rejects.toThrow('stored row size is not numeric');
+    expect(mockClient.query).not.toHaveBeenCalled();
+
+    // POSITIVE CONTROL: a numeric size on the same mocks reaches the write.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+      if (sql.includes('author_user_id, size_bytes'))
+        return { rows: [{ author_user_id: 42, size_bytes: 100 }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
+      return { rows: [], rowCount: 0 };
+    });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (sql.trim().startsWith('UPDATE')) return { rows: [], rowCount: 1 };
+      return { rows: [], rowCount: 0 };
+    });
+    await expect(
+      caller().update({
+        blockToken: 't',
+        key: 'ROW-KEY-1',
+        value: { title: 'ok', data: [1, 2, 3] },
+      })
+    ).resolves.toEqual({ ok: true });
+  });
+
+  /**
+   * 🔴 THE `quota` COUNTER GUARD, all three of its decisions pinned separately.
+   *
+   * `requireFiniteCounter` covers `used_bytes` on both write paths and `row_count` on
+   * append. A NaN in any of them fails open through both arms of its gate — on append
+   * `usedBytes + storedByteSize > CAP` and `rowCount + 1 > LIMIT` are both false against
+   * NaN; on update `netDelta` is unaffected so the refusal is false too.
+   *
+   * ⚠️ EACH ARM BELOW EXISTS BECAUSE A MUTANT SURVIVED WITHOUT IT. An earlier revision
+   * fed only `'not-a-number'` and asserted only that the null case was *accepted*, which
+   * left three mutants alive: swapping `!Number.isFinite` for `Number.isNaN` (so
+   * `'Infinity'` sails through — the very gap the sibling guard's commit existed to
+   * close, reopened on this one), dropping the `?? '0'` default, and changing it to
+   * `?? '1'`. The arms are labelled with what each one kills.
+   */
+  it('refuses the write loudly when a quota counter is not numeric', async () => {
+    const APP_QUOTA_BYTES = 50 * 1024 * 1024;
+    const mockCounters = (counters: Record<string, unknown>, storedSize?: number) =>
+      mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('author_user_id') && sql.includes('count(*)'))
+          return { rows: [{ n: '0' }], rowCount: 1 };
+        if (sql.includes('author_user_id, size_bytes'))
+          return { rows: [{ author_user_id: 42, size_bytes: 100 }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [
+              {
+                row_count: '0',
+                ...counters,
+                stored_size_bytes: storedSize ?? fixtureStoredSize(params),
+              },
+            ],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+    const value = { title: 'ok', data: [1, 2, 3] };
+    const callPath = (path: 'append' | 'update') =>
+      path === 'append'
+        ? caller().append({ blockToken: 't', value })
+        : caller().update({ blockToken: 't', key: 'ROW-KEY-1', value });
+
+    // (a) NON-NUMERIC, both write paths and both counters. Kills the two
+    // "drop the guard at this call site" mutants and the "return 0" mutant.
+    //
+    // 🔴 THE EXPECTED MESSAGE IS EXACT, PER CASE, NOT A DISJUNCTION. An earlier revision
+    // asserted `/app (used_bytes|row_count) is not numeric/` for all three, which left a
+    // mutant alive that had died before it: relabelling the UPDATE path's guard to
+    // `'app row_count'` then satisfied the regex and survived the whole suite. A 500
+    // naming the wrong column is the "sent to the wrong helper" failure this file warns
+    // about elsewhere, so the label is part of what the guard owes.
+    for (const [path, counters, expected] of [
+      ['append', { used_bytes: 'not-a-number' }, 'app used_bytes is not numeric'],
+      ['update', { used_bytes: 'not-a-number' }, 'app used_bytes is not numeric'],
+      ['append', { used_bytes: '0', row_count: 'not-a-number' }, 'app row_count is not numeric'],
+    ] as const) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockCounters(counters);
+      await expect(callPath(path)).rejects.toThrow(expected);
+      expect(mockClient.query).not.toHaveBeenCalled();
+    }
+
+    // (b) 🔴 NON-FINITE BUT NOT NaN. `Number('Infinity')` is Infinity, which
+    // `Number.isNaN` does NOT catch — this is the only arm that kills the
+    // `!Number.isFinite` -> `Number.isNaN` weakening.
+    for (const infinite of ['Infinity', '-Infinity', '1e400']) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockCounters({ used_bytes: infinite });
+      await expect(callPath('append')).rejects.toThrow('app used_bytes is not numeric');
+      expect(mockClient.query).not.toHaveBeenCalled();
+    }
+
+    // (c) NULL AND UNDEFINED ARE NOT FAULTS. The scalar subquery returns NULL when the
+    // app has no `quota` row, and reading that as zero is the pre-existing behaviour the
+    // FROM-less SELECT shape exists to preserve. The `undefined` case is what kills
+    // dropping the `?? '0'` default, since `Number(null)` is already 0.
+    //
+    // ⚠️ Scoped claim: WITHIN THIS FILE these are the only guard on that behaviour. An
+    // earlier revision claimed the tightening would otherwise "pass", and that is false —
+    // `still accepts a write when the app has no quota row at all` in the behaviour suite
+    // also kills it. This arm is the cheap, same-file half of a two-file guard.
+    for (const absent of [null, undefined]) {
+      mockClient.query.mockClear();
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockCounters({ used_bytes: absent, row_count: absent });
+      const out = await caller().append({ blockToken: 't', value });
+      expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+      expect(mockClient.query).toHaveBeenCalled();
+    }
+
+    // (d) 🔴 AND IT MUST READ AS EXACTLY ZERO, not merely "some small number". The
+    // mechanism is an OVERRIDDEN PROBE RESULT, not a resized value: `mockCounters`'
+    // second argument replaces `stored_size_bytes` with exactly APP_QUOTA_BYTES, so the
+    // gate is evaluated precisely ON the cap. A fallback of 0 accepts (`0 + CAP > CAP` is
+    // false) and any positive fallback refuses — so this is the only arm that kills
+    // changing `?? '0'` to `?? '1'`. Arm (c) cannot see that, because it asserts
+    // acceptance with megabytes of headroom.
+    //
+    // Two things fall out of overriding the probe rather than the value, both measured.
+    // It also kills the append gate's `>` -> `>=` (at the cap, `>=` refuses). And it is
+    // what makes this file able to see an append-path wire-unit reintroduction at all:
+    // a gate reading the wire `byteSize` ignores the override, so the CAP+1 control below
+    // stops refusing. See the note on `fixtureStoredSize` above, which records exactly
+    // how far that goes — it is one path, not both.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCounters({ used_bytes: null }, APP_QUOTA_BYTES);
+    const atCap = await caller().append({ blockToken: 't', value });
+    expect(atCap.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
+
+    // …and the control for (d): one byte more and it refuses, so (d) is not passing just
+    // because the gate was never consulted.
+    mockClient.query.mockClear();
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockCounters({ used_bytes: null }, APP_QUOTA_BYTES + 1);
+    await expect(caller().append({ blockToken: 't', value })).rejects.toMatchObject({
+      code: 'PAYLOAD_TOO_LARGE',
+      message: 'app quota exceeded',
+    });
+  });
+
   it('counts `data` bytes toward the per-app quota', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     // usedBytes is 50 bytes under the app quota; a data blob larger than that pushes
-    // usedBytes + byteSize over APP_QUOTA_BYTES → 'app quota exceeded' (proving the
-    // data bytes are included in byteSize).
+    // usedBytes + the value's STORED size over APP_QUOTA_BYTES → 'app quota exceeded',
+    // proving the `data` bytes reach the gate at all. ⚠️ NOT via `byteSize`, which this
+    // comment used to name: the wire `byteSize` is deliberately excluded from this gate
+    // now, and the stored size arrives as the `stored_size_bytes` column the mock below
+    // supplies (derived from `params[1]`, i.e. the serialized value the router sends).
     const APP_QUOTA_BYTES = 50 * 1024 * 1024;
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id') && sql.includes('count(*)'))
         return { rows: [{ n: '0' }], rowCount: 1 };
       if (sql.includes('.quota'))
         return {
-          rows: [{ used_bytes: String(APP_QUOTA_BYTES - 50), row_count: '0' }],
+          rows: [
+            {
+              used_bytes: String(APP_QUOTA_BYTES - 50),
+              row_count: '0',
+              stored_size_bytes: fixtureStoredSize(params),
+            },
+          ],
           rowCount: 1,
         };
       return { rows: [], rowCount: 0 };
@@ -1333,10 +1835,14 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
     opts: { author?: number; sizeBytes?: number; usedBytes?: number; updatedRows?: number } = {}
   ) {
     const { author = 42, sizeBytes = 100, usedBytes = 0, updatedRows = 1 } = opts;
-    mockPool.query.mockImplementation(async (sql: string) => {
+    mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
       if (sql.includes('author_user_id, size_bytes'))
         return { rows: [{ author_user_id: author, size_bytes: sizeBytes }], rowCount: 1 };
-      if (sql.includes('.quota')) return { rows: [{ used_bytes: String(usedBytes) }], rowCount: 1 };
+      if (sql.includes('.quota'))
+        return {
+          rows: [{ used_bytes: String(usedBytes), stored_size_bytes: fixtureStoredSize(params) }],
+          rowCount: 1,
+        };
       return { rows: [], rowCount: 0 };
     });
     mockClient.query.mockImplementation(async (sql: string) => {

@@ -34,7 +34,6 @@ import {
   shouldRefineSearchQuery,
   useCarriedSearchText,
 } from '~/components/Search/useCarriedSearchText';
-import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import {
   autocompleteAvailability,
   useAutocompleteAvailabilityStore,
@@ -53,8 +52,10 @@ import type { SearchIndexDataMap } from '~/components/Search/search.utils2';
 import { useHitsTransformed } from '~/components/Search/search.utils2';
 import type { ReverseSearchIndexKey, SearchIndexKey } from '~/components/Search/search.types';
 import { reverseSearchIndexMap, searchIndexMap } from '~/components/Search/search.types';
-import { isDefined, paired } from '~/utils/type-guards';
+import { paired } from '~/utils/type-guards';
 import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
+import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
+import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
 import {
@@ -64,7 +65,6 @@ import {
 } from '~/components/AutocompleteSearch/autocomplete-query';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
-import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { getBlockedNsfwWords } from '~/utils/metadata/audit-base';
@@ -128,7 +128,7 @@ const targetData = [
   { value: 'comics', label: 'Comics' },
 ] as const;
 
-export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
+const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
   const browsingSettingsAddons = useBrowsingSettingsAddons();
   const features = useFeatureFlags();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
@@ -165,33 +165,17 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     setTargetIndex(searchTarget);
   }, [searchTarget]);
 
-  const isModels = targetIndex === 'models';
-  const isImages = targetIndex === 'images';
-  const supportsPoi = ['models', 'images'].includes(targetIndex);
-  const supportsMinor = ['models', 'images'].includes(targetIndex);
-  const filters = [
-    isModels && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''}`
-      : null,
-    isImages && supportsPoi && browsingSettingsAddons.settings.disablePoi
-      ? `poi != true${
-          currentUser?.username
-            ? ` OR user.username = ${quoteMeiliValue(currentUser.username)}`
-            : ''
-        }`
-      : null,
-    supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
-    isModels && !currentUser?.isModerator
-      ? `availability != ${Availability.Private}${
-          currentUser?.id ? ` OR user.id = ${currentUser?.id}` : ''
-        }`
-      : null,
-  ].filter(isDefined);
+  const filters = buildAutocompleteBaseFilters({
+    targetIndex,
+    addons: browsingSettingsAddons.settings,
+    currentUser,
+  });
 
   const resolvedIndexName = searchIndexMap[targetIndex as keyof typeof searchIndexMap];
 
-  // Images stays selectable while image search is retired, but images_v6 is gone — swap to a
-  // client that never reaches the network so the on-mount search can't hit the deleted index.
+  // Images stays selectable while image search is retired, but images_v6 is empty and declares no
+  // filterable attributes — swap to a client that never reaches the network so the on-mount search
+  // can't query it. 🔴 The index EXISTS; this swap is live protection, not dead belt-and-braces.
   const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
 
   // The options the selector OFFERS: every target, narrowed by feature flag. Computed once here
@@ -267,7 +251,9 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   );
 });
 
-AutocompleteSearch.displayName = 'AutocompleteSearch';
+AutocompleteSearchInner.displayName = 'AutocompleteSearchInner';
+
+export const AutocompleteSearch = withSearchBrowsingScope(AutocompleteSearchInner);
 
 type AutocompleteSearchProps<T extends SearchIndexKey> = Props & {
   indexName: T;
@@ -308,8 +294,9 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? reverseSearchIndexMap[results.index as ReverseSearchIndexKey]
     : indexNameProp;
 
-  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
-  // show a maintenance notice in place and never refine the query against it.
+  // Images stays selectable while image search is retired, but the images_v6 index is empty and
+  // declares no filterable attributes — so show a maintenance notice in place and never refine the
+  // query against it. The index still exists; this branch is load-bearing, not dead code.
   const imageSearchMaintenance = indexName === 'images' && !features.imageSearch;
 
   const [selectedItem, setSelectedItem] = useState<ComboboxData[number] | null>(null);

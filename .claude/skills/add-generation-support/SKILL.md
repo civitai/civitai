@@ -105,7 +105,7 @@ Graph: src/shared/data-graph/generation/<name>-graph.ts
 
 Handler: src/server/services/orchestrator/ecosystems/<name>.handler.ts
 - Types: <from @civitai/orchestration-client, or generic>
-- Step type: <imageGen | videoGen | textToImage>
+- Step type: <imageGen | videoGen>
 - Fixed params: sampler=<x>, scheduler=<y> (if applicable)
 
 Wiring:
@@ -178,7 +178,7 @@ Template:
 ```ts
 import type {
   <EcosystemSpecificInputType>, // e.g., SeedanceVideoGenInput
-  <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate | TextToImageStepTemplate
+  <StepTemplateType>,            // ImageGenStepTemplate | VideoGenStepTemplate
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { GenerationGraphTypes } from '~/shared/data-graph/generation/generation-graph';
@@ -195,12 +195,11 @@ export const create<Name>Input = defineHandler<<Name>Ctx, [<StepTemplateType>]>(
   // Branch by model version if multiple variants produce different input types
   // For LoRA support: map resources to the format the type expects
   //   - Record<string, number> for comfy-based ecosystems (AIR → strength)
-  //   - Record<string, ImageJobNetworkParams> for textToImage
   //   - Array of { air, strength } for some video types
 
   return [
     {
-      $type: '<imageGen | videoGen | textToImage>',
+      $type: '<imageGen | videoGen>',
       input: removeEmpty({
         engine: '<engine>',
         // ecosystem: '<name>',  // only for comfy engine
@@ -311,6 +310,8 @@ See [docs/features/featured-auction-ecosystem-sync.md](docs/features/featured-au
 | 3 | files + `allowCommercialUse` + `baseModel IN "GenerationBaseModel"` (or `type = 'Upscaler'`); a **Checkpoint** qualifies differently per rule — see below | downloadable weights |
 
 Branch 3 is where the two rules part. Under `coveredNext` a checkpoint needs a scanned **SafeTensor** weight file, because the loader serves nothing else; under `covered` it needs a `CoveredCheckpoint` row instead. The file-format test differs too: `covered` excludes Diffusers for every type, `coveredNext` accepts it for everything but checkpoints. Branches 1 and 2 are identical under both.
+
+⚠️ **The view does not know about `modelLocked`, and a covered checkpoint there is still not generatable.** `isGenerationEligible` holds a Checkpoint on a `modelLocked` ecosystem to the LIVE column whichever rule is live, because `createCheckpointGraph` rewrites any foreign checkpoint id back to the workflow default — server parse included — so it could never reach the orchestrator. Branch 2 — an `EcosystemCheckpoints` row — is on the live column, so an ecosystem's own default checkpoints are unaffected however locked it is, as is an auction winner (branch 3 under the live rule). Do not add a coverage row expecting it to make a community checkpoint generatable on such an ecosystem.
 
 `GenerationBaseModel` is consulted by **branch 3 only**. For a file-less API model the row is inert — correct to add for the future, but it is not what makes the model generatable, so don't stop there and assume you're done.
 
@@ -486,6 +487,9 @@ Skip this if the variants share the same slider ranges (e.g. version bumps with 
 - **Always check `@civitai/orchestration-client` first.** Skipping this step leads to hand-rolled types that drift from the orchestrator API.
 - **`engine` string conventions**: `'comfy'` uses a separate `ecosystem` field; most other engines (`'sdcpp'`, `'seedance'`, `'vidu'`, etc.) use the engine string directly.
 - **Sampler/scheduler**: if the provider recommends a single fixed sampler+scheduler, hardcode them in the handler rather than creating UI controls. Simpler UX and avoids bad user choices.
-- **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints.
+- **Model-locked ecosystems**: set `modelLocked: true` in `ecosystemSettings.defaults` unless the ecosystem has multiple user-selectable checkpoints. This is **not** only a form setting — `isGenerationEligible` reads the same flag through `isModelLockedBaseModel` and holds every Checkpoint on the ecosystem to the LIVE coverage column, so the staged expansion stops making community checkpoints there generatable or loadable (an `EcosystemCheckpoints` row or an auction win still does). Clearing the flag restores them on the next request. Nothing else to update: no migration, no view change, no backfill.
 - **Aspect ratio source**: prefer HuggingFace model card recommended resolutions over round-number guesses. They affect output quality significantly.
-- **Aspect ratio `priorityOptions`**: when an ecosystem exposes more than ~5 aspect ratios, pass `priorityOptions` to `aspectRatioNode` so the UI shows a standard preferred subset up front and tucks the rest behind the "More" overflow. Use the standard preferred set `['16:9', '4:3', '1:1', '3:4', '9:16']` (as Lens and NanoBanana do) when the ecosystem supports those ratios; substitute the nearest available ratio for any it lacks (e.g. Krea2 uses `4:5` in place of `3:4`). Without `priorityOptions`, every ratio renders inline, which is noisy for wide ratio sets.
+- **~1M-pixel diffusion models (SDXL-style bucketing)**: don't write a bucket list. Use `sdxlFullAspectRatioNode()` (data-graph, from `./common`) / `SDXL_FULL_AR` (form-graph, from `../defs`) — the nine SDXL buckets 21:9 → 9:21 with a 3:2 / 1:1 / 2:3 first row. Before you do, read the width/height attributes on the engine's input class in `civitai-orchestration` (`Grains.Abstractions/Workflows/Steps/ImageGen/**`): the comfy inputs take `[Range(64, 2048)] [DivisibleBy(16)]`, so all nine fit, but a provider API can be tighter — BFL's `flux1-pro` caps each side at 1440, so Flux.1 Pro uses `flux1ProAspectRatioNode()` / `FLUX1_PRO_AR`, which drops 21:9 and 9:21. Any ratio that fits the engine's limits is valid; the buckets are about quality, not acceptance.
+- **Custom width × height**: the `SDXL_FULL_AR*` / `FLUX1_PRO_AR` defs carry `custom` limits from `generation.constants.ts` (SD1 passes `sd1CustomDimensionLimits` itself in `sd.graph.ts`), which add a "Custom" entry to the picker. A request opts in with `value: CUSTOM_ASPECT_RATIO` and is fitted by `fitCustomDimensions` (step, side range, area and ratio caps) in the def's `input` and `correct` — so the server enforces it on every parse. Pick the group from what the model's authors document, not from what the engine accepts: `sdxlCustomDimensionLimits` / `SDXL_FULL_AR` (~1 MP: warn past 1 MP, cap 1536²), `twoMegapixelCustomDimensionLimits` / `SDXL_FULL_AR_2MP` (documented to ~2 MP: warn past 2), `fourMegapixelCustomDimensionLimits` / `SDXL_FULL_AR_4MP` (documented to ~4 MP). MP is `MEGAPIXEL` = 1024² px, and **no image may pass 4 MP = 2048²** — a product rule. `maxArea` is enforced; `recommendedArea` only warns. The Custom segment opens `CustomDimensionsModal`: its sliders grey what `sideRange` rules out, and its ratio buttons (`atRatio`) change the shape at the current pixel count. An ecosystem without `custom` snaps a custom value to its nearest bucket. The old data-graph engine (shadow-parsed until it is removed) knows only the ~1 MP group. Users can save custom sizes (`GenerationSizePreset`): one list per user, offered on every model whose limits accept a size unchanged and greyed out where they don't, so a new limits object needs nothing extra; add it to `allCustomDimensionLimits` so the server accepts sizes only it allows.
+- **Aspect ratio order**: declaration order does not matter — `AspectRatioInput` sorts every list widest first, and a pick from "More" takes its neighbour's slot in that order. Declare widest first anyway, so the data reads the way it displays.
+- **Aspect ratio `priorityOptions`**: when an ecosystem exposes more than ~5 aspect ratios, pass `priorityOptions` to `aspectRatioNode` so the UI shows a standard preferred subset up front and tucks the rest behind the "More" overflow. Use the standard preferred set `['16:9', '4:3', '1:1', '3:4', '9:16']` (as Lens and NanoBanana do) when the ecosystem supports those ratios; substitute the nearest available ratio for any it lacks (e.g. Krea2 uses `4:5` in place of `3:4`). Without `priorityOptions`, the picker fills the row from the middle of the sorted list, which is rarely the set you'd choose. On a phone, "More" opens the shared `MobileMenuDrawer` bottom sheet rather than a popover — nothing to wire.

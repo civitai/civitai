@@ -55,6 +55,7 @@ const SCOPED_MANY =
 const TYPE_IN_KEY = new Set([
   'bountyEngagement', // type_bountyId_userId
   'challengeEngagement', // type_challengeId_userId
+  'crucibleEngagement', // type_crucibleId_userId
 ]);
 
 /**

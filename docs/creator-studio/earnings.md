@@ -52,8 +52,9 @@ service is too slow) ([plan §5.1](../creator-studio-plan.md#51-the-core-archite
   39,402 `np-deposit-` rows / 686M buzz vs 29,993 `early-access-` / 54.8M), and those carry `toAccountId` = the
   buyer. A naive `toAccountId = X AND type='purchase'` counts a creator's own buzz purchases as earnings. Always
   filter on the `externalTransactionId` prefix. Exclude `accountId = 0` (system/platform account).
-  ⚠️ **License fees currently land as `type='27'`** — the ingest MV's int→string map stops at 26 and falls back to
-  `toString(Type)`. Justin owns the fix + backfill; filter both values until it lands, or the card reads zero.
+  ⚠️ **Any transaction type above 26 lands as its NUMBER** — the ingest MV's int→string map stops at 26 and falls
+  back to `toString(Type)`. Today that is license fees (`'27'`) and the App Blocks author fee (`'28'`). Justin owns
+  the MV fix + backfill; filter both spellings of whichever type you want until it lands, or the card reads zero.
 - **No owner-keyed rollup dependency, and no dictionary.** That `modelVersionId`-keying problem is real for
   *usage* tables, but not for buzz transactions: `default.buzzTransactions.toAccountId` **is** the creator's
   `userId` (verified 1:1), and the table ships a `PROJECTION byToAccount (SELECT * ORDER BY toAccountId, date, …)`

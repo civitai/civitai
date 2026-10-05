@@ -10,7 +10,6 @@ import type {
   DetailsFailedRecurringBid,
   DetailsWonAuction,
 } from '~/server/notifications/auction.notifications';
-import { modelVersionResourceCache } from '~/server/redis/caches';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
@@ -307,7 +306,7 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
 };
 
 const TOP_EARNER_LIMIT = 20;
-const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerType[]) => {
+export const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerType[]) => {
   const winnerIds = winners.map((w) => w.entityId);
   const entityNames = Object.fromEntries(winnerIds.map((w) => [w, null as string | null]));
 
@@ -364,6 +363,9 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       entityNames[md.id] = md.model.name;
     });
 
+    // Busted below, outside the try: a Redis fault must not report the coverage write as failed.
+    let coverageDropouts: { model_id: number; version_id: number }[] = [];
+
     if (!auctionRow.auctionBase.ecosystem) {
       // update checkpoint coverage
       const checkpoints = winners
@@ -403,20 +405,23 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
           // Delta sync instead of TRUNCATE + INSERT: TRUNCATE isn't propagated
           // by every replication setup, which left stale "covered" rows on the
           // DataPacket replica.
-          await dbWrite.$transaction([
+          const [, removed] = await dbWrite.$transaction([
             dbWrite.$executeRaw`
               INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
               SELECT * FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
               ON CONFLICT DO NOTHING
             `,
-            dbWrite.$executeRaw`
+            dbWrite.$queryRaw<{ model_id: number; version_id: number }[]>`
               DELETE FROM "CoveredCheckpoint" cc
               WHERE NOT EXISTS (
                 SELECT 1 FROM UNNEST(${modelIds}::int[], ${versionIds}::int[]) AS t(model_id, version_id)
                 WHERE t.model_id = cc.model_id AND t.version_id = cc.version_id
               )
+              RETURNING cc.model_id, cc.version_id
             `,
           ]);
+
+          coverageDropouts = removed;
         }
       } catch (error) {
         const err = error as Error;
@@ -435,23 +440,29 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     }
 
     // Clear related caches
+    // Dropouts as well as winners: a version that left the set keeps a stale `canGenerate` in the
+    // index, which renders a generate button the submit then refuses.
+    const coverageModelIds = [
+      ...new Set([
+        ...winners
+          .map((w) => modelVersionData.find((mv) => mv.id === w.entityId)?.modelId)
+          .filter(isDefined),
+        ...coverageDropouts.map((d) => d.model_id),
+      ]),
+    ];
     await modelsSearchIndex.updateSync(
-      winners
-        .map((w) => {
-          const winMatch = modelVersionData.find((mv) => mv.id === w.entityId);
-          return winMatch
-            ? { id: winMatch.modelId, action: SearchIndexUpdateQueueAction.Update }
-            : undefined;
-        })
-        .filter(isDefined)
+      coverageModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
     await bustFeaturedModelsCache();
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
-    await resourceDataCache.bust(winnerIds);
-    await modelVersionResourceCache.refresh(winnerIds);
-    await bustOrchestratorModelCache(winnerIds);
+    // Dropouts need the winners' invalidation: the set also takes top weekly earners, so a version
+    // leaves with no auction event of its own, and unbusted the orchestrator keeps serving it as
+    // covered until its entry expires.
+    const coverageChanged = [...winnerIds, ...coverageDropouts.map((d) => d.version_id)];
+    await resourceDataCache.bust(coverageChanged);
+    await bustOrchestratorModelCache(coverageChanged);
 
-    log('busted cache', winnerIds.length);
+    log('busted cache', coverageChanged.length);
   }
 
   // Send notifications to each auction's contributing winners

@@ -129,6 +129,17 @@ export const PLATFORM_INTERNAL_STEP_TYPES: readonly string[] = Object.freeze([
   // Web egress.
   'webScrape',
   'webSearch',
+
+  // RETIRED, not a platform internal — the odd one out in this list. The app
+  // emits no `textToImage` step any more (every image family names its engine
+  // via a specialised `imageGen` endpoint), so the only way one could still be
+  // created is a block naming it on the pass-through arm. Denying it is what
+  // makes "zero created after the cutover" a property rather than a hope.
+  // A block that WAS using it breaks loudly here, which is the intended failure.
+  // Nothing on the `kind: 'textToImage'` BODY path reaches this guard — that is
+  // an API verb meaning "generate an image", resolved through the generation
+  // graph, and it stays.
+  'textToImage',
 ]);
 
 /**

@@ -32,6 +32,7 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -89,7 +90,6 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   Availability,
-  CollectionContributorPermission,
   CollectionMode,
   CollectionType,
   MediaType,
@@ -654,32 +654,7 @@ export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const db = await getDbWithoutLag('post', id);
   const post = await db.post.findFirst({
-    where: {
-      id,
-      OR: user?.isModerator
-        ? undefined
-        : [
-            { userId: user?.id },
-            { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } },
-            // Support judges of a collection to view any post in the collection
-            // regardless of NSFW level and published status.
-            {
-              collectionId: {
-                not: null,
-              },
-              collection: {
-                contributors: {
-                  some: {
-                    userId: user?.id,
-                    permissions: {
-                      has: CollectionContributorPermission.MANAGE,
-                    },
-                  },
-                },
-              },
-            },
-          ],
-    },
+    where: { id, ...getPostDetailVisibility(user) },
     select: postSelect,
   });
 
@@ -839,6 +814,7 @@ export const createPost = async ({
 }: PostCreateInput & {
   userId: number;
   isModerator?: boolean;
+  metadata?: Prisma.InputJsonObject;
 }): Promise<PostDetailEditable> => {
   await throwOnBlockedUserContent([data.title, data.detail], { surface: 'post' });
 
@@ -1004,42 +980,52 @@ export const updatePost = async ({
   });
 
   await preventReplicationLag('post', post.id);
-  await userPostCountCache.refresh(post.userId);
+  if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
+  else await userPostCountCache.refresh(post.userId);
   if (data.title !== undefined || data.detail !== undefined)
     scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
-  // A publishedAt change moves the images' feed sort position
-  // (GREATEST(publishedAt, scannedAt, createdAt)), but the DB-trigger-driven
-  // updatedAt bump isn't reliably picked up by the metrics_images index — so
-  // a reschedule would otherwise leave the index frozen at the original time.
-  // Enqueue an explicit reindex so sortAt/publishedAtUnix get recomputed.
-  if (publishedAtWritten) {
-    const images = await dbWrite.image.findMany({
-      where: { postId: post.id },
-      select: { id: true },
-    });
-    if (images.length) {
-      await queueImageSearchIndexUpdate({
-        ids: images.map((i) => i.id),
-        action: SearchIndexUpdateQueueAction.Update,
-      });
-    }
-    await userImageVideoCountCaches.refresh(post.userId);
-  }
-
   return post;
 };
+
+/**
+ * Everything a publish needs besides the write. The reindex is explicit because the trigger-driven
+ * updatedAt bump isn't reliably picked up by metrics_images, so a new publishedAt would leave
+ * sortAt/publishedAtUnix stale.
+ */
+export async function afterPostPublish(post: { postId: number; userId: number }) {
+  await afterPostsPublish([post]);
+}
+
+export async function afterPostsPublish(posts: { postId: number; userId: number }[]) {
+  if (!posts.length) return;
+  const userIds = uniq(posts.map((post) => post.userId));
+  await userPostCountCache.refresh(userIds);
+  const images = await dbWrite.image.findMany({
+    where: { postId: { in: posts.map((post) => post.postId) } },
+    select: { id: true },
+  });
+  if (images.length) {
+    await queueImageSearchIndexUpdate({
+      ids: images.map((i) => i.id),
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  }
+  await userImageVideoCountCaches.refresh(userIds);
+}
 
 export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
 
-  const { post, deletedImages, orphanedImageIds } = await dbWrite.$transaction(
+  const { post, deletedImages, orphanedImageIds, imageOwnerIds } = await dbWrite.$transaction(
     async (tx) => {
       // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
-      const images = await tx.$queryRaw<{ id: number; url: string; deletable: boolean }[]>`
-        SELECT i.id, i.url, ${Prisma.raw(
+      const images = await tx.$queryRaw<
+        { id: number; url: string; userId: number; deletable: boolean }[]
+      >`
+        SELECT i.id, i.url, i."userId", ${Prisma.raw(
           isModerator ? 'TRUE' : 'i."userId" = p."userId"'
         )} AS deletable
         FROM "Image" i
@@ -1068,7 +1054,9 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
       // selects `postId IS NOT NULL`, so it never revisits them — their docs must be dropped here.
       const orphanedImageIds = images.filter((image) => !image.deletable).map(({ id }) => id);
 
-      return { post, deletedImages, orphanedImageIds };
+      const imageOwnerIds = uniq(images.map((image) => image.userId));
+
+      return { post, deletedImages, orphanedImageIds, imageOwnerIds };
     },
     // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
     // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
@@ -1116,6 +1104,7 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
   }
 
   await bustCachesForPosts(id);
+  await userImageVideoCountCaches.bust(imageOwnerIds);
 
   return post;
 };

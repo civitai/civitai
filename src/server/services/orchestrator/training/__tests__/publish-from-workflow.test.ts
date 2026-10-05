@@ -48,6 +48,7 @@ import {
   stampWorkflowPublished,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
 import { trainingModelInfo } from '~/utils/training';
+import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockFindFirst = dbMock.dbWrite.model.findFirst;
 
@@ -136,6 +137,59 @@ describe('mapWorkflowToTrainingResultsV2', () => {
     expect(results.epochs.map((e) => e.epochNumber)).toEqual([1, 3]);
     expect(results.epochs[1].modelUrl).toBe('https://blobs/epoch-3');
     expect(results.sampleImagesPrompts).toEqual(['a photo of mychar', 'mychar at the beach']);
+  });
+
+  it('keeps a missing sample in its slot so sample N stays prompt N', () => {
+    const results = mapWorkflowToTrainingResultsV2(
+      studioWorkflow({
+        steps: [
+          {
+            $type: 'training',
+            input: { samples: { prompts: ['a', 'b', 'c'] } },
+            output: {
+              epochs: [
+                {
+                  epochNumber: 1,
+                  model: { url: 'https://blobs/epoch-1', available: true },
+                  samples: [
+                    { url: null },
+                    { url: 'https://blobs/s-1-2', available: true },
+                    { url: 'https://blobs/s-1-3', available: false },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      })
+    );
+
+    expect(results.epochs[0].sampleImages).toEqual(['', 'https://blobs/s-1-2', '']);
+    // The write gate a client round-trip goes through must accept the placeholders.
+    expect(() => modelFileMetadataSchema.parse({ trainingResults: results })).not.toThrow();
+  });
+
+  it('keeps an empty legacy sample in its slot', () => {
+    const results = mapWorkflowToTrainingResultsV2({
+      id: 'wf-legacy-gap',
+      steps: [
+        {
+          $type: 'imageResourceTraining',
+          output: {
+            sampleImagesPrompts: ['a', 'b'],
+            epochs: [
+              {
+                epochNumber: 1,
+                blobUrl: 'https://blobs/l-1',
+                sampleImages: ['', 'https://blobs/l-1-b'],
+              },
+            ],
+          },
+        },
+      ],
+    } as unknown as Workflow);
+
+    expect(results.epochs[0].sampleImages).toEqual(['', 'https://blobs/l-1-b']);
   });
 
   it('maps a legacy imageResourceTraining step off blobUrl/blobSize', () => {

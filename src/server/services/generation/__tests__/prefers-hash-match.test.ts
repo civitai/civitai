@@ -5,8 +5,8 @@ import { prefersHashMatch } from '~/server/services/generation/generation.servic
  * One hash can sit on files owned by several people — in practice because someone
  * re-uploaded another creator's weights. `prefersHashMatch` decides who gets credited,
  * and it has to agree with get_image_resources.sql's
- * `ORDER BY IIF(version_published,0,1), version_date, file_id`, because that function
- * credits the image page while this credits the generator. They disagreed until
+ * `ORDER BY IIF(version_published,0,1), IIF(is_official,0,1), version_date, file_id`, because that
+ * function credits the image page while this credits the generator. They disagreed until
  * 2026-09-15: the SQL took the oldest, this took the newest, so the same file credited
  * the original creator in one place and the re-uploader in the other. Nothing compares
  * the two implementations, so the direction is pinned here.
@@ -14,6 +14,7 @@ import { prefersHashMatch } from '~/server/services/generation/generation.servic
 
 const match = (over: Partial<Parameters<typeof prefersHashMatch>[0]> = {}) => ({
   versionPublished: true,
+  isOfficial: false,
   versionDate: new Date('2025-01-01'),
   fileId: 100,
   ...over,
@@ -29,6 +30,33 @@ describe('prefersHashMatch', () => {
     const unpublished = match({ versionPublished: false, versionDate: new Date('2020-01-01') });
     expect(prefersHashMatch(published, unpublished)).toBe(true);
     expect(prefersHashMatch(unpublished, published)).toBe(false);
+  });
+
+  // Official outranks date. The date rule reads a shared hash as "the earliest upload is the
+  // original", which is right between two community copies and wrong when one of them is the
+  // canonical host: an official model published a day later than a mirror of its own bytes lost
+  // the credit, and reclaiming it took hand-written SQL per version.
+  it('prefers an official version over an older community one', () => {
+    const official = match({ isOfficial: true, versionDate: new Date('2026-09-23') });
+    const mirror = match({ isOfficial: false, versionDate: new Date('2026-09-21') });
+    expect(prefersHashMatch(official, mirror)).toBe(true);
+    expect(prefersHashMatch(mirror, official)).toBe(false);
+  });
+
+  // Published still outranks official: an unpublished official version cannot be served, so
+  // crediting it would point the image at a page nobody can open.
+  it('prefers a published community version over an unpublished official one', () => {
+    const community = match({ isOfficial: false, versionPublished: true });
+    const draftOfficial = match({ isOfficial: true, versionPublished: false });
+    expect(prefersHashMatch(community, draftOfficial)).toBe(true);
+    expect(prefersHashMatch(draftOfficial, community)).toBe(false);
+  });
+
+  it('falls through to the date when both are official', () => {
+    const older = match({ isOfficial: true, versionDate: new Date('2026-06-29') });
+    const newer = match({ isOfficial: true, versionDate: new Date('2026-09-23') });
+    expect(prefersHashMatch(older, newer)).toBe(true);
+    expect(prefersHashMatch(newer, older)).toBe(false);
   });
 
   it('prefers the OLDEST of two published versions, not the newest', () => {

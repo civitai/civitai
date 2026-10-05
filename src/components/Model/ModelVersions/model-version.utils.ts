@@ -2,7 +2,11 @@ import dayjs from '~/shared/utils/dayjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { ModelVersionEarlyAccessPurchase } from '~/server/schema/model-version.schema';
-import { type ModelVersionTerms, generationOpenToNonBuyers, isFreeGeneration } from '@civitai/buzz';
+import {
+  type ModelVersionTerms,
+  generationOpenToNonBuyers,
+  requiresGenerationPurchase,
+} from '@civitai/buzz';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
@@ -87,8 +91,11 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
       (!!paidAccessTerms && generationOpenToNonBuyers(paidAccessTerms)),
     generationRequiresPurchase:
       isEarlyAccess &&
-      !hasBoughtGeneration &&
-      !(!!paidAccessTerms && isFreeGeneration(paidAccessTerms)),
+      !!paidAccessTerms &&
+      requiresGenerationPurchase(paidAccessTerms, {
+        isOwnerOrMod: false,
+        hasBought: hasBoughtGeneration,
+      }),
     paidAccess: !isEarlyAccess ? undefined : paidAccess,
     modelVersion,
     isEarlyAccess,

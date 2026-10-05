@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { FEEDBACK_PROMOTE_DRAFT_FIELDS } from '$lib/feedback-drafts';
 import { FEEDBACK_SORT_COLUMNS } from '$lib/feedback-sort';
+import { stripComments } from '../../test/strip-comments';
 
 /**
  * ⚠️⚠️ TRIPWIRES, NOT COVERAGE. READ THIS BEFORE TRUSTING ANYTHING BELOW.
@@ -52,12 +53,10 @@ const feedbackDir = path.resolve(dir, '../../routes/feedback');
  * Order matters: a markup comment can contain either script-comment syntax, so markup goes first.
  * Over-stripping is the safe direction — it makes pins fail LOUDLY — which is why the line-comment
  * rule is allowed to be blunt (it spares `https://` and nothing else).
+ *
+ * `stripComments` lives in `src/test/strip-comments.ts`; the two controls below exercise it from
+ * here, including the real-data one that watches the count MOVE.
  */
-const stripComments = (text: string): string =>
-  text
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:/])\/\/[^\n]*/g, '$1');
 
 /**
  * Strip comments, then collapse runs of whitespace so an assertion survives reflowing and
@@ -72,6 +71,13 @@ const libSource = (file: string): string =>
 
 const componentSource = (file: string): string =>
   stripComments(readFileSync(path.resolve(dir, '../components', file), 'utf-8')).replace(
+    /\s+/g,
+    ' '
+  );
+
+/** The per-report route's page, which renders the same panel the queue expands. */
+const reportPageSource = (): string =>
+  stripComments(readFileSync(path.resolve(feedbackDir, '[id]/+page.svelte'), 'utf-8')).replace(
     /\s+/g,
     ' '
   );
@@ -101,6 +107,7 @@ describe('the instrument itself', () => {
       expect(source(file).length).toBeGreaterThan(500);
     }
     expect(componentSource('Lightbox.svelte').length).toBeGreaterThan(500);
+    expect(reportPageSource().length).toBeGreaterThan(500);
   });
 
   /**
@@ -162,33 +169,169 @@ describe('the instrument itself', () => {
   });
 });
 
-describe('typed text outlives a tab click', () => {
+describe('typed text outlives the reload every write issues', () => {
   /**
-   * The triage note box. A tab is a navigation and the `{#if activeTab === …}` chain destroys the
-   * branch, so an unbound `value=` leaves the operator's half-written internal note in a DOM node
-   * that is about to stop existing. `bind:value` to state declared in `FeedbackDetail` — the one
-   * component that survives the navigation — is what keeps it.
+   * 🔴 THE TRIAGE NOTE BOX IS GONE, AND ITS COLUMN IS NOT. The status form posts no `note` field at
+   * all, so a server reading an absent field as an empty one would blank `Feedback.triageNote` on
+   * every status click. This pins the CLIENT half: the form must not acquire a note box again
+   * without someone re-reading what the absent field now means.
+   *
+   * ⚠️ Measured: production holds 47 `Feedback` rows with `triageNote` non-null on ZERO of them, so
+   * this guards the contract rather than existing text. The server half is behavioural and is tested
+   * for real in `routes/feedback/__tests__/feedback-actions.test.ts` and against rows in
+   * `lib/server/__tests__/feedback.service.test.ts`.
    */
-  it('binds the triage note rather than passing an unbound value', () => {
+  it('posts no note field from the status form', () => {
     const detail = source('FeedbackDetail.svelte');
-    expect(detail).toContain('name="note" rows={2} bind:value={note}');
-    expect(detail).not.toContain("value={row.triageNote ?? ''} />");
+    expect(detail).not.toContain('name="note"');
+    expect(detail).not.toContain('row.triageNote');
   });
 
   /**
-   * 🔴 THIS WAS TITLED "re-seeds the note ... on a successful save" AND IT PINNED NO SUCH THING.
-   * Its assertion was a bare `row.triageNote ?? ''`, which occurs FOUR times in `FeedbackDetail` —
-   * the initial seed, the re-seed, and two prose mentions — so deleting the whole re-seed from
-   * `onSuccess` left it green. Nothing was uncovered (`re-seeds the note through reseedTriageNote`
-   * below asserts that line exactly, and does go red), but a guard that READS as coverage while
-   * providing none is worse than no guard: it stops the next person looking.
+   * 🔴 THE CURRENT-STATUS BUTTON IS DISABLED, AND REMOVING THE NOTE BOX IS WHY. While this form
+   * carried the textarea, `Save (<status>)` persisted the note without moving the row. With the note
+   * gone it posts a status change to the status the row already has — `expectedStatus === status`,
+   * so the UPDATE matches one row and `triageFeedback` reassigns `handledById` and `handledAt` to
+   * whoever clicked, plus a `ModActivity` row. The queue's Handled column then credits a moderator
+   * who only clicked through, over the one who actually ruled, and nothing records that it changed.
    *
-   * Repointed at the claim its one remaining witness actually supports — the box is PRE-FILLED from
-   * the stored column, so an operator opening a report sees the note already on it rather than a
-   * blank box over a populated column. That decision was pinned nowhere before.
+   * Both halves: the guard is present, AND the label no longer says "Save" over a form with nothing
+   * to save. A button that still read `Save (reviewed)` while disabled invites someone to re-enable
+   * it rather than ask what it saves.
    */
-  it('seeds the note box from the stored column', () => {
-    expect(source('FeedbackDetail.svelte')).toContain("let note = $state(row.triageNote ?? '');");
+  it('disables the button for the status the row already has', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain('disabled={triageForm.submitting || status === row.status}');
+    expect(detail).not.toContain('Save (');
+  });
+
+  /**
+   * 🔴 THE TABS ARE GONE AND MUST NOT COME BACK BY THE BACK DOOR. The panel used to render one
+   * section at a time behind `{#if activeTab === …}`, which DESTROYED the other sections' markup —
+   * the reason every box below is bound to parent-owned state in the first place. A conditional
+   * section reintroduces that without reintroducing anything that says so.
+   *
+   * ⚠️ "UNCONDITIONALLY" IS ABOUT MOUNTING, NOT ABOUT BEING ON SCREEN. The context block ships
+   * inside a default-closed `<details>`, which hides its content and keeps it mounted — the next
+   * test is the one that pins that distinction, and this one would pass just as happily over an
+   * `{#if}` that unmounted it.
+   */
+  it('renders every section unconditionally', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).not.toContain('activeTab');
+    expect(detail).toContain('<FeedbackAttachments {context} />');
+    expect(detail).toContain('<FeedbackContextPanel');
+    expect(detail).toContain('<FeedbackPromote');
+  });
+
+  /**
+   * 🔴 THE CONTEXT BLOCK IS COLLAPSED, AND WHAT THIS PINS IS THE UNMOUNT — NOT THE CHEVRON. The
+   * sibling test above forbids `{#if}` around a section because the tab strip's conditionals
+   * DESTROYED the inactive sections' markup; a collapse is a conditional-shaped change, so it is
+   * exactly the back door that test was written against. `<details>` HIDES its content and keeps it
+   * mounted, which is the whole reason it is allowed here.
+   *
+   * 🔴 BOTH ASSERTIONS BELOW REPLACE ONES THAT READ AS COVERAGE AND PROVIDED NONE. Recorded rather
+   * than quietly fixed, because the shapes that walked them are the shapes a maintainer writes:
+   *
+   *   - `toContain('<FeedbackContextPanel')` was supposed to pin the unmount. It does not: an
+   *     `{#if contextOpen}` nested INSIDE the `<details>` and driven by `ontoggle` keeps that
+   *     substring inside the extracted block, so the lazy-render this test exists to forbid passed
+   *     37/37. The only `{#if}` it ever caught was one that also deleted `<details>` — which the
+   *     count above already catches. The pin now reads the REGION between `</summary>` and
+   *     `</details>` and forbids any `{#…}` block opener in it.
+   *   - The default-closed pin was a regex requiring whitespace before `open`, so `bind:open=`
+   *     matched nothing and a block shipping EXPANDED passed 37/37. A partial regex over a tag is
+   *     satisfied by the inverted tag; the attribute NAMES are enumerated and compared as a set.
+   *
+   * 🔴 WHAT THE UNMOUNT PIN DOES NOT COVER, STATED EXACTLY, BECAUSE THIS IS THE ONE PARAGRAPH WHOSE
+   * JOB IS SCOPE. The region runs from `</summary>` to `</details>`, so it covers the block's
+   * descendants BELOW the summary and nothing else. Two things are outside it:
+   *   - ANCESTORS — wrapping the whole `<details>` in `{#if …}` unmounts everything inside it and
+   *     passes. That hole predates this guard. What makes it worth naming is that the badge below
+   *     returns `null` when a report has no console errors and no failed requests, which makes
+   *     "then hide the block entirely" the obvious next edit — and it would take the reconstructed
+   *     URL, the filters, the session id and the Grafana link with it, on the ORDINARY report.
+   *   - THE SUMMARY'S OWN DESCENDANTS — there is a live `{#if technicalSummary}` in there, which is
+   *     exactly why the slice starts at `</summary>` rather than at the opening tag. Summary content
+   *     is never hidden, so unmounting it costs nothing; a reader expecting "no `{#if}` anywhere
+   *     inside `<details>`" would be wrong about the guard and about what it should assert.
+   *
+   * ⚠️ The class VALUES are deliberately not pinned — a Tailwind reorder changes them without
+   * changing anything true. The attribute-name set is what carries the claim.
+   */
+  it('collapses the technical-details block with <details>, closed by default', () => {
+    const detail = source('FeedbackDetail.svelte');
+
+    // Exactly one, so every assertion below is about the block the reader has in mind. It doubles
+    // as a `stripComments` tripwire: `FeedbackDetail.svelte`'s own comment names `<details>` in
+    // prose, so a stripper that stopped working pushes this count above 1. How far above is
+    // deliberately not written down — that is a property of prose nobody will keep in step.
+    expect(count(detail, '<details')).toBe(1);
+
+    const block = detail.match(/<details\b[^>]*>.*?<\/details>/)?.[0];
+    // Positive control on the extraction: without it, a regex that stopped matching would make
+    // every assertion below a claim about `undefined`.
+    expect(block, 'no <details>…</details> block in FeedbackDetail.svelte').toBeDefined();
+
+    // The summary carries the operator-specified title AND the badge. The badge is the only thing
+    // that survives the collapse — without it, a report whose session threw forty console errors
+    // looks exactly like a clean one at every level the operator can see. Its WORDING is asserted
+    // behaviourally in `feedback-technical-summary.test.ts`; this only pins that it is rendered.
+    const summary = block!.slice(block!.indexOf('<summary'), block!.indexOf('</summary>'));
+    expect(summary, 'no <summary> in the <details> block').toContain('<summary');
+    expect(summary).toContain('Technical details');
+    expect(summary).toContain('{technicalSummary}');
+
+    expect(block).toContain('<FeedbackContextPanel');
+
+    // 🔴 THE UNMOUNT PIN. Everything the collapse hides must be mounted unconditionally, so the
+    // region it wraps carries no block opener at all — `{#if}`, `{#each}`, `{#await}`, `{#key}`.
+    const body = block!.slice(block!.indexOf('</summary>'));
+    expect(body, 'the <details> body does not start at </summary>').toContain(
+      '<FeedbackContextPanel'
+    );
+    expect(body).not.toMatch(/\{#\w+/);
+
+    // 🔴 DEFAULT-CLOSED IS THE ABSENCE OF AN ATTRIBUTE, and `toContain('<details')` is satisfied by
+    // every spelling that adds one. The tag is required to carry exactly one attribute, `class`,
+    // with a literal value — so `open`, `bind:open`, `open={…}`, `{open}` and `{...spread}` all
+    // fail, without pinning a single class value.
+    const openTag = block!.match(/<details\b[^>]*>/)![0];
+
+    // 🔴 THE BRACE CHECK IS NOT BELT-AND-BRACES — IT IS THE HALF THE NAME SCAN CANNOT SEE, AND THE
+    // NAME SCAN'S OWN BLANKING STEP IS WHY. Quoted values are blanked so a Tailwind class list is
+    // not read as attributes (`border-t` would be a name), and `{…}` is blanked with it — which
+    // ERASES Svelte's shorthand `{open}`, an attribute spelled entirely inside braces and exactly
+    // equivalent to `open={open}`. Measured: with only the name scan, `{open}` yielded `['class']`
+    // and a block shipping EXPANDED passed 37/37 — the defect this assertion replaced, in a second
+    // spelling, reintroduced by the fix for the first. No brace belongs in this tag at all, so the
+    // cheap whole-token rule is also the correct one.
+    expect(openTag).not.toContain('{');
+
+    const attrNames = (tag: string): string[] =>
+      [
+        ...tag
+          .replace(/"[^"]*"/g, '""')
+          .replace(/\{[^}]*\}/g, '{}')
+          .matchAll(/\s([A-Za-z_:][-\w:.]*)(?==|[\s/>])/g),
+      ].map((m) => m[1]);
+
+    // Instrument controls: both halves must be shown able to fire on the spellings they are trusted
+    // against. A negative assertion over a matcher wired to nothing is green for the wrong reason.
+    expect(attrNames('<details open class="x">')).toEqual(['open', 'class']);
+    expect(attrNames('<details class="x" open>')).toEqual(['class', 'open']);
+    expect(attrNames('<details class="x" bind:open={contextOpen}>')).toEqual([
+      'class',
+      'bind:open',
+    ]);
+    // The spelling the name scan is BLIND to, documented by exercising it: `{open}` yields only
+    // `class`, so the name set alone would pass a tag that ships expanded. (No control is written
+    // for the brace check itself — a literal asserted to contain a character visible in it cannot
+    // fail and establishes nothing. What establishes it is the mutation run recorded in the commit.)
+    expect(attrNames('<details class="x" {open}>')).toEqual(['class']);
+
+    expect(attrNames(openTag)).toEqual(['class']);
   });
 
   /**
@@ -219,7 +362,7 @@ describe('typed text outlives a tab click', () => {
     }
   });
 
-  /** The mode toggle is draft state too: flipping to "attach", then to Context and back, kept it. */
+  /** The mode toggle is draft state too: it must survive the reload a triage save issues. */
   it('drives the promote mode from the draft, not from component-local state', () => {
     const promote = source('FeedbackPromote.svelte');
     expect(promote).toContain("value={draft.attachMode ? 'attach' : 'create'}");
@@ -257,29 +400,83 @@ describe('typed text outlives a tab click', () => {
   });
 });
 
-describe('the cross-clearing wiring', () => {
+describe('the refusal banner sees which form the operator used last', () => {
   /**
-   * ⚠️ THIS BLOCK WAS TITLED "at most one refusal is live", AND THAT WAS THE RETRACTED CLAIM WEARING
-   * A TEST NAME. Two refusals CAN be live — `feedback-refusal.ts` carries the reachable path — so
-   * the wiring below is a narrowing, not an exclusion, and the SELECTION rule that has to be correct
-   * when two are live is tested for real in `feedback-refusal.test.ts`. This is only the half that
-   * lives in a file no test can execute, pinned as text and labelled as such.
+   * 🔴 THE RANKING INPUT, AND IT IS THE HALF THAT LIVES IN A FILE NO TEST CAN EXECUTE. Two refusals
+   * can be live at once — each form disables only its OWN submit control, so a status click followed
+   * by a Create-issue click leaves two responses in flight — and `feedbackRefusal` breaks that tie
+   * on `lastSubmitted`. A form that stops writing it is a form whose refusal can never outrank the
+   * other's, which is precisely the defect that rule was written for. The SELECTION itself is tested
+   * for real in `feedback-refusal.test.ts`; only the wiring is pinned here.
+   *
+   * ⚠️ THE CROSS-CLEARING IS STILL THERE, AND THIS SENTENCE USED TO SAY IT WAS "DELIBERATELY GONE".
+   * It was removed once, that removal was reverted when it left a promote refusal on screen over a
+   * triage save that SUCCEEDED, and the paragraph describing the removal survived the revert — so a
+   * maintainer acting on it would have deleted a guard the very next test in this file pins by exact
+   * string (`clears each form error when the other form starts submitting`). The two mechanisms are
+   * complementary: cross-clearing collapses the common orderings, `lastSubmitted` decides the
+   * interleaved one neither ordering rules out.
    */
-  it('clears each form error when the other form starts submitting', () => {
+  it('records which form submitted last, on both forms', () => {
     const detail = source('FeedbackDetail.svelte');
-    expect(detail).toContain('promoteForm.error = null;');
-    expect(detail).toContain('onSubmit: () => { triageForm.error = null; }');
+    expect(detail).toContain("lastSubmitted = 'triage';");
+    expect(detail).toContain("lastSubmitted = 'promote';");
+    expect(detail).toContain(
+      'feedbackRefusal({ triage: triageForm.error, promote: promoteForm.error }, lastSubmitted)'
+    );
   });
 
   /**
-   * The triage form captures what it POSTED so `onSuccess` can leave text typed in flight alone.
-   * The decision itself is `reseedTriageNote`, tested for real in `feedback-drafts.test.ts`; this
-   * pins that the panel still routes through it instead of re-seeding unconditionally.
+   * 🔴 THE CROSS-CLEARING IS WHAT STOPS A REFUSAL OUTLIVING WHAT IT REFUSED. It was deleted once in
+   * this arc on the argument that `lastSubmitted` subsumed it, and that was wrong in a way no
+   * typecheck sees: refuse a promote, then run a triage that SUCCEEDS, and `feedbackRefusal`'s
+   * `?? raised[0]` fallback re-renders the promote refusal over a save that worked. There is no
+   * success indicator on this panel to contradict it, so the red banner is the only thing on screen
+   * and the operator's likeliest next move is to click the status button again.
    */
-  it('re-seeds the note through reseedTriageNote, not unconditionally', () => {
+  /**
+   * ⚠️ THE PAIRING IS PINNED INSIDE EACH HANDLER, AND THE SHORT FORM WAS WALKABLE. Asserting that
+   * both strings appear ANYWHERE in the file is satisfied by each handler clearing its OWN error —
+   * a plausible "simplification", the exact defect this guard names, and green. The title claimed a
+   * RELATIONSHIP while the body inspected one side of it. Found by a delta audit of the fix that
+   * restored this wiring, after a mutation sweep that only ever DELETED the two lines.
+   */
+  it('clears each form error when the other form starts submitting', () => {
     const detail = source('FeedbackDetail.svelte');
-    expect(detail).toContain("note = reseedTriageNote(note, postedNote, row.triageNote ?? '');");
-    expect(detail).toContain("postedNote = String(formData.get('note') ?? '');");
+    expect(detail).toContain("lastSubmitted = 'triage'; promoteForm.error = null;");
+    expect(detail).toContain("lastSubmitted = 'promote'; triageForm.error = null;");
+  });
+
+  /**
+   * 🔴 THE PAGE-LEVEL REFUSAL IS A FALLBACK INSIDE THE ONE BANNER, NEVER A SECOND `ErrorAlert`.
+   * `use:enhance` sets the page's `form` as well as `FormState.error`, so an unconditional
+   * page-level alert on `/feedback/<id>` renders the same refusal twice — the defect this queue has
+   * shipped three times, each invisible to every test, because this app has no browser tier.
+   */
+  it('renders the no-JS refusal only when neither form holds one', () => {
+    const detail = source('FeedbackDetail.svelte');
+    // 🔴 THE `lastSubmitted === null` GATE IS PART OF THE PIN. The page-level `form` is not replaced
+    // until a response lands, so a bare `?? formError` re-renders the refusal an enhanced submit
+    // just cleared, for the whole in-flight window.
+    expect(detail).toContain('lastSubmitted) ?? (lastSubmitted === null ? formError : null)');
+    expect(detail.match(/<ErrorAlert/g) ?? []).toHaveLength(1);
+
+    const report = reportPageSource();
+    expect(report).toContain('{formError}');
+    expect(report).not.toContain('ErrorAlert');
+  });
+
+  /**
+   * 🔴 THE PANEL MUST BE REBUILT WHEN THE REPORT CHANGES. SvelteKit reuses a route's component
+   * across a param change, so `/feedback/12` → `/feedback/34` — Back/Forward, a URL edit, or one of
+   * the sibling links `FeedbackPromote` now points at this route — would otherwise keep the same
+   * `FeedbackDetail`: a refusal raised on report A reading as a refusal of B, and a half-written
+   * issue draft submitting against B's id.
+   */
+  it('keys the panel on the report id on the per-report route', () => {
+    // The panel must be INSIDE the key block — `{#key}` around anything else is a no-op that reads
+    // as the guard.
+    expect(reportPageSource()).toContain('{#key data.row.id} <FeedbackDetail');
   });
 
   /**
@@ -291,9 +488,12 @@ describe('the cross-clearing wiring', () => {
    * guard was measuring documentation. `source()` now strips comments and that count is 2; the
    * control above asserts precisely this, on this file, so the claim is measured rather than argued.
    *
-   * The pair is kept because it pins a PAIRING that matters on its own: `reload: true` is what makes
-   * the re-seed read a fresh column, and a form that dropped it while keeping `reset: false` would
-   * still satisfy a bare pin.
+   * ⚠️ THE PAIR IS KEPT, AND ITS ORIGINAL REASON IS GONE RATHER THAN REPLACED. It used to read that
+   * `reload: true` is what makes "the re-seed" read a fresh column — `reseedTriageNote` was deleted
+   * in this PR along with the note box, so that sentence described nothing. What the pairing still
+   * buys is narrower and worth stating plainly: `reload: true` is what re-renders the status badge,
+   * the handled-by line and the issue link after a write, and a form that dropped it while keeping
+   * `reset: false` would satisfy a bare `/reset: false/` pin while quietly showing stale data.
    */
   it('keeps reset disabled on both forms', () => {
     const detail = source('FeedbackDetail.svelte');
@@ -302,14 +502,22 @@ describe('the cross-clearing wiring', () => {
 });
 
 describe('opening a row goes through the one choke point', () => {
-  /**
-   * Two hrefs set `?open=`, and both must clear `?tab=`. `siblingHref` is the easier one to get
-   * wrong because it builds its URL by hand — and it only renders ON the Issue tab, so a hand-rolled
-   * version opens every sibling onto the one panel that shows none of what that reporter wrote.
-   */
-  it('routes both open-a-row hrefs through feedbackOpenHref', () => {
+  /** The queue's own expand/collapse link. `?open=` is meaningful only against the current view. */
+  it('routes the queue expand link through feedbackOpenHref', () => {
     expect(source('+page.svelte')).toContain('feedbackOpenHref(page.url,');
-    expect(source('FeedbackPromote.svelte')).toContain('return feedbackOpenHref(next, id);');
+  });
+
+  /**
+   * 🔴 A SIBLING LINK IS NOT AN `?open=` LINK, AND MAKING IT ONE IS THE BUG. A sibling is by
+   * definition a report the operator did not navigate to, so it routinely sits outside the active
+   * status filter or on an earlier keyset page — where `?open=` resolves to "not in this view" for a
+   * row that plainly exists. This panel also renders on `/feedback/<id>`, where `?open=` is read by
+   * nothing at all.
+   */
+  it('routes sibling links through the permanent per-report path', () => {
+    const promote = source('FeedbackPromote.svelte');
+    expect(promote).toContain('feedbackReportHref(id)');
+    expect(promote).not.toContain('feedbackOpenHref');
   });
 
   /**
@@ -347,7 +555,7 @@ describe('opening a row goes through the one choke point', () => {
    * are matched, and the choke point is excluded BY FILENAME rather than by being unmatchable,
    * which is the difference between a guard that is scoped and a guard that is blind.
    */
-  const OPEN_CHOKE_POINT = 'feedback-tabs.ts';
+  const OPEN_CHOKE_POINT = 'feedback-open.ts';
 
   it('sets the open param to an id only through feedbackOpenHref', () => {
     const files = readdirSync(feedbackDir).filter((file) => file.endsWith('.svelte'));
@@ -399,6 +607,151 @@ describe('opening a row goes through the one choke point', () => {
   });
 });
 
+describe('the row click is an enhancement over a real link', () => {
+  /**
+   * 🔴 THE ANCHOR IS THE NO-JS SURFACE AND THE KEYBOARD AFFORDANCE BOTH, AND THE ROW CLICK IS WHY IT
+   * LOOKS DELETABLE. Once every row responds to a click, the `Open`/`Close` cell reads as redundant
+   * — and it is not: without JS it is the only way to reach the panel and the two forms inside it
+   * (see `+page.svelte`'s `pageError`, which exists for exactly that client), and with a keyboard it
+   * is the only thing in the tab order that opens a row.
+   */
+  it('keeps the Open/Close anchor beside the row handler', () => {
+    const page = source('+page.svelte');
+    expect(page).toContain('href={rowHref(row.id)}');
+    expect(page).toContain("{open ? 'Close' : 'Open'}");
+  });
+
+  /**
+   * 🔴 NO `tabindex` ON THE ROW. A focusable `<tr>` doing what the anchor inside it already does is
+   * a second tab stop per row — 50 extra stops on a full page — for no capability the keyboard did
+   * not have. The anchor is the affordance; this pins that nothing added a competing one.
+   *
+   * Positive control first: the scan must be able to see the attribute in the shape it would take.
+   */
+  it('adds no competing tab stop to the row', () => {
+    const TABINDEX = /tabindex=/g;
+    expect('<TableRow tabindex={0}>'.match(TABINDEX)).toHaveLength(1);
+    expect(source('+page.svelte').match(TABINDEX) ?? []).toEqual([]);
+  });
+
+  /**
+   * The handler has to be wired to the row at all. Everything it is HANDED is pinned by the
+   * whole-expression assertion below.
+   */
+  it('wires the row click handler to every row', () => {
+    expect(source('+page.svelte')).toContain('onclick={(event) => rowClick(event, row.id)}');
+  });
+
+  /**
+   * 🔴 THE WHOLE CALL, AS ONE NORMALISED STRING, BECAUSE EVERY FIELD OF IT IS A SEAM AND FRAGMENTS
+   * ARE WALKABLE. `+page.svelte` computes ten facts and `feedbackRowExpands` only receives them, so
+   * every slot takes any expression of the right type: a cross-wiring typechecks, and this app has
+   * no Svelte tier, so it is invisible to the suite as well. Two measured examples, both of which
+   * left the full suite at 1229 passed / 0 failed and `svelte-check` at 0 errors:
+   *   - `shiftKey: event.ctrlKey` — a shift-click then navigates the queue out from under the window
+   *     the browser is opening.
+   *   - `interactive: … && !target.closest(…)`, one `!` dropped so the sense inverts — every click
+   *     reports as landing on a control, so NO row in the queue ever expands. This one also walked
+   *     the fragment pin that used to live here: `target.closest(FEEDBACK_ROW_INTERACTIVE)` is a
+   *     SUBSTRING of the inverted expression, so `toContain` went on matching.
+   *
+   * 🔴 SO IT IS `toBe` ON THE EXTRACTED CALL, NOT `toContain` ON THE FILE. A substring pin cannot
+   * distinguish an expression from an expression that contains it; the whole normalised string
+   * cannot be satisfied by an inversion, a cross-wiring, a reorder or an addition. The cost is that
+   * a cosmetic edit — reordering the fields, renaming `target` — reddens this test and has to be
+   * mirrored here. That is the trade: this object is the one place a silent queue-wide wedge can be
+   * introduced with a green suite, and it has now happened twice.
+   *
+   * ⚠️ IT PINS SPELLING, NOT MEANING. It cannot tell you the ten facts are the RIGHT ten, only that
+   * they are the ones reviewed. What each field has to be is argued at its own declaration in
+   * `$lib/feedback-row-click.ts`; what the predicate DOES with them is tested for real in
+   * `feedback-row-click.test.ts`.
+   */
+  it('hands the predicate exactly the reviewed ten facts', () => {
+    const CALL = /feedbackRowExpands\(\{[^}]*\}\)/;
+
+    // Positive control: the extraction must find the call. A regex that stopped matching would make
+    // the comparison below a claim about `undefined`.
+    const call = source('+page.svelte').match(CALL)?.[0];
+    expect(call, 'the feedbackRowExpands call was not found in +page.svelte').toBeDefined();
+
+    expect(call).toBe(
+      'feedbackRowExpands({ button: event.button, ctrlKey: event.ctrlKey, ' +
+        'metaKey: event.metaKey, shiftKey: event.shiftKey, altKey: event.altKey, ' +
+        'defaultPrevented: event.defaultPrevented, interactive: target instanceof Element && ' +
+        '!!target.closest(FEEDBACK_ROW_INTERACTIVE), ' +
+        "selection: window.getSelection()?.toString() ?? '', " +
+        'openPanelDirty: data.openVisible && panelDirty, alreadyOpen: data.open === id, })'
+    );
+  });
+
+  /**
+   * 🔴 THE HANDLER OPENS; ONLY THE ANCHOR TOGGLES. `rowHref` is a toggle, so routing the row click
+   * through it makes the whole nine-cell strip a close target — and closing destroys the panel and
+   * every unsaved character of the issue draft inside it. `feedbackRowExpands`' dirtiness guard is
+   * the other half; this pins that the navigation itself cannot close a row.
+   *
+   * ⚠️ WHAT THIS PINS IS THE NAVIGATION, AND ONLY THAT. The argument object it used to carry field
+   * pins for is pinned whole, above — including `openPanelDirty` and `alreadyOpen`, which had the
+   * only two field pins this file ever had. The sentence that replaced them claimed every field was
+   * pinned when 2 of 10 were, and carved the other eight out as safe because they "read straight off
+   * the `MouseEvent`", which was wrong twice over: `selection` reads `window.getSelection()` and
+   * `interactive` is a `closest()` DOM read, and a cross-wiring between two same-typed event fields
+   * typechecks regardless.
+   */
+  it('navigates the row click through the open-only href', () => {
+    expect(source('+page.svelte')).toContain(
+      'goto(feedbackOpenHref(page.url, id), { noScroll: true, keepFocus: true })'
+    );
+  });
+
+  /**
+   * 🔴 THE DIRTY SIGNAL HAS TO ACTUALLY LEAVE THE PANEL, and it crosses a seam no typecheck walks:
+   * `FeedbackDetail` derives it, `+page.svelte` decides with it, and a `bind:` dropped at the call
+   * site leaves the page reading a `panelDirty` that is false forever. The row click would then go
+   * back to discarding unsaved issue drafts — silently, and only for an operator mid-sentence.
+   *
+   * Both ends are pinned, because either alone is satisfiable without the other: `$bindable` in the
+   * child declares the prop bindable, `bind:draftDirty=` in the parent puts the setter there, and
+   * the effect is what keeps the value in step with the draft.
+   */
+  it('reports the draft dirtiness out of the panel and into the queue', () => {
+    const detail = source('FeedbackDetail.svelte');
+    expect(detail).toContain('draftDirty = $bindable(false),');
+    // 🔴 `feedbackPanelHasUnsavedDraft(row, …)`, NOT the bare dirty check. The row half is what
+    // stops a SUCCESSFUL promote wedging the queue: it sets `bugId`, `FeedbackPromote` swaps to its
+    // linked-issue view and every box unmounts, but the draft object survives in this component —
+    // so the bare check goes on reporting the text of a form nobody can see, and every row click in
+    // the queue does nothing for the life of the page.
+    expect(detail).toContain('draftDirty = feedbackPanelHasUnsavedDraft(row, promoteDraft);');
+    expect(source('+page.svelte')).toContain('bind:draftDirty={panelDirty}');
+  });
+
+  /**
+   * ⚠️ THE PER-REPORT PAGE DELIBERATELY DOES NOT BIND IT. That route has no rows to click, so there
+   * is nothing for the flag to protect — and a binding there would be a second writer of a fact
+   * only the queue reads.
+   */
+  it('does not bind the dirty signal on the per-report route', () => {
+    expect(reportPageSource()).not.toContain('draftDirty');
+  });
+
+  /**
+   * The anchor's navigation options have to match the handler's, and nothing makes them: `rowHref`
+   * settles the URL only. Dropping either attribute sends the operator back to the top of the queue,
+   * or a keyboard operator back to the top of the document, on a gesture whose whole point is that
+   * the panel opens in place.
+   */
+  it('keeps the anchor and the handler agreeing on scroll and focus', () => {
+    const page = source('+page.svelte');
+    expect(page).toContain('data-sveltekit-noscroll');
+    expect(page).toContain('data-sveltekit-keepfocus');
+    // `replacestate` is deliberately NOT on this anchor — closing a row with Back is worth a
+    // history entry, unlike a sort cycle. Pinned so re-adding it has to come past this line.
+    expect(page).not.toContain('data-sveltekit-replacestate');
+  });
+});
+
 describe('the queue is ordered by the server, never by the browser', () => {
   /**
    * The header row is data-driven; the two `colspan`s that have to match it are not, and a literal
@@ -432,19 +785,17 @@ describe('the queue is ordered by the server, never by the browser', () => {
    * document, so cycling asc→desc→none means re-tabbing to the header three times; without
    * `replacestate` those three clicks leave three history entries and Back stops leaving the page.
    *
-   * `FeedbackTabs.svelte` is pinned alongside it because the two controls sit on the same page and
-   * the argument is one argument — a reader who deletes it from one should find the other going red.
+   * ⚠️ `FeedbackTabs.svelte` used to be pinned alongside it and no longer exists. The tab strip was
+   * the page's second link-driven control; the sort header is the only one left.
    */
-  it('keeps the navigation modifiers on both link-driven controls', () => {
-    for (const file of ['FeedbackSortHeader.svelte', 'FeedbackTabs.svelte']) {
-      const text = source(file);
-      for (const attribute of [
-        'data-sveltekit-noscroll',
-        'data-sveltekit-replacestate',
-        'data-sveltekit-keepfocus',
-      ])
-        expect(text, `${file} dropped ${attribute}`).toContain(attribute);
-    }
+  it('keeps the navigation modifiers on the sort header', () => {
+    const text = source('FeedbackSortHeader.svelte');
+    for (const attribute of [
+      'data-sveltekit-noscroll',
+      'data-sveltekit-replacestate',
+      'data-sveltekit-keepfocus',
+    ])
+      expect(text, `FeedbackSortHeader.svelte dropped ${attribute}`).toContain(attribute);
   });
 
   /**

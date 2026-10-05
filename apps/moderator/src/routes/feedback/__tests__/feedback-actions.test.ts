@@ -18,9 +18,12 @@ const linkFeedbackToBug = vi.fn();
 // the loader forwards is a fake the loader can be broken against and still pass.
 const getFeedbackList = vi.fn(async () => ({ items: [], nextCursor: null, nextCursorValue: null }));
 const getFeedbackAreas = vi.fn(async () => [] as string[]);
-const getSiblingFeedback = vi.fn(async () => []);
 const bulkTriageFeedback = vi.fn();
-const getKnownIssues = vi.fn(async () => []);
+// 🔴 ONE FAKE FOR THE PANEL'S PREREQUISITES, matching the one function the loader now calls. The
+// CONDITIONS behind it (an unlinked row plus the promote grant for the picker, a linked row for
+// siblings) moved into `feedbackPanelExtras` and are tested against real rows in
+// `lib/server/__tests__/feedback.service.test.ts` — a mock here could only restate them.
+const feedbackPanelExtras = vi.fn(async () => ({ siblings: [], knownIssues: [] }));
 
 // `$lib/server/query` reaches `users.service` → `db`, which demands DATABASE_URL at MODULE scope.
 // Stubbed rather than fed a URL: the point of that demand is that a suite can never open a
@@ -38,12 +41,11 @@ vi.mock('$lib/server/feedback.service', () => ({
     typeof e === 'object' && e !== null && (e as { code?: unknown }).code === '42703',
   getFeedbackList,
   getFeedbackAreas,
-  getSiblingFeedback,
+  feedbackPanelExtras,
   triageFeedback,
   promoteFeedbackToBug,
   linkFeedbackToBug,
   bulkTriageFeedback,
-  getKnownIssues,
 }));
 
 const { actions, load } = await import('../+page.server');
@@ -318,11 +320,17 @@ describe('load', () => {
 });
 
 /**
- * 🔴 THE THREE-WAY CONDITION IS THE WHOLE REASON THE PICKER'S OPTIONS ARE NOT LOADED WITH THE LIST.
- * Widening it to "always" is a `Bug` query on every page turn for a control nobody can see, and it
- * would ship green — nothing else asserts on it.
+ * 🔴 WHAT THE QUEUE DECIDES ABOUT THE PANEL'S PREREQUISITES IS "IS A ROW OPEN AT ALL", AND NOTHING
+ * ELSE. The three-way condition behind the issue picker — an unlinked row, plus the promote grant —
+ * is shared with `/feedback/<id>`, which renders the same panel, and lives in `feedbackPanelExtras`
+ * where it is tested against real rows. Restating it against a mock here would assert nothing about
+ * the function that actually runs.
+ *
+ * What is still this loader's alone, and therefore still tested here: the reads must not happen when
+ * no row is open. Widening that to "always" is a `Bug` query on every page turn for a control nobody
+ * can see, and it would ship green — nothing else asserts on it.
  */
-describe("load: the issue picker's options", () => {
+describe('load: the panel prerequisites', () => {
   const ROW = {
     id: 5,
     area: 'apps-marketplace',
@@ -354,40 +362,61 @@ describe("load: the issue picker's options", () => {
       url: new URL('https://moderator.test/feedback?status=new&open=5'),
       request: { method: 'GET' },
       locals: { user: MOD, grants },
-    } as never)) as { knownIssues: unknown[] };
+    } as never)) as { siblings: unknown[]; knownIssues: unknown[] };
 
-  it('loads them for an open, unlinked row when the grant is held', async () => {
+  /**
+   * The row AND the grants both reach the shared decision. Handing it the row without the grants —
+   * or the id without the row — is how the two routes' pickers drift apart while both typecheck.
+   */
+  it('hands the open row and the caller’s grants to the shared decision', async () => {
     withRow();
     const result = await loadWith(ALL_GRANTS);
 
-    expect(getKnownIssues).toHaveBeenCalled();
+    expect(feedbackPanelExtras).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 5, bugId: null }),
+      ALL_GRANTS
+    );
     expect(result.knownIssues).toEqual([]);
+    expect(result.siblings).toEqual([]);
   });
 
-  it('does NOT load them without the promote grant', async () => {
+  it('forwards a grant set that does not hold promote, rather than deciding here', async () => {
     withRow();
     await loadWith({ 'feedback.status.set': true });
 
-    expect(getKnownIssues).not.toHaveBeenCalled();
+    expect(feedbackPanelExtras).toHaveBeenCalledWith(expect.anything(), {
+      'feedback.status.set': true,
+    });
   });
 
-  it('does NOT load them for a row already linked to an issue', async () => {
-    // The attach form does not render for a linked row, so its options are a query for nothing.
-    withRow({ bugId: 42 });
-    await loadWith(ALL_GRANTS);
-
-    expect(getKnownIssues).not.toHaveBeenCalled();
-  });
-
-  it('does NOT load them when no row is open', async () => {
+  /**
+   * 🔴 THE ONE DECISION LEFT TO THIS LOADER. With nothing open there is no panel, so neither read
+   * has a consumer — and this is the case the shared function cannot express, because it takes a row.
+   */
+  it('makes no panel reads at all when no row is open', async () => {
     withRow();
-    await load({
+    const result = (await load({
       url: new URL('https://moderator.test/feedback?status=new'),
       request: { method: 'GET' },
       locals: { user: MOD, grants: ALL_GRANTS },
-    } as never);
+    } as never)) as { siblings: unknown[]; knownIssues: unknown[] };
 
-    expect(getKnownIssues).not.toHaveBeenCalled();
+    expect(feedbackPanelExtras).not.toHaveBeenCalled();
+    expect(result.siblings).toEqual([]);
+    expect(result.knownIssues).toEqual([]);
+  });
+
+  /** Same, for an `?open=` naming a row the current filters exclude — there is still no panel. */
+  it('makes no panel reads when the open id is not in this view', async () => {
+    getFeedbackList.mockResolvedValue({
+      items: [],
+      nextCursor: null,
+      nextCursorValue: null,
+    } as never);
+    const result = await loadWith(ALL_GRANTS);
+
+    expect(feedbackPanelExtras).not.toHaveBeenCalled();
+    expect(result.knownIssues).toEqual([]);
   });
 });
 
@@ -436,6 +465,42 @@ describe('triage action', () => {
     await actions.triage(event(form({ note: '   ' })));
 
     expect(triageFeedback).toHaveBeenCalledWith(expect.objectContaining({ note: null }));
+  });
+
+  /**
+   * 🔴 AN ABSENT `note` IS NOT AN EMPTY ONE. The panel has no note box any more — the status
+   * buttons post `id`, `expectedStatus` and `status` alone — so an action that read the missing
+   * field as `''` and stored `null` would blank `Feedback.triageNote` on the first status click,
+   * with a green screen over it and nothing in this app able to put it back.
+   *
+   * ⚠️ NO ROW IS AT RISK TODAY, and the honest version of this claim is worth the line: production
+   * holds 47 `Feedback` rows and `triageNote` is non-null on ZERO of them. This pins the CONTRACT —
+   * the column has no writer left, and the next one to appear (a backfill, an import, a note box
+   * that returns) must not find status clicks quietly erasing it.
+   *
+   * `undefined` is what `triageFeedback` reads as "leave the column out of the SET"; the test above
+   * is its control, proving a PRESENT blank box still means "clear it". The two cases have to differ
+   * or this one passes over an action that simply renamed `null` to `undefined`.
+   */
+  it('leaves the stored note alone when the form posts no note field at all', async () => {
+    const data = new FormData();
+    data.append('id', '5');
+    data.append('status', 'reviewed');
+    data.append('expectedStatus', 'new');
+
+    const result = await actions.triage({
+      request: { formData: async () => data },
+      locals: { user: MOD, grants: ALL_GRANTS },
+    } as never);
+
+    expect(result).toMatchObject({ success: true, triaged: 5 });
+    expect(triageFeedback).toHaveBeenCalledWith({
+      id: 5,
+      status: 'reviewed',
+      expectedStatus: 'new',
+      note: undefined,
+      moderatorId: 7,
+    });
   });
 
   /**

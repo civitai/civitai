@@ -207,7 +207,10 @@ describe('#5063 COUNTER-TESTS — every check that must still fire', () => {
 
     expect(res.statusCode).toBe(403);
     // Name the scope: a bare 403 would pass while some other gate fired.
-    expect(res.body).toEqual({ error: `${SHARED_WRITE} requires authenticated subject` });
+    expect(res.body).toEqual({
+      error: `${SHARED_WRITE} requires authenticated subject`,
+      code: 'context_binding',
+    });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -219,7 +222,15 @@ describe('#5063 COUNTER-TESTS — every check that must still fire', () => {
     await wrapped(makeReq(token) as never, res as never);
 
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: `missing required scope: ${USER_READ}` });
+    // `code` is new and additive. Kept as a whole-object `toEqual`: the 403 body is an
+    // app-facing contract, so adding a field should require editing a test rather than
+    // sliding past a `toMatchObject`. `insufficient_scope` (RFC 6750's spelling) means the
+    // token never carried the scope — distinct from `consent_revoked`, which means the viewer
+    // withdrew it.
+    expect(res.body).toEqual({
+      error: `missing required scope: ${USER_READ}`,
+      code: 'insufficient_scope',
+    });
     expect(handler).not.toHaveBeenCalled();
   });
 
@@ -236,7 +247,10 @@ describe('#5063 COUNTER-TESTS — every check that must still fire', () => {
     const badRes = makeRes();
     await bad.wrapped(makeReq(token, { id: String(OTHER_MODEL_ID) }) as never, badRes as never);
     expect(badRes.statusCode).toBe(403);
-    expect(badRes.body).toEqual({ error: 'models:read:self bound to different modelId' });
+    expect(badRes.body).toEqual({
+      error: 'models:read:self bound to different modelId',
+      code: 'context_binding',
+    });
     expect(bad.handler).not.toHaveBeenCalled();
 
     const good = route(MODELS_READ);

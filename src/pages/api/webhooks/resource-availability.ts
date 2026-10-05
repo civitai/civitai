@@ -2,14 +2,18 @@ import { timingSafeEqual } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { env } from '~/env/server';
-import { chunk, uniq } from 'lodash-es';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { instrumentApiResponse } from '~/server/prom/http-errors';
-import { resourceDataCache } from '~/server/redis/resource-data.redis';
 import { modelsSearchIndex } from '~/server/search-index';
+import {
+  bustGeneratorLoadedCaches,
+  setGeneratorLoaded,
+} from '~/server/services/generator-loaded.service';
 import { versionIdFromAir } from '~/shared/utils/air';
 
 /** `loaded` is in the payload and is NOT the answer: residency is `workersAvailable`. */
@@ -22,21 +26,9 @@ const eventSchema = z.object({
 
 const schema = z.object({ events: z.array(eventSchema) });
 
-const BATCH = 5000;
-
-async function setLoaded(ids: number[], loaded: boolean) {
-  if (!ids.length) return;
-  // Raw SQL rather than updateMany, so Prisma's @updatedAt does not bump ModelVersion."updatedAt" —
-  // it is on the public v1 payload and is remove-old-drafts' activity fence.
-  for (const batch of chunk(ids, BATCH))
-    await dbWrite.$executeRaw`
-      UPDATE "ModelVersion" SET "generatorLoaded" = ${loaded} WHERE id = ANY(${batch}::int[])
-    `;
-}
-
 function authorized(req: NextApiRequest) {
   const secret = env.WEBHOOK_TOKEN;
-  if (!secret) return false;
+  if (!isConfiguredSecret(secret)) return false;
   const raw = req.headers['x-webhook-secret'];
   const given = Array.isArray(raw) ? raw[0] : raw;
   if (!given) return false;
@@ -53,7 +45,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).end('Method Not Allowed');
   }
 
-  if (!env.WEBHOOK_TOKEN) return res.status(503).json({ error: 'Endpoint not configured' });
+  if (!isConfiguredSecret(env.WEBHOOK_TOKEN))
+    return res.status(503).json({ error: 'Endpoint not configured' });
 
   if (!authorized(req)) return res.status(401).json({ error: 'Unauthorized' });
 
@@ -86,11 +79,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     (event) => known.has(event.id) && residency.get(event.id) !== event.loaded
   );
 
-  await setLoaded(
+  await setGeneratorLoaded(
     acted.filter((event) => event.loaded).map((event) => event.id),
     true
   );
-  await setLoaded(
+  await setGeneratorLoaded(
     acted.filter((event) => !event.loaded).map((event) => event.id),
     false
   );
@@ -104,9 +97,15 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
     );
 
-  // Last, and after the enqueue for the reason the sync job gives. The SUBMIT path reads residency
-  // from resourceDataCache, whose hour TTL would otherwise keep refusing a resource that has loaded.
-  if (acted.length) await resourceDataCache.bust(acted.map((event) => event.id));
+  // Last, and after the enqueue, for the reasons the sync job gives. Logged rather than thrown: the
+  // column is already written, so a retry would find nothing left to act on and never bust again.
+  await bustGeneratorLoadedCaches(acted.map((event) => event.id)).catch((e) =>
+    logToAxiom({
+      name: 'resource-availability-webhook',
+      type: 'error',
+      message: `cache bust failed: ${String(e)}`,
+    }).catch(() => undefined)
+  );
 
   logToAxiom({
     name: 'resource-availability-webhook',

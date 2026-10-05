@@ -33,7 +33,6 @@ const BASE: GenerationCtx = {
 const CONTEXTS: [string, GenerationCtx][] = [
   ['base', BASE],
   ['wildcards', { ...BASE, flags: { wildcards: true } as GenerationCtx['flags'] }],
-  ['wan22MultiStep', { ...BASE, flags: { wan22MultiStep: true } as GenerationCtx['flags'] }],
   [
     'freeTier',
     {

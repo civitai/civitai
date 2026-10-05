@@ -4,6 +4,7 @@
     browser,
     generate,
     generateUrl,
+    hostConfig,
     hostLink,
     hrefFor,
     modelPageUrl,
@@ -25,6 +26,8 @@
     IconAlertTriangle,
     IconStarFilled,
     IconDownload,
+    IconFileDownload,
+    IconPackages,
     IconPhoto,
     IconArchive,
     IconRepeat,
@@ -38,6 +41,7 @@
   import { ToggleGroup, ToggleGroupItem } from '@civitai/ui/components/ui/toggle-group/index.js';
   import { Toggle } from '@civitai/ui/components/ui/toggle/index.js';
   import TrainingTrace from '$lib/components/TrainingTrace.svelte';
+  import LossGraph from '$lib/components/LossGraph.svelte';
   import RunStateBadge from '$lib/components/RunStateBadge.svelte';
   import SampleImage from '$lib/components/SampleImage.svelte';
   import SampleViewer from '$lib/components/SampleViewer.svelte';
@@ -46,12 +50,15 @@
     type TrainingDetail,
     type TrainingDetailEpoch,
   } from '$lib/data/trainingRows';
+  import { mediaCount } from '$lib/data/trainingModels';
   import { directDatasetUrl, handoffReuse, toReuseItems } from '$lib/reuse';
   import { extOfAir, extOfMime } from '$lib/media';
+  import { slugify } from '$lib/slug';
   import { RETENTION_DAYS } from '$lib/orchestrator-core';
   import { nonBlueSpend } from '$lib/buzz-balance.svelte';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
+  import * as Popover from '@civitai/ui/components/ui/popover/index.js';
 
   let {
     detail,
@@ -69,8 +76,8 @@
   // to finished/planned, when a piece is missing.
   const completedEpochs = $derived(d.epochs.length);
   const progressPct = $derived(overallProgressPct(completedEpochs, d.plannedEpochs, d.progress));
-  // The epoch being trained now (one past the last finished checkpoint), capped at the plan — so a run with
-  // 1 checkpoint ready reads as "epoch 2", the one actually in progress, not "epoch 1".
+  // The epoch being trained now (one past the last finished checkpoint), capped at the plan. Labels
+  // the live trace stream only — every progress COUNTER shows completed checkpoints, starting 0/N.
   const currentEpoch = $derived(
     d.plannedEpochs ? Math.min(completedEpochs + 1, d.plannedEpochs) : completedEpochs + 1
   );
@@ -178,6 +185,21 @@
   });
   const expiresSoon = $derived(expiresAt - Date.now() < 7 * 86400000);
 
+  // Wall-clock training time, from the step's own start/completion stamps. That pair is the only
+  // duration the payload carries — epochs have no per-epoch timestamps in either output shape.
+  const durationLabel = $derived.by(() => {
+    if (!d.startedAt || !d.completedAt) return '';
+    const min = Math.round((new Date(d.completedAt).getTime() - new Date(d.startedAt).getTime()) / 60000);
+    if (min < 1) return '';
+    return min < 60 ? `${min} min` : `${Math.floor(min / 60)} h ${min % 60} min`;
+  });
+
+  function formatBytes(bytes: number): string {
+    if (bytes >= 1024 ** 3) return `${(bytes / 1024 ** 3).toFixed(2)} GB`;
+    if (bytes >= 1024 ** 2) return `${(bytes / 1024 ** 2).toFixed(1)} MB`;
+    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
+  }
+
   // Relative "created" label: minutes/hours ago for a recent run, weekday-at-time within the last week,
   // otherwise the date. Recomputed on each poll so "2 minutes ago" stays honest while training.
   const createdLabel = $derived.by(() => {
@@ -261,8 +283,13 @@
     if (fromAir && fromAir.length <= 4) return fromAir;
     return extOfMime(mime) ?? 'png';
   }
-  function slug(s: string): string {
-    return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'dataset';
+  function saveBlob(blob: Blob, fileName: string) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    URL.revokeObjectURL(url);
   }
 
   async function fetchDatasetBlob(air: string): Promise<Blob> {
@@ -304,22 +331,53 @@
         downloadError = "Couldn't fetch the dataset images — nothing to download.";
         return;
       }
-      const out = await zip.generateAsync({ type: 'blob' });
-      const url = URL.createObjectURL(out);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `${slug(d.name)}-dataset.zip`;
-      a.click();
-      URL.revokeObjectURL(url);
+      saveBlob(await zip.generateAsync({ type: 'blob' }), `${slugify(d.name, 'dataset')}-dataset.zip`);
     } finally {
       downloading = false;
     }
+  }
+
+  let archiving = $state(false);
+  let archiveError = $state('');
+  // A blob KEY, not a URL: a legacy run's epochs download one by one from signed URLs but name no
+  // blob the archive could include.
+  const archivableEpochs = $derived(d.epochs.filter((e) => e.modelKey).length);
+  async function downloadAllCheckpoints() {
+    if (archiving) return;
+    archiving = true;
+    archiveError = '';
+    try {
+      const { url } = await backend().epochArchive(d.workflowId);
+      const a = document.createElement('a');
+      a.href = url;
+      // New tab: an attachment response downloads there; a failed one can't replace the run page.
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.click();
+    } catch (e) {
+      archiveError = e instanceof Error ? e.message : "Couldn't build the archive.";
+    } finally {
+      archiving = false;
+    }
+  }
+
+  function downloadSettings() {
+    saveBlob(
+      new Blob([JSON.stringify(d.settings, null, 2)], { type: 'application/json' }),
+      `${slugify(d.name, 'training')}-training-settings.json`
+    );
   }
 
   // Reuse this run's already-scanned dataset blobs as-is (no re-upload) to seed a new training.
   async function reuseDataset() {
     handoffReuse(await toReuseItems(d.dataset, d.workflowId));
   }
+
+  // Only an explicit host `false` gates — absent means the host has no membership knowledge and
+  // the affordance behaves as before (see HostContext.config.canGenerateUnpublished). A function,
+  // not $derived: the host context isn't reactive, so a frozen derived would never see a re-wired
+  // config — read it at render time like the generate()/generateUrl() seam reads.
+  const generateGated = () => hostConfig().canGenerateUnpublished === false;
 
   // "Generate with this epoch": the handoff for a checkpoint's weights blob. A host `generate`
   // opens its generator in place (button); otherwise `generateUrl` gives a /generate deep link
@@ -464,8 +522,6 @@
   // The fullscreen viewer navigates over `newestFirst` (↑ = newer epoch, matching the in-app trainer).
   let viewer = $state<{ epochIndex: number; sampleIndex: number } | null>(null);
   function openViewer(epoch: TrainingDetailEpoch, sampleIndex: number) {
-    // Audio samples are inline players (the controls are the interaction) — no fullscreen viewer.
-    if (d.media === 'audio') return;
     const epochIndex = newestFirst.indexOf(epoch);
     if (epochIndex !== -1) viewer = { epochIndex, sampleIndex };
   }
@@ -486,6 +542,42 @@
     showLineage = false;
   });
 </script>
+
+<!-- The one place the Generate affordance decides gated vs in-place action vs deep link — a render
+     site that skipped the gate would silently un-gate non-members. When the host says this user
+     can't use unpublished weights, clicking the muted button (touch and keyboard included — a
+     tooltip's content is unreachable for both) explains the gate instead of silently doing nothing. -->
+{#snippet epochGenerate(
+  gen: { action: () => void } | ReturnType<typeof hostLink>,
+  liveCls: string,
+  gatedCls: string,
+  iconSize: number,
+  title: string | undefined = undefined
+)}
+  {#if generateGated()}
+    {@const pricing = hostConfig().pricingUrl}
+    <Popover.Root>
+      <!-- Not aria-disabled: the control is live — it opens the explanation. -->
+      <Popover.Trigger class="{gatedCls} cursor-not-allowed text-dark-2">
+        <IconSparkles size={iconSize} stroke={2} />Generate
+      </Popover.Trigger>
+      <Popover.Content class="max-w-[260px] text-xs" portalProps={portalProps()}>
+        Generating with unpublished training results requires a Civitai membership.
+        {#if pricing}
+          <a {...hostLink(pricing)} class="font-semibold text-primary hover:underline">View plans</a>
+        {/if}
+      </Popover.Content>
+    </Popover.Root>
+  {:else if 'action' in gen}
+    <button type="button" onclick={gen.action} {title} class={liveCls}>
+      <IconSparkles size={iconSize} stroke={2} />Generate
+    </button>
+  {:else}
+    <a {...gen} {title} class={liveCls}>
+      <IconSparkles size={iconSize} stroke={2} />Generate
+    </a>
+  {/if}
+{/snippet}
 
 <section class="flex flex-col gap-6">
   <a href={hrefFor({ view: 'home' })} use:locationHref={{ view: 'home' }} class="inline-flex items-center gap-1 font-mono text-xs text-dark-2 transition-colors hover:text-white">
@@ -557,6 +649,12 @@
         <dt class="text-dark-2">Created</dt>
         <dd class="m-0 text-dark-0">{createdLabel}</dd>
       </div>
+      {#if durationLabel}
+        <div class="flex items-center gap-1.5">
+          <dt class="text-dark-2">Trained in</dt>
+          <dd class="m-0 text-dark-0">{durationLabel}</dd>
+        </div>
+      {/if}
       {#if d.state !== 'training' && d.epochs.length > 0 && expiresLabel}
         <div class="flex items-center gap-1.5">
           <dt class="text-dark-2">Expires</dt>
@@ -593,6 +691,24 @@
         </dd>
       </div>
     </dl>
+    <div class="mt-3 flex flex-wrap items-center gap-2 border-t border-dark-4 pt-3">
+      <span class="font-mono text-xs uppercase tracking-wider text-dark-2">Download</span>
+      {#if archivableEpochs > 0}
+        <Button size="sm" variant="outline" disabled={archiving} onclick={downloadAllCheckpoints}
+          title="One zip with every ready checkpoint's weights and sample images">
+          <IconPackages size={14} stroke={2} />
+          {archiving
+            ? 'Building archive…'
+            : `All ${archivableEpochs} checkpoint${archivableEpochs === 1 ? '' : 's'} (.zip)`}
+        </Button>
+      {/if}
+      <Button size="sm" variant="ghost" onclick={downloadSettings} title="The run's effective training configuration as JSON">
+        <IconFileDownload size={14} stroke={2} />Settings (.json)
+      </Button>
+      {#if archiveError}
+        <span class="font-mono text-xs text-red-400">{archiveError}</span>
+      {/if}
+    </div>
   </header>
 
   {#if d.state === 'training'}
@@ -603,7 +719,7 @@
           Training progress
         </span>
         <span class="font-mono text-dark-2">
-          {progressPct}%{#if d.plannedEpochs} · epoch {currentEpoch} / {d.plannedEpochs}{/if}
+          {progressPct}%{#if d.plannedEpochs} · checkpoint {completedEpochs} / {d.plannedEpochs}{/if}
         </span>
       </div>
       <div
@@ -623,6 +739,12 @@
          resets cleanly when navigating to a different training. -->
     {#key d.workflowId}
       <TrainingTrace traceUrl={d.liveTraceUrl} plannedEpochs={d.plannedEpochs ?? null} {currentEpoch} />
+    {/key}
+  {/if}
+
+  {#if d.traces.length}
+    {#key d.workflowId}
+      <LossGraph traces={d.traces} training={d.state === 'training'} />
     {/key}
   {/if}
 
@@ -741,7 +863,9 @@
               {/each}
               {#each oldestFirst as epoch (epoch.id)}
                 {@const cellUrl = epoch.samples[r] ?? null}
-                {#if cellUrl}
+                {#if cellUrl && d.media === 'audio'}
+                  <SampleImage isAudio url={cellUrl} alt="Epoch {epoch.number}, prompt {r + 1}" />
+                {:else if cellUrl}
                   <button
                     type="button"
                     onclick={() => openViewer(epoch, r)}
@@ -798,33 +922,32 @@
           <div class="flex items-baseline gap-2">
             <h2 class="m-0 text-lg font-semibold text-white">Epoch {featured.number}</h2>
             {#if featured === recommended}
-              <span
-                class="rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
-              >
-<IconStarFilled size={10} class="mr-0.5 inline" />Recommended
-              </span>
+              <Tooltip.Provider>
+                <Tooltip.Root>
+                  <Tooltip.Trigger
+                    class="cursor-default rounded bg-buzz/15 px-2 py-0.5 text-xs font-semibold text-buzz"
+                  >
+                    <IconStarFilled size={10} class="mr-0.5 inline" />Recommended
+                  </Tooltip.Trigger>
+                  <Tooltip.Content class="max-w-[280px] text-xs" portalProps={portalProps()}>
+                    This epoch has had the most training time applied to it and, in most cases, is
+                    the best choice. Models made with smaller datasets may overbake at high training
+                    time, so a lower epoch can be better.
+                  </Tooltip.Content>
+                </Tooltip.Root>
+              </Tooltip.Provider>
             {/if}
           </div>
           {#if featured.modelUrl}
             {@const gen = epochGenerateLink(featured)}
             <div class="ml-auto flex flex-wrap items-center gap-2">
               {#if gen}
-                {#if 'action' in gen}
-                  <button
-                    type="button"
-                    onclick={gen.action}
-                    class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
-                  >
-<IconSparkles size={14} stroke={2} class="mr-1 inline" />Generate
-                  </button>
-                {:else}
-                  <a
-                    {...gen}
-                    class="inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10"
-                  >
-<IconSparkles size={14} stroke={2} class="mr-1 inline" />Generate
-                  </a>
-                {/if}
+                {@render epochGenerate(
+                  gen,
+                  'inline-flex items-center gap-1.5 rounded border border-primary/40 px-3 py-1.5 text-[13px] font-semibold text-primary transition-colors hover:bg-primary/10',
+                  'inline-flex items-center gap-1.5 rounded border border-dark-4 px-3 py-1.5 text-[13px] font-semibold',
+                  14
+                )}
               {/if}
               <a
                 href={featured.modelUrl}
@@ -843,11 +966,18 @@
           {/if}
         </div>
 
-        <div class="grid grid-cols-1 gap-4 {d.media === 'audio' ? '' : 'sm:grid-cols-3'}">
+        <!-- Pin the epoch once something plays: a newly finished epoch becoming `recommended` would
+             otherwise swap the playing sample for a different file. -->
+        <div
+          class="grid grid-cols-1 gap-4 {d.media === 'audio' ? '' : 'sm:grid-cols-3'}"
+          onplaycapture={() => (selectedId ??= featured.id)}
+        >
           {#each promptLabels as prompt, i (i)}
             {@const featuredUrl = featured.samples[i] ?? null}
             <figure class="m-0 flex flex-col gap-2">
-              {#if featuredUrl}
+              {#if featuredUrl && d.media === 'audio'}
+                <SampleImage isAudio url={featuredUrl} alt="Epoch {featured.number} sample {i + 1}" />
+              {:else if featuredUrl}
                 <button
                   type="button"
                   onclick={() => openViewer(featured, i)}
@@ -865,6 +995,24 @@
             </figure>
           {/each}
         </div>
+
+        <!-- Only what the payload actually carries: legacy runs stamp a weights size; ai-toolkit
+             epochs carry no size and no per-epoch timestamps, so this hides rather than guess. -->
+        {#if featured.sizeBytes != null}
+          <details class="mt-4 self-start">
+            <summary
+              class="cursor-pointer select-none font-mono text-xs text-dark-2 transition-colors hover:text-dark-0"
+            >
+              More about this epoch
+            </summary>
+            <dl class="mt-2 flex flex-wrap gap-x-8 gap-y-1 rounded-md border border-dark-4 bg-dark-7 px-3 py-2 font-mono text-xs">
+              <div class="flex items-center gap-1.5">
+                <dt class="text-dark-2">Weights file size</dt>
+                <dd class="m-0 text-dark-0">{formatBytes(featured.sizeBytes)}</dd>
+              </div>
+            </dl>
+          </details>
+        {/if}
       </div>
 
       {#if newestFirst.length > 1}
@@ -902,36 +1050,35 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="grid grid-cols-3 gap-1.5">
-                    {#each promptLabels as _, si (si)}
-                      <SampleImage
-                        isVideo={d.isVideo} isAudio={d.media === 'audio'}
-                        url={epoch.samples[si] ?? null}
-                        pending={samplesPending}
-                        alt="Epoch {epoch.number} preview {si + 1}"
-                      />
-                    {/each}
-                  </div>
+                  {#if d.media === 'audio'}
+                    <!-- A player can't live inside this select button; the featured view plays them. -->
+                    {@const heard = epoch.samples.filter(Boolean).length}
+                    <span class="font-mono text-xs text-dark-2">
+                      {heard} audio sample{heard === 1 ? '' : 's'} · select to listen
+                    </span>
+                  {:else}
+                    <div class="grid grid-cols-3 gap-1.5">
+                      {#each promptLabels as _, si (si)}
+                        <SampleImage
+                          isVideo={d.isVideo}
+                          url={epoch.samples[si] ?? null}
+                          pending={samplesPending}
+                          alt="Epoch {epoch.number} preview {si + 1}"
+                        />
+                      {/each}
+                    </div>
+                  {/if}
                 </button>
                 {#if gen}
-                  {#if 'action' in gen}
-                    <button
-                      type="button"
-                      onclick={gen.action}
-                      title="Generate with epoch {epoch.number}"
-                      class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <IconSparkles size={12} stroke={2} />Generate
-                    </button>
-                  {:else}
-                    <a
-                      {...gen}
-                      title="Generate with epoch {epoch.number}"
-                      class="absolute right-2 top-2 inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <IconSparkles size={12} stroke={2} />Generate
-                    </a>
-                  {/if}
+                  <span class="absolute right-2 top-2">
+                    {@render epochGenerate(
+                      gen,
+                      'inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary',
+                      'inline-flex items-center gap-1 rounded px-1.5 py-1 text-xs font-medium',
+                      12,
+                      `Generate with epoch ${epoch.number}`
+                    )}
+                  </span>
                 {/if}
               </div>
             {/each}
@@ -1068,7 +1215,7 @@
         <IconPhoto size={16} stroke={2} class="text-dark-2" />
         Training data
         <span class="font-mono text-xs font-normal text-dark-2">
-          {d.dataset.length} image{d.dataset.length === 1 ? '' : 's'}
+          {mediaCount(d.dataset.length, d.media)}
         </span>
         <span class="ml-auto flex items-center gap-1.5">
           <button

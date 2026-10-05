@@ -45,7 +45,7 @@ Then work out the **case**:
 
 Adding a base model or an ecosystem costs a second deploy and is hard to undo once resources are published against it. So the default is **neither**. Go down this list and take the first rule that matches:
 
-1. **API-only, and the model's line already has an ecosystem → C or D.** Add a new version under the existing base model. Don't add a base model or an ecosystem: nobody trains resources against an API-only model, so there's nothing compatibility could apply to. For example, later Nano Banana releases stay under the one `Nano Banana` base model.
+1. **API-only, and the model's line already has an ecosystem → C or D.** Add a new version under the existing base model. Don't add a base model or an ecosystem: nobody trains resources against an API-only model, so there's nothing compatibility could apply to. For example, later Nano Banana releases stay under the one `Nano Banana` base model. **Exception → B:** when the existing base model is hosted weights and something keyed by its name must not reach the API release — its licence, a mature-content restriction, a base-model warning, or its LoRAs — add a hidden API-only base model inside the existing ecosystem and toggle between the versions in the generator. Example: `Ideogram 4.5` beside `Ideogram 4.0` in `ECO.Ideogram`.
 2. **API-only, and it's the first model from its line → A.** It still needs an ecosystem to generate under. Name it for the line, not the release (`MuseImage`, not `MuseImage1`), so later releases fit under rule 1.
 3. **Hosted weights, and existing resources work on it → B.** Existing resources (LoRAs, embeddings and other addons) in the ecosystem run on the new checkpoint, so add a base model inside the existing ecosystem. Example: `SDXL 0.9` → `SDXL 1.0` → `SDXL 1.0 LCM`, all in `ECO.SDXL`. If the new checkpoint is a drop-in release that creators won't need to tell apart, prefer C.
 4. **Hosted weights, and existing resources do not work on it → A.** Create a new versioned ecosystem. Example: `LTXV` → `LTXV2` → `LTXV 2.3` → `LTXV 2.5`, each its own ecosystem. Apply the compatibility test in `add-ecosystem` ("The test: does this need its own ecosystem?"). It judges compatibility by the weights actually shipped, not the vendor's family name, and when you're unsure it says to split.
@@ -84,6 +84,12 @@ Show the user the case, the kind, the phases and where the run will stop, for de
    - After the deploy, run `generator-launch check`. Continue only when the version is `Draft`, covered, and `canGenerate: true` for you. Then ask the user to try generating with it on the live site.
 
 8. **Hand off.** Run `generator-launch launch` and give the user its output: publish, then remove the gate. Don't do those steps yourself.
+
+**If community models already host the same weights, that needs no action** — the attribution
+tie-break prefers the official version, and archiving those models would not move credit anyway. See
+`official-model-admin` → "Community copies of the same weights". The question worth raising at hand-off
+is the repo's shared components (text encoders, a VAE): whether to publish them as their own models so
+community finetunes can cite them.
 
 ## Rules for the whole run
 

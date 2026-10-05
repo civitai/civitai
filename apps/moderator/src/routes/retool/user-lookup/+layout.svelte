@@ -215,8 +215,16 @@
     </div>
   {/if}
 
-  <div class="flex gap-6">
-    <nav class="w-56 shrink-0">
+  <!-- A fixed-width pane here does not stack below `lg`; pinned by
+       `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`
+       and re-derives the width below.
+       `lg` not `md`: the app sidebar is 16rem of FLOW width from 768px up, so `md` leaves 216px
+       of content -- NARROWER than at 767px, where the sidebar is off-canvas. For scale, the
+       sibling `audit/generator-restrictions` already sits at 280px at its own `lg`.
+       No `items-*`: grid defaults to stretch, matching the flex row this replaced. The sibling
+       DOES set `items-start`, and that divergence is deliberate. -->
+  <div data-two-pane class="grid gap-6 lg:grid-cols-[14rem_1fr]">
+    <nav data-pane class="min-w-0">
       <ul class="space-y-0.5">
         {#each SECTIONS as s (s.slug)}
           <li>
@@ -264,7 +272,7 @@
       </ul>
     </nav>
 
-    <div class="min-w-0 flex-1">
+    <div data-pane class="min-w-0">
       {@render children()}
     </div>
   </div>

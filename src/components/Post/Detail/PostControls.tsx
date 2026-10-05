@@ -1,12 +1,21 @@
 import { Menu, useMantineTheme } from '@mantine/core';
-import { IconEdit, IconFlag, IconTrash, IconShieldHalf } from '@tabler/icons-react';
+import {
+  IconEdit,
+  IconFlag,
+  IconTrash,
+  IconShieldHalf,
+  IconSpeakerphone,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
+import { GalleryPromotionModal } from '~/components/Promotion/GalleryPromotionModal';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -29,6 +38,7 @@ export function PostControls({
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const isOwnerOrModerator = isOwner || isModerator;
+  const features = useFeatureFlags();
   const enqueuNsfwLevelUpdateMutation = trpc.post.enqueueNsfwLevelUpdate.useMutation({
     onSuccess: () => showSuccessNotification({ message: 'Nsfw level update queued' }),
   });
@@ -74,6 +84,16 @@ export function PostControls({
               Edit Post
             </Menu.Item>
           </>
+        )}
+        {isOwner && features.creatorPromotions && (
+          <Menu.Item
+            leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
+            onClick={() =>
+              dialogStore.trigger({ component: GalleryPromotionModal, props: { postId } })
+            }
+          >
+            Promote in a gallery
+          </Menu.Item>
         )}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">

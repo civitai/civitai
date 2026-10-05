@@ -1,7 +1,7 @@
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import {
-  SDXL_SQUARE_AR,
+  SDXL_FULL_AR,
   SEED,
   defaultSamplerPresets,
   guidancePresetsLowBalHigh,
@@ -28,7 +28,7 @@ export const chroma = defineGraph<FamilyExt>({ scope: familyScope })
   )
   .field('resources', familyResources)
   .use(promptOnlyTextBlock)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field(
     'sampler',
     selectDef({ options: chromaSamplers, default: 'Euler', presets: defaultSamplerPresets })

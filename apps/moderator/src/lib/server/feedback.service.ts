@@ -7,6 +7,7 @@ import {
   type FeedbackSortColumn,
 } from '$lib/feedback-sort';
 import { MAX_INT4 } from './users.service';
+import type { PermissionSet } from '$lib/permissions';
 
 /**
  * The `Feedback` table, read and triaged.
@@ -203,6 +204,82 @@ const coerceSortValue = (
   return n >= -MAX_INT4 - 1 && n <= MAX_INT4 ? n : undefined;
 };
 
+/**
+ * Every column a `FeedbackRow` carries, joined the way it is carried, in ONE place.
+ *
+ * 🔴 THE QUEUE AND THE SINGLE-REPORT PAGE RENDER THE SAME PANEL, so a column added for one is a
+ * column the other must carry — open-coding the projection twice is how a panel ends up showing
+ * `undefined` on exactly one of the two routes, with nothing failing.
+ *
+ * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write here
+ * reloads the page, so under replica lag an operator can see their own triage come back unapplied,
+ * and their next click then posts the STALE `expectedStatus` and is refused with "someone else
+ * already triaged this" over their own write.
+ *
+ * Left on the replica anyway: it fails CLOSED (a refusal, never a silent overwrite), it is the
+ * convention every other queue in this app follows, and a triage queue read by a handful of people
+ * is the shape where lag is least likely to be observed. `linkFeedbackToBug`'s Bug lookup goes to
+ * the primary instead, and that is not an inconsistency — there the stale answer is a flat "no issue
+ * with that number" for an issue the operator is looking at, which reads as a defect rather than as
+ * a conflict.
+ *
+ * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
+ */
+const feedbackRowQuery = () =>
+  dbRead
+    .selectFrom('Feedback as f')
+    .leftJoin('User as u', 'u.id', 'f.userId')
+    .leftJoin('User as h', 'h.id', 'f.handledById')
+    .leftJoin('Bug as b', 'b.id', 'f.bugId')
+    .select([
+      'f.id',
+      'f.area',
+      'f.userId',
+      'u.username',
+      'f.message',
+      'f.context',
+      'f.status',
+      'f.createdAt',
+      'f.triageNote',
+      'f.handledById',
+      'h.username as handledByUsername',
+      'f.handledAt',
+      'f.bugId',
+      'b.title as bugTitle',
+      'b.status as bugStatus',
+    ]);
+
+/**
+ * 🔴 TYPED FROM THE QUERY, AND WITHOUT A CAST, BECAUSE THE RETURN ANNOTATION IS THE ONLY THING THAT
+ * COMPARES THE PROJECTION AGAINST `FeedbackRow`. An `as FeedbackRow` here would make the whole point
+ * of `feedbackRowQuery` — one projection, two routes — unenforced: adding a field to `FeedbackRow`
+ * and forgetting it in the `.select([...])` above would typecheck, and both routes would render
+ * `undefined` with nothing failing.
+ */
+type FeedbackRowQueryResult = Awaited<
+  ReturnType<ReturnType<typeof feedbackRowQuery>['execute']>
+>[number];
+
+const toFeedbackRow = (r: FeedbackRowQueryResult): FeedbackRow => ({
+  ...r,
+  createdAt: new Date(r.createdAt),
+  handledAt: r.handledAt ? new Date(r.handledAt) : null,
+});
+
+/**
+ * One report, by id, with no reference to the queue's filters, sort or cursor.
+ *
+ * 🔴 THIS IS WHAT `/feedback/<id>` EXISTS FOR, and the difference from `getFeedbackList` is the
+ * whole point: `?open=` on the queue resolves against the rows the current view happens to hold, so
+ * a link to a report outside the active filters or past the first keyset page dead-ends. A link
+ * handed to someone outside this queue — in a ticket, in a message — has to resolve whatever view
+ * the reader lands with.
+ */
+export async function getFeedbackRow(id: number): Promise<FeedbackRow | null> {
+  const row = await feedbackRowQuery().where('f.id', '=', id).executeTakeFirst();
+  return row ? toFeedbackRow(row) : null;
+}
+
 export async function getFeedbackList(input: {
   statuses: readonly FeedbackStatus[];
   area?: string | null;
@@ -249,44 +326,7 @@ export async function getFeedbackList(input: {
    */
   const ascending = sort?.direction === 'asc';
 
-  /**
-   * ⚠️ THE REPLICA, DELIBERATELY, AND IT HAS A COST — read this before "fixing" it. Every write
-   * here reloads the page, so under replica lag an operator can see their own triage come back
-   * unapplied, and their next click then posts the STALE `expectedStatus` and is refused with
-   * "someone else already triaged this" over their own write.
-   *
-   * Left on the replica anyway: it fails CLOSED (a refusal, never a silent overwrite), it is the
-   * convention every other queue in this app follows, and a triage queue read by a handful of
-   * people is the shape where lag is least likely to be observed. `linkFeedbackToBug`'s Bug lookup
-   * goes to the primary instead, and that is not an inconsistency — there the stale answer is a
-   * flat "no issue with that number" for an issue the operator is looking at, which reads as a
-   * defect rather than as a conflict.
-   *
-   * Revisit if a moderator reports a conflict they cannot explain; the fix is this one word.
-   */
-  let query = dbRead
-    .selectFrom('Feedback as f')
-    .leftJoin('User as u', 'u.id', 'f.userId')
-    .leftJoin('User as h', 'h.id', 'f.handledById')
-    .leftJoin('Bug as b', 'b.id', 'f.bugId')
-    .select([
-      'f.id',
-      'f.area',
-      'f.userId',
-      'u.username',
-      'f.message',
-      'f.context',
-      'f.status',
-      'f.createdAt',
-      'f.triageNote',
-      'f.handledById',
-      'h.username as handledByUsername',
-      'f.handledAt',
-      'f.bugId',
-      'b.title as bugTitle',
-      'b.status as bugStatus',
-    ])
-    .limit(limit + 1);
+  let query = feedbackRowQuery().limit(limit + 1);
 
   /**
    * 🔴 `id DESC`, not `createdAt DESC`, and the keyset below compares the same column.
@@ -381,13 +421,7 @@ export async function getFeedbackList(input: {
 
   const rows = await query.execute();
   const hasMore = rows.length > limit;
-  const items = (hasMore ? rows.slice(0, limit) : rows).map(
-    (r): FeedbackRow => ({
-      ...r,
-      createdAt: new Date(r.createdAt),
-      handledAt: r.handledAt ? new Date(r.handledAt) : null,
-    })
-  );
+  const items = (hasMore ? rows.slice(0, limit) : rows).map(toFeedbackRow);
 
   const boundaryRow = hasMore && items.length ? items[items.length - 1] : null;
   return {
@@ -475,7 +509,16 @@ export async function triageFeedback(input: {
   id: number;
   status: FeedbackStatus;
   expectedStatus: FeedbackStatus;
-  note: string | null;
+  /**
+   * 🔴 `undefined` MEANS "LEAVE THE COLUMN ALONE"; `null` MEANS "CLEAR IT". They are opposite
+   * instructions and collapsing them DESTROYS DATA, which is why this is not simply `string | null`.
+   *
+   * The status buttons post no note at all — the panel has no note box — so every status click would
+   * otherwise write `null` over whatever was stored, on a column nothing else in this app can
+   * restore. The distinction lives in the TYPE rather than in a caller's discipline because there is
+   * no failure to notice: the UPDATE succeeds, the status moves, and the note is gone.
+   */
+  note?: string | null;
   moderatorId: number;
 }): Promise<TriageResult> {
   const handled = input.status !== 'new';
@@ -483,7 +526,7 @@ export async function triageFeedback(input: {
     .updateTable('Feedback')
     .set({
       status: input.status,
-      triageNote: input.note,
+      ...(input.note === undefined ? {} : { triageNote: input.note }),
       handledById: handled ? input.moderatorId : null,
       handledAt: handled ? new Date() : null,
       // 🔴 `bugId` IS DELIBERATELY NOT TOUCHED HERE — not on any status, reopening included.
@@ -668,6 +711,39 @@ export async function getKnownIssues(limit = 200): Promise<KnownIssueOption[]> {
   // ("so the operator can see they are attaching to something closed") depend on eyeballing free
   // text. One definition of closed, in one place.
   return rows.map((r) => ({ ...r, closed: isBugClosed(r.status) }));
+}
+
+/**
+ * Everything `FeedbackDetail` needs beyond the row itself, for ONE report.
+ *
+ * 🔴 THE READ HALF OF THE SEAM `feedback-actions.ts` CLOSED FOR WRITES. Both routes render that
+ * panel, so both have to satisfy its prerequisites — and open-coding them twice is a divergence
+ * TYPECHECK CANNOT SEE: a missing prop fails at the call site, a diverged CONDITION does not. Widen
+ * when the picker may be shown (a re-attach flow, an area filter) and whichever copy is missed
+ * renders an empty control on one route with nothing failing anywhere.
+ *
+ * 🔴 BOTH READS ARE CONDITIONAL, AND THE CONDITIONS ARE THE POINT, not an optimisation. The issue
+ * picker exists only for an UNLINKED row held by someone with the promote grant, so loading its
+ * options otherwise is a `Bug` query per page view for a control nobody can see. `siblings` is the
+ * mirror image: only a LINKED row has any.
+ */
+export async function feedbackPanelExtras(
+  row: Pick<FeedbackRow, 'id' | 'bugId'>,
+  /**
+   * 🔴 `PermissionSet`, NOT A LOOSE STRING RECORD — this is the ONE site that gates the issue picker
+   * on both routes, so a widened key type retires the invariant `apps/moderator/CLAUDE.md` states in
+   * its own words: "a mistyped id does not compile". Measured with `svelte-check`: a typo here under
+   * the loose type produced 0 errors, and the same typo against `locals.grants` produced 1 naming
+   * the valid union. A typo that compiles renders the picker's "No issues to pick from yet" branch,
+   * which reads as an empty `Bug` table rather than a defect — on both routes at once.
+   */
+  grants: PermissionSet
+): Promise<{ siblings: FeedbackSibling[]; knownIssues: KnownIssueOption[] }> {
+  const siblings =
+    row.bugId != null ? await getSiblingFeedback({ bugId: row.bugId, excludeId: row.id }) : [];
+  const knownIssues =
+    row.bugId === null && grants['feedback.bug.promote'] ? await getKnownIssues() : [];
+  return { siblings, knownIssues };
 }
 
 /**

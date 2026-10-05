@@ -1,0 +1,173 @@
+/* The narrow-container (card) rendering of the activity table.
+ *
+ * 🔴 A CONTAINER QUERY, NOT A MEDIA QUERY. The panel's two mounts disagree about width while
+ * sharing a viewport: `/apps/activity` gets the whole apps container, and
+ * `AppPermissionsActivityDrawer` gets a Mantine `size="md"` drawer — 27.5rem, ~408px of
+ * content — inside a viewport that may be 2560. A `@media` query reads the viewport, so it
+ * cannot separate them at all.
+ *
+ * ⚠️ NOT because a JS breakpoint read is LINTED against here. `local-rules/
+ * no-ssr-divergent-media-query` is deliberately off by default and enabled per-surface from
+ * `.eslintrc.js` `overrides`, whose file list is `AppsPageLayout.tsx`, `AppsRailNav.tsx`,
+ * `useAppsNavSections.ts` and `appsRailState.tsx` — this component is NOT among them, so a
+ * regression to `useContainerSmallerThan` here would not be caught. The rule states the house
+ * convention; it does not enforce it on this file.
+ *
+ * 🔴 THE DECLARATION BELOW IS WHAT MAKES THE QUERY RESOLVE AT ALL. A `@container` query with
+ * no ancestor query container is FALSE for every element — not "falls back to the viewport" —
+ * so without it the stacked rules would never apply and the drawer would stay broken while
+ * every media-query-shaped test passed. MUTATION-MEASURED, both in
+ * `AppsWideLayout.geometry.test.tsx`: `inline-size` → `normal` fails "the drawer's activity
+ * feed renders the STACKED variant…" on `expected 'table' to be 'block'` AND the overflow arm
+ * on `TR right=2568.48` against a 2544 container edge; widening the threshold to 300px fails
+ * the identical pair. The same trap is recorded on `HomeTabs.geometry.test.tsx`'s wrapper.
+ *
+ * A module declaring its own container rather than the Tailwind `@container` utility is the
+ * pattern this folder already uses — `AppListingsMarketplaceBody.module.scss` opens one for the
+ * store grid with the same argument (the container must be an ANCESTOR of the queried element,
+ * so one element cannot carry both).
+ *
+ * ⚠️ IT ALSO IMPLIES `contain: layout style inline-size` AT EVERY WIDTH, not only inside the
+ * query. Two consequences a future edit would hit, neither live today (this panel has no
+ * positioned or overlay descendant): `inline-size` containment makes the panel's INTRINSIC
+ * inline size zero, so dropping it into a `Group` (flex row), an `inline-block` or a grid `auto`
+ * track yields a 0-width panel with no error; and `layout` containment makes the panel a
+ * STACKING CONTEXT and a CONTAINING BLOCK for absolutely/fixed-positioned descendants, so an
+ * inline `Menu`/`Popover`/`Tooltip` added inside it is offset against the panel rather than the
+ * viewport, and can be stacking-trapped under a sibling — pass `withinPortal` there (see the root
+ * CLAUDE.md note on that theme default).
+ * ⚠️ NOT CLIPPED, though that is the obvious guess and an earlier revision of this note said it:
+ * clipping needs PAINT containment, which `container-type: inline-size` does not apply. The
+ * symptom to expect is a floating element in the wrong PLACE, which is why it would not be
+ * matched to this paragraph if the paragraph predicted clipping.
+ *
+ * 🔴 AND NOT `Table.ScrollContainer`, WHICH IS THIS FOLDER'S USUAL ANSWER to a table wider than
+ * its box (`MySubmissionsList`, `OffsiteSubmissionsList`, `ReportTabs`, with a shared
+ * `SUBMISSIONS_TABLE_MIN_WIDTH`). Horizontal scroll works at 1424px where the table is nearly
+ * whole; at 408px it would be a 735px table dragged through a 408px window, five columns at a
+ * time, on a read-only panel opened over a running app. Cards are not a rejection of that
+ * convention — they are what is left when the surplus is 55%.
+ */
+.panel {
+  container-type: inline-size;
+}
+
+/* 🔴 560px, A LITERAL, AND BOTH HOUSE TOKENS WERE WEIGHED. `theme('screens.sm')` (768) would
+ * stack the wide page, whose 736px of content at a 768 viewport is the measurement the
+ * `no-surplus` exemption in `~/components/Apps/appsWideLayout` rests on. `theme('screens.xs')`
+ * (480) satisfies both constraints too; 560 was taken over it for headroom — 152px above the
+ * drawer's 408 against 72 — so a future `size="lg"` drawer does not silently fall back to the
+ * table.
+ *
+ * ⚠️ NO THRESHOLD IN THIS RANGE IS "CORRECT", and the honest statement of why 560 is safe is
+ * that NO MOUNT LANDS BETWEEN 560 AND 736 TODAY — the drawer is 408, the page is ≥736. Anything
+ * that did land in the gap would still overflow ~735px of max-content and would still be on the
+ * table; that is a reason to move the threshold when such a mount appears, not an argument that
+ * 560 covers it. (An earlier revision rejected 480 on exactly that overflow argument, which
+ * indicts 560 equally.) */
+@container (max-width: 560px) {
+  /* The whole table becomes a block flow of cards. `modules` sits ABOVE `mantine` in the
+   * layer order declared in `src/pages/_document.tsx`, which is why these plain selectors
+   * beat Mantine's own Table rules without `!important`. */
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+  }
+
+  .table thead {
+    display: none;
+  }
+
+  /* One grid per row, so the cards can read in a different order from the DOM. The DOM
+   * order is the table's (When · App · Action · Detail · Status) and stays that way —
+   * a second JSX branch for the narrow case is how the two renderings come to disagree,
+   * which is the hazard `AppPermissionsActivityDrawer`'s own docblock names.
+   *
+   * ⚠️ SO VISUAL ORDER AND DOM ORDER DIVERGE: `status` is announced last but reads second,
+   * `app` is announced second but reads fourth. That is the accepted cost of one DOM, and it is
+   * why the status pill carries visually-hidden TEXT — an integer read out of sequence is the
+   * value that loses the most from the divergence. TEXT and not an `aria-label`: that was tried
+   * and is inert on a Mantine Badge, for the reason `ScopeStatusBadge` records.
+   *
+   * `app` and `detail` are two rows rather than the one footer line the brief asked for. They
+   * shared a row in an earlier revision: `detail` carries an unbroken app-controlled token, so
+   * at 408px it wrapped mid-token directly beside the app name and neither read as a label.
+   *
+   * ⚠️ AND `app` IS FOURTH BECAUSE OF THE DRAWER, WHERE IT IS A LABEL — every row there is the
+   * same app, by construction (`appBlockId` drill-down). On `/apps/activity` the same cards render
+   * under ~560px of container and `app` is the ATTRIBUTION, so a phone reader meets the action
+   * before the actor. One DOM means one order; this is the accepted cost of that, not an oversight,
+   * and the phone mount is measured by its own geometry arm. */
+  .table tbody tr {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      'when status'
+      'action action'
+      'app app'
+      'detail detail';
+    column-gap: var(--mantine-spacing-xs);
+    row-gap: calc(0.125rem * var(--mantine-scale));
+    padding-block: var(--mantine-spacing-xs);
+    border-bottom: calc(0.0625rem * var(--mantine-scale)) solid var(--mantine-color-default-border);
+  }
+
+  .table tbody tr:last-of-type {
+    border-bottom: none;
+  }
+
+  .table tbody td {
+    padding: 0;
+    border: none;
+  }
+
+  .table tbody td[data-activity-cell='when'] {
+    grid-area: when;
+  }
+
+  .table tbody td[data-activity-cell='app'] {
+    grid-area: app;
+  }
+
+  .table tbody td[data-activity-cell='action'] {
+    grid-area: action;
+  }
+
+  /* 🔴 BOTH CELLS THAT CAN CARRY AN APP-CONTROLLED UNBROKEN TOKEN, not just `detail`. `detail`
+   * renders a workflow id or a storage key; `action`'s sentence INTERPOLATES the same key for
+   * `storage.set` / `storage.delete` / `storage.increment` (see `describeBlockAction`), and the
+   * key is `z.string().min(1).max(200)` with no whitespace requirement. An earlier revision
+   * hardened `detail` alone and asserted in this comment that it was the only such cell, which
+   * would have stopped the next reader looking at the other.
+   *
+   * `anywhere` rather than `break-word` because it also lowers the cell's min-content size, so
+   * the card stays inside the container rather than wrapping once it is already too wide. Both
+   * are witnessed by the overflow arm, which pokes a long token into each cell directly — the
+   * shared geometry fixture cannot carry one without widening a column at 768 and moving the
+   * very ≥768 baseline the exemption above rests on.
+   *
+   * ⚠️ SCOPED TO THE CARD VARIANT, SO THE WIDE TABLE IS STILL EXPOSED — pre-existing, and left
+   * that way deliberately. A 200-char key already pushes the wide table's min-content past its
+   * container on `/apps/activity` today; hardening it there changes min-content at ≥768, which is
+   * the axis the `no-surplus` exemption is measured on, so it is its own change with its own
+   * measurement rather than a line added here. */
+  .table tbody td[data-activity-cell='detail'],
+  .table tbody td[data-activity-cell='action'] {
+    overflow-wrap: anywhere;
+  }
+
+  .table tbody td[data-activity-cell='detail'] {
+    grid-area: detail;
+  }
+
+  /* ⚠️ NO `justify-self: end` HERE, THOUGH THE STATUS PILL IS AT THE TRAILING EDGE. It was
+   * written and deleted: column 2 is an `auto` track sized to the badge, so there is no room
+   * inside the cell for justification to act and `start`/`end` render identically — measured,
+   * the mutation survived every arm. The trailing edge comes from the TRACK, and dropping
+   * `grid-template-areas` is what the reading-order arm catches. */
+  .table tbody td[data-activity-cell='status'] {
+    grid-area: status;
+  }
+}

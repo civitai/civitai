@@ -1,5 +1,5 @@
 import { Alert, Badge, Button, Group, Loader, Stack, Text } from '@mantine/core';
-import { useCallback } from 'react';
+import { useCallback, type ReactNode } from 'react';
 
 import { withdrawSuccessMessage } from '~/components/Apps/listingPublishingActions';
 import { historyStatusColor } from '~/components/Apps/myAppsView';
@@ -126,86 +126,120 @@ export function ListingHistoryPanelView({
   return (
     <Stack gap={8} data-testid="apps-history-list">
       {entries.map((e) => (
-        <Group
+        <ListingHistoryEntryRow
           key={e.id}
-          gap="xs"
-          wrap="wrap"
-          data-testid={`apps-history-entry-${e.id}`}
-          data-history-source={e.source}
-        >
-          <Badge size="sm" variant="light" color={e.source === 'version' ? 'blue' : 'grape'}>
-            {e.source === 'version' ? `v${e.version ?? '?'}` : 'Listing edit'}
-          </Badge>
-          <Badge
-            size="sm"
-            variant="outline"
-            color={historyStatusColor(e.status)}
-            data-testid={`apps-history-status-${e.id}`}
-          >
-            {e.status}
-          </Badge>
-          <Text size="xs" c="dimmed">
-            {formatWhen(e.submittedAt)}
-          </Text>
-          {e.deployState ? (
-            <Text size="xs" c="dimmed">
-              · {e.deployState}
-            </Text>
-          ) : null}
-          {e.rejectionReason ? (
-            <Text size="xs" c="red" data-testid={`apps-history-notes-${e.id}`}>
-              {e.rejectionReason}
-            </Text>
-          ) : e.approvalNotes ? (
-            <Text size="xs" c="dimmed" data-testid={`apps-history-notes-${e.id}`}>
-              {e.approvalNotes}
-            </Text>
-          ) : null}
-          {/*
-            🔴 THREE CONDITIONS, and each one removes a button that could only fail.
-            `canWithdraw` is the server restating its own submitter-scoped refusal;
-            `withdrawEnabled` covers the FLAG mismatch (the version-withdraw mutation
-            carries `enforceAppBlocksFlag` while this page and its reads gate on
-            `appBlocksAuthor` only, so with the store flag off that half 403s).
-          */}
-          {e.canWithdraw && onWithdraw && (e.source === 'listing' || withdrawEnabled) ? (
-            <Button
-              size="compact-xs"
-              variant="subtle"
-              color="gray"
-              disabled={withdrawing}
-              onClick={() => onWithdraw(e)}
-              /*
-                🔴 THE ONE-WAY WARNING IS ON THE CONTROL, not only in the toast that
-                follows it. Withdrawing the review of a listing that was previously LIVE
-                does not return it to how it was: the server closes it to `removed` behind
-                a `delist` event, which the owner-republish guard reads as a moderator
-                takedown, so only a moderator can put it back. That is deliberate (it
-                closes a self-restore exploit — see `closeTerminalListing`), which is
-                exactly why it has to be disclosed BEFORE the click rather than defended
-                afterwards. Worded for the case it warns about without asserting the
-                listing IS in it — this component cannot tell, and a warning that
-                over-claims gets ignored.
-
-                🔴 THE VERSION ENTRIES (`source === 'version'`) ARE NOW CONDITIONAL, which
-                is why the hedged wording has to stay rather than be sharpened. Withdrawing
-                a VERSION reaches `closeOnsiteResetListingOnWithdraw`, which since the
-                asset-review route REFUSES to close a `pending` listing whose review
-                belongs to the LISTING queue. So a version withdraw delists in the
-                mod-reset case and does not in the republish-review case — and which case
-                you are in depends on a row this component does not read. Warning in both
-                is the safe direction for a one-way action; claiming either outcome
-                per-entry would be an assertion this surface cannot support.
-              */
-              title="Withdraws this submission. If the listing was previously live, withdrawing takes it off the store and a moderator has to restore it."
-              data-testid={`apps-history-withdraw-${e.id}`}
-            >
-              Withdraw
-            </Button>
-          ) : null}
-        </Group>
+          entry={e}
+          onWithdraw={onWithdraw}
+          withdrawing={withdrawing}
+          withdrawEnabled={withdrawEnabled}
+        />
       ))}
     </Stack>
+  );
+}
+
+/**
+ * ONE publish-request entry, as a row.
+ *
+ * 🔴 EXPORTED SO THE MODERATOR'S PRIOR-VERSIONS MODAL RENDERS THE SAME RECORD. Two homes
+ * for one record is how the two come to disagree about what a status means — the same rule
+ * this file's own docblock states about the panel's move off `/apps/mine`. The mod surface
+ * adds the submitter/reviewer chips and the "current" marker through `children` rather than
+ * forking the row.
+ */
+export function ListingHistoryEntryRow({
+  entry: e,
+  onWithdraw,
+  withdrawing = false,
+  withdrawEnabled = true,
+  children,
+}: {
+  entry: ListingHistoryEntry;
+  onWithdraw?: (entry: ListingHistoryEntry) => void;
+  withdrawing?: boolean;
+  withdrawEnabled?: boolean;
+  /** Rendered at the end of the row — the moderator surface's extra chips. */
+  children?: ReactNode;
+}) {
+  return (
+    <Group
+      gap="xs"
+      wrap="wrap"
+      data-testid={`apps-history-entry-${e.id}`}
+      data-history-source={e.source}
+    >
+      <Badge size="sm" variant="light" color={e.source === 'version' ? 'blue' : 'grape'}>
+        {e.source === 'version' ? `v${e.version ?? '?'}` : 'Listing edit'}
+      </Badge>
+      <Badge
+        size="sm"
+        variant="outline"
+        color={historyStatusColor(e.status)}
+        data-testid={`apps-history-status-${e.id}`}
+      >
+        {e.status}
+      </Badge>
+      <Text size="xs" c="dimmed">
+        {formatWhen(e.submittedAt)}
+      </Text>
+      {e.deployState ? (
+        <Text size="xs" c="dimmed">
+          · {e.deployState}
+        </Text>
+      ) : null}
+      {e.rejectionReason ? (
+        <Text size="xs" c="red" data-testid={`apps-history-notes-${e.id}`}>
+          {e.rejectionReason}
+        </Text>
+      ) : e.approvalNotes ? (
+        <Text size="xs" c="dimmed" data-testid={`apps-history-notes-${e.id}`}>
+          {e.approvalNotes}
+        </Text>
+      ) : null}
+      {/*
+        🔴 THREE CONDITIONS, and each one removes a button that could only fail.
+        `canWithdraw` is the server restating its own submitter-scoped refusal;
+        `withdrawEnabled` covers the FLAG mismatch (the version-withdraw mutation
+        carries `enforceAppBlocksFlag` while this page and its reads gate on
+        `appBlocksAuthor` only, so with the store flag off that half 403s).
+      */}
+      {e.canWithdraw && onWithdraw && (e.source === 'listing' || withdrawEnabled) ? (
+        <Button
+          size="compact-xs"
+          variant="subtle"
+          color="gray"
+          disabled={withdrawing}
+          onClick={() => onWithdraw(e)}
+          /*
+            🔴 THE ONE-WAY WARNING IS ON THE CONTROL, not only in the toast that
+            follows it. Withdrawing the review of a listing that was previously LIVE
+            does not return it to how it was: the server closes it to `removed` behind
+            a `delist` event, which the owner-republish guard reads as a moderator
+            takedown, so only a moderator can put it back. That is deliberate (it
+            closes a self-restore exploit — see `closeTerminalListing`), which is
+            exactly why it has to be disclosed BEFORE the click rather than defended
+            afterwards. Worded for the case it warns about without asserting the
+            listing IS in it — this component cannot tell, and a warning that
+            over-claims gets ignored.
+
+            🔴 THE VERSION ENTRIES (`source === 'version'`) ARE NOW CONDITIONAL, which
+            is why the hedged wording has to stay rather than be sharpened. Withdrawing
+            a VERSION reaches `closeOnsiteResetListingOnWithdraw`, which since the
+            asset-review route REFUSES to close a `pending` listing whose review
+            belongs to the LISTING queue. So a version withdraw delists in the
+            mod-reset case and does not in the republish-review case — and which case
+            you are in depends on a row this component does not read. Warning in both
+            is the safe direction for a one-way action; claiming either outcome
+            per-entry would be an assertion this surface cannot support.
+          */
+          title="Withdraws this submission. If the listing was previously live, withdrawing takes it off the store and a moderator has to restore it."
+          data-testid={`apps-history-withdraw-${e.id}`}
+        >
+          Withdraw
+        </Button>
+      ) : null}
+      {children}
+    </Group>
   );
 }
 

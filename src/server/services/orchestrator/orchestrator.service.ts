@@ -28,6 +28,11 @@ import {
   isDefiniteNotFound,
   resolveDownloadUrl,
 } from '~/utils/delivery-worker';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+  normalizeImageScanUrl,
+} from '~/server/utils/image-scan-url';
 
 // Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
 // this returns a workflow id immediately, it does NOT wait for the scan to finish).
@@ -122,8 +127,25 @@ export async function createImageIngestionRequest({
   priority?: Priority;
   type?: MediaType;
 }) {
+  // 🔴 This is the funnel for the image-scan INGESTION path. `getEdgeUrl` forwards
+  // absolute http(s)/blob: URLs through unmodified, so without this guard every path that
+  // reaches `Image.url` from caller input (comics procs, article content media nodes, …)
+  // is an SSRF primitive. `ingestImage` pre-checks the same predicate so it can route the
+  // rejection through the submit-failure machinery; this throw is the backstop for direct
+  // callers.
+  //
+  // It is not the only place a caller-supplied URL reaches a fetcher, and the others are
+  // now on this same predicate rather than left ungated: `getPerceptualHash` below,
+  // `resizeBadgeImage` (product-badge.service.ts) and `validateArtwork`
+  // (creator-shop.service.ts — a fetch from the WEB pod, not the orchestrator). The full
+  // ledger is asserted by `media-fetch-funnel-ledger.test.ts`, which fails when a new
+  // funnel appears un-gated, so do not maintain that list by hand here.
+  if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+
   const metadata = { imageId };
-  const edgeUrl = getEdgeUrl(url, { type });
+  // Submit the NORMALIZED form: an absolute url goes out as its parsed `href`, so the host
+  // this guard validated is the host a downstream RFC-3986 client resolves.
+  const edgeUrl = getEdgeUrl(normalizeImageScanUrl(url), { type });
   // Idempotency key: if a submit returns 500 but actually created the workflow
   // server-side, re-submitting with the same `externalId` returns the existing
   // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
@@ -284,7 +306,33 @@ export async function getPerceptualHash(
   url: string,
   hashType: MediaHashType = 'perceptual'
 ): Promise<string | undefined> {
-  const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
+  // 🔴 Same SSRF boundary as `createImageIngestionRequest` above, and it is reached from a
+  // LOWER rung than that one: `queueCosmeticPerceptualHash` is called from
+  // creator-shop's submit path (any signed-in user with the `creatorShop` flag), and the
+  // `cosmetic-phash-sweep` cron replays whatever was stored in `Cosmetic.data.url`, so an
+  // off-allowlist URL that got persisted once is re-submitted on a schedule.
+  //
+  // Unlike the ingestion funnel this returns `undefined` rather than throwing: every other
+  // failure here is already soft ("a hash is a signal, not a gate" — see the docblock), and
+  // the sweep counts a thrown error as a dead row it will retry forever. A refusal is
+  // logged so it is not a silent zero.
+  if (!isAllowedImageScanUrl(url)) {
+    logToAxiom({
+      type: 'error',
+      name: 'perceptual-hash',
+      message: 'Refusing to hash an off-allowlist media url',
+      reason: 'url-not-allowed',
+      url,
+    }).catch(() => null);
+    return undefined;
+  }
+
+  // The old `url.startsWith('http') ? url : getEdgeUrl(url, …)` ternary was a no-op —
+  // `getEdgeUrl` forwards a passthrough src unmodified on exactly that predicate — and it
+  // was a fourth open-coded spelling of it. Submit the NORMALIZED form for the same reason
+  // `createImageIngestionRequest` does: the host this guard validated is then the host a
+  // downstream RFC-3986 client resolves.
+  const mediaUrl = getEdgeUrl(normalizeImageScanUrl(url), { type: 'image' });
 
   // getEdgeUrl drops a missing NEXT_PUBLIC_IMAGE_LOCATION from the join instead
   // of failing, yielding a relative path the orchestrator can't fetch. Outside

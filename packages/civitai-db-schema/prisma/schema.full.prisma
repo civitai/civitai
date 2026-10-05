@@ -575,6 +575,7 @@ model User {
   issuedStrikes               UserStrike[]                    @relation("strikeIssuedBy")
   voidedStrikes               UserStrike[]                    @relation("strikeVoidedBy")
   generationPresets           GenerationPreset[]
+  generationSizePresets       GenerationSizePreset[]
   ownedWildcardSets           WildcardSet[]                   @relation("WildcardSetOwner")
   blurbs                      Blurb[]
 
@@ -604,6 +605,9 @@ model User {
   blockAuthorFeeAccrualsAsViewer   BlockAuthorFeeAccrual[]  @relation("BlockAuthorFeeAccrualViewer")
   blockSubscriptionAttributionsAsPurchaser BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionPurchaser")
   blockSubscriptionAttributionsAsAppOwner  BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppOwner")
+  blockGoodPurchasesAsBuyer        BlockGoodPurchase[]      @relation("BlockGoodPurchaseBuyer")
+  blockGoodPurchasesAsAppOwner     BlockGoodPurchase[]      @relation("BlockGoodPurchaseAppOwner")
+  blockGoodEntitlements            BlockGoodEntitlement[]   @relation("BlockGoodEntitlementOwner")
   publishRequestsSubmitted   AppBlockPublishRequest[]        @relation("PublishRequestSubmitter")
   publishRequestsReviewed    AppBlockPublishRequest[]        @relation("PublishRequestReviewer")
   blockScopeInvocations      BlockScopeInvocation[]
@@ -635,6 +639,10 @@ model User {
   placementsMade                     Placement[]                @relation("PlacementPlacer")
   placementsSold                     Placement[]                @relation("PlacementSeller")
   pricingSlots                       PricingSlot[]
+  crucibles                          Crucible[]
+  crucibleEntries                    CrucibleEntry[]
+  crucibleEngagements                CrucibleEngagement[]
+  prizes                             Prize[]
 
   @@index([deletedAt])
 }
@@ -750,6 +758,18 @@ enum UserEngagementType {
   Follow
   Hide
   Block
+}
+
+/// Hidden from every gallery the creator owns, merged with each model's own gallerySettings.users.
+/// No relations to User on purpose: an FK locks "User" while it validates.
+model CreatorGalleryHiddenUser {
+  creatorId Int
+  userId    Int
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@id([creatorId, userId])
+  @@index([userId])
 }
 
 model UserEngagement {
@@ -1221,6 +1241,7 @@ model ModelVersion {
   imageResources          ImageResource[]
   posts                   Post[]
   resourceReviews         ResourceReview[]
+  resourceInsight         ResourceInsight?
   hashes                  ModelHash[]
   metricsDaily            ModelMetricDaily[]
   modelVersionExploration ModelVersionExploration[]
@@ -1582,6 +1603,7 @@ model Report {
   model3d        Model3DReport?
   model3dReview  Model3DReviewReport?
   announcement   AnnouncementReport?
+  crucible       CrucibleReport?
 }
 
 model ResourceReviewReport {
@@ -1752,6 +1774,28 @@ model ResourceReviewReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([reviewId, userId, reaction])
+}
+
+// Jev-assigned meaning labels for a published model version (what a resource is
+// FOR: role / style family / content types). One row per version; rows carry the
+// question-spec hash that produced them, so a spec bump marks old rows `stale`
+// for re-labeling instead of silently blending two taxonomies. Written only by
+// the labeling pass (scripts/label-resource-insights.ts) — never by user traffic.
+// The migration is applied manually per environment (no prisma migrate deploy).
+model ResourceInsight {
+  modelVersionId Int          @id
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  role           String
+  styleFamily    String
+  contentTypes   String[]
+  qualityScore   Float
+  confidence     Float
+  specHash       String
+  model          String
+  createdAt      DateTime     @default(now())
+  stale          Boolean      @default(false)
+
+  @@index([stale])
 }
 
 enum ReviewReactions {
@@ -1943,6 +1987,9 @@ model Image {
   appListingIcons        AppListing[]           @relation("AppListingIcon")
   appListingCovers       AppListing[]           @relation("AppListingCover")
   appListingScreenshots  AppListingScreenshot[] @relation("AppListingScreenshot")
+  crucibles              Crucible[]             @relation("CrucibleImage")
+  crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
+  crucibleEntries        CrucibleEntry[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -2554,6 +2601,7 @@ model OauthClient {
   spendAttributions BlockSpendAttribution[] @relation("BlockSpendAttributionApp")
   authorFeeAccruals BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualApp")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionApp")
+  goodPurchases BlockGoodPurchase[] @relation("BlockGoodPurchaseApp")
   connectListings          AppListing[]
 
   @@index([userId])
@@ -2712,6 +2760,8 @@ model AppBlock {
   spendAttributions  BlockSpendAttribution[] @relation("BlockSpendAttributionAppBlock")
   authorFeeAccruals  BlockAuthorFeeAccrual[] @relation("BlockAuthorFeeAccrualAppBlock")
   subscriptionAttributions BlockSubscriptionAttribution[] @relation("BlockSubscriptionAttributionAppBlock")
+  goodPurchases      BlockGoodPurchase[] @relation("BlockGoodPurchaseAppBlock")
+  goodEntitlements   BlockGoodEntitlement[] @relation("BlockGoodEntitlementAppBlock")
   publishRequests    AppBlockPublishRequest[]
   scopeInvocations   BlockScopeInvocation[]
   userScopeGrants    AppUserScopeGrant[]
@@ -2989,6 +3039,38 @@ model AppListing {
   // can't express it; canonical code set = APP_LISTING_STATUSES). P3b adds
   // 'removed' (the mod delist target); see app-blocks-p3b-delist-claim-scope.
   status          String       @default("draft")
+  /// Per-listing cohort gate: private|moderators|testers|public, or NULL.
+  ///
+  /// NULLABLE WITH NO DEFAULT, and NULL is NOT the `private` level — it means the owner
+  /// has expressed no choice, so the pre-feature rule for the row's `status` applies
+  /// (approved is visible, non-approved is not). That is what lets a level be
+  /// authoritative on an `approved` listing without a new approval -- of which there are
+  /// eight scattered writes and no chokepoint -- minting a row that vanishes from the
+  /// store. A level that IS set binds at every eligible status, `approved` included, so
+  /// an owner can restrict a live listing (discovery-only: hidden from the store, still
+  /// runnable by slug).
+  ///
+  /// Free-text `text` like `status`; the allowed set is a DB CHECK that lives ONLY in the
+  /// migration .sql (canonical code set = APP_LISTING_VISIBILITIES), and NULL passes that
+  /// CHECK by design. Always an AND with the surface flags, never an override.
+  ///
+  /// 🔴 THE no-type ANNOTATION ON THE FIELD LINE STRIPS IT FROM THE GENERATED CLIENT ON
+  /// PURPOSE, AND THAT
+  /// IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
+  /// declares in its default SELECT/RETURNING, so while this was an ordinary field every
+  /// `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
+  /// on this tree, 17 of them WRITES — and during the manual-apply window that is
+  /// `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
+  /// delist all 500d on the PR preview. Stripping the field makes every one of those sites
+  /// immune by construction. The column is reached ONLY by raw SQL, in
+  /// `app-listing-visibility.service.ts` (read) and `-write.service.ts` (write). Re-adding it
+  /// to the client re-opens the outage; `app-listing-visibility.no-prisma-field` is the guard.
+  ///
+  /// MANUAL-APPLY, like every migration here. Read it ONLY through
+  /// `app-listing-visibility.service.ts` and never add it to a shared `select`: a
+  /// `select` naming a missing column throws P2022 for the WHOLE query, which on the
+  /// grid's shared select is a public-store outage.
+  visibility      String? // @no-type
   // Maturity rating. For on-site listings this MIRRORS AppBlock.content_rating
   // (single source — the listing must NOT override the runtime .red/.com serving
   // gate). Off-site listings carry their own. Same domain as AppBlock (g..x).
@@ -3577,16 +3659,15 @@ model BlockBuzzAttribution {
   @@map("block_buzz_attribution")
 }
 
-/// Idempotency ledger for publisher revenue-share payouts. One row per
-/// (app_owner_user_id, period_key) — a publisher is paid at most once per
-/// period. mintPayoutForOwner inserts here inside the same transaction
-/// that flips the contributing block_buzz_attribution rows to paid_out;
-/// the UNIQUE on (app_owner_user_id, period_key) is the no-double-pay
-/// guard (a racing/retried mint hits P2002 and no-ops).
+/// 🔴 UNREFERENCED — no code reads or writes this table. It was the idempotency
+/// ledger for publisher revenue-share payouts, one row per
+/// (app_owner_user_id, period_key), written by a `mintPayoutForOwner` service
+/// function that never had a production caller; that function and the write-free
+/// cron that was one day going to call it have both been removed.
 ///
-/// This row records that the ledger was minted — it does NOT mean money
-/// moved. Actual disbursement (Tipalti / creator-program cash bank) is a
-/// separate, leadership-gated step that reads these rows.
+/// Retained only because dropping it is a hand-applied DB migration rather than a
+/// code change. Do not add a writer: there is no payout rail, and the purchase
+/// rev-share it was built for has no disbursement path anywhere in the tree.
 ///
 /// Application-generated id (`bba_payout_<ulid>`).
 model BlockAttributionPayout {
@@ -3621,7 +3702,7 @@ model BlockAttributionPayout {
 /// paid on top of the spend — never a slice of the viewer's Buzz — and it was
 /// superseded by the additive, author-set, viewer-paid per-generation author
 /// fee (`src/server/services/blocks/author-fee.ts`). Its compute and backpay
-/// rails were deleted; nothing reads a rate card's `spendSharePct` any more.
+/// rails were deleted, and a rate card no longer carries a spend rate at all.
 ///
 /// WHAT THE ROWS CARRY NOW: `app_owner_share_cents = 0`, `spend_share_pct = 0`,
 /// `rate_card_version = 'unrated'`. `status` is NOT uniformly 'tracked' — do not
@@ -3758,6 +3839,11 @@ model BlockSpendAttribution {
   status             String   @default("tracked")
   /// 'self_spend' / 'internal_owner' / 'manual_review'. Spend has no
   /// refund path, so this is never 'refund'/'chargeback'.
+  /// 'manual_review' carries TWO senses on this table: an operator void, and a
+  /// PRIVATE RUN of a delisted app (the value is reused rather than adding a
+  /// 'private_run' member, which would need a hand-applied migration). A
+  /// cross-table query cannot tell them apart here; the private-run mint's audit
+  /// line is what discriminates. Nothing pays out of this table either way.
   voidedReason       String?  @map("voided_reason")
   attributedAt       DateTime @default(now()) @map("attributed_at") @db.Timestamptz(6)
   confirmedAt        DateTime? @map("confirmed_at") @db.Timestamptz(6)
@@ -3873,6 +3959,166 @@ model BlockAuthorFeeAccrual {
   @@index([status, accruedAt], map: "block_author_fee_accrual_settlement_idx")
   @@index([appOwnerUserId, accruedAt], map: "block_author_fee_accrual_owner_idx")
   @@map("block_author_fee_accrual")
+}
+
+/// App Blocks DIGITAL GOODS — the purchase ledger.
+///
+/// One row = one viewer buying one manifest-declared good from one app for
+/// Buzz. The row is the FINANCIAL RECORD: who paid, how much, under which
+/// manifest version, how it split, and what was actually paid out. The
+/// entitlement it grants is a separate row (`BlockGoodEntitlement`) so a
+/// refund can revoke the entitlement while the money history stays intact.
+///
+/// 🔴 THE PAYOUT IS IMMEDIATE, NOT A DAILY BATCH — the cosmetic shop's shape,
+/// not the author fee's. The buyer is debited to the bank (`TransactionType
+/// .Purchase`) and the app owner is credited from the bank
+/// (`TransactionType.Sell`) inside the same request. There is no settlement
+/// job and no accrual state to reconcile.
+///
+/// 🔴 `payouts` RECORDS WHAT WAS ACTUALLY PAID, per recipient and colour, with
+/// the ledger transaction id. A refund reverses THOSE transactions; it never
+/// re-derives a split. Re-deriving would pay back a number the recipient may
+/// never have received (a colour proration that floored differently, a share
+/// constant that has since moved).
+///
+/// 🔴 `app_owner_user_id` is resolved at WRITE time. An app that changes hands
+/// must not retroactively move earnings already paid to the previous owner.
+///
+/// CONSERVATION: `platform_share_buzz + app_owner_share_buzz = price_buzz` is a
+/// CHECK, so a split arithmetic bug fails at INSERT rather than quietly
+/// minting or destroying Buzz. Mirrors `block_buzz_attribution`'s three-way
+/// invariant; there is no provider fee here because no card is involved.
+///
+/// FK posture is RESTRICT throughout — these rows are financial history and
+/// must not disappear with the app, the client or the user.
+///
+/// Application-generated id (`bgp_<ulid>`).
+model BlockGoodPurchase {
+  id                  String   @id
+
+  /// The buyer. Always the verified block-token subject, never a body field.
+  userId              Int      @map("user_id")
+  user                User     @relation("BlockGoodPurchaseBuyer", fields: [userId], references: [id], onDelete: Restrict)
+
+  appId               String   @map("app_id")
+  app                 OauthClient @relation("BlockGoodPurchaseApp", fields: [appId], references: [id], onDelete: Restrict)
+  appBlockId          String   @map("app_block_id")
+  appBlock            AppBlock @relation("BlockGoodPurchaseAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+
+  /// NOT an FK and NULLABLE, for the same reason the attribution tables give:
+  /// synthetic instance ids (`bus_pub_*`, `page_*`, `ephemeral-*`) resolve to no
+  /// row. NULL means the instance could not be resolved — the purchase still
+  /// happened and is still attributed to the app; only the install context is
+  /// unknown. A purchase must never fail because attribution could not.
+  blockInstanceId     String?  @map("block_instance_id")
+
+  /// The manifest `goods[].id` bought, and the manifest `version` it was bought
+  /// under. Together they explain a disputed price without needing the manifest
+  /// that was live at the time (a later approved version may have repriced it).
+  goodId              String   @map("good_id")
+  manifestVersion     String   @map("manifest_version")
+
+  /// What the viewer was charged, in whole Buzz. Always > 0 (CHECK).
+  priceBuzz           Int      @map("price_buzz")
+  /// How much of `price_buzz` came out of the BLUE (granted) account. Drives
+  /// the proportional colour split of the payout, so a viewer paying blue does
+  /// not turn non-withdrawable Buzz into withdrawable earnings.
+  bluePaidBuzz        Int      @default(0) @map("blue_paid_buzz")
+
+  appOwnerUserId      Int      @map("app_owner_user_id")
+  appOwner            User     @relation("BlockGoodPurchaseAppOwner", fields: [appOwnerUserId], references: [id], onDelete: Restrict)
+  appOwnerShareBuzz   Int      @map("app_owner_share_buzz")
+  platformShareBuzz   Int      @map("platform_share_buzz")
+
+  /// The deterministic `externalTransactionIdPrefix` the buyer's debit was
+  /// made under. UNIQUE — this is the LEDGER-backed half of idempotency: a
+  /// retry after the Redis sentinel expired collides here instead of charging
+  /// twice.
+  buzzTransactionId   String   @unique @map("buzz_transaction_id")
+
+  /// What was actually paid, per recipient and colour, with each payout's own
+  /// ledger transaction id: `[{ userId, amount, color, transactionId? }]`.
+  /// Empty until the payout leg runs. A refund reads THIS, never a re-derived
+  /// split.
+  payouts             Json     @default("[]")
+
+  /// 'pending' | 'paid' | 'refunded'. A row is INSERTED as `pending` BEFORE the
+  /// buyer is charged — the UNIQUE `buzzTransactionId` is what serialises
+  /// concurrent attempts, so exactly one can reach the charge. A surviving
+  /// `pending` row is the reconciliation record for a charge whose outcome is
+  /// unknown.
+  ///
+  /// `refunded` also marks a charge that was reversed before any entitlement
+  /// was granted: that row is kept, not deleted, because its `buzzTransactionId`
+  /// stays occupied in the Buzz ledger and the next attempt supersedes it.
+  status              String   @default("pending")
+  refundReason        String?  @map("refund_reason")
+  refundedAt          DateTime? @map("refunded_at") @db.Timestamptz(6)
+
+  createdAt           DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  entitlement         BlockGoodEntitlement?
+
+  @@index([userId, createdAt(sort: Desc)], map: "bgp_buyer_idx")
+  @@index([appBlockId, createdAt(sort: Desc)], map: "bgp_app_block_idx")
+  @@index([appOwnerUserId, createdAt(sort: Desc)], map: "bgp_owner_idx")
+  @@map("block_good_purchase")
+}
+
+/// App Blocks DIGITAL GOODS — what a viewer OWNS.
+///
+/// The platform owns this ledger; the good's MEANING is the app's business.
+/// `payload` is copied VERBATIM from the approved manifest at purchase time and
+/// is never interpreted here — the app reads its entitlements and keeps the
+/// semantics in its own storage.
+///
+/// 🔴 `payload` IS MANIFEST-SOURCED, NOT CLIENT-SUPPLIED. It rides the
+/// submit → review → approve pipeline like the price does, so what an
+/// entitlement carries is something a moderator saw.
+///
+/// 🔴 `(user_id, app_block_id, good_id)` IS UNIQUE. Buying the same good twice
+/// is refused before any money moves; the constraint is what makes that true
+/// under concurrency rather than by check-then-act. Goods are therefore
+/// single-ownership by construction — a consumable (buy N uses) is a different
+/// product and would need its own table, not a relaxed constraint here.
+///
+/// 🔴 `kind` IS WHAT LETS THE PAID-APP UNLOCK LAND WITHOUT A MIGRATION. An
+/// `app_unlock` entitlement is recorded exactly like any other and the platform
+/// does NOT act on it yet: the access gate is a later change that reads this
+/// column. Nothing in this repo branches on it today.
+///
+/// Application-generated id (`bge_<ulid>`).
+model BlockGoodEntitlement {
+  id                  String   @id
+
+  userId              Int      @map("user_id")
+  user                User     @relation("BlockGoodEntitlementOwner", fields: [userId], references: [id], onDelete: Restrict)
+  appBlockId          String   @map("app_block_id")
+  appBlock            AppBlock @relation("BlockGoodEntitlementAppBlock", fields: [appBlockId], references: [id], onDelete: Restrict)
+
+  goodId              String   @map("good_id")
+  /// 'good' | 'app_unlock' — see BLOCK_GOOD_KINDS.
+  kind                String   @default("good")
+  /// The opaque app payload, snapshotted from the manifest at purchase.
+  payload             Json     @default("{}")
+
+  /// The purchase that granted it. One-to-one: a purchase grants exactly one
+  /// entitlement, and an entitlement always has a purchase behind it.
+  purchaseId          String   @unique @map("purchase_id")
+  purchase            BlockGoodPurchase @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+
+  grantedAt           DateTime @default(now()) @map("granted_at") @db.Timestamptz(6)
+  /// Set when the purchase is refunded or the good is taken down. A revoked
+  /// entitlement is kept, never deleted — the row is the audit trail for a
+  /// reversal.
+  revokedAt           DateTime? @map("revoked_at") @db.Timestamptz(6)
+  revokeReason        String?  @map("revoke_reason")
+
+  /// No separate index for the entitlements read: the unique key's leading
+  /// (userId, appBlockId) prefix already serves it, measured identical on a
+  /// 2M-row fixture. See the migration for the numbers.
+  @@unique([userId, appBlockId, goodId], map: "block_good_entitlement_owner_good_uniq")
+  @@map("block_good_entitlement")
 }
 
 /// W3 flow C — App Blocks MEMBERSHIP / subscription attribution.
@@ -3996,10 +4242,22 @@ model BlockScopeInvocation {
   /// Intentionally FK-LESS text so the audit row SURVIVES deletion of the
   /// OauthClient it references (an audit trail must outlive the app).
   oauthClientId    String?  @map("oauth_client_id")
-  /// Discriminates the token population that made the call: `'app-block'` (an App
-  /// Block block-token, the historical default) vs `'external-oauth'` (a standard
-  /// external OAuth access token verified at `enforceTokenScope`). Additive:
-  /// existing rows backfill to `'app-block'`.
+  /// Discriminates the token population that made the call. THREE values, and this
+  /// comment is the single source for the generated type docs, so keep it complete:
+  ///   * `'app-block'`      — an App Block block-token, the historical default.
+  ///   * `'external-oauth'` — a standard external OAuth access token verified at
+  ///                          `enforceTokenScope`; carries no `app_block_id`.
+  ///   * `'private-run'`    — a block-token minted for a PRIVATE RUN: a moderator, the
+  ///                          owner, or an accepted listing collaborator running a
+  ///                          delisted/suspended app's deployed bundle. It carries the
+  ///                          app's REAL id, and this value is the ONLY thing keeping the
+  ///                          row out of that app owner's analytics, so it is a
+  ///                          load-bearing discriminator rather than a label. Written
+  ///                          only from the verified `privateRun` token claim; see
+  ///                          `scope-activity-predicate.ts`.
+  /// Free-text with NO CHECK constraint — the value space is enforced in TypeScript
+  /// (`BlockScopeInvocationSource`), not by the database. Additive: existing rows
+  /// backfill to `'app-block'` via the column DEFAULT.
   source           String   @default("app-block")
   scope            String
   endpoint         String
@@ -4034,9 +4292,11 @@ model BlockScopeInvocation {
 ///
 /// A grant is written at install / subscribe time (implicit first-consent) and
 /// extended on re-consent. `version` records the app version the grant was last
-/// taken against (informational). `revoked_at` (NULL = active) lets a future
-/// per-scope revoke flip the grant off without losing the audit row — a
-/// non-NULL revoked_at makes the mint path treat granted_scopes as empty.
+/// taken against (informational). `revoked_at` (NULL = active) is the WHOLE-GRANT
+/// revoke — a non-NULL revoked_at makes the mint path treat granted_scopes as
+/// empty. ⚠️ THIS PARAGRAPH USED TO CALL PER-SCOPE REVOKE "a future" FEATURE.
+/// It shipped: `revoked_scopes` below is the per-scope half, and `revoked_at` is
+/// now set by the revoke path itself when the last granted scope goes away.
 ///
 /// Application-generated id (`augr_<ulid>`).
 model AppUserScopeGrant {
@@ -4049,6 +4309,29 @@ model AppUserScopeGrant {
   grantedScopes  String[]  @default([]) @map("granted_scopes")
   grantedAt      DateTime  @default(now()) @map("granted_at") @db.Timestamptz(6)
   revokedAt      DateTime? @map("revoked_at") @db.Timestamptz(6)
+  /// PER-SCOPE REVOCATION — the SUPPRESSION LIST, not the absence of a grant.
+  ///
+  /// 🔴 A REVOKE CANNOT BE MODELLED AS REMOVAL FROM `granted_scopes`, AND THAT IS
+  /// THE WHOLE REASON THIS COLUMN EXISTS. `BlockRegistry.recordInstallConsent`
+  /// passes the app's ENTIRE consent-gated effective set into `recordScopeGrant`,
+  /// which UNIONS it into `granted_scopes` — so a revoke expressed only as removal
+  /// is silently undone by the user's next install or subscribe of that app, with
+  /// no consent prompt anywhere. A scope listed here is subtracted at every read
+  /// (`getGrantedScopes`), so a union that puts it back grants nothing.
+  ///
+  /// Cleared ONLY by an explicit prompted re-consent (`blocks.grantScopes` →
+  /// `recordScopeGrant({ clearRevocations: true })`), and then only for the scopes
+  /// that consent actually covered — never wholesale, or re-consenting to scope A
+  /// would resurrect a revoked scope B.
+  revokedScopes  String[]  @default([]) @map("revoked_scopes")
+  /// When the MOST RECENT per-scope revoke happened for this (user, app).
+  ///
+  /// ⚠️ NOT A PER-SCOPE TIMESTAMP, and deliberately not: `revoked_scopes` is a
+  /// TEXT[] with no room for one, and a per-scope time would need a child table.
+  /// Two revokes a week apart leave ONE value here — the later. So it is honest as
+  /// an APP-LEVEL "permissions last changed", and a UI must not render it beside an
+  /// individual scope as though it dated that scope's revoke.
+  revokedScopesAt DateTime? @map("revoked_scopes_at") @db.Timestamptz(6)
   /// The per-UTC-day Buzz ceiling the VIEWER set for THIS app at consent time.
   /// NULL = the user set no budget, and the app spends under the platform's own
   /// per-user daily ceiling (`BLOCK_BUZZ_CAP_PER_DAY`, 50,000) alone — which is
@@ -4649,6 +4932,8 @@ model Cosmetic {
   pHashHex            String?
   pHashVersion        String?
   pHashFailedAt      DateTime?
+  /// Bitwise `CosmeticFlag` (src/shared/constants/cosmetic-flags.constants.ts). Moderator-owned; creator edits never write it.
+  flags               Int                         @default(0)
   creator             User?                       @relation("CosmeticCreator", fields: [createdById], references: [id], onDelete: SetNull)
   UserCosmetic        UserCosmetic[]
   purchases           UserCosmeticShopPurchases[]
@@ -5923,6 +6208,7 @@ enum JobQueueType {
   BlockedImageDelete
   ImageScan
   ReplacedImageDelete
+  ImageStorageDelete
 }
 
 model JobQueue {
@@ -5930,6 +6216,7 @@ model JobQueue {
   entityType EntityType
   entityId   Int
   createdAt  DateTime     @default(now())
+  data       Json?
 
   @@id([entityType, entityId, type])
 }
@@ -6156,6 +6443,7 @@ enum AppealStatus {
   Pending
   Approved
   Rejected
+  Void
 }
 
 model Appeal {
@@ -6175,7 +6463,7 @@ model Appeal {
   internalNotes     String?
   buzzTransactionId String?
 
-  @@unique([entityType, entityId, userId])
+  @@index([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
 }
@@ -7973,6 +8261,20 @@ model GenerationPreset {
   @@index([userId, ecosystem])
 }
 
+/// A custom width × height a user saved. One list per user, offered on every
+/// model whose limits accept the size unchanged; greyed out where they don't.
+model GenerationSizePreset {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  width     Int
+  height    Int
+  createdAt DateTime @default(now())
+
+  @@unique([userId, width, height])
+  @@index([userId])
+}
+
 enum WildcardSetKind {
   System
   User
@@ -8726,4 +9028,154 @@ model BlurbReference {
   // RAW partial index (NOT expressible in Prisma — it carries a WHERE):
   // "BlurbReference_pending_idx" ON ("materializedAt") WHERE "pendingSince" IS NOT NULL.
   // Created in 20260825000000_add_blurbs (manual-apply).
+}
+
+// ============================================================================
+// Crucible - Head-to-head content competitions
+// ============================================================================
+
+enum CrucibleStatus {
+  Pending
+  Active
+  Completed
+  Cancelled
+}
+
+enum CrucibleIngestionStatus {
+  Pending
+  Scanned
+  Blocked
+  Error
+}
+
+model Crucible {
+  id                Int            @id @default(autoincrement())
+  userId            Int
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name              String
+  description       String?
+  imageId           Int?
+  image             Image?         @relation("CrucibleImage", fields: [imageId], references: [id], onDelete: SetNull)
+  heroImageId       Int?
+  heroImage         Image?         @relation("CrucibleHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
+  buzzType          String         @default("yellow")
+  nsfwLevel         Int            @default(0)
+  contentType       MediaType      @default(image)
+  entryFee          Int            @default(0)
+  seededPrizePool   Int            @default(0)
+  // Sort key for the feed, kept in step with seed + paid entries. Payouts and every shown pool
+  // derive from the entries instead (getCrucibleTotalPrizePool).
+  prizePool         Int            @default(0)
+  entryLimit        Int            @default(1)
+  // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
+  freeEntriesPerUser Int           @default(0)
+  maxTotalEntries   Int?
+  minViewSeconds    Int?
+  maxClipSeconds    Int?
+  prizePositions    Json           @default("[]")
+  allowedResources  Json?
+  // Base model names (basemodel.constants); an entry's checkpoint must be one of them.
+  allowedBaseModels String[]       @default([])
+  duration          Int            @default(480)
+  startAt           DateTime?
+  endAt             DateTime?
+  status            CrucibleStatus @default(Pending)
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  buzzTransactionId String?
+  seedTransactionId String?
+  // Text scan of name + description. Defaults to Scanned so rows from before the scan stay visible.
+  ingestion         CrucibleIngestionStatus @default(Scanned)
+  scannedAt         DateTime?
+  // The scan found the text adult: list surfaces show it only to viewers who browse R or above.
+  textNsfw          Boolean        @default(false)
+
+  entries     CrucibleEntry[]
+  reports     CrucibleReport[]
+  engagements CrucibleEngagement[]
+
+  @@index([userId], type: Hash)
+  @@index([status])
+  @@index([endAt])
+  @@index([startAt])
+  @@index([status, ingestion])
+}
+
+enum CrucibleEngagementType {
+  Notify
+}
+
+model CrucibleEngagement {
+  userId     Int
+  user       User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  crucibleId Int
+  crucible   Crucible               @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  type       CrucibleEngagementType
+  createdAt  DateTime               @default(now())
+
+  @@id([type, crucibleId, userId])
+  @@index([crucibleId])
+  @@index([userId], type: Hash)
+}
+
+model CrucibleReport {
+  crucibleId Int
+  crucible   Crucible @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  reportId   Int      @unique
+  report     Report   @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, crucibleId])
+  @@index([crucibleId], type: Hash)
+}
+
+model CrucibleEntry {
+  id                Int      @id @default(autoincrement())
+  crucibleId        Int
+  crucible          Crucible @relation(fields: [crucibleId], references: [id], onDelete: Cascade)
+  userId            Int
+  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // Null once its image is deleted: the entry and its fee stay, so the pool and a cancel's refund
+  // still count it.
+  imageId           Int?
+  image             Image?   @relation(fields: [imageId], references: [id], onDelete: SetNull)
+  score             Int      @default(1500)
+  voteCount         Int      @default(0)
+  position          Int?
+  buzzTransactionId String?
+  createdAt         DateTime @default(now())
+
+  @@index([crucibleId], type: Hash)
+  @@index([userId], type: Hash)
+  @@index([crucibleId, score(sort: Desc)])
+}
+
+enum PrizeSourceType {
+  Crucible
+  Challenge
+}
+
+// A Buzz prize owed to a user. The winner picks the currency when claiming; an unclaimed prize is
+// paid green at `autoClaimAt`.
+model Prize {
+  id                    Int             @id @default(autoincrement())
+  userId                Int
+  user                  User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sourceType            PrizeSourceType
+  sourceId              Int
+  subjectId             Int?
+  position              Int?
+  amount                Int
+  title                 String
+  // The source's ledger key. Currency-independent, so a prize can only ever be paid once.
+  externalTransactionId String          @unique
+  createdAt             DateTime        @default(now())
+  autoClaimAt           DateTime
+  claimedAt             DateTime?
+  buzzType              String? // 'green' | 'yellow'
+  autoClaimed           Boolean         @default(false)
+  paidAt                DateTime?
+  voidedAt              DateTime?
+
+  @@index([userId])
+  @@index([sourceType, sourceId])
 }

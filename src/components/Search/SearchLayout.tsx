@@ -116,8 +116,9 @@ export function SearchLayout({
   initialUiState?: UiState;
   /**
    * Render the search chrome without querying `indexName`. Used when the index is intentionally
-   * retired (image search — the images_v6 index has been deleted) so the page can show a
-   * maintenance notice in place of results instead of hitting an index that no longer exists.
+   * retired (image search — the images_v6 index still EXISTS but is empty and declares no
+   * filterable attributes) so the page can show a maintenance notice in place of results instead
+   * of querying an index where a filtered or sorted query errors and the rest return nothing.
    */
   maintenance?: boolean;
 }) {

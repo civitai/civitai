@@ -2,6 +2,7 @@ import '~/server/services/text-scan/profiles/index';
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
 import { bountyModerationAdapter } from '~/server/services/bounty-moderation.adapter';
 import { challengeModerationAdapter } from '~/server/services/challenge-moderation.adapter';
+import { crucibleModerationAdapter } from '~/server/services/crucible-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
 import { textScanShadowAdapters } from '~/server/services/text-scan/adapter';
@@ -23,6 +24,7 @@ import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-ca
 const moderationAdapters: Record<string, ModerationAdapter> = {
   Article: articleModerationAdapter,
   Challenge: challengeModerationAdapter,
+  Crucible: crucibleModerationAdapter,
   Model: modelModerationAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
   Bounty: bountyModerationAdapter,

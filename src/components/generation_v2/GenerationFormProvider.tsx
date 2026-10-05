@@ -194,12 +194,6 @@ const storageAdapter = createLocalStorageAdapter({
     { name: 'output', keys: ['ecosystem'], scope: 'output' },
     // ecosystem is scoped to workflow (different workflows may use different ecosystems)
     // { name: 'workflow', keys: ['ecosystem'], scope: 'workflow' },
-    {
-      name: 'workflow',
-      keys: ['quantity'],
-      scope: 'workflow',
-      condition: (ctx) => ctx.workflow === 'txt2img:draft',
-    },
     { name: 'workflow', keys: ['images', 'video'], scope: 'workflow' },
     // Ecosystem groups - settings scoped by group ID for grouped ecosystems
     // This allows settings to persist when switching between variants (e.g., Wan 2.5 <-> Wan 2.2)

@@ -31,6 +31,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconEdit,
+  IconSpeakerphone,
   IconExclamationMark,
   IconFlag,
   IconLock,
@@ -69,6 +70,7 @@ import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { ModelPromotionModal } from '~/components/Promotion/ModelPromotionModal';
 
 const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection'),
@@ -116,7 +118,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
-import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
+import { moderatorModelLookupPath } from '~/shared/constants/moderator-app';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useEngagedModelMembership } from '~/hooks/useEngagedModelMembership';
@@ -1079,7 +1081,7 @@ export default function ModelDetailsV2({
                           <IconDotsVertical size={20} />
                         </LegacyActionIcon>
                       </Menu.Target>
-                      <Menu.Dropdown>
+                      <Menu.Dropdown className="max-h-[70vh] overflow-y-auto">
                         {currentUser && isCreator && published && (
                           <Menu.Item
                             leftSection={<IconBan size={14} stroke={1.5} />}
@@ -1120,6 +1122,19 @@ export default function ModelDetailsV2({
                               Edit Model
                             </Menu.Item>
                           </>
+                        )}
+                        {isCreator && published && features.creatorPromotions && (
+                          <Menu.Item
+                            leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: ModelPromotionModal,
+                                props: { modelId: model.id },
+                              })
+                            }
+                          >
+                            Promote this model
+                          </Menu.Item>
                         )}
                         {features.collections && (
                           <AddToCollectionMenuItem
@@ -1184,11 +1199,8 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                             {isModerator && (
                               <>
-                                {/* The moderator app has no model page of its own; Bulk Image Manager
-                                    keyed to the model is every image across every version, which is
-                                    what a report about a model is about. */}
                                 <ModeratorLookupMenuItem
-                                  path={moderatorBulkImageManagerPath('model', model.id)}
+                                  path={moderatorModelLookupPath(model.id, selectedVersion?.id)}
                                 >
                                   Lookup Model
                                 </ModeratorLookupMenuItem>
@@ -1551,44 +1563,47 @@ export default function ModelDetailsV2({
           {versionCount > 1 ? (
             <ReorderVersionsModal modelId={model.id} opened={opened} onClose={toggle} />
           ) : null}
-          {canLoadBelowTheFold && (
-            <>
-              {(isOwner || model.hasSuggestedResources) && (
-                <>
-                  {model.hasSuggestedResources && <AdUnitTopSection />}
-                  {selectedVersion && (
-                    <AssociatedModels
-                      fromId={model.id}
-                      type="Suggested"
-                      ownerId={model.user.id}
-                      label={
-                        <Group gap={8} wrap="nowrap">
-                          Suggested Resources{' '}
-                          <InfoPopover>
-                            <Text size="sm" fw={400}>
-                              These are resources suggested by the creator of this model. They may
-                              be related to this model or created by the same user.
-                            </Text>
-                          </InfoPopover>
-                        </Group>
-                      }
-                    />
-                  )}
-                </>
-              )}
-              <AdUnitTopSection />
-              <ModelDiscussion
-                canDiscuss={canDiscuss}
-                onlyEarlyAccess={onlyEarlyAccess}
-                modelId={model.id}
-                modelUserId={model.user.id}
-                locked={model.locked || model.meta?.commentsLocked}
-              />
-            </>
-          )}
         </Container>
         {showRail && <div className={classes.rail}>{canShowRail && <AdUnitSide_1 />}</div>}
       </div>
+      {canLoadBelowTheFold && (
+        <>
+          {/* A sponsored card can run on a page with no suggestions of its own. */}
+          {(isOwner || model.hasSuggestedResources || features.creatorPromotions) && (
+            <>
+              {model.hasSuggestedResources && <AdUnitTopSection />}
+              {selectedVersion && (
+                <AssociatedModels
+                  fromId={model.id}
+                  type="Suggested"
+                  ownerId={model.user.id}
+                  label={
+                    <Group gap={8} wrap="nowrap">
+                      Suggested Resources{' '}
+                      <InfoPopover>
+                        <Text size="sm" fw={400}>
+                          These are resources suggested by the creator of this model. They may be
+                          related to this model or created by the same user.
+                        </Text>
+                      </InfoPopover>
+                    </Group>
+                  }
+                />
+              )}
+            </>
+          )}
+          <AdUnitTopSection />
+          <Container size="xl" my="xl">
+            <ModelDiscussion
+              canDiscuss={canDiscuss}
+              onlyEarlyAccess={onlyEarlyAccess}
+              modelId={model.id}
+              modelUserId={model.user.id}
+              locked={model.locked || model.meta?.commentsLocked}
+            />
+          </Container>
+        </>
+      )}
       {canLoadBelowTheFold && !model.locked && model.mode !== ModelModifier.TakenDown && (
         <Box id="gallery" mt="md">
           <ModelGallery

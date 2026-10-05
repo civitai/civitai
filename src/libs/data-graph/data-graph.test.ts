@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { DataGraph } from './data-graph';
 
@@ -62,5 +62,50 @@ describe('DataGraph external-context deps', () => {
     // Genuine change — must re-run exactly once.
     graph.setExt({ limits: { maxResources: 10 } });
     expect(counter.runs).toBe(afterInit + 1);
+  });
+});
+
+describe('watcher isolation', () => {
+  // A subscriber that throws used to abort the notification loop, so watchers registered after it
+  // stopped running and the write that triggered the notification failed too — unrelated parts of a
+  // form silently stopped updating, far from the thrower.
+  function makeSimpleGraph() {
+    return new DataGraph<{ ecosystem: string }>().node('ecosystem', {
+      output: z.string(),
+      defaultValue: 'sd',
+    });
+  }
+
+  it('runs the watchers after one that throws', () => {
+    const graph = makeSimpleGraph();
+    graph.init({}, {});
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    let after = 0;
+
+    graph.subscribe(() => {
+      throw new Error('boom');
+    });
+    graph.subscribe(() => {
+      after += 1;
+    });
+
+    expect(() => graph.set({ ecosystem: 'flux1' })).not.toThrow();
+    expect(after).toBe(1);
+    expect(errors).toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it('keeps the write that triggered the notification', () => {
+    const graph = makeSimpleGraph();
+    graph.init({}, {});
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    graph.subscribe(() => {
+      throw new Error('boom');
+    });
+    graph.set({ ecosystem: 'flux1' });
+
+    expect(graph.getSnapshot().ecosystem).toBe('flux1');
+    errors.mockRestore();
   });
 });

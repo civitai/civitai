@@ -47,6 +47,11 @@ import { ensureRegisterImageUploadRelayMetrics } from '~/server/prom/image-uploa
 // this counter was added to end, so leaving it unseeded would reproduce the defect one
 // level down.
 import { ensureRegisterCsamArchiveMetrics } from '~/server/metrics/csam-archive.metrics';
+// Same reason as the three neighbours above, for the App Blocks KV storage counters: two of
+// the four were absent in production purely because nothing had ever incremented them, and one
+// of those exists to be alerted on. Called from the handler rather than here because it must
+// await a read of the latency histogram's existing children before zeroing any of them.
+import { seedAppBlockStorageMetrics } from '~/server/prom/app-block-storage.metrics';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 ensureRegisterGenerationModelSubstitutionMetrics();
@@ -184,6 +189,8 @@ async function collectRegistryMetrics(
 }
 
 const handler = WebhookEndpoint(async (_, res: NextApiResponse) => {
+  await seedAppBlockStorageMetrics();
+
   const metrics = await collectRegistryMetrics(client.register, 'default');
 
   // Metrics emitted from the instrumentation webpack graph (e.g. the event-loop

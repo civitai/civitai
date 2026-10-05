@@ -101,6 +101,7 @@ import { Page } from '~/components/AppLayout/Page';
 import classes from './[[...slug]].module.scss';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getCurrencyConfig } from '~/shared/constants/currency.constants';
+import { isViewer } from '~/utils/is-viewer';
 
 const querySchema = z.object({
   id: z.coerce.number(),
@@ -160,7 +161,8 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
   const isDeletingImage = !!useIsMutating({ mutationKey: getQueryKey(trpc.image.delete) });
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const isOwnerOrMod = currentUser?.id === bounty?.user?.id || (currentUser?.isModerator ?? false);
+  const isOwnerOrMod =
+    isViewer(currentUser, bounty?.user?.id) || (currentUser?.isModerator ?? false);
 
   useDidUpdate(() => {
     if (bounty?.id && !isDeletingImage) queryUtils.bounty.getById.invalidate({ id: bounty.id });

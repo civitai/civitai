@@ -38,7 +38,6 @@ const outputFormatOptions = ['jpeg', 'png'] as const;
 const NEW_TO_OLD: Record<string, string> = {
   'image:create': 'txt2img',
   'image:edit': 'img2img:edit',
-  'image:draft': 'txt2img:draft',
   'image:face-fix': 'txt2img:face-fix',
   'image:hires-fix': 'txt2img:hires-fix',
   'image:upscale': 'img2img:upscale',

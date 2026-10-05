@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { reportDetail, reportStatusVariant } from '$lib/reports';
+  import { activityLabel } from '$lib/mod-activity';
   import { userLookupUrl } from '$lib/entity-url';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
@@ -169,7 +170,7 @@
       <ul class="space-y-1 text-sm">
         {#each modActivity.rows as a (a.id)}
           <li class="flex flex-wrap items-baseline gap-x-2">
-            <Badge variant="secondary">{a.activity}</Badge>
+            <Badge variant="secondary">{activityLabel(a.activity)}</Badge>
             <span class="text-xs text-dark-2">
               {a.moderatorUsername ?? (a.moderatorId ? `#${a.moderatorId}` : 'system')} · {dateTime(
                 a.createdAt

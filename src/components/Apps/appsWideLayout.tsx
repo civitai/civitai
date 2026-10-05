@@ -143,23 +143,43 @@ export function appsTableColumnProblems(label: string, columns: AppsTableColumns
 }
 
 /**
- * The `/apps/review` QUEUE table (`UnifiedReviewList`) — Kind · **App** · Submitter ·
- * date · [Deploy] · action.
+ * The `/apps/review` QUEUE table (`UnifiedReviewList`) — Kind · **App** · Version ·
+ * Submitter · Plays · date · [Deploy] · action.
  *
  * The App column is primary: it is the only cell carrying a variable-length identity
- * (a slug plus an optional title), and it is what a moderator scans down. Everything
- * else is a badge, a username, a formatted date or a button — all of which have a
- * natural width that more space does not improve.
+ * (an icon, a slug and an optional title), and it is what a moderator scans down.
+ * Everything else is a badge, a semver, a user chip, an abbreviated count, a relative
+ * age or a button — all of which have a natural width that more space does not improve.
  *
  * The Deploy column exists on the Approved tab only, so BOTH shapes are enumerated
  * rather than one being patched at the call site. Its presence is decided by whether a
  * retrigger handler was supplied — i.e. by data, never by width.
+ *
+ * 🔴 THE DATE SHARE WENT DOWN WHEN THE COLUMN WENT RELATIVE, AND THAT IS THE DIRECTION
+ * THIS MODULE'S OWN RULE REQUIRES. It was 9 against a `toLocaleString()` stamp; the cell
+ * now renders `5h` / `2mo`, whose max-content is a fraction of that, so 9 would have been
+ * ~130px of padding per row at the wide width — "a share larger than its cell needs is
+ * padding relabelled", which is the defect, not the fix.
+ *
+ * 🔴 VERSION AND SUBMITTER ARE THE TWO BIG FIXED SHARES, which is not where intuition puts
+ * them. Version is a `<Code>` semver NEXT TO a violet `first version` badge on a nowrap
+ * row. Submitter is an avatar plus a username, sized to the longest the schema allows
+ * (`usernameInputSchema.max(25)`): `UserAvatar`'s own row is `wrap="nowrap"`, so a long
+ * name moves the cell's MIN-CONTENT rather than the row height, and a share under that
+ * simply stops binding — automatic table layout hands the column its min-content anyway and
+ * the primary absorbs less.
+ *
+ * 🔴 NEITHER IS SIZED BY EYE, AND NEITHER MAY BE JUSTIFIED BY A FIGURE WRITTEN HERE. The
+ * declared-share and Version-containment arms in `AppsWideLayout.geometry.test.tsx` render
+ * the real components at the real bound and red on a share below its cell; that is the
+ * record. A pixel value in this comment is not — it moves with any font, padding or `size`
+ * change, with nothing asserting it.
  */
 export const APPS_REVIEW_QUEUE_COLUMNS = {
-  /** Pending / Rejected: Kind · App · Submitter · date · action. */
-  withoutDeploy: [6, null, 6, 9, 6] as AppsTableColumns,
-  /** Approved: Kind · App · Submitter · date · Deploy · action. */
-  withDeploy: [5, null, 5, 8, 8, 5] as AppsTableColumns,
+  /** Pending / Rejected: Kind · App · Version · Submitter · Plays · date · action. */
+  withoutDeploy: [6, null, 14, 13, 5, 5, 6] as AppsTableColumns,
+  /** Approved: Kind · App · Version · Submitter · Plays · date · Deploy · action. */
+  withDeploy: [6, null, 14, 13, 5, 5, 8, 6] as AppsTableColumns,
 } as const;
 
 /**
@@ -368,6 +388,22 @@ export const APPS_ACTIVE_PREVIEWS_COLUMNS: AppsTableColumns = [3, 2, 2, 2, null]
  * (The `before` @2560 row reproduces the recorded `natural @2560` figures exactly, which
  * is the control on the re-measurement: the instrument agrees with the number that was
  * already in this comment before it was pointed at anything new.)
+ *
+ * ── ⚠️ THE SCOPE OF ALL OF THE ABOVE: CONTAINERS ≥768 ─────────────────────────
+ *
+ * Every number in this note comes from the 768 / 1200 / 1440 / 2560 ladder, and the
+ * `no-surplus` argument is "max-content sum ≈ container content width AT 768". Nothing in
+ * it is wrong; it simply never described the panel's OTHER mount.
+ * `AppPermissionsActivityDrawer` renders it in a Mantine `size="md"` drawer — 27.5rem,
+ * ~408px of content — where ~735px of max-content is ~80% over and overflow is certain.
+ *
+ * So the exemption now states its own bound: NO-SURPLUS AT ≥768, and below ~560px the panel
+ * renders the STACKED variant (`AppActivityPanel.module.scss`, a `container-type: inline-size`
+ * query) where each row is a card and there are no columns to ledger. A `<colgroup>` is inert
+ * against `display: block` cells, so the two decisions do not interact. Both halves are
+ * measured: `the activity table renders ONE LINE per cell at every width` holds the ≥768
+ * claim, and `the drawer's activity feed renders the STACKED variant, and the wide page does
+ * not` holds the narrow one — `__tests__/appsWideLayout.test.ts` requires both arms by name.
  */
 
 /**

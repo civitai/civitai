@@ -17,6 +17,33 @@
 // against the real wire contract instead of a hand-copied literal union.
 import type { AppWorkflow } from '~/server/services/blocks/workflow.service';
 
+/**
+ * `Post.metadata` key carrying the publishing app's `OauthClient.id`.
+ *
+ * SERVER-AUTHORITATIVE BY CONSTRUCTION: no post input schema has a `metadata`
+ * field (`postCreateSchema` / `postUpdateSchema` both omit it), so no client —
+ * block, browser or API — can set or forge it, and the server writes it
+ * unconditionally on the create path so a block cannot suppress it either. The
+ * one native path that mutates `Post.metadata` (`updatePost`'s anti-bump raw
+ * UPDATE) uses targeted key-deletes, so adding a key is safe.
+ *
+ * Same key name and same value semantics as the `Image` precedent
+ * (`BLOCK_PUBLISHED_APP_ID_META_KEY`) so ONE moderation sweep can read both.
+ *
+ * 🔴 THE BADGE MUST RENDER FROM THIS COLUMN, NOT FROM THE COPY. A block can write
+ * "made with X" into `title`/`detail` and be lying; it cannot write this.
+ *
+ * 🔴 IT LIVES IN THE PURE MODULE BECAUSE IT NOW HAS A READER AS WELL AS A WRITER.
+ * `block-post.service.ts` (the writer) re-exports it; `post-app-chip.logic.ts`
+ * (the post-detail chip's reader) imports it from here. The reader is a pure
+ * projection and cannot import the service without dragging Prisma into it — so
+ * before this move the reader had to re-spell the literal, and a rename on the
+ * write side would have killed the chip silently, with no test able to see it.
+ * One declaration makes that a compile error instead. The three-holder ledger in
+ * `__tests__/block-post.service.test.ts` pins the relationship.
+ */
+export const BLOCK_POST_APP_ID_META_KEY = 'blockPublishedAppId' as const;
+
 /** Hard ceiling on images in ONE app-created post. */
 export const BLOCK_POST_MAX_IMAGES = 20;
 

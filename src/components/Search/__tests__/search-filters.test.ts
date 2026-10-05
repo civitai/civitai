@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildBrowsingLevelClause,
   buildBrowsingLevelFilters,
+  buildMinorExclusionFilter,
   joinFilterClauses,
 } from '~/components/Search/search-filters';
 
@@ -76,9 +77,7 @@ describe('joinFilterClauses', () => {
 // Either guard alone hides the `()`, so the assembled expression is asserted separately from both.
 describe('the expression BrowsingLevelFilter hands to ApplyCustomFilter', () => {
   it('is empty, not "()", when the browsing level is empty', () => {
-    const filters = joinFilterClauses(
-      buildBrowsingLevelFilters({ attribute, browsingLevel: 0 })
-    );
+    const filters = joinFilterClauses(buildBrowsingLevelFilters({ attribute, browsingLevel: 0 }));
 
     expect(filters).toBe('');
     expect(filters).not.toContain('()');
@@ -103,5 +102,36 @@ describe('the expression BrowsingLevelFilter hands to ApplyCustomFilter', () => 
     );
 
     expect(filters).toBe('(type=Model) AND (nsfwLevel=1 OR nsfwLevel=2)');
+  });
+});
+
+describe('buildMinorExclusionFilter', () => {
+  const on = { disableMinor: true };
+  const owner = { id: 7, username: 'owner' };
+
+  it('exempts the viewer on models by id', () => {
+    expect(
+      buildMinorExclusionFilter({ targetIndex: 'models', addons: on, currentUser: owner })
+    ).toBe('minor != true OR user.id = 7');
+  });
+
+  it('applies to everyone when no one is signed in', () => {
+    expect(
+      buildMinorExclusionFilter({ targetIndex: 'models', addons: on, currentUser: null })
+    ).toBe('minor != true');
+  });
+
+  // The images index has no filterable user id, and the owner is never matched by username.
+  it('exempts no one on images', () => {
+    expect(
+      buildMinorExclusionFilter({ targetIndex: 'images', addons: on, currentUser: owner })
+    ).toBe('minor != true');
+  });
+
+  it('says nothing when the addon is off or the index has no minor attribute', () => {
+    expect(
+      buildMinorExclusionFilter({ targetIndex: 'models', addons: { disableMinor: false } })
+    ).toBeNull();
+    expect(buildMinorExclusionFilter({ targetIndex: 'articles', addons: on })).toBeNull();
   });
 });

@@ -4,7 +4,6 @@ import {
   Availability,
   MediaType,
   MetricTimeframe,
-  TagTarget,
   TagType,
   UserHubSourceType,
 } from '~/shared/utils/prisma/enums';
@@ -91,14 +90,24 @@ export const HUB_COLLECTION_SOURCES_ENABLED = false;
  *
  * The picker and the write path now read this through ONE `hubTagWhere`, so the
  * vocabulary cannot be offered and refused by two different rules. It used to be two:
- * the client picker called `getTags` (array OVERLAP, ANY) while the server used
- * `hasEvery` (ALL) — identical at one `entityType` and divergent at two. Adding a
- * second target is safe now; keep it that way by not reintroducing a client-side copy.
+ * the client picker called `getTags` while the server used a `where` fragment; keep it
+ * one by not reintroducing a client-side copy.
+ *
+ * Eligibility follows ACTUAL image usage, not `Tag.target`. The image tagger applies
+ * many tags whose `target` never gains Image (it keeps reading {Model,Post}), yet each
+ * is carried by real images and returns real hub results — so gating on `target` hid
+ * them. `hubTagWhere` reads AllTime `TagMetric.imageCount` instead — the same number the
+ * picker ranks by, so a tag that would collect nothing is also the one left out. `types`
+ * still bounds which kinds of tag qualify.
+ *
+ * The trade this makes explicit: `imageCount` is a periodically-recomputed aggregate,
+ * not tag state, so a tag whose AllTime metric row has not caught up is refused until
+ * the metric job runs — where `target` admitted a used tag the moment it was applied.
+ * Accepted: a tag with no counted images returns an empty hub anyway.
  *
  * See `hub-moderation-tag-vocabulary.test.ts` before narrowing any of this.
  */
 export const HUB_TAG_SOURCE_FILTER = {
-  entityType: [TagTarget.Image],
   types: [TagType.UserGenerated, TagType.Label, TagType.Moderation],
 } as const;
 

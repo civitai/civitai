@@ -1,5 +1,3 @@
-import dayjs from '~/shared/utils/dayjs';
-
 import * as z from 'zod';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
@@ -10,6 +8,7 @@ import {
   baseQuerySchema,
   getByIdSchema,
   infiniteQuerySchema,
+  keysetCursorSchema,
   paginationSchema,
   periodModeSchema,
   userPreferencesSchema,
@@ -59,14 +58,7 @@ export const getAllModelsSchema = z.object({
 
   limit: z.preprocess((val) => Number(val), z.number().min(0).max(100)).optional(),
   page: z.preprocess((val) => Number(val), z.number().min(1)).optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: keysetCursorSchema.optional(),
   query: z.string().optional(),
   tag: z.string().optional(),
   tagname: z.string().optional(),
@@ -254,6 +246,27 @@ export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSch
 export const updateGallerySettingsSchema = z.object({
   id: z.number(),
   gallerySettings: modelGallerySettingsInput.nullable(),
+});
+
+const creatorGalleryHiddenUserNote = z
+  .string()
+  .trim()
+  .max(constants.modelGallery.maxCreatorHiddenUserNoteLength)
+  .nullish();
+
+export type UpsertCreatorGalleryHiddenUserInput = z.infer<
+  typeof upsertCreatorGalleryHiddenUserSchema
+>;
+export const upsertCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
+  note: creatorGalleryHiddenUserNote,
+});
+
+export type RemoveCreatorGalleryHiddenUserInput = z.infer<
+  typeof removeCreatorGalleryHiddenUserSchema
+>;
+export const removeCreatorGalleryHiddenUserSchema = z.object({
+  userId: z.number().int().positive(),
 });
 
 export type CopyGallerySettingsInput = z.infer<typeof copyGallerySettingsSchema>;

@@ -32,6 +32,7 @@ import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { SponsoredBadge } from '~/components/Promotion/SponsoredBadge';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -113,6 +114,11 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           className={clsx({ ['border']: !pinned })}
         >
           <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          {data.sponsored && (
+            <div className="relative z-10 flex px-2 pt-2">
+              <SponsoredBadge kind="post" />
+            </div>
+          )}
           {data.user.id !== -1 && <ImagesAsPostsCardHeader {...props} cosmetic={cosmetic} />}
 
           <div className="relative flex-1 overflow-hidden">

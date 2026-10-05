@@ -11,6 +11,8 @@ export interface UploadedBlob {
   url?: string | null;
   available: boolean;
   blockedReason?: string | null;
+  /** The scan's rating (`pg`…`xxx`, `na`). */
+  nsfwLevel?: string | null;
 }
 
 export class UploadError extends Error {

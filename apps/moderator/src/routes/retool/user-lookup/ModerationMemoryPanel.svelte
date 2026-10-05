@@ -5,9 +5,10 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { LINK_CLASS } from '$lib/format';
   import { fetchMemory } from './user-memory';
   import CannedReasonPicker from '$lib/components/CannedReasonPicker.svelte';
+  import ModeratorNoteList from '$lib/components/ModeratorNoteList.svelte';
   import StrikeList from '$lib/components/StrikeList.svelte';
   import { STRIKE_REASONS } from '$lib/moderation-reasons';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -28,7 +29,6 @@
 
   const memory = $derived(browser ? fetchMemory(userId, version) : null);
 
-  let editing = $state<number | null>(null);
   let adding = $state(false);
   let striking = $state(false);
   let strikeReason = $state('');
@@ -38,7 +38,6 @@
   // including a 744M-row scan.
   const notesForm = new FormState({
     onSuccess: () => {
-      editing = null;
       adding = false;
       version += 1;
     },
@@ -118,47 +117,20 @@
 
       {#if !result}
         <p class="text-sm text-dark-2">Loading notes…</p>
-      {:else if result.notes.length === 0}
-        <p class="text-sm text-dark-2">No notes on this account.</p>
       {:else}
-        <ul class="space-y-3">
-          {#each result.notes as note (note.id)}
-            <li class="border-b border-dark-4 pb-3 last:border-0 last:pb-0">
-              {#if editing === note.id}
-                <form method="POST" action="?/editNote" use:enhance={notesForm.enhance}>
-                  <input type="hidden" name="id" value={note.id} />
-                  <Textarea name="notes" rows={3} value={note.notes ?? ''} required />
-                  <div class="mt-2 flex gap-2">
-                    <Button type="submit" size="sm" disabled={notesForm.submitting}>Save</Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onclick={() => (editing = null)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </form>
-              {:else}
-                <p class="text-sm whitespace-pre-wrap text-dark-0">{note.notes}</p>
-                <div class="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs text-dark-2">
-                  <span>{note.lastUpdateBy ?? 'unknown'}</span>
-                  <span>{dateTime(note.lastUpdate)}</span>
-                  {#if note.isMine}
-                    <button
-                      type="button"
-                      class={LINK_CLASS}
-                      onclick={() => (editing = note.id)}
-                    >
-                      edit
-                    </button>
-                  {/if}
-                </div>
-              {/if}
-            </li>
-          {/each}
-        </ul>
+        <ModeratorNoteList
+          notes={result.notes.map((n) => ({
+            id: n.id,
+            content: n.notes,
+            author: n.lastUpdateBy,
+            at: n.lastUpdate,
+            isMine: n.isMine,
+          }))}
+          empty="No notes on this account."
+          editAction="?/editNote"
+          field="notes"
+          onSaved={() => (version += 1)}
+        />
       {/if}
     {:catch}
       <p class="text-sm text-red-300">Could not load notes.</p>

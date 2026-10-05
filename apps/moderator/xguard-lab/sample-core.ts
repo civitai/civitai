@@ -47,7 +47,7 @@ type ChRow = {
 // rather than escaped — this is a parameter an HTTP caller now controls.
 const LABEL_PATTERN = /^[A-Za-z][A-Za-z0-9_]*$/;
 
-async function clickhouse<T>(sql: string, config: ClickHouseConfig): Promise<T[]> {
+export async function clickhouse<T>(sql: string, config: ClickHouseConfig): Promise<T[]> {
   const auth = Buffer.from(`${config.username ?? 'default'}:${config.password ?? ''}`).toString(
     'base64'
   );

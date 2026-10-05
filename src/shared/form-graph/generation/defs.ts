@@ -2,8 +2,22 @@ import { z } from 'zod';
 import { rootScope } from 'form-graph';
 import type { FieldDef } from 'form-graph';
 import type { VersionGroup } from './checkpoint';
-import { MAX_SEED, sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
-import { findClosestAspectRatio } from '~/utils/aspect-ratio-helpers';
+import {
+  CUSTOM_ASPECT_RATIO,
+  MAX_SEED,
+  flux1ProAspectRatioBuckets,
+  flux1ProCustomDimensionLimits,
+  fourMegapixelCustomDimensionLimits,
+  sdxlCustomDimensionLimits,
+  twoMegapixelCustomDimensionLimits,
+  sdxlFullAspectRatioBuckets,
+  sdxlFullPriorityAspectRatios,
+} from '~/shared/constants/generation.constants';
+import {
+  findClosestAspectRatio,
+  fitCustomDimensions,
+  type CustomDimensionLimits,
+} from '~/utils/aspect-ratio-helpers';
 import { snippetReferenceSchema } from '~/shared/data-graph/schemas/snippet-schema';
 import {
   controlNetCategoryLabels,
@@ -96,6 +110,8 @@ export interface AspectRatioValue {
 export interface AspectRatioMeta {
   options: AspectRatioOption[];
   priorityOptions?: string[];
+  /** Present when the ecosystem takes a custom width × height; the picker offers "Custom". */
+  custom?: CustomDimensionLimits;
 }
 
 /** common.ts `aspectRatioNode` */
@@ -103,8 +119,18 @@ export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
   options: AspectRatioOption[];
   default?: string;
   priorityOptions?: string[];
+  /** Accept `{ value: 'custom', width, height }`, fitted inside these limits. */
+  custom?: CustomDimensionLimits;
 }) {
   const options = opts.options;
+  const custom = opts.custom;
+  // Custom sizes go through the same fitting on every path — the client's pick, a
+  // remix, and the server's re-parse — so nothing outside the limits is ever sent.
+  const fitCustom = (val: { width?: number; height?: number }): AspectRatioValue | undefined => {
+    if (!custom || !val.width || !val.height) return undefined;
+    const fit = fitCustomDimensions({ width: val.width, height: val.height }, custom);
+    return fit && { value: CUSTOM_ASPECT_RATIO, ...fit };
+  };
   const defaultOption = options.find((o) => o.value === (opts.default ?? '1:1')) ?? options[0]!;
   const toValue = ({ value, width, height }: AspectRatioOption): AspectRatioValue => ({
     value,
@@ -125,6 +151,10 @@ export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
       .transform((val) => {
         if (!val) return toValue(defaultOption);
         const value = typeof val === 'string' ? val : val.value;
+        if (value === CUSTOM_ASPECT_RATIO && typeof val === 'object') {
+          const fitted = fitCustom(val);
+          if (fitted) return fitted;
+        }
         const exact = options.find((o) => o.value === value);
         if (exact) return toValue(exact);
         if (typeof val === 'object' && val.width && val.height) {
@@ -138,7 +168,41 @@ export const aspectRatioDef = cachedFactory(function aspectRatioDef(opts: {
       }),
     output: z.object({ value: z.string(), width: z.number(), height: z.number() }),
     default: toValue(defaultOption),
-    meta: { options, ...(opts.priorityOptions ? { priorityOptions: opts.priorityOptions } : {}) },
+    // Output checks SHAPE, not membership, so an out-of-set ratio would validate
+    // and be submitted rather than blocked — the quiet half of the same problem
+    // the other defs' `correct` hooks solve loudly.
+    //
+    // Membership is by label AND size: Flux Ultra's 16:9 is 2752×1536 and
+    // Standard's is 1344×768, and the modes share one aspectRatio, so a label-only
+    // check left Ultra's size in state after a switch. (The server re-parses through
+    // `input` and generated the right size; only the client state was wrong.)
+    correct: (value) => {
+      if (value.value === CUSTOM_ASPECT_RATIO) {
+        const fitted = fitCustom(value);
+        if (!fitted)
+          return {
+            value: toValue(findClosestAspectRatio(value, options)),
+            reason: 'ratio_unavailable',
+          };
+        return fitted.width === value.width && fitted.height === value.height
+          ? undefined
+          : { value: fitted, reason: 'dimensions_fitted' };
+      }
+      const exact = options.find((o) => o.value === value.value);
+      if (!exact)
+        return {
+          value: toValue(findClosestAspectRatio(value, options)),
+          reason: 'ratio_unavailable',
+        };
+      if (exact.width !== value.width || exact.height !== value.height)
+        return { value: toValue(exact), reason: 'ratio_resized' };
+      return undefined;
+    },
+    meta: {
+      options,
+      ...(opts.priorityOptions ? { priorityOptions: opts.priorityOptions } : {}),
+      ...(custom ? { custom } : {}),
+    },
   } satisfies FieldDef<AspectRatioValue, AspectRatioMeta>;
 });
 
@@ -458,7 +522,7 @@ export const defaultSamplerPresets = [
 
 // --- quantity -------------------------------------------------------------------
 
-/** common.ts `quantityNode`: min and default both equal the step (draft = 4s). */
+/** common.ts `quantityNode`: min and default both equal the step. */
 export const quantityDef = cachedFactory(function quantityDef(opts: {
   max: number;
   step?: number;
@@ -774,4 +838,34 @@ export const guidancePresetsLowBalHigh = [
   { label: 'High', value: 7 },
 ];
 
-export const SDXL_SQUARE_AR = aspectRatioDef({ options: sdxlAspectRatioBuckets, default: '1:1' });
+/** All nine SDXL buckets: 3:2 / 1:1 / 2:3 in the row, the rest behind More. */
+export const SDXL_FULL_AR = aspectRatioDef({
+  options: sdxlFullAspectRatioBuckets,
+  priorityOptions: sdxlFullPriorityAspectRatios,
+  default: '1:1',
+  custom: sdxlCustomDimensionLimits,
+});
+
+/** SDXL_FULL_AR for models documented to ~2 MP: the size warning moves up to 2 MP. */
+export const SDXL_FULL_AR_2MP = aspectRatioDef({
+  options: sdxlFullAspectRatioBuckets,
+  priorityOptions: sdxlFullPriorityAspectRatios,
+  default: '1:1',
+  custom: twoMegapixelCustomDimensionLimits,
+});
+
+/** SDXL_FULL_AR for models documented to ~4 MP: custom sizes up to the 4 MP ceiling. */
+export const SDXL_FULL_AR_4MP = aspectRatioDef({
+  options: sdxlFullAspectRatioBuckets,
+  priorityOptions: sdxlFullPriorityAspectRatios,
+  default: '1:1',
+  custom: fourMegapixelCustomDimensionLimits,
+});
+
+/** SDXL_FULL_AR minus the buckets over Flux.1 Pro's 1440 side limit. */
+export const FLUX1_PRO_AR = aspectRatioDef({
+  options: flux1ProAspectRatioBuckets,
+  priorityOptions: sdxlFullPriorityAspectRatios,
+  default: '1:1',
+  custom: flux1ProCustomDimensionLimits,
+});

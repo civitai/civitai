@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'fs';
 import { join } from 'path';
-import { stripComments, stripCommentsAndStrings } from '../../../../test/strip-comments';
+import { stripComments } from '../../../../test/strip-comments';
 
 /**
  * Money copy must not describe a disbursement that does not run.
@@ -17,10 +17,18 @@ import { stripComments, stripCommentsAndStrings } from '../../../../test/strip-c
  * have been exactly the kind of unchecked claim it exists to forbid.
  *
  * Nothing could have caught them, because each was prose agreeing only with other prose.
- * `mintPayoutForOwner` is the ONLY writer of `paidOutAt`/`payoutId` and has no production
- * caller; the weekly `bulk-payout-block-attributions` job is registered and does run, but
- * aggregates, logs to Axiom and writes nothing. So the cadence was invented, and the copy
- * was the only place it existed.
+ * `mintPayoutForOwner` was the ONLY writer of `paidOutAt`/`payoutId` and never had a
+ * production caller; the weekly `bulk-payout-block-attributions` job was registered and did
+ * run, but aggregated, logged to Axiom and wrote nothing. So the cadence was invented, and
+ * the copy was the only place it existed.
+ *
+ * 🔴 BOTH ARE NOW GONE, WHICH MAKES THE STATE GUARDS STRONGER, NOT UNNECESSARY. The mint and
+ * the stub cron were removed rather than kept inert, so the STATE half below no longer asks
+ * "is the rail still unwired" — it asserts the rail DOES NOT EXIST: zero references to the
+ * mint in any non-test code file under `src`/`packages`/`apps`/`scripts`, and no
+ * `bulk-payout-block-attributions` module and no registration of it in the job array. Each
+ * half carries a positive control, because "0 occurrences" and "a scan wired to nothing" are
+ * otherwise the same observation.
  *
  * 🔴 THIS ASSERTS A RELATIONSHIP, NOT A VOCABULARY, and it has both directions — the shape
  * `standaloneWordingCallSites.test.ts` uses in the next directory for the same reason.
@@ -42,9 +50,9 @@ import { stripComments, stripCommentsAndStrings } from '../../../../test/strip-c
  *   both are asserted directly rather than trusted. The rail half is an exact per-file
  *   OCCURRENCE ledger over RAW text, for the polarity reason recorded at that test.
  *
- * If you are here because you WIRED the payout rail: the `payout rail is still unwired`
- * guard is the one that should have failed first. Both copy strings may then legitimately
- * promise a cadence again — update them and this file together, in that order.
+ * If you are here because you BUILT a payout rail: the `payout rail does not exist` guard is
+ * the one that should have failed first. Both copy strings may then legitimately promise a
+ * cadence again — update them and this file together, in that order.
  */
 
 const REPO_ROOT = join(__dirname, '../../../..');
@@ -72,22 +80,48 @@ const REVENUE_PAGE = 'src/pages/apps/revenue.tsx';
 const REVENUE_PANEL = 'src/components/AppBlocks/RevenuePanel.tsx';
 const EARNINGS_PANEL = 'src/components/Apps/AppEarningsPanel.tsx';
 const EARNINGS_ROUTER = 'src/server/routers/app-collaborators.router.ts';
-/** The only writer of `paidOutAt` / `payoutId`. */
+/** The REMOVED mint — was the only writer of `paidOutAt` / `payoutId`. */
 const PAYOUT_MINT = 'mintPayoutForOwner';
+/**
+ * A real exported symbol from the module the mint used to live in, scanned with the SAME
+ * machinery as the positive control for it. Without this, `PAYOUT_MINT`'s zero is
+ * indistinguishable from a scan that matches nothing because the regex, the walk or the roots
+ * are wrong.
+ */
+const PAYOUT_MINT_CONTROL = 'getRevenueForOwner';
+/** The REMOVED weekly stub cron — neither the module nor the registration may come back. */
+const PAYOUT_JOB_MODULE = 'src/server/jobs/bulk-payout-block-attributions.ts';
+const PAYOUT_JOB_EXPORT = 'bulkPayoutBlockAttributions';
+const RUN_JOBS = 'src/pages/api/webhooks/run-jobs/[[...run]].ts';
+/** A block-attribution job that IS still registered — the run-jobs read's positive control. */
+const RUN_JOBS_CONTROL = 'confirmPendingBlockAttributions';
 
 function read(relPath: string) {
   return readFileSync(join(REPO_ROOT, relPath), 'utf8');
 }
 
-function walk(dir: string, out: string[] = []): string[] {
+/**
+ * `.ts`/`.tsx` only by default, which is what the COPY ledger below wants.
+ *
+ * 🔴 The mint ledger passes `CODE_FILES` instead, and the difference is the point: a
+ * caller could live in a `.mjs` script or a Svelte component, and a guard whose headline
+ * says "anywhere a caller could live" while walking `.tsx?` alone would stay green
+ * through exactly that. It is not a rounding error: the roots hold hundreds of such
+ * files — Svelte sources under both `packages/civitai-ui` and `apps/*`, JS under
+ * `apps/*`, and `scripts/*.mjs`.
+ */
+function walk(dir: string, out: string[] = [], match = /\.tsx?$/): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === '.next') continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
+    if (statSync(full).isDirectory()) walk(full, out, match);
+    else if (match.test(entry)) out.push(full);
   }
   return out;
 }
+
+/** Every extension a production caller of the mint could be written in. */
+const CODE_FILES = /\.(tsx?|jsx?|mjs|cjs|svelte)$/;
 
 const rel = (p: string) =>
   p
@@ -100,17 +134,18 @@ const rel = (p: string) =>
  *
  * Stripping (via the shared `test/strip-comments` — not a local copy, since that module
  * exists precisely because the technique was re-derived at a second site and lost a case)
- * is used only for assertions of the form "this code is NOT here", on files already pinned
- * by name: the two prose mentions of the mint, and the payout job's write scan. There,
- * dropping comments is what stops the job header's call-SHAPED wiring instruction from
- * reading as a live call.
+ * is used only where the assertion is about CODE SHAPE on a file pinned by name — today just
+ * the earnings router / trpc gate reads at the bottom of this file.
  *
- * It is NOT used for the mint LEDGER, which scans raw text. That module documents itself as
- * biased toward over-stripping because over-stripping "turns the guard RED, which is the
- * safe direction" — true for its other callers, which assert a call IS present. For a guard
- * asserting ABSENCE the same bias turns it GREEN, so the inherited argument inverts. The
- * ledger therefore never strips, and each scan carries a positive control that what it
- * counts was actually found.
+ * It is NOT used for the mint LEDGER or the job-registration read, which scan raw text. That
+ * module documents itself as biased toward over-stripping because over-stripping "turns the
+ * guard RED, which is the safe direction" — true for its other callers, which assert a call IS
+ * present. For a guard asserting ABSENCE the same bias turns it GREEN, so the inherited
+ * argument inverts. Those scans therefore never strip, and each carries a positive control
+ * that the scan can find something at all. (Raw text is also what makes the mint ledger
+ * strictly stronger here: a comment merely NAMING the removed mint fails it, which is the
+ * right polarity — the point is that nothing in the tree points a reader at a rail that is
+ * gone.)
  */
 
 /**
@@ -140,6 +175,33 @@ function prose(block: string) {
     .trim();
 }
 
+/**
+ * The first single-quoted string literal after a cursor, CONCATENATING a `'a' + 'b'` run.
+ *
+ * 🔴 The run-joining is the point, not decoration. A single-literal regex reads only the
+ * first piece, so the moment prettier wraps a long string into a concatenation — which it
+ * does at the print width, i.e. exactly for the sentences this file pins — the pin would
+ * silently start comparing against a FRAGMENT and pass on a reworded tail. That is the
+ * vacuous-green shape this file exists to prevent, arriving via the formatter.
+ */
+function extractSingleQuoted(src: string): string | null {
+  const re = /'((?:[^'\\]|\\.)*)'/g;
+  const first = re.exec(src);
+  if (!first) return null;
+  let out = first[1];
+  let cursor = re.lastIndex;
+  for (;;) {
+    const joiner = /^\s*\+\s*/.exec(src.slice(cursor));
+    if (!joiner) break;
+    re.lastIndex = cursor + joiner[0].length;
+    const next = re.exec(src);
+    if (!next || next.index !== cursor + joiner[0].length) break;
+    out += next[1];
+    cursor = re.lastIndex;
+  }
+  return out;
+}
+
 /** The balanced `{...}` value of a JSX prop, so the extraction cannot run past the prop. */
 function propValue(src: string, prop: string) {
   const key = `${prop}={`;
@@ -155,125 +217,181 @@ function propValue(src: string, prop: string) {
 
 const SUBTITLE =
   'Revenue share and analytics for your apps. Confirmed earnings accrue here; ' +
-  'automated payouts are not yet enabled. See Apps to manage installations.';
+  'automated payouts are not yet enabled. Digital goods sales are separate: that rail ' +
+  'pays out in Buzz at the time of each settled sale rather than accruing here, and the ' +
+  'figures shown are your recorded share. See Apps to manage installations.';
 
 const CONFIRMED_TOOLTIP =
   'Past the refund window. This amount accrues; automated payouts are not yet enabled.';
+
+/**
+ * The digital-goods card's timing disclosure, pinned whole for the same reason the two
+ * sentences above are: it is a claim about WHEN money moves, on a surface a user reads.
+ *
+ * 🔴 UNLIKE THOSE TWO, THIS ONE PROMISES A DISBURSEMENT — so it is only admissible while
+ * the rail behind it exists, which is what `GOODS_PAYOUT_FN` below asserts. That pairing
+ * is the whole point of this file: the three retracted claims it was written for described
+ * a pipeline whose only writer had no production caller, and nothing could tell, because
+ * the prose agreed only with other prose.
+ */
+const GOODS_TOOLTIP =
+  'This rail pays out immediately in Buzz rather than accruing like the buckets above. ' +
+  'The figure is your recorded share of each settled sale. Reversed, refunded and ' +
+  'not-yet-settled rows are all excluded.';
+
+/**
+ * 🔴 TWO MORE MONEY CLAIMS, PINNED WHOLE for the reason this file's SHRINK half exists.
+ * Both shipped guarded only by a four-word substring regex in the component test, which is
+ * exactly the SPELLED guard this file forbids: either could be reworded into something
+ * false while staying green.
+ *
+ * - The blue caveat is a claim about NON-BANKABILITY. It must stay "may be": the owner's
+ *   blue leg is floored, so gross blue can be non-zero while the share is entirely domain
+ *   colour (see the constant's own docblock).
+ * - The unavailable message asserts "this is NOT a zero", which is the whole point of
+ *   having a discriminator at all. A reword that softened it back into sounding like a
+ *   measured zero would undo the fix silently.
+ */
+const GOODS_BLUE_CAVEAT =
+  'Some of these sales were paid with Blue Buzz, so part of your share may be Blue and ' +
+  'cannot be withdrawn. The dollar figures are an upper bound.';
+
+const GOODS_UNAVAILABLE_MESSAGE =
+  'Digital goods sales could not be loaded, so none are shown here. This is not a report ' +
+  'of zero sales — the figures above cover your other revenue only.';
+
+/** The goods payout leg — the rail the goods copy describes. */
+const GOODS_SERVICE = 'src/server/services/blocks/block-goods.service.ts';
+const GOODS_PAYOUT_FN = 'payBlockGoodOwner';
+/**
+ * The positive control for the goods-rail assertion — the mirror of `PAYOUT_MINT_CONTROL`
+ * above, which controls a zero; this one controls a NON-zero. An identifier that appears in
+ * that file ONLY as an awaited call, never as a declaration (it is imported from
+ * `~/server/services/buzz.service`).
+ *
+ * ⚠️ CORRECTED. This was `readRecordedPayouts`, which is DECLARED in that same file, so a
+ * bare `name(`-shaped probe matched its `export function readRecordedPayouts(` line. That
+ * controlled "can this read find an identifier followed by a paren" — true of any declared
+ * function — not "can this machinery observe a CALL", which is the only thing the assertion
+ * claims. It could not have gone red if every call vanished while the declaration stayed. A
+ * control must share the assertion's SHAPE, not merely its subject.
+ */
+const GOODS_PAYOUT_CONTROL = 'createMultiAccountBuzzTransaction';
 
 describe('app earnings copy does not promise a payout pipeline that does not run', () => {
   it('sanity: every file this guard reasons about is on disk (positive control)', () => {
     // Without this, a renamed or moved file would make the assertions below pass by
     // reading an empty string / matching nothing, which is the shape of a vacuous green.
-    for (const f of [REVENUE_PAGE, REVENUE_PANEL, EARNINGS_PANEL, EARNINGS_ROUTER]) {
+    for (const f of [REVENUE_PAGE, REVENUE_PANEL, EARNINGS_PANEL, EARNINGS_ROUTER, GOODS_SERVICE]) {
       expect(read(f).length).toBeGreaterThan(0);
     }
   });
 
-  it('the payout rail is still unwired — an exact ledger of every mention of the mint', () => {
+  it('the payout rail does not exist — zero references to the mint, with a positive control', () => {
     // 🔴 The STATE half, and the one that licenses the copy below. It is deliberately its
     // own test so it fails for its OWN reason: if it lived with the copy assertions, an
     // earlier string mismatch would throw first and this would never be evaluated.
     //
     // 🔴 THIS SCANS RAW TEXT, AND THAT IS THE WHOLE DESIGN. `test/strip-comments` documents
-    // itself as biased toward over-stripping because that "turns the guard RED, which is the
-    // safe direction" — true for its other callers, which assert a call IS present. THIS
-    // guard asserts the opposite, so for it over-stripping turns the guard GREEN: a real call
-    // the stripper ate would read as "no caller". The inherited safety argument INVERTS here.
-    // (Measured: a `/*` inside a `//` comment, or a regex literal ending `\/`, hides real
-    // code in ~105 files across these roots — including files under services/blocks/, the
-    // payout rail's own neighbourhood.)
+    // itself as biased toward over-stripping because over-stripping "turns the guard RED,
+    // which is the safe direction" — true for its other callers, which assert a call IS
+    // present. THIS guard asserts the opposite, so for it over-stripping turns the guard
+    // GREEN: a real call the stripper ate would read as "no caller". The inherited safety
+    // argument INVERTS here. (Measured: a `/*` inside a `//` comment, or a regex literal
+    // ending `\/`, hides real code in ~105 files across these roots — including files under
+    // services/blocks/, the payout rail's own neighbourhood.)
     //
-    // So the ledger is built from untouched file text and pins an exact OCCURRENCE COUNT per
-    // file. Any new reference — a call, an import, an alias, a bare callback reference,
-    // `.call`/`.apply`, a computed access — changes a count or adds a file, and fails. That
-    // is strictly stronger than a call-shaped regex over stripped text, and it has no blind
-    // spot to disclose.
-    const files = CALLER_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
-    // Walk positive controls, one per root: a misrooted or empty walk finds no mentions
-    // either, and would read as "the rail is unwired" no matter what the tree holds. The
-    // total alone cannot see a dropped root — `src` by itself clears any plausible threshold.
+    // Scanning raw text also makes this guard wider than "no caller": a COMMENT naming the
+    // mint fails it too. That is the right polarity now the mint is deleted — the failure
+    // mode being prevented is a reader being pointed at a rail that is gone, exactly the
+    // class of defect this file exists for. ⚠️ Its reach is CODE under these roots —
+    // `.ts`/`.tsx`/`.js`/`.jsx`/`.mjs`/`.cjs`/`.svelte`. PROSE is not scanned: `.md`,
+    // `.prisma` and migration `.sql` do name the mint deliberately — the Prisma docstring
+    // for the table it left behind, the GA handoff tracker, and the applied migrations,
+    // which are a historical record and must not be rewritten.
+    const files = CALLER_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d), [], CODE_FILES));
+    // 🔴 WALK POSITIVE CONTROLS — EXACT PATHS, one per root and one per extension class
+    // that exists in the tree (`.cjs` by probe only; there are no `.jsx` files here). A
+    // misrooted or empty walk finds no mentions either, and would read as "the rail does
+    // not exist" no matter what the tree holds.
+    //
+    // 🔴 MEMBERSHIP IS EXACT, AND MUST STAY EXACT. A prefix test
+    // (`f.startsWith(<root> + '/')`) degenerates to "this root is non-empty" and stays
+    // GREEN when `CODE_FILES` narrows back to `/\.tsx?$/`, i.e. when the widening this
+    // ledger depends on is undone.
+    const walked = new Set(files.map(rel));
     expect(files.length).toBeGreaterThan(3000);
     for (const probe of [
       REVENUE_PANEL,
       'packages/civitai-db/src/kysely.ts',
-      'apps/moderator/svelte.config.js.d.ts',
+      'packages/civitai-ui/src/lib/components/selection/selection-checkbox.svelte',
+      'apps/training-studio/svelte.config.js',
       'scripts/typecheck.mjs',
+      'scripts/graceful-fs-patch.cjs',
     ]) {
-      expect(
-        files.map(rel).some((f) => f === probe || f.startsWith(probe.split('/')[0] + '/'))
-      ).toBe(true);
+      expect(walked.has(probe)).toBe(true);
     }
+    // ...and a count for the three non-`.tsx?` classes with enough files to floor, so
+    // dropping one of those extensions from `CODE_FILES` fails even if its named probe is
+    // later deleted. (`.ts`/`.tsx` are floored jointly by the `files.length` assertion.)
+    const byExt = (re: RegExp) => files.filter((f) => re.test(f)).length;
+    expect(byExt(/\.svelte$/)).toBeGreaterThan(400);
+    expect(byExt(/\.mjs$/)).toBeGreaterThan(40);
+    expect(byExt(/\.js$/)).toBeGreaterThan(100);
 
-    const mentions = new Map<string, number>();
-    const ident = new RegExp(String.raw`\b${PAYOUT_MINT}\b`, 'g');
-    for (const f of files) {
-      const r = rel(f);
-      if (/\.test\.tsx?$/.test(r) || r.includes('__tests__/')) continue;
-      const n = (readFileSync(f, 'utf8').match(ident) ?? []).length;
-      if (n > 0) mentions.set(r, n);
-    }
+    const countOf = (needle: string) => {
+      const re = new RegExp(String.raw`\b${needle}\b`, 'g');
+      const mentions = new Map<string, number>();
+      for (const f of files) {
+        const r = rel(f);
+        if (/\.(test|spec)\.[a-z]+$/.test(r) || r.includes('__tests__/')) continue;
+        const n = (readFileSync(f, 'utf8').match(re) ?? []).length;
+        if (n > 0) mentions.set(r, n);
+      }
+      return Object.fromEntries([...mentions].sort());
+    };
 
-    // 🔴 THE LEDGER. Fails when the set GROWS (a new file references the mint) or SHRINKS
-    // (a listed mention disappears, so this ledger is stale and its counts mean nothing).
-    // The declaration's own file is the positive control: if the scan is wired to nothing,
-    // this entry vanishes and the assertion fails rather than passing clean.
-    expect(Object.fromEntries([...mentions].sort())).toEqual({
-      // The declaration itself — the only writer of `paidOutAt`/`payoutId`.
-      'src/server/services/blocks/buzz-attribution.service.ts': 1,
-      // Prose only: the header's design note, incl. a call-SHAPED wiring instruction.
-      'src/server/jobs/bulk-payout-block-attributions.ts': 3,
-      // Prose only: a comment about the `(app_owner_user_id, period_key)` UNIQUE.
-      'src/server/services/blocks/app-ownership-transfer.service.ts': 1,
-    });
+    // 🔴 POSITIVE CONTROL ON THE ZERO. `PAYOUT_MINT_CONTROL` is a symbol that is genuinely
+    // exported from the module the mint used to live in, counted by the SAME regex over the
+    // SAME file list. Without it, `{}` below is indistinguishable from a scan wired to
+    // nothing — a broken regex, a bad walk or a wrong `rel()` all produce the same clean
+    // pass. Asserting the control's declaring file by NAME (not just "non-empty") is what
+    // makes it a control for THIS scan rather than for any scan at all.
+    const control = countOf(PAYOUT_MINT_CONTROL);
+    expect(Object.keys(control)).toContain(
+      'src/server/services/blocks/buzz-attribution.service.ts'
+    );
 
-    // ...and the two prose entries must still be PROSE. Counts alone cannot tell a comment
-    // from code, so this is the half that says the mentions are not calls. Over-stripping
-    // can only make this assertion pass more easily, which is why it is a secondary check
-    // behind the raw ledger rather than the guard itself.
-    for (const f of [
-      'src/server/jobs/bulk-payout-block-attributions.ts',
-      'src/server/services/blocks/app-ownership-transfer.service.ts',
-    ]) {
-      expect(stripCommentsAndStrings(read(f))).not.toMatch(ident);
-    }
+    // 🔴 THE LEDGER, NOW EMPTY BY CONSTRUCTION. Fails the moment any non-test CODE file
+    // under these roots names the mint again — a call, an import, an alias, a callback
+    // reference, `.call`/`.apply`, a computed access, or a comment. The control above is
+    // what turns this `{}` into evidence rather than a coincidence.
+    expect(countOf(PAYOUT_MINT)).toEqual({});
   });
 
-  it('the weekly job still writes nothing', () => {
-    // The job IS registered and DOES run, so "the cron is off" is not why the cadence copy
-    // was false. What makes it false is that the run body only reads and logs — asserted
-    // here rather than inferred from the header comment, which is itself prose.
-    // Every write idiom this repo's jobs actually use — Prisma, the `pgDb*` raw clients and
-    // the Kysely builder. `\bdbWrite\b` alone does NOT cover `pgDbWrite`, and `.update(` does
-    // NOT cover Kysely's `.updateTable(`; both shapes are live in other job files.
-    const WRITE_IDIOMS = [
-      /\b(db|pgDb|kyselyDb)Write\b/,
-      /\.(update|updateMany|create|createMany|upsert|delete|deleteMany|updateTable|insertInto|deleteFrom)\s*\(/,
-      /\$execute(Raw|RawUnsafe)|\$queryRaw(Unsafe)?/,
-    ];
-    // 🔴 POSITIVE CONTROL ON THE NEGATIVES. A `not.toMatch` that CANNOT fire is
-    // indistinguishable from one that found nothing, so each pattern is first shown to match
-    // a synthetic line it must catch. Without this a typo'd pattern reports the job clean.
-    const MUST_CATCH = [
-      'await pgDbWrite.query("UPDATE x SET y")',
-      'await kyselyDb.updateTable("t").set({ a: 1 }).execute()',
-      'await dbWrite.$executeRawUnsafe(sql)',
-    ];
-    for (const sample of MUST_CATCH) {
-      expect(WRITE_IDIOMS.some((re) => re.test(sample))).toBe(true);
-    }
+  it('the weekly payout stub cron is gone — no module and no registration', () => {
+    // The second half of the removal. The job used to be registered and DID run; what made
+    // the cadence copy false was that its body only read and logged. It has now been
+    // deleted outright, so the check is structural: the module must not exist, and the
+    // `jobs` array must not name it. Membership of that array plus a cron string IS the
+    // registration on this deployment — see CLAUDE.md, "How a scheduled job actually gets
+    // scheduled" — so the array is the authoritative place to assert the absence.
+    expect(existsSync(join(REPO_ROOT, PAYOUT_JOB_MODULE))).toBe(false);
 
-    const job = stripCommentsAndStrings(read('src/server/jobs/bulk-payout-block-attributions.ts'));
-    // Positive control: the read path must be FOUND, or every "no write" assertion below is
-    // just a regex matching nothing over a file that failed to load.
-    expect(job).toMatch(/dbRead\./);
-    for (const re of WRITE_IDIOMS) expect(job).not.toMatch(re);
+    const runJobs = read(RUN_JOBS);
+    // 🔴 POSITIVE CONTROL, TWICE OVER. A zero from a file that failed to load, or whose job
+    // array this guard can no longer find, is indistinguishable from a real absence. So:
+    // the file is non-trivial, and a SIBLING block-attribution job that IS still registered
+    // must be found by the same read. If that control ever fails, this test is measuring
+    // nothing and the absence below means nothing.
+    expect(runJobs.length).toBeGreaterThan(1000);
+    expect(runJobs).toContain(RUN_JOBS_CONTROL);
 
-    // 🔴 AND NO INDIRECTION. The idiom list above cannot see `await flipRowsToPaidOut(rows)`
-    // — a helper whose body does the write. The job's whole run body is small and its only
-    // awaited calls are the read and the log, so pin THAT rather than trusting the list to
-    // be exhaustive: any new awaited call here is a write candidate and must be looked at.
-    const awaited = [...job.matchAll(/await\s+([A-Za-z_$][\w$.]*)\s*\(/g)].map((m) => m[1]).sort();
-    expect(awaited).toEqual(['dbRead.blockBuzzAttribution.groupBy']);
+    // Both spellings: the module path (an import) and the exported job (the array entry).
+    // Raw text on purpose — a commented-out registration is still a thing to delete, and a
+    // future reader should not find a half-restored wiring instruction here.
+    expect(runJobs).not.toContain(PAYOUT_JOB_MODULE.replace(/^src\//, '~/').replace(/\.ts$/, ''));
+    expect(runJobs).not.toContain(PAYOUT_JOB_EXPORT);
   });
 
   it('/apps/revenue subtitle states accrual, pinned whole', () => {
@@ -292,6 +410,79 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     expect(at).toBeGreaterThan(-1);
     const label = /label="([^"]*)"/.exec(panel.slice(at))?.[1];
     expect(label).toBe(CONFIRMED_TOOLTIP);
+  });
+
+  it('the digital-goods timing disclosure is pinned whole', () => {
+    const panel = read(REVENUE_PANEL);
+    // Anchored to the constant that feeds the card's Tooltip, so the assertion cannot be
+    // satisfied by the sentence appearing in a comment elsewhere in the file.
+    const at = panel.indexOf('const GOODS_TIMING_TOOLTIP');
+    // Anchor control: without it a renamed constant gives `slice(-1)` and the failure
+    // reads as a copy mismatch rather than "the card this guard targets is gone".
+    expect(at).toBeGreaterThan(-1);
+    expect(extractSingleQuoted(panel.slice(at))).toBe(GOODS_TOOLTIP);
+    // ...and it must actually be the Tooltip's label, not a dead constant. The GROW
+    // lesson of this file is that a claim nothing renders is still a claim, but a claim
+    // nothing renders is not the one that misleads a user — so pin the wiring too.
+    expect(stripComments(panel)).toMatch(/label=\{GOODS_TIMING_TOOLTIP\}/);
+  });
+
+  it('the two other goods money claims are pinned whole, and are rendered', () => {
+    // The blue caveat and the unavailable message. Both were guarded only by a short
+    // substring regex in the component test — walkable by rewording, which on a money
+    // surface is this file's entire thesis.
+    const panel = read(REVENUE_PANEL);
+
+    const blueAt = panel.indexOf('const GOODS_BLUE_CAVEAT');
+    expect(blueAt).toBeGreaterThan(-1); // anchor control
+    expect(extractSingleQuoted(panel.slice(blueAt))).toBe(GOODS_BLUE_CAVEAT);
+    // Rendered, not a dead constant.
+    expect(stripComments(panel)).toMatch(/\{GOODS_BLUE_CAVEAT\}/);
+
+    // Anchored past the `case` LABEL, not at the function: the label is itself a
+    // single-quoted literal, so anchoring at the function name extracted `'unreadable'`
+    // and compared the reason code against the sentence.
+    const unavailAt = panel.indexOf("case 'unreadable':");
+    expect(unavailAt).toBeGreaterThan(-1); // anchor control
+    expect(extractSingleQuoted(panel.slice(unavailAt + "case 'unreadable':".length))).toBe(
+      GOODS_UNAVAILABLE_MESSAGE
+    );
+    // ...and reachable: the card must call it, or the branch is decoration.
+    expect(stripComments(panel)).toMatch(/goodsUnavailableMessage\(unavailable\)/);
+  });
+
+  it('the goods payout rail DOES exist — the one claim here that promises a disbursement', () => {
+    // 🔴 THE STATE HALF FOR THE GOODS COPY, and the inverse of the mint guard above. That
+    // one asserts a rail is GONE so its cadence copy must not return; this one asserts a
+    // rail is WIRED, which is the only thing that licenses the subtitle and the tooltip to
+    // say this rail "pays out" at all.
+    //
+    // ⚠️ This sentence used to quote `is credited at the time of each sale` as the claim
+    // being licensed. That string was REMOVED from the product for being unsupportable —
+    // the figure is an accrual a failed payout leg can leave unpaid — so the comment was
+    // naming a claim that exists nowhere in the tree and telling a reader of this guard
+    // the wrong thing about what it protects.
+    //
+    // Stripping is correct HERE and wrong above, and the difference is polarity: this
+    // assertion is that a call IS present, so the stripper's documented bias toward
+    // over-stripping turns it RED — the safe direction. The absence guards above must not
+    // strip, for exactly the inverted reason recorded at them.
+    const service = stripComments(read(GOODS_SERVICE));
+    // 🔴 POSITIVE CONTROL, IN THE ASSERTION'S OWN SHAPE. A control that merely finds an
+    // identifier followed by a paren is also satisfied by a DECLARATION, so it cannot
+    // establish that this machinery observes a CALL — which is the only thing the assertion
+    // below claims. Same `await X(` pattern, on an identifier that appears in that file only
+    // as a call. If this fails, the read or the stripper is broken and the assertion below
+    // means nothing.
+    expect(service).toMatch(new RegExp(String.raw`await\s+${GOODS_PAYOUT_CONTROL}\s*\(`));
+    // The payout leg is AWAITED somewhere in the service — a declaration alone would match
+    // a bare `name(` shape, which is why the keyword is part of the pattern.
+    expect(service).toMatch(new RegExp(String.raw`await\s+${GOODS_PAYOUT_FN}\s*\(`));
+    // Residual gap, stated rather than papered over: this proves the leg is called from
+    // somewhere in that module, not that the call is reachable from the REST purchase
+    // entry point. Proving reachability needs a call graph; what makes the weaker form
+    // worth having is that the defect this file documents was a writer with NO caller at
+    // all, which this does catch.
   });
 
   it('the earnings docblock describes the gate the proc actually has', () => {
@@ -347,6 +538,14 @@ describe('app earnings copy does not promise a payout pipeline that does not run
     // A third such surface fails here, and its author then has to decide — consciously —
     // whether it needs the accrual disclosure the other two carry.
     const BUCKET_LABELS = ['Confirmed (unpaid)', 'Paid out'];
+    //
+    // 🔴 THE GOODS RAIL HAS ITS OWN SETTLEMENT VOCABULARY, and this half of the guard was
+    // blind to it. `BUCKET_LABELS` is the card-purchase rail's; `GoodsSalesCard` shares
+    // neither string, so extracting it into its own file — the obvious next refactor —
+    // would have dropped it from this ledger silently, and a future goods surface on a new
+    // file would be invisible to the very check written to catch that. A second marker,
+    // OR-ed into the same population, so the ledger covers both rails rather than one.
+    const GOODS_LABELS = ['Digital goods sales', 'reversed or refunded'];
     const files = MONEY_COPY_ROOTS.flatMap((d) => walk(join(REPO_ROOT, d)));
     // Walk positive control: an empty walk yields an empty set, which would "equal" nothing
     // and pass if the expectation below were also empty. It is not — but prove the walk ran.
@@ -357,12 +556,24 @@ describe('app earnings copy does not promise a payout pipeline that does not run
       .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
       .filter((f) => {
         const src = readFileSync(f, 'utf8');
-        return BUCKET_LABELS.every((l) => src.includes(l));
+        return (
+          BUCKET_LABELS.every((l) => src.includes(l)) || GOODS_LABELS.every((l) => src.includes(l))
+        );
       })
       .map(rel)
       .sort();
 
     // Non-empty by construction, so this cannot be a vacuous "no matches" pass.
     expect(surfaces).toEqual([EARNINGS_PANEL, REVENUE_PANEL].sort());
+
+    // 🔴 CONTROL ON THE SECOND MARKER. Without this the `||` arm could match nothing —
+    // a typo'd label, a reworded card — and the expectation above would still pass on the
+    // first arm alone, leaving the goods rail unledgered exactly as it was before. Assert
+    // that the goods marker, on its own, finds the surface it was added for.
+    const goodsSurfaces = files
+      .filter((f) => !/\.test\.tsx?$/.test(rel(f)) && !rel(f).includes('__tests__/'))
+      .filter((f) => GOODS_LABELS.every((l) => readFileSync(f, 'utf8').includes(l)))
+      .map(rel);
+    expect(goodsSurfaces).toEqual([REVENUE_PANEL]);
   });
 });

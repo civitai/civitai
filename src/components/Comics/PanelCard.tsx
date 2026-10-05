@@ -557,6 +557,7 @@ export function PanelCard({
                             openSetBrowsingLevelModal({
                               imageId: panel.imageId,
                               nsfwLevel: panel.image.nsfwLevel as NsfwLevel,
+                              isOwner: true,
                               onSubmit: () => onRatingChange?.(),
                             });
                           }

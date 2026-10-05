@@ -22,6 +22,7 @@ import { describe, expect, it } from 'vitest';
 
 const repoRoot = path.resolve(__dirname, '../../../..');
 const SERVICE = 'src/server/services/resource-load.service.ts';
+const TYPES_SOURCE = 'src/server/services/resource-residency.service.ts';
 const MIGRATIONS = 'packages/civitai-db-schema/prisma/migrations';
 const VIEW_DDL = 'CREATE OR REPLACE VIEW "GenerationCoverage"';
 
@@ -51,6 +52,7 @@ function currentViewMigration() {
 
 const migration = currentViewMigration();
 const service = readFileSync(path.join(repoRoot, SERVICE), 'utf8');
+const typesSource = readFileSync(path.join(repoRoot, TYPES_SOURCE), 'utf8');
 
 /** The `ARRAY[...]` in the file test that computes the SafeTensor flag. */
 function migrationWeightTypes(sql: string) {
@@ -93,7 +95,7 @@ describe('the SafeTensor rule has one meaning in SQL and TypeScript', () => {
       migrationWeightTypes(migration!.sql),
       `${migration!.name}: no weight-type ARRAY found beside the SafeTensor flag — the file test ` +
         `may have been reshaped`
-    ).toEqual(serviceWeightTypes(service));
+    ).toEqual(serviceWeightTypes(typesSource));
   });
 
   it('the service applies the format rule to checkpoints only', () => {

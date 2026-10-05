@@ -312,6 +312,73 @@ describe('PageBlockHost SHARED storage bridge (Phase 2b cross-user datastore)', 
     replies.stop();
   });
 
+  // civitai/civitai#5354 Q3 — `mine` forwarding. The test above is the control:
+  // it posts no `mine` and asserts a call object without one, so these two cover
+  // the arm it cannot see. Without the host forwarding it, the server parameter
+  // is reachable by no block at all, which is the defect round 0 of /audit-pr
+  // caught — the capability existed end-to-end except for this line.
+  test('SHARED_LIST forwards mine:true', async () => {
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('SHARED_LIST', { requestId: 'rq_mine', mine: true });
+
+    await vi.waitFor(() => {
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: undefined,
+          limit: 50,
+          cursor: undefined,
+          mine: true,
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
+    });
+    replies.stop();
+  });
+
+  test('🔴 SHARED_LIST forwards mine ONLY for a literal true — a truthy value is dropped', async () => {
+    mocks.list.mockResolvedValue({ items: [], nextCursor: undefined });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    // The string "true" is the shape a hand-rolled postMessage or a querystring
+    // round-trip produces. `raw.mine === true` rejects it; a `!!raw.mine` or any
+    // truthiness check would narrow the feed on it.
+    //
+    // 🔴 THE `in` CHECK IS LOAD-BEARING AND AN EARLIER VERSION OF THIS TEST
+    // LACKED IT. It asserted `toHaveBeenCalledWith({…, mine: undefined})`, and
+    // `toHaveBeenCalledWith` uses `toEqual` semantics under which an explicit
+    // `undefined` property EQUALS an absent one. Measured: with both hosts
+    // reverted to pre-change, that version still PASSED — it could not tell
+    // "the host dropped a non-literal-true" (key present, value undefined) from
+    // "the host never forwards mine at all" (key absent), which is the whole
+    // thing it claims to pin. `'mine' in arg` is the only assertion that
+    // separates them.
+    postFromBlock('SHARED_LIST', { requestId: 'rq_mine_str', mine: 'true' });
+
+    await vi.waitFor(() => {
+      expect(mocks.list).toHaveBeenCalledWith(
+        {
+          blockToken: 'tok_abc',
+          prefix: undefined,
+          limit: 50,
+          cursor: undefined,
+          mine: undefined,
+        },
+        { staleTime: BLOCK_STORAGE_READ_STALE_TIME_MS }
+      );
+    });
+    const arg = mocks.list.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect('mine' in arg, 'the host must REACH the mine arm, not skip it').toBe(true);
+    expect(arg.mine, 'and resolve a non-literal-true to undefined').toBeUndefined();
+    replies.stop();
+  });
+
   test('SHARED_LIST error path posts { requestId, error } (no hang)', async () => {
     mocks.list.mockRejectedValue(new Error('shared storage is not enabled'));
     renderWithProviders(<PageBlockHost {...baseProps} />);

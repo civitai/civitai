@@ -17,6 +17,7 @@ import {
   preCommitFreeReason,
   trayNotes,
 } from '~/components/Sticker/free-offer';
+import { isPromotionSurface } from '~/shared/utils/promotion';
 
 describe('the free option is a price, not a process', () => {
   /**
@@ -641,8 +642,14 @@ describe('the shared-allowance note tracks the rules it describes', () => {
    * to `PLACEMENT_SURFACES` and this goes red, pointing at the copy that needs
    * the third name.
    */
+  // Promotions are paid only: nothing creates a free placement on them, so they
+  // never draw on this budget.
   it('fails if a surface is added to the shared budget without updating the copy', () => {
-    expect(Object.keys(PLACEMENT_SURFACES).sort()).toEqual(['remixGallery', 'sticker']);
+    expect(
+      Object.keys(PLACEMENT_SURFACES)
+        .filter((surface) => !isPromotionSurface(surface))
+        .sort()
+    ).toEqual(['remixGallery', 'sticker']);
   });
 });
 

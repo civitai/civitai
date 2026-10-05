@@ -93,7 +93,6 @@ export type OutputFormat = (typeof outputFormatOptions)[number];
 const NEW_TO_OLD: Record<string, string> = {
   'image:create': 'txt2img',
   'image:edit': 'img2img:edit',
-  'image:draft': 'txt2img:draft',
   'image:face-fix': 'txt2img:face-fix',
   'image:hires-fix': 'txt2img:hires-fix',
   'image:upscale': 'img2img:upscale',
@@ -124,7 +123,7 @@ export function migrateWorkflowKey(key: string | undefined): string | undefined 
 
 export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx>()
   // Workflow is the primary selector - determines input type, output type, and available ecosystems
-  // Workflow values are workflow keys (e.g., 'txt2img', 'txt2img:draft', 'txt2vid')
+  // Workflow values are workflow keys (e.g., 'txt2img', 'txt2vid')
   .node(
     'workflow',
     (_ctx, ext) => {
@@ -251,7 +250,6 @@ export const generationGraph = new DataGraph<Record<never, never>, GenerationCtx
         'txt2img',
         'img2img',
         'img2img:edit',
-        'txt2img:draft',
         'txt2img:face-fix',
         'img2img:face-fix',
         'txt2img:hires-fix',
@@ -304,7 +302,6 @@ const _hasNodeCache = new Map<string, boolean>();
  * workflowHasNode('txt2img', 'images') // true - default ecosystem has images
  * workflowHasNode('vid2vid:upscale', 'video')  // true - video upscale graph has video
  * workflowHasNode('vid2vid:upscale', 'images') // false - video upscale has no images
- * workflowHasNode('txt2img:draft', 'images')   // false - images has when:false in default ecosystem
  * ```
  */
 export function workflowHasNode(workflow: string, nodeKey: string): boolean {
@@ -379,19 +376,6 @@ if ('test'.length > 5) {
         console.log(data.images);
       }
     }
-    if (data.workflow === 'txt2img:draft') {
-      console.log(data.ecosystem);
-      // Now discriminating on ecosystem instead of modelFamily
-      if (data.ecosystem === 'Flux1') {
-        console.log(data.fluxMode);
-      }
-      if (data.ecosystem === 'SDXL') {
-        console.log(data.aspectRatio);
-        console.log(data.seed);
-        console.log(data.model);
-      }
-    }
-
     // Test non-ecosystem workflows - these define their own images node
     if (data.workflow === 'img2img:upscale') {
       console.log(data.images);

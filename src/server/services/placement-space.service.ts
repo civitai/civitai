@@ -8,10 +8,15 @@ import type {
   PlacementSpaceSetting,
   PlacementSpaceSettings,
   PlacementSurface,
+  PlacementTargetType,
 } from '~/shared/utils/placement';
 import {
   effectiveFreeSlots,
   declineFeeAmount,
+  HOST_DECLINE_FEE_SETTING,
+  hostDeclineFeePercentRefusal,
+  isDeclineFeeHostAdjustable,
+  resolveHostDeclineFeePercent,
   effectivePlacementPrice,
   FREE_SLOT_HOLDING_STATUSES,
   PLACEMENT_SURFACES,
@@ -43,6 +48,20 @@ async function resolveImageTarget(imageId: number) {
     ownerUsername: image.user?.username ?? null,
   };
 }
+
+/** A model's space is configured on its owner's account only; there is no model or post level. */
+async function resolveModelTarget(modelId: number) {
+  const model = await dbWrite.model.findUnique({
+    where: { id: modelId },
+    select: { userId: true, user: { select: { username: true } } },
+  });
+  if (!model) throw throwBadRequestError('placement: that model no longer exists');
+
+  return { ownerId: model.userId, postId: null, ownerUsername: model.user?.username ?? null };
+}
+
+const resolveTarget = (targetType: PlacementTargetType, targetId: number) =>
+  targetType === 'model' ? resolveModelTarget(targetId) : resolveImageTarget(targetId);
 
 export type ResolvedPlacementSpace = {
   ownerId: number;
@@ -77,6 +96,13 @@ export type ResolvedPlacementSpace = {
    * multiplying a percentage would be wrong on cheap placements.
    */
   declineFee: number;
+  /**
+   * The rate that sizes the decline-fee hold when a placement is bought here.
+   * The hold is the snapshot: a decline pays what was held, never this.
+   */
+  declineFeeRate: number;
+  /** The host's own setting in whole percent; `null` where the platform fixes the fee. */
+  hostDeclineFeePercent: number | null;
   /**
    * The count the cascade resolved, before the cap — the same relationship
    * `setPrice` has to `price`, so a caller can say "you have set 9, we are
@@ -127,7 +153,7 @@ export const reservedFreeSlots = (
     surface,
     targetType,
     targetId,
-  }: { surface: PlacementSurface; targetType: PlacementSpaceEntity; targetId: number }
+  }: { surface: PlacementSurface; targetType: PlacementTargetType; targetId: number }
 ) =>
   client.placement.count({
     where: {
@@ -152,19 +178,19 @@ export async function resolvePlacementSpaceFor({
   targetId,
 }: {
   surface: PlacementSurface;
-  targetType: PlacementSpaceEntity;
+  targetType: PlacementTargetType;
   targetId: number;
 }): Promise<ResolvedPlacementSpace> {
   if (!surfaceAcceptsTarget(surface, targetType))
     throw throwBadRequestError(`placement: ${surface} cannot be placed on a ${targetType}`);
 
-  const { ownerId, postId, ownerUsername } = await resolveImageTarget(targetId);
+  const { ownerId, postId, ownerUsername } = await resolveTarget(targetType, targetId);
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
       surface,
       OR: [
-        { entityType: 'image', entityId: targetId },
+        ...(targetType === 'image' ? [{ entityType: 'image', entityId: targetId }] : []),
         ...(postId ? [{ entityType: 'post', entityId: postId }] : []),
         { entityType: 'user', entityId: ownerId },
       ],
@@ -193,6 +219,11 @@ export async function resolvePlacementSpaceFor({
   const { max: cap, freeSlotCap } = await placementPriceRange(ownerId, surface);
   const config = await getPlacementConfig();
   const shares = config.approvalShares(surface);
+  const hostDeclineFeePercent = isDeclineFeeHostAdjustable(surface)
+    ? resolveHostDeclineFeePercent(surface, resolved.settings)
+    : null;
+  const declineFeeRate =
+    hostDeclineFeePercent == null ? config.declineFeeRate(surface) : hostDeclineFeePercent / 100;
 
   // `resolvePlacementSpace` is the one place the surface default is applied, so
   // this reads it rather than defaulting again — the same shape as `setPrice`
@@ -229,10 +260,9 @@ export async function resolvePlacementSpaceFor({
      * placements the floor exists for. The placer is told an amount because an
      * amount is what leaves their wallet.
      */
-    declineFee: declineFeeAmount(
-      effectivePlacementPrice(resolved.price, cap) ?? 0,
-      config.declineFeeRate(surface)
-    ),
+    declineFee: declineFeeAmount(effectivePlacementPrice(resolved.price, cap) ?? 0, declineFeeRate),
+    declineFeeRate,
+    hostDeclineFeePercent,
     setFreeSlots,
     freeSlots,
     freeSlotCap,
@@ -280,6 +310,7 @@ export async function setPlacementSpace({
   mode,
   price,
   freeSlots,
+  declineFeePercent,
   settings,
   userId,
 }: {
@@ -288,6 +319,12 @@ export async function setPlacementSpace({
   entityId: number;
   mode: PlacementSpaceMode;
   price?: number | null;
+  /**
+   * What the host keeps on a decline, in whole percent, on a surface that lets
+   * them choose. `undefined` keeps, `null` returns to the surface default.
+   * Refused outright on a surface whose fee is fixed.
+   */
+  declineFeePercent?: number | null;
   /**
    * `undefined` leaves this level's count alone, `null` clears it so the level
    * inherits again, and a number sets it — the same three-way distinction
@@ -304,6 +341,11 @@ export async function setPlacementSpace({
 }) {
   await assertOwnsSpaceEntity({ entityType, entityId, userId });
 
+  if (declineFeePercent !== undefined) {
+    const refusal = hostDeclineFeePercentRefusal(surface, declineFeePercent);
+    if (refusal) throw throwBadRequestError(`placement: ${refusal}`);
+  }
+
   // An open space with no price is representable in the schema and meaningless
   // in the product: the placement mutation cannot decide what to charge, so it
   // would refuse every attempt while the owner's UI showed the space as open.
@@ -312,7 +354,7 @@ export async function setPlacementSpace({
   const [existing, inherited] = await Promise.all([
     dbWrite.placementSpace.findUnique({
       where: { surface_entityType_entityId: { surface, entityType, entityId } },
-      select: { price: true },
+      select: { price: true, settings: true },
     }),
     inheritedPrice({ surface, entityType, entityId, userId }),
   ]);
@@ -348,6 +390,21 @@ export async function setPlacementSpace({
   if (price != null && price < floor && price !== existing?.price)
     throw throwBadRequestError(`placement: the lowest you can charge is ${floor} Buzz`);
 
+  // The decline fee rides in `settings` but is not the settings caller's to
+  // drop: a wholesale settings replace carries the stored value over unless this
+  // call set it. A fixed surface never stores one, whatever the row says.
+  const storedSettings = (existing?.settings ?? {}) as PlacementSpaceSettings;
+  const nextSettings = (() => {
+    if (settings === undefined && declineFeePercent === undefined) return undefined;
+    const { [HOST_DECLINE_FEE_SETTING]: storedFee, ...base } = settings ?? storedSettings;
+    if (!isDeclineFeeHostAdjustable(surface)) return base;
+    const fee =
+      declineFeePercent === undefined
+        ? storedSettings[HOST_DECLINE_FEE_SETTING]
+        : declineFeePercent;
+    return fee == null ? base : { ...base, [HOST_DECLINE_FEE_SETTING]: fee };
+  })();
+
   await dbWrite.placementSpace.upsert({
     where: { surface_entityType_entityId: { surface, entityType, entityId } },
     create: {
@@ -357,7 +414,7 @@ export async function setPlacementSpace({
       mode,
       price: price ?? null,
       freeSlots: freeSlots ?? null,
-      settings: (settings ?? {}) as Prisma.InputJsonValue,
+      settings: (nextSettings ?? {}) as Prisma.InputJsonValue,
     },
     update: {
       mode,
@@ -365,7 +422,7 @@ export async function setPlacementSpace({
       ...(freeSlots === undefined ? {} : { freeSlots }),
       // Replaced wholesale, not merged: the caller sends the settings it owns,
       // and a merge here would make a removed key impossible to express.
-      ...(settings === undefined ? {} : { settings: settings as Prisma.InputJsonValue }),
+      ...(nextSettings === undefined ? {} : { settings: nextSettings as Prisma.InputJsonValue }),
     },
   });
 }

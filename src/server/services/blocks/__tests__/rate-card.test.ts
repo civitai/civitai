@@ -30,7 +30,6 @@ describe('computeRateCardSplit', () => {
       platform_default: 0,
       viewer_global: 0,
     },
-    spendSharePct: 10,
     subscriptionSharePct: 0,
     internalAppOwnerUserIds: [42],
     effectiveFrom: '2026-01-01',
@@ -311,7 +310,6 @@ describe('computeSubscriptionShare', () => {
       platform_default: 0,
       viewer_global: 0,
     },
-    spendSharePct: 0,
     subscriptionSharePct: 20,
     internalAppOwnerUserIds: [42],
     effectiveFrom: '2026-01-01',
@@ -410,12 +408,11 @@ describe('computeSubscriptionShare', () => {
     expect(RATE_CARD_V4.subscriptionSharePct).toBe(0);
   });
 
-  it('V5 carries V4 verbatim (purchase + spend) and only adds the subscription rate', () => {
+  it('V5 carries V4 verbatim and only adds the subscription rate', () => {
     // Immutability: V5 must not silently drift V4's stamped values.
     expect(RATE_CARD_V5.publisherSharePctByScope).toEqual(RATE_CARD_V4.publisherSharePctByScope);
-    expect(RATE_CARD_V5.spendSharePct).toBe(RATE_CARD_V4.spendSharePct);
-    // Sanity on the carried V4 numbers (15/15/25/0/0, spend 5) so a future
-    // edit to V4 can't silently change V5's "carried" assertion.
+    // Sanity on the carried V4 numbers (15/15/25/0/0) so a future edit to V4
+    // can't silently change V5's "carried" assertion.
     expect(RATE_CARD_V4.publisherSharePctByScope).toMatchObject({
       per_model_install: 15,
       publisher_all_my_models: 15,
@@ -423,7 +420,6 @@ describe('computeSubscriptionShare', () => {
       platform_default: 0,
       viewer_global: 0,
     });
-    expect(RATE_CARD_V4.spendSharePct).toBe(5);
     // The subscription rate is the ONLY thing V5 changes.
     expect(RATE_CARD_V5.subscriptionSharePct).toBe(15);
     expect(RATE_CARD_V4.subscriptionSharePct).toBe(0);

@@ -13,8 +13,6 @@ import {
   Loader,
   type MantineSize,
   Menu,
-  Paper,
-  type PaperProps,
   ScrollArea,
   Spoiler,
   Stack,
@@ -30,7 +28,7 @@ import {
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import type { InferGetServerSidePropsType } from 'next';
 import type { MouseEvent } from 'react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -66,7 +64,6 @@ import {
   IconBulb,
   IconCheck,
   IconClockHour4,
-  IconCube,
   IconDotsVertical,
   IconFilter,
   IconFlag,
@@ -97,7 +94,7 @@ import {
 } from '~/components/DescriptionTable/DescriptionTable';
 import { buildPassthroughQuery } from '~/utils/query-string-helpers';
 import { getCanonicalSlugDestination } from '~/utils/canonical-slug';
-import { getModelUrl, slugit } from '~/utils/string-helpers';
+import { slugit } from '~/utils/string-helpers';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -106,7 +103,9 @@ import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { SpotlightCard } from '~/components/SpotlightCard/SpotlightCard';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { generationFormStore } from '~/store/generation-form.store';
@@ -788,86 +787,6 @@ function ChallengeDetailsPage({ id }: InferGetServerSidePropsType<typeof getServ
   );
 }
 
-/** Card with a mouse-tracking white spotlight glow on the border. */
-function SpotlightCard({
-  children,
-  borderColor,
-  bg,
-  ...rest
-}: {
-  children: React.ReactNode;
-  borderColor: string;
-  bg: string;
-} & Omit<PaperProps, 'children'>) {
-  const cardRef = useRef<HTMLDivElement>(null);
-  const [spotlight, setSpotlight] = useState({ x: 0, y: 0, opacity: 0 });
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    setSpotlight({ x: e.clientX - rect.left, y: e.clientY - rect.top, opacity: 1 });
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    setSpotlight((s) => ({ ...s, opacity: 0 }));
-  }, []);
-
-  return (
-    <div
-      ref={cardRef}
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      style={
-        {
-          position: 'relative',
-          borderRadius: 'var(--mantine-radius-md)',
-          '--spotlight-x': `${spotlight.x}px`,
-          '--spotlight-y': `${spotlight.y}px`,
-          '--spotlight-opacity': spotlight.opacity,
-        } as React.CSSProperties
-      }
-    >
-      {/* Border glow — wide, faint white bloom near cursor */}
-      <div
-        style={{
-          position: 'absolute',
-          inset: -1,
-          borderRadius: 'inherit',
-          background: `radial-gradient(400px circle at ${spotlight.x}px ${spotlight.y}px, rgba(255,255,255,0.04), transparent 70%)`,
-          opacity: spotlight.opacity,
-          transition: 'opacity 0.5s ease',
-          pointerEvents: 'none',
-          zIndex: 0,
-        }}
-      />
-      <Paper
-        p="md"
-        radius="md"
-        style={{
-          position: 'relative',
-          zIndex: 1,
-          background: bg,
-          border: `1px solid ${borderColor}`,
-        }}
-        {...rest}
-      >
-        {/* Wide ambient inner wash */}
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            borderRadius: 'inherit',
-            background: `radial-gradient(500px circle at ${spotlight.x}px ${spotlight.y}px, rgba(255,255,255,0.005), transparent 60%)`,
-            opacity: spotlight.opacity,
-            transition: 'opacity 0.5s ease',
-            pointerEvents: 'none',
-          }}
-        />
-        {children}
-      </Paper>
-    </div>
-  );
-}
-
 function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
   useInjectKeyframes();
   const colorScheme = useComputedColorScheme('dark');
@@ -1475,74 +1394,17 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               <Group justify="space-between">Eligible Models</Group>
             </Accordion.Control>
             <Accordion.Panel>
-              <ScrollArea.Autosize mah={300}>
-                {challenge.models.map((m) => (
-                  <div
-                    key={m.versionId}
-                    className="flex items-center gap-3 px-3 py-2 hover:bg-gray-1 dark:hover:bg-dark-5"
-                  >
-                    <Link
-                      href={getModelUrl({
-                        modelId: m.id,
-                        modelName: m.name,
-                        modelVersionId: m.versionId,
-                      })}
-                      className="flex min-w-0 flex-1 items-center gap-3 no-underline"
-                      target="_blank"
-                    >
-                      {m.image ? (
-                        <ImageGuard2 image={m.image} explain={false}>
-                          {(safe) => (
-                            <div className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-gray-2 dark:bg-dark-3">
-                              {safe ? (
-                                <EdgeMedia2
-                                  src={m.image!.url}
-                                  width={96}
-                                  type={m.image!.type}
-                                  className="size-full object-cover"
-                                />
-                              ) : (
-                                <MediaHash {...m.image!} />
-                              )}
-                            </div>
-                          )}
-                        </ImageGuard2>
-                      ) : (
-                        <div className="flex size-12 shrink-0 items-center justify-center rounded-lg bg-gray-2 dark:bg-dark-3">
-                          <IconCube size={20} className="text-dimmed" />
-                        </div>
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <Text size="sm" fw={500} lineClamp={1}>
-                          {m.name}
-                        </Text>
-                        <Group gap={4} wrap="nowrap">
-                          <Badge size="xs" variant="light">
-                            {m.baseModel}
-                          </Badge>
-                          <Text size="xs" c="dimmed" lineClamp={1}>
-                            {m.versionName}
-                          </Text>
-                        </Group>
-                      </div>
-                    </Link>
-                    {isActive && (
-                      <ActionIcon
-                        variant="subtle"
-                        color="blue"
-                        size="md"
-                        onClick={() => {
-                          generationGraphPanel.open({ type: 'modelVersion', id: m.versionId });
-                          generationFormStore.setType('image');
-                        }}
-                        aria-label={`Generate with ${m.name}`}
-                      >
-                        <IconBrush size={16} />
-                      </ActionIcon>
-                    )}
-                  </div>
-                ))}
-              </ScrollArea.Autosize>
+              <EligibleModelsList
+                models={challenge.models}
+                onGenerate={
+                  isActive
+                    ? (m) => {
+                        generationGraphPanel.open({ type: 'modelVersion', id: m.versionId });
+                        generationFormStore.setType('image');
+                      }
+                    : undefined
+                }
+              />
             </Accordion.Panel>
           </Accordion.Item>
         )}

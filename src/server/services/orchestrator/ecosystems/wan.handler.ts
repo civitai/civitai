@@ -9,8 +9,6 @@
 import type {
   Wan21CivitaiVideoGenInput,
   Wan22ComfyVideoGenInput,
-  Wan22FalTextToVideoInput,
-  Wan22FalImageToVideoInput,
   Wan225bFalTextToVideoInput,
   Wan225bFalImageToVideoInput,
   Wan25FalTextToVideoInput,
@@ -35,7 +33,6 @@ import type { ResourceData } from '~/shared/data-graph/generation/common';
 import { ecosystemToVersionDef } from '~/shared/data-graph/generation/wan-graph';
 import { ecosystemToImageVersionDef } from '~/shared/data-graph/generation/wan-image-graph';
 import { defineHandler } from './handler-factory';
-import { isFlipt, FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 import { type BaseModelGroup } from '~/shared/constants/basemodel.constants';
 
 // Types derived from generation graph
@@ -194,81 +191,37 @@ export const createWanSteps = defineHandler<WanCtx, WanSteps>(async (data, ctx) 
     }
 
     case 'v2.2': {
-      // Multi-step vs legacy is driven entirely by the flipt flag
-      const useMultiStep = await isFlipt(FLIPT_FEATURE_FLAGS.WAN22_MULTI_STEP, 'global', {
-        userId: String(ctx.user.id),
-        isModerator: String(ctx.user.isModerator),
-      });
-
-      if (useMultiStep) {
-        // Multi-step comfy workflow: 12fps videoGen + VFIMamba fr
-        // ame interpolation
-        const resolution = 'resolution' in data ? (data.resolution as string) : '480p';
-        const ratioEntries = v22AspectRatioEntries(resolution);
-        const dims = hasImages
-          ? findClosestAspectRatio(data.images![0], ratioEntries)
-          : ratioEntries.find((e) => e.value === data.aspectRatio?.value) ?? ratioEntries[0];
-        const videoGenStep: VideoGenStepTemplate & { metadata: { suppressOutput: true } } = {
-          $type: 'videoGen',
-          input: removeEmpty({
-            ...baseInput,
-            provider: 'comfy' as const,
-            frameRate: 12,
-            width: dims?.width,
-            height: dims?.height,
-            duration: 'duration' in data ? data.duration : 5,
-            steps: 'steps' in data ? data.steps : 20,
-            negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
-            shift: 'shift' in data ? data.shift : undefined,
-            images: hasImages ? data.images?.map((x) => x.url) : undefined,
-          }) as Wan22ComfyVideoGenInput,
-          metadata: { suppressOutput: true },
-        };
-        const videoInterpolationStep: VideoInterpolationStepTemplate = {
-          $type: 'videoInterpolation',
-          input: {
-            video: { $ref: '$0', path: 'output.video.url' } as unknown as string,
-            interpolationFactor: 2,
-            model: 'VFIMamba',
-          },
-        };
-        return [videoGenStep, videoInterpolationStep];
-      }
-
-      // Legacy single-step fal workflow
-      const operation = hasImages ? 'image-to-video' : 'text-to-video';
-      const input = {
-        ...baseInput,
-        provider: 'fal' as const,
-        operation,
-        negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
-        resolution: 'resolution' in data ? data.resolution : undefined,
-        aspectRatio: (hasImages
-          ? getImageAspectRatio(data.images, v225bAspectRatios)
-          : data.aspectRatio?.value) as Wan22FalTextToVideoInput['aspectRatio'],
-        enablePromptExpansion: false,
-        shift: 'shift' in data ? data.shift : undefined,
-        interpolatorModel: 'interpolatorModel' in data ? data.interpolatorModel : undefined,
-        useTurbo: 'draft' in data ? data.draft : undefined,
+      // 12fps generation, then VFIMamba interpolation to 24fps
+      const resolution = 'resolution' in data ? (data.resolution as string) : '480p';
+      const ratioEntries = v22AspectRatioEntries(resolution);
+      const dims = hasImages
+        ? findClosestAspectRatio(data.images![0], ratioEntries)
+        : ratioEntries.find((e) => e.value === data.aspectRatio?.value) ?? ratioEntries[0];
+      const videoGenStep: VideoGenStepTemplate & { metadata: { suppressOutput: true } } = {
+        $type: 'videoGen',
+        input: removeEmpty({
+          ...baseInput,
+          provider: 'comfy' as const,
+          frameRate: 12,
+          width: dims?.width,
+          height: dims?.height,
+          duration: 'duration' in data ? data.duration : 5,
+          steps: 'steps' in data ? data.steps : 20,
+          negativePrompt: 'negativePrompt' in data ? data.negativePrompt : undefined,
+          shift: 'shift' in data ? data.shift : undefined,
+          images: hasImages ? data.images?.map((x) => x.url) : undefined,
+        }) as Wan22ComfyVideoGenInput,
+        metadata: { suppressOutput: true },
       };
-
-      if (hasImages) {
-        return [
-          {
-            $type: 'videoGen',
-            input: removeEmpty({
-              ...input,
-              images: data.images?.map((x) => x.url),
-            }) as Wan22FalImageToVideoInput,
-          },
-        ];
-      }
-      return [
-        {
-          $type: 'videoGen',
-          input: removeEmpty(input) as Wan22FalTextToVideoInput,
+      const videoInterpolationStep: VideoInterpolationStepTemplate = {
+        $type: 'videoInterpolation',
+        input: {
+          video: { $ref: '$0', path: 'output.video.url' } as unknown as string,
+          interpolationFactor: 2,
+          model: 'VFIMamba',
         },
-      ];
+      };
+      return [videoGenStep, videoInterpolationStep];
     }
 
     case 'v2.2-5b': {

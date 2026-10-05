@@ -402,8 +402,10 @@ describe('AppAnalyticsPanel — top-N cards are humanised, not raw tokens', () =
     // `preview / component-tests` red at this PR's audit-fix round.
     //
     // `getByText` is substring + case-insensitive, and the "Runs (range)" stat's own
-    // tooltip copy begins *"Generations run through your app within the selected
-    // range…"* (AppAnalyticsPanel.tsx). Mantine mounts that tooltip only while the
+    // tooltip copy begins *"Generations run through your app by other people within the
+    // selected range…"* (AppAnalyticsPanel.tsx — re-quoted 2026-09-29 when the copy gained
+    // the self-testing disclosure; the assertion below matches a shorter PREFIX, which is
+    // why it kept passing while this quote was stale). Mantine mounts that tooltip only while the
     // pointer rests on the stat (hover-only), and vitest browser mode shares ONE
     // browser page across every `.browser.test.tsx` file — so the pointer position
     // left behind by an earlier file can already sit over the stat at mount. The

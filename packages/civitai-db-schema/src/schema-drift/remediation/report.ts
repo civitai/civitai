@@ -6,7 +6,7 @@
  * a reviewer of this plan is actually checking, and burying them under a total is how a
  * plan that deletes 23,500 rows reads as routine.
  */
-import type { RelationPlan, RemediationPlan } from './types';
+import type { RefusalCode, RelationPlan, RemediationPlan } from './types';
 
 function indent(text: string, prefix: string): string {
   return text
@@ -161,11 +161,34 @@ export function formatPlan(plan: RemediationPlan, options: FormatOptions = {}): 
     r.prerequisites.length > 0 &&
     r.prerequisites.every((p) => p.code === 'constraint-validity-unknown');
 
+  // A table the catalog does not have — not migrated yet when the snapshot was read, dropped, or a
+  // view — has no constraint to remediate, so its per-relation detail says nothing an operator
+  // can act on. Every schema model added after the snapshot lands here, and listing each one
+  // in full is how the default report grew back toward --verbose. The keys stay visible.
+  const missingTableOnly = new Set<RefusalCode>([
+    'table-not-in-catalog',
+    'referenced-table-not-in-catalog',
+    'column-not-in-catalog',
+  ]);
+  const onMissingTable = (r: RelationPlan) =>
+    r.refusals.some((x) => x.code === 'table-not-in-catalog') &&
+    r.refusals.every((x) => missingTableOnly.has(x.code));
+  const missingTableRelations = plan.relations.filter(onMissingTable);
+  if (!options.verbose && missingTableRelations.length > 0) {
+    lines.push(
+      `  Refused because the table is absent from this catalog, or is a view ` +
+        `(${missingTableRelations.length}; details with --verbose):`
+    );
+    lines.push(`    ${missingTableRelations.map((r) => r.key).join(', ')}`);
+    lines.push('');
+  }
+
   const shown = plan.relations.filter(
     (r) =>
       options.verbose ||
-      r.outcome !== 'satisfied' ||
-      ((r.prerequisites.length > 0 || r.refusals.length > 0) && !catalogWide(r))
+      (!onMissingTable(r) &&
+        (r.outcome !== 'satisfied' ||
+          ((r.prerequisites.length > 0 || r.refusals.length > 0) && !catalogWide(r))))
   );
   const order: Record<RelationPlan['outcome'], number> = {
     refused: 0,

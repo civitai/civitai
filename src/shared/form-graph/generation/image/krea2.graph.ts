@@ -1,6 +1,8 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
+import { fourMegapixelCustomDimensionLimits } from '~/shared/constants/generation.constants';
+import { fitCustomDimensions } from '~/utils/aspect-ratio-helpers';
 import { SEED, aspectRatioDef, enumDef, imagesDef, workflowScoped } from '../defs';
 import {
   familyResources,
@@ -76,10 +78,23 @@ const krea2ResolutionOptions = [
   { label: '2K', value: '2K' },
 ] as const;
 
+/**
+ * 2K: each ~1MP bucket doubled, then fitted. A straight doubling sends 16:9 as
+ * 2752 × 1536 — past the comfy input's 2048 per side (and the 4 MP ceiling), so the
+ * orchestrator refused every 2K ratio but 1:1. Fitting shrinks both sides together,
+ * so each keeps its ratio: 16:9 is 2048 × 1152.
+ */
 const krea2AspectRatioOptionsFor = (scale: number) =>
   Object.keys(krea2AspectRatioDimensions).map((ratio) => {
     const { width, height } = krea2AspectRatioDimensions[ratio]!;
-    return { label: ratio, value: ratio, width: width * scale, height: height * scale };
+    const size =
+      scale === 1
+        ? { width, height }
+        : fitCustomDimensions(
+            { width: width * scale, height: height * scale },
+            fourMegapixelCustomDimensionLimits
+          )!;
+    return { label: ratio, value: ratio, ...size };
   });
 
 const krea2AspectRatioOptionsByResolution: Record<
@@ -228,12 +243,18 @@ const variants = branch('krea2Variant', variantOf, { fal, raw, turbo, editRaw, e
 
 const RESOLUTION = enumDef({ options: krea2ResolutionOptions, default: '1K' });
 
-const AR = defFamily((resolution: string) =>
+/**
+ * Custom sizes on the comfy builds only: they take any width × height (64–2048
+ * /16), while the FAL tiers take a ratio label and nothing else. Grouped with the
+ * ~4 MP models, the size the 2K tier reaches.
+ */
+const AR = defFamily((resolution: string, comfy: boolean) =>
   aspectRatioDef({
     options:
       krea2AspectRatioOptionsByResolution[resolution] ?? krea2AspectRatioOptionsByResolution['1K']!,
     default: '1:1',
     priorityOptions: krea2PriorityRatios,
+    custom: comfy ? fourMegapixelCustomDimensionLimits : undefined,
   })
 );
 
@@ -251,7 +272,9 @@ export const krea2 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('resolution', ({ model, _ext }) =>
     krea2UsesComfyEngine(modelIdOf(model) ?? undefined, _ext.workflow) ? RESOLUTION : null
   )
-  .field('aspectRatio', ({ resolution }) => AR(resolution ?? '1K'))
+  .field('aspectRatio', ({ resolution, model, _ext }) =>
+    AR(resolution ?? '1K', krea2UsesComfyEngine(modelIdOf(model) ?? undefined, _ext.workflow))
+  )
   .use(variants)
   // negativePrompt exists only in the comfy variants; its in-branch snippet
   // registration never fires

@@ -84,6 +84,7 @@ import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
 import { useInView } from 'react-intersection-observer';
+import { isViewer } from '~/utils/is-viewer';
 
 const NOT_FOUND = Symbol('article-not-found');
 
@@ -222,7 +223,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
   const isModerator = currentUser?.isModerator ?? false;
-  const isActualOwner = currentUser?.id === article?.user?.id;
+  const isActualOwner = isViewer(currentUser, article?.user?.id);
   const isOwner = isActualOwner || isModerator;
 
   const disableArticles = !features.articles && !article?.user.isModerator;

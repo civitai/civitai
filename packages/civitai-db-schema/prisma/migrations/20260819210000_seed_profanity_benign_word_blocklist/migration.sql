@@ -1,5 +1,5 @@
--- Seed the moderator-editable ProfanityBenignWord list from the static
--- src/utils/metadata/lists/whitelist-words.json shipped with the app.
+-- Seed the moderator-editable ProfanityBenignWord list from the static whitelist-words.json
+-- shipped with the app (then src/utils/metadata/lists/; now packages/civitai-mod-utils/src/profanity/lists/).
 --
 -- This row REPLACES the static list once present, rather than adding to it, so a moderator
 -- removing an entry actually removes it — under a union every seeded word would stay

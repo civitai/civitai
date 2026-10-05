@@ -190,6 +190,10 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
     exposure: 'READ_PUBLIC',
     why: 'The public, maturity-clamped model catalog. No requiredScope.',
   },
+  'src/pages/api/v1/blocks/resource-intent.ts': {
+    exposure: 'READ_PUBLIC',
+    why: 'Jev resource-intent suggestions: public, maturity-clamped resource data projected through projectSafeGenerationResource — no requiredScope, nothing viewer-scoped, nothing written. It costs vendor LLM spend per call (the reason it keeps the default fail-closed 503 on an approval-lookup failure, unlike its READ_PUBLIC siblings), but the RESPONSE discloses only what the catalog routes disclose.',
+  },
   'src/pages/api/v1/blocks/shared-storage/append.ts': {
     exposure: 'WRITE',
     why: 'Creates a cross-user shared_kv row: PUBLIC, moderated, user-authored text that every other user of the app reads. The highest-consequence of the six shared writes — a takedown that left it reachable would let a suspended app keep publishing into a community feed on a signed-in viewer’s behalf, and every row published would outlive the suspension. It also spends that viewer’s per-user row cap and the app’s byte quota. ALREADY refused before this gate, incidentally, for the same delegation reason as increment.ts: it goes through resolveSharedContext, which reads app_blocks.status itself.',
@@ -237,6 +241,14 @@ const REST_ROUTE_RATIONALE: Record<string, { exposure: RestExposure; why: string
   'src/pages/api/v1/blocks/user-checkpoint/set.ts': {
     exposure: 'WRITE',
     why: 'Upserts the VIEWER’s own checkpoint override into block_user_settings, keyed on (block_instance_id, user_id) — and that row is not inert configuration, it is the FIRST link in the precedence chain resolveBlockCheckpoint walks on every subsequent generation, ahead of the publisher’s own default. A suspended app left reachable here could therefore keep steering which Checkpoint a signed-in viewer’s generations anchor to, silently and durably: the override outlives the session and outlives the takedown, and the viewer has no reason to suspect the model they are generating against is not the one the publisher configured. It spends no Buzz and no storage quota — the write is a single bounded upsert on an already-resolved install — so it is not SPEND, but it is the one write on this surface whose effect lands on FUTURE spending rather than on present state. Neither half of the key is a request parameter: both come from the verified JWT, which is what keeps an override from leaking across installs or across viewers.',
+  },
+  'src/pages/api/v1/blocks/entitlements.ts': {
+    exposure: 'READ_VIEWER_SCOPED',
+    why: 'Lists the DIGITAL GOODS the viewer owns from THIS app — the goodId, the manifest-sourced payload and the grant time of every entitlement the app has sold them. Scoped to claims.appBlockId in the query, so it discloses nothing about what the viewer bought elsewhere, which is why it is not a broader read; but a suspended app left reachable here keeps reading a signed-in user’s purchase history with this app after the takedown, and the payload is whatever that app chose to put on the entitlement.',
+  },
+  'src/pages/api/v1/blocks/goods/purchase.ts': {
+    exposure: 'SPEND',
+    why: 'Debits the viewer’s Buzz for a manifest-declared good and pays the app owner 70% immediately. The third SPEND route this table carries, and the only one whose counterparty is the app’s own owner: a suspended app left reachable here would keep selling its catalog to signed-in users and keep paying its own owner out of their balances, which is precisely the revenue a takedown exists to stop. The charge is bounded per purchase and per viewer per day, but neither bound is a substitute for refusing a suspended app.',
   },
   'src/pages/api/v1/blocks/tip-allowance.ts': {
     exposure: 'READ_VIEWER_SCOPED',
@@ -1326,6 +1338,13 @@ describe('no unguarded block-REST token verification', () => {
     // unreachable — so a suspended app left serving it keeps delivering its
     // users' generated images after the takedown.
     'src/pages/api/v1/blocks/gated-images.ts',
+    // The DIGITAL GOODS pair. `goods/purchase.ts` is the third SPEND route this
+    // table has ever carried and `entitlements.ts` reads the viewer's purchase
+    // history with the app. Neither may opt out: a suspended app reaching the
+    // first keeps charging signed-in viewers and paying its own owner, and one
+    // reaching the second keeps reading what it sold them.
+    'src/pages/api/v1/blocks/entitlements.ts',
+    'src/pages/api/v1/blocks/goods/purchase.ts',
     'src/pages/api/v1/blocks/me.ts',
     'src/pages/api/v1/blocks/shared-storage/append.ts',
     'src/pages/api/v1/blocks/shared-storage/counts.ts',
@@ -1625,5 +1644,232 @@ describe('the approval predicate is not open-coded a second time', () => {
     expect(BACKING_ROW_LOOKUP_LEDGER).not.toHaveProperty(
       'src/server/services/blocks/block-bridge-auth.service.ts'
     );
+  });
+
+  /**
+   * 🔴 WHICH TOKEN SEAMS APPLY PER-SCOPE CONSENT REVOCATIONS — a growth/shrink ledger, because
+   * the enforcement is a STRIP and a strip is invisible where it is absent.
+   *
+   * `verifyBlockToken` has FOUR call sites. Two of them apply revocations
+   * (`consent-revocation.service`'s `applyRevocations`); two do not, and that is safe ONLY
+   * because each of those authorizes exclusively `apps:storage:*` / `apps:storage:shared:*`,
+   * every one of which is in `CONSENT_EXEMPT_SCOPES` — so no marker can ever name a scope they
+   * check. Nothing asserted that property, which means a gated scope added to the storage family
+   * would be silently unenforced on those two paths. This is that assertion.
+   *
+   * 🔴 IT FAILS IN BOTH DIRECTIONS **BECAUSE IT DERIVES THE CALLER SET**, and the first version did
+   * not. That version asserted a growth property it could not observe: every `walk()` in this file
+   * targets `src/pages/api`, while all four real `verifyBlockToken` call sites live under
+   * `src/server/**` — so a fifth caller was invisible and the "fails on growth" sentence was
+   * false. Same description-wider-than-body defect this commit fixed twice elsewhere, reproduced
+   * inside its own new guard. The callers are now enumerated from **`src`**, whole.
+   *
+   * ⚠️ IT WAS `src/server` + `src/pages`, WHICH IS A BOUND NOTHING JUSTIFIED. No caller lives
+   * outside those two today, but the guard's whole claim is "a FIFTH caller is loud", and a caller
+   * added under `src/shared`, `src/utils` or `src/libs` would have been exactly as invisible as
+   * the `src/server` ones were to the version before it. Walking one root instead of two costs
+   * nothing — 2,012 files become 4,503, an 8 ms walk and a 29 ms read — and removes the residual.
+   *
+   * ⚠️ AND THE ENUMERATION HERE USED TO BE WRONG, in the commit whose stated purpose included
+   * correcting three un-derived counts. It claimed "the only other mentions of the name anywhere
+   * in `src` are comments in `src/env/server-schema.ts` and
+   * `src/shared/constants/block-scope.constants.ts`". Re-derived by round-5 review: **13**
+   * non-test files under `src` mention the name, **5** match the raw call-shape regex, and **3**
+   * survive `stripNonCode` as real callers. Of the files the widening newly brought into scope,
+   * exactly one matches the raw regex — `block-scope.constants.ts`, twice, both inside a
+   * block comment that `stripNonCode` removes. The argument never depended on the enumeration; the
+   * number is the part that rots, so read the derivation rather than this sentence.
+   */
+  const CONSENT_STRIP_SEAMS: Record<string, string> = {
+    'src/server/middleware/block-scope.middleware.ts':
+      "REST. Refuses with `code: consent_revoked` when the route's own requiredScope is revoked, " +
+      'and strips every other revoked scope so in-handler sub-checks — which is how ' +
+      '`collections:read:private` is gated — honour the revoke too.',
+    'src/server/services/blocks/block-bridge-auth.service.ts':
+      'tRPC bridge. Strips, so all of its procedures honour the revoke through their own ' +
+      '`claims.scopes.includes(...)` gates. This is the only path that authorizes ' +
+      '`posts:write:self`.',
+  };
+
+  /** The seams that verify a token but apply NO revocations, with the property that makes it safe. */
+  const EXEMPT_ONLY_SEAMS: Record<string, readonly string[]> = {
+    'src/server/routers/apps-shared.router.ts': [
+      'apps:storage:shared:read',
+      'apps:storage:shared:write',
+    ],
+    'src/server/services/apps/app-storage.service.ts': ['apps:storage:read', 'apps:storage:write'],
+  };
+
+  /**
+   * Every production file that CALLS `verifyBlockToken`, derived by walking `src` whole.
+   * `block-scope.middleware.ts` is excluded as the DEFINER — it exports the function, and its own
+   * call is the REST seam, which is ledgered by name. The exclusion is safe because both sides of
+   * the equality use the same constant, so a RENAME breaks the comparison loudly rather than
+   * quietly dropping a caller.
+   */
+  function verifyTokenCallers(): string[] {
+    /** Every `.ts`/`.tsx` under a repo-relative dir, excluding tests. Uses this file's own
+     *  `toPosix` so the keys compare on win32 as well. */
+    function tsFiles(relDir: string, out: string[] = []): string[] {
+      for (const entry of fs.readdirSync(path.join(REPO_ROOT, relDir), { withFileTypes: true })) {
+        const rel = toPosix(path.join(relDir, entry.name));
+        if (entry.isDirectory()) {
+          if (entry.name === '__tests__' || entry.name === 'node_modules') continue;
+          tsFiles(rel, out);
+          continue;
+        }
+        if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(rel);
+      }
+      return out;
+    }
+    const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
+    return tsFiles('src')
+      .filter((rel) => rel !== DEFINER)
+      .filter((rel) => /verifyBlockToken\s*\(/.test(stripNonCode(read(rel))))
+      .sort();
+  }
+
+  it('POSITIVE CONTROL: the verifyBlockToken caller set is derived and complete', () => {
+    const callers = verifyTokenCallers();
+    // A broken walk makes every equality below vacuous.
+    expect(callers.length).toBeGreaterThan(2);
+    // And it really is the union of the two ledgers — this is the GROWTH check the first version
+    // claimed and could not perform.
+    // The REST seam IS `block-scope.middleware.ts`, which is also the DEFINER and therefore
+    // excluded from the derivation — so compare against the ledgers minus that one key.
+    const DEFINER = 'src/server/middleware/block-scope.middleware.ts';
+    expect(callers).toEqual(
+      [...Object.keys(CONSENT_STRIP_SEAMS), ...Object.keys(EXEMPT_ONLY_SEAMS)]
+        .filter((k) => k !== DEFINER)
+        .sort()
+    );
+  });
+
+  it('every verifyBlockToken seam either applies revocations or authorizes only exempt scopes', async () => {
+    const { isConsentExemptScope } = await import('~/server/services/blocks/scope-grant.service');
+    const seams = [...Object.keys(CONSENT_STRIP_SEAMS), ...Object.keys(EXEMPT_ONLY_SEAMS)].sort();
+
+    // POSITIVE CONTROL on the enumeration itself: every ledgered seam must really call
+    // `verifyBlockToken`, or this whole block is a claim about a list rather than the tree.
+    for (const rel of seams) {
+      expect(stripNonCode(read(rel)), `${rel} does not verify a block token`).toMatch(
+        /verifyBlockToken\s*\(/
+      );
+    }
+
+    for (const [rel, why] of Object.entries(CONSENT_STRIP_SEAMS)) {
+      expect(
+        stripNonCode(read(rel)),
+        `${rel} is ledgered as applying consent revocations (${why}) and does not call ` +
+          `applyRevocations. A strip that is absent is invisible: every scope the viewer ` +
+          `withdrew keeps working on that seam for the rest of the token's life.`
+      ).toMatch(/applyRevocations\s*\(/);
+    }
+
+    for (const [rel, scopes] of Object.entries(EXEMPT_ONLY_SEAMS)) {
+      const code = stripNonCode(read(rel));
+      expect(code, `${rel} now applies revocations — move it to CONSENT_STRIP_SEAMS.`).not.toMatch(
+        /applyRevocations\s*\(/
+      );
+      for (const scope of scopes) {
+        expect(
+          isConsentExemptScope(scope),
+          `${rel} authorizes "${scope}", which is NO LONGER consent-exempt. That seam applies ` +
+            `no revocations, so a viewer withdrawing it would be silently ignored there. Either ` +
+            `wire the strip in, or re-exempt the scope deliberately.`
+        ).toBe(true);
+      }
+      // …and the scopes it authorizes are still the ones ledgered here. Read the RAW source for
+      // this one: `stripNonCode` blanks string literals, so the scope names are gone from `code`.
+      const raw = read(rel);
+      for (const scope of scopes) {
+        expect(raw, `${rel} no longer authorizes "${scope}" — re-derive this ledger`).toContain(
+          scope
+        );
+      }
+    }
+  });
+
+  /**
+   * 🔴 THE ANY-TOKEN ROUTES READ NO SCOPES — DERIVED, NOT LISTED.
+   *
+   * The middleware skips the consent-marker read entirely when a route declares no
+   * `requiredScope`, on the ground that such a route exercises no scope and a marker can therefore
+   * neither refuse nor usefully strip. That holds only while those routes really do ignore
+   * `claims.scopes`; if one starts reading them, a viewer's revoke is silently unenforced there.
+   *
+   * ⚠️ THE FIRST VERSION HARDCODED FIVE PATHS AND THE POPULATION IS SIX — `generation-resources.ts`
+   * was missing. A hand-list ALONE is exactly what this file's own preamble forbids ("A
+   * RELATIONSHIP, NOT A COUNT … the KEY SET must equal the DERIVED set, in both directions"), and
+   * it is the shape that let the skip's soundness guard cover 5 of 6 while claiming the population.
+   * So the set is DERIVED from the same `blockScopedRoutes()` walk every other ledger here uses,
+   * and a seventh route is covered the day it is added.
+   *
+   * ⚠️ THE FIX THAT CLAIMED SIX SAID SEVEN. The commit adding this derivation asserted a population
+   * of seven by also counting `blocks/me.ts` — which declares `requiredScope: 'user:read:self'` and
+   * is therefore not in this population at all. Both the five and the seven were stated without
+   * being derived; that is why the ledger below exists.
+   */
+  function anyTokenRoutes(): string[] {
+    return blockScopedRoutes()
+      .filter((rel) => !/requiredScope\s*:/.test(stripNonCode(read(rel))))
+      .sort();
+  }
+
+  /**
+   * 🔴 THE LEDGER THE DERIVATION IS GRADED AGAINST — the idiom this file's preamble mandates, and
+   * the only control that fails when the derivation SHRINKS.
+   *
+   * `expect(routes.length).toBeGreaterThan(3)` was measured too loose to be worth keeping: with a
+   * derived population of six, a walk that silently lost 2 of 6 still passed, which is a WEAKER
+   * property than the hand-list defect it replaced (missing 1 of 6). Established by mutating
+   * `stripNonCode` to the identity function — the population collapsed from 6 to 3 and the control
+   * failed by exactly one. The companion `toBeLessThan(blockScopedRoutes().length)` was free: that
+   * side is 35.
+   *
+   * Set equality in BOTH directions is what makes a lost route and a new route each loud. Adding a
+   * route here is a deliberate act: it asserts the route reads no `claims.scopes`, which the arm
+   * below then verifies mechanically.
+   */
+  const ANY_TOKEN_ROUTES = [
+    'src/pages/api/v1/blocks/gated-images.ts',
+    'src/pages/api/v1/blocks/generation-resources.ts',
+    'src/pages/api/v1/blocks/images.ts',
+    'src/pages/api/v1/blocks/models.ts',
+    'src/pages/api/v1/blocks/resource-intent.ts',
+    'src/pages/api/v1/blocks/tools.ts',
+    'src/pages/api/v1/blocks/user-checkpoint/set.ts',
+  ];
+
+  it('POSITIVE CONTROL: the any-token population is derived and equals its ledger', () => {
+    const routes = anyTokenRoutes();
+    // Non-vacuous first: an empty derivation makes the soundness arm below assert nothing.
+    expect(routes.length).toBeGreaterThan(3);
+    // …and it is a strict subset of the wrapped routes, i.e. the filter really filtered.
+    expect(routes.length).toBeLessThan(blockScopedRoutes().length);
+    // 🔴 BOTH DIRECTIONS. A route that STOPS being any-token (it gained a `requiredScope`) and a
+    // route that STARTS being one (a new catalog route) are both findings: the first means this
+    // ledger over-claims, the second means the middleware's marker skip just widened without
+    // anyone checking the new route ignores `claims.scopes`.
+    expect(
+      routes,
+      'the derived any-token population no longer matches its ledger. A route ADDED here must be ' +
+        'confirmed to read no claims.scopes (the arm below does that); a route REMOVED here now ' +
+        'declares a requiredScope and is consulted normally — update the list either way. A ' +
+        'SHRINKING derivation is the dangerous direction: it silently reduces what the soundness ' +
+        'arm covers, which is how a list of five stood in for a population of six.'
+    ).toEqual([...ANY_TOKEN_ROUTES].sort());
+  });
+
+  it('every any-token route reads no scopes, so the marker skip is sound', () => {
+    for (const rel of anyTokenRoutes()) {
+      const code = stripNonCode(read(rel));
+      expect(
+        code,
+        `${rel} declares no requiredScope, so the consent-marker read is SKIPPED for it — but it ` +
+          `reads claims.scopes, which means a viewer's revoke is silently unenforced there. ` +
+          `Either give the route a requiredScope, or stop reading scopes in it.`
+      ).not.toMatch(/\bscopes\b/);
+    }
   });
 });

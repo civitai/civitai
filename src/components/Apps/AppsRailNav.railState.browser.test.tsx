@@ -351,7 +351,14 @@ describe('🔴 the collapsed rail keeps its accessible names', () => {
   test('the group heading is CLIPPED, not removed from the accessibility tree', async () => {
     await renderCollapsed();
     const nav = document.querySelector('nav[aria-label="App sections"]') as HTMLElement;
-    const headings = Array.from(nav.children).filter((el) => el.tagName.toLowerCase() !== 'a');
+    // ⚠️ SELECTED BY `data-apps-chrome="rail-group-heading"`, NOT BY "every non-anchor
+    // child of the nav". The first group's heading now shares a row with the collapse
+    // toggle, so it sits inside a wrapper — and the structural form would have handed the
+    // `sr-only` assertion below the WRAPPER's className, which never carries it. That is a
+    // red for the right reason on a correct component, i.e. the worst kind.
+    const headings = Array.from(
+      nav.querySelectorAll('[data-apps-chrome="rail-group-heading"]')
+    ) as HTMLElement[];
     // Still present and still carrying its text — `hidden`/`aria-hidden` would drop it from
     // the tree, which is what the component's comment says it must not do.
     expect(headings.length).toBeGreaterThan(0);
