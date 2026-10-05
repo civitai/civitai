@@ -158,6 +158,7 @@ describe('GET /api/v1/blocks/shared-storage/list', () => {
       prefix: 'req:',
       limit: 3,
       cursor: 'azc=',
+      mine: false,
     });
     expect((res._json() as { items: unknown[] }).items).toEqual(ROWS);
   });
@@ -191,6 +192,67 @@ describe('GET /api/v1/blocks/shared-storage/list', () => {
       prefix: undefined,
       limit: 50,
       cursor: undefined,
+      mine: false,
+    });
+  });
+
+  // civitai/civitai#5354 Q3 — `mine=true` narrows the page to the viewer's own rows.
+  // The handler's whole job here is to parse one query param correctly and thread it;
+  // the author resolution and the SQL predicate are the router's, tested there.
+  describe('#5354 Q3 mine=', () => {
+    // 🔴 No separate "mine=true threads down" test: the composition case at the
+    // bottom of this block asserts the FULL call object including `mine: true`
+    // and strictly subsumes an `objectContaining({mine:true})` version of it.
+    it('🔴 mine=false is FALSE — the string is not truthy-coerced', async () => {
+      const { req, res } = createMocks({ query: { mine: 'false' } });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      // This is the test that fails if anyone "simplifies" the schema to
+      // z.coerce.boolean(), which maps the STRING "false" to true and would
+      // invert the flag for every caller that passes it explicitly. Nothing
+      // else in this file can see that change.
+      expect(mockList).toHaveBeenCalledWith(
+        'tok_list',
+        expect.objectContaining({ mine: false })
+      );
+    });
+
+    it('an unrecognised value 400s rather than defaulting, and nothing is read', async () => {
+      for (const mine of ['yes', '1', 'TRUE', '']) {
+        mockList.mockClear();
+        const { req, res } = createMocks({ query: { mine } });
+        await handler(req as never, res as never);
+        expect(res._status(), `mine=${JSON.stringify(mine)}`).toBe(400);
+        expect(mockList, `mine=${JSON.stringify(mine)}`).not.toHaveBeenCalled();
+      }
+    });
+
+    it('🔴 nextPage CARRIES mine forward — page 2 must not silently widen to the whole board', async () => {
+      const { req, res } = createMocks({ query: { mine: 'true', limit: '3' } });
+      await handler(req as never, res as never);
+      const body = res._json() as { metadata: { nextPage?: string } };
+      // This property is NOT implemented here — it falls out of getNextPage
+      // spreading `req.query` and overriding only `cursor`. That is a seam between
+      // two files, so nothing in either one fails if it changes: a getNextPage that
+      // rebuilt the query from an allowlist would drop `mine`, and the follow-on
+      // page would return every author's rows under a "my submissions" heading.
+      // Pinned here because this endpoint is where the damage would show.
+      expect(decodeURIComponent(body.metadata.nextPage ?? '')).toContain('mine=true');
+      expect(decodeURIComponent(body.metadata.nextPage ?? '')).toContain('cursor=');
+    });
+
+    it('composes with prefix/limit/cursor instead of replacing them', async () => {
+      const { req, res } = createMocks({
+        query: { prefix: 'grid:', limit: '7', cursor: 'azc=', mine: 'true' },
+      });
+      await handler(req as never, res as never);
+      expect(res._status()).toBe(200);
+      expect(mockList).toHaveBeenCalledWith('tok_list', {
+        prefix: 'grid:',
+        limit: 7,
+        cursor: 'azc=',
+        mine: true,
+      });
     });
   });
 

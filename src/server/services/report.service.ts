@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { randomUUID } from 'crypto';
 import dayjs from '~/shared/utils/dayjs';
 import {
   BlockedReason,
@@ -61,6 +62,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
+import { isSafeToRetry } from '@civitai/buzz';
+import { APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
 import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -587,29 +590,25 @@ export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
   });
 }
 
-export function getLatestModelAppeal(modelId: number, userId: number) {
+export function getLatestAppeal({
+  entityType,
+  entityId,
+  userId,
+}: {
+  entityType: EntityType;
+  entityId: number;
+  userId: number;
+}) {
   return dbRead.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, userId },
-    orderBy: { createdAt: 'desc' },
-    select: { status: true, resolvedAt: true },
+    where: { entityType, entityId, userId },
+    orderBy: { id: 'desc' },
+    select: { id: true, status: true, resolvedAt: true },
   });
 }
 
-// `Appeal` is unique on (entityType, entityId, userId), so an owner asking for
-// review a second time can only ever be an update of the row they already have.
-export function reopenModelAppeal({
-  entityId,
-  userId,
-  message,
-}: {
-  entityId: number;
-  userId: number;
-  message: string;
-}) {
+export function reopenModelAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
-    where: {
-      entityType_entityId_userId: { entityType: EntityType.Model, entityId, userId },
-    },
+    where: { id },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
@@ -642,9 +641,31 @@ function getAppealById({ id, select }: GetByIdInput & { select?: Prisma.AppealSe
   return dbRead.appeal.findUnique({ where: { id }, select });
 }
 
-export async function getAppealDetails({ id }: GetByIdInput) {
-  const appeal = await getAppealById({ id });
-  if (!appeal) throw throwNotFoundError('Appeal not found');
+export async function getAppealDetails({
+  id,
+  userId,
+  isModerator,
+}: GetByIdInput & { userId: number; isModerator?: boolean }) {
+  const appeal = await getAppealById({
+    id,
+    select: {
+      id: true,
+      userId: true,
+      entityType: true,
+      entityId: true,
+      status: true,
+      appealMessage: true,
+      createdAt: true,
+      updatedAt: true,
+      resolvedAt: true,
+      resolvedMessage: true,
+      resolvedBy: isModerator,
+      internalNotes: isModerator,
+    },
+  });
+  // Not found for someone else's appeal too, so ids can't be probed.
+  if (!appeal || (!isModerator && appeal.userId !== userId))
+    throw throwNotFoundError('Appeal not found');
 
   // Get details based on entityType
   let entityDetails: MixedObject | null = null;
@@ -669,7 +690,9 @@ export async function getAppealDetails({ id }: GetByIdInput) {
   return { ...appeal, entityDetails };
 }
 
-const getAppealPrefix = (userId: number) => `appeal-${userId}-${new Date().getTime()}`;
+// The failure path refunds by this prefix, so two submits in the same millisecond must not share it.
+const getAppealPrefix = (userId: number) =>
+  `appeal-${userId}-${new Date().getTime()}-${randomUUID().slice(0, 8)}`;
 const isAppealPrefix = (prefix: string) => prefix.startsWith('appeal-');
 
 export async function createEntityAppeal({
@@ -735,11 +758,33 @@ export async function createEntityAppeal({
     return appeal;
   } catch (error) {
     if (buzzTransactionId) {
-      await refundMultiAccountTransaction({
-        externalTransactionIdPrefix: buzzTransactionId ?? '',
-        description: 'Refund appeal fee',
-      });
+      const prefix = buzzTransactionId;
+      try {
+        // Retries only when the request provably never landed: retrying a timed-out refund can
+        // refund twice, and the log below covers the case where it did not land.
+        await refundMultiAccountTransaction(
+          {
+            externalTransactionIdPrefix: prefix,
+            description: `Refund appeal fee for ${entityType} ${entityId}`,
+          },
+          { shouldRetry: isSafeToRetry }
+        );
+      } catch (refundError) {
+        // No appeal row was written, so nothing else records that this user is owed the fee.
+        logToAxiom({
+          type: 'error',
+          name: 'create-entity-appeal',
+          message: 'Failed to refund appeal fee',
+          userId,
+          entityType,
+          entityId,
+          buzzTransactionId: prefix,
+          error: (refundError as Error).message,
+        });
+      }
     }
+    // Lost the race on the one-Pending-appeal-per-entity index to a concurrent submit.
+    if (isPrismaUniqueViolation(error)) throw throwBadRequestError(APPEAL_ALREADY_PENDING);
     throw error;
   }
 }
@@ -768,20 +813,22 @@ type AppealFeeRef = {
   buzzTransactionId: string;
 };
 
-function refundAppealFee(appeal: AppealFeeRef) {
-  return withRetries(async () => {
-    if (isAppealPrefix(appeal.buzzTransactionId)) {
-      await refundMultiAccountTransaction({
+async function refundAppealFee(appeal: AppealFeeRef) {
+  if (isAppealPrefix(appeal.buzzTransactionId)) {
+    // A timed-out refund may still land, so only a request that never reached Buzz is retried.
+    await refundMultiAccountTransaction(
+      {
         externalTransactionIdPrefix: appeal.buzzTransactionId,
         description: `Refund appeal fee for ${appeal.entityType} ${appeal.entityId}`,
-      });
-    } else {
-      await refundTransaction(
-        appeal.buzzTransactionId,
-        `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-      );
-    }
-  });
+      },
+      { shouldRetry: isSafeToRetry }
+    );
+  } else {
+    await refundTransaction(
+      appeal.buzzTransactionId,
+      `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+    );
+  }
 }
 
 /**
@@ -848,8 +895,11 @@ export async function resolveEntityAppeal({
   refundBuzz,
   userId,
 }: ResolveAppealInput & { userId?: number }) {
-  const appeals = await dbRead.appeal.findMany({
+  // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
+  // back for it, so only one of them refunds.
+  const appeals = await dbWrite.appeal.updateManyAndReturn({
     where: { entityId: { in: ids }, status: AppealStatus.Pending, entityType },
+    data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
     select: {
       id: true,
       entityId: true,
@@ -860,13 +910,7 @@ export async function resolveEntityAppeal({
       userId: true,
     },
   });
-  const affectedIds = appeals.map((a) => a.id);
-  if (affectedIds.length === 0) return [];
-
-  await dbWrite.appeal.updateMany({
-    where: { id: { in: affectedIds } },
-    data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
-  });
+  if (appeals.length === 0) return [];
 
   const approved = status === AppealStatus.Approved;
 
@@ -927,9 +971,16 @@ export async function resolveEntityAppeal({
       try {
         await refundAppealFee({ ...appeal, buzzTransactionId: appeal.buzzTransactionId });
       } catch (e) {
-        // Log but don't block appeal resolution if refund fails
-        // (e.g., old transactions may no longer exist in buzz service)
-        console.error(`Failed to refund buzz for appeal ${appeal.id}: ${e}`);
+        // The appeal is already closed, so this is the only record that the fee is still owed.
+        logToAxiom({
+          type: 'error',
+          name: 'resolve-entity-appeal',
+          message: 'Failed to refund appeal fee',
+          appealId: appeal.id,
+          userId: appeal.userId,
+          buzzTransactionId: appeal.buzzTransactionId,
+          error: (e as Error).message,
+        });
       }
     }
 
@@ -938,7 +989,9 @@ export async function resolveEntityAppeal({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
+      // Per appeal, not per entity: an entity can be appealed again after a re-block, and the
+      // notification service reuses the row for a repeated key, so the second decision would vanish.
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${appeal.id}`,
       details: {
         entityType: appeal.entityType,
         entityId: appeal.entityId,

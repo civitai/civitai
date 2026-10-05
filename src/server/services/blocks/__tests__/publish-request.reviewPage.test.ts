@@ -66,7 +66,7 @@ function dbRow(overrides: Record<string, unknown> = {}) {
     fileSummary: null,
     manifestDiffSummary: null,
     forgejoCommitSha: null,
-    submittedBy: { id: 7, username: 'author', image: null },
+    submittedBy: { id: 7, username: 'author', deletedAt: null, image: null },
     reviewedBy: null,
     ...overrides,
   };
@@ -214,7 +214,7 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
       dbRow({
         status: 'rejected',
         rejectionReason: 'uses a disallowed scope',
-        reviewedBy: { id: 9, username: 'reviewer', image: null },
+        reviewedBy: { id: 9, username: 'reviewer', deletedAt: null, image: null },
         reviewedAt: new Date('2026-07-02T00:00:00Z'),
       })
     );

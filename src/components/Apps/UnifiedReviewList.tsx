@@ -26,7 +26,11 @@ import { AppsTableColgroup, APPS_REVIEW_QUEUE_COLUMNS } from '~/components/Apps/
 import { getPlayCountLabel } from '~/components/Apps/appListingCardView';
 import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { ListingIconThumb } from '~/components/Apps/ListingMediaThumb';
-import { compactRelativeTime } from '~/components/Apps/reviewRelativeTime';
+import {
+  compactRelativeTime,
+  REVIEW_RELATIVE_TICK_MS,
+  useNowTick,
+} from '~/components/Apps/reviewRelativeTime';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   mergeReviewRows,
@@ -66,17 +70,13 @@ export type VersionHistoryTarget = {
   title: string;
 };
 
-/**
- * How often the relative-age column re-renders, in ms.
- *
- * 🔴 ONE TIMER FOR THE WHOLE LIST, not one per row. The Pending tab already repaints on its
- * own 15s poll, but the history tabs do not poll at all, so without this an Approved row
- * opened in a background tab would keep reading `5h` for a day. `DaysFromNow`'s `live` tick
- * is the precedent; this is that tick hoisted to the list so a 50-row page has one interval
- * rather than 50. A minute is the finest granularity the ladder can express past the `now`
- * rung, so a faster tick could not change a single label.
+/*
+ * 🔴 THE TICK AND ITS HOOK MOVED TO `reviewRelativeTime.ts`, beside the ladder they drive.
+ * `REVIEW_RELATIVE_TICK_MS` is re-exported here because this module's own tests and the
+ * `/apps/review` page import it from this path; the rationale (one timer for the whole list,
+ * and why a minute is the floor) now lives on the hook.
  */
-export const REVIEW_RELATIVE_TICK_MS = 60_000;
+export { REVIEW_RELATIVE_TICK_MS };
 
 /**
  * What the Plays column does and does not mean.
@@ -101,15 +101,6 @@ export const PLAYS_CAVEAT =
   `still flag-limited, so this reflects internal opens rather than public traffic. A ` +
   `${STANDALONE_KIND_LABEL} listing can never record one: its CTA leaves the site, so an ` +
   'em dash there means unmeasurable, not zero.';
-
-function useNowTick(intervalMs: number): Date {
-  const [now, setNow] = useState(() => new Date());
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
 
 export function UnifiedReviewList({
   onsiteItems,

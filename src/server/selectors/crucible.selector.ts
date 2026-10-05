@@ -56,6 +56,7 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   maxClipSeconds: true,
   prizePositions: true,
   allowedResources: true,
+  allowedBaseModels: true,
   duration: true,
   status: true,
   startAt: true,

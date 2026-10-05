@@ -16,6 +16,16 @@ export const CRUCIBLE_MAX_ENTRIES = 20;
 export const CRUCIBLE_MIN_TOTAL_ENTRIES = 2;
 export const CRUCIBLE_MAX_TOTAL_ENTRIES = 100_000;
 
+/** Following only buys something while the crucible still has an ending ahead of it. */
+export const CRUCIBLE_FOLLOWABLE_STATUSES: CrucibleStatus[] = [
+  CrucibleStatus.Pending,
+  CrucibleStatus.Active,
+];
+
+/** Throwaway accounts score 0, so a bot farm has to earn real engagement before its votes count. */
+export const CRUCIBLE_JUDGE_MIN_CREATOR_SCORE = 500;
+export const CRUCIBLE_JUDGE_SCORE_REQUIRED_MESSAGE = `You need a creator score of at least ${CRUCIBLE_JUDGE_MIN_CREATOR_SCORE} to judge crucibles.`;
+
 export const CRUCIBLE_NAME_MAX_LENGTH = 100;
 export const CRUCIBLE_DESCRIPTION_MAX_LENGTH = 500;
 
@@ -60,11 +70,14 @@ export const getPrizeDistributionTotal = (prizePositions: Record<string, number>
 
 /**
  * Cost in Buzz for restricting entries to specific model versions (`allowedResources`).
+ * Restricting by base model (`allowedBaseModels`) is free.
  */
 export const CRUCIBLE_RESOURCE_REQUIREMENTS_COST = 500;
 
 /** Matches ModelVersionMultiSelect's default `maxSelections`. */
 export const CRUCIBLE_MAX_ALLOWED_RESOURCES = 10;
+
+export const CRUCIBLE_MAX_ALLOWED_BASE_MODELS = 10;
 
 /** How far ahead a crucible's start may be scheduled. */
 export const CRUCIBLE_MAX_START_LEAD_DAYS = 30;
@@ -157,3 +170,6 @@ export const accumulatePlaybackMs = ({
 
   return watchedMs + deltaMs;
 };
+
+/** Bounds how far one judge can move a single entry. */
+export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;

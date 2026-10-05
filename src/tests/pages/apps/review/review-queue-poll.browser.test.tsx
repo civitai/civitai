@@ -606,7 +606,7 @@ const onsiteRow = (id: string) => ({
   fileSummary: {},
   manifestDiffSummary: {},
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: 'onsite-dev', image: null },
+  submittedBy: { id: 7, username: 'onsite-dev', deletedAt: null, image: null },
 });
 
 const offsiteRow = (id: string) => ({
@@ -622,7 +622,7 @@ const offsiteRow = (id: string) => ({
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 9, username: 'offsite-dev', image: null },
+  submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
 });
 
 const countText = () =>

@@ -21,7 +21,11 @@ import type {
   SubmitVoteSchema,
 } from '~/server/schema/crucible.schema';
 import { crucibleListSelect } from '~/server/selectors/crucible.selector';
-import { getCrucibleCreateEligibility } from '~/server/services/crucible-eligibility.service';
+import {
+  assertCanJudgeCrucible,
+  getCrucibleCreateEligibility,
+  getCrucibleJudgeEligibility,
+} from '~/server/services/crucible-eligibility.service';
 import { BlockedByUsers } from '~/server/services/user-preferences.service';
 import { logToAxiom } from '~/server/logging/client';
 import { amIBlockedByUser } from '~/server/services/user.service';
@@ -98,19 +102,10 @@ export const getCrucibleByIdHandler = async ({
     });
     if (blocked) return null;
   }
-  // Off the green site a green crucible doesn't exist, as for user challenges; on green a yellow one
-  // is returned so the page can show the redirect to the mature site.
+  // On green a non-SFW crucible is returned so the page can point to the mature site; its adult
+  // text stays off green.
   const canPreview = !!ctx.user?.isModerator || crucible?.userId === ctx.user?.id;
-  if (crucible && !ctx.features?.isGreen && crucible.buzzType === 'green' && !canPreview)
-    return null;
-  // Returned on green only so the page can point to the mature site; its adult text stays off green.
-  if (
-    crucible &&
-    ctx.features?.isGreen &&
-    crucible.buzzType !== 'green' &&
-    crucible.textNsfw &&
-    !canPreview
-  )
+  if (crucible && ctx.features?.isGreen && crucible.textNsfw && !canPreview)
     return { ...crucible, name: 'Crucible', description: null };
   // A background image that hasn't passed its scan falls back to the cover for everyone else.
   if (
@@ -133,7 +128,7 @@ export const createCrucibleHandler = async ({
     ...input,
     userId: ctx.user.id,
     isModerator: ctx.user.isModerator,
-    buzzType: input.buzzType ?? deriveDomainCurrency(!!ctx.features?.isGreen),
+    buzzType: deriveDomainCurrency(!!ctx.features?.isGreen),
   });
 };
 
@@ -235,6 +230,7 @@ export const getJudgingPairHandler = async ({
   input: GetJudgingPairSchema;
   ctx: ProtectedContext;
 }) => {
+  await assertCanJudgeCrucible({ userId: ctx.user.id, isModerator: ctx.user.isModerator });
   const pair = await getJudgingPair({
     ...input,
     userId: ctx.user.id,
@@ -268,6 +264,7 @@ export const submitVoteHandler = async ({
   input: SubmitVoteSchema;
   ctx: ProtectedContext;
 }) => {
+  await assertCanJudgeCrucible({ userId: ctx.user.id, isModerator: ctx.user.isModerator });
   return submitVote({
     ...input,
     userId: ctx.user.id,
@@ -320,6 +317,9 @@ export const updateCrucibleHandler = async ({
 export const getCreateEligibilityHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   return getCrucibleCreateEligibility(ctx.user.id);
 };
+
+export const getJudgeEligibilityHandler = async ({ ctx }: { ctx: ProtectedContext }) =>
+  getCrucibleJudgeEligibility({ userId: ctx.user.id, isModerator: ctx.user.isModerator });
 
 export const getUserCrucibleStatsHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   return getUserCrucibleStats({ userId: ctx.user.id });

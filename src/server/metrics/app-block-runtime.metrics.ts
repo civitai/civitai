@@ -491,9 +491,7 @@ export const APP_BLOCK_REST_APPROVAL_VERDICT_REASONS = [
   /**
    * The dev-tunnel re-check could not be completed (clawgate #571). Refuses like
    * `not_approved`, counted separately so a cache incident is not indistinguishable from
-   * the stale-dev-token population that verdict exists to create — which matters more
-   * here than it would elsewhere, because application-container logs are not collected on
-   * this deployment, so this label is the whole signal for that leg.
+   * the stale-dev-token population that verdict exists to create.
    *
    * ⚠️ THIS LIST IS A THIRD EDIT SITE, NOT DERIVED. It is a hand-maintained union
    * alongside `AppBlockApprovalVerdict` and the two callers' mappings; a new verdict needs
@@ -1148,19 +1146,13 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   // is not enabled" whenever their session could not be read. Two different facts,
   // one message; only one of them is about permission.
   //
-  // 🔴 A LOG LINE WOULD NOT HAVE SATISFIED THIS. Application-container stdout is
-  // not collected into the log store for this deployment, so a `console.error` on
-  // this branch is unreadable to any later investigator — the exact reason the
-  // 2026-09-19 refusal could not be attributed to a mechanism at all. A scraped
-  // counter is the only surface that exists here today.
-  //
   // 🔴 ONE LABEL, `surface`, over a 2-value code-owned union → 2 series, TOTAL. No
   // `app_block_id` and no user id: this fires once per refused post/preview attempt
   // with nothing caching it, and prom-client retains every distinct label set in
   // the Node heap for the process lifetime across every scraped pod. Same
-  // alert-on-the-metric / attribute-from-the-log split as the two counters above —
-  // except that here the log half does not exist yet, so read this series as a RATE
-  // signal only and do not expect to identify WHICH viewer was refused from it.
+  // alert-on-the-metric / attribute-from-the-log split as the two counters above: read
+  // this series as a RATE signal only and do not expect to identify WHICH viewer was
+  // refused from it.
   //
   // 🔴 WHAT A ZERO DOES AND DOES NOT MEAN. Zero is the healthy steady state — a
   // subject that hydrates never reaches the emitter — so "nothing has gone wrong"
@@ -1171,7 +1163,7 @@ export function ensureRegisterAppBlockRuntimeMetrics(reg: Registry = client.regi
   const postSubjectRefusalsTotal = getOrCreateCounter(
     reg,
     'civitai_app_block_post_subject_refusals_total',
-    "Post-from-app requests refused because the token subject did not hydrate to a SessionUser, by surface. surface: create = blocks.createPostFromApp, preview = blocks.previewPostFromApp. This is NOT a flag denial and must never be read as one — a flag denial does not increment this series at all, and the two refusals carry different messages on purpose. A non-zero rate means viewers who may well be entitled to post were turned away by an identity read that failed, so alert on the RATE, not on a single event. Carries no app or user label (cardinality); per-viewer attribution is not available on this deployment because application-container logs are not collected, so this counter is the whole signal. Zero is also the healthy steady state, so a flat zero cannot by itself distinguish 'nothing failed' from 'the emitter is inert' — the registration is pinned by a real-registry test instead",
+    "Post-from-app requests refused because the token subject did not hydrate to a SessionUser, by surface. surface: create = blocks.createPostFromApp, preview = blocks.previewPostFromApp. This is NOT a flag denial and must never be read as one — a flag denial does not increment this series at all, and the two refusals carry different messages on purpose. A non-zero rate means viewers who may well be entitled to post were turned away by an identity read that failed, so alert on the RATE, not on a single event. Carries no app or user label (cardinality), so it attributes a MECHANISM and never a viewer. Zero is also the healthy steady state, so a flat zero cannot by itself distinguish 'nothing failed' from 'the emitter is inert' — the registration is pinned by a real-registry test instead",
     ['surface']
   );
 
@@ -1740,12 +1732,10 @@ export function recordBlockRestApprovalVerdict(reason: AppBlockRestApprovalVerdi
  * decided by the time this runs, so a metrics error must not convert a chosen 401 into
  * an uncaught 500.
  *
- * 🔴 THIS IS THE ONLY OBSERVABILITY THIS BRANCH HAS. Application-container logs are not
- * collected for this deployment, so the `console.error` shape used elsewhere in the repo
- * would be invisible to a later investigator. Deleting this call does not fail a type
- * check and does not fail any test that only asserts the thrown error — it silently
- * returns the branch to being unobservable, which is the state that made the 2026-09-19
- * refusal unattributable. `app-block-post-subject-refusals.metrics.test.ts` is what
+ * 🔴 THIS IS THE ONLY OBSERVABILITY THIS BRANCH HAS — it emits nothing else. Deleting
+ * this call does not fail a type check and does not fail any test that only asserts the
+ * thrown error — it silently returns the branch to being unobservable, which is the state
+ * that made the 2026-09-19 refusal unattributable. `app-block-post-subject-refusals.metrics.test.ts` is what
  * stops that.
  *
  * COST: one in-heap counter increment, only on the refusal path. A fleet whose subjects

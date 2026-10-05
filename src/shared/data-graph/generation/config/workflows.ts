@@ -411,7 +411,6 @@ export const workflowConfigs: WorkflowConfigs = {
     category: 'audio',
     ecosystemIds: [ECO.AceAudio, ECO.MiniMaxMusic3, ECO.YuE2, ECO.Sonilo],
     stepDisplay: 'separate',
-    memberOnly: true,
   },
 
   // ===========================================================================

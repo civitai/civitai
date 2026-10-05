@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -54,9 +55,16 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
   coverageAudience: vi.fn(async () => ({ next: false, member: false })),
 }));
 
-const { getResourceIntent, resourceIntentCacheKey } = await import(
+const { getResourceIntent, resolveSuggestionLimit, resourceIntentCacheKey } = await import(
   '~/server/services/resource-intent.service'
 );
+
+/**
+ * The matcher's RESULT shape. It returns `{ entries, insightFallback }` rather than
+ * a bare array precisely so its fail-soft path is not silent at this seam, and the
+ * default here is the success case — a test that wants the fallback passes `true`.
+ */
+const matched = (entries: unknown[], insightFallback = false) => ({ entries, insightFallback });
 
 const INPUT = { prompt: 'a photorealistic portrait of a knight' } as const;
 const CTX = { browsingLevel: 3, coverage: { next: false, member: false } };
@@ -127,7 +135,11 @@ function mockStage1() {
   mockAskJev.mockImplementationOnce(async () => ({
     answers: STAGE1_ANSWERS,
     usage: { promptTokens: 100, completionTokens: 50 },
-    model: 'typesafe/jev-1.13',
+    // A DATED build, not the bare pin: `askJev` now returns the model the vendor
+    // reports answered, and a response carrying the bare pin is possible but is not
+    // what the live endpoint sends. A fixture production can never produce is not a
+    // fixture. `jev.test.ts` covers both arms of the pin check.
+    model: 'typesafe/jev-1.13-20260917',
   }));
 }
 
@@ -135,7 +147,7 @@ function mockStage3(distribution: Record<string, number>, value = '0') {
   mockAskJev.mockImplementationOnce(async () => ({
     answers: [{ id: 'resourceVersion', type: 'choice' as const, value, distribution }],
     usage: { promptTokens: 200, completionTokens: 20 },
-    model: 'typesafe/jev-1.13',
+    model: 'typesafe/jev-1.13-20260917',
   }));
 }
 
@@ -143,7 +155,7 @@ beforeEach(() => {
   clickhouseHolder.client = { insert: mockInsert };
   mockAskJev.mockReset();
   mockFindCandidates.mockReset();
-  mockFindCandidates.mockResolvedValue([]);
+  mockFindCandidates.mockResolvedValue(matched([]));
   mockGetResourceData.mockReset();
   mockGetResourceData.mockResolvedValue([]);
   mockInsert.mockReset();
@@ -153,6 +165,29 @@ beforeEach(() => {
   redisMock.redis.packed.get.mockResolvedValue(null);
   redisMock.redis.packed.set.mockReset();
   redisMock.redis.packed.set.mockResolvedValue('OK');
+});
+
+describe('resolveSuggestionLimit — the one shortlist bound', () => {
+  // The matcher used to clamp separately, and the two disagreed about exactly these
+  // inputs: `Math.min(limit, MAX)` alone passes 0, negatives and fractions straight
+  // through.
+  //
+  // ⚠️ Invariant guard, and labelled as one: the only production caller of
+  // `getResourceIntent` is the REST route, which parses through
+  // `resourceIntentInputSchema` (`int().min(1).max(255)`), so 0, -4 and 9.8 are
+  // unreachable today. This pins the consolidated clamp against the next caller —
+  // it is NOT evidence of a live hole that was closed.
+  it('floors at 1, truncates, and caps at the maximum', async () => {
+    const { RESOURCE_INTENT_MAX_SHORTLIST, RESOURCE_INTENT_DEFAULT_LIMIT } = await import(
+      '~/server/schema/resource-intent.schema'
+    );
+    expect(resolveSuggestionLimit(undefined)).toBe(RESOURCE_INTENT_DEFAULT_LIMIT);
+    expect(resolveSuggestionLimit(7)).toBe(7);
+    expect(resolveSuggestionLimit(0)).toBe(1);
+    expect(resolveSuggestionLimit(-4)).toBe(1);
+    expect(resolveSuggestionLimit(9.8)).toBe(9);
+    expect(resolveSuggestionLimit(1000)).toBe(RESOURCE_INTENT_MAX_SHORTLIST);
+  });
 });
 
 describe('cache behavior', () => {
@@ -172,12 +207,37 @@ describe('cache behavior', () => {
     expect(resourceIntentCacheKey({ ...base, cap: 1 })).not.toBe(a);
   });
 
+  it('🔴 the spec term in the key is the spec HASH, not the hand-maintained version', async () => {
+    // Recomputed independently, so swapping the term back to
+    // `String(QUESTION_SPEC_VERSION)` goes red. The hash moves on ANY question-spec
+    // edit; the integer only moves when someone remembers. Measured once: rewording
+    // the `specificity` prompt moved the hash and left the version at 1, so a
+    // pre-edit cache entry would have been served for its full hour under the new
+    // spec and then stamped into the shadow table with the NEW hash.
+    const { RESOURCE_INTENT_SPEC_HASH, QUESTION_SPEC_VERSION } = await import(
+      '~/server/schema/resource-intent.schema'
+    );
+    const base = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
+    const expected = createHash('sha256')
+      .update(['p', 'SDXL 1.0', '3', '50', RESOURCE_INTENT_SPEC_HASH].join('|'))
+      .digest('hex');
+    expect(resourceIntentCacheKey(base)).toBe(`packed:caches:jev-resource-intent:v1:${expected}`);
+    // And the control: the version integer is NOT what the key carries.
+    const withVersion = createHash('sha256')
+      .update(['p', 'SDXL 1.0', '3', '50', String(QUESTION_SPEC_VERSION)].join('|'))
+      .digest('hex');
+    expect(resourceIntentCacheKey(base)).not.toBe(
+      `packed:caches:jev-resource-intent:v1:${withVersion}`
+    );
+  });
+
   it('🔴 never serves more suggestions than the caller asked for, even from a wider entry', async () => {
     // An entry written under an OLDER key shape (i.e. at a wider cap) landing on
     // this request's key is the case the key change alone cannot fix — the
     // serve-time truncation is what holds the contract. Planted directly.
     const wide = {
       degraded: false,
+      insightFallback: false,
       intent: {
         needsResource: 0.9,
         role: { value: 'style' as const, distribution: { style: 1 } },
@@ -190,16 +250,17 @@ describe('cache behavior', () => {
         injectionPresent: 0,
       },
       criteria: {
-        criteriaVersion: 1 as const,
+        criteriaVersion: 2 as const,
         specHash: 'abc',
         role: 'style' as const,
+        styleFamily: 'anime_manga' as const,
         modelTypes: ['LORA' as const],
         baseModel: null,
       },
       suggestions: [{ versionId: 11 }, { versionId: 22 }, { versionId: 33 }],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
-      criteriaVersion: 1 as const,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2 as const,
     };
     redisMock.redis.packed.get.mockResolvedValue(wide);
 
@@ -216,7 +277,7 @@ describe('cache behavior', () => {
   it('passes the resolved cap to the matcher and honours limit end-to-end', async () => {
     mockStage1();
     mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockGetResourceData.mockResolvedValue([genResource(11), genResource(22)]);
 
     const result = await getResourceIntent({ ...INPUT, limit: 1 }, CTX);
@@ -228,6 +289,7 @@ describe('cache behavior', () => {
   it('a cache hit short-circuits both Jev calls and is NOT rewritten', async () => {
     const cached = {
       degraded: false,
+      insightFallback: false,
       intent: {
         needsResource: 0.9,
         role: { value: 'style', distribution: { style: 1 } },
@@ -237,16 +299,17 @@ describe('cache behavior', () => {
         injectionPresent: 0,
       },
       criteria: {
-        criteriaVersion: 1,
+        criteriaVersion: 2,
         specHash: 'abc',
         role: 'style',
+        styleFamily: 'anime_manga',
         modelTypes: ['LORA'],
         baseModel: null,
       },
       suggestions: [],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
-      criteriaVersion: 1,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
 
@@ -257,10 +320,113 @@ describe('cache behavior', () => {
     expect(result).toEqual(cached);
   });
 
+  it('🔴 a well-formed PRE-BUMP entry is recomputed, not served', async () => {
+    // The cache key is unchanged by this bump — it carries the question spec hash,
+    // which did not move — so every live entry keeps its key and only the response
+    // parse rejects it. The sibling test below plants garbage; this plants the one
+    // blob shape that actually sits in Redis today, which is the only thing standing
+    // between a cached prompt and an hour of un-ordered suggestions.
+    const v1Criteria = {
+      criteriaVersion: 1,
+      specHash: 'a'.repeat(64),
+      role: 'style',
+      modelTypes: ['LORA'],
+      baseModel: null,
+    };
+    const v1Intent = {
+      needsResource: 0.9,
+      role: { value: 'style', distribution: { style: 1 } },
+      styleFamily: { value: 'anime_manga', distribution: { anime_manga: 1 } },
+      contentType: { value: 'portrait_character', distribution: { portrait_character: 1 } },
+      specificity: 3,
+      injectionPresent: 0,
+    };
+    redisMock.redis.packed.get.mockResolvedValue({
+      degraded: false,
+      insightFallback: false,
+      intent: v1Intent,
+      criteria: v1Criteria,
+      suggestions: [{ versionId: 999 }],
+      noneProbability: 0.1,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 1,
+    });
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched([]));
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(mockAskJev).toHaveBeenCalledTimes(1);
+    expect(result.criteriaVersion).toBe(2);
+    expect(result.suggestions).toEqual([]);
+
+    // 🔴 The parse has THREE independently sufficient terms — `criteria.criteriaVersion`,
+    // the response-root `criteriaVersion`, and `criteria.styleFamily` being required —
+    // so the blob above cannot attribute the rejection to any one of them, and relaxing
+    // any ONE leaves it passing. Each arm below plants a blob only one term can reject.
+    const stale = async (blob: Record<string, unknown>) => {
+      mockAskJev.mockReset();
+      mockStage1();
+      redisMock.redis.packed.get.mockResolvedValue(blob);
+      const out = await getResourceIntent(INPUT, CTX);
+      expect(mockAskJev).toHaveBeenCalledTimes(1);
+      expect(out.suggestions).toEqual([]);
+    };
+
+    const current = {
+      degraded: false,
+      insightFallback: false,
+      intent: v1Intent,
+      criteria: { ...v1Criteria, criteriaVersion: 2, styleFamily: 'anime_manga' },
+      suggestions: [{ versionId: 999 }],
+      noneProbability: 0.1,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2,
+    };
+
+    // 🔴 POSITIVE CONTROL, and it is what makes the three single-term arms below mean
+    // anything: each of those is `current` with ONE term spoiled, so if `current`
+    // itself stops parsing — the response schema is strict, so the next required
+    // field does that — they would all still be recomputed, for the wrong reason, and
+    // stay green. It does NOT cover the fourth arm, which is a different blob shape
+    // (degraded, `criteria: null`); that one's own parse is pinned by the
+    // `shadow event` test that plants the same shape at the current version and
+    // asserts it IS served.
+    mockAskJev.mockReset();
+    redisMock.redis.packed.get.mockResolvedValue(current);
+    const served = await getResourceIntent(INPUT, CTX);
+    expect(mockAskJev).not.toHaveBeenCalled();
+    expect(served.suggestions).toEqual([{ versionId: 999 }]);
+
+    // Only the ROOT literal can reject this one.
+    await stale({ ...current, criteriaVersion: 1 });
+    // Only the CRITERIA literal can reject this one.
+    await stale({ ...current, criteria: { ...current.criteria, criteriaVersion: 1 } });
+    // Only the required-field term can reject this one.
+    await stale({
+      ...current,
+      criteria: (({ styleFamily: _dropped, ...rest }) => rest)(current.criteria),
+    });
+    // 🔴 And the shape where the root literal is the ONLY reachable gate, because
+    // `criteria` is nullable and both criteria-side terms are structurally
+    // unreachable: a DEGRADED pre-bump entry, which is a real production blob on
+    // the 60s TTL path.
+    await stale({
+      degraded: true,
+      insightFallback: false,
+      intent: null,
+      criteria: null,
+      suggestions: [],
+      noneProbability: null,
+      model: 'jev-unavailable',
+      criteriaVersion: 1,
+    });
+  });
+
   it('a corrupted cached blob is ignored and recomputed', async () => {
     redisMock.redis.packed.get.mockResolvedValue({ not: 'a response' });
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
     expect(mockAskJev).toHaveBeenCalledTimes(1);
@@ -269,14 +435,14 @@ describe('cache behavior', () => {
   it('a cache read failure is a miss, never an error', async () => {
     redisMock.redis.packed.get.mockRejectedValue(new Error('redis down'));
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
   });
 
   it('a successful response caches for 1h; a degraded one for 60s', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     await getResourceIntent(INPUT, CTX);
     expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 3600 });
@@ -287,6 +453,49 @@ describe('cache behavior', () => {
     await getResourceIntent(INPUT, CTX);
     expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
+  });
+
+  // 🔴 The matcher's label-read fallback gets the SHORT TTL, and it is not degraded.
+  // Red before the fix with `EX: 3600`: the matcher swallowed its own fallback, so
+  // the service had no way to tell an unordered response from an ordered one and
+  // pinned the unordered one to this cache key for an hour — while the analogous
+  // vendor failure above got 60s.
+  //
+  // The two arms differ ONLY in the matcher's flag: same prompt, same stage-1, same
+  // stage-3, same shortlist. So nothing but the flag can move the TTL, and the
+  // control arm is what stops `EX: 60` unconditionally from passing.
+  it('🔴 a label-read fallback caches for 60s, and is NOT reported as degraded', async () => {
+    mockStage1();
+    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST, true));
+    mockGetResourceData.mockResolvedValue([genResource(11), genResource(22)]);
+
+    const fallback = await getResourceIntent(INPUT, CTX);
+
+    expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
+    expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
+    // Not a degrade: real suggestions, a real intent, and the vendor's own model.
+    expect(fallback.degraded).toBe(false);
+    expect(fallback.insightFallback).toBe(true);
+    expect(fallback.suggestions.map((s) => s.versionId)).toEqual([11, 22]);
+    expect(fallback.model).toBe('typesafe/jev-1.13-20260917');
+    // 🔴 The flag rides INSIDE the cached blob, so a replay reports what the
+    // computation did. Asserted on the value handed to redis, not on the return.
+    expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({
+      insightFallback: true,
+    });
+
+    // Control arm: the identical request with the labels read successfully.
+    redisMock.redis.packed.set.mockClear();
+    mockAskJev.mockReset();
+    mockStage1();
+    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
+
+    const ok = await getResourceIntent(INPUT, CTX);
+
+    expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 3600 });
+    expect(ok.insightFallback).toBe(false);
   });
 });
 
@@ -312,12 +521,54 @@ describe('degradation — fail closed, fail empty', () => {
 
   it('a hydration failure degrades instead of leaking a partial list', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockRejectedValue(new Error('db down'));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
     expect(result.suggestions).toEqual([]);
+  });
+
+  // 🔴 The two failures COMBINED, which is the only path on which `insightFallback`
+  // is tracked outside the `try` — and the line that tracking exists for had no
+  // coverage at all: `insightFallback` → `false` in the degraded literal was green
+  // across the whole suite. The TTL cannot see it (a degrade is already short-lived),
+  // so what this pins is the CACHED BLOB, which is the one property the field's own
+  // docstring says it exists for — a replay has to report what the computation did.
+  //
+  // It is also the fixture that makes the scoping honest: `insightFallback: true`
+  // here arrives with `suggestions: []`, so anything claiming the flag implies
+  // suggestions is false, and the comments now say "only interpretable when
+  // `degraded` is false" because of this case.
+  it('🔴 a label-read fallback followed by a LATER failure degrades, and still records the fallback', async () => {
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST, true));
+    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockGetResourceData.mockRejectedValue(new Error('db down'));
+
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(result.degraded).toBe(true);
+    expect(result.suggestions).toEqual([]);
+    expect(result.insightFallback).toBe(true);
+    // Asserted on what reached redis, not only the return value.
+    expect(redisMock.redis.packed.set.mock.calls[0][1]).toMatchObject({
+      degraded: true,
+      insightFallback: true,
+    });
+
+    // Control: the identical degrade WITHOUT a label-read failure records `false`.
+    // Without this arm, hardcoding `true` in the degraded literal passes.
+    redisMock.redis.packed.set.mockClear();
+    mockAskJev.mockReset();
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
+    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+
+    const plain = await getResourceIntent(INPUT, CTX);
+
+    expect(plain.degraded).toBe(true);
+    expect(plain.insightFallback).toBe(false);
   });
 });
 
@@ -328,7 +579,7 @@ describe('stage flow', () => {
         a.id === 'role' ? { ...a, value: 'none', distribution: { style: 0.2, none: 0.8 } } : a
       ),
       usage: { promptTokens: 1, completionTokens: 1 },
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
     }));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
@@ -341,12 +592,13 @@ describe('stage flow', () => {
 
   it('compiles criteria from the role mapping and caller-supplied baseModel', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent({ ...INPUT, baseModel: 'SDXL 1.0' }, CTX);
     expect(result.criteria).toEqual({
-      criteriaVersion: 1,
+      criteriaVersion: 2,
       specHash: expect.stringMatching(/^[0-9a-f]{64}$/),
       role: 'style',
+      styleFamily: 'anime_manga',
       modelTypes: [
         'LORA',
         'TextualInversion',
@@ -365,7 +617,7 @@ describe('stage flow', () => {
 
   it('stage 3 reorders the shortlist by the distribution (gate-passing entries only)', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '1': 0.6, '0': 0.3, none: 0.1 }, '1');
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
@@ -392,7 +644,7 @@ describe('stage flow', () => {
 
   it('a stage-3 "none" argmax returns empty suggestions without being degraded', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.3, '1': 0.2, none: 0.5 }, 'none');
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
@@ -403,7 +655,7 @@ describe('stage flow', () => {
 
   it('an empty shortlist skips stage 3 entirely (no forced fits)', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
     expect(result.suggestions).toEqual([]);
@@ -431,7 +683,7 @@ describe('stage flow', () => {
 
   it('hydration re-applies the gates: a non-public version is dropped, not shipped', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockImplementation(async () => [
       // 11 is public and fine; 22 comes back without access (e.g. index lag) — it must vanish.
@@ -450,7 +702,7 @@ describe('stage flow', () => {
   // about a path that can run. The reachable case is the one below.
   it('🔴 drops a mature-FLAGGED model whose cover image is SFW', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     // The reachable case the sibling test above CANNOT produce. `pickPreviewImage`
     // only ever returns an image already visible at the ceiling, so an image level
@@ -478,7 +730,7 @@ describe('stage flow', () => {
     // `modelNsfw` and reopens the hole. It also buys nothing: the projection
     // emits no image field.
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
@@ -500,12 +752,13 @@ describe('shadow event', () => {
     // reason, so those rows pool in a blank bucket that reads like a writer bug.
     redisMock.redis.packed.get.mockResolvedValue({
       degraded: true,
+      insightFallback: false,
       intent: null,
       criteria: null,
       suggestions: [],
       noneProbability: null,
       model: 'jev-unavailable',
-      criteriaVersion: 1,
+      criteriaVersion: 2,
     });
 
     await getResourceIntent(INPUT, { ...CTX, now: () => new Date('2026-09-29T00:00:00.000Z') });
@@ -521,7 +774,7 @@ describe('shadow event', () => {
 
   it('records the pinned model, spec hash and suggestion ids to ClickHouse', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue(SHORTLIST);
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
@@ -544,7 +797,7 @@ describe('shadow event', () => {
       // rejection never reaches us, so the table would just stay empty.
       // Pinned as a literal, not derived from the implementation.
       time: '2026-09-29 00:00:00.000',
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
       degraded: 0,
       role: 'style',
       styleFamily: 'anime_manga',
@@ -557,7 +810,7 @@ describe('shadow event', () => {
       noneProbability: 0.1,
       browsingLevel: 3,
       specVersion: 1,
-      criteriaVersion: 1,
+      criteriaVersion: 2,
     });
     expect(row.specHash).toMatch(/^[0-9a-f]{64}$/);
     expect(row.promptHash).toMatch(/^[0-9a-f]{64}$/);
@@ -566,7 +819,7 @@ describe('shadow event', () => {
 
   it('degrades the shadow row instead of failing the request when ClickHouse is down', async () => {
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     mockInsert.mockRejectedValue(new Error('clickhouse down'));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
@@ -579,11 +832,14 @@ describe('shadow event', () => {
   it('falls back to the structured log when ClickHouse is not wired at all', async () => {
     clickhouseHolder.client = undefined;
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     await getResourceIntent(INPUT, CTX);
     expect(mockInsert).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'resource-intent-shadow', model: 'typesafe/jev-1.13' }),
+      expect.objectContaining({
+        type: 'resource-intent-shadow',
+        model: 'typesafe/jev-1.13-20260917',
+      }),
       'temp-search'
     );
   });
@@ -591,6 +847,7 @@ describe('shadow event', () => {
   it('a cache-hit shadow row records the hydrated suggestion count as shortlistCount', async () => {
     const cached = {
       degraded: false,
+      insightFallback: false,
       intent: {
         needsResource: 0.9,
         role: { value: 'style', distribution: { style: 1 } },
@@ -600,9 +857,10 @@ describe('shadow event', () => {
         injectionPresent: 0,
       },
       criteria: {
-        criteriaVersion: 1,
+        criteriaVersion: 2,
         specHash: 'a'.repeat(64),
         role: 'style',
+        styleFamily: 'anime_manga',
         modelTypes: ['LORA'],
         baseModel: null,
       },
@@ -622,8 +880,8 @@ describe('shadow event', () => {
         },
       ],
       noneProbability: 0.1,
-      model: 'typesafe/jev-1.13',
-      criteriaVersion: 1,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2,
     };
     redisMock.redis.packed.get.mockResolvedValue(cached);
     await getResourceIntent(INPUT, CTX);
@@ -653,7 +911,7 @@ describe('degradation reasons', () => {
         a.id === 'role' ? { id: 'role', type: 'noul', value: 0.5 } : a
       ),
       usage: { promptTokens: 1, completionTokens: 1 },
-      model: 'typesafe/jev-1.13',
+      model: 'typesafe/jev-1.13-20260917',
     }));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
@@ -670,7 +928,7 @@ describe('coverage resolution', () => {
     const coverageSource = await import('~/server/services/generation/coverage-source');
     vi.mocked(coverageSource.coverageAudience).mockClear();
     mockStage1();
-    mockFindCandidates.mockResolvedValue([]);
+    mockFindCandidates.mockResolvedValue(matched([]));
     await getResourceIntent(INPUT, { browsingLevel: 3 });
     expect(coverageSource.coverageAudience).toHaveBeenCalledTimes(1);
     // The resolved audience reached the matcher.
@@ -684,12 +942,13 @@ describe('coverage resolution', () => {
     vi.mocked(coverageSource.coverageAudience).mockClear();
     redisMock.redis.packed.get.mockResolvedValue({
       degraded: false,
+      insightFallback: false,
       intent: null,
       criteria: null,
       suggestions: [],
       noneProbability: null,
-      model: 'typesafe/jev-1.13',
-      criteriaVersion: 1,
+      model: 'typesafe/jev-1.13-20260917',
+      criteriaVersion: 2,
     });
     await getResourceIntent(INPUT, { browsingLevel: 3 });
     expect(coverageSource.coverageAudience).not.toHaveBeenCalled();

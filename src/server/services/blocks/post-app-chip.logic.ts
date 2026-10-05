@@ -268,6 +268,7 @@ export function postAppChipQuery(appId: string) {
           currentVersionDeployedAt: true,
           appListing: {
             select: {
+              id: true,
               slug: true,
               name: true,
               status: true,
@@ -322,7 +323,29 @@ type ListingCandidate = {
  * it contributes no candidate at all, and so it can never be "lost to maturity".
  * A refused candidate is a real store row this host may not acknowledge.
  */
-function readListingCandidate(block: unknown, host: string): ListingCandidate | null {
+function readListingCandidate(
+  block: unknown,
+  host: string,
+  /**
+   * Listing ids the per-listing VISIBILITY LEVEL hides from a general viewer.
+   *
+   * 🔴 THE FOURTH TERM OF THE DESTINATION'S PREDICATE, and without it this chip links a
+   * page that 404s — the exact failure `postAppChipQuery`'s docblock says this module
+   * exists to avoid. `getListingDetail` gained a level gate, so an owner setting
+   * `private`/`moderators`/`testers` on an APPROVED listing makes the store drop it while
+   * every public post made with that app still showed its name, icon and a working-looking
+   * link.
+   *
+   * It is resolved for the `public` floor only — strictly narrower than any real viewer's
+   * floor, so it can only ever UNDER-link, which is the direction this module's docblock
+   * already accepts for the block-status term.
+   *
+   * An EMPTY set reproduces pre-feature behaviour exactly (and is what an unapplied
+   * migration yields), so it is the right default — but it is a default about visibility,
+   * so the one service call site passes it explicitly and a guard pins that.
+   */
+  hiddenListingIds: ReadonlySet<string>
+): ListingCandidate | null {
   if (typeof block !== 'object' || block === null) return null;
   const b = block as Record<string, unknown>;
   const listing = b.appListing;
@@ -345,7 +368,17 @@ function readListingCandidate(block: unknown, host: string): ListingCandidate | 
   // mature app is still recorded as maturity-refused and still disappears on a
   // non-red host, which is what that host's store does with it.
   const deployed = l.kind !== 'onsite' || b.currentVersionDeployedAt != null;
-  const lifecycleOk = b.status === APPROVED_STATUS && l.status === APPROVED_STATUS && deployed;
+  // 🔴 THE LEVEL IS A LIFECYCLE TERM, so a hidden listing degrades to name-unlinked rather
+  // than vanishing — the same treatment a `removed` listing gets, and it is what keeps the
+  // chip from becoming a 404. Grouped here, not with maturity, because it answers "does the
+  // store have a page for this?" and not "may this host acknowledge it?".
+  // 🔴 DEFENSIVE ON THE SET ITSELF, because this runs on a PUBLIC POST PAGE. The parameter
+  // is required by the type so it cannot be forgotten in review, but a JS caller that omits
+  // it must degrade to pre-feature behaviour rather than throw — a chip is cosmetic and must
+  // never be the reason a post 500s. Same posture as the `…ForRender` readers.
+  const levelOk = typeof l.id !== 'string' || !hiddenListingIds?.has(l.id);
+  const lifecycleOk =
+    b.status === APPROVED_STATUS && l.status === APPROVED_STATUS && deployed && levelOk;
   const maturityOk = ratingAllowedOnHost(
     typeof l.contentRating === 'string' ? l.contentRating : null,
     host
@@ -437,6 +470,28 @@ function readListingCandidate(block: unknown, host: string): ListingCandidate | 
  * can forget to. A name with nothing legible left is treated as no name at all:
  * the chip is dropped rather than rendered as a bare "Published with".
  */
+/** The empty hidden-set, frozen so no caller can mutate a shared default. */
+const EMPTY_HIDDEN: ReadonlySet<string> = new Set<string>();
+
+/**
+ * Every candidate listing id in a chip row, for the batched level read.
+ *
+ * Tolerant of shape by design: this module is handed an `unknown`-ish row and every other
+ * reader here narrows defensively rather than trusting it.
+ */
+export function listingIdsInChipRow(row: PostAppChipRow | null): string[] {
+  const blocks = Array.isArray(row?.appBlocks) ? row.appBlocks : [];
+  const ids: string[] = [];
+  for (const b of blocks) {
+    const listing = (b as { appListing?: unknown } | null)?.appListing as
+      | { id?: unknown }
+      | null
+      | undefined;
+    if (listing && typeof listing.id === 'string') ids.push(listing.id);
+  }
+  return [...new Set(ids)];
+}
+
 export function projectPostAppChip(
   row: PostAppChipRow | null | undefined,
   /**
@@ -444,13 +499,17 @@ export function projectPostAppChip(
    * that decides whether a mature app is viewable here, and a default would make
    * that decision silently. See {@link readListingCandidate}.
    */
-  opts: { host: string }
+  opts: {
+    host: string;
+    /** See {@link readListingCandidate}. Required so the level term cannot be forgotten. */
+    hiddenListingIds: ReadonlySet<string>;
+  }
 ): PostAppChip | null {
   if (!row) return null;
   const clientName = typeof row.name === 'string' ? sanitizeAppChromeName(row.name) ?? '' : '';
   const blocks = Array.isArray(row.appBlocks) ? row.appBlocks : [];
   const candidates = blocks
-    .map((b) => readListingCandidate(b, opts.host))
+    .map((b) => readListingCandidate(b, opts.host, opts.hiddenListingIds))
     .filter((c): c is ListingCandidate => c !== null)
     .sort((a, b) => (a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0));
 
@@ -567,6 +626,12 @@ export async function resolvePostAppChip(args: {
   readPostMetadata: (postId: number) => Promise<unknown>;
   /** Allowlisted app read. Build its args with {@link postAppChipQuery}. */
   readApp: (appId: string) => Promise<PostAppChipRow | null | undefined>;
+  /**
+   * Which of these listing ids the per-listing VISIBILITY LEVEL hides from a general
+   * viewer. REQUIRED, so the fourth term of the destination's predicate cannot be
+   * forgotten — see {@link readListingCandidate}.
+   */
+  readHiddenListingIds: (listingIds: string[]) => Promise<ReadonlySet<string>>;
 }): Promise<PostAppChipResolution> {
   // 🔒 GATE FIRST — before the marker is read, before anything is queried.
   if (!scopeAdmitsListingKind(args.storeScope, 'onsite')) {
@@ -580,6 +645,14 @@ export async function resolvePostAppChip(args: {
   if (!appId) return { chip: null, outcome: 'no-marker' };
 
   const row = await args.readApp(appId);
-  const chip = projectPostAppChip(row ?? null, { host: args.host });
+  // 🔴 THE LEVEL TERM, RESOLVED ONCE FOR EVERY CANDIDATE. Injected like the other two
+  // readers so this module stays DB-free; batched so a post view costs ONE extra statement
+  // regardless of how many blocks the client has, rather than an N+1 on a page-view-rate
+  // path. Skipped entirely when the row carries no listing, which is the common case.
+  const listingIds = listingIdsInChipRow(row ?? null);
+  const hiddenListingIds = listingIds.length
+    ? await args.readHiddenListingIds(listingIds)
+    : EMPTY_HIDDEN;
+  const chip = projectPostAppChip(row ?? null, { host: args.host, hiddenListingIds });
   return { chip, outcome: chip ? 'chip' : 'unresolved' };
 }

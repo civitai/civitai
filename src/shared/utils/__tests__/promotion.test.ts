@@ -10,6 +10,7 @@ import {
   sponsoredBrowsingLevel,
   sponsoredSlotIndex,
   parseModelPromotionData,
+  promotionDeclineTerms,
   promotionAmount,
   promotionRunEndsAt,
   PROMOTION_SURFACES,
@@ -185,5 +186,22 @@ describe('sponsoredSlotIndex', () => {
     expect(sponsoredSlotIndex(3, 10)).toBe(3);
     expect(sponsoredSlotIndex(0, 10)).toBe(1);
     expect(sponsoredSlotIndex(0, 0)).toBe(0);
+  });
+});
+
+describe('promotionDeclineTerms', () => {
+  it('names the percent and the Buzz a host keeps', () => {
+    expect(promotionDeclineTerms(20, 42)).toBe(
+      'If they decline, they keep 20% (42 Buzz) and the rest comes back.'
+    );
+  });
+
+  // Keyed on the Buzz, which is what is held: a held fee is never described as
+  // "all of it comes back", whatever the percent says.
+  it('promises everything back only when no Buzz is kept', () => {
+    expect(promotionDeclineTerms(0, 0)).toBe('If they decline, all of it comes back.');
+    expect(promotionDeclineTerms(0, 5)).toBe(
+      'If they decline, they keep 0% (5 Buzz) and the rest comes back.'
+    );
   });
 });

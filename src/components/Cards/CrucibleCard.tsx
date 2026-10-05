@@ -10,7 +10,7 @@ import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
-  toCrucibleBuzzType,
+  CRUCIBLE_PRIZE_BUZZ_TYPE,
   getCrucibleStatusBadge,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
@@ -26,7 +26,6 @@ type CrucibleCardData = {
   endAt: Date | null;
   entryFee: number;
   seededPrizePool: number;
-  buzzType: string;
   user: {
     id: number;
     username: string | null;
@@ -58,7 +57,6 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
     endAt,
     entryFee,
     seededPrizePool,
-    buzzType,
     user,
     image,
     _count,
@@ -119,7 +117,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
           <div className="flex items-center justify-between gap-2">
             <CurrencyBadge
               currency={Currency.BUZZ}
-              type={toCrucibleBuzzType(buzzType)}
+              type={CRUCIBLE_PRIZE_BUZZ_TYPE}
               unitAmount={prizePool}
               radius="xl"
               px={8}

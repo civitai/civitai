@@ -91,8 +91,8 @@ export function GalleryPromotionModal({ postId }: { postId: number }) {
               days={days}
               onDaysChange={setDays}
               loading={create.isPending}
-              onBuy={(expectedPrice) =>
-                host && create.mutate({ modelId: host.modelId, postId, days, expectedPrice })
+              onBuy={(expected) =>
+                host && create.mutate({ modelId: host.modelId, postId, days, ...expected })
               }
             />
           </>

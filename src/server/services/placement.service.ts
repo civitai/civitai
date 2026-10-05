@@ -6,6 +6,7 @@ import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placem
 import {
   clampApprovalShares,
   clampDeclineFeeRate,
+  isDeclineFeeHostAdjustable,
   PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
@@ -47,6 +48,11 @@ const placementConfigSchema = z.object({
 });
 
 export type PlacementConfig = {
+  /**
+   * Platform-fixed surfaces only. A host-set surface's rate lives on its space
+   * (`ResolvedPlacementSpace.declineFeeRate`), and answering here too would be a
+   * second, different answer — the operator floor makes a 0% host read as 5%.
+   */
   declineFeeRate: (surface: PlacementSurface) => number;
   expiryHours: (surface: PlacementSurface) => number;
   priceCapTiers: (surface: PlacementSurface) => PlacementPriceTier[];
@@ -77,11 +83,14 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   }
 
   return {
-    declineFeeRate: (surface) =>
-      clampDeclineFeeRate(
+    declineFeeRate: (surface) => {
+      if (isDeclineFeeHostAdjustable(surface))
+        throw new Error(`placement config: the decline fee on ${surface} is set by its host`);
+      return clampDeclineFeeRate(
         stored.declineFeeRates?.[surface],
         PLACEMENT_SURFACES[surface].defaultDeclineFeeRate
-      ),
+      );
+    },
     expiryHours: (surface) =>
       clampExpiryHours(stored.expiryHours?.[surface], PLACEMENT_SURFACES[surface].expiryHours),
     priceCapTiers: (surface) =>

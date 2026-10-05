@@ -3,6 +3,7 @@ import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
+import { baseModelByName } from '~/shared/constants/basemodel.constants';
 import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
@@ -16,6 +17,7 @@ import {
   CRUCIBLE_MIN_TOTAL_ENTRIES,
   CRUCIBLE_MIN_VIEW_SECONDS_OPTIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
+  CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_ALLOWED_RESOURCES,
   CRUCIBLE_MAX_START_LEAD_DAYS,
   CRUCIBLE_NAME_MAX_LENGTH,
@@ -42,6 +44,12 @@ export const getCruciblesInfiniteSchema = infiniteQuerySchema.extend({
 export type GetCrucibleByIdSchema = z.infer<typeof getCrucibleByIdSchema>;
 export const getCrucibleByIdSchema = z.object({
   id: z.number(),
+});
+
+export type ToggleCrucibleFollowInput = z.infer<typeof toggleCrucibleFollowSchema>;
+export const toggleCrucibleFollowSchema = z.object({
+  crucibleId: z.number(),
+  setTo: z.boolean().optional(),
 });
 
 export const getCrucibleRequiredModelsSchema = z.object({
@@ -90,6 +98,11 @@ export function calculateCrucibleSetupCost(
   return durationCost + prizeCustomizationCost + resourceRequirementsCost;
 }
 
+const allowedBaseModelsSchema = z
+  .array(z.string().refine((name) => baseModelByName.has(name), { message: 'Unknown base model' }))
+  .max(CRUCIBLE_MAX_ALLOWED_BASE_MODELS)
+  .transform((names) => [...new Set(names)]);
+
 // Schema for creating a new crucible
 export type CreateCrucibleInputSchema = z.infer<typeof createCrucibleInputSchema>;
 const prizePositionsSchema = z
@@ -112,12 +125,11 @@ const prizePositionsSchema = z
   );
 
 export const createCrucibleInputBaseSchema = z.object({
-  buzzType: z.enum(['green', 'yellow']).optional(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
   coverImage: crucibleImageSchema,
   heroImage: crucibleImageSchema.optional(),
-  nsfwLevel: z.number(),
+  nsfwLevel: z.number().int().positive(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),
@@ -131,6 +143,7 @@ export const createCrucibleInputBaseSchema = z.object({
     .optional(),
   prizePositions: prizePositionsSchema,
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  allowedBaseModels: allowedBaseModelsSchema.optional(),
   duration: z.number().refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
     message: 'Unsupported crucible duration',
   }), // duration in hours
@@ -233,6 +246,13 @@ export const checkCrucibleEntryEligibilitySchema = z.object({
 });
 
 // Schema for submitting a vote
+// Minted by the judge page on entry. Absent (an older client) means no session, so every clip
+// needs the full watch. Charset-limited because it becomes part of a Redis key.
+const judgingSessionIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9-]{8,64}$/)
+  .optional();
+
 export type SubmitVoteSchema = z.infer<typeof submitVoteSchema>;
 export const submitVoteSchema = z
   .object({
@@ -248,6 +268,7 @@ export const submitVoteSchema = z
     // test that passed a round number passed.
     winnerWatchedMs: z.number().min(0).finite().optional(),
     loserWatchedMs: z.number().min(0).finite().optional(),
+    judgingSessionId: judgingSessionIdSchema,
   })
   .refine(({ winnerEntryId, loserEntryId }) => winnerEntryId !== loserEntryId, {
     message: 'A vote needs two different entries',
@@ -268,6 +289,7 @@ export const getJudgingPairSchema = z.object({
   // These entries won't appear in the returned pair
   excludeEntryIds: z.array(z.number()).max(50).optional(),
   browsingLevel: z.number().int().min(0).optional(),
+  judgingSessionId: judgingSessionIdSchema,
 });
 
 // Not `createCrucibleInputBaseSchema.partial()`: Zod 4 still applies its `.default()`s to omitted
@@ -293,6 +315,7 @@ export const updateCrucibleSchema = z.object({
     .nullish(),
   prizePositions: prizePositionsSchema.optional(),
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
+  allowedBaseModels: allowedBaseModelsSchema.optional(),
   duration: z
     .number()
     .refine((hours) => hours in CRUCIBLE_DURATION_COSTS, {
@@ -335,7 +358,9 @@ export type UserCrucibleStats = {
   totalCrucibles: number;
   buzzWon: number;
   bestPlacement: number | null;
-  winRate: number;
+  /** Average finish as the top percent of the field; null until enough crucibles count. */
+  avgFinishTopPercent: number | null;
+  prizesWon: number;
 };
 
 // Schema for getting user's active crucibles (no input needed - uses authenticated user)

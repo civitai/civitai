@@ -1,5 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
 
@@ -30,9 +32,17 @@ vi.mock('~/server/services/generation/coverage-source', async (importOriginal) =
   coverageAudience: vi.fn(async () => ({ next: false, member: false })),
 }));
 
-const { buildResourceIntentFilter, expandShortlist, findResourceIntentCandidates } = await import(
-  '~/server/services/resource-intent-matcher.service'
-);
+const {
+  applyInsightRanking,
+  buildResourceIntentFilter,
+  expandShortlist,
+  findResourceIntentCandidates,
+} = await import('~/server/services/resource-intent-matcher.service');
+// The two floors live in the leaf, not in the module under test, and are imported from
+// there rather than through a re-export — see that module's header for why there is one
+// import path and not two.
+const { RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE, RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE } =
+  await import('~/server/services/resource-insight');
 const { RESOURCE_INTENT_MAX_SHORTLIST } = await import('~/server/schema/resource-intent.schema');
 
 const COVERAGE = { next: false, member: false };
@@ -58,6 +68,10 @@ beforeEach(() => {
   meiliHolder.client = { index: () => ({}) };
   searchWithSignal.mockReset();
   searchWithSignal.mockResolvedValue({ hits: [], estimatedTotalHits: 0 });
+  dbMock.dbRead.resourceInsight.findMany.mockReset();
+  dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
+  loggingMock.logToAxiom.mockReset();
+  loggingMock.logToAxiom.mockResolvedValue(undefined);
 });
 
 describe('buildResourceIntentFilter — the deterministic gates reach Meilisearch', () => {
@@ -214,44 +228,78 @@ describe('expandShortlist — determinism, cap, gates', () => {
 
 describe('findResourceIntentCandidates', () => {
   const criteria = {
-    criteriaVersion: 1,
+    criteriaVersion: 2,
     specHash: 'abc',
     role: 'style' as const,
+    styleFamily: 'anime_manga' as const,
     modelTypes: ['LORA', 'TextualInversion'] as never,
     baseModel: 'SDXL 1.0',
   };
 
-  it('queries with the popularity sort and returns the capped shortlist', async () => {
+  it('seeds the pool by INSIGHT first and popularity second, and returns the capped shortlist', async () => {
     searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
-    const entries = await findResourceIntentCandidates(criteria, {
+    const { entries } = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 50,
     });
     const args = meiliArgsOf();
-    expect(args.sort).toEqual(['metrics.thumbsUpCount:desc']);
+    expect(args.sort).toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc']);
     expect(args.limit).toBeGreaterThanOrEqual(50);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ versionId: 11, modelType: 'LORA', baseModel: 'SDXL 1.0' });
   });
 
+  // 🔴 Separate from the whole-array assertion above on purpose, and it is the one that encodes
+  // the POINT of the change rather than its spelling. The arc's closing condition is that the
+  // pool stops being popularity-SEEDED; `metrics.thumbsUpCount:desc` legitimately remains in the
+  // array as the SECOND key (it is what orders the ~99% of documents that carry no label — see
+  // `modelInsightQualityScore`). So "popularity is absent" is the wrong invariant and a grep for
+  // that string is the wrong guard: what must hold is that popularity is not FIRST.
+  //
+  // Demoting insight to second, or dropping it, restores a popularity-seeded pool while the sort
+  // array still mentions insight — which reads as correct in a diff. This fails on exactly that.
+  it('🔴 never lets popularity be the FIRST sort key', async () => {
+    searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
+    await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 50,
+    });
+    const sort = meiliArgsOf().sort ?? [];
+    expect(sort.length).toBeGreaterThan(0);
+    expect(sort[0]).toBe('insight.qualityScore:desc');
+    expect(sort[0]).not.toMatch(/thumbsUpCount/);
+    // A second key is REQUIRED, not optional: without one, the unlabeled documents come back in
+    // document order. Measured against Meilisearch v1.15.0 — they are not dropped and they sort
+    // last in both directions, but their internal order is arbitrary until a second key orders it.
+    expect(sort.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('returns [] without querying when the role is none', async () => {
-    const entries = await findResourceIntentCandidates(
+    const result = await findResourceIntentCandidates(
       { ...criteria, role: 'none', modelTypes: null },
       { browsingLevel: 3, coverage: COVERAGE, cap: 50 }
     );
-    expect(entries).toEqual([]);
+    // 🔴 Asserted on the WHOLE return, not just `.entries`. When this function
+    // returned a bare array, `toEqual([])` covered everything it could report; the
+    // move to a result object silently narrowed that, and `insightFallback: true`
+    // on this early return then passed the entire suite. No label read happens
+    // here, so the only honest value is `false` — and a `true` would shorten the
+    // cache TTL for every `role: 'none'` response.
+    expect(result).toEqual({ entries: [], insightFallback: false });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
   it('returns [] without querying when Meilisearch is not configured', async () => {
     meiliHolder.client = null;
-    const entries = await findResourceIntentCandidates(criteria, {
+    const result = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 50,
     });
-    expect(entries).toEqual([]);
+    // Whole return, for the same reason as the role-none case above.
+    expect(result).toEqual({ entries: [], insightFallback: false });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
@@ -260,5 +308,565 @@ describe('findResourceIntentCandidates', () => {
     await expect(
       findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 50 })
     ).rejects.toThrow('meili down');
+  });
+});
+
+const entryOf = (versionId: number, thumbsUpCount: number) => ({
+  versionId,
+  modelId: versionId + 1,
+  modelName: `model-${versionId}`,
+  versionName: 'v1',
+  baseModel: 'SDXL 1.0',
+  modelType: 'LORA',
+  thumbsUpCount,
+});
+
+const insightRow = (
+  modelVersionId: number,
+  row: { role: string; styleFamily: string; confidence: number; qualityScore: number }
+) => ({ modelVersionId, ...row });
+
+const insightMap = (...rows: ReturnType<typeof insightRow>[]) =>
+  new Map(rows.map(({ modelVersionId, ...rest }) => [modelVersionId, rest]));
+
+describe('applyInsightRanking — the label ordering policy', () => {
+  const WANT = { role: 'style', styleFamily: 'anime_manga' } as const;
+
+  it('ranks both-axis agreement over role-only over style-only over unlabeled over disagreement', () => {
+    // Seeded in exactly the reverse of the expected order, and the qualityScores and
+    // confidences run AGAINST it, so no single-field descending sort can produce the
+    // assertion. A REVERSED index tiebreak still would — the all-unlabeled test in the
+    // suite below is what kills that one.
+    const entries = [
+      entryOf(55005, 91),
+      entryOf(54004, 73),
+      entryOf(53003, 64),
+      entryOf(52002, 46),
+      entryOf(51001, 38),
+    ];
+    const insights = insightMap(
+      insightRow(51001, {
+        role: 'style',
+        styleFamily: 'anime_manga',
+        confidence: 0.44,
+        qualityScore: 0.11,
+      }),
+      insightRow(52002, {
+        role: 'style',
+        styleFamily: 'render_3d',
+        confidence: 0.55,
+        qualityScore: 0.22,
+      }),
+      insightRow(53003, {
+        role: 'clothing',
+        styleFamily: 'anime_manga',
+        confidence: 0.66,
+        qualityScore: 0.33,
+      }),
+      // 54004 carries no row at all.
+      insightRow(55005, {
+        role: 'character',
+        styleFamily: 'pixel_retro',
+        confidence: 0.77,
+        qualityScore: 0.95,
+      })
+    );
+
+    expect(applyInsightRanking(entries, insights, WANT).map((e) => e.versionId)).toEqual([
+      51001, 52002, 53003, 54004, 55005,
+    ]);
+  });
+
+  it('🔴 an `other` style family on both sides is not agreement', () => {
+    const entries = [entryOf(61001, 84), entryOf(62002, 29)];
+    const disagrees = insightMap(
+      insightRow(61001, {
+        role: 'character',
+        styleFamily: 'other',
+        confidence: 0.93,
+        qualityScore: 0.87,
+      })
+    );
+    // 62002 is unlabeled, and still outranks a both-axis disagreement at 0.93.
+    expect(
+      applyInsightRanking(entries, disagrees, { role: 'style', styleFamily: 'other' }).map(
+        (e) => e.versionId
+      )
+    ).toEqual([62002, 61001]);
+
+    // Positive control: the same `other` request, with the ROLE agreeing, promotes.
+    const agreesOnRole = insightMap(
+      insightRow(61001, {
+        role: 'style',
+        styleFamily: 'other',
+        confidence: 0.93,
+        qualityScore: 0.87,
+      })
+    );
+    expect(
+      applyInsightRanking(entries, agreesOnRole, { role: 'style', styleFamily: 'other' }).map(
+        (e) => e.versionId
+      )
+    ).toEqual([61001, 62002]);
+  });
+
+  it('uses qualityScore to separate candidates inside one agreement bucket', () => {
+    const entries = [entryOf(71001, 68), entryOf(72002, 42)];
+    const insights = insightMap(
+      insightRow(71001, {
+        role: 'style',
+        styleFamily: 'render_3d',
+        confidence: 0.58,
+        qualityScore: 0.31,
+      }),
+      insightRow(72002, {
+        role: 'style',
+        styleFamily: 'render_3d',
+        confidence: 0.58,
+        qualityScore: 0.82,
+      })
+    );
+    expect(applyInsightRanking(entries, insights, WANT).map((e) => e.versionId)).toEqual([
+      72002, 71001,
+    ]);
+  });
+});
+
+describe('findResourceIntentCandidates — the labels change the response', () => {
+  const criteria = {
+    criteriaVersion: 2,
+    specHash: 'abc',
+    role: 'style' as const,
+    styleFamily: 'anime_manga' as const,
+    modelTypes: ['LORA', 'TextualInversion'] as never,
+    baseModel: 'SDXL 1.0',
+  };
+  const opts = { browsingLevel: 3, coverage: COVERAGE, cap: 50 };
+
+  const hitFor = (modelId: number, versionId: number, thumbsUpCount: number) =>
+    shortlistHit({
+      id: modelId,
+      metrics: { thumbsUpCount },
+      versions: [{ id: versionId, name: 'v1', baseModel: 'SDXL 1.0', canGenerate: true }],
+    });
+
+  // Meilisearch hands these back popularity-descending, which is the seed order.
+  const seed = [hitFor(7701, 10701, 97), hitFor(7702, 20802, 61), hitFor(7703, 30903, 23)];
+
+  it('🔴 orders the shortlist by the labels, not by the popularity seed', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      // The most popular candidate is also the highest-quality one and agrees on neither axis.
+      insightRow(10701, {
+        role: 'character',
+        styleFamily: 'pixel_retro',
+        confidence: 0.81,
+        qualityScore: 0.93,
+      }),
+      // 20802 carries no row — the unlabeled majority of a pool, though NOT the
+      // "~99% case" an earlier version of this comment called it: that rate is
+      // corpus-wide, and in-pool coverage measures 33-45% (see
+      // `applyInsightRanking`'s docstring). 30903 agrees on both axes.
+      insightRow(30903, {
+        role: 'style',
+        styleFamily: 'anime_manga',
+        confidence: 0.52,
+        qualityScore: 0.37,
+      }),
+    ]);
+
+    const { entries } = await findResourceIntentCandidates(criteria, opts);
+
+    expect(entries.map((e) => e.versionId)).toEqual([30903, 20802, 10701]);
+  });
+
+  it('🔴 promotes a candidate the popularity seed ranked outside the cap', async () => {
+    searchWithSignal.mockResolvedValue({
+      hits: [...seed, hitFor(7704, 40904, 8)],
+      estimatedTotalHits: 4,
+    });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(20802, {
+        role: 'clothing',
+        styleFamily: 'render_3d',
+        confidence: 0.66,
+        qualityScore: 0.88,
+      }),
+      insightRow(40904, {
+        role: 'style',
+        styleFamily: 'anime_manga',
+        confidence: 0.77,
+        qualityScore: 0.44,
+      }),
+    ]);
+
+    // cap 2 would have stopped the pool at 10701/20802, so 40904 is only reachable
+    // because the pool is wider than the response.
+    const { entries } = await findResourceIntentCandidates(criteria, { ...opts, cap: 2 });
+
+    expect(entries.map((e) => e.versionId)).toEqual([40904, 10701]);
+  });
+
+  // 🔴 The below-floor row sits in the MIDDLE of a three-candidate seed on purpose,
+  // and that position is load-bearing in both directions. On the last candidate,
+  // neutral and demoted are indistinguishable (`return 0` -> `return -1` survived).
+  // On the first, neutral and quality-leaked are indistinguishable (reading
+  // `qualityScore` for a neutral bucket survived). From the middle, one assertion
+  // kills both: a demotion sends it last, a quality leak sends it first.
+  it('🔴 a label below the promote floor is neutral — not demoted, and its quality unread', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    const perfectAgreement = {
+      role: 'style',
+      styleFamily: 'anime_manga',
+      qualityScore: 0.99,
+    };
+
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(20802, { ...perfectAgreement, confidence: 0.29 }),
+    ]);
+    const { entries: below } = await findResourceIntentCandidates(criteria, opts);
+    expect(below.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
+
+    searchWithSignal.mockResolvedValue({ hits: seed.slice(0, 2), estimatedTotalHits: 2 });
+
+    // The floor is inclusive: exactly at it, the same row IS read. This is the arm
+    // that kills a `<` -> `<=` mutant.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(20802, {
+        ...perfectAgreement,
+        confidence: RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE,
+      }),
+    ]);
+    const { entries: atFloor } = await findResourceIntentCandidates(criteria, opts);
+    expect(atFloor.map((e) => e.versionId)).toEqual([20802, 10701]);
+
+    // Positive control on the same fixture: over the floor it moves the same way.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(20802, { ...perfectAgreement, confidence: 0.31 }),
+    ]);
+    const { entries: above } = await findResourceIntentCandidates(criteria, opts);
+    expect(above.map((e) => e.versionId)).toEqual([20802, 10701]);
+  });
+
+  // 🔴 This is the guard the `stale: false` clause CANNOT provide: nothing in the
+  // repo sets `stale = true`, so that clause excludes no row today and a row
+  // written under a superseded taxonomy is read. Demoting on a value this build
+  // cannot interpret would bury the whole labeled population — the catalogue's
+  // high-usage head — beneath the unlabeled majority.
+  //
+  // 🔴 Each arm varies ONE field. An earlier version set both to unknown strings at
+  // once, which cannot attribute the behaviour: `styleFamily ? -1 : 0` and
+  // `role && styleFamily ? -1 : 0` both survived it, and the second of those is a
+  // DIFFERENT rule from the one the code implements.
+  it('🔴 demotion turns on the role alone, and only on a recognised AND ACTUAL role', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed.slice(0, 2), estimatedTotalHits: 2 });
+    // Named for the floor it clears, not for the word the doc used to use: 0.84 is
+    // well above the demote floor, but the BUCKET is not a "confident" one — at a 0.30
+    // floor it selects most label rows.
+    const overDemoteFloor = { confidence: 0.84, qualityScore: 0.76 };
+
+    // (i) role unrecognised, styleFamily recognised and disagreeing -> neutral.
+    // Kills `styleFamily ? -1 : 0`, which would demote here.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, {
+        ...overDemoteFloor,
+        role: 'retired_role_from_an_older_spec',
+        styleFamily: 'pixel_retro',
+      }),
+    ]);
+    expect(
+      (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
+    ).toEqual([10701, 20802]);
+
+    // (ii) role recognised and disagreeing, styleFamily unrecognised -> DEMOTED.
+    // The role is the evidence, so an uninterpretable style family does not rescue
+    // it. Kills `role && styleFamily ? -1 : 0`, which would stay neutral here.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, {
+        ...overDemoteFloor,
+        role: 'control_guidance',
+        styleFamily: 'retired_style_from_an_older_spec',
+      }),
+    ]);
+    expect(
+      (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
+    ).toEqual([20802, 10701]);
+
+    // (iii) both unrecognised -> neutral. The production shape of a taxonomy bump.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, {
+        ...overDemoteFloor,
+        role: 'retired_role_from_an_older_spec',
+        styleFamily: 'retired_style_from_an_older_spec',
+      }),
+    ]);
+    expect(
+      (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
+    ).toEqual([10701, 20802]);
+
+    // 🔴 (iv) role `none` -> neutral. It IS in the option list, so a plain membership
+    // test demotes on it — but it is the labeller's "I could not place this", not
+    // evidence of a different purpose, and demoting on it would make being labelled
+    // a penalty. The labelling pass asks with the full option list and persists the
+    // answer unfiltered, so this row shape is reachable, not hypothetical.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, { ...overDemoteFloor, role: 'none', styleFamily: 'pixel_retro' }),
+    ]);
+    expect(
+      (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
+    ).toEqual([10701, 20802]);
+  });
+
+  // 🔴 The other half of the `none` decision, and the half the natural refactor
+  // deletes. "A `none` row is neutral" reads like an early `if (role === 'none')
+  // return 0` placed BEFORE the agreement is computed — which is tidier than the
+  // trailing conjunct the code uses, silently drops this promotion, and keeps every
+  // other test in the segment green, because no other fixture pairs `role: 'none'`
+  // with a MATCHING style family. The style question has its own option list with no
+  // `none` in it, so a style family here is a positive answer to a different
+  // question, not a second decline.
+  it('🔴 a `none` role still promotes when its STYLE family agrees', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(30903, {
+        role: 'none',
+        styleFamily: 'anime_manga',
+        confidence: 0.64,
+        qualityScore: 0.19,
+      }),
+    ]);
+
+    const { entries } = await findResourceIntentCandidates(criteria, opts);
+
+    // 30903 is seeded LAST, so leading is only explicable by the style promotion.
+    expect(entries.map((e) => e.versionId)).toEqual([30903, 10701, 20802]);
+  });
+
+  // 🔴 `quality: insight && bucket !== 0 ? …` applies inside BOTH labeled buckets.
+  // With only ever one demoted row in a fixture, `bucket !== 0` -> `bucket > 0`
+  // changed nothing observable and the docstring's claim went unpinned.
+  it('🔴 qualityScore separates two candidates inside the DEMOTE bucket too', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      // Both disagree above the demote floor, so both demote; the seed order says 10701 first
+      // and the quality scores say 20802 first.
+      insightRow(10701, {
+        role: 'control_guidance',
+        styleFamily: 'pixel_retro',
+        confidence: 0.71,
+        qualityScore: 0.18,
+      }),
+      insightRow(20802, {
+        role: 'clothing',
+        styleFamily: 'render_3d',
+        confidence: 0.63,
+        qualityScore: 0.86,
+      }),
+    ]);
+
+    const { entries } = await findResourceIntentCandidates(criteria, opts);
+
+    // 30903 is unlabeled, so it leads both demotions; quality then orders them.
+    expect(entries.map((e) => e.versionId)).toEqual([30903, 20802, 10701]);
+  });
+
+  it('scopes the label read to exactly the pooled versions, in one query', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+
+    await findResourceIntentCandidates(criteria, opts);
+
+    expect(dbMock.dbRead.resourceInsight.findMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.resourceInsight.findMany.mock.calls[0][0]).toMatchObject({
+      where: { modelVersionId: { in: [10701, 20802, 30903] }, stale: false },
+    });
+  });
+
+  // Green at `origin/main` too — trivially, since the baseline reads no labels at
+  // all — so an invariant guard by the red/green matrix. It is the only cover on
+  // `loadResourceInsights`' empty-id early return, which no mutant in the battery
+  // targets, so a query on an empty `in: []` would otherwise go unnoticed.
+  it('issues no label query at all when the pool is empty', async () => {
+    searchWithSignal.mockResolvedValue({ hits: [], estimatedTotalHits: 0 });
+
+    const result = await findResourceIntentCandidates(criteria, opts);
+
+    // Whole return: an empty pool skips the label read entirely, which is NOT a
+    // fallback — the read did not fail, it never happened.
+    expect(result).toEqual({ entries: [], insightFallback: false });
+    expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
+  });
+
+  // 🔴 Asserted on the POOL — the id list handed to the label read — as well as on
+  // the Meilisearch page. An earlier version read only the page width, which at the
+  // maximum cap saturated against a since-deleted ceiling and so observed neither
+  // the multiplier nor the clamp: dropping `clampResourceIntentCap` from the pool
+  // passed it, which is the one thing its name promised to catch.
+  it('🔴 the pool is twice the cap, and the clamp binds at the shortlist maximum', async () => {
+    // More hits than any pool width, so the pool is bounded by the cap arithmetic
+    // and never by the fixture.
+    const wide = Array.from({ length: 600 }, (_, i) => hitFor(900000 + i, 500000 + i, 600 - i));
+    const pooledIds = () =>
+      (
+        dbMock.dbRead.resourceInsight.findMany.mock.calls[0][0] as {
+          where: { modelVersionId: { in: number[] } };
+        }
+      ).where.modelVersionId.in;
+
+    searchWithSignal.mockResolvedValue({ hits: wide, estimatedTotalHits: 600 });
+    await findResourceIntentCandidates(criteria, { ...opts, cap: 50 });
+    expect(pooledIds()).toHaveLength(100);
+    // And the page is one document per targeted version — no multiplier.
+    expect(meiliArgsOf().limit).toBe(100);
+
+    searchWithSignal.mockReset();
+    searchWithSignal.mockResolvedValue({ hits: wide, estimatedTotalHits: 600 });
+    dbMock.dbRead.resourceInsight.findMany.mockReset();
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
+
+    // At the maximum accepted limit the clamp binds: 2 x 255 would be 510, so the
+    // pool collapses to the cap and the ordering can only reshuffle the visible page.
+    await findResourceIntentCandidates(criteria, { ...opts, cap: RESOURCE_INTENT_MAX_SHORTLIST });
+    expect(pooledIds()).toHaveLength(RESOURCE_INTENT_MAX_SHORTLIST);
+    expect(meiliArgsOf().limit).toBe(RESOURCE_INTENT_MAX_SHORTLIST);
+  });
+
+  // 🔴 Green at `origin/main` too, so it is an invariant guard by the red/green
+  // matrix — but it is NOT dead weight: most ordering expectations in this file are
+  // the exact reverse of their seed, so `.sort((a, b) => b.index - a.index)` passes
+  // them and fails here. Do not delete it in a coverage prune.
+  it('an all-unlabeled pool keeps the seed order exactly — kills a reversed index tiebreak', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
+
+    const { entries } = await findResourceIntentCandidates(criteria, opts);
+
+    expect(entries.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
+  });
+
+  // 🔴 BOTH caps, and both are load-bearing. At cap 50 the fallback's slice is a
+  // no-op, so that arm is the one that pins "the fallback returns the pool whole" —
+  // a mutant that FILTERS the pool is invisible at cap 2, where only two of three
+  // hits are asserted. At cap 2 the slice is observable, which is what pins the
+  // fallback's own `.slice`: unsliced it would hand stage 3 up to twice the caller's
+  // cap in options and hydrate the same, with the shadow row recording the pool
+  // width as the shortlist size. Tightening one arm must not replace the other.
+  it('🔴 keeps the seed order whole, caps it, and logs once PER FAILURE when the label table is unreachable', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
+
+    const { entries: whole } = await findResourceIntentCandidates(criteria, opts);
+    expect(whole.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
+
+    const { entries: capped } = await findResourceIntentCandidates(criteria, { ...opts, cap: 2 });
+    expect(capped.map((e) => e.versionId)).toEqual([10701, 20802]);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledTimes(2);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'resource-intent-insight-read-failed' }),
+      'temp-search'
+    );
+  });
+
+  // 🔴 The seam half of the fallback. The log above reaches an operator, not the
+  // CALLER, and the caller is the one that owns this response's cache TTL — so a
+  // fallback that returns a correctly-shaped shortlist and no flag is
+  // indistinguishable from success at the only boundary that can act on it. Both
+  // arms are here because `insightFallback: true` hardcoded would pass the first
+  // alone, and `false` hardcoded would pass the second alone.
+  it('🔴 reports insightFallback when the label read fails, and not when it succeeds', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+
+    dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
+    const failed = await findResourceIntentCandidates(criteria, opts);
+    expect(failed.insightFallback).toBe(true);
+    // And it is a flag ON a usable shortlist, not an error: the entries are there.
+    expect(failed.entries.map((e) => e.versionId)).toEqual([10701, 20802, 30903]);
+
+    // Control arm: a label read that SUCCEEDS and reorders reports no fallback.
+    dbMock.dbRead.resourceInsight.findMany.mockReset();
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(30903, {
+        role: 'style',
+        styleFamily: 'anime_manga',
+        confidence: 0.58,
+        qualityScore: 0.41,
+      }),
+    ]);
+    const ordered = await findResourceIntentCandidates(criteria, opts);
+    expect(ordered.insightFallback).toBe(false);
+    expect(ordered.entries.map((e) => e.versionId)).toEqual([30903, 10701, 20802]);
+  });
+
+  // 🔴 A label read that SUCCEEDS but returns nothing is NOT a fallback. Without
+  // this arm, `insightFallback = pool.every(unlabeled)` — the shape someone reaches
+  // for when wiring the shadow columns — passes every other assertion in this file,
+  // and would then cut the cache TTL for the single commonest response there is.
+  it('🔴 an empty label result is not a fallback', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([]);
+
+    const result = await findResourceIntentCandidates(criteria, opts);
+
+    expect(result.insightFallback).toBe(false);
+    expect(result.entries).toHaveLength(3);
+  });
+
+  // 🔴 F1: the two directions now read SEPARATE constants. 🔴 DO NOT DELETE THIS IN A
+  // COVERAGE PRUNE — mutation-measured, its demote arms are the ONLY coverage the
+  // demote branch has: deleting that branch's floor check, and flipping its `<` to
+  // `<=`, each fail exactly one test in the whole suite, this one. The branch is new
+  // code from the constant split and nothing else reaches it.
+  //
+  // What this test does NOT prove, so the label is honest in both directions: it
+  // cannot tell which constant each branch reads (a mutant swapping them is green
+  // across the whole suite while both hold the same value), and it does not pin the demote VALUE
+  // (0.3 → 0.5 is also green — deliberate, since that value is explicitly unargued).
+  // Its first arm, the promote side under its own floor, IS redundant with "a label
+  // below the promote floor is neutral" above; the demote arms are not redundant with
+  // anything. Both arms derive from the constants rather than the literal 0.3, so
+  // whichever floor moves first the other keeps asserting the right boundary.
+  it('reads the promote floor on the promote side and the demote floor on the demote side', async () => {
+    searchWithSignal.mockResolvedValue({ hits: seed.slice(0, 2), estimatedTotalHits: 2 });
+
+    // Promote side, one step under its own floor -> neutral, so the seed order holds.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(20802, {
+        role: 'style',
+        styleFamily: 'anime_manga',
+        confidence: RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE - 0.01,
+        qualityScore: 0.97,
+      }),
+    ]);
+    expect(
+      (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
+    ).toEqual([10701, 20802]);
+
+    // Demote side, one step under ITS floor -> neutral, so 10701 keeps the lead it
+    // would lose to a demotion.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, {
+        role: 'control_guidance',
+        styleFamily: 'pixel_retro',
+        confidence: RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE - 0.01,
+        qualityScore: 0.12,
+      }),
+    ]);
+    expect(
+      (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
+    ).toEqual([10701, 20802]);
+
+    // Demote side AT its floor -> demoted. This is the arm that makes the one above
+    // a boundary assertion rather than a claim that demotion never happens.
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      insightRow(10701, {
+        role: 'control_guidance',
+        styleFamily: 'pixel_retro',
+        confidence: RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE,
+        qualityScore: 0.12,
+      }),
+    ]);
+    expect(
+      (await findResourceIntentCandidates(criteria, opts)).entries.map((e) => e.versionId)
+    ).toEqual([20802, 10701]);
   });
 });

@@ -3,6 +3,7 @@ import {
   DRAFT_WORKFLOW,
   getSdDraftMode,
   sd1AspectRatioBuckets,
+  sd1CustomDimensionLimits,
   samplers,
 } from '~/shared/constants/generation.constants';
 import {
@@ -121,7 +122,7 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
     hasImages(images)
       ? null
       : effectiveEcosystem === 'SD1'
-      ? aspectRatioDef({ options: sd1AspectRatioBuckets })
+      ? aspectRatioDef({ options: sd1AspectRatioBuckets, custom: sd1CustomDimensionLimits })
       : SDXL_FULL_AR
   )
   .use(textBlock)

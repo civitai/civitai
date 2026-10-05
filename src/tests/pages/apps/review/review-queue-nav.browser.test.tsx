@@ -115,7 +115,7 @@ const PENDING = {
   manifestDiffSummary: { kind: 'first-version', fields: [] },
   reviewRepoUrl: 'https://forgejo.example/repo',
   pushCommitUrl: null,
-  submittedBy: { id: 7, username: 'dev-user', image: null },
+  submittedBy: { id: 7, username: 'dev-user', deletedAt: null, image: null },
 };
 
 const inert = { invalidate: vi.fn() };

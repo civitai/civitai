@@ -3,11 +3,18 @@ import { BuzzApiError } from '@civitai/buzz';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
+import type * as PostService from '~/server/services/post.service';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 const refundMultiAccountTransaction = vi.fn();
 const createNotification = vi.fn();
+const afterPostsPublish = vi.fn();
+
+vi.mock('~/server/services/post.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PostService>()),
+  afterPostsPublish,
+}));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -36,6 +43,7 @@ const entry = (
 ) => ({
   crucibleId: 7,
   userId: 42,
+  imageId: 70,
   buzzTransactionId: 'crucible-entry-7-42-abc',
   crucible: {
     status: CrucibleStatus.Active,
@@ -65,6 +73,8 @@ beforeEach(() => {
   deleteEntry.mockResolvedValue({});
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   createNotification.mockResolvedValue(undefined);
+  afterPostsPublish.mockResolvedValue(undefined);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
 });
 
 describe('removeCrucibleEntry', () => {
@@ -201,5 +211,53 @@ describe('removeCrucibleEntry', () => {
     expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ description: 'Crucible entry fee refund - entry removed' })
     );
+  });
+});
+
+describe('removeCrucibleEntry — entry post', () => {
+  const revealQuery = () => {
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.find(([strings]) =>
+      (strings as string[]).join('').includes('entry_posts')
+    );
+    if (!call) return undefined;
+    const [strings, ...values] = call as [TemplateStringsArray, ...unknown[]];
+    const query = Prisma.sql(strings, ...values);
+    return { sql: query.text, values: query.values };
+  };
+
+  it("publishes the removed entry's hidden post now, after the entry is gone", async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 300, userId: 42 }]);
+
+    await remove();
+
+    const query = revealQuery();
+    expect(query?.sql).toMatch(
+      /UPDATE "Post" p SET "publishedAt" = now\(\)\s+FROM entry_posts e\s+WHERE p\.id = e\.id AND e\.hidden/
+    );
+    expect(query?.sql).toMatch(/i\.id = \$\d/);
+    expect(query?.values).toEqual(expect.arrayContaining([70, 'crucibleEntryDraft']));
+    expect(afterPostsPublish).toHaveBeenCalledTimes(1);
+    expect(afterPostsPublish).toHaveBeenCalledWith([{ postId: 300, userId: 42 }]);
+    const revealCall = dbMock.dbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
+      (strings as string[]).join('').includes('entry_posts')
+    );
+    expect(dbMock.dbWrite.$queryRaw.mock.invocationCallOrder[revealCall]).toBeGreaterThan(
+      deleteEntry.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('reveals nothing when the entry was kept', async () => {
+    executeRaw.mockResolvedValue(0);
+
+    await expect(remove()).rejects.toThrow();
+    expect(revealQuery()).toBeUndefined();
+  });
+
+  it('reveals nothing for an entry whose image was deleted', async () => {
+    findEntry.mockResolvedValue(entry({ imageId: null }));
+
+    await remove();
+
+    expect(revealQuery()).toBeUndefined();
   });
 });

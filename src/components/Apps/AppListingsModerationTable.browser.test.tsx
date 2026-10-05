@@ -40,7 +40,7 @@ const ROWS = [
       id: 'alpr_p',
       submittedAt: new Date('2026-01-01T00:00:00Z'),
       changelog: 'a note',
-      submittedBy: { id: 1, username: 'dev', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
     },
   }),
   // Server (keyset) order is NOT alphabetical (Bravo precedes Alpha) so a client
@@ -69,7 +69,7 @@ const ROWS = [
       id: 'alpr_op',
       submittedAt: new Date('2026-01-01T00:00:00Z'),
       changelog: null,
-      submittedBy: { id: 1, username: 'dev', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
     },
   }),
 ];
@@ -88,7 +88,7 @@ const DRAFT_ROWS = [
       id: 'alpr_dp',
       submittedAt: new Date('2026-01-01T00:00:00Z'),
       changelog: null,
-      submittedBy: { id: 1, username: 'dev', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
     },
   }),
   offsite({ id: 'apl_do', slug: 'draft-orphan-ext', name: 'Draft Orphan', status: 'draft' }),
@@ -114,7 +114,7 @@ const STRANDED_PAGE1 = Array.from({ length: 50 }, (_, i) =>
       id: `alpr_sp_${i}`,
       submittedAt: new Date('2026-01-01T00:00:00Z'),
       changelog: null,
-      submittedBy: { id: 1, username: 'dev', image: null },
+      submittedBy: { id: 1, username: 'dev', deletedAt: null, image: null },
     },
   })
 );
@@ -276,6 +276,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         purgeListing: { useMutation: mutation('purge') },
         approveExternalRequest: { useMutation: mutation('approve') },
         rejectExternalRequest: { useMutation: mutation('reject') },
+        // 🔴 ADDED WITH THE VISIBILITY-LEVEL UI, AND ITS ABSENCE KILLED THIS WHOLE FILE.
+        // `AppListingsModerationTable` renders `ModListingVisibilityModal`, which calls
+        // `trpc.appListings.setListingVisibilityAsModerator.useMutation(...)`. With the
+        // namespace unmocked that read is `undefined`, so `.useMutation` throws DURING
+        // MOUNT and every test in this file fails — including the Message-owner,
+        // pagination and beta-declaration groups, which have nothing to do with
+        // visibility. That is exactly the gap the `messageAppOwner` comment below
+        // warns about: it reports as a render failure rather than as the mock gap it is.
+        // 50 tests across 2 files were failing in CI this way, invisibly, because this
+        // tier is report-only AND cannot run on the dev host.
+        setListingVisibilityAsModerator: { useMutation: mutation('setVisibilityAsModerator') },
         // The owner-message proc RESOLVES WITH A VALUE (`{ recipientCount }`) that the
         // composer's success handler reads, so it cannot use the shared `mutation`
         // factory above — that one calls `onSuccess()` with no argument, which would

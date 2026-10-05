@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-flags-find-many';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -424,6 +425,66 @@ describe('createCrucible — resource requirements', () => {
   });
 });
 
+describe('createCrucible — base model requirements', () => {
+  it('stores the base models without charging the resource requirements fee', async () => {
+    await createCrucible(input({ allowedBaseModels: ['SDXL 1.0'] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE]);
+    expect(storedData().allowedBaseModels).toEqual(['SDXL 1.0']);
+  });
+
+  it('charges the fee once when versions are required too', async () => {
+    await createCrucible(input({ allowedResources: [123], allowedBaseModels: ['SDXL 1.0'] }));
+
+    expect(chargedAmounts()).toEqual([SETUP_FEE + CRUCIBLE_RESOURCE_REQUIREMENTS_COST]);
+  });
+
+  it('refuses a base model that makes the other media type, before anything is written', async () => {
+    await expect(createCrucible(input({ allowedBaseModels: ['MiniMax H3'] }))).rejects.toThrow(
+      /allowed base model must make images/
+    );
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+});
+
+describe('createCrucible — required models unsuitable for mature content', () => {
+  const R = 1 | 2 | 4;
+  const PG13 = 1 | 2;
+  /** Version 123 + i carries models[i]; the media-type check's query gets []. */
+  const withModels = (...models: { minor: boolean; sfwOnly: boolean }[]) =>
+    modelVersionFindMany.mockImplementation(modelFlagsFindMany((id) => models[id - 123]));
+
+  it.each([
+    ['minor', { minor: true, sfwOnly: false }],
+    ['SFW-only', { minor: false, sfwOnly: true }],
+  ])('refuses R+ when a required model is %s, before anything is written', async (_, flags) => {
+    withModels({ minor: false, sfwOnly: false }, flags);
+
+    await expect(
+      createCrucible(input({ nsfwLevel: R, allowedResources: [123, 124] }))
+    ).rejects.toThrow(/PG and PG-13/);
+    expect(crucibleCreate).not.toHaveBeenCalled();
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('allows PG-13 with such a model', async () => {
+    withModels({ minor: true, sfwOnly: true });
+
+    await createCrucible(input({ nsfwLevel: PG13, allowedResources: [123] }));
+
+    expect(crucibleCreate).toHaveBeenCalled();
+  });
+
+  it('allows R+ when no required model is flagged', async () => {
+    withModels({ minor: false, sfwOnly: false });
+
+    await createCrucible(input({ nsfwLevel: R, allowedResources: [123] }));
+
+    expect(crucibleCreate).toHaveBeenCalled();
+  });
+});
+
 describe('activateScheduledCrucibles', () => {
   it('opens only Pending crucibles whose start has passed', async () => {
     crucibleUpdateMany.mockResolvedValue({ count: 2 });
@@ -486,6 +547,25 @@ describe('createCrucible — text scan', () => {
   });
 });
 
+/**
+ * The feed runs one query per status segment, running crucibles first. Reading only one of them
+ * would leave the other free to drop the visibility filters, so every query must carry the same
+ * `where` apart from its status. Snapshotted per call: the segments share nested objects, so a
+ * recorded argument shows only their final state.
+ */
+const sharedFeedWhere = async (run: () => Promise<unknown>, queries = 2) => {
+  const wheres: Record<string, unknown>[] = [];
+  dbMock.dbRead.crucible.findMany.mockImplementation((async ({ where }: { where: object }) => {
+    wheres.push({ ...structuredClone(where), status: undefined });
+    return [];
+  }) as never);
+  await run();
+  dbMock.dbRead.crucible.findMany.mockReset();
+  expect(wheres).toHaveLength(queries);
+  for (const where of wheres) expect(where).toEqual(wheres[0]);
+  return wheres[0] as any;
+};
+
 describe('getCrucibles — browsing level', () => {
   const findMany = dbMock.dbRead.crucible.findMany;
   const whereFor = async (opts: {
@@ -494,14 +574,32 @@ describe('getCrucibles — browsing level', () => {
     isGreen?: boolean;
   }) => {
     findMany.mockResolvedValue([]);
-    await getCrucibles({
-      input: { limit: 10, sort: CrucibleSort.Newest, browsingLevel: opts.browsingLevel },
-      select: { id: true },
-      viewerId: opts.viewerId,
-      isGreen: opts.isGreen,
-    });
-    return findMany.mock.calls.at(-1)![0].where;
+    return sharedFeedWhere(() =>
+      getCrucibles({
+        input: { limit: 10, sort: CrucibleSort.Newest, browsingLevel: opts.browsingLevel },
+        select: { id: true },
+        viewerId: opts.viewerId,
+        isGreen: opts.isGreen,
+      })
+    );
   };
+
+  it('keeps every filter on a later page, which starts partway through the groups', async () => {
+    const feed = (cursor?: number) =>
+      getCrucibles({
+        input: { limit: 10, sort: CrucibleSort.Newest, browsingLevel: 1, cursor },
+        select: { id: true },
+        viewerId: 4,
+        isGreen: true,
+        excludedUserIds: [7],
+      });
+    const firstPage = await sharedFeedWhere(() => feed());
+    dbMock.dbRead.crucible.findUnique.mockResolvedValueOnce({
+      status: CrucibleStatus.Pending,
+    } as never);
+
+    expect(await sharedFeedWhere(() => feed(5), 1)).toEqual(firstPage);
+  });
 
   it('requires both the crucible and its cover to fall inside the level', async () => {
     const where = await whereFor({ browsingLevel: 1 });
@@ -533,10 +631,22 @@ describe('getCrucibles — browsing level', () => {
     expect(where.AND[0].OR[0]).toEqual({ userId: 4 });
   });
 
-  it("shows only crucibles in the site's own currency, and the viewer's own anyway", async () => {
-    expect((await whereFor({ isGreen: true })).AND.at(-1)).toEqual({ buzzType: 'green' });
-    expect((await whereFor({ isGreen: false, viewerId: 4 })).AND.at(-1)).toEqual({
-      OR: [{ userId: 4 }, { buzzType: 'yellow' }],
+  // A crucible takes entry fees in either currency, so what it was created in must not decide where
+  // it is listed: every crucible was yellow at launch, and the green site listed none of them.
+  it('lists on both sites whatever currency the creator paid in, SFW-only on green', async () => {
+    const green = await whereFor({ isGreen: true });
+    expect(JSON.stringify(green)).not.toContain('buzzType');
+    expect(green.AND.at(-1)).toEqual({ nsfwLevel: { in: [1, 2, 3] }, textNsfw: false });
+
+    const red = await whereFor({ isGreen: false, viewerId: 4 });
+    expect(JSON.stringify(red)).not.toContain('buzzType');
+    expect(red.AND).toHaveLength(1);
+  });
+
+  it("shows a signed-in viewer SFW crucibles on green, and their own even when they aren't", async () => {
+    const where = await whereFor({ isGreen: true, viewerId: 4 });
+    expect(where.AND.at(-1)).toEqual({
+      OR: [{ userId: 4 }, { nsfwLevel: { in: [1, 2, 3] }, textNsfw: false }],
     });
   });
 
@@ -568,9 +678,11 @@ describe('getCrucibles — status for an unfiltered feed', () => {
   });
 
   it('shows only running and upcoming crucibles until a status is picked', async () => {
-    expect((await whereFor({ sort: CrucibleSort.Newest })).status).toEqual({
-      in: [CrucibleStatus.Active, CrucibleStatus.Pending],
-    });
+    await whereFor({ sort: CrucibleSort.Newest });
+    expect(findMany.mock.calls.map(([args]) => args!.where!.status)).toEqual([
+      { in: [CrucibleStatus.Active] },
+      { in: [CrucibleStatus.Pending] },
+    ]);
   });
 
   it('shows every picked status together', async () => {
@@ -602,13 +714,110 @@ describe('getCrucibles — status for an unfiltered feed', () => {
 
   it('leaves out crucibles by users the viewer is blocked by', async () => {
     findMany.mockResolvedValue([]);
-    await getCrucibles({
-      input: { limit: 10, sort: CrucibleSort.Newest },
-      select: { id: true },
-      excludedUserIds: [7, 8],
-    });
+    const where = await sharedFeedWhere(() =>
+      getCrucibles({
+        input: { limit: 10, sort: CrucibleSort.Newest },
+        select: { id: true },
+        excludedUserIds: [7, 8],
+      })
+    );
 
-    expect(findMany.mock.calls.at(-1)![0].where.userId).toEqual({ notIn: [7, 8] });
+    expect(where.userId).toEqual({ notIn: [7, 8] });
+  });
+});
+
+describe('getCrucibles — running crucibles lead upcoming ones', () => {
+  const rows = [
+    { id: 1, status: CrucibleStatus.Pending, prizePool: 50_000 },
+    { id: 2, status: CrucibleStatus.Active, prizePool: 100 },
+    { id: 3, status: CrucibleStatus.Completed, prizePool: 90_000 },
+    { id: 4, status: CrucibleStatus.Active, prizePool: 500 },
+  ];
+
+  // Prisma's status filter, prize sort, inclusive cursor and take: all that getCrucibles leans on.
+  beforeEach(() => {
+    dbMock.dbRead.crucible.findMany.mockImplementation((async ({
+      where,
+      cursor,
+      take,
+    }: {
+      where: { status: { in: CrucibleStatus[] } };
+      cursor?: { id: number };
+      take: number;
+    }) => {
+      const order = (a: (typeof rows)[number], b: (typeof rows)[number]) =>
+        b.prizePool - a.prizePool || b.id - a.id;
+      const sorted = rows.filter((row) => where.status.in.includes(row.status)).sort(order);
+      // Like Prisma, a cursor is a position in the sort, whether or not its row passes the filter.
+      const at = cursor && rows.find((row) => row.id === cursor.id);
+      if (cursor && !at) return [];
+      const from = at ? sorted.findIndex((row) => order(row, at) >= 0) : 0;
+      return from < 0 ? [] : sorted.slice(from, from + take).map(({ id }) => ({ id }));
+    }) as never);
+    dbMock.dbRead.crucible.findUnique.mockImplementation(
+      (async ({ where }: { where: { id: number } }) =>
+        rows.find((row) => row.id === where.id) ?? null) as never
+    );
+  });
+
+  const ids = async (input: { limit: number; status?: CrucibleStatus[]; cursor?: number }) => {
+    const page = await getCrucibles({
+      input: { sort: CrucibleSort.PrizePool, ...input },
+      select: { id: true },
+    });
+    return { ids: page.items.map(({ id }) => id), nextCursor: page.nextCursor };
+  };
+
+  it('ranks an upcoming crucible with a bigger prize below every running one', async () => {
+    expect((await ids({ limit: 10 })).ids).toEqual([4, 2, 1]);
+  });
+
+  it('keeps the chosen sort among the statuses picked alongside', async () => {
+    const all = [CrucibleStatus.Active, CrucibleStatus.Pending, CrucibleStatus.Completed];
+    expect((await ids({ limit: 10, status: all })).ids).toEqual([4, 2, 3, 1]);
+    const orderBys = dbMock.dbRead.crucible.findMany.mock.calls.map(([args]) => args!.orderBy);
+    expect(orderBys).toHaveLength(2);
+    expect(orderBys[1]).toEqual(orderBys[0]);
+    expect((orderBys[0] as unknown[])[0]).toEqual({ prizePool: 'desc' });
+  });
+
+  it('never serves more than the limit when a page spans both groups', async () => {
+    const all = [CrucibleStatus.Active, CrucibleStatus.Pending, CrucibleStatus.Completed];
+    expect(await ids({ limit: 2, status: all })).toEqual({ ids: [4, 2], nextCursor: 3 });
+  });
+
+  // Accepted, not designed: the cursor names only a row, so when that row is deleted between
+  // pages the feed cannot know where it was and serves upcoming crucibles from the top. Before
+  // the split it ended instead. Either is finite; carrying the group in the cursor would fix it.
+  it('pages on from the upcoming list when the cursor crucible has gone', async () => {
+    expect(await ids({ limit: 10, cursor: 99 })).toEqual({ ids: [1], nextCursor: undefined });
+  });
+
+  // Accepted, not designed: an upcoming cursor crucible that starts between pages is looked up as
+  // running, so the next page serves the running ones again before the rest. Finite, like above.
+  it('repeats the running crucibles when the cursor crucible has started since', async () => {
+    const started = rows.find((row) => row.id === 1)!;
+    started.status = CrucibleStatus.Active;
+    try {
+      expect(await ids({ limit: 10, cursor: 1 })).toEqual({
+        ids: [1, 4, 2],
+        nextCursor: undefined,
+      });
+    } finally {
+      started.status = CrucibleStatus.Pending;
+    }
+  });
+
+  it('pages across the boundary without repeating or skipping one', async () => {
+    const seen: number[] = [];
+    let cursor: number | undefined;
+    for (let page = 0; page < 10; page++) {
+      const next = await ids({ limit: 1, cursor });
+      seen.push(...next.ids);
+      cursor = next.nextCursor;
+      if (cursor === undefined) break;
+    }
+    expect(seen).toEqual([4, 2, 1]);
   });
 });
 
@@ -627,19 +836,12 @@ describe('createCrucible — prize customization fee', () => {
 });
 
 describe('createCrucible — free entries', () => {
-  it('stores the free entries a moderator sets', async () => {
-    await createCrucible(input({ isModerator: true, entryLimit: 3, freeEntriesPerUser: 1 }));
+  // Deliberately not moderator-only. Free entries move no Buzz: the pool counts only entries holding
+  // a fee transaction (crucible-prizes.test.ts).
+  it('lets a host who is not a moderator offer free entries', async () => {
+    await createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 2 }));
 
-    expect(storedData().freeEntriesPerUser).toBe(1);
-  });
-
-  it('refuses free entries from anyone else, before anything is written or charged', async () => {
-    await expect(createCrucible(input({ entryLimit: 3, freeEntriesPerUser: 1 }))).rejects.toThrow(
-      'Only moderators can offer free entries'
-    );
-
-    expect(crucibleCreate).not.toHaveBeenCalled();
-    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
+    expect(storedData().freeEntriesPerUser).toBe(2);
   });
 
   it('stores none when none are asked for', async () => {

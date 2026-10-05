@@ -56,10 +56,19 @@ interface TrainingStudioHost {
      *  `pricingUrl`) instead of silently doing nothing. Omit when the host has no membership
      *  knowledge (e.g. the standalone shell) — the affordance then behaves as before. */
     canGenerateUnpublished?: boolean;
-    /** The host's membership-plans page, linked from that explanation. Same URL semantics as
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
+     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
+     *  the host doesn't know. */
+    isPaidMember?: boolean;
+    /** The host's membership-plans page, linked from the `canGenerateUnpublished` explanation. Same URL semantics as
      *  `generateUrl` (relative = same-tab, absolute = new tab). Omit to render the explanation
      *  without a link. */
     pricingUrl?: string;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see. The standalone shell
+     *  evaluates them server-side in `/new`'s load; the element has no server, so the host must
+     *  evaluate them and pass the enabled keys (the main app maps them in
+     *  `studioModelFlagFeatures`, `src/utils/training.ts`). Omit and every gated model is hidden. */
+    enabledModelFlags?: string[];
   };
 
   /** The host owns the URL space. Flow code describes destinations in studio terms; the host maps
@@ -153,10 +162,11 @@ allowlist before the component works there.
 - **Component**: the four-step flow, My trainings, run detail (live progress, epochs, train
   further, remix), label editor — everything under `src/routes/*.svelte` + `[id]/` today.
 - **Shell (standalone host)**: hooks auth gate, closed-beta page, header chrome (avatar,
-  logout), favicon, and the three host callbacks above backed by the existing
-  `lib/server/{orchestrator-token,signals,buzz}.ts`.
+  logout), favicon, the per-model catalog gates (`allowedModelFlags` in `/new`'s load), and the
+  three host callbacks above backed by the existing `lib/server/{orchestrator-token,signals,buzz}.ts`.
 - **Main app (embedded host)**: implements the same three callbacks with its existing
-  orchestrator/buzz infra; mounts the element on a page/route it owns.
+  orchestrator/buzz infra, evaluates the per-model catalog gates into `config.enabledModelFlags`,
+  and mounts the element on a page/route it owns.
 
 ## Packaging notes
 

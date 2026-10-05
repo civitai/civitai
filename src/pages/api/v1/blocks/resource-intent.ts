@@ -42,7 +42,21 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
  * response cache so a dark flag never reads, never spends.
  *
  * Any failure inside the primitive returns 200 with `degraded: true` and empty
- * suggestions — never a stack trace, never fabricated suggestions.
+ * suggestions — never a stack trace, never fabricated suggestions. ⚠️ ONE
+ * EXCEPTION, and this line used to state the rule without it: a failed
+ * `ResourceInsight` label read is handled inside the matcher and returns a normal
+ * 200 with `degraded: false`, real suggestions, and `insightFallback: true`.
+ *
+ * 🔴 `insightFallback` is therefore PART OF THIS ROUTE'S PUBLIC BODY — this handler
+ * spreads the service result, so adding a field to the response adds it here. That
+ * is accepted rather than incidental: it is one bit saying "this shortlist is in
+ * popularity order because our label read failed", the same category of
+ * service-health disclosure `degraded` already publishes, it carries no viewer,
+ * model or moderation data, and a block that wanted to retry or to stop trusting
+ * the ordering has no other way to know. The reason it lives on the response at all
+ * is the cache: the response is what gets cached, so a replay has to report what
+ * the computation did. If a future field is NOT meant to be public, destructure it
+ * out here rather than relying on this comment.
  */
 
 const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: NextApiResponse) {

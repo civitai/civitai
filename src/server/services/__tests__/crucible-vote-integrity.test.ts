@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
+import {
+  CrucibleIngestionStatus,
+  CrucibleStatus,
+  ImageIngestionStatus,
+  MediaType,
+} from '~/shared/utils/prisma/enums';
 import { dbMock, redisMock } from '~/__tests__/mocks';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { submitVoteSchema } from '~/server/schema/crucible.schema';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as CrucibleEloService from '~/server/services/crucible-elo.service';
@@ -15,21 +22,74 @@ vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
 vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   ...(await importOriginal<typeof CrucibleEloRedis>()),
   crucibleEloRedis: {
+    getAllElos: vi.fn().mockResolvedValue({}),
+    getAllVoteCounts: vi.fn().mockResolvedValue({}),
     getVoteCount: vi.fn().mockResolvedValue(0),
     incrementVoteCount: vi.fn().mockResolvedValue(undefined),
   },
 }));
 
-const { submitVote, CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } = await import(
-  '~/server/services/crucible.service'
-);
+const { getJudgingPair, submitVote } = await import('~/server/services/crucible.service');
 
 const JUDGE = 42;
+const JUDGE_ENTRY_VOTES_KEY = `${REDIS_SYS_KEYS.CRUCIBLE.JUDGE_ENTRY_VOTES}:1:${JUDGE}`;
 const vote = (winnerEntryId = 10, loserEntryId = 20) =>
   submitVote({ crucibleId: 1, winnerEntryId, loserEntryId, userId: JUDGE });
 
+/** In-memory stand-in for the sysRedis commands the vote path uses, with Redis semantics. */
+const useFakeRedis = () => {
+  const strings = new Map<string, string>();
+  const sets = new Map<string, Set<string>>();
+  const hashes = new Map<string, Map<string, number>>();
+  const { sysRedis } = redisMock;
+  sysRedis.set.mockImplementation(async (key: string, value: string) => {
+    sets.delete(key);
+    strings.set(key, value);
+    return 'OK';
+  });
+  // The served-pair claim: deletes the key only while it still holds this pair.
+  sysRedis.eval.mockImplementation(
+    async (_script: string, { keys, arguments: args }: { keys: string[]; arguments: string[] }) => {
+      if (strings.get(keys[0]) !== args[0]) return 0;
+      strings.delete(keys[0]);
+      return 1;
+    }
+  );
+  sysRedis.sAdd.mockImplementation(async (key: string, value: string) => {
+    const set = sets.get(key) ?? new Set<string>();
+    sets.set(key, set);
+    if (set.has(value)) return 0;
+    set.add(value);
+    return 1;
+  });
+  sysRedis.sRem.mockImplementation(async (key: string, value: string) =>
+    sets.get(key)?.delete(value) ? 1 : 0
+  );
+  sysRedis.sMembers.mockImplementation(async (key: string) => [...(sets.get(key) ?? [])]);
+  sysRedis.hIncrBy.mockImplementation(async (key: string, field: string, by: number) => {
+    const hash = hashes.get(key) ?? new Map<string, number>();
+    hashes.set(key, hash);
+    hash.set(field, (hash.get(field) ?? 0) + by);
+    return hash.get(field);
+  });
+  sysRedis.hGet.mockImplementation(async (key: string, field: string) => {
+    const count = hashes.get(key)?.get(field);
+    return count === undefined ? null : String(count);
+  });
+  sysRedis.hGetAll.mockImplementation(async (key: string) =>
+    Object.fromEntries([...(hashes.get(key) ?? [])].map(([field, n]) => [field, String(n)]))
+  );
+  const judgeVotes = (field: string) => hashes.get(JUDGE_ENTRY_VOTES_KEY)?.get(field) ?? 0;
+  return { judgeVotes };
+};
+
+let fetchMock: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
+  // File-wide: every vote tracks to ClickHouse, and an unstubbed send retries into a later test.
+  fetchMock = vi.fn(async () => ({ ok: true, status: 200, text: async () => '' }));
+  vi.stubGlobal('fetch', fetchMock);
   dbMock.dbRead.crucible.findUnique.mockResolvedValue({
     id: 1,
     userId: 500,
@@ -46,9 +106,11 @@ beforeEach(() => {
     voteCount: where.id,
   }));
   processVote.mockResolvedValue({ winnerElo: 1516, loserElo: 1484 });
-  redisMock.sysRedis.sRem.mockResolvedValue(1);
-  redisMock.sysRedis.hGet.mockResolvedValue(null);
+  useFakeRedis();
+  // Every pair counts as served unless a test says otherwise.
+  redisMock.sysRedis.eval.mockResolvedValue(1);
 });
+afterEach(() => vi.unstubAllGlobals());
 
 describe('submitVote — a vote needs two different entries', () => {
   it('is refused by the input schema', () => {
@@ -78,7 +140,7 @@ describe('submitVote — a creator who blocked the judge', () => {
       })
     ).rejects.toThrow('Crucible not found');
     expect(processVote).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.sRem).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
   });
 });
 
@@ -97,19 +159,82 @@ describe('submitVote — only a pair this judge was served', () => {
   it('claims the served pair for this judge and crucible', async () => {
     await vote(20, 10);
 
-    expect(redisMock.sysRedis.sRem).toHaveBeenCalledWith(
-      expect.stringMatching(new RegExp(`:1:${JUDGE}$`)),
-      '10:20'
-    );
+    // No test executes Lua, so the script is pinned whole.
+    const compareThenDelete =
+      "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end return 0";
+    expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(compareThenDelete, {
+      keys: [expect.stringMatching(new RegExp(`served-pair:1:${JUDGE}$`))],
+      arguments: ['10:20'],
+    });
     expect(processVote).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a pair that was never served, or was already claimed', async () => {
-    redisMock.sysRedis.sRem.mockResolvedValue(0);
+    redisMock.sysRedis.eval.mockResolvedValue(0);
 
     await expect(vote()).rejects.toThrow('no longer available');
     expect(processVote).not.toHaveBeenCalled();
     expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitVote — only the pair served most recently', () => {
+  const rawEntry = (id: number) => ({
+    id,
+    imageId: id * 10,
+    userId: id + 1000,
+    score: 1500,
+    image_id: id * 10,
+    image_url: `image-${id}`,
+    image_width: 512,
+    image_height: 512,
+    image_nsfwLevel: 1,
+    user_id: id + 1000,
+    user_username: `user${id}`,
+    user_deletedAt: null,
+    user_image: null,
+  });
+  const serve = async (...entryIds: number[]) => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue(entryIds.map(rawEntry));
+    const pair = await getJudgingPair({ crucibleId: 1, userId: JUDGE });
+    if (!pair) throw new Error('no pair served');
+    return [pair.left.id, pair.right.id] as const;
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      id: 1,
+      userId: 500,
+      status: CrucibleStatus.Active,
+      endAt: new Date(Date.now() + 60_000),
+      nsfwLevel: 31,
+      textNsfw: false,
+      ingestion: CrucibleIngestionStatus.Scanned,
+      image: { ingestion: ImageIngestionStatus.Scanned },
+      minViewSeconds: null,
+    });
+    useFakeRedis();
+  });
+
+  // Deliberate, including for a judge with two tabs open: the older tab's vote is refused and it
+  // loads a fresh pair. Do not widen this back to every pair ever served.
+  it('refuses a pair once a newer one has been served to the judge', async () => {
+    const [olderA, olderB] = await serve(10, 20);
+    const [newerA, newerB] = await serve(30, 40);
+
+    await expect(vote(olderA, olderB), 'the older pair').rejects.toThrow('no longer available');
+    await expect(vote(newerA, newerB), 'the newer pair').resolves.toMatchObject({
+      winnerEntryId: newerA,
+    });
+    expect(processVote).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts the served pair only once', async () => {
+    const [a, b] = await serve(10, 20);
+
+    await vote(a, b);
+    await expect(vote(a, b)).rejects.toThrow('no longer available');
+    expect(processVote).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -127,20 +252,105 @@ describe('submitVote — rating update', () => {
 
 describe('submitVote — per-judge cap on each entry', () => {
   it('refuses once the judge has voted on either entry as often as allowed', async () => {
-    redisMock.sysRedis.hGet.mockImplementation(async (_key: string, field: string) =>
-      field === '20' ? String(CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY) : null
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    await redisMock.sysRedis.hIncrBy(
+      JUDGE_ENTRY_VOTES_KEY,
+      '20',
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
     );
 
     await expect(vote()).rejects.toThrow('as many times as allowed');
     expect(processVote).not.toHaveBeenCalled();
     // Refused before the served pair is claimed, so it is not burned.
-    expect(redisMock.sysRedis.sRem).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    expect([judgeVotes('10'), judgeVotes('20')], 'counts after the refusal').toEqual([
+      0,
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+    ]);
   });
 
   it('counts both entries toward the judge on an accepted vote', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+
     await vote();
 
-    expect(redisMock.sysRedis.hIncrBy).toHaveBeenCalledWith(expect.any(String), '10', 1);
-    expect(redisMock.sysRedis.hIncrBy).toHaveBeenCalledWith(expect.any(String), '20', 1);
+    expect([judgeVotes('10'), judgeVotes('20')]).toEqual([1, 1]);
+    expect(redisMock.sysRedis.expire).toHaveBeenCalledWith(
+      JUDGE_ENTRY_VOTES_KEY,
+      expect.any(Number)
+    );
+  });
+
+  it('admits only one of two concurrent votes that would take an entry past the cap', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    await redisMock.sysRedis.hIncrBy(
+      JUDGE_ENTRY_VOTES_KEY,
+      '10',
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY - 1
+    );
+
+    const results = await Promise.allSettled([vote(10, 20), vote(10, 30)]);
+
+    expect(results.map((r) => r.status).sort(), 'outcomes of the two votes').toEqual([
+      'fulfilled',
+      'rejected',
+    ]);
+    expect(processVote).toHaveBeenCalledTimes(1);
+    expect(judgeVotes('10'), 'count on the shared entry').toBe(
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+    );
+    expect(judgeVotes('20') + judgeVotes('30'), 'counts on the other entries').toBe(1);
+  });
+
+  it('gives the counts back when the pair is no longer served', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(0);
+
+    await expect(vote()).rejects.toThrow('no longer available');
+
+    expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
+  });
+
+  it('gives the counts back when the pair was already voted', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    redisMock.sysRedis.sAdd.mockResolvedValueOnce(0);
+
+    await expect(vote()).rejects.toThrow('already voted');
+
+    expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
+  });
+
+  it('gives the counts back when the rating update fails', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    processVote.mockRejectedValueOnce(new Error('rating script failed'));
+
+    await expect(vote()).rejects.toThrow('rating script failed');
+
+    expect([judgeVotes('10'), judgeVotes('20')]).toEqual([0, 0]);
+  });
+});
+
+describe('submitVote — the ClickHouse vote row', () => {
+  // The vote path builds its Tracker without a request or session, so the voter has to be
+  // passed in: the actor's userId on such a Tracker is 0, and every row read 0 until it was.
+  it('records the judge who voted, not the anonymous actor', async () => {
+    await vote(10, 20);
+    await new Promise((r) => setImmediate(r));
+
+    const rows = fetchMock.mock.calls
+      .filter(([url]) => String(url).endsWith('/track/crucible_votes'))
+      .map(([, init]) => JSON.parse((init as { body: string }).body));
+    expect(rows, 'crucible_votes rows sent').toHaveLength(1);
+    expect(rows[0], 'crucible_votes row').toMatchObject({
+      userId: JUDGE,
+      crucibleId: 1,
+      winnerEntryId: 10,
+      loserEntryId: 20,
+    });
   });
 });

@@ -340,6 +340,25 @@ describe('applyResult — green crucible with NSFW text, claim lost (ended or fi
   });
 });
 
+// Product decision, 2026-10-03: an SFW crucible created on civitai.red is listed on civitai.com and
+// may hold green entry fees, but flagged text still raises it to R and keeps it running rather than
+// cancelling it. Its green entrants lose sight of it on .com; prizes pay yellow either way. Do not
+// "fix" this into a cancel without asking.
+describe('applyResult — SFW crucible created on the mature site, with NSFW text', () => {
+  it('raises it to R and keeps it running, rather than cancelling it', async () => {
+    findUnique.mockResolvedValue(crucible({ buzzType: 'yellow', status: CrucibleStatus.Active }));
+
+    await scanNsfw();
+
+    expect(cancelCrucible).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ textNsfw: true, nsfwLevel: SFW | NsfwLevel.R }),
+      })
+    );
+  });
+});
+
 describe('applyCrucibleNsfwEscalation — row gone', () => {
   it('does nothing', async () => {
     findUnique.mockResolvedValue(null);

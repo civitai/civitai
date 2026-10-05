@@ -26,6 +26,10 @@ export const TOS_REASONS = [
     value: ViolationType.SchoolNsfw,
   },
   {
+    label: 'Minor with Violence',
+    value: ViolationType.MinorViolence,
+  },
+  {
     label: 'Bestiality',
     value: ViolationType.Bestiality,
   },
@@ -124,6 +128,8 @@ export function mapToViolationType(
 const USER_FACING_REASONS: Partial<Record<ViolationType, string>> = {
   [ViolationType.SchoolNsfw]:
     'School settings are moderated more strictly, and this was removed under that stricter standard',
+  [ViolationType.MinorViolence]:
+    'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed',
 };
 
 /** The wording for a violation shown back to the person it happened to. Falls back to the raw enum

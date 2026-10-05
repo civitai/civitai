@@ -277,6 +277,15 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         <CopyButton value={joinUrl}>
                           {({ copied, copy }) => (
                             <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
+                              {/* 🔴 NOT ROUTED THROUGH `~/components/CopyAffordance/CopyAffordance`,
+                                  UNLIKE THE FOUR `Code`-BLOCK COPIES IN `Account/`. This
+                                  control is gated on `disabled={!joinUrl}` — `joinUrl` is
+                                  `''` whenever `NEXT_PUBLIC_BASE_URL` or `collectionId` is
+                                  missing — and that component models no disabled state;
+                                  adding one for a single caller is API surface nobody asked
+                                  for. What it was missing is the accessible name, which it
+                                  now has: the icon carries no text, so without this the
+                                  control announced itself as "button". */}
                               <LegacyActionIcon
                                 pos="absolute"
                                 top="50%"
@@ -284,6 +293,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                                 variant="transparent"
                                 style={{ transform: 'translateY(-50%) !important' }}
                                 disabled={!joinUrl}
+                                aria-label="Copy the collection invite link"
                               >
                                 <IconClipboard />
                               </LegacyActionIcon>

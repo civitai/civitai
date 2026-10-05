@@ -20,6 +20,7 @@ import {
 import { Flags } from '~/shared/utils/flags';
 import { useImageStore } from '~/store/image.store';
 import classes from './ImageGuard.module.css';
+import { isViewer } from '~/utils/is-viewer';
 
 type ImageProps = {
   id: number;
@@ -103,7 +104,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   );
 
   const userId = image.userId ?? image.user?.id;
-  const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || userId === currentUser?.id);
+  const showUnprocessed = !nsfwLevel && (currentUser?.isModerator || isViewer(currentUser, userId));
   const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, nsfwLevel);
   const shouldBlur = blurNsfw && !showUnprocessed;
   const safe = !nsfw ? true : !shouldBlur;
@@ -287,7 +288,7 @@ function BlurToggle({
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
 
-  const isOwner = !!userId && currentUser?.id === userId;
+  const isOwner = isViewer(currentUser, userId);
   const ownerCanSeeFlag = isOwner && !needsReview;
   const showImageFlag = (currentUser?.isModerator || ownerCanSeeFlag) && imageFlag;
   const imageFlagRight = showImageFlag ? <ImageFlagSection label={imageFlag} /> : undefined;

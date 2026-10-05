@@ -102,6 +102,7 @@ import {
   imageTagsCache,
   tagCache,
   tagIdsForImagesCache,
+  refreshThumbnailCache,
   thumbnailCache,
   userImageVideoCountCaches,
 } from '~/server/redis/caches';
@@ -143,6 +144,7 @@ import type {
   UpdateImageToolsOutput,
 } from '~/server/schema/image.schema';
 import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema';
+import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import type {
@@ -152,7 +154,11 @@ import type {
 } from '~/server/search-index/metrics-images.search-index';
 import type { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
-import { imageSelect, publishedImageWhere } from '~/server/selectors/image.selector';
+import {
+  imageSelect,
+  publishedImageWhere,
+  publishedOrEntryDraftImageWhere,
+} from '~/server/selectors/image.selector';
 import type { ImageV2Model, ImageV2Stats } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
 import {
@@ -467,8 +473,19 @@ export async function deleteImageFromS3({
   // Off unless a moderation flow says otherwise. See `PurgeResizeCacheRetraction` for what it
   // destroys and for the collateral that is knowingly accepted along with it.
   retractPublicBlobs = false,
-}: { id: number; url: string } & PurgeResizeCacheRetraction) {
-  if (!env.DATABASE_IS_PROD) return;
+  // The retry job turns this off: the first failure already purged, and an outage would otherwise
+  // re-purge every queued key on every run.
+  purgeOnFailure = true,
+  // The shared B2 client sets no request timeout, and it also serves uploads, so a caller that
+  // needs a bound supplies its own.
+  abortSignal,
+}: {
+  id: number;
+  url: string;
+  purgeOnFailure?: boolean;
+  abortSignal?: AbortSignal;
+} & PurgeResizeCacheRetraction): Promise<StorageDeleteOutcome> {
+  if (!env.DATABASE_IS_PROD) return 'skipped';
   // Legacy avatar rows hold a full external URL where every other row holds a bucket key.
   // Handing one to deleteObject as a Key can only fail, and it is not ours to delete anyway.
   if (!url || url.startsWith('http')) {
@@ -483,9 +500,10 @@ export async function deleteImageFromS3({
         imageId: id,
         url,
       }).catch(() => undefined);
-    return;
+    return 'skipped';
   }
 
+  let outcome: StorageDeleteOutcome = 'deleted';
   try {
     const otherImagesWithSameUrl = await dbWrite.image.findFirst({
       select: { id: true },
@@ -495,7 +513,7 @@ export async function deleteImageFromS3({
       },
     });
 
-    if (!!otherImagesWithSameUrl) return;
+    if (!!otherImagesWithSameUrl) return 'skipped';
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
@@ -542,12 +560,14 @@ export async function deleteImageFromS3({
         new DeleteObjectCommand({
           Bucket: env.S3_IMAGE_B2_BUCKET ?? 'civitai-media-uploads',
           Key: url,
-        })
+        }),
+        { abortSignal }
       )
     );
   } catch (error) {
-    // Nothing retries this: deleteImages drops the DB row first, so a lost object stays
-    // publicly reachable (CDN urls are unsigned) with only this line to find it by.
+    // The DB row is already gone, so this key is the only route back to a publicly reachable
+    // object (CDN urls are unsigned). `retry-image-storage-deletes` works the queue.
+    outcome = 'failed';
     await logToAxiom({
       type: 'error',
       name: 'delete-image-from-s3-failed',
@@ -556,6 +576,7 @@ export async function deleteImageFromS3({
       url,
       error: safeError(error),
     }).catch(() => undefined);
+    await queueImageStorageDeleteRetry({ id, url });
   }
 
   // 🔴 The only attribution trail. Retraction destroys the shared stored object for every
@@ -577,7 +598,40 @@ export async function deleteImageFromS3({
   // bytes are still in the bucket and a live cache entry keeps serving content whose row is
   // already gone. The `otherImagesWithSameUrl` return above still skips this — that url belongs
   // to an image that is still live, so its bytes are not ours to retract either.
-  await purgeResizeCache({ url: url, retractPublicBlobs });
+  if (outcome === 'deleted' || purgeOnFailure)
+    await purgeResizeCache({ url: url, retractPublicBlobs });
+  return outcome;
+}
+
+export type StorageDeleteOutcome = 'deleted' | 'skipped' | 'failed';
+
+/**
+ * 🔴 Must tolerate the enum label not existing yet: it is added only after the deploy, since a label
+ * written before every pod knows it breaks every Prisma reader of JobQueue. Until then this insert
+ * fails and is logged, which is today's behaviour.
+ */
+export async function queueImageStorageDeleteRetry({ id, url }: { id: number; url: string }) {
+  const payload: ImageStorageDeletePayload = { url };
+  try {
+    await dbWrite.$executeRaw`
+      INSERT INTO "JobQueue" ("entityId", "entityType", "type", "data")
+      VALUES (${id}, ${EntityType.Image}::"EntityType", ${
+      JobQueueType.ImageStorageDelete
+    }::"JobQueueType", ${JSON.stringify(payload)}::jsonb)
+      -- Every failed retry lands here again; an unchanged key must not leave a dead row version.
+      ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET "data" = EXCLUDED."data"
+        WHERE "JobQueue"."data"->>'url' IS DISTINCT FROM EXCLUDED."data"->>'url'
+    `;
+  } catch (error) {
+    await logToAxiom({
+      type: 'error',
+      name: 'queue-image-storage-delete-retry-failed',
+      message: 'failed storage delete was not queued for retry; the object may still be public',
+      imageId: id,
+      url,
+      error: safeError(error),
+    }).catch(() => undefined);
+  }
 }
 
 export const invalidateManyImageExistence = async (ids: number[]) => {
@@ -657,9 +711,13 @@ export const deleteImageById = async ({
 
     const image = await dbWrite.image.delete({
       where: { id },
-      select: { url: true, postId: true, nsfwLevel: true, userId: true },
+      select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
     });
     if (!image) return;
+
+    // A custom video thumbnail is cached under its video, and the row that names the video is
+    // now gone, so `refreshThumbnailCache` can no longer find it.
+    const thumbnailParentId = (image.metadata as { parentId?: number } | null)?.parentId;
 
     const invalidateExistence = invalidateManyImageExistence([id]);
 
@@ -681,6 +739,7 @@ export const deleteImageById = async ({
       imageMetadataCache.refresh(id),
       userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
+      ...(thumbnailParentId ? [thumbnailCache.refresh(thumbnailParentId)] : []),
     ]);
 
     return image;
@@ -777,13 +836,21 @@ export async function deleteImages(
     });
 
     const results = await dbWrite.$queryRaw<
-      { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
+      {
+        id: number;
+        url: string;
+        postId: number | null;
+        nsfwLevel: number;
+        userId: number;
+        parentId: number | null;
+      }[]
     >`
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(ids)})
-      RETURNING id, url, "postId", "nsfwLevel", "userId"
+      RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
+    const thumbnailParentIds = uniq(results.map((x) => x.parentId).filter(isDefined));
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
     const invalidateExistence = invalidateManyImageExistence(imageIds);
@@ -801,6 +868,8 @@ export async function deleteImages(
       imageMetadataCache.refresh(imageIds),
       userImageVideoCountCaches.bust(uniq(results.map((x) => x.userId))),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
+      // Custom video thumbnails are cached under their video; see deleteImageById.
+      ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -1076,7 +1145,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await thumbnailCache.refresh(ids);
+  await refreshThumbnailCache(ids);
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -7025,7 +7094,7 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await imageMetadataCache.refresh(id);
+    await Promise.all([imageMetadataCache.refresh(id), refreshThumbnailCache(id)]);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7113,7 +7182,7 @@ export async function raiseOwnImageNsfwLevel({
   `;
   if (!raised) return false;
 
-  await thumbnailCache.refresh(id);
+  await refreshThumbnailCache(id);
   if (raised.postId) await updatePostNsfwLevel(raised.postId);
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
@@ -7841,8 +7910,7 @@ export async function queueImageSearchIndexUpdate({
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 
   if (action === SearchIndexUpdateQueueAction.Delete) {
-    // Bust the thumbnail cache for deleted images
-    await thumbnailCache.refresh(ids);
+    await refreshThumbnailCache(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
       ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
@@ -8084,6 +8152,7 @@ export async function createImageResources({
 export const getMyImages = async ({
   mediaTypes,
   publishedOnly,
+  includeEntryDrafts,
   userId,
   limit,
   cursor = 0,
@@ -8114,7 +8183,11 @@ export const getMyImages = async ({
         ingestion: publishedOnly
           ? { in: [ImageIngestionStatus.Pending, ImageIngestionStatus.Scanned] }
           : ImageIngestionStatus.Scanned,
-        ...(publishedOnly ? publishedImageWhere() : {}),
+        ...(publishedOnly && includeEntryDrafts
+          ? publishedOrEntryDraftImageWhere()
+          : publishedOnly
+          ? publishedImageWhere()
+          : {}),
       },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,

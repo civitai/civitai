@@ -5,7 +5,10 @@ import { BuzzApiError } from '@civitai/buzz';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as BuzzService from '~/server/services/buzz.service';
 import { buzzAccountTypes, TransactionType } from '~/shared/constants/buzz.constants';
-import { BLOCK_GOOD_MAX_PRICE_BUZZ } from '~/shared/constants/block-goods.constants';
+import {
+  BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ,
+  BLOCK_GOOD_MAX_PRICE_BUZZ,
+} from '~/shared/constants/block-goods.constants';
 
 /**
  * App Blocks DIGITAL GOODS — the purchase / entitlement / refund rail.
@@ -733,6 +736,58 @@ describe('purchaseBlockGood — the money path', () => {
     );
     expect(result).toMatchObject({ ok: false, status: 400, reason: 'price_over_cap' });
     expect(mockCreateMulti).not.toHaveBeenCalled();
+  });
+
+  it('REFUSES an app_unlock over the UNLOCK cap at a price an ordinary good may charge', async () => {
+    // 🔴 THE ONLY TEST THAT CAN SEE THE PER-KIND CEILING ON THE MONEY PATH. The case
+    // above uses `kind: 'good'` at 10,000,000, which refuses identically whether this
+    // guard reads the general cap or the per-kind one — so until this case existed,
+    // reverting `maxPriceBuzzForKind(good.kind)` to `BLOCK_GOOD_MAX_PRICE_BUZZ` left
+    // the entire suite green while an app unlock was bounded at 10x its real cap.
+    //
+    // The price is the discriminator: 5,001 is LEGAL for an ordinary good and over the
+    // ceiling for an unlock, so only a kind-aware guard can refuse it. Nothing is
+    // charged — asserted, because a 400 that still debited would be far worse than a
+    // missing bound.
+    const price = BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ + 1;
+    expect(price).toBeLessThanOrEqual(BLOCK_GOOD_MAX_PRICE_BUZZ);
+    const result = await purchaseBlockGood(
+      purchaseInput({
+        resolved: {
+          ...RESOLVED,
+          good: { ...GOOD, kind: 'app_unlock' as const, priceBuzz: price },
+        },
+      })
+    );
+    expect(result).toMatchObject({ ok: false, status: 400, reason: 'price_over_cap' });
+    expect(mockCreateMulti).not.toHaveBeenCalled();
+  });
+
+  it('ALLOWS an app_unlock exactly AT the unlock cap — the boundary, and the control', async () => {
+    // Without this, a `>` → `>=` mutant on the same line survives; and it is also the
+    // control proving the refusal above is about the PRICE rather than about the kind
+    // being rejected outright.
+    const result = await purchaseBlockGood(
+      purchaseInput({
+        resolved: {
+          ...RESOLVED,
+          good: { ...GOOD, kind: 'app_unlock' as const, priceBuzz: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ },
+        },
+      })
+    );
+    // 🔴 THE CLAIM IS "THE CEILING DID NOT FIRE", AND IT IS ASSERTED ON THE CHARGE, not
+    // on `ok`. `not.toMatchObject({reason})` alone does not discriminate — it passes for
+    // any other refusal and for a result with no `reason` at all. But `ok: true` would
+    // OVER-specify: this shared fixture only wires a successful Buzz response for the
+    // default price, so at a non-default amount the attempt gets past the ceiling and
+    // then returns `charge_failed` from the mock. That is a harness artefact, not a
+    // bound — do not chase it. What proves the ceiling allowed exactly-at-the-cap is
+    // that the charge was ATTEMPTED, at that amount, which no `price_over_cap` refusal
+    // could ever reach (it returns `charge: 'none'` before any debit).
+    expect(result).not.toMatchObject({ reason: 'price_over_cap' });
+    expect(mockCreateMulti).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: BLOCK_APP_UNLOCK_MAX_PRICE_BUZZ })
+    );
   });
 
   it('REFUSES as a duplicate when another attempt already SETTLED this purchase, without charging', async () => {

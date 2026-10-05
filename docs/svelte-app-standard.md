@@ -202,7 +202,7 @@ Reuse the shapes already on the page rather than inventing spacing: panels are
 
 ## Comments
 
-Per the [root guide](../CLAUDE.md#comments), and more strictly here: a comment in these apps earns its
+Per the [root comment guideline](../.claude/rules/comments.md), and more strictly here: a comment in these apps earns its
 place only as a **breakage guard** — an invariant, a cast, an ordering requirement, a hazard a future
 edit would otherwise walk into. No narration, no provenance, no "ported from X", no explaining your work
 to a reviewer. Say that in the PR.
@@ -210,7 +210,7 @@ to a reviewer. Say that in the PR.
 ## Verifying
 
 `typecheck`, never `check` — and `build` is not a check. Both run `svelte-kit sync`, which fights the
-dev server's file watcher; see the root [`CLAUDE.md`](../CLAUDE.md) for the full rule and why. Read
+dev server's file watcher; see [`.claude/rules/sveltekit.md`](../.claude/rules/sveltekit.md) for the full rule and why. Read
 `svelte-check`'s **WARNING** lines as well as its errors: `state_referenced_locally` is a real bug and
 appears nowhere else.
 

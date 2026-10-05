@@ -10,7 +10,7 @@ const schema = z.object({
 const resultCache = new Map<string, any>();
 
 export default TokenSecuredEndpoint(
-  env.HIVE_VISUAL_TOKEN?.slice(0, 5) ?? 'dummy',
+  env.HIVE_VISUAL_TOKEN?.slice(0, 5) ?? '',
   async function (req: NextApiRequest, res: NextApiResponse) {
     if (!env.HIVE_VISUAL_TOKEN) return res.status(500).json({ error: 'Missing HIVE_VISUAL_TOKEN' });
 

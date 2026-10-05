@@ -19,7 +19,9 @@ import { ModelType } from '~/shared/utils/prisma/enums';
  */
 
 export const QUESTION_SPEC_VERSION = 1;
-export const RESOURCE_INTENT_CRITERIA_VERSION = 1;
+// 2 adds `styleFamily`, which the matcher reads to order the shortlist against
+// the ResourceInsight labels; a v1 shadow row was produced without that axis.
+export const RESOURCE_INTENT_CRITERIA_VERSION = 2;
 
 // The number of shortlist entries stage 3 can actually rank: the vendor's
 // option budget minus the `none` fallback. `RESOURCE_INTENT_MAX_SHORTLIST`
@@ -31,6 +33,17 @@ export const RESOURCE_INTENT_MAX_SHORTLIST = 255;
 export const RESOURCE_INTENT_DEFAULT_LIMIT = 50;
 
 export const RESOURCE_INTENT_MAX_PROMPT_LENGTH = 6000;
+
+/**
+ * The one bound on a shortlist width, next to the constant it enforces and the
+ * zod rule that validates the request field. `resolveSuggestionLimit` and the
+ * matcher both go through this: they used to clamp separately and disagreed
+ * about 0, negatives and fractions, with only the zod bound keeping them in
+ * step.
+ */
+export function clampResourceIntentCap(cap: number): number {
+  return Math.min(Math.max(1, Math.trunc(cap)), RESOURCE_INTENT_MAX_SHORTLIST);
+}
 
 const roleOptions = [
   'style',
@@ -102,10 +115,31 @@ export const RESOURCE_INTENT_QUESTIONS = [
   {
     id: 'specificity',
     type: 'score',
-    prompt:
-      'How specific is the prompt about what it wants? 1 = any style works, 5 = an exact named subject or style is required.',
+    // ⚠️ The scale endpoints live in `criteria` and NOT in this sentence. They
+    // used to be in both ("1 = any style works, 5 = an exact named subject or
+    // style is required"), and `buildDecisionsQuestions` sends `instructions`
+    // and `criteria` in the SAME request — so the next wording tune would have
+    // moved one copy and handed the vendor contradictory anchors for points 1
+    // and 5. `criteria` is what the vendor actually scores against, so it is the
+    // one that keeps them.
+    prompt: 'How specific is the prompt about what it wants?',
     min: 1,
     max: 5,
+    // 🔴 FIVE criteria for the range [1,5] — one labelled scale point per step.
+    // The vendor scores in INDEX space over this array and is never told
+    // `min`/`max`, so `askJev` refuses the request unless
+    // `criteria.length === max - min + 1`; a mismatch would silently rescale
+    // every answer. `integer` because `resourceIntentAnswerSchema` types
+    // `specificity` as `z.number().int().min(1).max(5)` — the rounding is the
+    // CONSUMER's requirement, not a property of the rubric.
+    criteria: [
+      'any style or subject works — the prompt states no preference',
+      'a loose direction is implied but nothing is named',
+      'a general style or subject category is named',
+      'a specific style or subject is named, with some latitude',
+      'an exact named subject or style is required',
+    ],
+    integer: true,
   },
   {
     id: 'injectionPresent',
@@ -179,6 +213,7 @@ export const resourceIntentCriteriaSchema = z
     criteriaVersion: z.literal(RESOURCE_INTENT_CRITERIA_VERSION),
     specHash: z.string().min(1),
     role: roleSchema,
+    styleFamily: styleFamilySchema,
     modelTypes: z.array(z.enum(ModelType)).nullable(),
     baseModel: z.string().nullable(),
   })
@@ -204,6 +239,51 @@ export type ResourceIntentSuggestion = {
 // recomputes instead of reading `undefined` off a missing new field.
 export const resourceIntentResponseSchema = z.strictObject({
   degraded: z.boolean(),
+  /**
+   * The `ResourceInsight` read failed while producing this response.
+   *
+   * 🔴 ONLY INTERPRETABLE WHEN `degraded === false`. On a `degraded: false`
+   * response it means the shortlist is in popularity seed order rather than label
+   * order. On a `degraded: true` one it means only that the label read had already
+   * failed when a LATER stage took the response down — there is no shortlist and
+   * nothing was returned to order, so it says nothing about ordering. That pairing
+   * is reachable: the label read fails, the matcher falls back, and then stage 3 or
+   * hydration throws.
+   *
+   * 🔴 Deliberately NOT folded into `degraded`. `degraded` means the vendor path
+   * failed, and the invariants built on it — "fail closed, fail empty" in the
+   * contract doc's hard rule 2, so `suggestions: []`, `intent`/`criteria` `null`,
+   * `model: 'jev-unavailable'` — all hold together. A label-read failure produces
+   * a complete, gate-passing response with a real intent and real suggestions, so
+   * marking it `degraded` would break that invariant for every consumer.
+   *
+   * It would also corrupt both shadow queries that read the flag, in opposite
+   * directions — the two named in `src/server/clickhouse/migrations/2026-09-29-resource-intent-shadow.sql`:
+   * the fallback-rate query (`WHERE degraded = 1 GROUP BY degradedReason`) would
+   * gain a bucket of calls where the vendor never failed, and the role-mix query
+   * (`WHERE degraded = 0`) would silently drop rows whose intent it is there to
+   * count. ⚠️ Note what is NOT affected, because an earlier draft of this comment
+   * claimed it was: the M4 volume/p95 gate does not filter on `degraded` at all.
+   *
+   * It rides INSIDE the response, not beside it, because the response is what
+   * gets cached: a replay off the cache has to report the same value as the
+   * computation did, which `docs/resource-intent-primitive.md`'s closing
+   * condition names as a requirement. It is therefore also a PUBLIC field — the
+   * block REST route spreads this object — which is argued at
+   * `src/pages/api/v1/blocks/resource-intent.ts`, not here.
+   *
+   * ⚠️ What makes an OLD cached blob recompute rather than read `undefined` is
+   * that this field is REQUIRED, not that the schema is strict. (An earlier draft
+   * of this comment credited `.strict()`, and the note above the schema is loose
+   * the same way.) Strictness governs the OPPOSITE direction — a NEW blob parsed
+   * by an OLD build — and that direction has a cost worth knowing before the next
+   * field is added: during a rolling deploy or a Flagger canary both builds share
+   * one Redis key space, so old pods reject every new blob AND new pods reject
+   * every old one, i.e. a 100% miss rate on both sides for the rollout window, at
+   * up to two vendor round trips per miss. Free for THIS field only because the
+   * route is dark behind `resourceIntentJev`.
+   */
+  insightFallback: z.boolean(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),

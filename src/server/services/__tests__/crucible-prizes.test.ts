@@ -5,6 +5,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as CrucibleEloRedis from '~/server/redis/crucible-elo.redis';
 import type * as EloService from '~/server/services/crucible-elo.service';
+import type * as PrizeService from '~/server/services/prize.service';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 
 // `~/server/db/client` and `~/server/redis/client` are registered globally by the setup file
@@ -19,6 +20,7 @@ const createNotification = vi.fn();
 const getAllEntryElos = vi.fn();
 const getAllVoteCounts = vi.fn();
 const setTTL = vi.fn();
+const createPrizes = vi.fn();
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzService>()),
@@ -40,6 +42,14 @@ vi.mock('~/server/services/crucible-elo.service', async (importOriginal) => ({
   ...(await importOriginal<typeof EloService>()),
   getAllEntryElos,
 }));
+
+vi.mock('~/server/services/prize.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrizeService>()),
+  createPrizes,
+}));
+
+type AwardedPrize = { userId: number; amount: number };
+const awarded = () => createPrizes.mock.calls[0][0] as AwardedPrize[];
 
 const { finalizeCrucible } = await import('~/server/services/crucible.service');
 
@@ -126,6 +136,9 @@ beforeEach(() => {
     transactions,
     conflicts: [],
   }));
+  createPrizes.mockImplementation(async (inputs: AwardedPrize[]) =>
+    inputs.map((input, i) => ({ ...input, id: 100 + i }))
+  );
   createNotification.mockResolvedValue(undefined);
   refundMultiAccountTransaction.mockResolvedValue(undefined);
   setupCrucible();
@@ -198,28 +211,25 @@ describe('prize distribution', () => {
     expect(result.finalEntries.map((e) => e.prizeAmount)).toEqual([49, 49, 0]);
   });
 
-  it('transfers the pool from the central bank to each winner', async () => {
+  it('awards the pool to each winner, to be claimed', async () => {
     setupCrucible({ entryFee: 100, prizePositions: { '1': 60, '2': 40 } });
 
     await finalizeCrucible(1);
 
-    expect(createBuzzTransactionMany).toHaveBeenCalledTimes(1);
-    const [transactions] = createBuzzTransactionMany.mock.calls[0];
-    expect(transactions).toHaveLength(2);
-    expect(
-      transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])
-    ).toEqual([
+    expect(createPrizes).toHaveBeenCalledTimes(1);
+    expect(awarded().map((p) => [p.userId, p.amount])).toEqual([
       [10, 180],
       [11, 120],
     ]);
-    expect(transactions.every((t: { fromAccountId: number }) => t.fromAccountId === 0)).toBe(true);
+    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 
-  it('issues no Buzz transaction when nothing is owed', async () => {
+  it('awards nothing when nothing is owed', async () => {
     setupCrucible({ entryFee: 0 });
 
     await finalizeCrucible(1);
 
+    expect(createPrizes).not.toHaveBeenCalled();
     expect(createBuzzTransactionMany).not.toHaveBeenCalled();
   });
 
@@ -318,11 +328,8 @@ describe('seeded prize pool', () => {
 
     await finalizeCrucible(1);
 
-    const [transactions] = createBuzzTransactionMany.mock.calls[0];
     // 300 of entry fees + 600 seed, all to first place
-    expect(
-      transactions.map((t: { toAccountId: number; amount: number }) => [t.toAccountId, t.amount])
-    ).toEqual([[10, 900]]);
+    expect(awarded().map((p) => [p.userId, p.amount])).toEqual([[10, 900]]);
   });
 });
 
@@ -336,8 +343,7 @@ describe('free entries', () => {
     const result = await finalizeCrucible(1);
 
     expect(result.totalPrizePool).toBe(600);
-    const [transactions] = createBuzzTransactionMany.mock.calls[0];
-    expect(transactions.map((t: { amount: number }) => t.amount)).toEqual([600]);
+    expect(awarded().map((p) => p.amount)).toEqual([600]);
   });
 
   it('asks only for entries that carry a fee transaction', async () => {
@@ -363,7 +369,7 @@ describe('free entries', () => {
 
     expect(result.totalPrizePool).toBe(0);
     expect(result.finalEntries.map((e) => e.position)).toEqual([1, 2, 3]);
-    expect(createBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(createPrizes).not.toHaveBeenCalled();
   });
 
   it('counts only paid entries even when the crucible offers no free ones', async () => {

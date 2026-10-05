@@ -74,6 +74,9 @@ export const appRouter = router({
   generationPreset: lazy(() =>
     import('./generation-preset.router').then((m) => m.generationPresetRouter)
   ),
+  generationSizePreset: lazy(() =>
+    import('./generation-size-preset.router').then((m) => m.generationSizePresetRouter)
+  ),
   wildcardSet: lazy(() => import('./wildcard-set.router').then((m) => m.wildcardSetRouter)),
   newsletter: lazy(() => import('./newsletter.router').then((m) => m.newsletterRouter)),
   system: lazy(() => import('./system.router').then((m) => m.systemRouter)),
@@ -166,6 +169,7 @@ export const appRouter = router({
     import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
   ),
   crucible: lazy(() => import('./crucible.router').then((m) => m.crucibleRouter)),
+  prize: lazy(() => import('./prize.router').then((m) => m.prizeRouter)),
 });
 
 // export type definition of API
