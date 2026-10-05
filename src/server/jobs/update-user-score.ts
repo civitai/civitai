@@ -8,6 +8,15 @@ import { templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
+import type {
+  ScoreTierCrossing,
+  ScoreTotalTransition,
+} from '~/server/services/creator-milestone-grant.service';
+import {
+  grantScoreTierMilestones,
+  notifyScoreTierCrossings,
+} from '~/server/services/creator-milestone-grant.service';
 import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
@@ -36,6 +45,8 @@ export const updateUserScore = createJob(
       scoreMultipliers: await getScoreMultipliers(),
       lastUpdate: legacyLastUpdate,
       toUpdate: {},
+      tierCrossings: [],
+      tierGrantErrors: [],
       setScore: (id, category, score) => {
         if (!ctx.toUpdate[id]) ctx.toUpdate[id] = {};
         ctx.toUpdate[id][category] = Number(score);
@@ -49,15 +60,6 @@ export const updateUserScore = createJob(
     // and advance — one broken category can't freeze all six (as images did nightly
     // from 2026-06-22). Failures are collected and re-thrown after the good work is
     // committed, so the run still surfaces as failed for alerting.
-    const scoreFetchers = {
-      models: getModelScore,
-      articles: getArticleScore,
-      users: getUserScore,
-      reportsActioned: getReportedActionedScore,
-      reportsAgainst: getReportAgainstScore,
-      images: getImageScore,
-    } as const;
-
     const advanceCheckpoint: Array<() => Promise<void>> = [];
     const failures: Array<{ category: string; error: unknown }> = [];
     for (const [category, fetcher] of Object.entries(scoreFetchers)) {
@@ -87,6 +89,17 @@ export const updateUserScore = createJob(
     // for the five absolute categories, but a double-count for the incremental
     // `images` category (see getImageScore). Accepted; force-backfill reconciles.
     for (const setLastUpdate of advanceCheckpoint) await setLastUpdate();
+
+    if (ctx.tierGrantErrors.length) {
+      failures.push({ category: 'tierGrants', error: ctx.tierGrantErrors[0] });
+    }
+    if (ctx.tierCrossings.length) {
+      try {
+        await notifyScoreTierCrossings(ctx.tierCrossings, await getCreatorScoreUnlocks());
+      } catch (e) {
+        failures.push({ category: 'tierNotifications', error: e });
+      }
+    }
 
     // Re-throw so the run still surfaces as failed. Each category's original stack
     // is embedded into the thrown error's own stack: the job runner logs
@@ -122,7 +135,23 @@ type Context = {
   toUpdate: Record<number, Partial<Record<ScoreCategory, number>>>;
   setScore: (id: number, category: ScoreCategory, score: number) => void;
   lastUpdate: Date;
+  tierCrossings: ScoreTierCrossing[];
+  tierGrantErrors: unknown[];
 };
+
+const scoreFetchers = {
+  models: getModelScore,
+  articles: getArticleScore,
+  users: getUserScore,
+  reportsActioned: getReportedActionedScore,
+  reportsAgainst: getReportAgainstScore,
+  images: getImageScore,
+} as const;
+
+/** One per category, each advanced only by a run in which that category scored cleanly. */
+export const userScoreCheckpointKeys = Object.keys(scoreFetchers).map(
+  (category) => `${jobKey}:${category}`
+);
 
 async function getModelScore(ctx: Context) {
   await getScores(ctx, 'models')`
@@ -314,8 +343,17 @@ async function getReportAgainstScore(ctx: Context) {
 async function getUpdateTotalTasks(ctx: Context) {
   const tasks = chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map((records) => async () => {
     ctx.jobContext.checkIfCanceled();
-    await applyUserScoreUpdates(ctx.pg, records, (cancel) => ctx.jobContext.on('cancel', cancel));
+    const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
+    const transitions = await applyUserScoreUpdates(ctx.pg, records, onCancel);
     userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
+    // Scores are already committed, so a failed grant must not fail the batch. The next run that
+    // touches these users grants silently, and the backfill endpoint reconciles everyone else.
+    try {
+      ctx.tierCrossings.push(...(await grantScoreTierMilestones(ctx.pg, transitions, onCancel)));
+    } catch (e) {
+      log('tier grant failed for batch', e);
+      ctx.tierGrantErrors.push(e);
+    }
   });
 
   return tasks;
@@ -325,19 +363,24 @@ async function getUpdateTotalTasks(ctx: Context) {
 // statement. `records` are `[userId, { category: score }]` entries; each total is
 // the sum of the six categories, taking the freshly-supplied value when present
 // and otherwise the user's previously-stored value. Shared by the cron job and
-// the `testing/user-score` debug endpoint.
+// the image-score backfill. Returns each user's total before and after; `prev` is a self-join, so it
+// reads the pre-update row.
 export async function applyUserScoreUpdates(
   pg: AugmentedPool,
   records: [string, Partial<Record<ScoreCategory, number>>][],
   onCancel?: (cancel: () => Promise<void>) => void
-) {
-  if (!records.length) return;
+): Promise<ScoreTotalTransition[]> {
+  if (!records.length) return [];
 
   const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
-  const updateQuery = await pg.cancellableQuery(`
+  const updateQuery = await pg.cancellableQuery<{
+    userId: number;
+    oldTotal: string | null;
+    newTotal: string;
+  }>(`
     WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
     UPDATE "User" u
-      SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores}', COALESCE(meta->'scores', '{}') || s.scores || jsonb_build_object('total',
+      SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || s.scores || jsonb_build_object('total',
           COALESCE((s.scores->>'models')::numeric, (u.meta->'scores'->>'models')::numeric, 0)
           + COALESCE((s.scores->>'articles')::numeric, (u.meta->'scores'->>'articles')::numeric, 0)
           + COALESCE((s.scores->>'images')::numeric, (u.meta->'scores'->>'images')::numeric, 0)
@@ -347,10 +390,20 @@ export async function applyUserScoreUpdates(
         )
       )
     FROM scores s
-    WHERE s.id = u.id;
+    JOIN "User" prev ON prev.id = s.id
+    WHERE s.id = u.id
+    RETURNING
+      u.id AS "userId",
+      (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
+      (u.meta->'scores'->>'total')::numeric AS "newTotal";
   `);
   onCancel?.(updateQuery.cancel);
-  await updateQuery.result();
+  const rows = await updateQuery.result();
+  return rows.map((row) => ({
+    userId: row.userId,
+    oldTotal: row.oldTotal == null ? null : Number(row.oldTotal),
+    newTotal: Number(row.newTotal),
+  }));
 }
 
 // #region [helpers]
