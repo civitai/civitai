@@ -48,12 +48,13 @@ const BANNED = ' tom cruise portrait';
 
 const optionsFor = (
   prompt: string,
-  extra: { negativePrompt?: string; isGreen?: boolean } = {}
+  extra: { negativePrompt?: string; isGreen?: boolean; acknowledgedSoftBlock?: boolean } = {}
 ) => ({
   prompt,
   negativePrompt: extra.negativePrompt ?? '',
   userId: 5,
   isGreen: extra.isGreen ?? false,
+  acknowledgedSoftBlock: extra.acknowledgedSoftBlock,
   track: { prohibitedRequest: mockProhibited },
 });
 
@@ -122,9 +123,19 @@ describe('auditPromptServer — over-length input is refused by the regex layer'
     expect(err, 'auditPromptServer resolved instead of refusing').toBeInstanceOf(Error);
     expect((err as Error).message).toMatch(OVER_LENGTH);
     expect((err as { cause?: { softBlock?: boolean } }).cause?.softBlock).toBeUndefined();
+    expect(mockProhibited).toHaveBeenCalledTimes(1);
     expect(mockProhibited).toHaveBeenCalledWith(
       expect.objectContaining({ prompt, source: 'Regex' })
     );
+  });
+
+  // The behaviour a soft classification would actually break: the soft-block click-through.
+  it('cannot be clicked through with acknowledgedSoftBlock', async () => {
+    const prompt = benign(MAX_AUDIT_PROMPT_LENGTH + 1);
+
+    await expect(
+      auditPromptServer(optionsFor(prompt, { acknowledgedSoftBlock: true }))
+    ).rejects.toThrow(OVER_LENGTH);
   });
 
   it('is refused on the green domain too (without recording a prohibited request)', async () => {
