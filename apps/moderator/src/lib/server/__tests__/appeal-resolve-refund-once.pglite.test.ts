@@ -35,6 +35,7 @@ vi.mock('../image-moderation-effects', async (importOriginal) => ({
 vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
+vi.mock('../thumbnail-cache', () => ({ invalidateThumbnails: vi.fn(async () => undefined) }));
 vi.mock('../clickhouse', () => ({ getClickhouse: () => ({}) }));
 
 const { acceptImage, closedAppellants, resolveImageAppeal } = await import(
