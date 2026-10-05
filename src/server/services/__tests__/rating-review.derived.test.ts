@@ -91,16 +91,18 @@ describe('getStaleOverrideSignal', () => {
     ).toBe(false);
   });
 
-  it.each(['Challenge', 'Crucible', 'Collection'] as const)(
-    'never flags a %s, which only a moderator resolves',
-    async (entityType) => {
-      derived(1);
-      expect(
-        await getStaleOverrideSignal(entityType, 1, { override: 2, overrideBasis: 4 })
-      ).toEqual({ derivedLevel: null, derivedRatingDroppedBelowOverride: false });
-      expect(computeRatedEntityDerivedNsfwLevel).not.toHaveBeenCalled();
-    }
-  );
+  it.each([
+    ['Challenge', 2],
+    ['Crucible', 2],
+    ['Collection', 1],
+  ] as const)('never flags a %s, which only a moderator resolves', async (entityType, override) => {
+    derived(1);
+    expect(await getStaleOverrideSignal(entityType, 1, { override, overrideBasis: 4 })).toEqual({
+      derivedLevel: null,
+      derivedRatingDroppedBelowOverride: false,
+    });
+    expect(computeRatedEntityDerivedNsfwLevel).not.toHaveBeenCalled();
+  });
 });
 
 describe('evaluateOverrideAutoApprove', () => {

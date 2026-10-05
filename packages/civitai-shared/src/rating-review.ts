@@ -37,13 +37,17 @@ export function ratingReviewLevels(entityType: RatingReviewEntityType): number[]
     : [...browsingLevels];
 }
 
-// Raising a challenge runs the void/refund escalation, which only the main app can do.
+// A challenge's or crucible's level is an allowed-entry mask; raising one runs guarded side effects
+// (entry voids, content checks, refunds) that only the main app can, so a dispute may only lower it.
+const lowerOnly = (entityType: RatingReviewEntityType) =>
+  entityType === 'Challenge' || entityType === 'Crucible';
+
 export function ratingReviewOwnerLevels(
   entityType: RatingReviewEntityType,
   currentLevel: number
 ): number[] {
   const levels = ratingReviewLevels(entityType);
-  return entityType === 'Challenge' ? levels.filter((l) => l < currentLevel) : levels;
+  return lowerOnly(entityType) ? levels.filter((l) => l < currentLevel) : levels;
 }
 
 export function ratingReviewModeratorLevels(
@@ -51,14 +55,15 @@ export function ratingReviewModeratorLevels(
   currentLevel: number
 ): number[] {
   const levels = ratingReviewLevels(entityType);
-  return entityType === 'Challenge' ? levels.filter((l) => l <= currentLevel) : levels;
+  return lowerOnly(entityType) ? levels.filter((l) => l <= currentLevel) : levels;
 }
 
 export function ratingReviewLevelLabel(
   entityType: RatingReviewEntityType,
   level: number | null | undefined
 ): string {
-  if (entityType === 'Model' && level) return level >= NsfwLevel.R ? 'NSFW' : 'SFW';
+  if ((entityType === 'Model' || entityType === 'Collection') && level)
+    return level >= NsfwLevel.R ? 'NSFW' : 'SFW';
   return getBrowsingLevelLabel(level);
 }
 

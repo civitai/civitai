@@ -29,6 +29,17 @@ describe('rating-review constants', () => {
     expect(ratingReviewEntityLabels.Crucible).toBe('Crucible');
   });
 
+  it('lets a crucible be disputed and resolved only downward', () => {
+    expect(ratingReviewOwnerLevels('Crucible', NsfwLevel.R)).toEqual([1, 2]);
+    expect(ratingReviewModeratorLevels('Crucible', NsfwLevel.R)).toEqual([1, 2, 4]);
+    expect(ratingReviewOwnerLevels('Collection', NsfwLevel.PG)).toEqual([1, 4]);
+  });
+
+  it('labels a collection SFW/NSFW, like a model', () => {
+    expect(ratingReviewLevelLabel('Collection', NsfwLevel.R)).toBe('NSFW');
+    expect(ratingReviewLevelLabel('Collection', NsfwLevel.PG)).toBe('SFW');
+  });
+
   it('gives Model a binary SFW/NSFW choice and everyone else the five browsing levels', () => {
     expect(ratingReviewLevels('Model')).toEqual([NsfwLevel.PG, NsfwLevel.R]);
     expect(ratingReviewLevels('Post')).toEqual([1, 2, 4, 8, 16]);
