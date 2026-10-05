@@ -547,6 +547,23 @@ describe('createCrucible — text scan', () => {
   });
 });
 
+/**
+ * The feed runs one query per status segment, running crucibles first. Reading only one of them
+ * would leave the other free to drop the visibility filters, so every query must carry the same
+ * `where` apart from its status.
+ */
+const sharedFeedWhere = async (run: () => Promise<unknown>) => {
+  const findMany = dbMock.dbRead.crucible.findMany;
+  const before = findMany.mock.calls.length;
+  await run();
+  const wheres = findMany.mock.calls
+    .slice(before)
+    .map(([args]) => ({ ...args!.where, status: undefined }));
+  expect(wheres.length).toBeGreaterThan(0);
+  for (const where of wheres) expect(where).toEqual(wheres[0]);
+  return wheres[0] as any;
+};
+
 describe('getCrucibles — browsing level', () => {
   const findMany = dbMock.dbRead.crucible.findMany;
   const whereFor = async (opts: {
@@ -555,13 +572,14 @@ describe('getCrucibles — browsing level', () => {
     isGreen?: boolean;
   }) => {
     findMany.mockResolvedValue([]);
-    await getCrucibles({
-      input: { limit: 10, sort: CrucibleSort.Newest, browsingLevel: opts.browsingLevel },
-      select: { id: true },
-      viewerId: opts.viewerId,
-      isGreen: opts.isGreen,
-    });
-    return findMany.mock.calls.at(-1)![0].where;
+    return sharedFeedWhere(() =>
+      getCrucibles({
+        input: { limit: 10, sort: CrucibleSort.Newest, browsingLevel: opts.browsingLevel },
+        select: { id: true },
+        viewerId: opts.viewerId,
+        isGreen: opts.isGreen,
+      })
+    );
   };
 
   it('requires both the crucible and its cover to fall inside the level', async () => {
@@ -677,13 +695,15 @@ describe('getCrucibles — status for an unfiltered feed', () => {
 
   it('leaves out crucibles by users the viewer is blocked by', async () => {
     findMany.mockResolvedValue([]);
-    await getCrucibles({
-      input: { limit: 10, sort: CrucibleSort.Newest },
-      select: { id: true },
-      excludedUserIds: [7, 8],
-    });
+    const where = await sharedFeedWhere(() =>
+      getCrucibles({
+        input: { limit: 10, sort: CrucibleSort.Newest },
+        select: { id: true },
+        excludedUserIds: [7, 8],
+      })
+    );
 
-    expect(findMany.mock.calls.at(-1)![0].where.userId).toEqual({ notIn: [7, 8] });
+    expect(where.userId).toEqual({ notIn: [7, 8] });
   });
 });
 
@@ -740,6 +760,18 @@ describe('getCrucibles — running crucibles lead upcoming ones', () => {
     expect(orderBys).toHaveLength(2);
     expect(orderBys[1]).toEqual(orderBys[0]);
     expect((orderBys[0] as unknown[])[0]).toEqual({ prizePool: 'desc' });
+  });
+
+  it('never serves more than the limit when a page spans both groups', async () => {
+    const all = [CrucibleStatus.Active, CrucibleStatus.Pending, CrucibleStatus.Completed];
+    expect(await ids({ limit: 2, status: all })).toEqual({ ids: [4, 2], nextCursor: 3 });
+  });
+
+  // Accepted, not designed: the cursor names only a row, so when that row is deleted between
+  // pages the feed cannot know where it was and serves upcoming crucibles from the top. Before
+  // the split it ended instead. Either is finite; carrying the group in the cursor would fix it.
+  it('pages on from the upcoming list when the cursor crucible has gone', async () => {
+    expect(await ids({ limit: 10, cursor: 99 })).toEqual({ ids: [1], nextCursor: undefined });
   });
 
   it('pages across the boundary without repeating or skipping one', async () => {
