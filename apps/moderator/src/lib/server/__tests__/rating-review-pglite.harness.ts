@@ -42,8 +42,8 @@ CREATE TABLE "ModelVersion" ("id" SERIAL PRIMARY KEY, "modelId" INTEGER NOT NULL
 CREATE TABLE "Post" ("id" SERIAL PRIMARY KEY, "title" TEXT, "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
 CREATE TABLE "Bounty" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'b', "userId" INTEGER, "nsfw" BOOLEAN NOT NULL DEFAULT false, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "lockedProperties" TEXT[] NOT NULL DEFAULT '{}', "updatedAt" TIMESTAMP(3));
 CREATE TABLE "BountyEntry" ("id" SERIAL PRIMARY KEY, "bountyId" INTEGER NOT NULL DEFAULT 1, "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
--- Only as the Challenge resolve's gate target: Collection is not a disputable entity (D4).
-CREATE TABLE "Collection" ("id" SERIAL PRIMARY KEY, "metadata" JSONB NOT NULL DEFAULT '{}', "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Collection" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'col', "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "metadata" JSONB NOT NULL DEFAULT '{}', "updatedAt" TIMESTAMP(3));
+CREATE TABLE "Crucible" ("id" SERIAL PRIMARY KEY, "name" TEXT NOT NULL DEFAULT 'cr', "userId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "textNsfw" BOOLEAN NOT NULL DEFAULT false, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "updatedAt" TIMESTAMP(3));
 CREATE TABLE "Challenge" ("id" SERIAL PRIMARY KEY, "title" TEXT NOT NULL DEFAULT 'ch', "createdById" INTEGER, "source" TEXT NOT NULL DEFAULT 'User', "nsfwLevel" INTEGER NOT NULL DEFAULT 1, "allowedNsfwLevel" INTEGER NOT NULL DEFAULT 1, "moderatorNsfwLevel" INTEGER, "moderatorNsfwLevelBasis" INTEGER, "collectionId" INTEGER, "updatedAt" TIMESTAMP(3));
 `;
 

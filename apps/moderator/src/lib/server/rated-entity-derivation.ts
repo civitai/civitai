@@ -1,6 +1,7 @@
 import type { Kysely, Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { NsfwLevel, nsfwBrowsingLevelsFlag } from '@civitai/shared';
 import {
   articleModerationFloorText,
   challengeDerivedNsfwLevel,
@@ -49,10 +50,26 @@ export async function computeArticleDerivedNsfwLevel(
 
 export async function computeRatedEntityDerivedNsfwLevel(
   db: Kysely<DB> | Transaction<DB>,
-  entityType: DerivedNsfwEntityType | 'Article' | 'Challenge',
+  entityType: DerivedNsfwEntityType | 'Article' | 'Challenge' | 'Crucible' | 'Collection',
   entityId: number
 ): Promise<number | null> {
   if (entityType === 'Article') return computeArticleDerivedNsfwLevel(db, entityId);
+  if (entityType === 'Crucible') {
+    const row = await db
+      .selectFrom('Crucible')
+      .select('nsfwLevel')
+      .where('id', '=', entityId)
+      .executeTakeFirst();
+    return row ? challengeDerivedNsfwLevel(row.nsfwLevel) : null;
+  }
+  if (entityType === 'Collection') {
+    const row = await db
+      .selectFrom('Collection')
+      .select('nsfwLevel')
+      .where('id', '=', entityId)
+      .executeTakeFirst();
+    return row ? (row.nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG) : null;
+  }
   if (entityType === 'Challenge') {
     const row = await db
       .selectFrom('Challenge')

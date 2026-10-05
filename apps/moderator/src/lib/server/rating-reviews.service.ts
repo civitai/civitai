@@ -1,7 +1,7 @@
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { getHighestBrowsingLevelBit, nsfwBrowsingLevelsFlag } from '@civitai/shared';
+import { getHighestBrowsingLevelBit, NsfwLevel, nsfwBrowsingLevelsFlag } from '@civitai/shared';
 import { challengeDerivedNsfwLevel, isTextScanRaised } from '@civitai/shared/rated-entity-sql';
 import {
   isRatingReviewEntityType,
@@ -162,6 +162,38 @@ async function loadSummaries(
         });
       break;
     }
+    case 'Crucible': {
+      const found = await dbRead
+        .selectFrom('Crucible')
+        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        put({
+          ...base,
+          id: r.id,
+          title: r.name,
+          nsfwLevel: r.nsfwLevel,
+          override: r.moderatorNsfwLevel,
+        });
+      break;
+    }
+    case 'Collection': {
+      const found = await dbRead
+        .selectFrom('Collection')
+        .select(['id', 'name', 'nsfwLevel', 'moderatorNsfwLevel'])
+        .where('id', 'in', ids)
+        .execute();
+      for (const r of found)
+        put({
+          ...base,
+          id: r.id,
+          title: r.name,
+          nsfwLevel: r.nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG,
+          override: r.moderatorNsfwLevel,
+        });
+      break;
+    }
   }
   return out;
 }
@@ -306,7 +338,13 @@ export type ResolveResult = {
   modelVersionIds: number[];
 };
 
-const JOB_QUEUE_TYPES = new Set<RatingReviewEntityType>(['Post', 'Bounty', 'BountyEntry', 'Model']);
+const JOB_QUEUE_TYPES = new Set<RatingReviewEntityType>([
+  'Post',
+  'Bounty',
+  'BountyEntry',
+  'Model',
+  'Collection',
+]);
 
 const addLock = (prop: string) =>
   sql<string[]>`CASE WHEN ${prop} = ANY("lockedProperties") THEN "lockedProperties"
@@ -323,10 +361,15 @@ function assertOne(result: { numUpdatedRows: bigint }, entityType: RatingReviewE
 }
 
 type LiveChallenge = { nsfwLevel: number; allowedNsfwLevel: number; collectionId: number | null };
+type LiveCrucible = { nsfwLevel: number };
+
+// Their level is an allowed-entry mask read live under a row lock, not the review's snapshot.
+type MaskEntityType = 'Challenge' | 'Crucible';
+type OverrideEntityType = Exclude<RatingReviewEntityType, MaskEntityType>;
 
 async function applyOverride(
   trx: Transaction<DB>,
-  entityType: Exclude<RatingReviewEntityType, 'Challenge'>,
+  entityType: OverrideEntityType,
   entityId: number,
   appliedLevel: number,
   basis: number
@@ -415,6 +458,16 @@ async function applyOverride(
         entityType
       );
       break;
+    case 'Collection':
+      assertOne(
+        await trx
+          .updateTable('Collection')
+          .set({ moderatorNsfwLevel: appliedLevel, moderatorNsfwLevelBasis: appliedLevel })
+          .where('id', '=', entityId)
+          .executeTakeFirst(),
+        entityType
+      );
+      break;
   }
 
   if (JOB_QUEUE_TYPES.has(entityType))
@@ -457,9 +510,31 @@ async function applyChallengeOverride(
       .execute();
 }
 
+async function applyCrucibleOverride(
+  trx: Transaction<DB>,
+  entityId: number,
+  live: LiveCrucible,
+  appliedLevel: number
+): Promise<void> {
+  const allowed = challengeAllowedMaskAt(live.nsfwLevel, appliedLevel);
+  assertOne(
+    await trx
+      .updateTable('Crucible')
+      .set({
+        moderatorNsfwLevel: appliedLevel,
+        moderatorNsfwLevelBasis: challengeDerivedNsfwLevel(allowed),
+        nsfwLevel: allowed,
+        textNsfw: appliedLevel >= NsfwLevel.R,
+      })
+      .where('id', '=', entityId)
+      .executeTakeFirst(),
+    'Crucible'
+  );
+}
+
 async function entityExists(
   trx: Transaction<DB>,
-  entityType: Exclude<RatingReviewEntityType, 'Challenge'>,
+  entityType: OverrideEntityType,
   entityId: number
 ): Promise<boolean> {
   // Every rating-review table has an integer `id`; the cast only narrows the union for Kysely.
@@ -476,6 +551,14 @@ const readLiveChallenge = (trx: Transaction<DB>, entityId: number) =>
   trx
     .selectFrom('Challenge')
     .select(['nsfwLevel', 'allowedNsfwLevel', 'collectionId'])
+    .where('id', '=', entityId)
+    .forUpdate()
+    .executeTakeFirst();
+
+const readLiveCrucible = (trx: Transaction<DB>, entityId: number) =>
+  trx
+    .selectFrom('Crucible')
+    .select('nsfwLevel')
     .where('id', '=', entityId)
     .forUpdate()
     .executeTakeFirst();
@@ -503,22 +586,29 @@ export async function resolveRatingReview(input: {
 
     let exists: boolean;
     let challenge: LiveChallenge | undefined;
+    let crucible: LiveCrucible | undefined;
+    let liveLevel: number | undefined;
     if (entityType === 'Challenge') {
       challenge = await readLiveChallenge(trx, entityId);
       exists = !!challenge;
-      const level = challenge
-        ? getHighestBrowsingLevelBit(challenge.nsfwLevel)
-        : review.currentLevel;
-      if (!ratingReviewModeratorLevels(entityType, level).includes(appliedLevel))
-        throw notApplicable();
+      liveLevel = challenge?.nsfwLevel;
+    } else if (entityType === 'Crucible') {
+      crucible = await readLiveCrucible(trx, entityId);
+      exists = !!crucible;
+      liveLevel = crucible?.nsfwLevel;
     } else {
-      if (!ratingReviewModeratorLevels(entityType, review.currentLevel).includes(appliedLevel))
-        throw notApplicable();
       exists = await entityExists(trx, entityType, entityId);
     }
+    const level = liveLevel != null ? getHighestBrowsingLevelBit(liveLevel) : review.currentLevel;
+    if (!ratingReviewModeratorLevels(entityType, level).includes(appliedLevel))
+      throw notApplicable();
 
     const basis =
-      exists && entityType !== 'Model' && entityType !== 'Challenge'
+      exists &&
+      entityType !== 'Model' &&
+      entityType !== 'Challenge' &&
+      entityType !== 'Crucible' &&
+      entityType !== 'Collection'
         ? (await computeRatedEntityDerivedNsfwLevel(trx, entityType, entityId)) ?? 0
         : 0;
     const scanRow = exists
@@ -551,7 +641,8 @@ export async function resolveRatingReview(input: {
       throw new RatingReviewResolveError('Review already resolved');
 
     if (challenge) await applyChallengeOverride(trx, entityId, challenge, appliedLevel);
-    else if (exists && entityType !== 'Challenge')
+    else if (crucible) await applyCrucibleOverride(trx, entityId, crucible, appliedLevel);
+    else if (exists && entityType !== 'Challenge' && entityType !== 'Crucible')
       await applyOverride(trx, entityType, entityId, appliedLevel, basis);
 
     return {

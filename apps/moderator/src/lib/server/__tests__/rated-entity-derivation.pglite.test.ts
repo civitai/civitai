@@ -78,6 +78,18 @@ describe('computeDerivedNsfwLevel', () => {
     expect(await derived('Challenge', empty)).toBe(1);
   });
 
+  it("derives a crucible from its mask's highest bit and a collection from its bucket", async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', { nsfwLevel: 1 | 4 });
+    expect(await derived('Crucible', crucibleId)).toBe(4);
+    const emptyCrucible = await seedEntity(db, 'Crucible', { nsfwLevel: 0 });
+    expect(await derived('Crucible', emptyCrucible)).toBe(1);
+    const nsfwCollection = await seedEntity(db, 'Collection', { nsfwLevel: 29 });
+    expect(await derived('Collection', nsfwCollection)).toBe(4);
+    const sfwCollection = await seedEntity(db, 'Collection', { nsfwLevel: 1 });
+    expect(await derived('Collection', sfwCollection)).toBe(1);
+    expect(await derived('Collection', 404)).toBeNull();
+  });
+
   it("uses the article moderation floor: flat R for XGuard, the verdict's level for text-scan", async () => {
     const xguard = await seedEntity(db, 'Article', { nsfwLevel: 4 });
     await seedEm(db, {
