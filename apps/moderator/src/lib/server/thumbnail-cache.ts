@@ -38,7 +38,11 @@ export async function invalidateThumbnails(
       ...new Set(parents.filter((id): id is number => id != null && !ids.includes(id))),
     ];
     await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, [...ids, ...parentsToReindex]);
-    await syncSearchIndexBulk({ entityType: 'image', entityIds: parentsToReindex, action: 'update' });
+    await syncSearchIndexBulk({
+      entityType: 'image',
+      entityIds: parentsToReindex,
+      action: 'update',
+    });
   } catch (err) {
     console.error('[thumbnail-cache] invalidation failed', { count: ids.length }, err);
   }
