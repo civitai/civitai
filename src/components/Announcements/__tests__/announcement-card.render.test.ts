@@ -20,6 +20,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 }));
 
 const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+const { CustomMarkdown } = await import('~/components/Markdown/CustomMarkdown');
 
 function render(props: { content: string; actions?: AnnouncementCardAction[] }) {
   return renderToStaticMarkup(
@@ -69,5 +70,25 @@ describe('AnnouncementCard off-site action', () => {
   it('leaves an on-site action linking straight to its path', () => {
     const html = render({ content: 'x', actions: [{ link: '/models/1', linkText: 'See it' }] });
     expect(html).toMatch(/<a[^>]*href="\/models\/1"[^>]*>(?:(?!<\/a>).)*See it/);
+  });
+});
+
+// 🔴 `warnOnExternalLinks` is opt-in, and only announcements opt in. Without the flag, articles,
+// comments and bios must keep the raw destination; this is the gating half of that boundary.
+describe('CustomMarkdown without warnOnExternalLinks', () => {
+  it('keeps an external link pointing straight at its destination', () => {
+    const html = renderToStaticMarkup(
+      createElement(
+        MantineProvider,
+        null,
+        createElement(
+          CustomMarkdown,
+          { allowedElements: ['a'], unwrapDisallowed: true },
+          'grab them at [my telegram](https://t.me/SomeGroup)'
+        )
+      )
+    );
+    expect(html).toContain('href="https://t.me/SomeGroup"');
+    expect(html).not.toContain('/leaving');
   });
 });
