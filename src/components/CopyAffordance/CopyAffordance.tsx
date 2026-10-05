@@ -39,8 +39,18 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * the defect those four shared — a copy control for an API key or a client secret with no
  * accessible name at all, announced to a screen reader as "button" — is a type error here
  * rather than something a reviewer has to notice. One remaining local copy is deliberate:
- * `Collections/CollectionEditModal.tsx` gates its control on `disabled={!joinUrl}`, which
- * this component does not model, so it keeps its own shell and carries an `aria-label`.
+ * `Collections/CollectionInviteLink.tsx` keeps its own shell and carries an `aria-label`.
+ *
+ * 🔴 THAT EXCEPTION NEEDS **TWO** PROPS HERE, NOT ONE, AND THIS SENTENCE USED TO CLAIM ONE.
+ * The `disabled={!joinUrl}` state this component does not model is the half that was written
+ * down. The other half is the INSET: `right={COPY_ICON_INSET}` is emitted as an INLINE STYLE
+ * (deliberately — see the note on that prop), and an inline style beats `iconClassName`'s
+ * Tailwind `right-2`, so `iconClassName` CANNOT move it. A caller at `right={10}` therefore
+ * needs an `inset` prop as well. And `bodyClickCopies={false}` is not a substitute for the
+ * first half: the icon's own `onClick` is unconditional, so the CONTROL would still copy `''`.
+ * Weigh the reuse trade against two new props on seven live consumers, none of which exercises
+ * a disabled state — and note that an unexercised `disabled` prop in here is precisely where
+ * the "guard on one element, handler on another" defect would reappear, for all seven.
  *
  * `onCopy` is OPTIONAL and defaults to nothing. That is what keeps `GetStartedBody`,
  * `CliSubmitCta` and {@link AgentOnboardingCard} the "pure presentational (props-only, no
@@ -325,7 +335,7 @@ export const COPY_BODY_PADDING_RIGHT = copyBodyPaddingRight(COPY_ICON_INSET);
  * COPY_ICON_INSET}.
  *
  * 🔴 EXTRACTED SO THE RELATION IS SPELLED ONCE. `COPY_BODY_PADDING_RIGHT` above is this
- * function at this module's own inset; `Collections/CollectionEditModal.tsx`'s invite-link
+ * function at this module's own inset; `Collections/CollectionInviteLink.tsx`'s invite-link
  * block is the second caller, at `right={10}`. Before this existed, the only way to clear a
  * control at a different inset was to retype `rem(inset + COPY_CONTROL_SIZE)` at the call
  * site — two copies of one rule, either of which could be the one not updated when the

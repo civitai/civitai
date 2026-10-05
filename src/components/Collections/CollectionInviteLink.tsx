@@ -14,8 +14,14 @@ export const INVITE_LINK_COPY_LABEL = 'Copy the collection invite link';
  * it; it is kept because moving it is a rendered-output change this fix did not need to make,
  * not because 10 is better than 8. If it ever moves, the padding below moves with it by
  * construction.
+ *
+ * 🔴 NOT EXPORTED, AND THAT IS THE POINT. It is both the control's `right=` prop and a term in
+ * the padding derived from it, so a test that imported it would be checking the implementation
+ * against itself on both sides. The geometry suite reads the inset off the RENDERED control
+ * instead; keeping this module-local is what makes that a property of the code rather than a
+ * convention a reviewer has to notice.
  */
-export const INVITE_LINK_ICON_INSET = 10;
+const INVITE_LINK_ICON_INSET = 10;
 
 /**
  * The clearance this body reserves, from the one shared rule.
@@ -25,13 +31,17 @@ export const INVITE_LINK_ICON_INSET = 10;
  * magnitudes are measured in `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`,
  * which mounts this component and reports the clearance in its own failure messages.
  *
+ * Module-local for the same reason as the inset: nothing outside needs it, and it looks enough
+ * like a sibling of `COPY_BODY_PADDING_RIGHT` — which six bodies legitimately import — to be
+ * mis-imported, while being correct for exactly one body.
+ *
  * It is a `rem()` string, via {@link copyBodyPaddingRight}, because the other two terms scale
  * with the root font size: the inset goes through Mantine's `right=` style prop, and the
  * control's border box is `--ai-size-md`, which in the stylesheet this app imports is
  * `calc(1.75rem * var(--mantine-scale))`. A raw px number here would hold at a 16px root font
  * size and fail above it — the exact defect `COPY_BODY_PADDING_RIGHT`'s own doc records.
  */
-export const INVITE_LINK_BODY_PADDING_RIGHT = copyBodyPaddingRight(INVITE_LINK_ICON_INSET);
+const INVITE_LINK_BODY_PADDING_RIGHT = copyBodyPaddingRight(INVITE_LINK_ICON_INSET);
 
 /** Scopes the geometry fixture to this block's `Box`, rather than to any `pre` on the page. */
 export const INVITE_LINK_TESTID = 'collection-invite-link-copy';
@@ -47,10 +57,14 @@ export const INVITE_LINK_TESTID = 'collection-invite-link-copy';
  * and nothing else.
  *
  * ⚠️ DELIBERATELY NOT ROUTED THROUGH `~/components/CopyAffordance/CopyAffordance`, unlike the
- * `Code`-block copies in `Account/`. That component models no disabled state, and adding one
- * for a single caller is API surface nobody asked for; what it shares — the clearance
- * arithmetic — is imported as {@link copyBodyPaddingRight} instead, so the one thing that was
- * actually duplicated is not.
+ * `Code`-block copies in `Account/` — and it needs TWO new props there, not one. That component
+ * models no disabled state (and `bodyClickCopies={false}` is not a substitute: its icon's own
+ * `onClick` is unconditional, so the control would still copy `''`), AND its inset is emitted
+ * as an inline style, which `iconClassName` cannot override — so a caller at `right={10}` needs
+ * an `inset` prop too. Two new props on seven live consumers, none of which exercises a
+ * disabled state, to absorb ~25 lines of markup carrying one predicate. What those bodies
+ * genuinely share — the clearance arithmetic — is imported as {@link copyBodyPaddingRight}
+ * instead, so the one thing that was actually duplicated is not.
  *
  * ⚠️ THE CLEARANCE IS A CLAIM ABOUT A URL THAT *FITS*, AND NOTHING MORE. `<Code block>`
  * computes `white-space: pre` / `overflow-x: auto`, so a URL wider than the content box
