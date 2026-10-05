@@ -32,6 +32,11 @@ const TERMINAL_STATUSES = ['canceled', 'incomplete_expired'];
 const EXTENDABLE_STATUSES = ['active', 'trialing'];
 const tierRank = (tier: string) => constants.memberships.tierOrder.indexOf(tier as never);
 
+// A gift fulfilled before gifts had to be accepted was applied in full when it was paid. It is
+// still 'Fulfilled' until the migration's second part runs, and it has no months left to give.
+const isAwaitingAcceptance = (gift: { status: MembershipGiftStatus; monthsRemaining: number }) =>
+  gift.status === MembershipGiftStatus.Fulfilled && gift.monthsRemaining > 0;
+
 export type RecipientGiftability =
   | { status: 'no-subscription' }
   | { status: 'active'; tier: GiftableTier; renewsAt: Date; cancelsAtPeriodEnd: boolean }
@@ -337,12 +342,12 @@ export async function getGiftOffer({
       tier: true,
       status: true,
       monthsRemaining: true,
-      months: true,
     },
   });
   if (!gift || gift.holderId !== userId) throw throwNotFoundError('Gift not found');
+  if (gift.monthsRemaining <= 0) throw throwBadRequestError('This gift has already been used');
 
-  const months = gift.monthsRemaining || gift.months;
+  const months = gift.monthsRemaining;
   const subscription = await getGreenSubscription(userId);
   const live = subscription && !TERMINAL_STATUSES.includes(subscription.status);
   if (!live) return { kind: 'free-subscription', tier: gift.tier, months };
@@ -376,7 +381,7 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
   const gift = await dbWrite.membershipGift.findUnique({ where: { id: giftId } });
   if (!gift || gift.holderId !== userId) throw throwNotFoundError('Gift not found');
   if (gift.status === MembershipGiftStatus.Active) return { accepted: true as const };
-  if (gift.status !== MembershipGiftStatus.Fulfilled)
+  if (!isAwaitingAcceptance(gift))
     throw throwBadRequestError('This gift is not available to accept');
   if (gift.expiresAt && gift.expiresAt < new Date())
     throw throwBadRequestError('This gift has expired');
@@ -406,11 +411,7 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
 
   await dbWrite.membershipGift.update({
     where: { id: gift.id },
-    data: {
-      status: MembershipGiftStatus.Active,
-      acceptedAt: new Date(),
-      monthsRemaining: gift.monthsRemaining || gift.months,
-    },
+    data: { status: MembershipGiftStatus.Active, acceptedAt: new Date() },
   });
 
   await armNextGiftMonth({ userId });
@@ -917,7 +918,7 @@ export async function getMyMembershipGifts({ userId }: { userId: number }) {
     sent,
     received: received.map((g) => ({
       ...g,
-      pending: g.status === MembershipGiftStatus.Fulfilled,
+      pending: isAwaitingAcceptance(g),
       gifter: g.anonymous ? null : g.gifter,
     })),
   };

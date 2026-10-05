@@ -100,6 +100,7 @@ import {
   createMembershipGiftCheckout,
   fulfillMembershipGift,
   getGiftOffer,
+  getMyMembershipGifts,
   getRecipientGiftability,
   honorGiftResidualsForUser,
   keepGiftMembership,
@@ -419,6 +420,13 @@ describe('getGiftOffer', () => {
     mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, holderId: 99 });
     await expect(getGiftOffer({ giftId: 'gift_1', userId: 2 })).rejects.toThrow(/not found/i);
   });
+
+  it('makes no offer on a gift that was applied in full when it was paid', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, monthsRemaining: 0 });
+    await expect(getGiftOffer({ giftId: 'gift_1', userId: 2 })).rejects.toThrow(
+      /already been used/i
+    );
+  });
 });
 
 describe('acceptMembershipGift', () => {
@@ -455,11 +463,21 @@ describe('acceptMembershipGift', () => {
 
     await acceptMembershipGift({ giftId: 'gift_1', userId: 2 });
 
-    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        data: expect.objectContaining({ status: 'Active', monthsRemaining: 3 }),
-      })
+    const [{ data }] = mockDbWrite.membershipGift.update.mock.calls[0];
+    expect(data).toMatchObject({ status: 'Active' });
+    expect(data).not.toHaveProperty('monthsRemaining');
+  });
+
+  it('refuses a gift that was applied in full when it was paid', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, monthsRemaining: 0 });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));
+
+    await expect(acceptMembershipGift({ giftId: 'gift_1', userId: 2 })).rejects.toThrow(
+      /not available to accept/i
     );
+    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+    expect(mockStripe.coupons.create).not.toHaveBeenCalled();
   });
 
   it('refuses a gift the caller does not hold', async () => {
@@ -476,6 +494,37 @@ describe('acceptMembershipGift', () => {
     });
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub());
     await expect(acceptMembershipGift({ giftId: 'gift_1', userId: 2 })).rejects.toThrow(/expired/i);
+  });
+});
+
+describe('getMyMembershipGifts', () => {
+  const receivedRow = {
+    id: 'gift_1',
+    tier: 'gold',
+    months: 3,
+    message: null,
+    anonymous: false,
+    monthsConsumed: 0,
+    acceptedAt: null,
+    expiresAt: null,
+    fulfilledAt: new Date(),
+    gifter: { id: 1, username: 'gifter' },
+  };
+
+  it('lists a gift as waiting only while it has months left to accept', async () => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      { ...receivedRow, id: 'queued', status: 'Fulfilled', monthsRemaining: 3 },
+      { ...receivedRow, id: 'applied_at_payment', status: 'Fulfilled', monthsRemaining: 0 },
+      { ...receivedRow, id: 'in_use', status: 'Active', monthsRemaining: 2 },
+    ]);
+
+    const { received } = await getMyMembershipGifts({ userId: 2 });
+
+    expect(received.map((gift) => [gift.id, gift.pending])).toEqual([
+      ['queued', true],
+      ['applied_at_payment', false],
+      ['in_use', false],
+    ]);
   });
 });
 

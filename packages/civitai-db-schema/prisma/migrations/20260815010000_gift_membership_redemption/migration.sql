@@ -17,8 +17,8 @@
 --   * The previous build lists a user's received gifts with status = 'Fulfilled', so
 --     those gifts would disappear from /user/account for the people who hold them.
 --
--- Do not leave a long gap after the deploy either: until Part 2 runs, gifts fulfilled
--- under the old design show in the new queue as unaccepted.
+-- Nothing else depends on when Part 2 runs: until it does, gifts fulfilled under the old
+-- design read as received rather than used.
 --
 -- DO NOT WRAP EITHER PART IN AN EXPLICIT BEGIN/COMMIT. Postgres refuses to use an
 -- enum value that was added in the same transaction, so Part 2's UPDATE fails with
@@ -62,8 +62,6 @@ ALTER TABLE "MembershipGift" ALTER COLUMN "holderId" SET NOT NULL;
 
 -- Rows fulfilled under the old design already had their whole value applied as a
 -- single multi-month coupon, so they are Completed with nothing left to consume.
--- Leaving them 'Fulfilled' would keep them in the new gift queue as unaccepted, and
--- accepting one would arm a second discount on top of a coupon that is still running.
 --
 -- "monthsRemaining" = 0 is what tells them apart from gifts the new build has already
 -- queued: the new build sets it to the gift's months when it records the payment.
