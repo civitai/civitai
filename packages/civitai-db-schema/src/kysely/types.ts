@@ -388,6 +388,121 @@ export type AppDevForgejoIdentity = {
   forgejo_token_encrypted: string;
   created_at: Generated<Timestamp>;
 };
+export type AppDevSandbox = {
+  id: string;
+  user_id: number;
+  /**
+   * The app's blockId. Carries identity across the whole lifecycle INCLUDING the
+   * EPHEMERAL (never-submitted) case, which has no AppBlock row at all — the same
+   * reason the dev-tunnel user index exists. Mirrors AppBlockPublishRequest.slug.
+   */
+  block_id: string;
+  /**
+   * FK, populated only once an AppBlock row exists (i.e. after a moderator approves
+   * a publish request). SetNull, NOT Cascade: deleting the block must leave this row
+   * reachable by the janitor, because there is still a volume to delete — a cascade
+   * would orphan storage with no handle left to it. The data flow is one-directional,
+   * approval -> sandbox: this column is written BECAUSE a moderator approved, and
+   * nothing here is an input to any approve gate.
+   */
+  app_block_id: string | null;
+  /**
+   * 'provisioning' | 'active' | 'paused' | 'resuming' | 'reaped' | 'failed'.
+   * `paused` and `failed` BOTH retain the volume; `reaped` is the only state that
+   * has deleted data, and only the retention janitor writes it.
+   */
+  status: Generated<string>;
+  /**
+   * Human-readable detail, primarily a provisioning or resume failure reason.
+   * Mirrors AppBlockPublishRequest.deployDetail.
+   */
+  status_detail: string | null;
+  /**
+   * The PVC backing the workspace (repo + node_modules). NULL until bound. This is
+   * the janitor's delete handle. The namespace is a deployment constant and is
+   * deliberately NOT stored.
+   */
+  volume_claim_name: string | null;
+  /**
+   * Provisioned size, for the storage-GB-day meter. BigInt mirrors
+   * AppBlockPublishRequest.bundleSizeBytes.
+   */
+  volume_size_bytes: string | null;
+  /**
+   * Object-storage KEY for the agent transcript — never the transcript itself.
+   * Keeps rows small and makes a ban / account-deletion purge a single object
+   * delete. Mirrors AppBlockPublishRequest.bundleKey.
+   */
+  transcript_key: string | null;
+  /**
+   * The most recent `dev-<16hex>.<APPS_DOMAIN>` minted for this sandbox.
+   *
+   * 🔴 EXISTS SO THE DNS GC CAN RETRY, and that is the whole reason it is durable.
+   * `deleteDevTunnelDns` is best-effort by design — it never throws, so it also never
+   * retries, and it leaves no durable trace of a DELETE that did not land. A sandbox
+   * mints a NEW host on every resume, so the number of records needing cleanup grows
+   * with resume count; recording the host is what makes a missed cleanup
+   * RECOVERABLE instead of unreachable. NOT a credential: it is a public DNS name,
+   * and the only property that matters is that it gets cleaned up.
+   */
+  last_tunnel_host: string | null;
+  /**
+   * The synthetic PAGE instance id the dev mint stamps into the block token —
+   * `page_<appBlockId>` | `page_pubreq_<id>` | `page_local_<slug>`, resolved in
+   * `src/pages/api/v1/blocks/dev-token.ts` — i.e. BlockSpendAttribution's
+   * `block_instance_id`. Stored RESOLVED so deriving this sandbox's generation spend
+   * is ONE equality rather than a second copy of a three-arm resolver.
+   *
+   * 🔴 NOT the tunnel sessionId: spend rows never carry that, and a join on it would
+   * silently return zero rows. The synthetic id is also stable ACROSS resumes, which
+   * is what a durable sandbox needs.
+   */
+  spend_instance_id: string | null;
+  /**
+   * CUMULATIVE Buzz ceiling for this SANDBOX, re-anchored here off the tunnel session.
+   *
+   * 🔴 WHY THIS COLUMN EXISTS IN M2.5 RATHER THAN M4. Dev-session spend is already
+   * bounded three ways that this does not change: the per-call budget cap, the
+   * per-user DAILY cap, and self-binding (the spender is the minter, so it is their
+   * own Buzz). On top of those sits a cumulative per-session BACKSTOP, and that one
+   * is accounted against the TUNNEL session id — which a durable sandbox rotates on
+   * every resume. So the backstop needs a durable anchor to keep meaning what it
+   * says once pause/resume exists; this column is that anchor.
+   *
+   * 🔴 A CEILING, NEVER A RUNNING TOTAL. Generation spend already has an append-only
+   * Postgres ledger (BlockSpendAttribution, keyed on workflowId as the idempotency
+   * anchor); a mutable total beside it is a second source of truth that cannot be
+   * reconciled, where a SUM over the ledger can. Sandbox-side costs (agent tokens,
+   * CPU/RAM-hours, storage-GB-days) want a ledger of their own for the same reason.
+   */
+  spend_cap_buzz: number;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+  /**
+   * Last activity on EITHER axis — a gate hit on the tunnel, or agent-chat traffic.
+   * Both, because a user reading the agent's output without reloading the iframe is
+   * active, and an agent building with nobody watching is too. Drives idle
+   * auto-pause and nothing else.
+   */
+  last_active_at: Timestamp | null;
+  paused_at: Timestamp | null;
+  /**
+   * When a PAUSED volume becomes reclaimable. Set at pause, CLEARED on resume.
+   * A timestamp rather than a duration: the retention policy can change without
+   * re-dating existing rows, and the warning quotes the SAME column the janitor
+   * reads — so a user cannot be warned about a different date than the one that
+   * deletes their work.
+   */
+  retention_expires_at: Timestamp | null;
+  /**
+   * When the retention warning was delivered. NULL = never warned, and the retention
+   * janitor REFUSES to delete on a NULL. Makes "warn before deleting" a checkable
+   * state rather than an intention — the only thing standing between a clock bug and
+   * deleting a user's work.
+   */
+  warned_at: Timestamp | null;
+  reaped_at: Timestamp | null;
+};
 export type Appeal = {
   id: Generated<number>;
   userId: number;
@@ -4850,6 +4965,7 @@ export type DB = {
   app_blocks: AppBlock;
   app_collaborators: AppCollaborator;
   app_dev_forgejo_identity: AppDevForgejoIdentity;
+  app_dev_sandbox: AppDevSandbox;
   app_listing_metrics: AppListingMetric;
   app_listing_moderation_events: AppListingModerationEvent;
   app_listing_publish_requests: AppListingPublishRequest;

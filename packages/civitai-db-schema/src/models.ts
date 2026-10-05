@@ -686,6 +686,7 @@ export interface User {
   blockScopeInvocations?: BlockScopeInvocation[];
   appUserScopeGrants?: AppUserScopeGrant[];
   appDevForgejoIdentity?: AppDevForgejoIdentity | null;
+  appDevSandboxes?: AppDevSandbox[];
   appListings?: AppListing[];
   appListingReviews?: AppListingReview[];
   appListingPublishRequestsSubmitted?: AppListingPublishRequest[];
@@ -2030,6 +2031,7 @@ export interface AppBlock {
   publishRequests?: AppBlockPublishRequest[];
   scopeInvocations?: BlockScopeInvocation[];
   userScopeGrants?: AppUserScopeGrant[];
+  devSandboxes?: AppDevSandbox[];
   appListing?: AppListing | null;
 }
 
@@ -2537,6 +2539,30 @@ export interface AppDevForgejoIdentity {
   forgejoUsername: string;
   forgejoTokenEncrypted: string;
   createdAt: Date;
+}
+
+export interface AppDevSandbox {
+  id: string;
+  userId: number;
+  user?: User;
+  blockId: string;
+  appBlockId: string | null;
+  appBlock?: AppBlock | null;
+  status: string;
+  statusDetail: string | null;
+  volumeClaimName: string | null;
+  volumeSizeBytes: bigint | null;
+  transcriptKey: string | null;
+  lastTunnelHost: string | null;
+  spendInstanceId: string | null;
+  spendCapBuzz: number;
+  createdAt: Date;
+  updatedAt: Date;
+  lastActiveAt: Date | null;
+  pausedAt: Date | null;
+  retentionExpiresAt: Date | null;
+  warnedAt: Date | null;
+  reapedAt: Date | null;
 }
 
 export interface OauthConsent {
