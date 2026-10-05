@@ -2467,6 +2467,17 @@ export type CreatorGalleryHiddenUser = {
   note: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type CreatorMilestone = {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: Generated<boolean>;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  sortOrder: Generated<number>;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -4535,6 +4546,12 @@ export type UserCosmeticShopPurchases = {
   refunded: boolean;
   meta: unknown | null;
 };
+export type UserCreatorMilestone = {
+  userId: number;
+  milestoneKey: string;
+  achievedAt: Generated<Timestamp>;
+  seenAt: Timestamp | null;
+};
 export type UserEngagement = {
   userId: number;
   targetUserId: number;
@@ -4968,6 +4985,7 @@ export type DB = {
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
+  CreatorMilestone: CreatorMilestone;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5144,6 +5162,7 @@ export type DB = {
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
+  UserCreatorMilestone: UserCreatorMilestone;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;
