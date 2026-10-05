@@ -1,5 +1,5 @@
 import { Alert, Badge, Button, Group, Stack, Text } from '@mantine/core';
-import { IconAlertTriangle, IconEye, IconEyeOff } from '@tabler/icons-react';
+import { IconAlertTriangle, IconEye, IconEyeOff, IconUsers } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 
 import { ownerListingState, ownerStateChip } from '~/components/Apps/offsiteOwnerControls';
@@ -12,9 +12,16 @@ import {
   showModRemovedNotice,
   showRepublish,
   showUnpublish,
+  showVisibility,
 } from '~/components/Apps/listingPublishingActions';
+import { ListingVisibilityModal } from '~/components/Apps/ListingVisibilityModal';
+import {
+  visibilityPostApprovalPrompt,
+  visibilitySummaryLabel,
+} from '~/components/Apps/listingVisibilityCopy';
 import type { ListingKind } from '~/shared/constants/app-capabilities.constants';
 import type { AppRole } from '~/shared/constants/app-capabilities.constants';
+import type { AppListingVisibility } from '~/shared/utils/app-listing-visibility';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -57,6 +64,21 @@ export type ListingPublishingPanelProps = {
    * refuse rather than inventing one.
    */
   lastModerationAction?: string | null;
+  /**
+   * The listing's per-listing VISIBILITY LEVEL, or `null` for "no choice expressed".
+   *
+   * 🔴 `null` IS NOT `private` — it resolves to the pre-feature rule for this status, which
+   * on an approved listing means visible to everyone. Defaulted to `null` so a caller that
+   * has not been updated renders the unset state rather than claiming a level.
+   */
+  visibility?: AppListingVisibility | null;
+  /**
+   * False ⇒ the manual-apply migration is not applied in this environment. Defaults to
+   * TRUE because every real caller passes the server's answer, and the server refuses the
+   * write authoritatively either way; defaulting to `false` would disable the control on
+   * every un-updated caller and read as the feature being broken.
+   */
+  visibilityAvailable?: boolean;
   /** Invalidate the surrounding reads after a successful write. */
   onChanged?: () => void;
 };
@@ -71,9 +93,12 @@ export function ListingPublishingPanel({
   role,
   status,
   lastModerationAction = null,
+  visibility = null,
+  visibilityAvailable = true,
   onChanged,
 }: ListingPublishingPanelProps) {
   const [unpublishOpen, setUnpublishOpen] = useState(false);
+  const [visibilityOpen, setVisibilityOpen] = useState(false);
   const utils = trpc.useUtils();
 
   const refresh = useCallback(() => {
@@ -112,6 +137,13 @@ export function ListingPublishingPanel({
   const chip = ownerStateChip(state);
   const canUnpublish = showUnpublish(row);
   const canRepublish = showRepublish(row);
+  // 🔴 OWNER-GATED — see `showVisibility`. ⚠️ This comment said "NOT role-gated" on the
+  // grounds that the level proc admits an accepted collaborator. That is true of the PROC and
+  // was unreachable in the product: `editorTabsFor` withholds this tab from an editor, so the
+  // branch described a configuration nothing can mount. Re-enabling the seat means widening
+  // that tab's `role` term FIRST — the server will already allow it.
+  const canSetVisibility = showVisibility(row);
+  const postApprovalPrompt = visibilityPostApprovalPrompt(visibility, status);
   // On-site apps go OFFLINE; an off-site listing is only delisted from the store.
   const variant: OwnerUnpublishVariant = kind === 'onsite' ? 'offline' : 'store';
 
@@ -175,6 +207,27 @@ export function ListingPublishingPanel({
         </Alert>
       ) : null}
 
+      {postApprovalPrompt ? (
+        /*
+         * 🔴 FINDING F11'S ENTIRE OWNER-SIDE SIGNAL. Nothing clears the level at approval —
+         * deliberately, because that would mean the approve path writing this column (the
+         * eight-scattered-writes hazard the `@no-type` shape exists to avoid) and it would
+         * discard a choice an owner may really have wanted. So an app approved while set to
+         * `moderators` goes LIVE VISIBLE TO MODERATORS ONLY, and without this line the
+         * owner's only clue is that nobody ever uses their app. The wording and the
+         * fire/stay-silent arms are in `visibilityPostApprovalPrompt`, under the blocking
+         * unit project, because this branch itself is only reachable in report-only tests.
+         */
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          data-testid="apps-publishing-visibility-prompt"
+        >
+          {postApprovalPrompt}
+        </Alert>
+      ) : null}
+
       <Group gap="xs" data-testid={PUBLISHING_ACTIONS_TESTID}>
         {canUnpublish && (
           <Button
@@ -202,6 +255,25 @@ export function ListingPublishingPanel({
             Republish
           </Button>
         )}
+        {canSetVisibility && (
+          /*
+           * 🔴 THE `data-author-action` IS LOAD-BEARING, NOT DECORATION. The browser ledger
+           * enumerates `button, a[href]` in this container and FAILS on any such element
+           * that carries no such attribute, so omitting it would not hide the control — it
+           * would break the test with an "undeclared control" error. It is also why this is
+           * a Button opening a modal rather than an inline Select: an `<input>` is invisible
+           * to that enumeration, which would make the ledger read the control as MISSING.
+           */
+          <Button
+            variant="default"
+            leftSection={<IconUsers size={14} />}
+            onClick={() => setVisibilityOpen(true)}
+            data-testid="apps-publishing-visibility"
+            data-author-action="visibility"
+          >
+            Visibility: {visibilitySummaryLabel(visibility, status)}
+          </Button>
+        )}
       </Group>
 
       {/*
@@ -216,6 +288,21 @@ export function ListingPublishingPanel({
         onDone={refresh}
         testIdPrefix="apps-publishing"
         variant={variant}
+      />
+
+      {/*
+        Same confirm-gated-modal shape as the unpublish pair above, for the same reason: the
+        level picker owns its own mutation and its own copy, so the panel stays a renderer.
+        Mounted unconditionally (it returns `null` without a target) to match the sibling.
+      */}
+      <ListingVisibilityModal
+        target={visibilityOpen ? { id: appListingId, slug } : null}
+        status={status}
+        currentVisibility={visibility}
+        available={visibilityAvailable}
+        onClose={() => setVisibilityOpen(false)}
+        onDone={refresh}
+        testIdPrefix="apps-publishing"
       />
     </Stack>
   );
