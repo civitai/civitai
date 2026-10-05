@@ -108,8 +108,9 @@ const swapIndex = async ({
  * a guarantee: the deletion lands AFTER the rebuild's `setup` has already read the old settings,
  * so the rebuild gets a bare auto-created index and the swap promotes one with no settings at all.
  *
- * `deleteIndexIfExists`, not `deleteIndex`: the latter throws `index_not_found`, and an absent swap
- * index is an ordinary case. Returns false when there was nothing there.
+ * `deleteIndexIfExists`, not `deleteIndex`: the latter rejects with `index_not_found`, and an absent
+ * swap index is a reachable case on the path this runs on. Resolves to `false` when there was
+ * nothing to delete, and to `undefined` when there is no client at all.
  */
 const deleteSwapIndex = async ({
   swapIndexName,

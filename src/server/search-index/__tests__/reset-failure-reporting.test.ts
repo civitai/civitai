@@ -445,8 +445,9 @@ describe('reset :: refuses a rebuild that has no batches at all', () => {
       // shape `metrics-images--update-metrics` returns when it has no ClickHouse client.
       label: 'a NaN batch count (batchSize 0)',
       batches: { batchSize: 0, startId: 0, endId: 0 },
-      // `Math.ceil(0 / 0)` is NaN, and `totalTasks` reports it verbatim.
-      expectedTotalTasks: NaN,
+      // `Math.ceil(0 / 0)` is NaN, but `totalTasks` reports the CLAMPED count — the number of
+      // batches actually enqueued — so a non-finite value never escapes into a job result line.
+      expectedTotalTasks: 0,
     },
   ];
 
@@ -513,6 +514,40 @@ describe('reset :: refuses a rebuild that has no batches at all', () => {
     const index = buildIndex(withBatches(NO_BATCH_SHAPES[0].batches));
 
     await expect(index.reset(jobContext)).resolves.toMatchObject({ swapped: true });
+  }, 60_000);
+});
+
+describe('reset :: a non-finite batch count cannot spin the enqueue loop', () => {
+  it('treats an Infinity batch count as zero batches rather than looping forever', async () => {
+    // `Math.ceil(n / 0)` with unequal bounds is `Infinity`. The refusal below it is conditional on
+    // something being at stake, so an empty live index does NOT refuse — which means the loop bound
+    // is the only thing standing between this and a hang. A test that hung would simply time out
+    // after 60s, so the real assertion is that this returns at all.
+    const pushData = vi.fn();
+    const index = buildIndex({
+      prepareBatches: async () => ({ batchSize: 0, startId: 0, endId: 70 }),
+      pushData,
+    });
+
+    const result = await index.reset(jobContext);
+
+    expect(result.totalTasks).toBe(0);
+    expect(pushData).not.toHaveBeenCalled();
+    // Live index is empty, so nothing is at stake and the empty rebuild is promoted — which is what
+    // gives a brand-new index its settings.
+    expect(result.swapped).toBe(true);
+  }, 60_000);
+
+  it('refuses an Infinity batch count when the live index has documents', async () => {
+    documentCounts.set('test_index', 99);
+    const index = buildIndex({
+      prepareBatches: async () => ({ batchSize: 0, startId: 0, endId: 70 }),
+    });
+
+    const error = await expectRefusal(index.reset(jobContext));
+
+    expect(error.reason).toBe('no-batches');
+    expect(swapIndex).not.toHaveBeenCalled();
   }, 60_000);
 });
 
@@ -586,15 +621,26 @@ describe('reset :: discards the rebuild it refuses to promote', () => {
     expect(swapIndex).not.toHaveBeenCalled();
   }, 60_000);
 
-  it('discards the rebuild on a stale-swap-index refusal too', async () => {
+  it("does NOT discard on a stale-swap-index refusal — that index is not this run's to delete", async () => {
+    // 🔴 The one reason that must not clean up, and it is a safety property rather than a nicety.
+    // Two resets of one index can overlap: a pod that dies drops its lock within seconds, and the
+    // scheduler retries. If run B deleted the index it found populated, it would be deleting the
+    // index run A is actively writing into — A's remaining pushes would then auto-create a bare
+    // index and A would swap THAT in. Both failures this whole change prevents, caused by the guard
+    // meant to prevent them.
+    //
+    // It is also what the check's own rationale demands: a populated swap index holds state this
+    // run did not create, and deleting it is strictly more destructive than the clearing that
+    // rationale already rejects as "a destructive act taken on a guess".
     documentCounts.set(SWAP_INDEX, 3);
     const index = buildIndex();
 
-    await expectRefusal(index.reset(jobContext));
+    const error = await expectRefusal(index.reset(jobContext));
 
-    expect(deleteSwapIndex).toHaveBeenCalledWith(
-      expect.objectContaining({ swapIndexName: SWAP_INDEX })
-    );
+    expect(error.reason).toBe('stale-swap-index');
+    expect(deleteSwapIndex).not.toHaveBeenCalled();
+    expect(swapIndex).not.toHaveBeenCalled();
+    expect(clearQueue).not.toHaveBeenCalled();
   }, 60_000);
 
   it('still refuses, with its own error, when discarding the rebuild throws', async () => {

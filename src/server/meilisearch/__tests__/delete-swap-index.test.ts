@@ -7,13 +7,17 @@ import type { MeiliSearch } from 'meilisearch';
  *
  * It exists because a full-corpus `reset` can now ABANDON its rebuild. Before that, every
  * non-partial reset ended in `swapIndex`, whose last act is to delete the swap index — so a
- * surviving swap index was a sign of a crash, not an ordinary outcome. `reset` calls this twice: once
- * before rebuilding, so the rebuild cannot land on documents left by an earlier abandoned run
- * (`setup` does not clear an index and `pushData` upserts by primary key), and once when refusing,
- * so a near-complete copy of the corpus is not left resident.
+ * surviving swap index was a sign of a crash, not an ordinary outcome.
+ *
+ * `reset` calls it on the REFUSAL path only, and at most once per run, so that a near-complete copy
+ * of the corpus is not left resident. It is deliberately NOT called before a rebuild: the deletion
+ * is a task that completes later, so a pre-rebuild delete lands after `setup` has read the old
+ * settings and ends up promoting an index with none. `base.search-index.ts` establishes an empty
+ * rebuild with a READ instead. It is also not called for a `stale-swap-index` refusal, where the
+ * index holds state the run did not create — possibly a concurrent run's.
  *
  * The one thing that must not regress is WHICH client method it calls, because the two differ
- * exactly on the case that happens most: an index that is not there.
+ * exactly on the case it has to tolerate: an index that is not there.
  */
 const { deleteSwapIndex, countIndexDocuments } = await import('~/server/meilisearch/util');
 
@@ -38,16 +42,19 @@ describe('deleteSwapIndex', () => {
 
     expect(deleteIndexIfExists).toHaveBeenCalledTimes(1);
     expect(deleteIndexIfExists).toHaveBeenCalledWith('models_v9_NEW');
-    // 🔴 The load-bearing half. `deleteIndex` THROWS `index_not_found`, and a swap index that does
-    // not exist is the ordinary case — it is every index's first ever reset. Using it would make the
-    // caller log a cleanup failure on a run where there was simply nothing to discard, which is a
-    // false alarm on exactly the path that is supposed to be quiet.
+    // 🔴 The load-bearing half. `deleteIndex` rejects with `index_not_found` for an index that is
+    // not there, and that case is reachable on the refusal path — a `no-batches` refusal enqueues
+    // no documents, so the swap index may have been deleted by an earlier run and never recreated.
+    // Using it would make the caller log a cleanup failure on a run where there was simply nothing
+    // to discard, which is a false alarm on exactly the path that is supposed to be quiet.
     expect(deleteIndex).not.toHaveBeenCalled();
   });
 
   it('resolves, rather than throwing, when the swap index does not exist', async () => {
-    // What `deleteIndexIfExists` reports for a missing index. The caller treats "nothing to delete"
-    // as success, so this must not reject.
+    // What `deleteIndexIfExists` reports for a missing index — `false`, not a rejection. The caller
+    // treats "nothing to delete" as success, so this must not throw. (The no-client branch below
+    // returns `undefined` rather than `false`; the two are different answers and both are fine,
+    // because every consumer only cares that it did not reject.)
     const { client } = fakeClient({ deleteIndexIfExists: vi.fn().mockResolvedValue(false) });
 
     await expect(deleteSwapIndex({ swapIndexName: 'articles_v5_NEW', client })).resolves.toBe(

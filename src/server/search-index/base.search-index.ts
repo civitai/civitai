@@ -743,24 +743,40 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       const swapIndexName = `${indexName}_NEW`;
 
       /**
-       * Abandon the rebuild: discard it, then say why. Only ever called on the non-partial path.
+       * Abandon the rebuild and say why. Only ever called on the non-partial path.
+       *
+       * It discards the swap index for every reason EXCEPT `stale-swap-index`, and that exception
+       * is the important one. For the other reasons the swap index holds this run's own work, so
+       * throwing it away costs only the storage it occupies. For `stale-swap-index` it holds state
+       * this run did not create and cannot account for — and deleting it would be strictly more
+       * destructive than the clearing the comment at the check itself calls "a destructive act
+       * taken on a guess".
+       *
+       * 🔴 It is also unsafe, because two resets of one index can genuinely overlap. The reset jobs
+       * now set `keepLockOnDisconnect`, but a pod that dies still drops its lock within seconds, so
+       * the window is narrowed rather than closed. Were this to delete, the sequence would be: run
+       * A is mid-rebuild; run B starts, sees A's partial documents, refuses and deletes the index A
+       * is writing into; A's remaining `updateDocuments` calls then auto-create a bare index and A
+       * swaps it in. That is both of the failures this whole change exists to prevent — a truncated
+       * index, and one with no settings — caused by the guard meant to stop them.
        */
       const refuse = async (
         reason: SearchIndexResetRefusalReason,
         counts: { totalTasks: number; failedTasks: number; failedRanges: SearchIndexIdRange[] }
       ) => {
-        try {
-          // Best-effort storage cleanup so a near-complete copy of the corpus is not left
-          // resident. NOT a correctness mechanism and deliberately not treated as one — the
-          // deletion is a task that completes later, which is why the stale-swap-index check
-          // below is a READ. Non-fatal: the error we are about to throw is the diagnosis and
-          // must not be replaced by a cleanup failure.
-          await deleteSwapIndex({ swapIndexName, client: processor.client });
-        } catch (e) {
-          console.error(
-            `createSearchIndexUpdateProcessor :: reset :: ${indexName} :: could not discard ${swapIndexName} after refusing to promote it`,
-            e
-          );
+        if (reason !== 'stale-swap-index') {
+          try {
+            // Best-effort storage cleanup so a near-complete copy of the corpus is not left
+            // resident. NOT a correctness mechanism and deliberately not treated as one — the
+            // deletion is a task that completes later. Non-fatal: the error we are about to throw
+            // is the diagnosis and must not be replaced by a cleanup failure.
+            await deleteSwapIndex({ swapIndexName, client: processor.client });
+          } catch (e) {
+            console.error(
+              `createSearchIndexUpdateProcessor :: reset :: ${indexName} :: could not discard ${swapIndexName} after refusing to promote it`,
+              e
+            );
+          }
         }
         throw new SearchIndexResetIncompleteError({ indexName, reason, ...counts });
       };
@@ -786,10 +802,20 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         // found nothing to change — so no settings task is enqueued, the deletion then removes the
         // index, `updateDocuments` silently auto-creates a bare one, and the swap promotes an index
         // with NO filterable/sortable/searchable attributes at all. Every filtered query against it
-        // then errors. A read cannot race like that: it answers about now.
+        // then errors. A read cannot reorder itself against `setup` that way.
+        //
+        // 🔴 WHAT IT STILL DOES NOT COVER, because "a read answers about now" is a weaker statement
+        // than it sounds: it answers about the documents Meilisearch has already PROCESSED. Tasks
+        // that are merely enqueued are invisible to it, and nothing in this file awaits an index
+        // deletion — `swapIndex` ends by enqueuing one, and so does `refuse`. So a swap index with
+        // a pending deletion reads as populated (a spurious refusal, which is safe), and one whose
+        // deletion has just landed while a dead run's writes are still queued reads as empty (not
+        // safe, and not detectable here). Closing that needs the deletion and the document writes
+        // awaited by task uid; it is not done here.
         //
         // Refusing rather than repairing, because a populated swap index means a previous run
         // ended in a way nobody looked at, and clearing it is a destructive act taken on a guess.
+        // `refuse` does not discard it for this reason, for the same reason — see its doc comment.
         const swapDocumentCount = await countIndexDocuments({
           indexName: swapIndexName,
           client: processor.client,
@@ -809,6 +835,13 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       const { batchSize, startId = 0, endId } = await prepareBatches(ctx);
 
       const tasks = Math.ceil((endId - startId) / batchSize);
+      // The number of batches actually enqueued below, which is what `totalTasks` should report and
+      // what the loop must bound itself by. A non-finite `tasks` is clamped to 0 rather than being
+      // allowed to reach the loop: `NaN` already iterates zero times, but `Infinity` would spin
+      // forever, and the refusal below cannot be relied on to stop it — it is conditional on
+      // something being at stake, so an `Infinity` over an empty live index falls straight through.
+      // Clamping is what makes "this guard sits before the loop" actually true.
+      const taskCount = Number.isFinite(tasks) ? tasks : 0;
 
       // A run that enqueues NO batches rebuilds NOTHING, and would otherwise sail through the
       // dropped-batch gate below with `failedTasks === 0` and promote a freshly-created, EMPTY swap
@@ -816,17 +849,18 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // its maximum, reached by a different route, so it belongs to the same guarantee rather than
       // being a separate feature.
       //
-      // Reachable, not defensive — though the two halves of the predicate differ on that. `tasks < 1`
-      // is reachable: `prepareBatches` derives its bounds from `MIN(id)/MAX(id)` (six processors) or
-      // from `ORDER BY "createdAt" LIMIT 1` subqueries (`users`, `metrics-images`), all of which
-      // yield `null` on an empty eligible set, and the `startId = 0` default above does NOT fire for
-      // `null`, so `Math.ceil(0 / batchSize)` is 0. A single eligible row (`startId === endId`)
-      // gives 0 the same way. The `Number.isFinite` half is defensive: no processor can produce
-      // `NaN` today, and the `batchSize: 0` shape that would yield `Infinity` belongs to a `partial`
-      // processor that returns before this point.
+      // Reachable, not defensive. `tasks < 1`: `prepareBatches` derives its bounds from
+      // `MIN(id)/MAX(id)` (six processors) or from `ORDER BY "createdAt" LIMIT 1` subqueries
+      // (`users`, `metrics-images`), all of which yield `null` on an empty eligible set, and the
+      // `startId = 0` default above does NOT fire for `null`, so `Math.ceil(0 / batchSize)` is 0. A
+      // single eligible row (`startId === endId`) gives 0 the same way — via the batch-count
+      // off-by-one, not because one row is nothing.
       //
-      // 🔴 It sits BEFORE the enqueue loop on purpose. `Infinity` would make that loop spin forever,
-      // so a guard placed after it could never report the one shape it names.
+      // `!Number.isFinite(tasks)` is reachable too: `metrics-images--update-metrics` returns
+      // `{ batchSize: 0, startId: 0, endId: 0 }` when it has no ClickHouse client, and
+      // `Math.ceil(0 / 0)` is `NaN`. That processor is `partial`, and the `partial` early return is
+      // BELOW this point, not above it — the `partial ? 0` arm here is what waves it through.
+      // `Infinity` has no producer in this directory today.
       //
       // Refuse only when something is actually AT STAKE. An index whose live corpus is empty has
       // nothing to lose from promoting an empty rebuild — and that case must keep working, because
@@ -834,7 +868,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       // index ever receives its settings. Refusing there would strand it unconfigured forever, and
       // every filtered query against it would error. That is the shape of a new index before launch,
       // and of every index on a dev or test database.
-      if (!Number.isFinite(tasks) || tasks < 1) {
+      if (taskCount < 1) {
         const liveDocumentCount = partial
           ? 0
           : await countIndexDocuments({ indexName, client: processor.client });
@@ -842,7 +876,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         if ((liveDocumentCount ?? 0) > 0) await refuse('no-batches', noCounts);
       }
 
-      for (let i = 0; i < tasks; i++) {
+      for (let i = 0; i < taskCount; i++) {
         const start = startId + i * batchSize;
         const batch = {
           startId: start,
@@ -893,27 +927,28 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         //
         // Nor is there anything to log, today, and it is worth saying why rather than leaving a
         // reader to assume this path is instrumented. The one `partial` processor's
-        // `prepareBatches` returns `startId: 0, endId: 0`, so `tasks` is 0, no range task is ever
-        // enqueued, and `failedTasks` here is structurally always 0. A diagnostic would read as
+        // `prepareBatches` returns `startId: 0, endId: 0` on both of its branches, so `taskCount`
+        // is 0 — directly, or via the clamp when its no-ClickHouse branch makes `tasks` `NaN` — no
+        // range task is ever enqueued, and `failedTasks` here is structurally always 0. A diagnostic would read as
         // reporting while being incapable of firing. The counts are returned instead, for tests and
         // for a future partial processor that does enqueue batches — at which point this path needs
         // a real report, because `update()` and `processQueues()` never read `queue.failedTasks`
         // (only `updateSync` does) and `reset`'s sole caller discards the return value.
-        return { indexName, totalTasks: tasks, failedTasks, failedRanges, swapped: false };
+        return { indexName, totalTasks: taskCount, failedTasks, failedRanges, swapped: false };
       }
 
       // Refuse the swap AND the `clearQueue` below. Leaving the queue alone is half the point: it
       // is the channel that would repair the gap, and clearing it is what turned a recoverable
       // truncation into a permanent one.
       if (failedTasks > 0)
-        await refuse('dropped-batches', { totalTasks: tasks, failedTasks, failedRanges });
+        await refuse('dropped-batches', { totalTasks: taskCount, failedTasks, failedRanges });
 
       // Finally, perform the swap:
       await swapIndex({ indexName, swapIndexName, client: processor.client });
       // Clear update queue since our index should be brand new:
       await SearchIndexUpdate.clearQueue(indexName);
 
-      return { indexName, totalTasks: tasks, failedTasks: 0, failedRanges: [], swapped: true };
+      return { indexName, totalTasks: taskCount, failedTasks: 0, failedRanges: [], swapped: true };
     },
     async updateSync(
       items: Array<{ id: number; action?: SearchIndexUpdateQueueAction }>,
