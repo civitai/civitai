@@ -36,6 +36,7 @@ import { createImageTagsForReview } from '~/server/services/image-review.service
 import {
   tagIdsForImagesCache,
   tagCacheByName,
+  thumbnailCache,
   userImageVideoCountCaches,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
@@ -893,6 +894,10 @@ export async function applyIngestionSideEffects({
     // identical counts for an N-image post.
     await userImageVideoCountCaches.bust(image.userId);
     await tagIdsForImagesCache.refresh(image.id);
+    // A custom video thumbnail is cached under its video with this scan's level. The refresh in
+    // insertTagsOnImageNew runs before the final nsfwLevel write, so it can cache the old one.
+    const thumbnailParentId = (image.metadata as { parentId?: number } | null)?.parentId;
+    if (thumbnailParentId) await thumbnailCache.refresh(thumbnailParentId);
     if (
       typeof image.metadata === 'object' &&
       (image.metadata as MediaMetadata | undefined)?.profilePicture

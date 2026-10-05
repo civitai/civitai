@@ -6,12 +6,14 @@ import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
-import { imageMetaCache } from '~/server/redis/caches';
+import { imageMetaCache, thumbnailCache } from '~/server/redis/caches';
+import type { PublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
+import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import {
   getNsfwLevelDeprecatedReverseMapping,
   NsfwLevelDeprecated,
 } from '~/shared/constants/browsingLevel.constants';
-import type { MediaType } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
  * Shared image-search + response-shaping body extracted verbatim from
@@ -78,6 +80,8 @@ export type ShapedImage = {
   browsingLevel: number;
   createdAt: unknown;
   postId: unknown;
+  /** A JPEG still and its dimensions; null unless `type` is video. */
+  thumbnail: PublicVideoThumbnail | null;
   stats: {
     cryCount: number;
     laughCount: number;
@@ -246,6 +250,9 @@ export async function runImageSearch(
     imageMetas = await imageMetaCache.fetch(items.map((img) => img.id));
   }
 
+  const videoIds = items.filter((img) => img.type === MediaType.video).map((img) => img.id);
+  const customThumbnails = videoIds.length > 0 ? await thumbnailCache.fetch(videoIds) : {};
+
   const shaped: ShapedImage[] = items.map((image) => {
     const nsfw = getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel);
 
@@ -261,6 +268,11 @@ export async function runImageSearch(
       browsingLevel: image.nsfwLevel,
       createdAt: image.createdAt,
       postId: image.postId,
+      thumbnail: getPublicVideoThumbnail({
+        image,
+        customThumbnail: customThumbnails[image.id],
+        browsingLevel,
+      }),
       stats: {
         cryCount: image.stats?.cryCountAllTime ?? 0,
         laughCount: image.stats?.laughCountAllTime ?? 0,

@@ -102,6 +102,7 @@ import {
   imageTagsCache,
   tagCache,
   tagIdsForImagesCache,
+  refreshThumbnailCache,
   thumbnailCache,
   userImageVideoCountCaches,
 } from '~/server/redis/caches';
@@ -710,9 +711,13 @@ export const deleteImageById = async ({
 
     const image = await dbWrite.image.delete({
       where: { id },
-      select: { url: true, postId: true, nsfwLevel: true, userId: true },
+      select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
     });
     if (!image) return;
+
+    // A custom video thumbnail is cached under its video, and the row that names the video is
+    // now gone, so `refreshThumbnailCache` can no longer find it.
+    const thumbnailParentId = (image.metadata as { parentId?: number } | null)?.parentId;
 
     const invalidateExistence = invalidateManyImageExistence([id]);
 
@@ -734,6 +739,7 @@ export const deleteImageById = async ({
       imageMetadataCache.refresh(id),
       userImageVideoCountCaches.bust(image.userId),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete' }),
+      ...(thumbnailParentId ? [thumbnailCache.refresh(thumbnailParentId)] : []),
     ]);
 
     return image;
@@ -830,13 +836,21 @@ export async function deleteImages(
     });
 
     const results = await dbWrite.$queryRaw<
-      { id: number; url: string; postId: number | null; nsfwLevel: number; userId: number }[]
+      {
+        id: number;
+        url: string;
+        postId: number | null;
+        nsfwLevel: number;
+        userId: number;
+        parentId: number | null;
+      }[]
     >`
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(ids)})
-      RETURNING id, url, "postId", "nsfwLevel", "userId"
+      RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
+    const thumbnailParentIds = uniq(results.map((x) => x.parentId).filter(isDefined));
     const idsForPostUpdate = updatePosts ? results.map((x) => x.postId).filter(isDefined) : [];
 
     const invalidateExistence = invalidateManyImageExistence(imageIds);
@@ -854,6 +868,8 @@ export async function deleteImages(
       imageMetadataCache.refresh(imageIds),
       userImageVideoCountCaches.bust(uniq(results.map((x) => x.userId))),
       enqueueCollectionRebuild({ ...collectionsToRebuild, source: 'image-delete-bulk' }),
+      // Custom video thumbnails are cached under their video; see deleteImageById.
+      ...(thumbnailParentIds.length ? [thumbnailCache.refresh(thumbnailParentIds)] : []),
     ]);
 
     await Limiter({ batchSize: 5 }).process(
@@ -1129,7 +1145,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   await dbWrite.$executeRawUnsafe(
     `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
   );
-  await thumbnailCache.refresh(ids);
+  await refreshThumbnailCache(ids);
 }
 
 // Single source of truth for restoring an image's rating after it's unblocked.
@@ -7078,7 +7094,7 @@ export async function updateImageNsfwLevel({
       where: { id },
       data: { nsfwLevel, nsfwLevelLocked: true, metadata: updatedMetadata },
     });
-    await imageMetadataCache.refresh(id);
+    await Promise.all([imageMetadataCache.refresh(id), refreshThumbnailCache(id)]);
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
     // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
@@ -7166,7 +7182,7 @@ export async function raiseOwnImageNsfwLevel({
   `;
   if (!raised) return false;
 
-  await thumbnailCache.refresh(id);
+  await refreshThumbnailCache(id);
   if (raised.postId) await updatePostNsfwLevel(raised.postId);
   await updateModel3DNsfwLevelForThumbnailImage({ imageId: id, postId: raised.postId });
   await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Update });
@@ -7894,8 +7910,7 @@ export async function queueImageSearchIndexUpdate({
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
 
   if (action === SearchIndexUpdateQueueAction.Delete) {
-    // Bust the thumbnail cache for deleted images
-    await thumbnailCache.refresh(ids);
+    await refreshThumbnailCache(ids);
     // Remove the image from the knights of new order pool counters
     await Promise.all([
       ...poolCounters.Knight.a.map((queue) => queue.reset({ id: ids })),
