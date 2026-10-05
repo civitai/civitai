@@ -206,7 +206,17 @@ export const actions: Actions = {
         .trim()
         .slice(0, 1000) || undefined;
 
-    await resolveImageAppeal({ imageId, status, resolvedMessage, userId: locals.user.id });
+    const closed = await resolveImageAppeal({
+      imageId,
+      status,
+      resolvedMessage,
+      userId: locals.user.id,
+    });
+    if (!closed)
+      return fail(409, {
+        error: 'Another moderator already resolved this appeal. Reload.',
+        imageId,
+      });
     return { success: true, imageId };
   },
 

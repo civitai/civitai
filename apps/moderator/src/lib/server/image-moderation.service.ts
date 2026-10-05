@@ -312,8 +312,17 @@ export async function resolveImageAppeal({
     resolvedMessage: resolvedMessage ?? null,
     resolvedAt: new Date(),
   });
-  // Another resolution decided it; applying this one to the image would contradict the recorded verdict.
-  if (!appeal) return undefined;
+  if (!appeal) {
+    // Another resolution decided it, so this verdict must not reach the image. Only the queue flag is
+    // cleared: an image flagged for appeal with no pending appeal would otherwise never leave the queue.
+    await dbWrite
+      .updateTable('Image')
+      .set({ needsReview: null })
+      .where('id', '=', imageId)
+      .where('needsReview', '=', 'appeal')
+      .execute();
+    return undefined;
+  }
 
   const img = await dbRead
     .selectFrom('Image')

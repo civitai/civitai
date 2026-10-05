@@ -164,6 +164,7 @@ const { handleUnblockImages } = await import('../image.service');
 const { resolveEntityAppeal } = await import('../report.service');
 const { createNotification } = await import('../notification.service');
 const { refundMultiAccountTransaction } = await import('../buzz.service');
+const { logToAxiom } = await import('~/server/logging/client');
 const { isSafeToRetry } = await import('@civitai/buzz');
 
 const BLOCKED = 32;
@@ -443,5 +444,12 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     } as any);
 
     expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'resolve-entity-appeal',
+        appealId: 555,
+        buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+      })
+    );
   });
 });

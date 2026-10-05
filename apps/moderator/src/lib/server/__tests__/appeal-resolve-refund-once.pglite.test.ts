@@ -100,6 +100,15 @@ const appealStatuses = async () =>
     ({ status }) => status
   );
 
+const imageRow = async () =>
+  (
+    await db.query<{
+      needsReview: string | null;
+      blockedFor: string | null;
+      ingestion: string | null;
+    }>(`SELECT "needsReview", "blockedFor", "ingestion" FROM "Image" WHERE "id" = $1`, [IMAGE_ID])
+  ).rows[0];
+
 describe('resolving one appeal twice at once', () => {
   it('resolveImageAppeal refunds the fee once', async () => {
     const approve = () => resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
@@ -112,18 +121,22 @@ describe('resolving one appeal twice at once', () => {
     expect(closedAppellants([IMAGE_ID, IMAGE_ID], closed)).toEqual([
       { userId: 7, imageId: IMAGE_ID },
     ]);
+    expect(await imageRow()).toEqual({ needsReview: null, blockedFor: null, ingestion: 'Scanned' });
   });
 
   it('acceptImage refunds the fee once', async () => {
     const accept = () => acceptImage({ imageId: IMAGE_ID, userId: 2 });
 
-    await Promise.all([accept(), accept()]);
+    const closed = await Promise.all([accept(), accept()]);
 
     expect(refundAppealFee).toHaveBeenCalledTimes(1);
     expect(await appealStatuses()).toEqual(['Approved']);
+    expect(closedAppellants([IMAGE_ID, IMAGE_ID], closed)).toEqual([
+      { userId: 7, imageId: IMAGE_ID },
+    ]);
   });
 
-  it('leaves the image and the fee alone when another resolution already decided the appeal', async () => {
+  it('applies no verdict to the image when another resolution already decided the appeal', async () => {
     await db.query(`UPDATE "Appeal" SET "status" = 'Rejected'`);
 
     const closed = await resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
@@ -131,10 +144,11 @@ describe('resolving one appeal twice at once', () => {
     expect(closed).toBeUndefined();
     expect(refundAppealFee).not.toHaveBeenCalled();
     expect(await appealStatuses()).toEqual(['Rejected']);
-    const { rows } = await db.query<{ blockedFor: string | null; ingestion: string | null }>(
-      `SELECT "blockedFor", "ingestion" FROM "Image" WHERE "id" = $1`,
-      [IMAGE_ID]
-    );
-    expect(rows).toEqual([{ blockedFor: 'moderated', ingestion: null }]);
+    // Still blocked; only the queue flag is cleared so the card can leave the queue.
+    expect(await imageRow()).toEqual({
+      needsReview: null,
+      blockedFor: 'moderated',
+      ingestion: null,
+    });
   });
 });
