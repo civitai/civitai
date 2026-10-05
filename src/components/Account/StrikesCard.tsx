@@ -6,12 +6,13 @@ import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { CreatorJourneyCardLink } from '~/components/CreatorJourney/CreatorJourneyCardLink';
 import { CREATOR_SCORE_ANCHOR } from './creator-score-copy';
 import { CreatorScoreExplainer } from './CreatorScoreExplainer';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
-// The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
-// rows link to `#creator-score`. Both targets only render their `id` once data loads, so the
+// The strike email links to `/user/account#strikes`, and CREATOR_SCORE_EXPLAINER_HREF links to
+// `#creator-score`. Both targets only render their `id` once data loads, so the
 // browser's native hash scroll fires too early. Module-level so the ref identity stays stable.
 // Legacy page only — the v2 shell maps these anchors to a section and drops the fragment
 // (`legacyAnchorSections` in account-sections.ts), so these refs are dead on the pane.
@@ -133,6 +134,7 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
           <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
             <Stack gap="lg">
               <UserScoreDisplay scores={scores} flat abbreviate={false} />
+              <CreatorJourneyCardLink total={scores?.total} />
               <CreatorScoreExplainer />
             </Stack>
           </div>
@@ -165,6 +167,7 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
         <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
           <Stack gap="lg">
             <UserScoreDisplay scores={scores} />
+            <CreatorJourneyCardLink total={scores?.total} />
             <CreatorScoreExplainer />
           </Stack>
         </div>

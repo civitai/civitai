@@ -18,6 +18,7 @@ import {
 import { getPlacementConfig } from '~/server/services/placement.service';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
+import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
   PLACEMENT_FREE_SLOT_CAP_TIERS,
@@ -25,36 +26,6 @@ import {
   placementSurfaceLabel,
   placementSurfaces,
 } from '~/shared/utils/placement';
-
-export type CreatorScoreUnlockSurface =
-  | 'crucibles'
-  | 'challenges'
-  | 'posting'
-  | 'comments'
-  | 'reactions'
-  | 'articles'
-  | 'monetization'
-  | 'earlyAccess'
-  | 'announcements'
-  | 'placements'
-  | 'creatorProgram';
-
-/**
- * Which number the gate compares. They are not interchangeable: `total` is `User.meta.scores.total`, the
- * figure the account page shows; `aggregate` is `GREATEST(sum of the categories, total)`, which can be
- * higher; `articles` is the articles category alone.
- */
-export type CreatorScoreKind = 'total' | 'aggregate' | 'articles';
-
-export type CreatorScoreUnlock = {
-  key: string;
-  minScore: number;
-  label: string;
-  surface: CreatorScoreUnlockSurface;
-  scoreKind: CreatorScoreKind;
-  /** `keyValue` means an operator can move it without a deploy, so never cache the number in copy. */
-  source: 'compiled' | 'keyValue';
-};
 
 export type CreatorScoreUnlockInputs = {
   saleMinScore: number;
@@ -210,31 +181,6 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
   ];
 
   return unlocks.filter((unlock) => unlock.minScore > 0).sort((a, b) => a.minScore - b.minScore);
-}
-
-/**
- * The unlocks not yet reached that have the lowest threshold, which is what a refusal or a progress bar
- * points at next. Each gate is judged against its own kind of score: `aggregate` falls back to `total`
- * when absent, and the articles tiers are left out unless an articles score is passed. Empty when every
- * comparable unlock is reached.
- */
-export function nextCreatorScoreUnlocks(
-  unlocks: CreatorScoreUnlock[],
-  scores: { total: number; aggregate?: number; articles?: number }
-): CreatorScoreUnlock[] {
-  const scoreFor = (kind: CreatorScoreKind) =>
-    kind === 'articles'
-      ? scores.articles
-      : kind === 'aggregate'
-      ? scores.aggregate ?? scores.total
-      : scores.total;
-  const pending = unlocks.filter((u) => {
-    const score = scoreFor(u.scoreKind);
-    return score != null && score < u.minScore;
-  });
-  if (pending.length === 0) return [];
-  const next = Math.min(...pending.map((u) => u.minScore));
-  return pending.filter((u) => u.minScore === next);
 }
 
 async function getSaleMinScore() {

@@ -61,6 +61,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
@@ -339,20 +340,21 @@ const JoinCreatorProgramCard = () => {
         <div className="flex flex-col gap-4 sm:flex-row">
           <CreatorProgramRequirement
             isMet={hasEnoughCreatorScore}
-            title={`Have a Creator Score higher than ${abbreviateNumber(
+            title={`Have a Creator Score of at least ${numberWithCommas(
               requirements?.score.min ?? MIN_CREATOR_SCORE
             )}`}
             content={
               <p className="my-0">
-                Your current{' '}
-                <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-                  Creator Score
-                </Anchor>{' '}
-                is{' '}
-                <Anchor component={NextLink} href="/user/account#creator-score" inherit>
-                  {abbreviateNumber(requirements?.score.current ?? 0)}
-                </Anchor>
-                .
+                {hasEnoughCreatorScore ? (
+                  `Your Creator Score is ${numberWithCommas(
+                    Math.floor(requirements?.score.current ?? 0)
+                  )}.`
+                ) : (
+                  <CreatorScoreGateMessage
+                    score={requirements?.score.current}
+                    required={requirements?.score.min ?? MIN_CREATOR_SCORE}
+                  />
+                )}
               </p>
             }
           />

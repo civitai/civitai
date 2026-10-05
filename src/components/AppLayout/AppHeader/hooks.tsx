@@ -22,6 +22,7 @@ import {
   IconProgressBolt,
   IconSword,
   IconShoppingBag,
+  IconStairsUp,
   IconSticker,
   IconThumbUp,
   IconTrophy,
@@ -41,6 +42,7 @@ import { useQueryNotificationsCount } from '~/components/Notifications/notificat
 import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { OnboardingSteps } from '~/server/common/enums';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -205,6 +207,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Creator Studio',
           newUntil: new Date('2026-09-01'),
+        },
+        {
+          href: CREATOR_JOURNEY_HREF,
+          visible: !!currentUser,
+          icon: IconStairsUp,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Creator Journey',
+          newUntil: new Date('2026-11-15'),
         },
         {
           href: '/user/vault',
