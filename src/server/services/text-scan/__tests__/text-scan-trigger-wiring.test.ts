@@ -125,6 +125,18 @@ const cases: [file: string, start: string, call: string, times: number][] = [
     "scanEntityInBackground({ entityType: 'BountyEntry', entityId: result.id })",
     1,
   ],
+  [
+    'src/server/services/collection.service.ts',
+    'export const upsertCollection',
+    "scanEntityInBackground({ entityType: 'Collection', entityId: updated.id })",
+    1,
+  ],
+  [
+    'src/server/services/collection.service.ts',
+    'export const upsertCollection',
+    "scanEntityInBackground({ entityType: 'Collection', entityId: collection.id })",
+    1,
+  ],
 ];
 
 describe('text-scan write-path wiring', () => {

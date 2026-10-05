@@ -72,6 +72,8 @@ import { bustOrchestratorModelCache } from '~/server/services/orchestrator/model
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
+import { shouldScanCollection } from '~/server/services/text-scan/actions/collection';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -1316,8 +1318,11 @@ export const upsertCollection = async ({
       where: { id },
       select: {
         id: true,
+        name: true,
+        description: true,
         read: true,
         write: true,
+        availability: true,
         mode: true,
         createdAt: true,
         image: { select: { id: true } },
@@ -1370,8 +1375,11 @@ export const upsertCollection = async ({
           id: true,
           mode: true,
           image: { select: { id: true, url: true, ingestion: true, type: true } },
+          name: true,
+          description: true,
           read: true,
           write: true,
+          availability: true,
           userId: true,
         },
         where: { id },
@@ -1503,6 +1511,9 @@ export const upsertCollection = async ({
 
     await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
+    if (shouldScanCollection(currentCollection, updated))
+      scanEntityInBackground({ entityType: 'Collection', entityId: updated.id });
+
     // nb: doing this will delete a user's own image
     // if (currentCollection.image && !input.image) {
     //   const isOwner = await isImageOwner({
@@ -1534,8 +1545,11 @@ export const upsertCollection = async ({
     select: {
       id: true,
       image: { select: { id: true, url: true } },
+      name: true,
+      description: true,
       read: true,
       write: true,
+      availability: true,
       userId: true,
       mode: true,
     },
@@ -1579,6 +1593,9 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.refresh(userId);
+
+  if (shouldScanCollection(null, collection))
+    scanEntityInBackground({ entityType: 'Collection', entityId: collection.id });
 
   // Route subsequent reads to primary while the replica catches up so the
   // post-create redirect to /collections/[id] doesn't 404 on a fresh row.

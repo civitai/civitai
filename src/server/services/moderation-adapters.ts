@@ -8,6 +8,7 @@ import { modelModerationAdapter } from '~/server/services/model-moderation.adapt
 import { textScanShadowAdapters } from '~/server/services/text-scan/adapter';
 import {
   bountyEntryTextScanAdapter,
+  collectionTextScanAdapter,
   postTextScanAdapter,
 } from '~/server/services/text-scan/adapters';
 import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
@@ -29,6 +30,7 @@ const moderationAdapters: Record<string, ModerationAdapter> = {
   WildcardSetCategory: wildcardCategoryModerationAdapter,
   Bounty: bountyModerationAdapter,
   BountyEntry: bountyEntryTextScanAdapter,
+  Collection: collectionTextScanAdapter,
   Post: postTextScanAdapter,
   ...textScanShadowAdapters(),
   ...scamModerationAdapters,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as RedisCaches from '~/server/redis/caches';
+import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -19,7 +20,13 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
   userCollectionCountCache: { refresh: mockCountCacheRefresh },
 }));
 
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof TextScanSubmit>()),
+  scanEntityInBackground: vi.fn(),
+}));
+
 const { upsertCollection } = await import('~/server/services/collection.service');
+const { scanEntityInBackground } = await import('~/server/services/text-scan/submit');
 
 const COLLECTION_ID = 10;
 const OWNER_ID = 999;
@@ -256,5 +263,75 @@ describe('upsertCollection authorization', () => {
     } as never);
 
     expect(mockDbWrite.collection.update).toHaveBeenCalled();
+  });
+
+  it('scans a Private collection made Public after the transaction commits', async () => {
+    arrange({ actorId: OWNER_ID });
+    const current = { name: 'Mine', description: null, availability: 'Public' };
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Private',
+      write: 'Private',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      ...current,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Public',
+      write: 'Private',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+      ...current,
+    });
+    let committed = false;
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      const result = await fn({
+        collection: { update: mockDbWrite.collection.update },
+        tagsOnCollection: { deleteMany: vi.fn(), createMany: vi.fn() },
+      });
+      committed = true;
+      return result;
+    });
+    vi.mocked(scanEntityInBackground).mockImplementation(() => {
+      expect(committed).toBe(true);
+    });
+
+    await upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Mine', read: 'Public', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Collection',
+      entityId: COLLECTION_ID,
+    });
+  });
+
+  it('does not scan an edit that leaves text and visibility alone', async () => {
+    arrange({ actorId: OWNER_ID, currentWrite: 'Public' });
+    const row = { name: 'Mine', description: null, read: 'Public', availability: 'Public' };
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      write: 'Public',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      ...row,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      write: 'Public',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+      ...row,
+    });
+    await upsertCollection({
+      input: { id: COLLECTION_ID, write: 'Public', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
   });
 });
