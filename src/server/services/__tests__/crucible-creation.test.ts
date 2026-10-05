@@ -550,16 +550,17 @@ describe('createCrucible — text scan', () => {
 /**
  * The feed runs one query per status segment, running crucibles first. Reading only one of them
  * would leave the other free to drop the visibility filters, so every query must carry the same
- * `where` apart from its status.
+ * `where` apart from its status. Snapshotted per call: the segments share nested objects, so a
+ * recorded argument shows only their final state.
  */
-const sharedFeedWhere = async (run: () => Promise<unknown>) => {
-  const findMany = dbMock.dbRead.crucible.findMany;
-  const before = findMany.mock.calls.length;
+const sharedFeedWhere = async (run: () => Promise<unknown>, queries = 2) => {
+  const wheres: Record<string, unknown>[] = [];
+  dbMock.dbRead.crucible.findMany.mockImplementation((async ({ where }: { where: object }) => {
+    wheres.push({ ...structuredClone(where), status: undefined });
+    return [];
+  }) as never);
   await run();
-  const wheres = findMany.mock.calls
-    .slice(before)
-    .map(([args]) => ({ ...args!.where, status: undefined }));
-  expect(wheres.length).toBeGreaterThan(0);
+  expect(wheres).toHaveLength(queries);
   for (const where of wheres) expect(where).toEqual(wheres[0]);
   return wheres[0] as any;
 };
@@ -581,6 +582,23 @@ describe('getCrucibles — browsing level', () => {
       })
     );
   };
+
+  it('keeps every filter on a later page, which starts partway through the groups', async () => {
+    const feed = (cursor?: number) =>
+      getCrucibles({
+        input: { limit: 10, sort: CrucibleSort.Newest, browsingLevel: 1, cursor },
+        select: { id: true },
+        viewerId: 4,
+        isGreen: true,
+        excludedUserIds: [7],
+      });
+    const firstPage = await sharedFeedWhere(() => feed());
+    dbMock.dbRead.crucible.findUnique.mockResolvedValueOnce({
+      status: CrucibleStatus.Pending,
+    } as never);
+
+    expect(await sharedFeedWhere(() => feed(5), 1)).toEqual(firstPage);
+  });
 
   it('requires both the crucible and its cover to fall inside the level', async () => {
     const where = await whereFor({ browsingLevel: 1 });
@@ -772,6 +790,15 @@ describe('getCrucibles — running crucibles lead upcoming ones', () => {
   // the split it ended instead. Either is finite; carrying the group in the cursor would fix it.
   it('pages on from the upcoming list when the cursor crucible has gone', async () => {
     expect(await ids({ limit: 10, cursor: 99 })).toEqual({ ids: [1], nextCursor: undefined });
+  });
+
+  // Accepted, not designed: an upcoming cursor crucible that starts between pages is looked up as
+  // running, so the next page serves the running ones again before the rest. Finite, like above.
+  it('repeats the running crucibles when the cursor crucible has started since', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValueOnce({
+      status: CrucibleStatus.Active,
+    } as never);
+    expect(await ids({ limit: 10, cursor: 1 })).toEqual({ ids: [4, 2, 1], nextCursor: undefined });
   });
 
   it('pages across the boundary without repeating or skipping one', async () => {
