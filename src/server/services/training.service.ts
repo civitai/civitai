@@ -26,7 +26,6 @@ import type {
   AutoTagInput,
   GetAutoLabelUploadUrlInput,
   GetAutoLabelWorkflowInput,
-  MoveAssetInput,
   SubmitAutoLabelWorkflowInput,
   TrainingServiceStatus,
 } from '~/server/schema/training.schema';
@@ -101,12 +100,23 @@ const assetUrlRegex =
 
 const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
 
+export const isBlobAssetUrl = (url: string) => blobUrlRegex.test(url);
+
 type MoveAssetRow = {
   metadata: FileMetadata | null;
   updatedAt: Date;
 };
 
-async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVersionId: number }) {
+export async function moveAssetFromBlob({
+  url,
+  modelVersionId,
+}: {
+  url: string;
+  modelVersionId: number;
+}) {
+  // blobUrlRegex matches a path, so it says nothing about which host answers. This URL is
+  // fetched and its body stored under our own bucket — see isTrustedOrchestratorUrl.
+  if (!isTrustedOrchestratorUrl(url)) throw throwBadRequestError('Invalid asset URL');
   console.log('[moveAssetFromBlob] Starting', { url, modelVersionId });
 
   const urlMatch = url.match(blobUrlRegex);
@@ -172,14 +182,14 @@ async function moveAssetFromBlob({ url, modelVersionId }: { url: string; modelVe
   };
 }
 
-async function moveAssetFromJob({
+export async function moveAssetFromJob({
   url,
   modelVersionId,
-  userId,
+  ownerId,
 }: {
   url: string;
   modelVersionId: number;
-  userId: number;
+  ownerId: number;
 }) {
   const urlMatch = url.match(assetUrlRegex);
   if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
@@ -193,7 +203,7 @@ async function moveAssetFromJob({
     destinationUri,
   };
 
-  const submittedAt = await getSubmittedAt(modelVersionId, userId);
+  const submittedAt = await getSubmittedAt(modelVersionId, ownerId);
   const response = await getOrchestratorCaller(submittedAt).copyAsset({
     payload: reqBody,
     queryParams: { wait: true },
@@ -230,23 +240,6 @@ async function moveAssetFromJob({
     fileSize: result.fileSize,
   };
 }
-
-export const moveAsset = async ({
-  url,
-  modelVersionId,
-  userId,
-}: MoveAssetInput & { userId: number }) => {
-  // Check if it's a blob URL (new format)
-  if (blobUrlRegex.test(url)) {
-    // blobUrlRegex matches a path, so it says nothing about which host answers. This URL is
-    // fetched and its body stored under our own bucket — see isTrustedOrchestratorUrl.
-    if (!isTrustedOrchestratorUrl(url)) throw throwBadRequestError('Invalid asset URL');
-    return moveAssetFromBlob({ url, modelVersionId });
-  }
-
-  // Otherwise, use the job asset flow (legacy format)
-  return moveAssetFromJob({ url, modelVersionId, userId });
-};
 
 export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
   const response = await getOrchestratorCaller(submittedAt).clearAssets({

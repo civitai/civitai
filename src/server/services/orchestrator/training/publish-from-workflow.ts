@@ -51,7 +51,7 @@ type TrainingStepInputLike = {
   samples?: { prompts?: string[] };
 };
 
-function getTrainingStep(workflow: Workflow) {
+export function getTrainingStep(workflow: Workflow) {
   const step = workflow.steps?.find((s) => (s as { $type?: string }).$type === 'training') as
     | TrainingStep
     | undefined;
