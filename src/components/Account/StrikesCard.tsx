@@ -6,6 +6,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { CreatorScoreExplainer } from './CreatorScoreExplainer';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
 // The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
@@ -129,7 +130,10 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
       <div id="strikes" ref={scrollToStrikes}>
         <SettingsSection title="Account standing">
           <div id="creator-score" ref={scrollToCreatorScore}>
-            <UserScoreDisplay scores={scores} flat abbreviate={false} />
+            <Stack gap="lg">
+              <UserScoreDisplay scores={scores} flat abbreviate={false} />
+              <CreatorScoreExplainer />
+            </Stack>
           </div>
           <SettingRow
             label="Strikes"
@@ -158,7 +162,10 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
         <Divider />
 
         <div id="creator-score" ref={scrollToCreatorScore}>
-          <UserScoreDisplay scores={scores} />
+          <Stack gap="lg">
+            <UserScoreDisplay scores={scores} />
+            <CreatorScoreExplainer />
+          </Stack>
         </div>
 
         <Divider />
