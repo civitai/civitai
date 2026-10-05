@@ -1,7 +1,13 @@
 # Civitai Development Guide
 
-Loaded into every session and every subagent — keep it to what applies to nearly every task.
-Everything else lives where it loads on demand (see "Where knowledge lives").
+Loaded into every session and every subagent and re-read every turn, so every line costs every task.
+Add here only a rule that applies to nearly every task, as one instruction line. Everything else goes
+where it loads on demand:
+- applies to some files only → a `.claude/rules/*.md` with `paths:` frontmatter
+- setup and how-to → `docs/dev/`; feature behaviour → `docs/features/`; a procedure → a skill
+- why a rule exists, incident history → the commit message or PR body
+
+`no-claude-md-bloat` caps this file at 150 lines; move content out rather than raising the cap.
 
 ## How to work with us
 - Plans are markdown documents in `docs/`. Our inline comments are marked `@dev:`; leave yours as `@ai:`.

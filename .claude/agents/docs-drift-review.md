@@ -61,6 +61,10 @@ Every one is cheap to catch mechanically and expensive to hit.
      a finding; give the row. The table is curated, not exhaustive — don't flag every unlisted doc.
    - Root `CLAUDE.md` → "Where knowledge lives" — every file in `.claude/rules/` and `docs/dev/` must be
      named there, and nothing it names may be gone.
+8. **Question every line added to a `CLAUDE.md`.** The root file loads in every session and subagent.
+   Lines that apply only to some files, explain setup, or record incident history are a finding: name
+   where they belong (a path-scoped `.claude/rules/` file, `docs/dev/`, `docs/features/`, a skill, or the
+   commit message) and give the one-line instruction, if any, that should stay.
 
 ## Concision
 
