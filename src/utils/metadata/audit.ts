@@ -61,7 +61,10 @@ export type PromptTriggerCategory =
   | 'nsfw_blocklist'
   | 'profanity'
   | 'harmful_combo'
-  | 'external';
+  | 'external'
+  // Input longer than MAX_AUDIT_PROMPT_LENGTH: refused unscanned. Hard — never add it to
+  // SOFT_BLOCK_CATEGORIES, or a click-through would skip the regex layer for long prompts.
+  | 'over_length';
 
 export interface PromptTrigger {
   category: PromptTriggerCategory;
@@ -129,6 +132,11 @@ export interface EnrichedAuditResult {
 // below): the bounds keep individual regexes linear, this keeps the whole
 // pipeline's input bounded.
 export const MAX_AUDIT_PROMPT_LENGTH = 20000;
+// User-facing: reaches the generation error toast as "Your prompt was flagged: <this>".
+// Names the limit so someone who pasted a long prompt knows what to fix.
+const OVER_LENGTH_MESSAGE = `Prompt exceeds the maximum allowed length (${MAX_AUDIT_PROMPT_LENGTH.toLocaleString(
+  'en-US'
+)} characters)`;
 const capAuditLength = <T extends string | undefined>(s: T): T =>
   typeof s === 'string' && s.length > MAX_AUDIT_PROMPT_LENGTH
     ? (s.slice(0, MAX_AUDIT_PROMPT_LENGTH) as T)
@@ -147,13 +155,19 @@ export const auditPromptEnriched = (
   // Block over-length input outright (#2727 M2). Truncating then scanning would let
   // a banned word buried past MAX_AUDIT_PROMPT_LENGTH evade the regex layer; a
   // prompt this long is anomalous so we refuse it rather than scan a truncated copy.
+  //
+  // 🔴 The refusal MUST carry a trigger. `auditPromptServer` raises a regex block only
+  // when `triggers.length > 0`; an empty trigger set there falls through to the
+  // external classifier ALONE — so a trigger-less refusal let over-length input
+  // skip the regex layer entirely. `over_length` is a hard
+  // category (not in SOFT_BLOCK_CATEGORIES), so it can never be clicked through.
   if (
     prompt.length > MAX_AUDIT_PROMPT_LENGTH ||
     (negativePrompt != null && negativePrompt.length > MAX_AUDIT_PROMPT_LENGTH)
   ) {
     return {
-      blockedFor: ['Prompt exceeds the maximum allowed length'],
-      triggers: [],
+      blockedFor: [OVER_LENGTH_MESSAGE],
+      triggers: [{ category: 'over_length', message: OVER_LENGTH_MESSAGE }],
       success: false,
     };
   }

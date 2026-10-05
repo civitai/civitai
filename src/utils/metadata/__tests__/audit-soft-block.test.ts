@@ -30,6 +30,7 @@ const EXPECTED: Record<PromptTriggerCategory, boolean> = {
   inappropriate_poi: false,
   harmful_combo: false,
   external: false,
+  over_length: false,
 };
 
 describe('isSoftBlock — the overridable boundary', () => {
