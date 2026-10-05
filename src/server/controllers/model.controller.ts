@@ -27,7 +27,10 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import { stampWorkflowPublished } from '~/server/services/orchestrator/training/publish-from-workflow';
+import {
+  assertWorkflowPublishable,
+  stampWorkflowPublished,
+} from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import {
   applyTrainingWorkflowOverlay,
@@ -827,7 +830,7 @@ export const publishModelHandler = async ({
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { status: true, meta: true, nsfw: true },
+      select: { status: true, meta: true, nsfw: true, userId: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status === ModelStatus.Published)
@@ -840,6 +843,15 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
+    // A model materialized from a training workflow publishes only if that run's training data
+    // is approved — checked again here, at the step that makes it public.
+    if (modelMeta?.trainingStudioWorkflowId)
+      await assertWorkflowPublishable({
+        ownerId: model.userId,
+        callerId: ctx.user.id,
+        workflowId: modelMeta.trainingStudioWorkflowId,
+      });
+
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });

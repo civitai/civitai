@@ -39,8 +39,10 @@ vi.mock('~/server/services/orchestrator/workflows', () => ({
 }));
 
 import type { Workflow } from '@civitai/client';
+import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import {
+  assertWorkflowPublishable,
   createDraftModelFromWorkflow,
   mapTrainingBaseModelToBaseModel,
   mapWorkflowToTrainingResultsV2,
@@ -72,6 +74,7 @@ function studioWorkflow(overrides: Partial<Record<string, unknown>> = {}): Workf
           samples: { prompts: ['a photo of mychar', 'mychar at the beach'] },
         },
         output: {
+          moderationStatus: 'approved',
           epochs: [
             { epochNumber: 1, model: { url: 'https://blobs/epoch-1', available: true } },
             { epochNumber: 2, model: { url: 'https://blobs/epoch-2', available: false } },
@@ -250,7 +253,13 @@ describe('createDraftModelFromWorkflow', () => {
   it('re-entry on an existing draft whose blobs expired resolves the ids with a null epoch instead of throwing', async () => {
     mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
     const wf = studioWorkflow({
-      steps: [{ $type: 'training', input: { ecosystem: 'sdxl' }, output: { epochs: [] } }],
+      steps: [
+        {
+          $type: 'training',
+          input: { ecosystem: 'sdxl' },
+          output: { moderationStatus: 'approved', epochs: [] },
+        },
+      ],
     });
     const result = await createDraftModelFromWorkflow({
       user: USER,
@@ -262,7 +271,13 @@ describe('createDraftModelFromWorkflow', () => {
 
   it('refuses a run with no downloadable checkpoint before any write', async () => {
     const wf = studioWorkflow({
-      steps: [{ $type: 'training', input: { ecosystem: 'sdxl' }, output: { epochs: [] } }],
+      steps: [
+        {
+          $type: 'training',
+          input: { ecosystem: 'sdxl' },
+          output: { moderationStatus: 'approved', epochs: [] },
+        },
+      ],
     });
     await expect(
       createDraftModelFromWorkflow({ user: USER, workflow: wf, selectedEpochNumber: 1 })
@@ -316,6 +331,137 @@ describe('createDraftModelFromWorkflow', () => {
       selectedEpochNumber: 99,
     });
     expect(mockCreateFile.mock.calls[0][0].metadata.selectedEpochUrl).toBe('https://blobs/epoch-3');
+  });
+});
+
+/** A finished studio run whose training step reports `moderationStatus` (or none, when undefined). */
+function runWithModeration(moderationStatus: string | undefined, stepType = 'training'): Workflow {
+  const [, info] = Object.entries(trainingModelInfo).find(([, i]) => i.air)!;
+  const output =
+    stepType === 'training'
+      ? {
+          epochs: [{ epochNumber: 1, model: { url: 'https://blobs/epoch-1', available: true } }],
+        }
+      : { sampleImagesPrompts: [], epochs: [{ epochNumber: 1, blobUrl: 'https://blobs/l-1' }] };
+  return studioWorkflow({
+    steps: [
+      {
+        $type: stepType,
+        input: { model: info.air, ecosystem: 'sdxl' },
+        output: moderationStatus === undefined ? output : { ...output, moderationStatus },
+      },
+    ],
+  });
+}
+
+const NOT_APPROVED = /dataset has not been approved/;
+const REFUSED_STATUSES = ['evaluating', 'underReview', 'rejected'];
+
+describe('training moderation gate — createDraftModelFromWorkflow', () => {
+  it.each(['training', 'imageResourceTraining'])(
+    'materializes an approved %s run',
+    async (stepType) => {
+      const result = await createDraftModelFromWorkflow({
+        user: USER,
+        workflow: runWithModeration('approved', stepType),
+        selectedEpochNumber: 1,
+      });
+      expect(result.modelId).toBe(100);
+      expect(mockCreateFile).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  describe.each(['training', 'imageResourceTraining'])('%s step', (stepType) => {
+    it.each(REFUSED_STATUSES)(
+      'refuses a run whose moderation status is %s, before any read or write',
+      async (status) => {
+        await expect(
+          createDraftModelFromWorkflow({
+            user: USER,
+            workflow: runWithModeration(status, stepType),
+            selectedEpochNumber: 1,
+          })
+        ).rejects.toThrow(NOT_APPROVED);
+        expect(mockFindFirst).not.toHaveBeenCalled();
+        expect(mockUpsertModel).not.toHaveBeenCalled();
+        expect(mockUpsertModelVersion).not.toHaveBeenCalled();
+        expect(mockCreateFile).not.toHaveBeenCalled();
+      }
+    );
+
+    it('refuses a run that reports no moderation status', async () => {
+      await expect(
+        createDraftModelFromWorkflow({
+          user: USER,
+          workflow: runWithModeration(undefined, stepType),
+          selectedEpochNumber: 1,
+        })
+      ).rejects.toThrow(NOT_APPROVED);
+      expect(mockUpsertModel).not.toHaveBeenCalled();
+      expect(mockCreateFile).not.toHaveBeenCalled();
+    });
+  });
+
+  it('refuses a run with no output at all', async () => {
+    const wf = studioWorkflow({ steps: [{ $type: 'training', input: { ecosystem: 'sdxl' } }] });
+    await expect(
+      createDraftModelFromWorkflow({ user: USER, workflow: wf, selectedEpochNumber: 1 })
+    ).rejects.toThrow(NOT_APPROVED);
+  });
+
+  it.each(REFUSED_STATUSES)(
+    're-entry on an already-materialized draft is refused too when the status is %s',
+    async (status) => {
+      mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });
+      await expect(
+        createDraftModelFromWorkflow({
+          user: USER,
+          workflow: runWithModeration(status),
+          selectedEpochNumber: 1,
+        })
+      ).rejects.toThrow(NOT_APPROVED);
+    }
+  );
+});
+
+describe('training moderation gate — assertWorkflowPublishable', () => {
+  const args = { ownerId: 5, callerId: 5, workflowId: 'wf-studio-1' };
+
+  beforeEach(() => {
+    mockGetToken.mockResolvedValue('owner-token');
+  });
+
+  it('allows an approved run, reading it with the owner token', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
+    await expect(assertWorkflowPublishable(args)).resolves.toBeUndefined();
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetWorkflow).toHaveBeenCalledWith({
+      token: 'owner-token',
+      path: { workflowId: 'wf-studio-1' },
+    });
+  });
+
+  it('mints the owner token with the cache bypass when a moderator publishes', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
+    await assertWorkflowPublishable({ ...args, callerId: 999 });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+  });
+
+  it.each([...REFUSED_STATUSES, undefined])('refuses a run whose status is %s', async (status) => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration(status));
+    await expect(assertWorkflowPublishable(args)).rejects.toThrow(NOT_APPROVED);
+  });
+
+  it('lets a run the orchestrator no longer returns through (past retention)', async () => {
+    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+    await expect(assertWorkflowPublishable(args)).resolves.toBeUndefined();
+  });
+
+  it('rethrows any other read failure instead of publishing unchecked', async () => {
+    mockGetWorkflow.mockRejectedValue(
+      new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'orchestrator down' })
+    );
+    await expect(assertWorkflowPublishable(args)).rejects.toThrow('orchestrator down');
   });
 });
 

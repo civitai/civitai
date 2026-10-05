@@ -1,10 +1,13 @@
 import type {
   ImageResourceTrainingOutput,
+  ImageResouceTrainingModerationStatus,
   ImageResourceTrainingStep,
+  TrainingModerationStatus,
   TrainingOutput,
   TrainingStep,
   Workflow,
 } from '@civitai/client';
+import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { upsertModel } from '~/server/services/model.service';
@@ -66,6 +69,27 @@ function getTrainingStep(workflow: Workflow) {
   if (stepType !== 'training' && stepType !== 'imageResourceTraining')
     throw throwBadRequestError(`Unsupported training step type: ${stepType ?? 'unknown'}`);
   return { step: first, stepType };
+}
+
+// A typed literal rather than the client's runtime enum object: `@civitai/client` is mocked in the
+// unit test setup, so a value import from it is undefined there.
+const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerationStatus &
+  ImageResouceTrainingModerationStatus;
+
+const TRAINING_NOT_APPROVED_MESSAGE =
+  "This training run's dataset has not been approved, so a model can't be created or published from it.";
+
+/**
+ * Throws unless the run's training step reports an `approved` training-data moderation status. Both
+ * step types carry the same four values (`evaluating`, `underReview`, `approved`, `rejected`), so the
+ * comparison is against the one approved value: every other status, and a step with no status at all,
+ * is refused. The one check for every path that turns a training workflow into a model.
+ */
+export function assertTrainingModerationApproved(workflow: Workflow): void {
+  const { step } = getTrainingStep(workflow);
+  const output = step.output as TrainingOutput | ImageResourceTrainingOutput | null | undefined;
+  if (output?.moderationStatus !== APPROVED_TRAINING_MODERATION_STATUS)
+    throw throwBadRequestError(TRAINING_NOT_APPROVED_MESSAGE);
 }
 
 /**
@@ -184,6 +208,8 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
  * Idempotent per workflow: the first call stamps `meta.trainingStudioWorkflowId`, and later calls for the
  * same workflow return the existing ids instead of creating a duplicate. `selectedEpoch` is null only on
  * that path — once the blobs expire the draft still resolves, but there is nothing left to finalize.
+ *
+ * Refuses (BAD_REQUEST) unless the run's training data is approved — on first entry and on re-entry.
  */
 export async function createDraftModelFromWorkflow({
   user,
@@ -201,6 +227,8 @@ export async function createDraftModelFromWorkflow({
   selectedEpoch: TrainingResultsV2['epochs'][number] | null;
 }> {
   if (!workflow.id) throw throwBadRequestError('Workflow is missing an id');
+  // Ahead of the idempotency lookup, so re-entry on an existing draft is refused too.
+  assertTrainingModerationApproved(workflow);
 
   const trainingResults = mapWorkflowToTrainingResultsV2(workflow);
   const selectedEpoch =
@@ -359,6 +387,38 @@ export async function stampWorkflowDraftModel({
       error
     );
   }
+}
+
+/**
+ * The publish-time half of `assertTrainingModerationApproved`, for a model whose meta names its source
+ * workflow. Reads the workflow with the model OWNER's token (a moderator can publish someone else's
+ * model), like `stampWorkflowPublished`, and throws when the run's training data is not approved.
+ *
+ * A workflow past the orchestrator's retention window reads as NOT_FOUND and cannot be checked here; it
+ * is let through, since refusing would strand every older draft. Drafts are also checked when
+ * `createDraftModelFromWorkflow` materializes them. Any other read failure is rethrown, so the publish
+ * fails and can be retried rather than going ahead unchecked.
+ */
+export async function assertWorkflowPublishable({
+  ownerId,
+  callerId,
+  workflowId,
+}: {
+  ownerId: number;
+  callerId: number;
+  workflowId: string;
+}): Promise<void> {
+  const token = await getOrchestratorToken(ownerId, undefined, {
+    bypassCache: callerId !== ownerId,
+  });
+  let workflow: Workflow;
+  try {
+    workflow = await getWorkflow({ token, path: { workflowId } });
+  } catch (error) {
+    if (error instanceof TRPCError && error.code === 'NOT_FOUND') return;
+    throw error;
+  }
+  assertTrainingModerationApproved(workflow);
 }
 
 /**
