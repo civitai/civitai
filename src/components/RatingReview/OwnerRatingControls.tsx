@@ -36,19 +36,34 @@ export function OwnerRatingControls({
   const { currentLevel, scanReason, staleOverride } = data;
   const state = ownerRatingButtonState(data.review, data.canResubmit);
   const open = (initialSuggestedLevel?: number) =>
-    openRatingReviewModal({ entityType, entityId, currentLevel, scanReason, initialSuggestedLevel });
+    openRatingReviewModal({
+      entityType,
+      entityId,
+      currentLevel,
+      scanReason,
+      initialSuggestedLevel,
+    });
 
   // A text-only article can derive 0, which has no label and is not a valid suggestion. A bitmask
   // (Post, Bounty, BountyEntry) is offered as its highest level, the one the owner can pick.
   const staleLevel =
-    staleOverride?.derivedRatingDroppedBelowOverride && state.kind === 'open' && (staleOverride.derivedLevel ?? 0) >= 1
+    staleOverride?.derivedRatingDroppedBelowOverride &&
+    state.kind === 'open' &&
+    (staleOverride.derivedLevel ?? 0) >= 1
       ? getHighestBrowsingLevelBit(staleOverride.derivedLevel ?? 0)
       : null;
 
   let button: ReactNode;
   if (state.kind === 'pending') {
     button = (
-      <Tooltip label={<span>Submitted <DaysFromNow date={new Date(state.createdAt)} /></span>} withArrow>
+      <Tooltip
+        label={
+          <span>
+            Submitted <DaysFromNow date={new Date(state.createdAt)} />
+          </span>
+        }
+        withArrow
+      >
         <Button variant="default" size="xs" disabled>
           Dispute pending
         </Button>
@@ -82,7 +97,8 @@ export function OwnerRatingControls({
         <AlertWithIcon icon={<IconAlertCircle size={20} />} color="yellow" iconColor="yellow">
           <Stack gap="xs">
             <Text size="sm">
-              Your recent edits brought this {ratingReviewEntityLabels[entityType].toLowerCase()}&apos;s content down to{' '}
+              Your recent edits brought this {ratingReviewEntityLabels[entityType].toLowerCase()}
+              &apos;s content down to{' '}
               <Text component="span" fw={600}>
                 {ratingReviewLevelLabel(entityType, staleLevel)}
               </Text>

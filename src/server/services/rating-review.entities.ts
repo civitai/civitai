@@ -29,7 +29,10 @@ type Db = typeof dbRead | typeof dbWrite;
 type Loader = (id: number, db: Db) => Promise<RatingReviewSubject | null>;
 
 const overrideSelect = { moderatorNsfwLevel: true, moderatorNsfwLevelBasis: true } as const;
-const overridePair = (r: { moderatorNsfwLevel: number | null; moderatorNsfwLevelBasis: number | null }) => ({
+const overridePair = (r: {
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
+}) => ({
   override: r.moderatorNsfwLevel,
   overrideBasis: r.moderatorNsfwLevelBasis,
 });
@@ -127,7 +130,14 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
   Challenge: async (id, db) => {
     const c = await db.challenge.findUnique({
       where: { id },
-      select: { createdById: true, source: true, nsfwLevel: true, updatedAt: true, title: true, ...overrideSelect },
+      select: {
+        createdById: true,
+        source: true,
+        nsfwLevel: true,
+        updatedAt: true,
+        title: true,
+        ...overrideSelect,
+      },
     });
     return (
       c && {

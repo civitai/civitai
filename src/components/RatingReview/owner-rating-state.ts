@@ -8,7 +8,12 @@ type ReviewLike = {
 export type OwnerRatingButtonState =
   | { kind: 'open' }
   | { kind: 'pending'; createdAt: Date | string }
-  | { kind: 'resolved'; label: string; resolvedAt: Date | string | null; modComment: string | null };
+  | {
+      kind: 'resolved';
+      label: string;
+      resolvedAt: Date | string | null;
+      modComment: string | null;
+    };
 
 export function ownerRatingButtonState(
   review: ReviewLike | null | undefined,

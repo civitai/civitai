@@ -7,7 +7,7 @@ export default defineModeratorEndpoint('bounty.repayAward', {
   returns: '{ bountyId, winnerUserId, amount }',
   notes: [
     'Use for awards listed by the `bounty-award` "Award committed but the Buzz payout failed" error.',
-    'Idempotent: the payout reuses the award\'s externalTransactionId, so an award that was paid is not paid twice.',
+    "Idempotent: the payout reuses the award's externalTransactionId, so an award that was paid is not paid twice.",
     'Refuses legacy awards without transaction ids.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },

@@ -307,9 +307,7 @@ describe('createRatingReview', () => {
     await file({ entityType: 'Bounty', suggestedLevel: 4 });
 
     const clear = dbMock.dbWrite.$executeRaw.mock.calls[0][0] as Prisma.Sql;
-    expect(clear.sql).toMatch(
-      /UPDATE "Bounty" SET .*"nsfw" = \?,\s+"lockedProperties" = ARRAY\(/s
-    );
+    expect(clear.sql).toMatch(/UPDATE "Bounty" SET .*"nsfw" = \?,\s+"lockedProperties" = ARRAY\(/s);
     expect(clear.sql).toMatch(/ARRAY\['nsfw'\]::text\[\]/);
     expect(clear.values).toContain(true);
   });

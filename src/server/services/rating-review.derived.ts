@@ -2,13 +2,17 @@ import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit, NsfwLevel } from '@c
 import { overrideBasisDropped } from '@civitai/shared/rated-entity-sql';
 import { dbRead } from '~/server/db/client';
 import { computeArticleDerivedNsfwLevel } from '~/server/services/article-rating-review.helpers';
-import type { RatingReviewScan, RatingReviewSubject } from '~/server/services/rating-review.entities';
+import type {
+  RatingReviewScan,
+  RatingReviewSubject,
+} from '~/server/services/rating-review.entities';
 import { computeRatedEntityDerivedNsfwLevel } from '~/server/services/text-scan/derived-level';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
 export type OverrideEntityType = 'Post' | 'Bounty' | 'BountyEntry' | 'Challenge';
 const OVERRIDE_ENTITY_TYPES = new Set<string>(['Post', 'Bounty', 'BountyEntry', 'Challenge']);
-export const isOverrideEntityType = (t: string): t is OverrideEntityType => OVERRIDE_ENTITY_TYPES.has(t);
+export const isOverrideEntityType = (t: string): t is OverrideEntityType =>
+  OVERRIDE_ENTITY_TYPES.has(t);
 
 const UNSETTLED_IMAGE = [
   ImageIngestionStatus.Pending,
@@ -28,7 +32,10 @@ export function computeDerivedNsfwLevel(
     : computeRatedEntityDerivedNsfwLevel(entityType, entityId);
 }
 
-export type StaleOverrideSignal = { derivedLevel: number | null; derivedRatingDroppedBelowOverride: boolean };
+export type StaleOverrideSignal = {
+  derivedLevel: number | null;
+  derivedRatingDroppedBelowOverride: boolean;
+};
 
 export async function getStaleOverrideSignal(
   entityType: OverrideEntityType | 'Article',
@@ -58,7 +65,9 @@ async function hasUnsettledImages(entityType: OverrideEntityType, entityId: numb
   if (entityType === 'Challenge') return false;
   const count =
     entityType === 'Post'
-      ? await dbRead.image.count({ where: { postId: entityId, ingestion: { in: UNSETTLED_IMAGE } } })
+      ? await dbRead.image.count({
+          where: { postId: entityId, ingestion: { in: UNSETTLED_IMAGE } },
+        })
       : await dbRead.imageConnection.count({
           where: { entityType, entityId, image: { ingestion: { in: UNSETTLED_IMAGE } } },
         });

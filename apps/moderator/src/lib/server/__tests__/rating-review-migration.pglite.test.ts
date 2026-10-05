@@ -10,7 +10,12 @@ import {
   seedUser,
 } from './rating-review-pglite.harness';
 
-type Copied = { entityId: number; status: string; appliedLevel: number | null; modComment: string | null };
+type Copied = {
+  entityId: number;
+  status: string;
+  appliedLevel: number | null;
+  modComment: string | null;
+};
 
 const copied = (db: PGlite) =>
   rows<Copied>(
@@ -37,7 +42,13 @@ describe('20260928000000_rating_review', () => {
   it('copies every ArticleRatingReview once, and a re-run adds nothing', async () => {
     const a1 = await seedArticle(db, { userId: owner });
     const a2 = await seedArticle(db, { userId: owner });
-    await seedArticleReview(db, { articleId: a1, userId: owner, status: 'Actioned', appliedLevel: 2, resolvedBy: mod });
+    await seedArticleReview(db, {
+      articleId: a1,
+      userId: owner,
+      status: 'Actioned',
+      appliedLevel: 2,
+      resolvedBy: mod,
+    });
     await seedArticleReview(db, { articleId: a2, userId: owner });
 
     await applyRatingReviewMigration(db);
@@ -102,7 +113,11 @@ describe('20260928000000_rating_review', () => {
        VALUES ('Article', $1, $2, 4, 1, '2026-09-05T00:00:00.000Z')`,
       [a1, owner]
     );
-    const oldId = await seedArticleReview(db, { articleId: a1, userId: owner, createdAt: '2026-09-04T00:00:00.000Z' });
+    const oldId = await seedArticleReview(db, {
+      articleId: a1,
+      userId: owner,
+      createdAt: '2026-09-04T00:00:00.000Z',
+    });
 
     await expect(applyRatingReviewMigration(db)).resolves.toBeUndefined();
 

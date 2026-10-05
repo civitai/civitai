@@ -213,8 +213,8 @@ describe('resolveFlagScanReasons', () => {
         poi: { workflowId: 'w1', reason: 'r', appealGranted: { at: '2026-10-01', by: 4 } },
       },
     };
-    expect(resolveFlagScanReasons({ isOwner: true, poi: true, minor: false, meta: granted })).toEqual(
-      []
-    );
+    expect(
+      resolveFlagScanReasons({ isOwner: true, poi: true, minor: false, meta: granted })
+    ).toEqual([]);
   });
 });

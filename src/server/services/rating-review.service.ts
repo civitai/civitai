@@ -454,8 +454,7 @@ export async function getRatingReviewForOwner({
   return {
     review: latest ? (review as Omit<NonNullable<typeof latest>, 'resolvedTextHash'>) : null,
     canResubmit,
-    canDispute:
-      !subject.flagRestricted && (entityType === 'Article' || !!scan?.raised || !!latest),
+    canDispute: !subject.flagRestricted && (entityType === 'Article' || !!scan?.raised || !!latest),
     currentLevel: subject.currentLevel,
     scanReason: scan?.reason ?? null,
     scanLevel: scan?.level ?? null,

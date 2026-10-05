@@ -166,7 +166,13 @@ async function clearStaleVerdict({
   const emEntityType = textScanEmEntityType(entityType, mode);
   const existing = await dbWrite.entityModeration.findUnique({
     where: { entityType_entityId: { entityType: emEntityType, entityId } },
-    select: { workflowId: true, status: true, nsfwLevel: true, triggeredLabels: true, result: true },
+    select: {
+      workflowId: true,
+      status: true,
+      nsfwLevel: true,
+      triggeredLabels: true,
+      result: true,
+    },
   });
   if (!existing?.workflowId || existing.status !== 'Succeeded') return;
   if ((existing.result as { version?: number } | null)?.version === undefined) return;

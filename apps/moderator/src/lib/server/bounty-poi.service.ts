@@ -24,7 +24,13 @@ export type BountyPoiAppealRow = {
   textScanPoi: BountyPoiVerdict | null;
 };
 
-export async function getBountyPoiAppeals({ limit, offset = 0 }: { limit: number; offset?: number }) {
+export async function getBountyPoiAppeals({
+  limit,
+  offset = 0,
+}: {
+  limit: number;
+  offset?: number;
+}) {
   const rows = await sql<BountyPoiAppealRow>`
     SELECT a.id AS "appealId", a."appealMessage", a."createdAt" AS "appealCreatedAt",
            b.id AS "bountyId", b.name AS "bountyName", b."userId", u.username,
