@@ -176,6 +176,47 @@ describe('a non-object stored User.settings', () => {
     });
   });
 
+  /**
+   * The base is shared by EVERY op, not just `set`. A remove-only patch is reachable in
+   * production — `setUserSetting({ k: undefined })` compiles to `remove` with no `set` —
+   * and without the guard `jsonb - text[]` raises on a scalar and silently leaves an array
+   * an array. A guard applied only when `set` is present would pass every case above.
+   */
+  describe('patchUserSettings without a `set`', () => {
+    it.each(MALFORMED)('a remove-only patch leaves {} for %s', async (_l, bad) => {
+      await seedUser(holder.db, USER_ID, bad);
+
+      const returned = await patchUserSettings(USER_ID, { remove: ['allowAds'] });
+      const stored = await readSettings(holder.db, USER_ID);
+
+      for (const settings of [returned as unknown, stored as unknown]) {
+        expect(isPlainObject(settings)).toBe(true);
+        expect(settings).toEqual({});
+      }
+    });
+
+    it.each(MALFORMED)('a mergeInto-only patch leaves an object for %s', async (_l, bad) => {
+      await seedUser(holder.db, USER_ID, bad);
+
+      const returned = await patchUserSettings(USER_ID, {
+        mergeInto: { chat: { muteSounds: true } },
+      });
+
+      expect(returned).toEqual({ chat: { muteSounds: true } });
+      expect(await readSettings(holder.db, USER_ID)).toEqual({ chat: { muteSounds: true } });
+    });
+
+    it.each(MALFORMED)('a deepMergeInto-only patch leaves an object for %s', async (_l, bad) => {
+      await seedUser(holder.db, USER_ID, bad);
+
+      const returned = await patchUserSettings(USER_ID, {
+        deepMergeInto: { tourSettings: { welcome: { currentStep: 1 } } },
+      });
+
+      expect(returned).toEqual({ tourSettings: { welcome: { currentStep: 1 } } });
+    });
+  });
+
   describe('patchUserSettings with nothing to write', () => {
     it.each(MALFORMED)('returns {} for %s rather than the malformed value', async (_l, bad) => {
       await seedUser(holder.db, USER_ID, bad);

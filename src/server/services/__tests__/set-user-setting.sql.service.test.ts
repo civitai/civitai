@@ -301,7 +301,7 @@ describe('patchUserSettings — the nested merge', () => {
     // assertion pins the STATEMENT SHAPE, so both halves are named here: the read of
     // the live column (atomicity) and the guard around it (shape).
     expect(write.text).toMatch(
-      /CASE WHEN jsonb_typeof\(settings->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text *ELSE *'\{\}'::jsonb *END *\|\| *\$\d+::jsonb/
+      /CASE WHEN jsonb_typeof\(settings->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text *ELSE *'\{\}'::jsonb *END\)? *\|\| *\$\d+::jsonb/
     );
     expect(write.values).toContainEqual('features');
     expect(write.values).toContainEqual(JSON.stringify({ someFlag: true }));
@@ -335,7 +335,7 @@ describe('patchUserSettings — the deep nested merge', () => {
     // SQL-construction path that reads and guards one level further — the sub-key
     // itself — so a sibling sub-key another writer just added to the same tour survives.
     expect(write.text).toMatch(
-      /CASE WHEN jsonb_typeof\(settings->\$\d+::text->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text->\$\d+::text *ELSE *'\{\}'::jsonb *END *\|\| *\$\d+::jsonb/
+      /CASE WHEN jsonb_typeof\(settings->\$\d+::text->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text->\$\d+::text *ELSE *'\{\}'::jsonb *END\)? *\|\| *\$\d+::jsonb/
     );
     expect(write.values).toContainEqual('tourSettings');
     expect(write.values).toContainEqual('welcome');

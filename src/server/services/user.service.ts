@@ -3241,8 +3241,14 @@ type RawClient = Pick<typeof dbWrite, '$queryRawUnsafe'>;
  * scalar` on a scalar), so the write fails outright for that user. Treating a non-object as
  * `{}` makes the next write repair the row — the same self-healing property the nested-key
  * guards in `patchUserSettings` restore one level down.
+ *
+ * The top level and every nested key share one builder, `asJsonbObject`, so a change to
+ * the guard cannot reach one level and miss the other.
  */
-const SETTINGS_AS_OBJECT = `(CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END)`;
+function asJsonbObject(expr: string) {
+  return `(CASE WHEN jsonb_typeof(${expr}) = 'object' THEN ${expr} ELSE '{}'::jsonb END)`;
+}
+const SETTINGS_AS_OBJECT = asJsonbObject('settings');
 
 export async function patchUserSettings(
   userId: number,
@@ -3316,8 +3322,7 @@ export async function patchUserSettings(
     const k = bind(key);
     expr =
       `(${expr} || jsonb_build_object(${k}::text, ` +
-      `CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
-      `THEN settings->${k}::text ELSE '{}'::jsonb END ` +
+      `${asJsonbObject(`settings->${k}::text`)} ` +
       `|| ${bind(JSON.stringify(value))}::jsonb))`;
   }
   for (const [key, subEntries] of deepMergeInto) {
@@ -3326,15 +3331,12 @@ export async function patchUserSettings(
     // malformed `tourSettings.welcome` doesn't either). Both reads are of the STORED
     // column, same reasoning as the `set`/`mergeInto` non-composition note above.
     const k = bind(key);
-    let sub =
-      `(CASE WHEN jsonb_typeof(settings->${k}::text) = 'object' ` +
-      `THEN settings->${k}::text ELSE '{}'::jsonb END)`;
+    let sub = asJsonbObject(`settings->${k}::text`);
     for (const [subKey, value] of subEntries) {
       const sk = bind(subKey);
       sub =
         `(${sub} || jsonb_build_object(${sk}::text, ` +
-        `CASE WHEN jsonb_typeof(settings->${k}::text->${sk}::text) = 'object' ` +
-        `THEN settings->${k}::text->${sk}::text ELSE '{}'::jsonb END ` +
+        `${asJsonbObject(`settings->${k}::text->${sk}::text`)} ` +
         `|| ${bind(JSON.stringify(value))}::jsonb))`;
     }
     expr = `(${expr} || jsonb_build_object(${k}::text, ${sub}))`;
