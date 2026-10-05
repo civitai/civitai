@@ -13,9 +13,9 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  });
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Task 19: hardens the LLM-winner -> judged-entry mapping in pickWinnersForChallenge against
 // creator-name spoofing. generateWinners (a TEXT-only LLM call) returns
@@ -47,7 +47,6 @@ const {
   mockCreateNotification,
   mockCreateChallengeWinner,
   mockGetChallengeById,
-  
 } = vi.hoisted(() => ({
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
@@ -62,7 +61,6 @@ const {
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
-  
 }));
 
 vi.mock('~/server/events', () => ({
@@ -138,7 +136,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: vi.fn().mockResolvedValue('user'),
   reportPoolFundingShortfall: vi.fn(),
 }));

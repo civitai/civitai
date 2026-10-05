@@ -26,7 +26,11 @@ import classes from './ModelVersionList.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
+import {
+  isAdditionalResourceFeeWaived,
+  isEvictable,
+  isGenerationDisabled,
+} from '~/shared/constants/model-version-flags.constants';
 import { LoadedMark } from '~/components/ResourceLoad/ResourceResidency';
 import { generatorReadiness } from '~/shared/generation/generator-readiness';
 
@@ -245,6 +249,8 @@ export function ModelVersionList({
                 published={published}
                 canGenerate={version.canGenerate}
                 generationDisabled={isGenerationDisabled(version.flags ?? 0)}
+                evictable={isEvictable(version.flags ?? 0)}
+                additionalResourceFeeWaived={isAdditionalResourceFeeWaived(version.flags ?? 0)}
                 showToggleCoverage={showToggleCoverage}
               />
             </Button.Group>

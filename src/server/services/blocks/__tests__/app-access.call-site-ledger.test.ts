@@ -96,6 +96,34 @@ const GATE_LEDGER: Record<string, string> = {
     'invitee does not. NO mod bypass — preserved exactly as it was (D1). getMyApps is ' +
     'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
+  'src/server/services/blocks/app-listing-visibility-write.service.ts':
+    'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
+    'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
+    'through dbWrite so a seat accepted moments ago is visible. NO mod bypass, ' +
+    'deliberately — and the moderator half is a SEPARATE proc rather than a bypass here. ' +
+    'setListingVisibilityAsModerator now EXISTS (added with the owner-facing UI): ' +
+    'moderatorProcedure at the router, a REQUIRED audited reason, and a `set-visibility` ' +
+    'moderation event written inside the SAME interactive transaction as the level write. ' +
+    '🔴 THE TRANSACTION IS THE SUPPORT, NOT THE ORDERING. An earlier wording here derived ' +
+    'the invariant from the event being written AFTER the level lands — which is exactly ' +
+    'the two-round-trip shape that SHIPPED and produced a committed level change with no ' +
+    'audit row. Ordering is what failed; atomicity is what fixes it. So a moderator cannot ' +
+    "change a stranger's discoverability without a row the OWNER can read in their own " +
+    'listing history — and if the `$transaction` is ever removed, THIS invariant is gone ' +
+    'with it, whatever the ordering. The earlier ledger entry asserted this proc while it did NOT exist ' +
+    '(it had been deferred), which is worse in a ledger than in prose because a ledger is ' +
+    'the authoritative in-tree record — so note that the claim is now TRUE and was ' +
+    'verified against the router and the service, not inferred from this sentence. ' +
+    'Admitting a moderator to the OWNER path would still be an unaudited write, which is ' +
+    'why that path is unchanged and has no mod bypass. D1 and the review ceiling bind for ' +
+    'moderators too (applyVisibility enforces both for every caller), so a mod cannot ' +
+    'make a draft public — they approve it instead. A missing row ' +
+    'and a caller ' +
+    'with no role produce the SAME refusal, so the proc is not an existence oracle over ' +
+    'listing ids. The resolver is NOT status-aware (its own header says so), so D1 ' +
+    '("levels apply to non-suspended listings only") is enforced separately in ' +
+    'applyVisibility against VISIBILITY_ELIGIBLE_LISTING_STATUSES plus the backing ' +
+    "block's own suspension, and re-asserted in the CAS write's WHERE clause.",
   'src/server/services/blocks/app-listing-assets.service.ts':
     'loadOwnedListing is THE gate: owner | ACCEPTED collaborator | moderator, with BOTH ' +
     'the owner half and the seat half resolved by resolveListingAccess — never the ' +

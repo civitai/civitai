@@ -1,14 +1,21 @@
 import { vi, describe, it, expect, beforeEach } from 'vitest';
-import { applyTagRules } from '../tagsOnImageNew.service';
+import {
+  applyTagRules,
+  insertTagsOnImageNew,
+  upsertTagsOnImageNew,
+} from '../tagsOnImageNew.service';
 import * as systemCache from '../system-cache';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { refreshThumbnailCache } from '~/server/redis/caches';
 
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, 
+vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: {},
+  pgDbReadLong: {},
   pgDbWrite: { query: vi.fn() },
 }));
 vi.mock('~/server/redis/caches', () => ({
   tagIdsForImagesCache: { bust: vi.fn() },
-  thumbnailCache: { refresh: vi.fn() },
+  refreshThumbnailCache: vi.fn(),
   imageTagsCache: { bust: vi.fn() },
 }));
 vi.mock('~/server/services/image.service', () => ({
@@ -33,13 +40,25 @@ describe('tagsOnImageNew.service', () => {
       // tag 3 -> appends tag 4
       vi.mocked(systemCache.getTagRules).mockResolvedValue([
         { toId: 1, fromId: 2, type: 'Append', fromTag: 'two', toTag: 'one', createdAt: new Date() },
-        { toId: 2, fromId: 3, type: 'Append', fromTag: 'three', toTag: 'two', createdAt: new Date() },
-        { toId: 3, fromId: 4, type: 'Append', fromTag: 'four', toTag: 'three', createdAt: new Date() },
+        {
+          toId: 2,
+          fromId: 3,
+          type: 'Append',
+          fromTag: 'three',
+          toTag: 'two',
+          createdAt: new Date(),
+        },
+        {
+          toId: 3,
+          fromId: 4,
+          type: 'Append',
+          fromTag: 'four',
+          toTag: 'three',
+          createdAt: new Date(),
+        },
       ]);
 
-      const initialArgs = [
-        { imageId: 10, tagId: 1, confidence: 100, source: 'User' },
-      ] as any[];
+      const initialArgs = [{ imageId: 10, tagId: 1, confidence: 100, source: 'User' }] as any[];
 
       const result = await applyTagRules(initialArgs);
 
@@ -50,20 +69,25 @@ describe('tagsOnImageNew.service', () => {
       expect(result).toHaveLength(4);
       const tagIds = result.map((r) => r.tagId).sort();
       expect(tagIds).toEqual([1, 2, 3, 4]);
-      
-      const tag4 = result.find(r => r.tagId === 4);
+
+      const tag4 = result.find((r) => r.tagId === 4);
       expect(tag4?.confidence).toBe(70);
       expect(tag4?.source).toBe('Computed');
     });
 
     it('should correctly handle Replace rules', async () => {
       vi.mocked(systemCache.getTagRules).mockResolvedValue([
-        { toId: 5, fromId: 6, type: 'Replace', fromTag: 'six', toTag: 'five', createdAt: new Date() },
+        {
+          toId: 5,
+          fromId: 6,
+          type: 'Replace',
+          fromTag: 'six',
+          toTag: 'five',
+          createdAt: new Date(),
+        },
       ]);
 
-      const initialArgs = [
-        { imageId: 20, tagId: 5, confidence: 90, source: 'WD14' },
-      ] as any[];
+      const initialArgs = [{ imageId: 20, tagId: 5, confidence: 90, source: 'WD14' }] as any[];
 
       const result = await applyTagRules(initialArgs);
 
@@ -76,8 +100,22 @@ describe('tagsOnImageNew.service', () => {
     it('should not duplicate tags when multiple incoming tags map to the same Append rule', async () => {
       // Multiple starting tags matching the same rule
       vi.mocked(systemCache.getTagRules).mockResolvedValue([
-        { toId: 7, fromId: 9, type: 'Append', fromTag: 'nine', toTag: 'seven', createdAt: new Date() },
-        { toId: 8, fromId: 9, type: 'Append', fromTag: 'nine', toTag: 'eight', createdAt: new Date() },
+        {
+          toId: 7,
+          fromId: 9,
+          type: 'Append',
+          fromTag: 'nine',
+          toTag: 'seven',
+          createdAt: new Date(),
+        },
+        {
+          toId: 8,
+          fromId: 9,
+          type: 'Append',
+          fromTag: 'nine',
+          toTag: 'eight',
+          createdAt: new Date(),
+        },
       ]);
 
       const initialArgs = [
@@ -98,7 +136,14 @@ describe('tagsOnImageNew.service', () => {
       // exists as a genuine high-confidence User tag. First-wins must preserve it
       // rather than downgrading it to { confidence: 70, source: 'Computed' }.
       vi.mocked(systemCache.getTagRules).mockResolvedValue([
-        { toId: 12, fromId: 11, type: 'Append', fromTag: 'eleven', toTag: 'twelve', createdAt: new Date() },
+        {
+          toId: 12,
+          fromId: 11,
+          type: 'Append',
+          fromTag: 'eleven',
+          toTag: 'twelve',
+          createdAt: new Date(),
+        },
       ]);
 
       const initialArgs = [
@@ -113,5 +158,94 @@ describe('tagsOnImageNew.service', () => {
       expect(tag11?.confidence).toBe(100);
       expect(tag11?.source).toBe('User');
     });
+  });
+});
+
+describe('blocked-level tags written after the scan', () => {
+  const URINE = 100;
+  const XXX = 101;
+  const SAFE = 102;
+
+  const reviewInserts = () =>
+    vi
+      .mocked(dbMock.dbWrite.$queryRawUnsafe)
+      .mock.calls.map(([sql]) => String(sql))
+      .filter((sql) => sql.includes('ImageTagForReview'));
+  const queueQueries = () =>
+    vi
+      .mocked(dbMock.dbWrite.$queryRaw)
+      .mock.calls.filter(([strings]) =>
+        (strings as TemplateStringsArray).join('').includes(`"needsReview" = 'tag'`)
+      );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(systemCache.getTagRules).mockResolvedValue([]);
+    vi.mocked(systemCache.getModeratedTags).mockResolvedValue([
+      { id: URINE, name: 'urine', nsfwLevel: 32 },
+      { id: XXX, name: 'xxx', nsfwLevel: 16 },
+    ]);
+  });
+
+  it('queues the image for tag review with the blocked tag that raised it', async () => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ imageId: 7, tagId: URINE }]);
+
+    await insertTagsOnImageNew([
+      { imageId: 7, tagId: URINE, source: 'User' },
+      { imageId: 7, tagId: XXX, source: 'User' },
+    ]);
+
+    expect(queueQueries()).toHaveLength(1);
+    const [, written] = queueQueries()[0];
+    expect(JSON.parse(written as string)).toEqual([{ imageId: 7, tagId: URINE, source: 'User' }]);
+    expect(reviewInserts()).toEqual([expect.stringContaining(`(7, ${URINE})`)]);
+  });
+
+  it('refreshes the thumbnail cache, parent videos included, for re-rated images', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: 7, tagId: XXX },
+      { imageId: 8, tagId: SAFE },
+    ]);
+
+    expect(refreshThumbnailCache).toHaveBeenCalledTimes(1);
+    expect(refreshThumbnailCache).toHaveBeenCalledWith([7]);
+  });
+
+  it('does not touch review state when no blocked-level tag was written', async () => {
+    await upsertTagsOnImageNew([
+      { imageId: 7, tagId: XXX },
+      { imageId: 7, tagId: SAFE },
+    ]);
+
+    expect(queueQueries()).toHaveLength(0);
+    expect(reviewInserts()).toHaveLength(0);
+  });
+
+  it('creates no review rows when the database flagged nothing', async () => {
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([]);
+
+    await upsertTagsOnImageNew([{ imageId: 7, tagId: URINE, disabled: true }]);
+
+    expect(queueQueries()).toHaveLength(1);
+    expect(reviewInserts()).toHaveLength(0);
+  });
+
+  it('queues a blocked tag that a tag rule appended', async () => {
+    vi.mocked(systemCache.getTagRules).mockResolvedValue([
+      {
+        toId: SAFE,
+        fromId: URINE,
+        type: 'Append',
+        fromTag: 'urine',
+        toTag: 'pee',
+        createdAt: new Date(),
+      },
+    ]);
+    vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ imageId: 9, tagId: URINE }]);
+
+    await insertTagsOnImageNew([{ imageId: 9, tagId: SAFE, source: 'User' }]);
+
+    expect(queueQueries()).toHaveLength(1);
+    expect(reviewInserts()).toEqual([expect.stringContaining(`(9, ${URINE})`)]);
   });
 });

@@ -1,4 +1,5 @@
 import { ecosystemByKey, getEcosystemDefaults } from '~/shared/constants/basemodel.constants';
+import { DRAFT_WORKFLOW } from '~/shared/constants/generation.constants';
 import {
   getWorkflowsForEcosystem,
   isWorkflowAvailable,
@@ -42,8 +43,7 @@ export function deriveSelectorsFromModel(
   // replaces it with the locked default before its effect could see it, so no
   // switch happens there. Version SIBLINGS (LTXV23 on LTXV2, wan on wan) are
   // valid entries in the locked picker's own version list, so they re-pick the
-  // version branch — the lock does not apply. modelLocked comes from ecosystem
-  // defaults, plus the one workflow-driven lock (flux draft).
+  // version branch — the lock does not apply.
   if (
     current.ecosystem &&
     familyOf(modelEco) !== familyOf(current.ecosystem) &&
@@ -74,7 +74,8 @@ function familyOf(ecosystem: string): string {
 }
 
 function isModelLocked(ecosystem: string, workflow: string | undefined): boolean {
-  if ((ecosystem === 'Flux1' || ecosystem === 'FluxKrea') && workflow === 'txt2img:draft')
+  // Flux draft locks its picker to the draft build (flux.graph.ts's modelLocked)
+  if ((ecosystem === 'Flux1' || ecosystem === 'FluxKrea') && workflow === DRAFT_WORKFLOW)
     return true;
   const eco = ecosystemByKey.get(ecosystem);
   if (!eco) return false;
@@ -102,6 +103,16 @@ export function deriveWorkflowFromModel(
   current: { ecosystem: string | undefined; workflow: string | undefined }
 ): SelectorCorrection | undefined {
   const id = model?.id;
+  // The Flux draft build only runs under the draft workflow. Moving the workflow (not swapping the
+  // model to standard) is what keeps a non-interactive caller — an App Block, a remix — from being
+  // billed for a build it didn't ask for.
+  if (
+    (current.ecosystem === 'Flux1' || current.ecosystem === 'FluxKrea') &&
+    id === FLUX_DRAFT_ID &&
+    current.workflow !== DRAFT_WORKFLOW
+  ) {
+    return { workflow: DRAFT_WORKFLOW };
+  }
   // Vidu Q3 has no reference-to-video operation: v1's effect drops the
   // workflow back to plain img2vid when the Q3 build is picked (probed)
   if (
@@ -174,17 +185,17 @@ export const modelSelectorRules = {
   },
 };
 
-// flux.graph.ts's fluxVersionIds — inlined; importing the graph here would cycle
-const FLUX_DRAFT_ID = 699279;
-const FLUX_MODE_IDS = new Set([699279, 691639, 922358, 2068000, 1088507]);
+// flux.graph.ts's fluxVersionIds — inlined, since importing the graph here would cycle.
+// reconcile.test.ts pins the two copies together.
+export const FLUX_DRAFT_ID = 699279;
+export const FLUX_MODE_IDS = new Set([699279, 691639, 922358, 2068000, 1088507]);
 
 /**
- * v1's INTERACTIVE flux draft coupling: picking the Draft build drags the
- * workflow to txt2img:draft, and picking any other flux build while in draft
- * drags it back. STORE LANE ONLY — at the parse boundary the workflow wins
- * (probed 2026-09-01) and the model correct in flux.graph.ts enforces that,
- * so this must never run in reconcileSelectors. Without it the correct
- * reverts an interactive Draft pick before the user ever sees it.
+ * STORE LANE ONLY: picking another Flux build while in draft drags the workflow back to txt2img.
+ * At the parse boundary a non-draft build in draft is forced to the draft build instead (the
+ * model correct in flux.graph.ts), so this must never run in reconcileSelectors — and without it
+ * that correct reverts an interactive version pick before the user sees it. The opposite
+ * direction (the draft build moving the workflow into draft) is deriveWorkflowFromModel's.
  */
 function fluxDraftWorkflowFor(
   model: { id?: number } | undefined,
@@ -193,9 +204,7 @@ function fluxDraftWorkflowFor(
   if (current.ecosystem !== 'Flux1' && current.ecosystem !== 'FluxKrea') return undefined;
   const id = model?.id;
   if (id == null || !FLUX_MODE_IDS.has(id)) return undefined;
-  if (id === FLUX_DRAFT_ID && current.workflow !== 'txt2img:draft')
-    return { workflow: 'txt2img:draft' };
-  if (id !== FLUX_DRAFT_ID && current.workflow === 'txt2img:draft') return { workflow: 'txt2img' };
+  if (id !== FLUX_DRAFT_ID && current.workflow === DRAFT_WORKFLOW) return { workflow: 'txt2img' };
   return undefined;
 }
 

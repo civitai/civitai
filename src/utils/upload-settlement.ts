@@ -22,6 +22,7 @@ import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   type ClientDeclarableProducer,
 } from '~/utils/image-upload-relay-producer';
+import type { RelayFallbackFailureReason } from '~/utils/relay-fallback-outcome';
 
 /**
  * The route both upload paths fall back to.
@@ -164,8 +165,9 @@ export function attachUploadSettlement(
           resolve({ kind: 'relayed', id: relayedId });
         })
         .catch((relayError: unknown) => {
-          // A cancel during the fallback is a cancel, not an upload failure.
-          if (relayError instanceof DOMException && relayError.name === 'AbortError') {
+          // A cancel during the fallback is a cancel, not an upload failure. No signal to
+          // consult here — the relay closure owns it — so this site is shape-only.
+          if (isClientAbort(relayError)) {
             callbacks.onAborted();
             reject(new Error('Upload canceled'));
             return;
@@ -256,25 +258,34 @@ function abortError() {
 }
 
 /**
+ * Did the person cancel? Answered from the SIGNAL where one is available, not from the
+ * error's shape alone: `abort(reason)` rejects with that reason verbatim, so a cancel
+ * carrying a plain `Error` — an ordinary idiom — is indistinguishable by shape from a
+ * genuine failure. (`isClientAbortError` in `~/server/utils/errorHandling` is the
+ * server-side equivalent and is not importable from client code.)
+ */
+function isClientAbort(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  return err instanceof DOMException && err.name === 'AbortError';
+}
+
+export type RelayFallbackResult =
+  | { ok: true; id: string }
+  | { ok: false; reason: RelayFallbackFailureReason };
+
+/**
  * Execute the multipart upload's relay fallback: POST the whole file through our own
- * origin (`/api/v1/image-upload/relay`) and resolve the relay-minted key, or `null`.
+ * origin (`/api/v1/image-upload/relay`) and resolve the relay-minted key, or the reason
+ * the rescue did not produce one.
  *
  * The DECISION to call this lives in `shouldRelayOnPartFailure` (~/utils/upload-retry);
  * this is the execution half, extracted from `useS3Upload` so it is unit-testable the
  * same way `attachUploadSettlement` is.
  *
- * ⚠ This used to add "that hook has no test file", and that was the reasoning that made
- * unit-testing the two halves separately look sufficient. It was not: both halves were
- * correct in isolation while the feature was inert, because the hook handed this function
- * an ALREADY-ABORTED signal and handed the gate an always-true flag. The hook now has a
- * test file — `src/hooks/__tests__/useS3Upload.test.ts` — and it is the one that can see
- * that class of defect, because it drives the hook rather than these functions.
- *
- * 🔴 `null` for EVERY failure, including throws. The caller falls through to the normal
- * terminal-error path, so a broken fallback degrades to "the upload failed" (the
+ * 🔴 NEVER THROWS, for any failure. The caller falls through to the normal terminal-error
+ * path on `ok: false`, so a broken fallback degrades to "the upload failed" (the
  * pre-existing outcome) rather than replacing the user's real diagnosis with a fallback
- * error. The 429 shed is retried once via `relayWithRetry`, honoured with the same
- * clamp and cancellability the single-PUT path gets.
+ * error.
  *
  * The relay mints its OWN key server-side (an overwrite guard it enforces by accepting
  * no caller key), so the returned id is NOT the presigned key the multipart session was
@@ -288,7 +299,7 @@ export async function relayImageFallback(
     sleep: (ms: number) => Promise<void>;
     defaultRetryAfterSeconds: number;
   }
-): Promise<string | null> {
+): Promise<RelayFallbackResult> {
   try {
     const res = await relayWithRetry(
       // `multipart`: this is the execution half of the MULTIPART path's rescue. The
@@ -298,10 +309,25 @@ export async function relayImageFallback(
       () => postImageUploadRelay(file, { signal: opts.signal, producer: 'multipart' }),
       opts
     );
-    if (!res.ok) return null;
-    const data: { id?: unknown } = await res.json();
-    return typeof data.id === 'string' && data.id ? data.id : null;
-  } catch {
-    return null;
+    if (!res.ok) return { ok: false, reason: 'non_2xx' };
+    let id: unknown;
+    try {
+      id = ((await res.json()) as { id?: unknown }).id;
+    } catch (err) {
+      // A cancel after the headers arrived rejects the body read, not the `fetch`, so it
+      // lands here rather than in the outer catch — and `bad_body` is the one bucket this
+      // result exists to measure, so a cancel must not inflate it.
+      if (isClientAbort(err, opts.signal)) return { ok: false, reason: 'aborted' };
+      // A 2xx body we cannot read is the SAME mode as one carrying no id — the route stored
+      // the bytes and counted a success either way. Merging this into the outer catch would
+      // report it as a transport failure, i.e. as a request that never arrived.
+      return { ok: false, reason: 'bad_body' };
+    }
+    return typeof id === 'string' && id ? { ok: true, id } : { ok: false, reason: 'bad_body' };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: isClientAbort(err, opts.signal) ? 'aborted' : 'transport_error',
+    };
   }
 }

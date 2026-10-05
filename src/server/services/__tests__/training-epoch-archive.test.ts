@@ -81,6 +81,24 @@ describe('buildEpochArchiveEntries', () => {
     ]);
   });
 
+  it("skips a failed sample's empty slot without counting it unresolved, keeping later sample numbers", () => {
+    const { entries, unresolvedCount } = buildEpochArchiveEntries({
+      trainingResults: {
+        ...v2Results,
+        epochs: [{ ...v2Results.epochs[1], sampleImages: ['', blobUrl('E1S2.jpeg')] }],
+      },
+      modelName: 'M',
+      versionName: 'V1',
+      versionId: 77,
+    });
+
+    expect(unresolvedCount).toBe(0);
+    expect(entries.map((e) => e.fileName)).toEqual([
+      'M_77_epoch_1.safetensors',
+      'M_77_epoch_1_sample_2.jpeg',
+    ]);
+  });
+
   it('normalizes the legacy v1 epoch shape', () => {
     const { entries } = buildEpochArchiveEntries({
       trainingResults: {
@@ -128,7 +146,8 @@ describe('buildEpochArchiveEntries', () => {
     });
 
     expect(entries).toEqual([{ blobId: 'OK.jpeg', fileName: 'legacy_77_epoch_1_sample_1.jpeg' }]);
-    expect(unresolvedCount).toBe(2);
+    // The non-blob model URL; the '' sample slot isn't counted.
+    expect(unresolvedCount).toBe(1);
     expect(cappedCount).toBe(0);
   });
 

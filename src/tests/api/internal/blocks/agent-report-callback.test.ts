@@ -14,9 +14,10 @@ import { Readable } from 'node:stream';
 
 const { mockFlag, mockVerify, mockUpdateMany, mockTs } = vi.hoisted(() => ({
   mockFlag: { enabled: true },
-  mockVerify: vi.fn(
-    (): { ok: boolean; publishRequestId?: string } => ({ ok: true, publishRequestId: 'x' })
-  ),
+  mockVerify: vi.fn((): { ok: boolean; publishRequestId?: string } => ({
+    ok: true,
+    publishRequestId: 'x',
+  })),
   mockUpdateMany: vi.fn(async (_args: { where: unknown; data: any }) => ({ count: 1 })),
   // Faithful ±300s stand-in for the reused checkCallbackTimestamp.
   mockTs: vi.fn((ts: unknown) => {
@@ -46,6 +47,7 @@ import handler, {
   buildReportUpdate,
   persistedStatusFor,
 } from '~/pages/api/internal/blocks/agent-report-callback';
+import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
 
 const PUBREQ = 'pubreq_0123456789ABCDEFGHJKMNPQRS';
 
@@ -66,7 +68,10 @@ function makeReqRes(body: string, opts: { method?: string; auth?: string } = {})
       return this;
     },
   };
-  return { req: stream, res: res as unknown as NextApiResponse & { statusCode: number; body: any } };
+  return {
+    req: stream,
+    res: res as unknown as NextApiResponse & { statusCode: number; body: any },
+  };
 }
 
 const goodBody = (over: Record<string, unknown> = {}) =>
@@ -120,6 +125,153 @@ describe('persistedStatusFor / buildReportUpdate (pure)', () => {
   it('drops a non-finite / negative costUsd', () => {
     expect(buildReportUpdate(JSON.parse(goodBody({ costUsd: -1 }))).costUsd).toBeUndefined();
     expect(buildReportUpdate(JSON.parse(goodBody({ costUsd: 'nope' }))).costUsd).toBeUndefined();
+  });
+
+  /**
+   * 🔴 SEAM GUARD, NOT A COMPONENT GUARD — the writable section set vs the shared ledger.
+   *
+   * `AGENT_REVIEW_SECTIONS` now has four consumers (the request schema, the service that
+   * builds the job, the renderer, and THIS writer). The writer's divergence is the silent
+   * one: a fifth analysis wired through schema + service + UI but missed here would have
+   * its results dropped on write, and every one of those surfaces would still test green
+   * in isolation. So this pins the RELATIONSHIP — it fails when the set GROWS (a new ledger
+   * section the writer ignores) and when the writer ACCEPTS a key the ledger does not list.
+   *
+   * 🔴 THE TWO HALVES ARE NOT EQUALLY STRONG, AND AN EARLIER DOCSTRING CLAIMED THEY WERE.
+   * The growth half is universal: the body is built FROM the ledger, so any section the
+   * writer ignores fails. The other half cannot be — a key the ledger does not contain is
+   * never in a ledger-built fixture, so `writtenSections` equals the ledger by construction
+   * and a hand-spelled branch for an UNPLANTED key survives. Measured: adding one for
+   * `licenceAudit` left all 16 cases green. It is therefore a BATTERY, not a proof: the
+   * decoys below cover a plausible fourth analysis, two near-misses of real section names,
+   * and the two prototype members an adversarial body would reach for.
+   *
+   * A branch for a key outside the battery is not caught here, and the structural fact that
+   * bounds it is narrower than "one assignment site": the ledger loop is the writer's only
+   * COMPUTED-key write (`data[section]`). The other five writes are hardcoded non-section
+   * keys — `status`/`completedAt` in the literal, then `model`, `tokenUsage`, `costUsd`,
+   * `summaryMd` — so a hand-spelled `data.licenceAudit = …` is type-legal and adds a seventh
+   * site that nothing structurally prevents. It is visible in review and nowhere else.
+   *
+   * ⚠️ AND THE SECOND HALF IS WIDER THAN "SECTION-SHAPED". `nonSection` is a closed literal
+   * set, so the equality is an exact ledger of every column this writer may write — a new
+   * NON-section column (`data.runnerVersion = …`) also turns it red, measured. That is
+   * deliberate: `data` is handed to Prisma as a column map, so an unledgered column is the
+   * same class of defect as an unledgered section. A legitimate new column means adding it to
+   * `nonSection` in the same commit.
+   *
+   * ⚠️ The mutant that does survive is specifically a GUARDED branch for a key the
+   * ledger-built fixture never plants (`if (body.licenceAudit) data.licenceAudit = …` never
+   * fires ⇒ no key ⇒ green). An UNCONDITIONAL one is caught by the same set-equality.
+   *
+   * The body is built FROM the ledger rather than hand-spelled, which is what makes the
+   * growth half automatic. Values are pairwise distinct AND distinct from any literal this
+   * file asserts elsewhere, so a writer that hardcoded one key's value cannot survive.
+   *
+   * 🔴 MEASURED GREEN AT `origin/main` → A SEAM GUARD, NOT REGRESSION COVERAGE. Run against
+   * the base (with this file and the ledger module copied in), it passes: the pre-change
+   * writer spelled the same three keys as three `if`s, so it satisfies the ledger too. What
+   * the change bought is that the two can no longer DIVERGE — which is a future defect, not
+   * one anybody watched. Do not count it toward "the redesign is tested".
+   */
+  it('🔴 writes EXACTLY the shared ledger’s section keys — no more, no fewer', () => {
+    const marker = (section: string) => ({ from: `ledger:${section}` });
+    // The decoy battery. A plausible fourth analysis, two NEAR-MISSES of real section names
+    // (the shape a typo takes), and the two prototype members an adversarial body reaches
+    // for — none of which may reach the UPDATE `data`, because `data` is handed to Prisma as
+    // a column map.
+    const DECOYS = [
+      'licenseAudit',
+      'license_audit',
+      'codeReviews',
+      'scopeVerdict',
+      '__proto__',
+      'constructor',
+    ] as const;
+
+    // 🔴 BUILT THROUGH `JSON.parse`, NOT AS AN OBJECT LITERAL, because the handler's body
+    // arrives that way and the two are not equivalent for this fixture: assigning
+    // `obj.__proto__ = …` on a literal invokes the SETTER and replaces the prototype, so the
+    // decoy would never become a key at all and the case would pass while testing nothing.
+    // `JSON.parse` materialises it as an ordinary OWN property — which is exactly the shape
+    // an adversarial request body has.
+    // The JSON TEXT is assembled directly: round-tripping a literal through
+    // `JSON.stringify` does not work either, because `payload.__proto__ = …` already went to
+    // the setter and the key was never there to serialise.
+    const members = [
+      `"publishRequestId":${JSON.stringify(PUBREQ)}`,
+      `"status":"complete"`,
+      ...DECOYS.map((d) => `${JSON.stringify(d)}:${JSON.stringify({ from: `decoy:${d}` })}`),
+      ...AGENT_REVIEW_SECTIONS.map((x) => `${JSON.stringify(x)}:${JSON.stringify(marker(x))}`),
+    ];
+    const body = JSON.parse(`{${members.join(',')}}`) as Record<string, unknown>;
+    // The fixture must actually carry the hostile key as an own property, or the two
+    // prototype decoys are decorative.
+    expect(Object.prototype.hasOwnProperty.call(body, '__proto__')).toBe(true);
+
+    const data = buildReportUpdate(body);
+
+    // Growth half: every ledger section is written, with ITS OWN value.
+    for (const section of AGENT_REVIEW_SECTIONS) {
+      expect(data[section], `ledger section \`${section}\` was not written`).toEqual(
+        marker(section)
+      );
+    }
+    // Shrink half: the written section-shaped keys are exactly the ledger's.
+    const ledger = new Set<string>(AGENT_REVIEW_SECTIONS);
+    const nonSection = new Set([
+      'status',
+      'completedAt',
+      'model',
+      'tokenUsage',
+      'costUsd',
+      'summaryMd',
+    ]);
+    const writtenSections = Object.keys(data).filter((k) => !nonSection.has(k));
+    expect(new Set(writtenSections)).toEqual(ledger);
+    for (const decoy of DECOYS) {
+      // 🔴 OWN-PROPERTY, NOT `toBeUndefined()`. `data.__proto__` resolves to
+      // `Object.prototype` through the chain, so a value check reports a hit for a key
+      // nobody wrote — and `data.constructor` likewise. Presence is the question.
+      expect(
+        Object.prototype.hasOwnProperty.call(data, decoy),
+        `decoy key \`${decoy}\` must not reach the column map`
+      ).toBe(false);
+    }
+    // …and the writer did not swap the object's prototype on the way through.
+    expect(Object.getPrototypeOf(data)).toBe(Object.prototype);
+
+    // 🔴 POSITIVE CONTROL — a ledger that had gone empty would satisfy both halves above
+    // while asserting nothing. Three is today's count; the bound is what matters.
+    expect(AGENT_REVIEW_SECTIONS.length).toBeGreaterThanOrEqual(3);
+  });
+
+  /**
+   * The carry-forward contract a TARGETED re-run depends on: a callback reporting on ONE
+   * section must not blank the other two.
+   *
+   * 🔴 ALSO MEASURED GREEN AT `origin/main` → AN INVARIANT GUARD. The absent-key semantics
+   * are unchanged by this PR and deliberately so; this pins them because the new targeted
+   * re-run is the first caller that DEPENDS on them. `startAgentReview` step (d') copies the previous
+   * report's untargeted sections forward precisely because this writer leaves an absent
+   * key alone — so if that ever became "write null", a one-section retry would erase the
+   * two analyses it did not re-run.
+   */
+  it('🔴 an ABSENT or NULL section is left alone — a one-section retry cannot blank the others', () => {
+    const [first, ...rest] = AGENT_REVIEW_SECTIONS;
+    const data = buildReportUpdate({
+      publishRequestId: PUBREQ,
+      status: 'complete',
+      [first]: { only: 'this one ran' },
+      // An explicit null is the runner's way of saying "no result", and must be treated
+      // as absence rather than written as a NULL column value.
+      ...(rest[0] ? { [rest[0]]: null } : {}),
+    });
+    expect(data[first]).toEqual({ only: 'this one ran' });
+    for (const section of rest) {
+      expect(data, `\`${section}\` must not be written at all`).not.toHaveProperty(section);
+    }
+    expect(rest.length, 'the fixture needs at least one untargeted section').toBeGreaterThan(0);
   });
 });
 

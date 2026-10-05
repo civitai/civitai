@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { NsfwLevel } from '~/server/common/enums';
+import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
 import { getHiddenImagesForUser } from '~/server/services/user-preferences.service';
 import { Availability, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
@@ -107,6 +108,23 @@ describe('getHiddenImagesForUser', () => {
       ['a ToS takedown', posted(1, { tosViolation: true })],
       ['a Blocked rating', posted(2, { nsfwLevel: NsfwLevel.Blocked })],
       ['an unscanned image', posted(3, { ingestion: ImageIngestionStatus.Pending })],
+      ['an image in a review queue', posted(13, { needsReview: 'minor' })],
+      [
+        'a Knights-locked errored scan',
+        posted(10, {
+          ingestion: ImageIngestionStatus.Error,
+          nsfwLevelLocked: true,
+          metadata: { nsfwLevelReason: KNIGHTS_VOTE_NSFW_LEVEL_REASON },
+        }),
+      ],
+      [
+        'a mod-locked scan that failed permanently',
+        posted(11, {
+          ingestion: ImageIngestionStatus.Error,
+          nsfwLevelLocked: true,
+          scanJobs: { error: { failureClass: 'permanent' } },
+        }),
+      ],
       ['an unpublished post', posted(4, {}, { publishedAt: null })],
       ['a scheduled post', posted(5, {}, { publishedAt: future })],
       ['a private post', posted(6, {}, { availability: Availability.Private })],
@@ -129,6 +147,21 @@ describe('getHiddenImagesForUser', () => {
 
       expect(items[0].canViewMedia).toBe(true);
       expect(items[0].url).toBe('url-8');
+    });
+
+    it('keeps the media for a mod-locked errored scan', async () => {
+      dbMock.dbRead.imageEngagement.findMany.mockResolvedValue([
+        posted(12, {
+          ingestion: ImageIngestionStatus.Error,
+          nsfwLevelLocked: true,
+          metadata: { nsfwLevelReason: 'reviewed' },
+          scanJobs: { error: { failureClass: 'unknown' } },
+        }),
+      ] as never);
+
+      const { items } = await getHiddenImagesForUser({ userId: viewerId, targetUserId });
+
+      expect(items[0].canViewMedia).toBe(true);
     });
 
     it('lets the owner see their own image whatever its state', async () => {

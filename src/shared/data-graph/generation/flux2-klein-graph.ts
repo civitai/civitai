@@ -16,7 +16,7 @@
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   createCheckpointGraph,
   createResourcesGraph,
   imagesNode,
@@ -29,7 +29,6 @@ import {
   snippetsGraph,
   triggerWordsGraph,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Flux.2 Klein Mode Constants
@@ -95,7 +94,7 @@ type Flux2KleinModeCtx = {
  */
 const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .merge(negativePromptGraph)
   .node('steps', sliderNode({ min: 4, max: 12, defaultValue: 8 }))
   .node('seed', seedNode());
@@ -106,7 +105,7 @@ const distilledModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
  */
 const baseModeGraph = new DataGraph<Flux2KleinModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .merge(negativePromptGraph)
   .node('sampler', samplerNode({ options: flux2KleinSamplers, defaultValue: 'euler' }))
   .node('scheduler', schedulerNode({ options: flux2KleinSchedules, defaultValue: 'simple' }))

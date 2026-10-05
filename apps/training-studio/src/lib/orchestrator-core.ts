@@ -5,14 +5,17 @@ import type { createCivitaiClient } from '@civitai/client';
 import {
   getConsumerBlobUploadUrl,
   getWorkflow,
+  invokeBlobArchiveStepTemplate,
   queryWorkflows,
   submitWorkflow,
+  type BlobArchiveEntry,
   type BuzzClientAccount,
   type WorkflowStepTemplate,
 } from '@civitai/client';
 import {
   CIVITAI_TAG,
   TRAINING_TAG,
+  epochArchiveEntries,
   workflowToDetail,
   workflowToRow,
   type GenerationItem,
@@ -316,4 +319,47 @@ export async function getRunDataset(
 ): Promise<{ air: string; caption: string }[]> {
   const detail = await getTrainingWorkflow(client, workflowId);
   return detail?.dataset ?? [];
+}
+
+/** The run id names no workflow the caller can read. */
+export class RunNotFoundError extends Error {}
+/** The run has no epoch with a downloadable blob yet. */
+export class NothingToArchiveError extends Error {}
+/** The orchestrator refused the archive request itself (a 4xx) — not retryable as-is. */
+export class ArchiveRejectedError extends Error {}
+
+export interface EpochArchive {
+  /** Signed URL that streams the zip. */
+  url: string;
+  entryCount: number;
+  expiresAt?: string;
+}
+
+/** One zip of every checkpoint's weights (plus each epoch's samples) for a run — the orchestrator's
+ *  blobArchive recipe over the run's own blobs. The workflow is re-read here rather than trusting a
+ *  client-supplied blob list, so a caller can only archive blobs the token already scopes to. The zip
+ *  is built and streamed by the orchestrator; nothing is buffered here. */
+export async function createEpochArchive(
+  client: OrchestratorClient,
+  workflowId: string
+): Promise<EpochArchive> {
+  const { data: wf, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  if (!wf) {
+    if (getError?.status === 404) throw new RunNotFoundError('archive: run not found');
+    throw new Error(`archive: getWorkflow failed (${getError?.detail ?? 'no data returned'})`);
+  }
+  const { entries, archiveName } = epochArchiveEntries(wf);
+  if (entries.length === 0)
+    throw new NothingToArchiveError('archive: no checkpoint weights are ready yet');
+  const { data, error } = await invokeBlobArchiveStepTemplate({
+    client,
+    body: { entries: entries as BlobArchiveEntry[], archiveName, format: 'zip' },
+  });
+  if (!data?.url) {
+    const status = (error as { status?: number } | undefined)?.status;
+    if (typeof status === 'number' && status >= 400 && status < 500)
+      throw new ArchiveRejectedError(`archive refused: ${describeSubmitError(error)}`);
+    throw new Error(`archive failed: ${describeSubmitError(error)}`);
+  }
+  return { url: data.url, entryCount: data.entryCount, expiresAt: data.expiresAt ?? undefined };
 }

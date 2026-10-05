@@ -74,8 +74,16 @@
 import { describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
-import { cascadeEvidence, nextLayout, renderAtViewport } from '../../../test/geometry-setup';
+import {
+  LOADABLE_IMAGE_DATA_URI,
+  cascadeEvidence,
+  nextLayout,
+  renderAtViewport,
+} from '../../../test/geometry-setup';
+import { USERNAME_MAX_LENGTH } from '~/shared/zod/username.schema';
 import type * as TrpcMod from '~/utils/trpc';
+import type * as BrowserSettingsMod from '~/providers/BrowserSettingsProvider';
+import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { GroupedApp } from '~/components/Apps/groupSubscriptionsByApp';
 import type { SubscriptionRecord } from '~/server/schema/blocks/subscription.schema';
 import type { MyAppRow } from '~/components/Apps/myAppsView';
@@ -180,6 +188,26 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
   FeatureFlagsProvider: ({ children }: { children: unknown }) => children,
 }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
+/*
+  🔴 THE REAL `UserAvatar` RENDERS IN THIS TIER, AND THE STUB IT REPLACED WAS A MEASUREMENT
+  DEFECT. This file's whole purpose is painted width, and the Submitter column's share is
+  what the declared-share arm below reads — so stubbing the component
+  whose width is the quantity under assertion measured the stub. (The behaviour suites
+  elsewhere DO stub it; there the width is not what they assert.) What the real component
+  needs is two viewer-state hooks no geometry fixture can supply: `useBrowsingSettings`
+  (via `useGetEdgeUrl`) and `useViewerBrowsingLevelDebounced` (called directly) — both
+  stubbed at the SOURCE rather than the component.
+*/
+vi.mock('~/providers/BrowserSettingsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowserSettingsMod>()),
+  // The avatar reads one slice (`autoplayGifs`) through this selector; a geometry fixture
+  // has no settings store, and the value cannot change a rendered width.
+  useBrowsingSettings: () => undefined,
+}));
+vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelMod>()),
+  useViewerBrowsingLevelDebounced: () => 1,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ id: 1, username: 'author', isModerator: false }),
 }));
@@ -369,7 +397,9 @@ vi.mock('~/server/utils/server-side-helpers', () => ({
 }));
 
 const { AppsPageLayout } = await import('~/components/Apps/AppsPageLayout');
-const { AppsCardGrid } = await import('~/components/Apps/appsWideLayout');
+const { AppsCardGrid, APPS_REVIEW_QUEUE_COLUMNS } = await import(
+  '~/components/Apps/appsWideLayout'
+);
 const { UnifiedReviewList } = await import('~/components/Apps/UnifiedReviewList');
 const { MyAppsBodyView } = await import('~/components/Apps/MyAppsBody');
 const { InstalledAppCard } = await import('~/pages/apps/activity');
@@ -416,6 +446,27 @@ const px = (n: number) => Math.round(n * 100) / 100;
 
 // ── fixtures ─────────────────────────────────────────────────────────────────
 
+/** The shared loadable 1×1 data: URI — an http(s) src is never served to a test browser,
+ *  so the `<img>` would fire a real `error` event mid-test (`no-unloadable-image-fixture`). */
+const PIXEL = LOADABLE_IMAGE_DATA_URI;
+
+/** The dedup key the adapter builds for `ONSITE` — the suffix of every row-scoped testid. */
+const ONSITE_KEY = 'onsite:or1';
+
+/**
+ * 🔴 THE LONGEST USERNAME THE SCHEMA ALLOWS, DERIVED FROM THE BOUND ITSELF. The Submitter
+ * cell's MIN-CONTENT is what the declared-share arm reads, and a long name is what sets it
+ * — so a fixture shorter than the bound measures a cell narrower than production can
+ * render, which is how that share shipped two sizes too small, twice.
+ *
+ * Derived rather than pinned: an earlier revision hardcoded 25 and a sibling unit test
+ * regex-grepped THIS FILE AS A STRING to check the number. That mechanism was itself the
+ * defect — the loose regex was walkable by a `//`-commented decoy — and importing the
+ * constant makes the whole class unreachable. The chip is `wrap="nowrap"`, so this moves
+ * min-content, not row height.
+ */
+const SUBMITTER_USERNAME = 'w'.repeat(USERNAME_MAX_LENGTH);
+
 const ONSITE: OnsiteReviewRequest = {
   id: 'or1',
   appBlockId: null,
@@ -426,9 +477,17 @@ const ONSITE: OnsiteReviewRequest = {
   bundleSha256: 'sha',
   manifest: { name: 'Lighthouse' },
   fileSummary: {},
-  manifestDiffSummary: {},
+  // 🔴 THE WIDEST REALISTIC VERSION CELL, DELIBERATELY. The first-version badge sits beside
+  // the `<Code>` semver on a nowrap row, so this is the shape whose max-content the Version
+  // share has to clear — a fixture without it would measure a cell narrower than production
+  // ever renders and the share could sit below its content unnoticed.
+  manifestDiffSummary: { kind: 'first-version', fields: ['name', 'version'] },
+  // The widest realistic Plays label (`abbreviateNumber` → "12.4k plays").
+  playCount: 12_400,
+  iconUrl: PIXEL,
+  coverUrl: PIXEL,
   reviewRepoUrl: 'https://forgejo.example/repo',
-  submittedBy: { id: 7, username: 'onsite-dev', image: null },
+  submittedBy: { id: 7, username: SUBMITTER_USERNAME, deletedAt: null, image: null },
 } as OnsiteReviewRequest;
 
 const OFFSITE: OffsiteReviewRequest = {
@@ -444,7 +503,10 @@ const OFFSITE: OffsiteReviewRequest = {
     category: 'utility',
     contentRating: 'g',
   },
-  submittedBy: { id: 9, username: 'offsite-dev', image: null },
+  submittedBy: { id: 9, username: 'offsite-dev', deletedAt: null, image: null },
+  playCount: 7,
+  iconUrl: PIXEL,
+  coverUrl: null,
 };
 
 const MINE_ROW: MyAppRow = {
@@ -619,32 +681,61 @@ describe('the harness is measuring the real cascade', () => {
 
 // ── table route 1: /apps/review ──────────────────────────────────────────────
 
+/** The Pending/Rejected shape — seven columns, no Deploy. */
+const reviewList = () => (
+  <UnifiedReviewList
+    onsiteItems={[ONSITE]}
+    offsiteItems={[OFFSITE]}
+    direction="asc"
+    openOnsiteReview={vi.fn()}
+    openOffsiteReview={vi.fn()}
+    openVersionHistory={vi.fn()}
+    isLoading={false}
+    emptyLabel="empty"
+    dateLabel="Submitted"
+    actionLabel="Review"
+    hasMore={false}
+    onLoadMore={vi.fn()}
+  />
+);
+
+/** The Approved shape — the SAME component with the retrigger handler that adds Deploy. */
+const reviewListWithDeploy = () => (
+  <UnifiedReviewList
+    onsiteItems={[
+      { ...ONSITE, deployState: 'live', reviewedAt: '2026-01-02T00:00:00Z' } as OnsiteReviewRequest,
+    ]}
+    offsiteItems={[OFFSITE]}
+    direction="desc"
+    openOnsiteReview={vi.fn()}
+    openOffsiteReview={vi.fn()}
+    openVersionHistory={vi.fn()}
+    isLoading={false}
+    emptyLabel="empty"
+    dateLabel="Reviewed"
+    actionLabel="View"
+    hasMore={false}
+    onLoadMore={vi.fn()}
+    onRetriggerBuild={vi.fn()}
+  />
+);
+
 describe('/apps/review — the queue table spends the width on its App column', () => {
-  const list = () => (
-    <UnifiedReviewList
-      onsiteItems={[ONSITE]}
-      offsiteItems={[OFFSITE]}
-      direction="asc"
-      openOnsiteReview={vi.fn()}
-      openOffsiteReview={vi.fn()}
-      isLoading={false}
-      emptyLabel="empty"
-      dateLabel="Submitted"
-      actionLabel="Review"
-      hasMore={false}
-      onLoadMore={vi.fn()}
-    />
-  );
+  const list = reviewList;
+  const listWithDeploy = reviewListWithDeploy;
 
   test('the App column grows with the container, and takes MOST of the surplus', async () => {
     // 🔴 THE CLAIM IS A SHARE, NOT MERELY "IT GREW". Without a `<colgroup>` every column
     // grows — automatic table layout distributes surplus across all of them in proportion
     // to their content — so "the App column got wider" is satisfied by the DEFECT. What
-    // separates the two is HOW MUCH of the 1120px it took: the ledger gives it 54% of the
-    // table, i.e. more than the other four columns put together.
+    // separates the two is HOW MUCH of the 1120px it took: the ledger leaves it more than
+    // every fixed share put together.
     const { narrow, wide } = await atBothWidths(list, headerWidths);
-    expect(narrow, 'the queue renders five columns on the Pending tab').toHaveLength(5);
-    expect(wide).toHaveLength(5);
+    const expected = APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy.length;
+    expect(narrow, `the queue renders ${expected} columns on the Pending tab`).toHaveLength(
+      expected
+    );
+    expect(wide).toHaveLength(expected);
 
     const appDelta = wide[1] - narrow[1];
     const otherDelta = wide.reduce((s, w, i) => (i === 1 ? s : s + (w - narrow[i])), 0);
@@ -653,8 +744,8 @@ describe('/apps/review — the queue table spends the width on its App column', 
     expect(
       appDelta,
       `the App column took ${px(appDelta)} of the container's ${CONTAINER_DELTA}px, and the ` +
-        `other four columns took ${px(otherDelta)} between them — the primary column is ` +
-        'supposed to absorb the slack'
+        `other ${expected - 1} columns took ${px(otherDelta)} between them — the primary ` +
+        'column is supposed to absorb the slack'
     ).toBeGreaterThan(otherDelta);
     // …and the two together account for the whole container delta, so nothing has been
     // silently spent as table margin.
@@ -665,20 +756,171 @@ describe('/apps/review — the queue table spends the width on its App column', 
     // The other half of "proportional": the fixed columns are a PERCENTAGE of the table,
     // not a content width that happens to have grown. Asserted at the wide fixture only,
     // because at 1408 a column can legitimately exceed its share (min-content wins).
+    // Derived from the ledger rather than a hand-copied pair list, so adding a column
+    // cannot drop a later one out of the check.
     await renderRoute(list(), WIDE);
     const widths = headerWidths();
     const table = document.querySelector('table')!.getBoundingClientRect().width;
-    for (const [index, share] of [
-      [0, 6],
-      [2, 6],
-      [3, 9],
-      [4, 6],
-    ] as const) {
+    let checked = 0;
+    for (const [index, share] of APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy.entries()) {
+      if (share === null) continue;
+      checked += 1;
       expect(px(widths[index]), `column ${index} should be ${share}% of ${px(table)}`).toBeCloseTo(
         (share / 100) * table,
         0
       );
     }
+    expect(checked, 'no fixed column was checked').toBe(
+      APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy.length - 1
+    );
+    await cleanup();
+  });
+
+  test('🔴 the APPROVED shape (with Deploy) holds its shares too, and does not overflow', async () => {
+    // The Deploy column exists on one tab only, so the eight-column shape is a SECOND
+    // table that no arm measured — and a share below its cell content is invisible to the
+    // seven-column one. Both shapes are rendered from the same component, so the only
+    // thing that separates them is the prop that adds the column.
+    await renderRoute(listWithDeploy(), WIDE);
+    const widths = headerWidths();
+    const table = document.querySelector('table')!.getBoundingClientRect().width;
+    expect(widths).toHaveLength(APPS_REVIEW_QUEUE_COLUMNS.withDeploy.length);
+    let checked = 0;
+    for (const [index, share] of APPS_REVIEW_QUEUE_COLUMNS.withDeploy.entries()) {
+      if (share === null) continue;
+      checked += 1;
+      expect(
+        px(widths[index]),
+        `approved-shape column ${index} should be ${share}% of ${px(table)}`
+      ).toBeCloseTo((share / 100) * table, 0);
+    }
+    // Same counter as the seven-column arm: a second `null` in the ledger would otherwise
+    // drop a column from the check while `toHaveLength` still passed.
+    expect(checked, 'no fixed column was checked').toBe(
+      APPS_REVIEW_QUEUE_COLUMNS.withDeploy.length - 1
+    );
+    // Nothing paints outside the table at any of the four widths.
+    await cleanup();
+    for (const vp of ALL_WIDTHS) {
+      await renderRoute(listWithDeploy(), vp);
+      const el = document.querySelector('table') as HTMLElement;
+      expect(
+        el.scrollWidth,
+        `the approved-shape table overflows its own box at ${vp.width}`
+      ).toBeLessThanOrEqual(Math.ceil(el.clientWidth) + 1);
+      await cleanup();
+    }
+  });
+
+  test('🔴 the Version cell is no worse CONTAINED than the browser contains it unaided', async () => {
+    /**
+     * 🔴 THE FAILURE THIS CATCHES IS INVISIBLE TO EVERY WIDTH AND HEIGHT ASSERTION ABOVE.
+     * The cell is a `wrap="nowrap"` Group holding a `<Code>` and a Badge, which is the
+     * exact shape `/apps/mine`'s Status row had: its min-content is far below what it
+     * PAINTS, so a share sized under the painted width leaves the content overhanging into
+     * the next column or clipped inside its own — the row does not get taller and no
+     * column gets narrower, so the row-height invariant and the declared-share arm both
+     * stay green.
+     *
+     * TWO AXES, MEASURED DIFFERENTLY ON PURPOSE. Overhang is absolute — nothing may paint
+     * outside the cell at any width. CLIPPING is measured against the same tree with its
+     * `<colgroup>` REMOVED, for the reason the row-height invariant below gives at length:
+     * at 768 this table's columns want more than the container's 736px between them
+     * whatever the split, so a literal "never clipped" is a claim no correct ledger could
+     * satisfy. What a ledger must never do is clip the cell WORSE than the browser does
+     * unaided at that width — which is a comparison this arm takes rather than a number
+     * either file asserts.
+     */
+    const offenders: string[] = [];
+    for (const vp of ALL_WIDTHS) {
+      await renderRoute(list(), vp);
+      const measure = () => {
+        const td = document.querySelector(
+          `[data-testid="apps-unified-review-row-${ONSITE_KEY}"] td:nth-child(3)`
+        ) as HTMLElement;
+        const inner = document.querySelector(
+          `[data-testid="apps-unified-review-version-trigger-${ONSITE_KEY}"]`
+        ) as HTMLElement;
+        const pad = parseFloat(getComputedStyle(td).paddingRight) || 0;
+        const overhang =
+          inner.getBoundingClientRect().right - (td.getBoundingClientRect().right - pad);
+        // `scrollWidth > clientWidth` is the second half: content clipped INSIDE the
+        // trigger is content a moderator cannot read, even with nothing painting outside.
+        const clipped = inner.scrollWidth - Math.round(inner.getBoundingClientRect().width);
+        return { overhang, clipped };
+      };
+      const withLedger = measure();
+      const colgroup = document.querySelector('table > colgroup');
+      expect(colgroup, 'this arm is supposed to measure a LEDGERED table').not.toBeNull();
+      colgroup!.remove();
+      await nextLayout();
+      const natural = measure();
+      // OVERHANG is absolute: nothing may paint outside the cell's content box at any
+      // width. It is NOT compared to natural layout, because natural gives every
+      // non-primary column more room than a ledger deliberately does — "no worse than
+      // natural" on this axis is a claim no correct ledger could satisfy.
+      if (withLedger.overhang > 1) {
+        offenders.push(`@${vp.width}: overhangs its column by ${px(withLedger.overhang)}`);
+      }
+      if (withLedger.clipped > natural.clipped + 1) {
+        offenders.push(
+          `@${vp.width}: clips ${withLedger.clipped}px with the ledger vs ${natural.clipped}px without it`
+        );
+      }
+      await cleanup();
+    }
+    expect(
+      offenders,
+      'the Version share is below what the cell paints — a nowrap row overhangs or clips ' +
+        'rather than wrapping, which no width or height assertion can see'
+    ).toEqual([]);
+  });
+
+  test('the new cells really render (guards a vacuous measurement)', async () => {
+    // Every assertion above is a width comparison, and a cell that rendered nothing
+    // produces two internally-consistent numbers just as happily. One entry per cell this
+    // change added — Plays was missing from this list while the comment claimed it was
+    // covered.
+    await renderRoute(list(), NARROW);
+
+    const text = (testId: string) => {
+      const el = document.querySelector(`[data-testid="${testId}"]`) as HTMLElement | null;
+      expect(
+        el,
+        `${testId} did not render — the measurement above covered an empty cell`
+      ).not.toBeNull();
+      return (el!.textContent ?? '').trim();
+    };
+
+    /**
+     * 🔴 THE VALUE, NOT MERELY A NON-EMPTY ELEMENT. THREE of these five cells — Version,
+     * Submitter, Plays — render `'—'` on their OWN testid when the datum is missing, so
+     * "present" and even "non-empty" pass over a placeholder, which is the shape this arm
+     * exists to catch. Asserting the fixture's own values is what makes those three
+     * load-bearing, and it covers the submitter span's empty-child case (a `UserAvatar`
+     * returning null for `id === -1` leaves the span in the DOM). The other two carry no
+     * placeholder branch: `first-version` renders no testid at all when absent, and the age
+     * cell has no `'—'` arm — which is why that one is a SHAPE matcher, the only form there
+     * that also excludes an empty render.
+     */
+    expect(text(`apps-unified-review-version-${ONSITE_KEY}`)).toContain('1.0.0');
+    expect(text(`apps-unified-review-first-version-${ONSITE_KEY}`)).toBe('first version');
+    expect(text(`apps-unified-review-submitter-${ONSITE_KEY}`)).toContain(SUBMITTER_USERNAME);
+    expect(text(`apps-unified-review-plays-${ONSITE_KEY}`)).toContain('plays');
+    // 🔴 A SHAPE, NOT `not.toBe('—')`. That form is dead on this arm: `compactRelativeTime`
+    // returns either the dash or a label, so it discriminates the production placeholder but
+    // NOT the emptiness this arm is named for — rendering `{''}` passed it. The value itself
+    // is pinned in `UnifiedReviewList.browser.test.tsx`; `now` here is the real clock, so a
+    // shape is what this tier can assert.
+    expect(text(`apps-unified-review-age-${ONSITE_KEY}`)).toMatch(/^(now|\d+(m|h|d|w|mo|y))$/);
+
+    // The icon is a LEAF `<img>` — no text, no children — so presence plus a `src` is what
+    // "it rendered" means there.
+    const icon = document.querySelector(
+      `[data-testid="apps-unified-review-icon-${ONSITE_KEY}"]`
+    ) as HTMLImageElement | null;
+    expect(icon, 'the row icon did not render').not.toBeNull();
+    expect(icon!.getAttribute('src'), 'the row icon rendered with no src').toBeTruthy();
     await cleanup();
   });
 });
@@ -1861,24 +2103,11 @@ describe('🔴 NO LEDGER MAKES ITS ROWS TALLER AT A NARROWER WIDTH', () => {
    * render a component with its own colgroup removed.
    */
   const CASES = [
-    {
-      name: '/apps/review queue',
-      ui: () => (
-        <UnifiedReviewList
-          onsiteItems={[ONSITE]}
-          offsiteItems={[OFFSITE]}
-          direction="asc"
-          openOnsiteReview={vi.fn()}
-          openOffsiteReview={vi.fn()}
-          isLoading={false}
-          emptyLabel="empty"
-          dateLabel="Submitted"
-          actionLabel="Review"
-          hasMore={false}
-          onLoadMore={vi.fn()}
-        />
-      ),
-    },
+    { name: '/apps/review queue', ui: reviewList },
+    // 🔴 BOTH SHAPES, because they are two different ledgers over two different column
+    // sets. The eight-column one is only reachable on the Approved tab, so an arm that
+    // mounts the seven-column shape alone leaves the other's shares unmeasured.
+    { name: '/apps/review queue (approved shape, with Deploy)', ui: reviewListWithDeploy },
     { name: '/apps/review previews', ui: () => <ActivePreviewsPanel /> },
     { name: '/apps/mine', ui: () => <MyAppsBodyView rows={[MINE_ROW]} /> },
   ] as const;
@@ -1887,6 +2116,7 @@ describe('🔴 NO LEDGER MAKES ITS ROWS TALLER AT A NARROWER WIDTH', () => {
     // A loop over a list nobody pinned passes vacuously when the list shrinks.
     expect(CASES.map((c) => c.name)).toEqual([
       '/apps/review queue',
+      '/apps/review queue (approved shape, with Deploy)',
       '/apps/review previews',
       '/apps/mine',
     ]);

@@ -10,9 +10,9 @@ const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
 dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
 dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
 dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  });
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Verifies Task 10: pickWinnersForChallenge skips the LLM winner-pick (generateWinners) when
 // fewer than 2 distinct entrants were judged. generateWinners is asked to pick "exactly 3"
@@ -130,7 +130,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: vi.fn().mockResolvedValue('user'),
   reportPoolFundingShortfall: vi.fn(),
 }));
@@ -181,7 +181,11 @@ const currentChallenge = {
   title: 'Test',
   invitation: '',
   coverUrl: '',
-  prizes: [{ buzz: 500, points: 10 }, { buzz: 250, points: 5 }, { buzz: 100, points: 2 }],
+  prizes: [
+    { buzz: 500, points: 10 },
+    { buzz: 250, points: 5 },
+    { buzz: 100, points: 2 },
+  ],
   entryPrizeRequirement: 10,
   entryPrize: { buzz: 0, points: 0 },
 } as never;
@@ -192,9 +196,7 @@ function mockChallengeJudgeRow(source: string) {
   ]);
 }
 
-function mockJudgedEntryRows(
-  rows: Array<{ imageId: number; userId: number; username: string }>
-) {
+function mockJudgedEntryRows(rows: Array<{ imageId: number; userId: number; username: string }>) {
   mockDbReadQueryRaw.mockResolvedValueOnce(
     rows.map((row) => ({
       ...row,

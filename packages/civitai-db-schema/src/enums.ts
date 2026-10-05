@@ -916,6 +916,7 @@ export const JobQueueType = {
   BlockedImageDelete: 'BlockedImageDelete',
   ImageScan: 'ImageScan',
   ReplacedImageDelete: 'ReplacedImageDelete',
+  ImageStorageDelete: 'ImageStorageDelete',
 } as const;
 
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
@@ -1257,3 +1258,36 @@ export const UserHubSourceType = {
 } as const;
 
 export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];
+
+export const CrucibleStatus = {
+  Pending: 'Pending',
+  Active: 'Active',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+
+export type CrucibleStatus = (typeof CrucibleStatus)[keyof typeof CrucibleStatus];
+
+export const CrucibleIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+
+export type CrucibleIngestionStatus =
+  (typeof CrucibleIngestionStatus)[keyof typeof CrucibleIngestionStatus];
+
+export const CrucibleEngagementType = {
+  Notify: 'Notify',
+} as const;
+
+export type CrucibleEngagementType =
+  (typeof CrucibleEngagementType)[keyof typeof CrucibleEngagementType];
+
+export const PrizeSourceType = {
+  Crucible: 'Crucible',
+  Challenge: 'Challenge',
+} as const;
+
+export type PrizeSourceType = (typeof PrizeSourceType)[keyof typeof PrizeSourceType];

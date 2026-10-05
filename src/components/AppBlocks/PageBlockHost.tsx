@@ -238,10 +238,25 @@ export { BLOCK_READY_TIMEOUT_MS, TOKEN_WAIT_TIMEOUT_MS };
  * wrapped in AppBlockChrome.)
  *
  * Implemented with a plain CSS opacity/transform transition rather than the
- * `motion` package: `motion` is NOT in the `/apps` route graph today (its only
- * importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached via
- * a `next/dynamic` ChatWindow chunk), so importing it here would pull a new
- * animation runtime into the run-page bundle for one cross-fade.
+ * `motion` package, because importing it here would pull an animation runtime
+ * into the run-page bundle for one cross-fade.
+ *
+ * ⚠️ THE ORIGINAL REASON — "`motion` is NOT in the `/apps` route graph today (its
+ * only importers are `src/components/Chat/*` + `src/utils/lazy-motion.ts`, reached
+ * via a `next/dynamic` ChatWindow chunk)" — IS NO LONGER TRUE, and is corrected here
+ * rather than deleted, because the conclusion above survives it while the premise
+ * does not. `src/components/Apps/AgentOnboardingCard.tsx` statically imports
+ * `motion/react` and `motion/react-m` and is reached from `src/pages/apps/build.tsx`
+ * with no `next/dynamic`, so `/apps/build` now carries them. It defers only the
+ * `domAnimation` feature bundle via `LazyMotion`; the static half it still pays is
+ * measured in that component's header — deliberately NOT restated here, so there is
+ * only one copy of a number to keep true.
+ *
+ * So the live argument is narrower and still decides this file the same way: that
+ * card is one route's deliberate exception, THIS page is a different route, and a
+ * cross-fade is not worth re-paying for. Do not read the exception as a precedent
+ * for reaching for `motion` here. (Corrected when the card landed; a stale premise
+ * stated this confidently enough that a reader could have taken it as license.)
  */
 export const LAUNCH_REVEAL_MS = 260;
 
@@ -3153,6 +3168,7 @@ export function PageBlockHost({
           prefix?: unknown;
           limit?: unknown;
           cursor?: unknown;
+          mine?: unknown;
         }
       | undefined
     >('SHARED_LIST', async (raw) => {
@@ -3171,12 +3187,20 @@ export function PageBlockHost({
             ? Math.min(Math.max(Math.floor(raw.limit), 1), 100)
             : 50;
         const cursor = typeof raw.cursor === 'string' ? raw.cursor : undefined;
+        // civitai/civitai#5354 Q3. Narrow to the viewer's own rows. 🔴 Forwarded
+        // ONLY when it is literally `true`: every other value — absent, `false`,
+        // the string "true", a truthy object — resolves to `undefined`, so a
+        // malformed payload cannot silently narrow someone's feed. The server
+        // still decides WHOSE rows (the resolved token subject); the block never
+        // names an author, and this message carries no user id to name one with.
+        const mine = raw.mine === true ? true : undefined;
         const result = await trpcUtils.apps.shared.list.fetch(
           {
             blockToken: token,
             prefix,
             limit,
             cursor,
+            mine,
           },
           BLOCK_STORAGE_READ_OPTS
         );
@@ -3780,10 +3804,29 @@ export function PageBlockHost({
       const { requestId, baseModelGroup } = req;
 
       // Normalize the optional family hint through getBaseModelGroup (accepts an
-      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). Empty /
-      // unresolved group → baseModels:[] → no checkpoints rather than all
-      // families (matching IframeHost: "all" would include incompatible families
-      // that 400 at submit).
+      // ecosystem key like 'Flux1' OR a baseModel name like 'Flux.1 D'). An
+      // absent/unresolved group → baseModels:[] → NO baseModel narrowing: the
+      // modal emits the bare `type = Checkpoint` clause, so it returns ALL
+      // checkpoints (still gated by `canGenerate`), NOT a subset and NOT none.
+      // Identical mechanism to OPEN_RESOURCE_PICKER above — same expression,
+      // same `resources:[{type, baseModels}]`, same modal. That is intentional
+      // and safe for the same reason: the server is the authority on family
+      // compatibility at spend, so an incompatible pick is rejected there rather
+      // than being silently filtered out of the picker here.
+      //
+      // This comment used to claim the opposite ("no checkpoints rather than all
+      // families"). It was wrong. Three layers each special-case the empty array
+      // as "no narrowing": ResourceSelectProvider (`resourceBaseModels.length > 0
+      // ? … : filterBaseModels`), `selectableVersions` in resource-select.types
+      // (`modelBaseModels.length === 0 ||`), and the query builder in
+      // resource-select.service (`_baseModels.length ? and(eq(type), inArray(…))
+      // : eq(type)`).
+      //
+      // NB `getBaseModelGroup('')` returns the REAL ecosystem key 'Other', not
+      // null — so an empty string is NOT an "unconstrained" hint, it narrows to
+      // the Other family. resolveCheckpointPickerRequest already strips '' to
+      // undefined, which is what keeps the guard below correct; callers wanting
+      // an unconstrained pick must OMIT the key rather than send ''.
       const groupKey = baseModelGroup ? getBaseModelGroup(baseModelGroup) : null;
       const baseModels = groupKey ? getBaseModelsByGroup(groupKey) : [];
 

@@ -13,6 +13,7 @@
  * consent.
  */
 
+import { appDisplayName } from '~/shared/utils/app-display-name';
 import { Prisma } from '@prisma/client';
 import {
   GLOBAL_SCOPE_ACTIVITY_OR,
@@ -863,7 +864,7 @@ export async function listMyScopeGrants(userId: number): Promise<ScopeGrantSurfa
       name?: unknown;
       iconUrl?: unknown;
     };
-    const manifestName = typeof manifest.name === 'string' ? manifest.name : entry.appBlock.blockId;
+    const manifestName = appDisplayName(manifest, entry.appBlock.blockId);
     const iconUrl =
       typeof manifest.iconUrl === 'string' && manifest.iconUrl.length > 0
         ? manifest.iconUrl

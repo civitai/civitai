@@ -925,8 +925,13 @@ async function cmdUnwedge(rest) {
 
 async function cmdWorktree(rest) {
   const [action, ...tail] = rest;
-  const { cmdStale, cmdRemove } = await import('./scripts/worktree.mjs');
+  const { cmdStale, cmdRemove, cmdCreate, parseNewArgs } = await import('./scripts/worktree.mjs');
 
+  if (action === 'new') {
+    const { name, branch, ...opts } = parseNewArgs(tail);
+    await cmdCreate(projectRoot, name, branch, opts);
+    return;
+  }
   if (action === 'stale') {
     await cmdStale(projectRoot, daemonRequest);
     return;
@@ -945,7 +950,7 @@ async function cmdWorktree(rest) {
     );
     return;
   }
-  console.error('Usage: wt <stale|rm>');
+  console.error('Usage: wt <new|stale|rm>');
   process.exit(1);
 }
 

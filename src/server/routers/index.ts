@@ -49,6 +49,7 @@ export const appRouter = router({
   partner: lazy(() => import('./partner.router').then((m) => m.partnerRouter)),
   placement: lazy(() => import('./placement.router').then((m) => m.placementRouter)),
   post: lazy(() => import('./post.router').then((m) => m.postRouter)),
+  promotion: lazy(() => import('./promotion.router').then((m) => m.promotionRouter)),
   question: lazy(() => import('./question.router').then((m) => m.questionRouter)),
   reaction: lazy(() => import('./reaction.router').then((m) => m.reactionRouter)),
   report: lazy(() => import('./report.router').then((m) => m.reportRouter)),
@@ -72,6 +73,9 @@ export const appRouter = router({
   generation: lazy(() => import('./generation.router').then((m) => m.generationRouter)),
   generationPreset: lazy(() =>
     import('./generation-preset.router').then((m) => m.generationPresetRouter)
+  ),
+  generationSizePreset: lazy(() =>
+    import('./generation-size-preset.router').then((m) => m.generationSizePresetRouter)
   ),
   wildcardSet: lazy(() => import('./wildcard-set.router').then((m) => m.wildcardSetRouter)),
   newsletter: lazy(() => import('./newsletter.router').then((m) => m.newsletterRouter)),
@@ -164,6 +168,8 @@ export const appRouter = router({
   scannerPolicies: lazy(() =>
     import('~/server/routers/scanner-policies.router').then((m) => m.scannerPoliciesRouter)
   ),
+  crucible: lazy(() => import('./crucible.router').then((m) => m.crucibleRouter)),
+  prize: lazy(() => import('./prize.router').then((m) => m.prizeRouter)),
 });
 
 // export type definition of API

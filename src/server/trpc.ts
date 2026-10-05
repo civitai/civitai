@@ -1,4 +1,9 @@
 import { initTRPC, TRPCError } from '@trpc/server';
+import {
+  clampRequestBrowsingLevels,
+  domainBrowsingLevelCap,
+  type RequestBrowsingLevels,
+} from '~/server/utils/browsing-level';
 import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { couldAwaitTosReacceptance } from '~/server/common/tos-reacceptance';
 import { shouldOfferTosReacceptance } from '~/server/services/tos-reacceptance.service';
@@ -29,10 +34,6 @@ import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
-import {
-  publicBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import { runEnforceTokenScope } from '~/server/services/oauth/enforce-token-scope';
 import { parseVerifiedBotHeader, VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
@@ -207,7 +208,7 @@ const enforceClientVersion = t.middleware(async ({ next, ctx }) => {
 const applyDomainFeature = t.middleware(async (options) => {
   const { next, ctx } = options;
   // v11: `rawInput` became the async `getRawInput()`.
-  const input = ((await options.getRawInput()) ?? {}) as { browsingLevel?: number };
+  const input = ((await options.getRawInput()) ?? {}) as RequestBrowsingLevels;
 
   // Verified search-engine crawlers (set by botDetectionMiddleware) are
   // treated as authorized only on mature-allowed domains. On the SFW site
@@ -217,24 +218,12 @@ const applyDomainFeature = t.middleware(async (options) => {
   const verifiedBot = parseVerifiedBotHeader(ctx.req?.headers[VERIFIED_BOT_HEADER]);
   const isAuthorized = !!ctx.user || (verifiedBot !== null && ctx.features.canViewNsfw);
 
-  // Cap rules:
-  //   anonymous (any domain), or bot on green → publicBrowsingLevelsFlag (PG)
-  //   logged-in on green domain               → sfwBrowsingLevelsFlag    (PG, PG-13)
-  //   logged-in or bot on blue/red            → no cap, respect caller
-  const maxAllowed = !isAuthorized
-    ? publicBrowsingLevelsFlag
-    : !ctx.features.canViewNsfw
-    ? sfwBrowsingLevelsFlag
-    : undefined;
+  const maxAllowed = domainBrowsingLevelCap({
+    isAuthorized,
+    canViewNsfw: ctx.features.canViewNsfw,
+  });
 
-  if (maxAllowed !== undefined) {
-    if (!input.browsingLevel) {
-      input.browsingLevel = maxAllowed;
-    } else {
-      const intersection = input.browsingLevel & maxAllowed;
-      input.browsingLevel = intersection || maxAllowed;
-    }
-  }
+  if (maxAllowed !== undefined) clampRequestBrowsingLevels(input, maxAllowed);
 
   return next();
 });

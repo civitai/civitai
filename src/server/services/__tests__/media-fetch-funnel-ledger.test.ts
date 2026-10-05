@@ -84,6 +84,7 @@ const GATED_FUNNELS: [string, string][] = [
     'createImageIngestionRequest + getPerceptualHash',
   ],
   ['server/services/product-badge.service.ts', 'resizeBadgeImage → orchestrator convertImage'],
+  ['server/services/video-dimensions.ts', 'probeVideoDimensions → orchestrator videoMetadata'],
   ['server/services/creator-shop.service.ts', 'validateArtwork → fetch() from the WEB pod'],
   ['server/controllers/user.controller.ts', 'verifyAvatar'],
   ['pages/api/media/ingest/[mediaId].ts', 'the ingest route maps the refusal to a status'],

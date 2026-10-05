@@ -21,6 +21,8 @@ import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
   aspectRatioNode,
+  flux1ProAspectRatioNode,
+  sdxlFullAspectRatioNode,
   controlNetsNode,
   CONTROLNET_LIMIT,
   createCheckpointGraph,
@@ -32,8 +34,8 @@ import {
   triggerWordsGraph,
   type ResourceData,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 import { fluxControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
+import { DRAFT_WORKFLOW } from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Flux Mode Constants
@@ -108,7 +110,7 @@ type FluxModeCtx = {
  * Contains: aspectRatio, cfgScale, steps, seed
  */
 const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node(
     'cfgScale',
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: fluxGuidancePresets })
@@ -129,7 +131,7 @@ const standardModeBaseGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  * Pro mode subgraph: aspectRatio, cfgScale, steps, seed (no resources)
  */
 const proModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', flux1ProAspectRatioNode())
   .node(
     'cfgScale',
     sliderNode({ min: 2, max: 20, defaultValue: 3.5, step: 0.5, presets: fluxGuidancePresets })
@@ -146,7 +148,7 @@ const standardModeWithResourcesGraph = new DataGraph<FluxModeCtx, GenerationCtx>
 
 /** Draft mode subgraph: aspectRatio, seed */
 const draftModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('seed', seedNode());
 
 /** Ultra mode subgraph: aspectRatio (different options), fluxUltraRaw, seed */
@@ -176,69 +178,47 @@ const ultraModeGraph = new DataGraph<FluxModeCtx, GenerationCtx>()
  * - krea: resources, aspectRatio, cfgScale, steps, seed
  * - pro: aspectRatio, cfgScale, steps, seed (no resources)
  * - ultra: aspectRatio (different options), fluxUltraRaw, seed
- *
- * Draft workflow behavior:
- * - When workflow is 'txt2img:draft', model defaults to draft version and is locked
- * - If user changes model to a non-draft version, workflow switches to txt2img
  */
 
 export const fluxGraph = new DataGraph<
   { ecosystem: string; workflow: string; model: ResourceData | undefined },
   GenerationCtx
 >()
-  // Merge checkpoint graph with dynamic modelLocked based on workflow
-  // When workflow is 'txt2img:draft', force the model to draft version (overrides any existing value)
-  // Note: showVersionSelector computed in createCheckpointGraph handles visibility based on current model
   .merge(
     (ctx) =>
       createCheckpointGraph({
         versions: { options: fluxModeVersionOptions },
-        modelLocked: ctx.workflow === 'txt2img:draft',
-        // defaultModelId: fluxVersionIds.standard,
+        modelLocked: ctx.workflow === DRAFT_WORKFLOW,
       }),
     ['workflow']
   )
-  // Effect 1: When workflow changes, sync model to match
-  // - If workflow changed to draft but model is not draft → set model to draft
-  // - If workflow changed away from draft but model is draft → set model to standard
+  // The draft build and the draft workflow move together. Order matters: on init every dep counts
+  // as changed, so the draft build pulling the workflow INTO draft must run before the workflow
+  // effect could swap the build out — otherwise a non-interactive submit naming the draft build
+  // on txt2img is silently billed for standard.
+  .effect(
+    (ctx, _ext, set) => {
+      if (ctx.model?.id === fluxVersionIds.draft && ctx.workflow !== DRAFT_WORKFLOW)
+        set('workflow', DRAFT_WORKFLOW);
+    },
+    ['model']
+  )
   .effect(
     (ctx, _ext, set) => {
       const isDraftModel = ctx.model?.id === fluxVersionIds.draft;
-      const isDraftWorkflow = ctx.workflow === 'txt2img:draft';
-
-      if (isDraftWorkflow && !isDraftModel) {
+      const isDraftWorkflow = ctx.workflow === DRAFT_WORKFLOW;
+      if (isDraftWorkflow && !isDraftModel)
         set('model', { id: fluxVersionIds.draft } as ResourceData);
-      } else if (!isDraftWorkflow && isDraftModel) {
+      else if (!isDraftWorkflow && isDraftModel)
         set('model', { id: fluxVersionIds.standard } as ResourceData);
-      }
     },
     ['workflow']
   )
-  // Effect 2: When model changes, sync workflow to match
-  // - If model changed to draft and workflow is not draft → set workflow to draft
-  // - If model changed away from draft and workflow is draft → set workflow to image:create
-  //
-  // Note: This effect only handles user-initiated model changes.
-  // When workflow changes trigger Effect 1 to set model, we don't want Effect 2
-  // to set workflow back - that would cause an infinite loop.
-  // The check for consistency prevents this: if workflow already matches what
-  // the model implies, no action is taken.
   .effect(
     (ctx, _ext, set) => {
-      const model = ctx.model as { id?: number } | undefined;
-      if (!model?.id) return;
-
-      const isDraftModel = model.id === fluxVersionIds.draft;
-      const isDraftWorkflow = ctx.workflow === 'txt2img:draft';
-
-      // Only sync if there's an actual mismatch that needs fixing
-      // This prevents loops: if Effect 1 set model to standard because workflow
-      // changed from draft, isDraftWorkflow is already false, so no action needed
-      if (isDraftModel && !isDraftWorkflow) {
-        set('workflow', 'txt2img:draft');
-      } else if (!isDraftModel && isDraftWorkflow) {
+      const id = ctx.model?.id;
+      if (id && id !== fluxVersionIds.draft && ctx.workflow === DRAFT_WORKFLOW)
         set('workflow', 'txt2img');
-      }
     },
     ['model']
   )

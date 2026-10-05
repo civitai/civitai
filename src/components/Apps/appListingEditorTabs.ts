@@ -8,6 +8,7 @@ import {
   isAuthorableListingStatus,
   isPublishableListingStatus,
 } from '~/shared/constants/app-capabilities.constants';
+import { isVisibilityEligibleListingStatus } from '~/shared/utils/app-listing-visibility';
 
 /**
  * App Store Listings — the CANONICAL owner/editor authoring page's tab set.
@@ -288,13 +289,20 @@ export function isOwnerUnpublishedTabContext(
  *                       narrower question — owner-only for invite/remove.) The status
  *                       clause is the Forgejo-write guard described at the top.
  *
- *   - `publishing`    — OWNER only, and only where a publishing control actually exists
- *                       (`isPublishableListingStatus`: `approved` ⇒ Unpublish, `removed` ⇒
- *                       Republish). This is the first clause for which `role` has ever been
- *                       load-bearing here: both `unpublishOwnListing` and
- *                       `republishOwnListing` are owner-scoped server-side and throw for a
- *                       seated editor, so offering an editor the tab would be offering a
- *                       guaranteed red toast.
+ *   - `publishing`    — OWNER only, and only where a publishing OR a VISIBILITY-LEVEL control
+ *                       actually exists: `isPublishableListingStatus` (`approved` ⇒
+ *                       Unpublish, `removed` ⇒ Republish) OR
+ *                       `isVisibilityEligibleListingStatus` (`draft`/`pending`/`approved` ⇒
+ *                       the level control). The level term is NOT optional decoration — see
+ *                       the 🔴 block at the branch itself: without it the tab never opened
+ *                       on a draft and the level control was unreachable on the very case it
+ *                       was built for. `role` is load-bearing here and nowhere else: both
+ *                       `unpublishOwnListing` and `republishOwnListing` are owner-scoped
+ *                       server-side and throw for a seated editor, so offering an editor the
+ *                       tab would be offering a guaranteed red toast for those two.
+ *                       ⚠️ The LEVEL proc is the exception — it admits an accepted seat — so
+ *                       this clause is narrower than the server for that one control, by
+ *                       operator decision rather than by necessity.
  *
  *   - `history`       — ALWAYS, for BOTH roles and EVERY status the route opens on.
  *                       `listingHistory` authorizes through `resolveListingAccess` (owner
@@ -319,7 +327,32 @@ export function editorTabsFor(ctx: EditorTabContext): EditorTab[] {
     if (ctx.capabilities.earnings === true && ctx.appBlockId != null) tabs.push('earnings');
     tabs.push('collaborators');
   }
-  if (ctx.role === 'owner' && isPublishableListingStatus(ctx.status)) tabs.push('publishing');
+  /**
+   * 🔴 WIDENED FOR THE VISIBILITY LEVEL, AND THE OLD GATE MADE THAT CONTROL UNREACHABLE ON
+   * THE CASE IT EXISTS FOR. `isPublishableListingStatus` is `{approved, removed}`, while a
+   * level is settable on `{draft, pending, approved}` — so with the publish predicate as
+   * the only term, the Publishing tab never opened on a `draft`, and the level control it
+   * hosts was dead there. The originating workflow in `maxVisibilityForStatus`'s own header
+   * is an owner setting `moderators` so a moderator can see their DRAFT; measured on
+   * production, 20 of the 38 level-eligible listings are drafts. It was caught by a round-0
+   * reachability pass, NOT by any of the four green test files that assert the draft
+   * behaviour — every one is scoped to the component and none loads this derivation. The
+   * seam is now pinned by `appListingEditorTabs.test.ts`'s
+   * "every status `showVisibility` offers the level on also opens the Publishing tab".
+   *
+   * 🔴 STILL OWNER-ONLY (operator's call, 2026-10-03). `setListingVisibilityAsOwner` does
+   * admit an accepted seat, so an editor-reachable tab would be defensible — but widening
+   * `role` here changes who sees a tab, which is a product decision and was declined in
+   * favour of the status widening alone. The panel's own editor machinery was deleted
+   * rather than left dead; do not re-add it without widening this term too.
+   *
+   * The two terms stay SEPARATE rather than merged into one predicate, because they answer
+   * different questions: one is "is there a publish control", the other "is there a level
+   * control". A single `isTabWorthyStatus` helper would read as one rule and drift.
+   */
+  const canPublish = isPublishableListingStatus(ctx.status);
+  const canSetLevel = isVisibilityEligibleListingStatus(ctx.status);
+  if (ctx.role === 'owner' && (canPublish || canSetLevel)) tabs.push('publishing');
   tabs.push('history');
   return tabs;
 }

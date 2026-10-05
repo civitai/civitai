@@ -8,6 +8,7 @@ import { announcementMediaCheckJob } from '~/server/jobs/announcement-media-chec
 import { auditRemixSourcesJob } from '~/server/jobs/audit-remix-sources';
 import { blurbFanoutJob } from '~/server/jobs/blurb-fanout';
 import { botAccountDetection } from '~/server/jobs/bot-account-detection';
+import { relabelBuildBatchJob } from '~/server/jobs/relabel-build-batch';
 import { pushSubscriptionCleanupJob } from '~/server/jobs/push-subscription-cleanup';
 import { reactionWithdrawalDetection } from '~/server/jobs/reaction-withdrawal-detection';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
@@ -121,9 +122,13 @@ import { updateUserScore } from '~/server/jobs/update-user-score';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
+import { retryImageStorageDeletes } from '~/server/jobs/retry-image-storage-deletes';
 import { restoreUserImages } from '~/server/jobs/restore-user-images';
 import { expireStrikesJob, processTimedUnmutesJob } from '~/server/jobs/process-strikes';
 import { processEnqueuedComicPanelsJob } from '~/server/jobs/process-enqueued-comic-panels';
+import { crucibleJobs } from '~/server/jobs/finalize-crucibles';
+import { crucibleSyncJobs } from '~/server/jobs/sync-crucible-scores';
+import { prizeAutoPayJob } from '~/server/jobs/prize-autopay';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -156,6 +161,7 @@ export const jobs: Job[] = [
   ingestImages,
   removeBlockedImages,
   removeReplacedImages,
+  retryImageStorageDeletes,
   processScheduledPublishing,
   // refreshImageGenerationCoverage,
   cleanImageResources,
@@ -204,6 +210,7 @@ export const jobs: Job[] = [
   settleBlockAuthorFeesJob,
   confirmMutes,
   botAccountDetection,
+  relabelBuildBatchJob,
   reactionWithdrawalDetection,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,
@@ -251,6 +258,9 @@ export const jobs: Job[] = [
   voidOrphanedAppealsJob,
   announcementMediaCheckJob,
   blurbFanoutJob,
+  ...crucibleJobs,
+  ...crucibleSyncJobs,
+  prizeAutoPayJob,
   pushSubscriptionCleanupJob,
 ];
 

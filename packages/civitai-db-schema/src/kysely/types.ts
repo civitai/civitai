@@ -133,6 +133,10 @@ import type {
   ShopifyMerchOrderStatus,
   OutboxEntity,
   UserHubSourceType,
+  CrucibleStatus,
+  CrucibleIngestionStatus,
+  CrucibleEngagementType,
+  PrizeSourceType,
 } from './enums';
 
 export type Account = {
@@ -411,6 +415,39 @@ export type AppListing = {
   cover_id: number | null;
   category: string | null;
   status: Generated<string>;
+  /**
+   * Per-listing cohort gate: private|moderators|testers|public, or NULL.
+   *
+   * NULLABLE WITH NO DEFAULT, and NULL is NOT the `private` level — it means the owner
+   * has expressed no choice, so the pre-feature rule for the row's `status` applies
+   * (approved is visible, non-approved is not). That is what lets a level be
+   * authoritative on an `approved` listing without a new approval -- of which there are
+   * eight scattered writes and no chokepoint -- minting a row that vanishes from the
+   * store. A level that IS set binds at every eligible status, `approved` included, so
+   * an owner can restrict a live listing (discovery-only: hidden from the store, still
+   * runnable by slug).
+   *
+   * Free-text `text` like `status`; the allowed set is a DB CHECK that lives ONLY in the
+   * migration .sql (canonical code set = APP_LISTING_VISIBILITIES), and NULL passes that
+   * CHECK by design. Always an AND with the surface flags, never an override.
+   *
+   * 🔴 THE no-type ANNOTATION ON THE FIELD LINE STRIPS IT FROM THE GENERATED CLIENT ON
+   * PURPOSE, AND THAT
+   * IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
+   * declares in its default SELECT/RETURNING, so while this was an ordinary field every
+   * `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
+   * on this tree, 17 of them WRITES — and during the manual-apply window that is
+   * `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
+   * delist all 500d on the PR preview. Stripping the field makes every one of those sites
+   * immune by construction. The column is reached ONLY by raw SQL, in
+   * `app-listing-visibility.service.ts` (read) and `-write.service.ts` (write). Re-adding it
+   * to the client re-opens the outage; `app-listing-visibility.no-prisma-field` is the guard.
+   *
+   * MANUAL-APPLY, like every migration here. Read it ONLY through
+   * `app-listing-visibility.service.ts` and never add it to a shared `select`: a
+   * `select` naming a missing column throws P2022 for the WHOLE query, which on the
+   * grid's shared select is a public-store outage.
+   */
   content_rating: string | null;
   external_url: string | null;
   source_repo_url: string | null;
@@ -2430,6 +2467,71 @@ export type CreatorGalleryHiddenUser = {
   note: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type CreatorMilestone = {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: Generated<boolean>;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  sortOrder: Generated<number>;
+};
+export type Crucible = {
+  id: Generated<number>;
+  userId: number;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  heroImageId: number | null;
+  buzzType: Generated<string>;
+  nsfwLevel: Generated<number>;
+  contentType: Generated<MediaType>;
+  entryFee: Generated<number>;
+  seededPrizePool: Generated<number>;
+  prizePool: Generated<number>;
+  entryLimit: Generated<number>;
+  freeEntriesPerUser: Generated<number>;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: Generated<unknown>;
+  allowedResources: unknown | null;
+  allowedBaseModels: Generated<string[]>;
+  duration: Generated<number>;
+  startAt: Timestamp | null;
+  endAt: Timestamp | null;
+  status: Generated<CrucibleStatus>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+  ingestion: Generated<CrucibleIngestionStatus>;
+  scannedAt: Timestamp | null;
+  textNsfw: Generated<boolean>;
+};
+export type CrucibleEngagement = {
+  userId: number;
+  crucibleId: number;
+  type: CrucibleEngagementType;
+  createdAt: Generated<Timestamp>;
+};
+export type CrucibleEntry = {
+  id: Generated<number>;
+  crucibleId: number;
+  userId: number;
+  imageId: number | null;
+  score: Generated<number>;
+  voteCount: Generated<number>;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Generated<Timestamp>;
+};
+export type CrucibleReport = {
+  crucibleId: number;
+  reportId: number;
+};
 export type CryptoDeposit = {
   paymentId: string;
   userId: number;
@@ -2641,6 +2743,13 @@ export type GenerationPreset = {
 export type GenerationServiceProvider = {
   name: string;
   schedulers: GenerationSchedulers[];
+};
+export type GenerationSizePreset = {
+  id: Generated<number>;
+  userId: number;
+  width: number;
+  height: number;
+  createdAt: Generated<Timestamp>;
 };
 export type HomeBlock = {
   id: Generated<number>;
@@ -2878,6 +2987,7 @@ export type JobQueue = {
   entityType: EntityType;
   entityId: number;
   createdAt: Generated<Timestamp>;
+  data: unknown | null;
 };
 export type KeyValue = {
   key: string;
@@ -3754,6 +3864,24 @@ export type PricingSlot = {
   ownerId: number;
   createdAt: Generated<Timestamp>;
 };
+export type Prize = {
+  id: Generated<number>;
+  userId: number;
+  sourceType: PrizeSourceType;
+  sourceId: number;
+  subjectId: number | null;
+  position: number | null;
+  amount: number;
+  title: string;
+  externalTransactionId: string;
+  createdAt: Generated<Timestamp>;
+  autoClaimAt: Timestamp;
+  claimedAt: Timestamp | null;
+  buzzType: string | null;
+  autoClaimed: Generated<boolean>;
+  paidAt: Timestamp | null;
+  voidedAt: Timestamp | null;
+};
 export type Product = {
   id: string;
   active: boolean;
@@ -3945,6 +4073,18 @@ export type ReportAutomated = {
   reportId: number;
   metadata: Generated<unknown>;
   createdAt: Generated<Timestamp>;
+};
+export type ResourceInsight = {
+  modelVersionId: number;
+  role: string;
+  styleFamily: string;
+  contentTypes: string[];
+  qualityScore: number;
+  confidence: number;
+  specHash: string;
+  model: string;
+  createdAt: Generated<Timestamp>;
+  stale: Generated<boolean>;
 };
 export type ResourceOverride = {
   hash: string;
@@ -4406,6 +4546,12 @@ export type UserCosmeticShopPurchases = {
   refunded: boolean;
   meta: unknown | null;
 };
+export type UserCreatorMilestone = {
+  userId: number;
+  milestoneKey: string;
+  achievedAt: Generated<Timestamp>;
+  seenAt: Timestamp | null;
+};
 export type UserEngagement = {
   userId: number;
   targetUserId: number;
@@ -4839,6 +4985,11 @@ export type DB = {
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
+  CreatorMilestone: CreatorMilestone;
+  Crucible: Crucible;
+  CrucibleEngagement: CrucibleEngagement;
+  CrucibleEntry: CrucibleEntry;
+  CrucibleReport: CrucibleReport;
   CryptoDeposit: CryptoDeposit;
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
@@ -4860,6 +5011,7 @@ export type DB = {
   GenerationCoverage: GenerationCoverage;
   GenerationPreset: GenerationPreset;
   GenerationServiceProvider: GenerationServiceProvider;
+  GenerationSizePreset: GenerationSizePreset;
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
@@ -4944,6 +5096,7 @@ export type DB = {
   PressMention: PressMention;
   Price: Price;
   PricingSlot: PricingSlot;
+  Prize: Prize;
   Product: Product;
   PurchasableReward: PurchasableReward;
   Purchase: Purchase;
@@ -4960,6 +5113,7 @@ export type DB = {
   ReferralReward: ReferralReward;
   Report: Report;
   ReportAutomated: ReportAutomated;
+  ResourceInsight: ResourceInsight;
   ResourceOverride: ResourceOverride;
   ResourceReview: ResourceReview;
   ResourceReviewHelper: ResourceReviewHelper;
@@ -5008,6 +5162,7 @@ export type DB = {
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
+  UserCreatorMilestone: UserCreatorMilestone;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;

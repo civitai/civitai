@@ -3,7 +3,12 @@ import {
   allBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { PLACEMENT_SURFACES, placementSurfaces } from '~/shared/utils/placement';
+import {
+  hostDeclineFeePercentRefusal,
+  PLACEMENT_SURFACES,
+  placementSurfaces,
+} from '~/shared/utils/placement';
+import { isPromotionSurface } from '~/shared/utils/promotion';
 import { REMIX_GALLERY_MAX_PINNED } from '~/shared/utils/remix-gallery';
 import {
   STICKER_COMMENT_MAX_LENGTH,
@@ -94,6 +99,9 @@ export const placementSpaceSchema = z
     // bound is a sanity limit on what may reach the column at all, well above the
     // highest cap the table can produce.
     freeSlots: z.number().int().min(0).max(1_000).nullable().optional(),
+    // `undefined` keeps, `null` returns to the surface default. The range is the
+    // surface's own, checked below; the service checks it again.
+    declineFeePercent: z.number().int().nullable().optional(),
     // Surface-owned. Bounded here so a client cannot store a max size outside the
     // global limits; the reader clamps too, since the column is editable by hand.
     // Each surface reads only its own keys, so the union is carried rather than
@@ -126,11 +134,30 @@ export const placementSpaceSchema = z
             ? 'Remix gallery submissions always need review'
             : 'That is not a mode this surface accepts',
       });
+
+    if (input.declineFeePercent !== undefined) {
+      const refusal = hostDeclineFeePercentRefusal(input.surface, input.declineFeePercent);
+      if (refusal)
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['declineFeePercent'],
+          message: refusal,
+        });
+    }
+
+    // A promotion's space is set on the host's account only; a row on one image
+    // or post would never be read, so an owner saving it would see no effect.
+    if (isPromotionSurface(input.surface) && input.entityType !== 'user')
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['entityType'],
+        message: 'Promotion prices are set on your account',
+      });
   });
 
 export const getPlacementSpaceSchema = z.object({
   surface: placementSurfaceSchema,
-  targetType: z.enum(['image']),
+  targetType: z.enum(['image', 'model']),
   targetId: z.number().int().positive(),
 });
 

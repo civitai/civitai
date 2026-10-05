@@ -1419,6 +1419,8 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
 export const thumbnailCache = createCachedObject<{
   id: number;
   url: string;
+  width: number | null;
+  height: number | null;
   nsfwLevel: NsfwLevel;
   parentId?: number;
 }>({
@@ -1440,11 +1442,20 @@ export const thumbnailCache = createCachedObject<{
     if (thumbnailIds.length === 0) return {};
 
     const thumbnails = await db.$queryRaw<
-      { id: number; url: string; nsfwLevel: NsfwLevel; parentId: number }[]
+      {
+        id: number;
+        url: string;
+        width: number | null;
+        height: number | null;
+        nsfwLevel: NsfwLevel;
+        parentId: number;
+      }[]
     >`
         SELECT
           id,
           url,
+          width,
+          height,
           "nsfwLevel",
           cast(metadata->'parentId' as int) as "parentId"
         FROM "Image"
@@ -1456,6 +1467,20 @@ export const thumbnailCache = createCachedObject<{
   dontCacheFn: (data) => !data.nsfwLevel,
   ttl: CacheTTL.day,
 });
+
+/** The cache is keyed by video id, so a change to a thumbnail image must refresh its parent video. */
+export async function refreshThumbnailCache(imageIds: number | number[]) {
+  const ids = Array.isArray(imageIds) ? imageIds : [imageIds];
+  if (!ids.length) return;
+
+  const parents = await dbWrite.$queryRaw<{ parentId: number | null }[]>`
+    SELECT cast(metadata->'parentId' as int) as "parentId"
+    FROM "Image"
+    WHERE id IN (${Prisma.join(ids)})
+  `;
+  const parentIds = parents.map((x) => x.parentId).filter(isDefined);
+  await thumbnailCache.refresh([...new Set([...ids, ...parentIds])]);
+}
 
 type ArticleStatLookup = {
   articleId: number;

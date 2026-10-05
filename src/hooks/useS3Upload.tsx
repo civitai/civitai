@@ -16,6 +16,7 @@ import {
   shouldRetryPartError,
 } from '~/utils/upload-retry';
 import { relayImageFallback } from '~/utils/upload-settlement';
+import type { ClientDeclarableRelayFallbackOutcome } from '~/utils/relay-fallback-outcome';
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
@@ -272,7 +273,10 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       };
 
       // Prepare abort
-      const abortUpload = (failure?: PartFailureReason) =>
+      const abortUpload = (
+        failure?: PartFailureReason,
+        relayOutcome?: ClientDeclarableRelayFallbackOutcome
+      ) =>
         fetch(abortEndpoint, {
           method: 'POST',
           headers,
@@ -283,6 +287,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             uploadId,
             backend,
             ...(failure ? { failure } : {}),
+            ...(relayOutcome ? { relayOutcome } : {}),
           }),
         });
 
@@ -428,6 +433,10 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         // that fit the relay's body cap. A relayed upload reports the RELAY-MINTED key —
         // the fallback endpoint deliberately accepts no caller key, so the id this
         // returns is not the one the multipart session was opened with.
+
+        // `not_attempted` is the gate declining, distinct from a relay that ran and failed.
+        let relayOutcome: ClientDeclarableRelayFallbackOutcome = 'not_attempted';
+
         if (
           shouldRelayOnPartFailure(fatal, {
             type,
@@ -436,7 +445,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             userAborted: userAbortController.signal.aborted,
           })
         ) {
-          const relayedKey = await relayImageFallback(file, {
+          const relayed = await relayImageFallback(file, {
             // 🔴 The USER's signal, not the teardown's — which by here has ALWAYS fired.
             // Handing the teardown signal to the relay aborts its POST on the first tick,
             // so the fallback stays inert even once the gate above opens. A cancel during
@@ -445,7 +454,8 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             sleep: (ms) => cancellableSleep(ms, userAbortController.signal),
             defaultRetryAfterSeconds: 2,
           });
-          if (relayedKey) {
+          relayOutcome = relayed.ok ? 'rescued' : relayed.reason;
+          if (relayed.ok) {
             // 🔴 `progress` MUST be written here, unlike the ordinary success path below.
             // There, `updateProgress()` has already driven progress to 100 from the part
             // xhr's own events. Here the part died at the NETWORK layer, which is exactly
@@ -467,11 +477,11 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             // down best-effort, after the success write so a teardown failure cannot
             // mask the outcome.
             try {
-              await abortUpload(describePartFailure(fatal));
+              await abortUpload(describePartFailure(fatal), relayOutcome);
             } catch {
               /* the upload already succeeded */
             }
-            return { url: relayedKey, bucket, key: relayedKey, name: file.name, size, backend };
+            return { url: relayed.id, bucket, key: relayed.id, name: file.name, size, backend };
           }
         }
 
@@ -482,7 +492,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           userAborted: userAbortController.signal.aborted,
         });
         updateFile({ status, file: undefined });
-        await abortUpload(describePartFailure(fatal));
+        await abortUpload(describePartFailure(fatal), relayOutcome);
         return { url: null, bucket, key, backend };
       }
 

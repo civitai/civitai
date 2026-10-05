@@ -14,7 +14,6 @@
     CONTENT_MAX,
     DEFAULT_DOMAINS,
     DOMAIN_CHIPS,
-    LINK_TEXT_MAX,
     TITLE_MAX,
     MIN_ANNOUNCEMENT_DURATION_MS,
     allowanceState,
@@ -24,16 +23,19 @@
   } from '$lib/announcements';
   import type { AnnouncementRow } from '$lib/server/announcements';
   import CoverField from './CoverField.svelte';
+  import LinkButtonsField from './LinkButtonsField.svelte';
   import type { CoverUpload } from './cover-upload';
 
   let {
     announcement = null,
     allowance,
+    isMember,
     error = null,
     onDone,
   }: {
     announcement?: AnnouncementRow | null;
     allowance: AnnouncementAllowance | null;
+    isMember: boolean;
     error?: string | null;
     onDone: () => void;
   } = $props();
@@ -68,32 +70,6 @@
   const profileOnly = $derived(!broadcast);
   let startsLocal = $state(toLocalInput(seed?.startsAt));
   let endsLocal = $state(toLocalInput(seed?.endsAt));
-  let linkUrl = $state(seed?.link ?? '');
-
-  // Shows the creator the adaptation the server performs on save: a link to one of our own
-  // domains is stored as a path so it opens on whichever site the reader is on. This is the
-  // visible half only — `toDomainRelativeLink` on the server is what actually decides, and
-  // it reads the real host list from server env, which the browser has no business knowing.
-  const OWN_HOSTS = ['civitai.com', 'civitai.red', 'civitaired.com'];
-
-  function truncateOwnDomain() {
-    const value = linkUrl.trim();
-    if (!value) return;
-
-    let url: URL;
-    try {
-      url = new URL(value);
-    } catch {
-      return; // already a path
-    }
-
-    const host = url.host.toLowerCase();
-    const ours = OWN_HOSTS.includes(host) || host === window.location.host.toLowerCase();
-    if (!ours) return;
-
-    linkUrl = `${url.pathname}${url.search}${url.hash}` || '/';
-  }
-  let linkText = $state(seed?.linkText ?? '');
   let cover = $state<CoverUpload | null>(null);
   let submitting = $state(false);
 
@@ -280,28 +256,7 @@
       </span>
     </div>
 
-    <div class="grid gap-4 sm:grid-cols-2">
-      <div class="flex flex-col gap-1.5">
-        <Label for="announcement-link">Button link (optional)</Label>
-        <Input
-          id="announcement-link"
-          name="linkUrl"
-          bind:value={linkUrl}
-          onblur={truncateOwnDomain}
-          placeholder="/models/123 or https://…"
-        />
-      </div>
-      <div class="flex flex-col gap-1.5">
-        <Label for="announcement-link-text">Button text</Label>
-        <Input
-          id="announcement-link-text"
-          name="linkText"
-          bind:value={linkText}
-          maxlength={LINK_TEXT_MAX}
-          placeholder="Check it out"
-        />
-      </div>
-    </div>
+    <LinkButtonsField seed={seed?.links ?? []} {isMember} />
 
     <!-- The stored column is `profileOnly`; the control is its inverse, because broadcasting is the
          thing a creator decides to do. The hidden input above still posts `profileOnly`. -->

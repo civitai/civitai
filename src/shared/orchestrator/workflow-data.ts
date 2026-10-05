@@ -13,7 +13,10 @@ import type {
 } from '~/server/services/orchestrator/orchestration-new.service';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
 import { isPrivateMature, isMature } from '~/shared/constants/orchestrator.constants';
-import { orchestratorCompletedStatuses } from '~/shared/constants/generation.constants';
+import {
+  orchestratorCompletedStatuses,
+  orchestratorRefundableStatuses,
+} from '~/shared/constants/generation.constants';
 
 // =============================================================================
 // Defaults
@@ -201,12 +204,19 @@ export class StepData {
   }
 
   /**
-   * Whether this step's output should be hidden from the user.
-   * Set to true for intermediate steps in multi-step workflows (e.g., Wan 2.2 low-fps videoGen
-   * before frame interpolation).
+   * Whether this step's output should be hidden from the user: an intermediate step (a ControlNet
+   * preprocess, Wan 2.2's 12fps pass) — unless a later step failed, in which case the intermediate
+   * result is all the user got for what they were charged, so it is shown.
    */
   get suppressOutput(): boolean {
-    return (this.metadata as any)?.suppressOutput === true;
+    if ((this.metadata as any)?.suppressOutput !== true) return false;
+    if (this.status !== 'succeeded' || this.output.length === 0) return true;
+    const steps = this.#workflow.steps ?? [];
+    const index = steps.indexOf(this);
+    if (index < 0) return true;
+    return !steps
+      .slice(index + 1)
+      .some((s) => s.status && orchestratorRefundableStatuses.includes(s.status));
   }
 
   /**

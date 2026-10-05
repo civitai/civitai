@@ -10819,7 +10819,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(stamped).toBe('step:imageBackgroundRemoval');
     });
 
-    it('NAMESPACES a $type that collides with a kind key — never bare `textToImage`', async () => {
+    it('NAMESPACES a $type that collides with a kind key — never bare `customComfy`', async () => {
       // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
       // flows through. `textToImage` is itself a live orchestrator `$type`
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
@@ -10830,12 +10830,26 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       ptQuoting(5, 5);
       await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ptBody({ $type: 'textToImage' }),
+        body: ptBody({ $type: 'customComfy' }),
       });
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      expect(stamped).toBe('step:textToImage');
-      expect(stamped).not.toBe('textToImage');
+      expect(stamped).toBe('step:customComfy');
+      expect(stamped).not.toBe('customComfy');
+    });
+
+    // The collision this namespacing was written for is now closed at the door instead:
+    // `textToImage` is retired, so the arm refuses it rather than stamping it. The
+    // namespacing above is what proves no PAST submit was miscounted as a body-kind one
+    // — prod recorded `step:imageBackgroundRemoval` and no `step:textToImage` at all.
+    it('refuses a bare textToImage outright — the step type is retired', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'textToImage' }) })
+      ).rejects.toThrow(/platform-internal and cannot be submitted by an app block/);
+      expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
     });
 
     it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {

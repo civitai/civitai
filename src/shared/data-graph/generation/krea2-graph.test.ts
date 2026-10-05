@@ -89,10 +89,12 @@ describe('krea2 base resolution tier', () => {
     expect(dimsOf(g)).toEqual({ width: 1024, height: 1024 });
   });
 
-  it('doubles every side at 2K, keeping each divisible by 32', () => {
+  // A straight doubling sent 16:9 as 2752 × 1536, past the comfy input's 2048 per
+  // side, so the orchestrator refused it. 2K fits instead, keeping the ratio.
+  it('fits 2K inside 2048 per side, keeping the ratio and /32', () => {
     const g = init('txt2img', krea2VersionIds.turbo);
     g.set({ resolution: '2K', aspectRatio: '16:9' });
-    expect(dimsOf(g)).toEqual({ width: 2752, height: 1536 });
+    expect(dimsOf(g)).toEqual({ width: 2048, height: 1152 });
     const { width, height } = dimsOf(g);
     expect(width % 32).toBe(0);
     expect(height % 32).toBe(0);

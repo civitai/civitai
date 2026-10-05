@@ -1,0 +1,137 @@
+-- ============================================================
+-- App Store Listings — per-listing VISIBILITY LEVEL (W14)
+-- ============================================================
+-- NOT AUTO-APPLIED. Migrations in this repo are run by hand — see CLAUDE.md -> Database.
+-- There is no `prisma migrate deploy` path and `_prisma_migrations` is not the source of
+-- truth; a HUMAN applies the statements below per environment. Apply to BOTH:
+--   1. the production primary (the live civitai DB)
+--   2. the dev clone, BEFORE any preview smoke run, or the preview 500s on the column
+--
+-- APPLY THIS **BEFORE** DEPLOYING THE CODE. THERE IS A HARD ORDERING CONSTRAINT, and it
+-- is the same one `20260823120000_app_listing_source_repo` learned the expensive way and
+-- `20260901120000_app_listing_beta` restated.
+--
+-- Prisma returns the created/updated row, so it emits
+-- `INSERT/UPDATE ... RETURNING <every scalar the MODEL declares>`. `visibility` is
+-- declared on the `AppListing` model, so the generated SQL names it whether or not the key
+-- appears in `data` — and the same is true of any call that RETURNS ROWS and passes no
+-- explicit `select`: `findUnique` / `findFirst` / `findMany` / `create` / `update` /
+-- `upsert` / `delete`, and the `...AndReturn` variants. There are many of those on this
+-- model. `updateMany` / `deleteMany` / `createMany` return a row COUNT, so they name no
+-- scalars in the RETURNING list — but they still name whatever columns appear in their own
+-- `data` and `where`, so an `appListing.updateMany({ data: { visibility } })` raises 42703
+-- exactly like the rest.
+--
+-- Deploying the code first therefore turns an additive feature into a public-store outage:
+--
+--     HTTP 500 — The column `app_listings.visibility` does not exist in the current database.
+--
+-- NO TEST IN THIS REPO CAN SEE THAT. The suites mock Prisma, so none of them generates
+-- SQL. `app-listing-visibility.service.ts` is defence in depth for the paths that DO pass
+-- an explicit select (and the store list path refuses to NAME the column until an
+-- availability probe says it is there); it is not, and cannot be, a substitute for running
+-- this first.
+--
+-- `ADD COLUMN ... NOT NULL DEFAULT 'private'` does NOT rewrite the table on PG 11+ (the
+-- default is stored in the catalog and materialised on read), so statement 1 is
+-- catalog-only and O(1) regardless of row count. Run these outside a long-running
+-- transaction so they cannot queue behind (or in front of) reads.
+--
+-- `IF NOT EXISTS` / `DROP ... IF EXISTS` so a re-run, or an environment where a human
+-- already applied part of this, is a no-op rather than an error.
+--
+-- ------------------------------------------------------------
+-- THE BACKFILL, PER STATUS -- AND THE CHOICE IS **NO BACKFILL**
+-- ------------------------------------------------------------
+-- NO POPULATION FIGURE IS QUOTED HERE, AND THAT IS DELIBERATE TWICE OVER — the same two
+-- reasons `blocks.router.ts` gives for refusing to quote its own. It is a count of a
+-- population MODERATORS MOVE (every delist, relist and approval changes it), so a number
+-- written into a permanent file is a snapshot that reads as a fact. And this repo is
+-- public: a per-status census of the store, the `removed` bucket above all, is not
+-- something to publish for the sake of a comment. The per-status RULE below is what
+-- matters and it holds at any population; derive the counts when you need them.
+--
+--   * `approved`             — NULL ⇒ visible to everyone the surface admits. Byte-identical
+--     to today, because that is literally the predicate this migration leaves in place for
+--     an unset row. Writing 'public' here would be behaviour-IDENTICAL, so it buys nothing
+--     and costs something: it fabricates an owner intent nobody expressed, and the enum has
+--     no way back to "unset".
+--   * `draft` / `pending`     — NULL ⇒ not reachable in the store. Also byte-identical to
+--     today. An owner who wants a cohort opts in explicitly, which is the feature.
+--   * `rejected` / `removed`  — NULL ⇒ not reachable, and the code's eligibility allowlist
+--     (`VISIBILITY_ELIGIBLE_LISTING_STATUSES`) refuses those two statuses outright at the
+--     READ as well as the write, so neither a level nor a backfill could partially
+--     un-take-down an app even if a row carried one.
+--
+-- So every existing row is already correct at NULL, for a DIFFERENT reason per status, and
+-- the merge is a no-op on the store until an owner or a moderator sets something.
+--
+-- 🔴 NULLABLE WITH NO DEFAULT IS THE WHOLE DESIGN. NULL = "no choice expressed", which is
+-- NOT the `private` LEVEL. A level must be authoritative on an `approved` listing (an owner
+-- has to be able to pull a live listing back to a cohort) AND must not leak a `draft`, and
+-- with a NOT NULL column no default does both:
+--
+--   * DEFAULT 'private' breaks approved rows. Every FUTURE approval — eight scattered
+--     writes set `status='approved'` across four services, with no chokepoint — would mint
+--     a row at `private`, and the listing would vanish from the store the moment it went
+--     live. Closing that needs `visibility='public'` at all eight sites, each guarded on
+--     this column existing; miss one and that path ships the outage.
+--   * DEFAULT 'public' breaks drafts: a brand-new draft would be born publicly visible.
+--
+-- NULL dissolves it. An unset level means "apply the pre-feature rule for this status", so
+-- a new row of ANY status behaves exactly as it does today with no write at the approve
+-- sites, while a row that DOES carry a level has it respected at every eligible status,
+-- `approved` included. The code half is `parseStoredVisibility` (NULL stays NULL) and
+-- `listingVisibleInStore` (NULL ⇒ the status baseline). A NULL can never ADMIT anything the
+-- store does not already show, so the unset case fails closed by construction.
+--
+-- The CHECK's IN-list is kept in lockstep with the code constant
+-- `APP_LISTING_VISIBILITIES` by the migration-agreement test
+-- `src/server/services/blocks/__tests__/app-listing-visibility.constants.test.ts`, which
+-- parses THIS file. That catches code/DDL drift in CI; it does NOT apply the DDL.
+
+-- 1. The column. NULLABLE, no default — see above. `ADD COLUMN` with no default is a
+--    catalog-only update on PG 11+, so it is O(1) regardless of row count.
+ALTER TABLE "app_listings"
+  ADD COLUMN IF NOT EXISTS "visibility" TEXT;
+
+-- 2. The allowed set. Postgres cannot modify a CHECK in place, so DROP then ADD, wrapped in
+--    one transaction: without it there is a sub-ms window with no CHECK at all through which
+--    a concurrent bad write could slip. Mirrors
+--    `20260706120200_w13_p3b_app_listing_status_add_removed`.
+--
+--    🔴 NULL PASSES THIS CHECK BY DESIGN, and that is standard SQL rather than an oversight:
+--    `NULL IN (...)` evaluates to NULL and a CHECK is violated only by FALSE. So the
+--    constraint bounds the LEVELS without forbidding "no level set". Do not "fix" it by
+--    adding `"visibility" IS NOT NULL` — that reintroduces the defaulting problem above.
+--
+--    🔴 AND IT DELIBERATELY DOES NOT ENCODE THE REVIEW CEILING. A level may not be wider
+--    than the listing's review state allows (`moderators` on an unreviewed `draft`/`pending`,
+--    `public` on an `approved`) — but that is a STATUS-DEPENDENT rule, so expressing it here
+--    would be a two-column CHECK that a legitimate status transition could violate: a
+--    moderator withdrawing an approved `public` listing back to `pending` would be rejected
+--    with 23514 on a row it never touched. The ceiling is enforced in `maxVisibilityForStatus`
+--    at BOTH the read and the write instead, and the read enforcement is what makes a row
+--    whose status moved under a now-too-wide level safe rather than merely unlikely.
+BEGIN;
+ALTER TABLE "app_listings" DROP CONSTRAINT IF EXISTS "app_listings_visibility_check";
+ALTER TABLE "app_listings" ADD  CONSTRAINT "app_listings_visibility_check"
+  CHECK ("visibility" IN ('private', 'moderators', 'testers', 'public'));
+COMMIT;
+
+-- 3. Statistics for the new column.
+--
+--    🔴 AUTOANALYZE WILL NEVER DO THIS ON ITS OWN. `ADD COLUMN` with no default is
+--    catalog-only, which is why statement 1 is O(1) — but the flip side is that it changes
+--    ZERO TUPLES, so `n_mod_since_analyze` does not move and autoanalyze is never triggered.
+--    `visibility` would have no `pg_stats` row indefinitely, and with no stats `nulltestsel`
+--    falls back to 0.005 for `IS NULL` / 0.995 for `IS NOT NULL` — estimating the store
+--    read's two disjuncts EXACTLY INVERTED, since today essentially every row is NULL. The
+--    plan is a seq scan at this table's size either way, so this is cheap insurance rather
+--    than a fix for a live problem; the point is that the error is in the wrong direction and
+--    feeds the row estimates for both LEFT JOINs and the sort.
+--
+--    Outside the transaction above: ANALYZE takes only a SHARE UPDATE EXCLUSIVE lock and is
+--    safe to run against a live table, but keeping it out of the CHECK swap means a slow
+--    sample cannot hold that lock alongside the constraint change.
+ANALYZE "app_listings";

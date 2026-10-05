@@ -357,6 +357,13 @@ describe('the board executes nothing', () => {
       './abuse-verdicts',
       './moderator-db',
       '@civitai/moderation',
+      // A TYPE, and only a type: `BadgeVariant` is `VariantProps<typeof badgeVariants>['variant']`,
+      // so `finding-presentation.ts` names the Badge variants the board may ask for instead of
+      // hand-copying that union. `import type` is erased before anything runs, and the package it
+      // comes from is presentation primitives — no client, no session, no service, nothing that
+      // could reach an account. Added deliberately, which is what a ledger that fails on GROWTH is
+      // for; a VALUE import from this package would be a different question and is not this.
+      '@civitai/ui/components/ui/badge/index.js',
       '@sveltejs/kit',
       // The query builder itself, for the raw `pg_attribute` capability probe in
       // `recordAbuseRun` and for the two transaction types it is written against. A SQL compiler

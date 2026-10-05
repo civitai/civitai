@@ -180,7 +180,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -255,6 +255,14 @@ export type ShopifyMerchOrderStatus = "Pending" | "Granted";
 export type OutboxEntity = "Article" | "Image" | "Model" | "Post" | "ModelVersion";
 
 export type UserHubSourceType = "User" | "Model" | "ModelVersion" | "Collection" | "Tag";
+
+export type CrucibleStatus = "Pending" | "Active" | "Completed" | "Cancelled";
+
+export type CrucibleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error";
+
+export type CrucibleEngagementType = "Notify";
+
+export type PrizeSourceType = "Crucible" | "Challenge";
 
 export interface Account {
   id: number;
@@ -593,6 +601,7 @@ export interface User {
   referralRewards?: ReferralReward[];
   referralRewardsAsReferee?: ReferralReward[];
   referralMilestones?: ReferralMilestone[];
+  creatorMilestones?: UserCreatorMilestone[];
   referralRedemptions?: ReferralRedemption[];
   referralAttributions?: ReferralAttribution[];
   clubs?: Club[];
@@ -646,6 +655,7 @@ export interface User {
   issuedStrikes?: UserStrike[];
   voidedStrikes?: UserStrike[];
   generationPresets?: GenerationPreset[];
+  generationSizePresets?: GenerationSizePreset[];
   ownedWildcardSets?: WildcardSet[];
   blurbs?: Blurb[];
   model3ds?: Model3D[];
@@ -701,6 +711,10 @@ export interface User {
   placementsMade?: Placement[];
   placementsSold?: Placement[];
   pricingSlots?: PricingSlot[];
+  crucibles?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
+  crucibleEngagements?: CrucibleEngagement[];
+  prizes?: Prize[];
 }
 
 export interface CustomerSubscription {
@@ -1055,6 +1069,7 @@ export interface ModelVersion {
   imageResources?: ImageResource[];
   posts?: Post[];
   resourceReviews?: ResourceReview[];
+  resourceInsight?: ResourceInsight | null;
   hashes?: ModelHash[];
   metricsDaily?: ModelMetricDaily[];
   modelVersionExploration?: ModelVersionExploration[];
@@ -1282,6 +1297,7 @@ export interface Report {
   model3d?: Model3DReport | null;
   model3dReview?: Model3DReviewReport | null;
   announcement?: AnnouncementReport | null;
+  crucible?: CrucibleReport | null;
 }
 
 export interface ResourceReviewReport {
@@ -1407,6 +1423,20 @@ export interface ResourceReviewReaction {
   reaction: ReviewReactions;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface ResourceInsight {
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  role: string;
+  styleFamily: string;
+  contentTypes: string[];
+  qualityScore: number;
+  confidence: number;
+  specHash: string;
+  model: string;
+  createdAt: Date;
+  stale: boolean;
 }
 
 export interface Post {
@@ -1544,6 +1574,9 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  crucibles?: Crucible[];
+  crucibleHeroes?: Crucible[];
+  crucibleEntries?: CrucibleEntry[];
 }
 
 export interface ImageTagForReview {
@@ -2927,6 +2960,7 @@ export interface Cosmetic {
   purchaseComponents?: UserCosmeticShopPurchaseCosmetic[];
   cosmeticShopItems?: CosmeticShopItem[];
   packMemberships?: CosmeticShopItemCosmetic[];
+  creatorMilestones?: CreatorMilestone[];
 }
 
 export interface UserCosmetic {
@@ -2943,6 +2977,29 @@ export interface UserCosmetic {
   forId: number | null;
   forType: CosmeticEntity | null;
   remaining: number | null;
+}
+
+export interface CreatorMilestone {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: boolean;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
+  sortOrder: number;
+  achievements?: UserCreatorMilestone[];
+}
+
+export interface UserCreatorMilestone {
+  userId: number;
+  user?: User;
+  milestoneKey: string;
+  milestone?: CreatorMilestone;
+  achievedAt: Date;
+  seenAt: Date | null;
 }
 
 export interface CosmeticShopSection {
@@ -3760,6 +3817,7 @@ export interface JobQueue {
   entityType: EntityType;
   entityId: number;
   createdAt: Date;
+  data: JsonValue | null;
 }
 
 export interface VaultItem {
@@ -5291,6 +5349,15 @@ export interface GenerationPreset {
   updatedAt: Date;
 }
 
+export interface GenerationSizePreset {
+  id: number;
+  userId: number;
+  user?: User;
+  width: number;
+  height: number;
+  createdAt: Date;
+}
+
 export interface WildcardSet {
   id: number;
   kind: WildcardSetKind;
@@ -5663,6 +5730,97 @@ export interface BlurbReference {
   materializedHash: string;
   materializedAt: Date;
   pendingSince: Date | null;
+}
+
+export interface Crucible {
+  id: number;
+  userId: number;
+  user?: User;
+  name: string;
+  description: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  heroImageId: number | null;
+  heroImage?: Image | null;
+  buzzType: string;
+  nsfwLevel: number;
+  contentType: MediaType;
+  entryFee: number;
+  seededPrizePool: number;
+  prizePool: number;
+  entryLimit: number;
+  freeEntriesPerUser: number;
+  maxTotalEntries: number | null;
+  minViewSeconds: number | null;
+  maxClipSeconds: number | null;
+  prizePositions: JsonValue;
+  allowedResources: JsonValue | null;
+  allowedBaseModels: string[];
+  duration: number;
+  startAt: Date | null;
+  endAt: Date | null;
+  status: CrucibleStatus;
+  createdAt: Date;
+  updatedAt: Date;
+  buzzTransactionId: string | null;
+  seedTransactionId: string | null;
+  ingestion: CrucibleIngestionStatus;
+  scannedAt: Date | null;
+  textNsfw: boolean;
+  entries?: CrucibleEntry[];
+  reports?: CrucibleReport[];
+  engagements?: CrucibleEngagement[];
+}
+
+export interface CrucibleEngagement {
+  userId: number;
+  user?: User;
+  crucibleId: number;
+  crucible?: Crucible;
+  type: CrucibleEngagementType;
+  createdAt: Date;
+}
+
+export interface CrucibleReport {
+  crucibleId: number;
+  crucible?: Crucible;
+  reportId: number;
+  report?: Report;
+}
+
+export interface CrucibleEntry {
+  id: number;
+  crucibleId: number;
+  crucible?: Crucible;
+  userId: number;
+  user?: User;
+  imageId: number | null;
+  image?: Image | null;
+  score: number;
+  voteCount: number;
+  position: number | null;
+  buzzTransactionId: string | null;
+  createdAt: Date;
+}
+
+export interface Prize {
+  id: number;
+  userId: number;
+  user?: User;
+  sourceType: PrizeSourceType;
+  sourceId: number;
+  subjectId: number | null;
+  position: number | null;
+  amount: number;
+  title: string;
+  externalTransactionId: string;
+  createdAt: Date;
+  autoClaimAt: Date;
+  claimedAt: Date | null;
+  buzzType: string | null;
+  autoClaimed: boolean;
+  paidAt: Date | null;
+  voidedAt: Date | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

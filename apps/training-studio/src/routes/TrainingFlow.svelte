@@ -120,10 +120,12 @@
       reviewName = t;
       reviewNameSeed = t;
     }
-    const labels = JSON.stringify(datasetLabels);
+    // The seed key covers the trigger too: an unedited prompt list follows a trigger change, so the
+    // samples always carry the word the run is being taught.
+    const labels = JSON.stringify([t, ...datasetLabels]);
     const untouched = promptsSeed !== null && JSON.stringify(samplePrompts) === promptsSeed.prompts;
     if (samplePrompts.length === 0 || (untouched && labels !== promptsSeed!.labels)) {
-      samplePrompts = seedPrompts(datasetLabels);
+      samplePrompts = seedPrompts(datasetLabels, t);
       promptsSeed = { labels, prompts: JSON.stringify(samplePrompts) };
     }
     runParams = Object.fromEntries(
@@ -243,6 +245,8 @@
   {:else if step === 3 && selection}
     <ReviewStep
       {selection}
+      {trigger}
+      {labelMode}
       bind:name={reviewName}
       bind:prompts={samplePrompts}
       bind:params={runParams}

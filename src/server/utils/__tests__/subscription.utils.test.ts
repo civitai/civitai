@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { PrepaidToken, SubscriptionMetadata } from '~/server/schema/subscriptions.schema';
 import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscription-tokens';
@@ -361,6 +362,20 @@ describe('invalidateSubscriptionCaches', () => {
       }),
       'webhooks'
     );
+  });
+
+  it("reopens the user's lapsed collections, so a new membership doesn't wait for the nightly job", async () => {
+    const { dbMock } = await import('~/__tests__/mocks/db.mock');
+    const { invalidateSubscriptionCaches } = await import('~/server/utils/subscription.utils');
+    vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValue(0);
+
+    await invalidateSubscriptionCaches(4527785);
+
+    const reopen = vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.map(([sql]) => sql as Prisma.Sql)
+      .find((sql) => sql.sql?.includes('"collaborationDisabledAt" = NULL'));
+    expect(reopen?.values).toContain(4527785);
   });
 
   it('does not log when every step resolves', async () => {

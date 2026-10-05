@@ -113,7 +113,7 @@
       class="mt-2"
     />
 
-    <div class="mt-2 flex items-center gap-2">
+    <div class="mt-2 flex items-center gap-2" data-touch-target>
       <Checkbox
         id="ban-remove-media-{uid}"
         name="removeMedia"
@@ -123,7 +123,7 @@
         Also remove their images
       </Label>
     </div>
-    <div class="mt-2 flex items-center gap-2">
+    <div class="mt-2 flex items-center gap-2" data-touch-target>
       <Checkbox
         id="ban-remove-models-{uid}"
         name="removeModels"
@@ -133,7 +133,7 @@
         Unpublish their models
       </Label>
     </div>
-    <div class="mt-2 flex items-center gap-2">
+    <div class="mt-2 flex items-center gap-2" data-touch-target>
       <Checkbox
         id="ban-remove-comments-{uid}"
         name="removeComments"
@@ -169,11 +169,15 @@
       </p>
     {/if}
 
+    <!-- The single-account ban path. Floored for the same reason as the bulk one on
+         `routes/retool/bulk-ban/+page.svelte`, which renders this form on the same page. -->
     <div class="mt-2 flex gap-2">
-      <Button type="submit" size="sm" variant="destructive" disabled={busy}>
+      <Button type="submit" size="sm" variant="destructive" disabled={busy} data-touch-target>
         {busy ? 'Working…' : 'Confirm ban'}
       </Button>
-      <Button type="button" size="sm" variant="outline" onclick={onCancel}>Cancel</Button>
+      <Button type="button" size="sm" variant="outline" onclick={onCancel} data-touch-target>
+        Cancel
+      </Button>
     </div>
   </div>
 </form>

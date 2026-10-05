@@ -153,8 +153,9 @@ describe('every shipped ledger is valid', () => {
     // GREEN for every table, and green at BOTH tiers for two of them. The relationship is
     // now checked against the parsed tables, further down; this stays as what it always
     // was — a value pin, honestly labelled, so a silent re-tune is still visible.
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy).toHaveLength(5); // Kind App Submitter date action
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy).toHaveLength(6); // …plus Deploy
+    // Kind App Version Submitter Plays date action
+    expect(APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy).toHaveLength(7);
+    expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy).toHaveLength(8); // …plus Deploy
     expect(APPS_MINE_COLUMNS).toHaveLength(4); // App Cover Status Updated
     expect(APPS_MOD_LISTINGS_COLUMNS).toHaveLength(5); // App Owner Category Reviews actions
     expect(APPS_REVENUE_COLUMNS.withApp).toHaveLength(7); // Date App Scope Buzz Gross Share Status

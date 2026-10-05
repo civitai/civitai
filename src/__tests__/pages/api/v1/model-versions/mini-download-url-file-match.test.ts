@@ -813,3 +813,31 @@ describe('evictable', () => {
     expect(byFileId.body.evictable).toBe(false);
   });
 });
+
+describe('additionalResourceCharge', () => {
+  // The orchestrator charges the additional-resource fee off this field, so the version's
+  // flags have to reach the charge decision, not just the response.
+  it('hands the version flags to the charge decision', async () => {
+    const versionFlags =
+      ModelVersionFlag.NoAdditionalResourceFee | ModelVersionFlag.GenerationDisabled;
+    const { status } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledWith([
+      {
+        modelType: versionRow.type,
+        modelId: versionRow.modelId,
+        fileSizeKB: SAFETENSOR.sizeKB,
+        versionFlags,
+      },
+    ]);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])('reports the charge decision for the version (%s)', async (charge) => {
+    mockGetShouldChargeForResources.mockResolvedValue({ [versionRow.modelId]: charge });
+    const { body } = await run([SAFETENSOR]);
+    expect((body as Body & { additionalResourceCharge?: boolean }).additionalResourceCharge).toBe(
+      charge
+    );
+  });
+});

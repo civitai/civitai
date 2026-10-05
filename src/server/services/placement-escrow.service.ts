@@ -430,11 +430,18 @@ export async function holdPlacementEscrow({
   surface,
   amount,
   spendType,
+  declineFeeRate,
 }: {
   placementId: number;
   placerId: number;
   surface: PlacementSurface;
   amount: number;
+  /**
+   * The host's decline fee as resolved and shown to the buyer, required on a
+   * surface whose host sets it and refused on one whose fee is fixed. It sizes
+   * the fee hold, which is the snapshot a decline later pays.
+   */
+  declineFeeRate?: number;
   /**
    * The one currency this placement is paid in, decided by the domain it was
    * made on. Required rather than defaulted: a default would silently reinstate
@@ -449,6 +456,17 @@ export async function holdPlacementEscrow({
     throw new Error(`placement escrow: ${spendType} is not a placement spend type`);
   if (!Number.isSafeInteger(amount) || amount < 0)
     throw new Error(`placement escrow: amount must be a non-negative integer, got ${amount}`);
+  const hostRange = PLACEMENT_SURFACES[surface].hostDeclineFeePercent;
+  if (!hostRange && declineFeeRate !== undefined)
+    throw new Error(`placement escrow: the decline fee on ${surface} is fixed`);
+  if (
+    hostRange &&
+    (typeof declineFeeRate !== 'number' ||
+      !(declineFeeRate >= hostRange.min / 100 && declineFeeRate <= hostRange.max / 100))
+  )
+    throw new Error(
+      `placement escrow: ${surface} needs the host's decline fee, got ${declineFeeRate}`
+    );
 
   // A free placement must never reach the escrow, even for zero. `amount === 0`
   // returns harmlessly below, so this is not about the money — it is about
@@ -520,7 +538,7 @@ export async function holdPlacementEscrow({
 
   if (amount === 0) return { fee: 0, principal: 0 };
 
-  const fee = declineFeeAmount(amount, config.declineFeeRate(surface));
+  const fee = declineFeeAmount(amount, declineFeeRate ?? config.declineFeeRate(surface));
   const principal = amount - fee;
 
   const hold = (kind: PlacementTransactionKind, holdAmount: number) =>
@@ -793,7 +811,9 @@ async function payoutLegsFor(
       const split = splitPlacementPayment({
         amount: fee + principal,
         outcome,
-        declineFeeRate: config.declineFeeRate(placement.surface as PlacementSurface),
+        // An approval never reads the decline rate, and a host-set surface has no
+        // operator rate to ask for.
+        declineFeeRate: 0,
         sellerShare: shares.seller,
         platformShare: shares.platform,
       });
@@ -920,6 +940,23 @@ async function payOutPlacement(placement: PlacementRow) {
     }
   }
 }
+
+/**
+ * Whether every Buzz of a paid placement's amount has been receipted into the
+ * escrow. False while a hold is in flight or after one failed.
+ */
+export const isPlacementEscrowFunded = async ({
+  placementId,
+  amount,
+}: {
+  placementId: number;
+  amount: number;
+}) => {
+  const held = await heldAmountsFor(placementId);
+  let total = 0;
+  for (const value of held.values()) total += value;
+  return total >= amount;
+};
 
 /**
  * What is actually sitting in the escrow account for this placement.
