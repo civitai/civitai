@@ -98,6 +98,8 @@ import { imageResourcesCache } from '~/server/redis/caches';
 import {
   getCrucibleMinVotes,
   baseModelMakesMediaType,
+  getAverageFinishTopPercent,
+  getCreatorFinish,
   getCruciblePrizeWinners,
   getCrucibleTotalPrizePool,
   getCruciblePublishableName,
@@ -1043,19 +1045,20 @@ export type CrucibleDetail = CrucibleDetailRow & {
 
 type PrizeCrucible = { id: number; prizePositions: PrizePosition[]; totalPrizePool: number };
 
+const getPlacedEntries = (crucibleIds: number[]) =>
+  dbRead.$queryRaw<{ crucibleId: number; entryId: number; userId: number; position: number }[]>`
+    SELECT ce."crucibleId", ce.id AS "entryId", ce."userId", ce.position
+    FROM "CrucibleEntry" ce
+    WHERE ce."crucibleId" = ANY(${crucibleIds}::int[])
+      AND ce.position IS NOT NULL
+  `;
+
 /** From the stored placings, so it agrees with what finalize paid. */
 export const getCruciblesPrizeWinners = async (crucibles: PrizeCrucible[]) => {
   const winners = new Map<number, CruciblePrizeWinner[]>(crucibles.map(({ id }) => [id, []]));
   if (!crucibles.some(({ prizePositions }) => prizePositions.length)) return winners;
 
-  const placed = await dbRead.$queryRaw<
-    { crucibleId: number; entryId: number; userId: number; position: number }[]
-  >`
-    SELECT ce."crucibleId", ce.id AS "entryId", ce."userId", ce.position
-    FROM "CrucibleEntry" ce
-    WHERE ce."crucibleId" = ANY(${crucibles.map(({ id }) => id)}::int[])
-      AND ce.position IS NOT NULL
-  `;
+  const placed = await getPlacedEntries(crucibles.map(({ id }) => id));
   for (const { id, prizePositions, totalPrizePool } of crucibles)
     winners.set(
       id,
@@ -4048,7 +4051,8 @@ export const cancelCrucible = async ({
  * - Total crucibles entered (not created)
  * - Total Buzz won from crucible prizes
  * - Best placement (lowest position number)
- * - Win rate (percentage of crucibles where user placed in prize positions)
+ * - Average finish, as the top percent of the field
+ * - Prizes won (crucibles where the user took a prize)
  */
 export const getUserCrucibleStats = async ({
   userId,
@@ -4058,7 +4062,8 @@ export const getUserCrucibleStats = async ({
   totalCrucibles: number;
   buzzWon: number;
   bestPlacement: number | null;
-  winRate: number;
+  avgFinishTopPercent: number | null;
+  prizesWon: number;
 }> => {
   // Get all entries for this user in completed crucibles
   const entries = await dbRead.crucibleEntry.findMany({
@@ -4085,7 +4090,8 @@ export const getUserCrucibleStats = async ({
       totalCrucibles: 0,
       buzzWon: 0,
       bestPlacement: null,
-      winRate: 0,
+      avgFinishTopPercent: null,
+      prizesWon: 0,
     };
   }
 
@@ -4097,26 +4103,29 @@ export const getUserCrucibleStats = async ({
   const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
   const bestPlacement = positions.length > 0 ? Math.min(...positions) : null;
 
-  // Win rate is per crucible: a creator holds at most one prize, which may sit below their best
-  // placing's position number.
+  // A creator holds at most one prize, which may sit below their best placing's position number.
   const prizePositionsByCrucible = new Map(
     entries.map((e) => [e.crucibleId, parsePrizePositions(e.crucible.prizePositions)])
   );
   const placedCrucibleIds = [
     ...new Set(entries.filter((e) => e.position !== null).map((e) => e.crucibleId)),
   ];
-  const winnersByCrucible = await getCruciblesPrizeWinners(
-    placedCrucibleIds.map((id) => ({
-      id,
-      prizePositions: prizePositionsByCrucible.get(id) ?? [],
-      totalPrizePool: 0,
-    }))
-  );
-  const cruciblesWon = placedCrucibleIds.filter((id) =>
-    winnersByCrucible.get(id)?.some((winner) => winner.userId === userId)
-  ).length;
+  const placed = placedCrucibleIds.length ? await getPlacedEntries(placedCrucibleIds) : [];
 
-  const winRate = totalCrucibles > 0 ? Math.round((cruciblesWon / totalCrucibles) * 100) : 0;
+  let prizesWon = 0;
+  const finishes: { rank: number; field: number }[] = [];
+  for (const crucibleId of placedCrucibleIds) {
+    const crucibleRows = placed.filter((row) => row.crucibleId === crucibleId);
+    const winners = getCruciblePrizeWinners({
+      placed: crucibleRows,
+      prizePositions: prizePositionsByCrucible.get(crucibleId) ?? [],
+      totalPrizePool: 0,
+    });
+    if (winners.some((winner) => winner.userId === userId)) prizesWon++;
+    const finish = getCreatorFinish({ placed: crucibleRows, userId });
+    if (finish) finishes.push(finish);
+  }
+  const avgFinishTopPercent = getAverageFinishTopPercent(finishes);
 
   // Calculate total Buzz won from crucible prizes
   // Uses externalTransactionId prefix which is more specific and potentially better indexed
@@ -4140,7 +4149,8 @@ export const getUserCrucibleStats = async ({
     totalCrucibles,
     buzzWon,
     bestPlacement,
-    winRate,
+    avgFinishTopPercent,
+    prizesWon,
   };
 };
 

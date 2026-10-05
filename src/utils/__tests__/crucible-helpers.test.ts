@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
+  getAverageFinishTopPercent,
+  getCreatorFinish,
   baseModelMakesMediaType,
   canSeeCrucibleEntryDetails,
   getCrucibleCountdown,
@@ -581,5 +583,35 @@ describe('canSeeCrucibleEntryDetails', () => {
         isOwnEntry: false,
       })
     ).toBe(true);
+  });
+});
+
+describe('getCreatorFinish', () => {
+  it('ranks each creator by their best entry, so extra entries take no extra places', () => {
+    const placed = [
+      { userId: 1, position: 1 },
+      { userId: 1, position: 2 },
+      { userId: 2, position: 3 },
+      { userId: 3, position: 4 },
+      { userId: 3, position: 5 },
+    ];
+
+    expect(getCreatorFinish({ placed, userId: 3 })).toEqual({ rank: 3, field: 3 });
+    expect(getCreatorFinish({ placed, userId: 1 })).toEqual({ rank: 1, field: 3 });
+    expect(getCreatorFinish({ placed, userId: 9 })).toBeNull();
+  });
+});
+
+describe('getAverageFinishTopPercent', () => {
+  it('averages the top percent of each counted field and never reads as top 0%', () => {
+    const firstOfMany = { rank: 1, field: 400 };
+    expect(getAverageFinishTopPercent([firstOfMany, firstOfMany, firstOfMany])).toBe(1);
+    expect(
+      getAverageFinishTopPercent([
+        { rank: 6, field: 6 },
+        { rank: 1, field: 10 },
+        { rank: 5, field: 10 },
+      ])
+    ).toBe(53);
   });
 });

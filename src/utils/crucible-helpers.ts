@@ -330,6 +330,43 @@ export function getCruciblePrizeWinners({
     }));
 }
 
+/** Smaller fields are too coarse to place a creator in: 2nd of 3 says little about skill. */
+export const AVG_FINISH_MIN_FIELD = 5;
+/** Below this, one lucky crucible would read as the creator's standing. */
+export const AVG_FINISH_MIN_CRUCIBLES = 3;
+
+/**
+ * Where a creator finished among the creators who placed, ranked by each creator's best entry —
+ * the same one-place-per-creator ordering prizes use. Null when the creator did not place.
+ */
+export function getCreatorFinish({
+  placed,
+  userId,
+}: {
+  placed: { userId: number; position: number }[];
+  userId: number;
+}): { rank: number; field: number } | null {
+  const bestByCreator = new Map<number, number>();
+  for (const { userId: creator, position } of placed)
+    bestByCreator.set(creator, Math.min(position, bestByCreator.get(creator) ?? Infinity));
+  if (!bestByCreator.has(userId)) return null;
+
+  const ranked = [...bestByCreator.entries()].sort(([, a], [, b]) => a - b);
+  return { rank: ranked.findIndex(([creator]) => creator === userId) + 1, field: ranked.length };
+}
+
+/**
+ * A creator's average finish as "top X%" of the field, so entering big crucibles does not count
+ * against them the way a win rate does. Null until there are enough crucibles to mean something.
+ */
+export function getAverageFinishTopPercent(finishes: { rank: number; field: number }[]) {
+  const counted = finishes.filter(({ field }) => field >= AVG_FINISH_MIN_FIELD);
+  if (counted.length < AVG_FINISH_MIN_CRUCIBLES) return null;
+
+  const mean = counted.reduce((sum, { rank, field }) => sum + rank / field, 0) / counted.length;
+  return Math.max(1, Math.round(mean * 100));
+}
+
 export const CRUCIBLE_MIN_VOTES_PERCENT = 75;
 
 /** Votes an entry needs to place: a share of the average per entry, so late entries can't win unjudged. */

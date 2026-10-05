@@ -1,6 +1,7 @@
 import { Card, Skeleton, Stack, Text, ThemeIcon } from '@mantine/core';
 import { useEffect, useState } from 'react';
-import { IconTrophy, IconCoin, IconMedal, IconChartBar } from '@tabler/icons-react';
+import clsx from 'clsx';
+import { IconTrophy, IconCoin, IconMedal, IconChartBar, IconAward } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -78,7 +79,7 @@ function UserCrucibleWelcomeContent({
       </Stack>
 
       {/* Stats grid */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard
           icon={<IconTrophy size={24} />}
           iconColor="blue"
@@ -105,10 +106,18 @@ function UserCrucibleWelcomeContent({
         <StatCard
           icon={<IconChartBar size={24} />}
           iconColor="green"
-          label="Win Rate"
-          value={stats?.winRate ?? 0}
+          label="Avg Finish"
+          value={stats?.avgFinishTopPercent}
           isLoading={isLoading}
-          formatValue={(v) => `${v ?? 0}%`}
+          formatValue={(v) => (v !== null && v !== undefined ? `Top ${v}%` : '-')}
+        />
+        <StatCard
+          icon={<IconAward size={24} />}
+          iconColor="yellow"
+          label="Prizes Won"
+          value={stats?.prizesWon ?? 0}
+          isLoading={isLoading}
+          className="col-span-2 sm:col-span-1"
         />
       </div>
 
@@ -125,6 +134,7 @@ type StatCardProps = {
   value: number | null | undefined;
   isLoading: boolean;
   formatValue?: (value: number | null | undefined) => string;
+  className?: string;
 };
 
 const iconColorMap = {
@@ -134,13 +144,21 @@ const iconColorMap = {
   green: 'text-green-500',
 };
 
-function StatCard({ icon, iconColor, label, value, isLoading, formatValue }: StatCardProps) {
+function StatCard({
+  icon,
+  iconColor,
+  label,
+  value,
+  isLoading,
+  formatValue,
+  className,
+}: StatCardProps) {
   const displayValue = formatValue ? formatValue(value) : numberWithCommas(value ?? 0);
 
   return (
     <Card
       radius="md"
-      className="border border-[#373a40] transition-all hover:border-blue-500"
+      className={clsx('border border-[#373a40] transition-all hover:border-blue-500', className)}
       style={{
         background: 'rgba(37, 38, 43, 0.5)',
       }}
