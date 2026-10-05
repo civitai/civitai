@@ -3,8 +3,10 @@ import { Button, Input } from '@mantine/core';
 import type { Node as PMNode } from '@tiptap/pm/model';
 import type { Editor, JSONContent } from '@tiptap/react';
 import { EditorContent, useEditor } from '@tiptap/react';
+import styles from './GenerationTextEditor.module.scss';
+import { Placeholder } from '@tiptap/extensions';
 import StarterKit from '@tiptap/starter-kit';
-import { IconDice5, IconEye, IconX } from '@tabler/icons-react';
+import { IconEye, IconX } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -338,6 +340,10 @@ function EditorBody({
   // freely (see snippetCategoriesRef) without remounting.
   const snippetsEnabled = snippets !== undefined;
 
+  // The label is the fallback, as the old attribute did — an unlabelled editor with no
+  // placeholder shows nothing rather than the string "undefined".
+  const placeholderText = placeholder ?? (typeof label === 'string' ? label : '');
+
   const extensions = useMemo(() => {
     const list = [
       StarterKit.configure({
@@ -362,6 +368,14 @@ function EditorBody({
         link: false,
         underline: false,
       }),
+      // 🔴 THE EXTENSION IS WHAT MAKES A PLACEHOLDER VISIBLE. Every caller already passed
+      // `placeholder` and it was set as a `data-placeholder` attribute on the editor root in
+      // `editorProps` — where nothing read it: no rule in the tree matched that attribute, so
+      // the prop was accepted and silently dropped at every call site. This puts the attribute
+      // on the empty paragraph and adds `is-editor-empty`, which the style module renders.
+      // Same pairing as `RichTextEditorComponent`, which takes its CSS from @mantine/tiptap;
+      // this editor is raw Tiptap, so it carries its own.
+      Placeholder.configure({ placeholder: placeholderText }),
     ];
     if (snippetsEnabled) {
       const { suggestion, refresh } = createSnippetCategorySuggestion(
@@ -377,7 +391,7 @@ function EditorBody({
       list.push(SnippetCategory.configure({ suggestion }) as never);
     }
     return list;
-  }, [snippetsEnabled]);
+  }, [snippetsEnabled, placeholderText]);
 
   const editor = useEditor(
     {
@@ -406,9 +420,9 @@ function EditorBody({
             // Preserve consecutive spaces and explicit newlines instead of
             // letting the browser collapse them. ProseMirror's default CSS
             // (which sets this on `.ProseMirror`) isn't imported globally.
-            'whitespace-pre-wrap'
+            'whitespace-pre-wrap',
+            styles.editor
           ),
-          'data-placeholder': placeholder ?? (typeof label === 'string' ? label : ''),
         },
         handleKeyDown(_view, event) {
           const isMod = event.metaKey || event.ctrlKey;
