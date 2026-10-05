@@ -275,6 +275,26 @@ describe('upsertBounty — create path', () => {
     expect(createData().lockedProperties).toEqual(['nsfw']);
   });
 
+  it('rejects a past start date as a bad request, not a server error', async () => {
+    await expect(
+      create({ startsAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString() })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Start date must be in the future' });
+    expect(mockBuzzTransaction).not.toHaveBeenCalled();
+  });
+
+  it('judges the start date against the current day, not the day the module loaded', async () => {
+    const loadedAt = Date.now();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      vi.setSystemTime(loadedAt + 5 * 24 * 60 * 60 * 1000);
+      await expect(
+        create({ startsAt: new Date(loadedAt + 2 * 24 * 60 * 60 * 1000).toISOString() })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('refuses to create an nsfw bounty paid in green buzz', async () => {
     await expect(create({ buzzType: 'green', nsfw: true })).rejects.toThrow(/Green Buzz/);
     expect(mockBuzzTransaction).not.toHaveBeenCalled();

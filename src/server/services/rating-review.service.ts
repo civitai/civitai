@@ -61,6 +61,8 @@ export type RatingReviewRow = {
 };
 
 const PENDING_MESSAGE = 'A dispute is already pending for this item';
+const FLAG_RESTRICTED_MESSAGE =
+  'This model is restricted to SFW by a flag. Request a review of that flag instead.';
 
 export function textChangedSinceResolution(
   last: { resolvedAt: Date | null; resolvedTextHash: string | null } | null,
@@ -323,6 +325,7 @@ export async function createRatingReview({
   if (!subject) throw throwNotFoundError(`No ${entityType} with id ${entityId}`);
   assertOwner(subject.ownerId, userId);
 
+  if (subject.flagRestricted) throw throwBadRequestError(FLAG_RESTRICTED_MESSAGE);
   if (entityType !== 'Article' && !scan?.raised && !lastResolved)
     throw throwBadRequestError('Only a rating raised by our text scan can be disputed.');
   if (entityType !== 'Article' && !subject.currentLevel)
@@ -451,7 +454,8 @@ export async function getRatingReviewForOwner({
   return {
     review: latest ? (review as Omit<NonNullable<typeof latest>, 'resolvedTextHash'>) : null,
     canResubmit,
-    canDispute: entityType === 'Article' || !!scan?.raised || !!latest,
+    canDispute:
+      !subject.flagRestricted && (entityType === 'Article' || !!scan?.raised || !!latest),
     currentLevel: subject.currentLevel,
     scanReason: scan?.reason ?? null,
     scanLevel: scan?.level ?? null,

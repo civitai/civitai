@@ -4,6 +4,7 @@ import {
   buildTextScanFlagEntry,
   hasOpenTextScanFlag,
   hasTextScanVerdict,
+  resolveFlagScanReasons,
   isBountyFlagAppealable,
   isModelFlagAppealable,
   isTextScanFlagAppealGranted,
@@ -181,5 +182,39 @@ describe('isTextScanPoiHidden', () => {
         meta: { textScanFlags: { poi: entry({ appealGranted: { at: 'x', by: 1 } }) } },
       })
     ).toBe(false);
+  });
+});
+
+describe('resolveFlagScanReasons', () => {
+  const meta = {
+    textScanFlags: {
+      poi: { workflowId: 'w1', reason: 'names a real actor', names: ['Jane Doe'] },
+      minor: { workflowId: 'w1', reason: 'describes a child' },
+    },
+  };
+
+  it('gives the owner each open flag reason, minor first, with the poi names', () => {
+    expect(resolveFlagScanReasons({ isOwner: true, poi: true, minor: true, meta })).toEqual([
+      { label: 'minor', reason: 'describes a child', names: [] },
+      { label: 'poi', reason: 'names a real actor', names: ['Jane Doe'] },
+    ]);
+  });
+
+  it('gives a visitor nothing', () => {
+    expect(resolveFlagScanReasons({ isOwner: false, poi: true, minor: true, meta })).toEqual([]);
+  });
+
+  it('skips a label whose column is unset, or whose flag an appeal lifted', () => {
+    expect(
+      resolveFlagScanReasons({ isOwner: true, poi: true, minor: false, meta }).map((r) => r.label)
+    ).toEqual(['poi']);
+    const granted = {
+      textScanFlags: {
+        poi: { workflowId: 'w1', reason: 'r', appealGranted: { at: '2026-10-01', by: 4 } },
+      },
+    };
+    expect(resolveFlagScanReasons({ isOwner: true, poi: true, minor: false, meta: granted })).toEqual(
+      []
+    );
   });
 });

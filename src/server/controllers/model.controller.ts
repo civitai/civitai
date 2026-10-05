@@ -159,6 +159,7 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
@@ -553,6 +554,12 @@ export const getModelHandler = async ({
       poiFlagged: resolvePoiFlagged({
         isOwner,
         poi: model.poi,
+        meta: model.meta as ModelMeta | null,
+      }),
+      flagScanReasons: resolveFlagScanReasons({
+        isOwner,
+        poi: model.poi,
+        minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),

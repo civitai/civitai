@@ -47,6 +47,16 @@ describe('loadRatingReviewSubject', () => {
     expect(await loadRatingReviewSubject('Model', 1)).toBeNull();
   });
 
+  it('marks a model restricted by a poi, minor or sfwOnly flag, and an unflagged one not', async () => {
+    const row = { userId: 3, nsfw: false, updatedAt: at, name: 'm', deletedAt: null, poi: false, minor: false, sfwOnly: false };
+    for (const flag of ['poi', 'minor', 'sfwOnly'] as const) {
+      dbMock.dbRead.model.findUnique.mockResolvedValueOnce({ ...row, [flag]: true });
+      expect((await loadRatingReviewSubject('Model', 1))?.flagRestricted).toBe(true);
+    }
+    dbMock.dbRead.model.findUnique.mockResolvedValueOnce(row);
+    expect((await loadRatingReviewSubject('Model', 1))?.flagRestricted).toBe(false);
+  });
+
   it('gives a system challenge no owner and a user challenge its creator', async () => {
     const row = { createdById: 9, nsfwLevel: 4, updatedAt: at, title: 't', moderatorNsfwLevel: null, moderatorNsfwLevelBasis: null };
     dbMock.dbRead.challenge.findUnique.mockResolvedValueOnce({ ...row, source: 'System' });

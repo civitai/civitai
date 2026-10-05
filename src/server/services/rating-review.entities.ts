@@ -17,6 +17,8 @@ export type RatingReviewSubject = {
   parentId: number | null;
   override: number | null;
   overrideBasis: number | null;
+  // A Model's POI/minor/sfwOnly restriction pins it SFW; only an appeal of that flag can move it.
+  flagRestricted?: boolean;
 };
 
 type Db = typeof dbRead | typeof dbWrite;
@@ -48,7 +50,16 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
   Model: async (id, db) => {
     const m = await db.model.findUnique({
       where: { id },
-      select: { userId: true, nsfw: true, updatedAt: true, name: true, deletedAt: true },
+      select: {
+        userId: true,
+        nsfw: true,
+        updatedAt: true,
+        name: true,
+        deletedAt: true,
+        poi: true,
+        minor: true,
+        sfwOnly: true,
+      },
     });
     if (!m || m.deletedAt) return null;
     return {
@@ -59,6 +70,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       parentId: null,
       override: null,
       overrideBasis: null,
+      flagRestricted: m.poi || m.minor || m.sfwOnly,
     };
   },
   Post: async (id, db) => {

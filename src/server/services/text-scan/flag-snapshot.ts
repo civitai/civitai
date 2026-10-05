@@ -124,3 +124,26 @@ export function isTextScanPoiHidden(bounty: { poi: boolean; availability: string
 export function isBountyFlagAppealable(bounty: { poi: boolean; meta: unknown }) {
   return bounty.poi && hasOpenTextScanFlag(bounty.meta, 'poi');
 }
+
+export type FlagScanReason = { label: TextScanFlagLabel; reason: string; names: string[] };
+
+export function resolveFlagScanReasons({
+  isOwner,
+  poi,
+  minor,
+  meta,
+}: {
+  isOwner: boolean | null | undefined;
+  poi: boolean | null | undefined;
+  minor: boolean | null | undefined;
+  meta: unknown;
+}): FlagScanReason[] {
+  if (!isOwner) return [];
+  const flags = readTextScanFlags(meta);
+  const set = { minor: !!minor, poi: !!poi };
+  return (['minor', 'poi'] as const).flatMap((label) => {
+    const entry = flags[label];
+    if (!set[label] || !hasOpenTextScanFlag(meta, label) || !entry?.reason) return [];
+    return [{ label, reason: entry.reason, names: entry.names ?? [] }];
+  });
+}

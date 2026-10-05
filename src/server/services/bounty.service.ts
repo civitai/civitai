@@ -1,3 +1,4 @@
+import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import {
   Availability,
@@ -529,6 +530,12 @@ export const updateBountyById = async ({
   return bounty;
 };
 
+async function parseBountyInput<T extends z.ZodType>(schema: T, input: unknown) {
+  const parsed = await schema.safeParseAsync(input);
+  if (!parsed.success) throw throwBadRequestError(parsed.error.issues[0]?.message);
+  return parsed.data as z.output<T>;
+}
+
 export const upsertBounty = async ({
   id,
   userId,
@@ -598,7 +605,7 @@ export const upsertBounty = async ({
   }
 
   if (id) {
-    const updateInput = await updateBountyInputSchema.parseAsync({ id, ...data });
+    const updateInput = await parseBountyInput(updateBountyInputSchema, { id, ...data });
     const updated = await updateBountyById({
       ...updateInput,
       userId,
@@ -618,7 +625,7 @@ export const upsertBounty = async ({
       );
     }
 
-    const createInput = await createBountyInputSchema.parseAsync({ ...data, buzzType });
+    const createInput = await parseBountyInput(createBountyInputSchema, { ...data, buzzType });
     const created = await createBounty({
       ...createInput,
       userId,
