@@ -6,12 +6,14 @@ import {
 } from '~/server/services/creator-score-unlocks.service';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
+import { placementSurfaceLabel, placementSurfaces } from '~/shared/utils/placement';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
 import {
   buildCreatorScoreLadder,
   creatorScoreGateState,
   currentCreatorScoreTier,
   describeCreatorScoreUnlocks,
+  groupCreatorScoreUnlocks,
   nextCreatorScoreRung,
 } from '~/shared/utils/creator-score-unlocks';
 
@@ -168,5 +170,39 @@ describe('describeCreatorScoreUnlocks', () => {
     expect(describeCreatorScoreUnlocks([a, b, c])).toBe(
       `${lower(a.label)}, ${lower(b.label)} and ${lower(c.label)}`
     );
+  });
+});
+
+describe('groupCreatorScoreUnlocks', () => {
+  it('collapses one privilege repeated per surface at a threshold into one line naming every surface', () => {
+    const priceCaps = unlocks.filter((u) => u.key.startsWith('placement-price-cap:'));
+    const threshold = priceCaps[0].minScore;
+    const atThreshold = priceCaps.filter((u) => u.minScore === threshold);
+    expect(atThreshold).toHaveLength(placementSurfaces.length);
+
+    const groups = groupCreatorScoreUnlocks(atThreshold);
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0].unlocks).toHaveLength(placementSurfaces.length);
+    for (const surface of placementSurfaces)
+      expect(groups[0].label).toContain(placementSurfaceLabel(surface));
+  });
+
+  it('keeps different privileges and different thresholds apart', () => {
+    const groups = groupCreatorScoreUnlocks(unlocks);
+    expect(groups.flatMap((g) => g.unlocks)).toHaveLength(unlocks.length);
+    for (const group of groups) {
+      expect(new Set(group.unlocks.map((u) => u.minScore)).size).toBe(1);
+      expect(new Set(group.unlocks.map((u) => u.key.split(':')[0])).size).toBe(1);
+    }
+  });
+
+  it('does not merge a family whose labels do not share a prefix', () => {
+    const [base] = unlocks;
+    const groups = groupCreatorScoreUnlocks([
+      { ...base, key: 'x:1', label: 'Alpha on one' },
+      { ...base, key: 'x:2', label: 'Beta on two' },
+    ]);
+    expect(groups.map((g) => g.label)).toEqual(['Alpha on one', 'Beta on two']);
   });
 });

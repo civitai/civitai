@@ -173,9 +173,58 @@ export function creatorScoreGateState({
   };
 }
 
-/** Registry labels as a run-on clause: "judge crucibles, ... and higher reaction limits". */
+const joinList = (items: string[]) =>
+  items.length <= 1
+    ? items[0] ?? ''
+    : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+
+export type CreatorScoreUnlockGroup = {
+  key: string;
+  minScore: number;
+  label: string;
+  unlocks: CreatorScoreUnlock[];
+};
+
+/**
+ * Collapses one privilege repeated per surface at the same threshold ("Higher price cap on stickers",
+ * "... on remix galleries") into one line, so a rung reads as privileges rather than a surface list.
+ */
+export function groupCreatorScoreUnlocks(unlocks: CreatorScoreUnlock[]): CreatorScoreUnlockGroup[] {
+  const groups = new Map<string, CreatorScoreUnlock[]>();
+  for (const unlock of unlocks) {
+    const id = `${unlock.key.split(':')[0]}@${unlock.minScore}`;
+    groups.set(id, [...(groups.get(id) ?? []), unlock]);
+  }
+
+  return [...groups.values()].flatMap((members): CreatorScoreUnlockGroup[] => {
+    const single = (u: CreatorScoreUnlock) => ({
+      key: u.key,
+      minScore: u.minScore,
+      label: u.label,
+      unlocks: [u],
+    });
+    if (members.length === 1) return [single(members[0])];
+
+    const parts = members.map((u) => /^(.+?) on (.+)$/.exec(u.label));
+    const prefix = parts[0]?.[1];
+    if (!prefix || parts.some((part) => part?.[1] !== prefix)) return members.map(single);
+
+    return [
+      {
+        key: members[0].key,
+        minScore: members[0].minScore,
+        label: `${prefix} on ${joinList(parts.map((part) => part?.[2] ?? ''))}`,
+        unlocks: members,
+      },
+    ];
+  });
+}
+
+/** Registry labels as one clause: "judge crucibles, higher comment limits and ...". */
 export function describeCreatorScoreUnlocks(unlocks: CreatorScoreUnlock[]) {
-  const labels = unlocks.map(({ label }) => label.charAt(0).toLowerCase() + label.slice(1));
-  if (labels.length <= 1) return labels[0] ?? '';
-  return `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+  return joinList(
+    groupCreatorScoreUnlocks(unlocks).map(
+      ({ label }) => label.charAt(0).toLowerCase() + label.slice(1)
+    )
+  );
 }

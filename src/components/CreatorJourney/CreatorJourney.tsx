@@ -9,6 +9,7 @@ import {
   buildCreatorScoreLadder,
   currentCreatorScoreTier,
   describeCreatorScoreUnlocks,
+  groupCreatorScoreUnlocks,
   isCreatorScoreUnlockReached,
   nextCreatorScoreRung,
 } from '~/shared/utils/creator-score-unlocks';
@@ -230,19 +231,19 @@ function LadderRung({
         )}
         {rung.unlocks.length > 0 ? (
           <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
-            {rung.unlocks.map((unlock) => {
-              const unlocked = isCreatorScoreUnlockReached(unlock, kinds);
+            {groupCreatorScoreUnlocks(rung.unlocks).map((group) => {
+              const unlocked = group.unlocks.every((u) => isCreatorScoreUnlockReached(u, kinds));
               return (
-                <li key={unlock.key} className="flex items-start gap-2">
+                <li key={group.key} className="flex items-start gap-2">
                   {unlocked ? (
                     <IconCircleCheck size={16} className="mt-0.5 shrink-0 text-green-6" />
                   ) : (
                     <IconLock size={16} className="mt-0.5 shrink-0 text-gray-5" />
                   )}
                   <Text size="sm" c={unlocked ? undefined : 'dimmed'}>
-                    {unlock.label}
-                    {unlock.minScore !== rung.minScore &&
-                      ` (from ${numberWithCommas(unlock.minScore)})`}
+                    {group.label}
+                    {group.minScore !== rung.minScore &&
+                      ` (from ${numberWithCommas(group.minScore)})`}
                   </Text>
                 </li>
               );
