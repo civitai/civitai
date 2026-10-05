@@ -1,6 +1,6 @@
 import { constants } from '~/server/common/constants';
 import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { cancelCrucible, claimCrucibleCancellation } from '~/server/services/crucible.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -37,7 +37,8 @@ export async function applyCrucibleNsfwEscalation({
   // False under text-scan: an R+ verdict raises a green crucible to R rather than cancelling it.
   greenCancels?: boolean;
 }): Promise<void> {
-  const crucible = await dbRead.crucible.findUnique({
+  // Primary: a moderator rating written just before this callback must be seen.
+  const crucible = await dbWrite.crucible.findUnique({
     where: { id: entityId },
     select: {
       userId: true,

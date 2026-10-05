@@ -12,11 +12,11 @@ const { applyCrucibleTextScan, settleSkippedCrucibleScan } = await import(
 );
 const { applyCrucibleNsfwEscalation } = await import('~/server/services/crucible-nsfw-escalation');
 
-const args = (detectedLevel: number) => ({
+const args = (detectedLevel: number, raised = detectedLevel > 1) => ({
   entityId: 5,
   workflowId: 'wf',
   outcome: {
-    nsfw: { detectedLevel, declaredLevel: 1, raised: detectedLevel > 1, reason: 'r' },
+    nsfw: { detectedLevel, declaredLevel: 1, raised, reason: 'r' },
     triggeredLabels: [],
     nsfwLevel: detectedLevel,
   },
@@ -44,6 +44,15 @@ describe('applyCrucibleTextScan', () => {
       });
     }
   );
+
+  it('stays NSFW on a rescan of already-raised text (detected R, not raised)', async () => {
+    await applyCrucibleTextScan(args(NsfwLevel.R, false) as never);
+    expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 5,
+      isNsfw: true,
+      greenCancels: false,
+    });
+  });
 
   it('ignores an outcome without nsfw', async () => {
     await applyCrucibleTextScan({
@@ -83,9 +92,27 @@ describe('settleSkippedCrucibleScan', () => {
     expect(applyCrucibleNsfwEscalation).not.toHaveBeenCalled();
   });
 
-  it('missing-prompt is logged, not settled', async () => {
-    await settleSkippedCrucibleScan(5, 'missing-prompt');
+  it('unchanged without a text-scan verdict is logged, not settled', async () => {
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+      status: 'Succeeded',
+      nsfwLevel: NsfwLevel.R,
+      result: {},
+    });
+    await settleSkippedCrucibleScan(5, 'unchanged');
     expect(applyCrucibleNsfwEscalation).not.toHaveBeenCalled();
-    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(expect.objectContaining({ crucibleId: 5 }));
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ crucibleId: 5, reason: 'unchanged' })
+    );
   });
+
+  it.each(['missing-prompt', 'no-profile'] as const)(
+    '%s is logged, not settled',
+    async (reason) => {
+      await settleSkippedCrucibleScan(5, reason);
+      expect(applyCrucibleNsfwEscalation).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({ crucibleId: 5, reason })
+      );
+    }
+  );
 });

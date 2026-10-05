@@ -48,6 +48,7 @@ const { getModerationAdapter } = await import('~/server/services/moderation-adap
 
 const findMany = dbMock.dbRead.crucible.findMany;
 const findUnique = dbMock.dbRead.crucible.findUnique;
+const findForEscalation = dbMock.dbWrite.crucible.findUnique;
 const update = dbMock.dbWrite.crucible.update;
 const updateMany = dbMock.dbWrite.crucible.updateMany;
 const logToAxiom = loggingMock.logToAxiom;
@@ -173,7 +174,7 @@ describe('applyResult — blocked but deleted since submit', () => {
 
 describe('applyResult — clean', () => {
   it('marks Scanned without touching textNsfw or nsfwLevel, and logs the verdict', async () => {
-    findUnique.mockResolvedValue(crucible({ textNsfw: true }));
+    findForEscalation.mockResolvedValue(crucible({ textNsfw: true }));
 
     await scan(0.3);
 
@@ -197,7 +198,7 @@ describe('applyResult — clean', () => {
 
 describe('applyResult — yellow crucible with NSFW text', () => {
   it('raises it to R, flags textNsfw, and notifies the creator', async () => {
-    findUnique.mockResolvedValue(crucible({ buzzType: 'yellow' }));
+    findForEscalation.mockResolvedValue(crucible({ buzzType: 'yellow' }));
 
     await scanNsfw();
 
@@ -228,7 +229,7 @@ describe('applyResult — yellow crucible with NSFW text', () => {
   });
 
   it('does not notify a second time when it was already raised', async () => {
-    findUnique.mockResolvedValue(
+    findForEscalation.mockResolvedValue(
       crucible({ buzzType: 'yellow', textNsfw: true, nsfwLevel: SFW | NsfwLevel.R })
     );
 
@@ -245,7 +246,7 @@ describe('applyResult — yellow crucible with NSFW text', () => {
 
 describe('applyResult — green crucible with NSFW text, Pending', () => {
   it('cancels as the system user BEFORE the Blocked write, then notifies', async () => {
-    findUnique.mockResolvedValue(crucible());
+    findForEscalation.mockResolvedValue(crucible());
 
     await scanNsfw();
 
@@ -271,7 +272,7 @@ describe('applyResult — green crucible with NSFW text, Pending', () => {
   });
 
   it('records refunds the cancel could not make', async () => {
-    findUnique.mockResolvedValue(crucible());
+    findForEscalation.mockResolvedValue(crucible());
     const failedRefunds = [{ entryId: null, userId: CREATOR, error: 'buzz 500' }];
     cancelCrucible.mockResolvedValue({
       crucibleId: ID,
@@ -297,7 +298,7 @@ describe('applyResult — green crucible with NSFW text, Pending', () => {
 
 describe('applyResult — green crucible with NSFW text, still running', () => {
   it('claims it as Cancelled only while it is Pending, or Active before its end or unentered', async () => {
-    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Active }));
+    findForEscalation.mockResolvedValue(crucible({ status: CrucibleStatus.Active }));
 
     await scanNsfw();
 
@@ -324,7 +325,7 @@ describe('applyResult — green crucible with NSFW text, still running', () => {
 
 describe('applyResult — green crucible with NSFW text, already cancelled', () => {
   it('finishes the refunds without notifying again (a redelivery after a crash, or a moderator cancel)', async () => {
-    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Cancelled }));
+    findForEscalation.mockResolvedValue(crucible({ status: CrucibleStatus.Cancelled }));
     updateMany.mockResolvedValue({ count: 0 });
 
     await scanNsfw();
@@ -337,7 +338,7 @@ describe('applyResult — green crucible with NSFW text, already cancelled', () 
 
 describe('applyResult — green crucible with NSFW text, claim lost (ended or finalizing)', () => {
   it('blocks and holds for review without refunding', async () => {
-    findUnique.mockResolvedValue(crucible({ status: CrucibleStatus.Active }));
+    findForEscalation.mockResolvedValue(crucible({ status: CrucibleStatus.Active }));
     updateMany.mockResolvedValue({ count: 0 });
 
     await scanNsfw();
@@ -361,7 +362,9 @@ describe('applyResult — green crucible with NSFW text, claim lost (ended or fi
 // "fix" this into a cancel without asking.
 describe('applyResult — SFW crucible created on the mature site, with NSFW text', () => {
   it('raises it to R and keeps it running, rather than cancelling it', async () => {
-    findUnique.mockResolvedValue(crucible({ buzzType: 'yellow', status: CrucibleStatus.Active }));
+    findForEscalation.mockResolvedValue(
+      crucible({ buzzType: 'yellow', status: CrucibleStatus.Active })
+    );
 
     await scanNsfw();
 
@@ -376,7 +379,7 @@ describe('applyResult — SFW crucible created on the mature site, with NSFW tex
 
 describe('applyCrucibleNsfwEscalation — row gone', () => {
   it('does nothing', async () => {
-    findUnique.mockResolvedValue(null);
+    findForEscalation.mockResolvedValue(null);
 
     await applyCrucibleNsfwEscalation({ entityId: ID, isNsfw: true });
 
@@ -387,7 +390,7 @@ describe('applyCrucibleNsfwEscalation — row gone', () => {
 
 describe('applyCrucibleNsfwEscalation — moderator override', () => {
   it('does not raise a crucible a moderator already rated', async () => {
-    findUnique.mockResolvedValue(
+    findForEscalation.mockResolvedValue(
       crucible({ buzzType: 'yellow', status: CrucibleStatus.Active, moderatorNsfwLevel: 1 })
     );
 
@@ -405,7 +408,7 @@ describe('applyCrucibleNsfwEscalation — moderator override', () => {
 
 describe('applyCrucibleNsfwEscalation — greenCancels:false', () => {
   it('raises a green crucible instead of cancelling it', async () => {
-    findUnique.mockResolvedValue(
+    findForEscalation.mockResolvedValue(
       crucible({ status: CrucibleStatus.Active, moderatorNsfwLevel: null })
     );
 
@@ -518,13 +521,12 @@ describe('resolveContent', () => {
 
 describe('scanCrucible under text-scan', () => {
   beforeEach(() => {
-    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ name: 'Neon', description: null });
     vi.mocked(getTextScanMode).mockResolvedValueOnce('active');
   });
 
   it('settles a skipped scan so the crucible does not stay Pending', async () => {
     vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'skipped', reason: 'too-short' });
-    findUnique.mockResolvedValue(crucible());
+    findForEscalation.mockResolvedValue({ ...crucible(), name: 'Neon', description: null });
 
     await scanCrucible(ID);
 
@@ -537,6 +539,7 @@ describe('scanCrucible under text-scan', () => {
 
   it('passes a moderator rescan through as force', async () => {
     vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'submitted', workflowId: 'ts-2' });
+    findForEscalation.mockResolvedValue({ name: 'Neon', description: null });
 
     await scanCrucible(ID, { forceRescan: true });
 
