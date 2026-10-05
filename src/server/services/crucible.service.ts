@@ -1085,17 +1085,21 @@ export const getCrucibleDetail = async ({
 
   if (!crucible) return null;
 
-  const [paidEntryCounts, allViewerEntries] = await Promise.all([
+  const [paidEntryCounts, { viewerEntries, viewerEntryCount }] = await Promise.all([
     getPaidEntryCounts([id]),
     userId
-      ? dbRead.crucibleEntry.findMany({
-          where: { crucibleId: id, userId },
-          select: crucibleEntrySelect,
-          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-        })
-      : [],
+      ? dbRead.crucibleEntry
+          .findMany({
+            where: { crucibleId: id, userId },
+            select: crucibleEntrySelect,
+            orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+          })
+          .then((entries) => ({
+            viewerEntries: entries.filter(hasEntryImage),
+            viewerEntryCount: entries.length,
+          }))
+      : { viewerEntries: [], viewerEntryCount: 0 },
   ]);
-  const viewerEntries = allViewerEntries.filter(hasEntryImage);
 
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
   const prizeWinners =
@@ -1121,7 +1125,7 @@ export const getCrucibleDetail = async ({
     ...crucible,
     paidEntryCount,
     viewerEntries,
-    viewerEntryCount: allViewerEntries.length,
+    viewerEntryCount,
     prizeWinners,
   };
 };
