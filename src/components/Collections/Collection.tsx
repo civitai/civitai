@@ -91,6 +91,7 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
@@ -762,6 +763,13 @@ export function Collection({
                       <Text size="xs">{abbreviateNumber(data._count.contributors)}</Text>
                     </IconBadge> */}
                       </Group>
+                    )}
+                    {collection && (
+                      <OwnerRatingControls
+                        entityType="Collection"
+                        entityId={collection.id}
+                        isOwner={!!permissions?.isOwner}
+                      />
                     )}
                   </Stack>
                   {collection && permissions && (
