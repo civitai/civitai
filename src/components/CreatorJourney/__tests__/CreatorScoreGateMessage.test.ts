@@ -90,6 +90,13 @@ describe('CreatorScoreGateMessageView', () => {
     expect(hrefs).toEqual([CREATOR_JOURNEY_HREF]);
   });
 
+  it('states the score of someone who meets the gate, and links to the journey', () => {
+    const { text, hrefs } = render({ score: required + 250, required, ladder });
+
+    expect(text).toBe('Your Creator Score is 5,250. See your journey');
+    expect(hrefs).toEqual([CREATOR_JOURNEY_HREF]);
+  });
+
   it('shows only the score while the ladder loads', () => {
     expect(render({ score: 120, required, ladder: undefined }).text).toBe(
       "You're at 120. See your journey"

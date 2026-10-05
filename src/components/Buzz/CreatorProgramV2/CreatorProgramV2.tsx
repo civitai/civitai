@@ -62,7 +62,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
-import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
@@ -347,21 +347,13 @@ const JoinCreatorProgramCard = () => {
             )}`}
             content={
               <p className="my-0">
-                {hasEnoughCreatorScore ? (
-                  <>
-                    Your Creator Score is{' '}
-                    {numberWithCommas(Math.floor(requirements?.score.current ?? 0))}.{' '}
-                    <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} inherit>
-                      See your journey
-                    </Anchor>
-                  </>
-                ) : (
-                  <CreatorScoreGateMessage
-                    score={requirements?.score.current}
-                    total={currentUser?.meta?.scores?.total}
-                    required={requirements?.score.min ?? MIN_CREATOR_SCORE}
-                  />
-                )}
+                <CreatorScoreGateMessage
+                  score={requirements?.score.current}
+                  total={
+                    currentUser?.meta?.scores ? creatorScoreFromMeta(currentUser.meta) : undefined
+                  }
+                  required={requirements?.score.min ?? MIN_CREATOR_SCORE}
+                />
               </p>
             }
           />

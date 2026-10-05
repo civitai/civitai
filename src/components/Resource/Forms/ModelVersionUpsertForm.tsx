@@ -29,6 +29,7 @@ import * as z from 'zod';
 import { CapUpsell } from '~/components/Buzz/CapUpsell';
 import { PricingSlotHistory } from '~/components/Buzz/PricingSlotHistory';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
@@ -1321,6 +1322,11 @@ export function ModelVersionUpsertForm({
                     <Text size="sm">
                       <CreatorScoreGateMessage
                         score={eligibility.score}
+                        total={
+                          currentUser?.meta?.scores
+                            ? creatorScoreFromMeta(currentUser.meta)
+                            : undefined
+                        }
                         required={eligibility.required}
                       />{' '}
                       Prices you have already set are unaffected.

@@ -1,12 +1,10 @@
-import { Anchor, Button, Divider, Modal, Stack, Text } from '@mantine/core';
+import { Button, Divider, Modal, Stack, Text } from '@mantine/core';
 import { IconArrowLeft, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import type { ReactNode } from 'react';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { describeActiveLimitsByTier } from '~/shared/constants/challenge.constants';
-import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { MUTE_POINTS } from '~/shared/constants/strike.constants';
 import type { RouterOutput } from '~/types/router';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -21,16 +19,7 @@ function renderRequirement(req: Requirement, noun: string): { title: string; con
         title: `Have a Creator Score of at least ${numberWithCommas(req.min)}`,
         content: (
           <Text size="sm" c="dimmed">
-            {req.met ? (
-              <>
-                Your Creator Score is {numberWithCommas(Math.floor(req.current))}.{' '}
-                <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} inherit>
-                  See your journey
-                </Anchor>
-              </>
-            ) : (
-              <CreatorScoreGateMessage score={req.current} required={req.min} />
-            )}
+            <CreatorScoreGateMessage score={req.current} required={req.min} />
           </Text>
         ),
       };

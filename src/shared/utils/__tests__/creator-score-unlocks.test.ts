@@ -144,7 +144,44 @@ describe('creatorScoreGateState', () => {
       unlocks,
       tiers: seededTiers,
     });
-    expect(state).toMatchObject({ kind: 'far', score: 4_000, next: { tier: { name: 'Spark' } } });
+    // Says the total, the number the named step is measured from.
+    expect(state).toMatchObject({ kind: 'far', score: 1, next: { tier: { name: 'Spark' } } });
+  });
+
+  it('judges an aggregate-score unlock on the aggregate when naming the next step', () => {
+    const [base] = unlocks;
+    const synthetic = [
+      { ...base, key: 'aggregate-step', minScore: 300, scoreKind: 'aggregate' as const },
+      { ...base, key: 'total-step', minScore: 600, scoreKind: 'total' as const },
+    ];
+    const state = creatorScoreGateState({
+      score: 400,
+      total: 100,
+      required: 1_000,
+      unlocks: synthetic,
+      tiers: [],
+    });
+    expect(state).toMatchObject({ kind: 'far', next: { minScore: 600 } });
+  });
+
+  it('reports a met requirement as met, at and above the gate', () => {
+    expect(gate(CHALLENGE_MIN_CREATOR_SCORE, CHALLENGE_MIN_CREATOR_SCORE)).toEqual({
+      kind: 'met',
+      score: CHALLENGE_MIN_CREATOR_SCORE,
+    });
+    expect(gate(CHALLENGE_MIN_CREATOR_SCORE - 1, CHALLENGE_MIN_CREATOR_SCORE).kind).not.toBe('met');
+  });
+
+  // The monetize gate clamps a negative score to 0 before it reaches the message.
+  it('does not call a clamped negative score "no score yet"', () => {
+    const state = creatorScoreGateState({
+      score: 0,
+      total: -40,
+      required: CHALLENGE_MIN_CREATOR_SCORE,
+      unlocks,
+      tiers: seededTiers,
+    });
+    expect(state).toMatchObject({ kind: 'far', score: -40 });
   });
 
   it('switches from the nearest rung to the gap at 80% of the gate', () => {

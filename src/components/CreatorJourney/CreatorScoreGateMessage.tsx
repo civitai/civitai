@@ -21,8 +21,9 @@ type GateMessageProps = {
 };
 
 /**
- * The body of every Creator Score refusal. The caller keeps its own title naming the gate and wraps this
- * in its own text element; this says where the viewer stands and the nearest step they can take.
+ * The body of every Creator Score requirement. The caller keeps its own title naming the gate and wraps
+ * this in its own text element; this says where the viewer stands and, below the gate, the nearest step
+ * they can take.
  */
 export function CreatorScoreGateMessage(props: GateMessageProps) {
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery(undefined, {
@@ -51,6 +52,13 @@ export function CreatorScoreGateMessageView({
       See your journey
     </Anchor>
   );
+
+  if (state.kind === 'met')
+    return (
+      <>
+        Your Creator Score is {numberWithCommas(Math.floor(state.score))}. {journeyLink}
+      </>
+    );
 
   if (state.kind === 'unknown')
     return (

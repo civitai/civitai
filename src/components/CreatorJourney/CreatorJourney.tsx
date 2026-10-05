@@ -62,7 +62,7 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
               Your Creator Score
             </Text>
             <Text size="2.5rem" fw={700} lh={1}>
-              {journey.scores ? Math.round(total).toLocaleString() : '–'}
+              {journey.scores ? numberWithCommas(Math.floor(total)) : '–'}
             </Text>
             {currentTier && (
               <Badge variant="light" color="yellow" size="lg" className="self-start">

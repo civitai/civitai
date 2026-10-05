@@ -136,6 +136,7 @@ const NEAR_GATE_SHARE = 0.8;
 
 export type CreatorScoreGateState =
   | { kind: 'unknown' }
+  | { kind: 'met'; score: number }
   | { kind: 'noScore' }
   | { kind: 'near'; score: number; gap: number }
   | {
@@ -165,17 +166,20 @@ export function creatorScoreGateState({
   tiers: CreatorScoreTier[];
 }): CreatorScoreGateState {
   if (score == null) return { kind: 'unknown' };
-  if (score === 0) return { kind: 'noScore' };
+  if (score >= required) return { kind: 'met', score };
+  const ladderScore = total ?? score;
+  // Some gates clamp a negative score to 0 before it gets here; the total still says which it was.
+  if (score === 0 && ladderScore >= 0) return { kind: 'noScore' };
   const gap = Math.max(required - score, 0);
   if (score >= required * NEAR_GATE_SHARE) return { kind: 'near', score, gap };
 
-  const nextUnlocks = nextCreatorScoreUnlocks(unlocks, { total: total ?? score });
+  const nextUnlocks = nextCreatorScoreUnlocks(unlocks, { total: ladderScore, aggregate: score });
   const minScore = nextUnlocks[0]?.minScore;
   if (minScore == null || minScore >= required) return { kind: 'near', score, gap };
 
   return {
     kind: 'far',
-    score,
+    score: ladderScore,
     next: {
       minScore,
       tier: tiers.find((tier) => tier.threshold === minScore) ?? null,

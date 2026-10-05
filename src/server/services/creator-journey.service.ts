@@ -2,7 +2,11 @@ import { dbRead } from '~/server/db/client';
 import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
-import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import {
+  creatorAggregateScoreFromMeta,
+  creatorArticlesScoreFromMeta,
+  creatorScoreFromMeta,
+} from '~/shared/utils/creator-score';
 
 type MilestoneDefinition = {
   key: string;
@@ -85,7 +89,7 @@ export async function getCreatorJourney(userId: number) {
       ? {
           total: creatorScoreFromMeta(user?.meta),
           aggregate: creatorAggregateScoreFromMeta(user?.meta),
-          articles: Number.isFinite(rawScores.articles) ? (rawScores.articles as number) : 0,
+          articles: creatorArticlesScoreFromMeta(user?.meta),
           breakdown: rawScores,
         }
       : null,
