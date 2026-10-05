@@ -72,10 +72,11 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     try {
       batch = await runBatch(cursor);
     } catch (e) {
+      console.error(`backfill-creator-milestones ${params.action}: batch after user ${cursor}`, e);
       // Every committed batch stays committed, so resume with `start` set to this `lastUserId`.
       return res.status(500).json({
         action: params.action,
-        error: (e as Error).message,
+        error: 'Batch failed; see server logs',
         batches,
         users,
         inserted,

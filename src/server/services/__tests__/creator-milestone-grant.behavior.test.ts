@@ -79,6 +79,13 @@ beforeAll(async () => {
     );
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  // Definitions the score detector must ignore: another track below every score, and a score row
+  // without a threshold. The migration seeds neither, so without them the track and threshold
+  // filters would be untested.
+  await holder.db.exec(`
+    INSERT INTO "CreatorMilestone" (key, track, threshold, name)
+    VALUES ('create:decoy', 'create', 1, 'Decoy'), ('score:unthresholded', 'score', NULL, 'Decoy');
+  `);
 });
 
 beforeEach(async () => {
@@ -184,13 +191,16 @@ describe('backfill', () => {
 
     let cursor = -10;
     let inserted = 0;
+    let users = 0;
     for (let i = 0; i < 10; i++) {
       const batch = await backfillScoreTierBatch(pg, { afterUserId: cursor, limit: 1 });
       if (!batch.users || batch.lastUserId == null) break;
       inserted += batch.inserted;
+      users += batch.users;
       cursor = batch.lastUserId;
     }
     expect(inserted).toBe(preview.rows);
+    expect(users).toBe(preview.users);
     expect(await previewScoreTierBackfill(pg, { afterUserId: -10 })).toEqual({
       users: 0,
       rows: 0,
