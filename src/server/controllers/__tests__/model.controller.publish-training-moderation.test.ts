@@ -118,11 +118,19 @@ describe('publishModelHandler — training moderation gate', () => {
       /dataset has not been approved/
     );
     expect(mockGetToken).toHaveBeenCalledWith(OWNER_ID, undefined, { bypassCache: true });
-    expect(mockGetToken).not.toHaveBeenCalledWith(
-      MODERATOR_ID,
-      expect.anything(),
-      expect.anything()
-    );
+    expect(mockGetToken.mock.calls.map((call) => call[0])).toEqual([OWNER_ID]);
+    expect(mockPublishModelById).not.toHaveBeenCalled();
+  });
+
+  it('re-checks on a republish too', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Unpublished',
+      meta: { trainingStudioWorkflowId: 'wf-1' },
+      nsfw: false,
+      userId: OWNER_ID,
+    } as never);
+    mockGetWorkflow.mockResolvedValue(trainingRun('rejected'));
+    await expect(publish()).rejects.toThrow(/dataset has not been approved/);
     expect(mockPublishModelById).not.toHaveBeenCalled();
   });
 
