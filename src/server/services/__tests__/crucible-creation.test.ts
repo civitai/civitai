@@ -706,10 +706,13 @@ describe('getCrucibles — running crucibles lead upcoming ones', () => {
       cursor?: { id: number };
       take: number;
     }) => {
-      const sorted = rows
-        .filter((row) => where.status.in.includes(row.status))
-        .sort((a, b) => b.prizePool - a.prizePool || b.id - a.id);
-      const from = cursor ? sorted.findIndex((row) => row.id === cursor.id) : 0;
+      const order = (a: (typeof rows)[number], b: (typeof rows)[number]) =>
+        b.prizePool - a.prizePool || b.id - a.id;
+      const sorted = rows.filter((row) => where.status.in.includes(row.status)).sort(order);
+      // Like Prisma, a cursor is a position in the sort, whether or not its row passes the filter.
+      const at = cursor && rows.find((row) => row.id === cursor.id);
+      if (cursor && !at) return [];
+      const from = at ? sorted.findIndex((row) => order(row, at) >= 0) : 0;
       return from < 0 ? [] : sorted.slice(from, from + take).map(({ id }) => ({ id }));
     }) as never);
     dbMock.dbRead.crucible.findUnique.mockImplementation(
