@@ -54,7 +54,15 @@ describe('Feed read path — index handle', () => {
   it('serves a query with the search as its only Meilisearch call', async () => {
     const { client, search } = fakeClient();
 
-    const result = await construct(client).query({ limit: 1 } as never);
+    const feed = construct(client);
+    // Asserted before the query so a constructor that fetches the index fails here, by name,
+    // rather than later on whatever the fake's absent handle happens to throw.
+    expect(client.getIndex).not.toHaveBeenCalled();
+    // The fake hands back the same handle for any name, so only this pins that the feed
+    // searches its own index.
+    expect(client.index).toHaveBeenCalledWith('test_feed_index_handle');
+
+    const result = await feed.query({ limit: 1 } as never);
 
     expect(result.items).toEqual([{ id: 1 }]);
     expect(result.nextCursor).toBe('1|1');
