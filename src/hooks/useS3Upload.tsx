@@ -20,6 +20,11 @@ import type { ClientDeclarableRelayFallbackOutcome } from '~/utils/relay-fallbac
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
+// Bounds SILENCE, not part duration: it resets on every progress event, so a slow 25 MB part
+// keeps it alive while a half-open connection trips it. 30s is well past the inter-chunk gap
+// a usable mobile link produces, and `xhr.timeout` cannot express this — being total-duration,
+// any value short enough to catch a stall would kill a legitimate 25 MB part on a slow link.
+const PART_STALL_TIMEOUT_MS = 30_000;
 
 // Abort-aware sleep so cancelling during a long Retry-After window
 // short-circuits the backoff instead of waiting it out.
@@ -331,17 +336,38 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           const part = i === partsCount ? file.slice(start) : file.slice(start, end);
           const xhr = new XMLHttpRequest();
           activeXhrs.add(xhr);
+          // 🔴 Lets the `abort` handler tell THIS abort from the person's, so it can reject with
+          // `aborted: false`. `shouldRelayOnPartFailure` refuses on `err.aborted`, so collapsing
+          // the two shapes makes the watchdog fire into a gate it cannot pass: the upload still
+          // fails and the relay still never runs.
+          const stalledRef = { value: false };
+          let stallTimer: ReturnType<typeof setTimeout> | undefined;
+          const clearStallTimer = () => clearTimeout(stallTimer);
+          const armStallTimer = () => {
+            clearStallTimer();
+            stallTimer = setTimeout(() => {
+              stalledRef.value = true;
+              xhr.abort();
+            }, PART_STALL_TIMEOUT_MS);
+          };
           xhr.upload.addEventListener('progress', ({ loaded }) => {
+            armStallTimer();
             partProgress.set(i, loaded);
             updateProgress();
           });
           xhr.upload.addEventListener('loadend', ({ loaded }) => {
+            // The body is fully sent, so what follows is the response wait — a different phase.
+            // Policing it with a progress watchdog would kill a slow-but-healthy server.
+            clearStallTimer();
             partProgress.set(i, loaded);
           });
           xhr.addEventListener('load', () => {
             eTag = xhr.getResponseHeader('ETag') ?? '';
           });
           xhr.addEventListener('loadend', () => {
+            // Fires after load, error AND abort, so this is the one clear that covers every
+            // terminal outcome; the `upload.loadend` clear above is a phase boundary, not cleanup.
+            clearStallTimer();
             activeXhrs.delete(xhr);
             if (xhr.readyState !== 4) return;
             if (xhr.status === 200) {
@@ -362,10 +388,21 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           });
           xhr.addEventListener('abort', () => {
             activeXhrs.delete(xhr);
+            if (stalledRef.value) {
+              reject({
+                status: null,
+                networkError: true,
+                aborted: false,
+                stalled: true,
+                partNumber: i,
+              } as UploadPartError);
+              return;
+            }
             reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
           });
           xhr.open('PUT', url);
           xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+          armStallTimer();
           xhr.send(part);
         });
 

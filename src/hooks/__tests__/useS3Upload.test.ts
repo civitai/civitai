@@ -6,6 +6,7 @@ import { createRoot } from 'react-dom/client';
 import { UploadType } from '~/server/common/enums';
 import { useS3Upload } from '~/hooks/useS3Upload';
 import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
+import { MAX_PART_ATTEMPTS } from '~/utils/upload-retry';
 
 // React 18.3 exposes `act` on the `react` export, but our @types/react predates that typing.
 // Declared locally rather than imported from `react-dom/test-utils`: that module's types are
@@ -51,6 +52,31 @@ let partHandler: (partNumber: number) => PartResponse;
 let backend: string;
 /** Part numbers whose PUT stays in flight forever, so a test can cancel mid-upload. */
 let hangPartNumbers: number[];
+/**
+ * How many of a hanging part's attempts actually hang; `null` means all of them. Lets a case
+ * script a stall that RECOVERS, which is what distinguishes "retried like any network error"
+ * from "fatal on the first stall".
+ */
+let hangAttemptLimit: number | null;
+/**
+ * Bytes a hanging part reports through `upload.progress` before it goes silent.
+ *
+ * 🔴 THE HALF-OPEN CONNECTION, which is the shape no other fixture here models: some of the
+ * body leaves, then the radio drops or NAT expires and NO RST arrives — so there is no
+ * `error`, no `load`, no `loadend`, and the request simply never ends. A part that never sends
+ * a byte (`null`) is the easier case; this one is the reported symptom.
+ */
+let hangAfterProgressBytes: number | null;
+/**
+ * How long the server takes to answer AFTER the body is fully sent. The healthy-but-slow case
+ * that a progress watchdog must not kill: `upload.progress` has stopped because there is
+ * nothing left to send, not because the connection died.
+ */
+let responseDelayMs: number;
+/** PUT attempts per part number, so a case can assert a part was never aborted and re-sent. */
+let partSendCounts: Map<number, number>;
+/** Fake-clock time of each part's response, for asserting the response wait really was long. */
+let partLoadTimes: number[];
 let relayCalls: number;
 let relayResponse: { ok: boolean; id?: string };
 /** Consumed before `relayResponse`, so a test can script a shed followed by a success. */
@@ -116,16 +142,28 @@ class FakeXHR {
     this.emit('loadend');
   }
   send(body: Blob) {
+    const partNumber = Number(new URL(this.url, 'https://store.test').searchParams.get('part'));
+    const attempt = (partSendCounts.get(partNumber) ?? 0) + 1;
+    partSendCounts.set(partNumber, attempt);
     setTimeout(() => {
       if (this.settled) return;
-      const partNumber = Number(new URL(this.url, 'https://store.test').searchParams.get('part'));
-      if (hangPartNumbers.includes(partNumber)) return; // in flight until aborted
-      this.settled = true;
+      if (
+        hangPartNumbers.includes(partNumber) &&
+        (hangAttemptLimit === null || attempt <= hangAttemptLimit)
+      ) {
+        // Deliberately NOT `settled`: the request is still open, so an abort from the hook's
+        // watchdog still reaches `abort()` and emits its events, the way a real one does.
+        if (hangAfterProgressBytes !== null)
+          this.upload.listeners['progress']?.forEach((cb) =>
+            cb({ loaded: hangAfterProgressBytes as number })
+          );
+        return; // in flight until aborted
+      }
       const res = partHandler(partNumber);
-      this.readyState = 4;
-      this.status = res.status;
-      if (res.etag) this.headers['ETag'] = res.etag;
       if (res.networkError) {
+        this.settled = true;
+        this.readyState = 4;
+        this.status = res.status;
         // 🔴 NO FULL-SIZE `upload.progress` ON THIS PATH, and that is the point of the
         // branch sitting ABOVE the ordinary progress emission. Emitting a full-size
         // `progress` here (which this fake used to do unconditionally) made every relayed
@@ -154,8 +192,21 @@ class FakeXHR {
       }
       this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
       this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
-      this.emit('load');
-      this.emit('loadend');
+      // The response phase. Kept un-`settled` until the answer lands so an abort DURING the
+      // wait still emits its events — otherwise a watchdog that wrongly policed this phase
+      // would be invisible here, and the mutation proving it does not would pass.
+      const respond = () => {
+        if (this.settled) return;
+        this.settled = true;
+        this.readyState = 4;
+        this.status = res.status;
+        if (res.etag) this.headers['ETag'] = res.etag;
+        partLoadTimes.push(Date.now());
+        this.emit('load');
+        this.emit('loadend');
+      };
+      if (responseDelayMs > 0) setTimeout(respond, responseDelayMs);
+      else respond();
     }, 0);
   }
   private emit(type: string) {
@@ -351,6 +402,11 @@ beforeEach(() => {
   vi.useFakeTimers();
   backend = 'backblaze';
   hangPartNumbers = [];
+  hangAttemptLimit = null;
+  hangAfterProgressBytes = null;
+  responseDelayMs = 0;
+  partSendCounts = new Map();
+  partLoadTimes = [];
   relayCalls = 0;
   relayResponse = { ok: true, id: RELAY_KEY };
   relayScriptedStatuses = [];
@@ -629,6 +685,116 @@ describe('useS3Upload relay fallback', () => {
     expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
     expect(h.statuses()).toEqual(['aborted']);
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'client-aborted' }]);
+    h.unmount();
+  });
+});
+
+/**
+ * THE SEAM AGAIN, for the same reason.
+ *
+ * `XMLHttpRequest.timeout` defaults to 0 — wait forever — so a part whose connection goes
+ * half-open fires neither `error` nor `load`: the row froze at its last progress value, the
+ * fatal slot was never written, the relay could not run and NOTHING was logged. A test that
+ * only asserts the watchdog's timer fired would also pass against a watchdog whose abort
+ * records the user-cancel shape, which `shouldRelayOnPartFailure` refuses on `err.aborted` —
+ * the inert-gate defect this code has shipped twice. So these assert the relay POST.
+ */
+describe('useS3Upload part stall watchdog', () => {
+  /** Comfortably past the hook's 30s window at the 60s clock turn the harness uses. */
+  const SLOW_RESPONSE_MS = 90_000;
+
+  it('relays a part that sent some bytes and then went silent', async () => {
+    // 🔴 THE DECISIVE CASE. Before the watchdog this upload never settles at all: the PUT
+    // hangs forever, so `runUpload` exhausts its clock budget and throws rather than failing
+    // an assertion. Every gate in `shouldRelayOnPartFailure` is satisfied — image type, image
+    // backend, a file far under the cap, a network-layer failure that nobody cancelled.
+    vi.stubGlobal('fetch', makeFetch(1));
+    hangPartNumbers = [1];
+    hangAfterProgressBytes = CHUNK / 2;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    // The watchdog aborted the part, the error survived the retry ladder as relay-eligible,
+    // and the relay actually ran. An `aborted: true` watchdog abort fails here.
+    expect(relayCalls).toBe(1);
+    expect(result).toMatchObject({ url: RELAY_KEY, key: RELAY_KEY });
+    expect(h.statuses()).toEqual(['success']);
+    expect(h.progresses()).toEqual([100]);
+    // 🔴 `stalled`, not `network-error`: a half-open connection and a real reset call for
+    // different fixes, and one kind for both is how the stall population stays invisible.
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
+    // The ladder was walked, not short-circuited — MAX_PART_ATTEMPTS PUTs for the one part.
+    expect(partSendCounts.get(1)).toBe(MAX_PART_ATTEMPTS);
+    h.unmount();
+  });
+
+  it('retries a stall that recovers, and never reaches the relay', async () => {
+    // A stall is transient far more often than it is fatal, so it must ride the ordinary
+    // network-error retry path. Only an exhausted part is owed a relay.
+    vi.stubGlobal('fetch', makeFetch(1));
+    hangPartNumbers = [1];
+    hangAttemptLimit = 1;
+    hangAfterProgressBytes = CHUNK / 2;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    expect(relayCalls).toBe(0);
+    // Positive control: a stall that was never provoked would satisfy everything below.
+    expect(partSendCounts.get(1)).toBe(2);
+    expect(result).toMatchObject({ key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['success']);
+    // Nothing gave up, so the session was completed rather than torn down.
+    expect(abortCalls).toEqual([]);
+    h.unmount();
+  });
+
+  it('does not abort a part whose body is sent and whose response is slow', async () => {
+    // 🔴 WHY `upload.loadend` CLEARS THE TIMER. Once the body is fully sent, `upload.progress`
+    // stops because there is nothing left to send — not because the connection died. Treating
+    // that wait as a stall kills a healthy upload against a slow backend, and the harm is
+    // invisible in production: the part is retried, so it looks like a flaky network.
+    vi.stubGlobal('fetch', makeFetch(1));
+    responseDelayMs = SLOW_RESPONSE_MS;
+    const h = await mountHook();
+
+    const t0 = Date.now();
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    // ONE PUT: the part was never aborted and re-sent. Asserted first because it is the
+    // legible reading of a watchdog that policed the response phase — `expected 5 to be 1`
+    // says the part was killed and retried, where the timing control below reads `NaN`.
+    expect(partSendCounts.get(1)).toBe(1);
+    expect(relayCalls).toBe(0);
+    expect(abortCalls).toEqual([]);
+    expect(result).toMatchObject({ key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['success']);
+    // 🔴 THE POSITIVE CONTROL, and the case is vacuous without it: if the harness ignored
+    // `responseDelayMs` the part would answer instantly, there would be no silent window at
+    // all, and every assertion above would hold against a watchdog that polices this phase.
+    // Last, so a real regression reports itself before this reports the harness.
+    expect(partLoadTimes[0] - t0).toBeGreaterThanOrEqual(SLOW_RESPONSE_MS);
+    h.unmount();
+  });
+
+  it('reports error, not a stall, when a stalled part cannot relay', async () => {
+    // The stall kind is a diagnostic, not a status: a non-image backend still owes the user an
+    // error row, and the abort stream still gets the real reason.
+    vi.stubGlobal('fetch', makeFetch(1));
+    backend = 'b2';
+    hangPartNumbers = [1];
+    hangAfterProgressBytes = CHUNK / 2;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Model);
+
+    expect(relayCalls).toBe(0);
+    expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['error']);
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
     h.unmount();
   });
 });

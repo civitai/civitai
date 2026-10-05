@@ -3,6 +3,13 @@ export type UploadPartError = {
   retryAfter?: string | null;
   networkError?: boolean;
   aborted?: boolean;
+  /**
+   * A progress watchdog gave up on this part: the connection went silent mid-body with no
+   * error and no response. Set WITH `networkError` and WITHOUT `aborted`, because the
+   * transfer did fail at the network layer and nobody cancelled it — the two flags are what
+   * every predicate below reads, and `stalled` only refines the reason.
+   */
+  stalled?: boolean;
   partNumber?: number;
 };
 
@@ -19,7 +26,7 @@ export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
  * client stopped — the field whose absence forced the 2026-09 image-upload investigation
  * to ask users for devtools screenshots. Caller-shaped input is sanitized again
  * server-side (see `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`); this
- * side only ever produces the three shapes below.
+ * side only ever produces the four shapes below.
  *
  * A user cancel maps to `client-aborted` ahead of every other reading: the cancel trips
  * the workers, which can race a status-0 `loadend` onto the same fatal slot, and user
@@ -27,6 +34,7 @@ export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
  */
 export type PartFailureReason =
   | { kind: 'client-aborted' }
+  | { kind: 'stalled'; partNumber?: number }
   | { kind: 'network-error'; partNumber?: number }
   | { kind: 'part-status'; partNumber?: number; status: number };
 
@@ -35,6 +43,13 @@ export function describePartFailure(
 ): PartFailureReason | undefined {
   if (!err) return undefined;
   if (err.aborted) return { kind: 'client-aborted' };
+  // Ahead of `networkError`, which a stall sets too so it can reach the relay. Read the
+  // other way round, a dead radio is indistinguishable from a connection reset in the logs.
+  if (err.stalled) {
+    return err.partNumber === undefined
+      ? { kind: 'stalled' }
+      : { kind: 'stalled', partNumber: err.partNumber };
+  }
   if (err.networkError) {
     return err.partNumber === undefined
       ? { kind: 'network-error' }

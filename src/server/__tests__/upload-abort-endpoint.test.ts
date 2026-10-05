@@ -409,6 +409,27 @@ describe('/api/upload/abort — client failure reason', () => {
     expect(logged.failure ?? {}).not.toHaveProperty(key);
   });
 
+  /**
+   * 🔴 THE CROSS-FILE HALF OF THE STALL WATCHDOG. `describePartFailure` minting a `stalled`
+   * kind is worth nothing if this route drops or rebuckets it — the field would then read as
+   * though stalls never happen, which is the state the watchdog exists to end.
+   *
+   * ⚠ It passes on the pre-watchdog route too, and that is the finding rather than a weakness:
+   * `kind` is bounded by TYPE AND LENGTH here, not against an enumerated set, so no server
+   * change was needed to admit a fourth kind. This case exists to KEEP that true — the moment
+   * someone tightens `sanitizeClientFailure` into a closed set, a kind missing from it drops
+   * silently, and this is what goes red instead.
+   */
+  it('keeps the stalled kind and its part number', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    const res = makeRes();
+    await handler(makeReq({ body: { failure: { kind: 'stalled', partNumber: 1 } } }), res);
+
+    expect(res.statusCode).toBe(200);
+    const logged = vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+    expect(logged.failure).toEqual({ kind: 'stalled', partNumber: 1 });
+  });
+
   it('an absent failure object logs nothing extra', async () => {
     mockAbortMultipartUpload.mockResolvedValue(undefined);
     const res = makeRes();
