@@ -358,7 +358,9 @@ export type UserCrucibleStats = {
   totalCrucibles: number;
   buzzWon: number;
   bestPlacement: number | null;
-  winRate: number;
+  /** Average finish as the top percent of the field; null until enough crucibles count. */
+  avgFinishTopPercent: number | null;
+  prizesWon: number;
 };
 
 // Schema for getting user's active crucibles (no input needed - uses authenticated user)
