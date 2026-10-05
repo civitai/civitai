@@ -14,8 +14,8 @@ type BaseTask = {
   start?: number;
   /**
    * How many source ids this task is responsible for. Carried through the pull -> transform ->
-   * push chain (the derived tasks no longer hold the id list) so that a task which ends up
-   * failing can be attributed back to a number of documents that were never indexed.
+   * push chain so that a task which ends up failing can be attributed back to a number of
+   * documents that were never indexed.
    */
   idCount?: number;
   /**

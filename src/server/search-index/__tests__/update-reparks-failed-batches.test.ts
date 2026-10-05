@@ -194,26 +194,42 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
     expect(await remainingQueuedIds()).toEqual([POISON_ID, 205, 206]);
   });
 
-  it('survives a checkout whose bucket-list write was dropped', async () => {
-    // If the checkout could not register its fresh bucket, the queue's newest bucket is still the
-    // one being drained — so an id re-queued BEFORE commit() lands in a bucket commit() deletes.
-    seedUpdateQueue(QUEUED_IDS);
-    let faultFired = false;
+  // If the checkout could not register its fresh bucket, the queue's newest bucket is still the
+  // one being drained — so an id re-queued BEFORE commit() lands in a bucket commit() deletes.
+  const dropFirstCheckoutWrite = () => {
+    const fault = { fired: false };
     const realHSet = redisMock.sysRedis.hSet.getMockImplementation();
     redisMock.sysRedis.hSet.mockImplementation(
       async (hash: string, field: string, value: string) => {
-        if (hash === REDIS_SYS_KEYS.QUEUES.BUCKETS && field === UPDATE_KEY && !faultFired) {
-          faultFired = true;
+        if (hash === REDIS_SYS_KEYS.QUEUES.BUCKETS && field === UPDATE_KEY && !fault.fired) {
+          fault.fired = true;
           throw new Error('sysRedis write timed out');
         }
         return realHSet?.(hash, field, value);
       }
     );
+    return fault;
+  };
+
+  it('update() survives a checkout whose bucket-list write was dropped', async () => {
+    seedUpdateQueue(QUEUED_IDS);
+    const fault = dropFirstCheckoutWrite();
 
     await buildIndex().update({} as never);
 
-    expect(faultFired).toBe(true);
+    expect(fault.fired).toBe(true);
     expect(await remainingQueuedIds()).toEqual(FAILING_BATCH);
+  });
+
+  it('processQueues() survives a checkout whose bucket-list write was dropped', async () => {
+    seedUpdateQueue(QUEUED_IDS);
+    const fault = dropFirstCheckoutWrite();
+
+    await buildIndex().processQueues({ processUpdates: true }, {} as never);
+
+    expect(fault.fired).toBe(true);
+    // processQueues batches by 10,000, so all nine ids share the poisoned batch.
+    expect(await remainingQueuedIds()).toEqual(QUEUED_IDS);
   });
 
   it('parks the ids in Postgres and says so when Redis refuses the re-queue', async () => {
@@ -239,14 +255,23 @@ describe('search index :: a batch that exhausts its retries is re-queued, not di
 
 describe('search index :: paths that must NOT re-queue', () => {
   // Invariant guards, not regression tests: each of these loses nothing on `main` either.
-  it('a partial index, whose read-only checkout never removed the ids', async () => {
-    seedUpdateQueue(QUEUED_IDS);
+  it.each(['update', 'processQueues'] as const)(
+    'a partial index in %s(), whose read-only checkout never removed the ids',
+    async (path) => {
+      seedUpdateQueue(QUEUED_IDS);
+      const transformData = vi.fn(async () => {
+        throw new Error('Server has closed the connection.');
+      });
+      const index = buildIndex({ partial: true, transformData });
 
-    await buildIndex({ partial: true }).update({} as never);
+      if (path === 'update') await index.update({} as never);
+      else await index.processQueues({ processUpdates: true }, {} as never);
 
-    expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
-    expect(await remainingQueuedIds()).toEqual(QUEUED_IDS);
-  });
+      expect(transformData).toHaveBeenCalled();
+      expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
+      expect(await remainingQueuedIds()).toEqual(QUEUED_IDS);
+    }
+  );
 
   it('a processor that does not drain the Update queue', async () => {
     const transformData = vi.fn(async () => {
@@ -285,4 +310,24 @@ describe('search index :: paths that must NOT re-queue', () => {
     expect(pullData).toHaveBeenCalledTimes(4);
     expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
   });
+
+  it.each(['transform', 'push'] as const)(
+    'a range task that fails at the %s step',
+    async (step) => {
+      const failing = vi.fn(async () => {
+        throw new Error('Server has closed the connection.');
+      });
+      const index = buildIndex({
+        prepareBatches: async () => ({ batchSize: 3, startId: 301, endId: 303, updateIds: [] }),
+        pullData: async (_ctx: unknown, batch: { type: string; startId?: number }) =>
+          batch.type === 'new' ? [{ id: 301 }, { id: 302 }, { id: 303 }] : null,
+        ...(step === 'transform' ? { transformData: failing } : { pushData: failing }),
+      });
+
+      await index.update({} as never);
+
+      expect(failing).toHaveBeenCalledTimes(4);
+      expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
+    }
+  );
 });
