@@ -95,6 +95,15 @@ const MALFORMED: [string, unknown][] = [
   ['a string', 'nope'],
 ];
 
+/** `jsonb_typeof` of the stored column — unlike `readSettings`, never folds JSON null away. */
+async function storedType() {
+  const r = await holder.db.query<{ t: string | null }>(
+    `SELECT jsonb_typeof(settings) AS t FROM "User" WHERE id = $1`,
+    [USER_ID]
+  );
+  return r.rows[0]?.t;
+}
+
 const isPlainObject = (v: unknown) => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 describe('a non-object stored User.settings', () => {
@@ -193,6 +202,9 @@ describe('a non-object stored User.settings', () => {
         expect(isPlainObject(settings)).toBe(true);
         expect(settings).toEqual({});
       }
+      // Both reads above fold a stored JSON `null` into `{}` (`?? {}`), so they cannot tell
+      // `{}` from JSON null. Ask Postgres for the stored type directly.
+      expect(await storedType()).toBe('object');
     });
 
     it.each(MALFORMED)('a mergeInto-only patch leaves an object for %s', async (_l, bad) => {
@@ -214,6 +226,9 @@ describe('a non-object stored User.settings', () => {
       });
 
       expect(returned).toEqual({ tourSettings: { welcome: { currentStep: 1 } } });
+      expect(await readSettings(holder.db, USER_ID)).toEqual({
+        tourSettings: { welcome: { currentStep: 1 } },
+      });
     });
   });
 
