@@ -3,7 +3,6 @@ import type { Session } from '~/types/session';
 import * as z from 'zod';
 
 import { constants } from '~/server/common/constants';
-import { dbRead } from '~/server/db/client';
 import { runImageSearch } from '~/server/services/image-search.service';
 import { getPostDetail } from '~/server/services/post.service';
 import { MixedAuthEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
@@ -30,7 +29,8 @@ import { TRPCError } from '@trpc/server';
  * any browsable level is served (never unscanned or Blocked-only), except in a restricted region,
  * where a post with any non-SFW level is a 404. The 404 is answered here, not by
  * `handleEndpointError`, so the edge can absorb it. Images are the `/api/v1/images` items for the
- * post at the same ceiling, so an image the viewer may not see is simply absent.
+ * post at the same ceiling, the first 100 in the post's own order, so an image the viewer may not
+ * see is simply absent.
  *
  * Published + scanned is re-checked here rather than trusted from `getPostDetail`, whose
  * collection-judge branch can return posts that are neither.
@@ -87,6 +87,7 @@ export default MixedAuthEndpoint(async function handler(
         limit: 100,
         withMeta: false,
         withTags: false,
+        postOrder: true,
         data: {
           postId: post.id,
           period: constants.galleryFilterDefaults.period,
@@ -95,13 +96,6 @@ export default MixedAuthEndpoint(async function handler(
       },
       { browsingLevel, user: undefined, req }
     );
-    // The feed search ranks by sort, not by the post's own image order.
-    const positions = await dbRead.image.findMany({
-      where: { postId: post.id },
-      select: { id: true, index: true },
-    });
-    const indexById = new Map(positions.map((x) => [x.id, x.index ?? 0]));
-    images.sort((a, b) => (indexById.get(a.id) ?? 0) - (indexById.get(b.id) ?? 0));
 
     return res.status(200).json({
       id: post.id,
