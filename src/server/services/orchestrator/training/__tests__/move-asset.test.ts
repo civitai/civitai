@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as z from 'zod';
 import type * as OrchestratorToken from '~/server/orchestrator/get-orchestrator-token';
 import type * as Workflows from '~/server/services/orchestrator/workflows';
 import type * as S3Utils from '~/utils/s3-utils';
@@ -43,10 +42,6 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
 vi.mock('~/server/http/orchestrator/orchestrator.caller', () => ({
   getOrchestratorCaller: () => ({ copyAsset: mockCopyAsset }),
 }));
-// The real module pulls client-only code into the node graph; moveAsset reads nothing from it.
-vi.mock('~/server/schema/training.schema', () => ({
-  trainingServiceStatusSchema: z.object({}),
-}));
 
 import type { Workflow } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
@@ -59,14 +54,19 @@ const MODERATOR = 999;
 const VERSION_ID = 321;
 const WORKFLOW_ID = '5-20261001000000000';
 
-const blobUrl = (blobId: string) =>
-  `https://orchestration.civitai.com/v2/consumer/blobs/${blobId}.safetensors?sig=s&exp=2099-01-01`;
+// The workflow's own URLs carry a different signature from the ones a client sends, so a test can
+// tell which of the two was fetched.
+const blobUrl = (blobId: string, sig = 'client') =>
+  `https://orchestration.civitai.com/v2/consumer/blobs/${blobId}.safetensors?sig=${sig}&exp=2099-01-01`;
+const runUrl = (blobId: string) => blobUrl(blobId, 'run');
 const EPOCH_1 = 'EPOCHONE';
 const EPOCH_2 = 'EPOCHTWO';
 const SAMPLE = 'SAMPLEIMG';
 const UNFINISHED = 'NOTREADY';
+const OTHER_STEP = 'OTHERSTEP';
 
 const mockFindUnique = dbMock.dbWrite.modelVersion.findUnique;
+const mockQueryRaw = dbMock.dbWrite.$queryRaw;
 
 function dbVersion({
   ownerId = OWNER,
@@ -83,13 +83,16 @@ function dbVersion({
 function trainingRun(moderationStatus: string | undefined): Workflow {
   const output = {
     epochs: [
-      { epochNumber: 1, model: { id: `${EPOCH_1}.safetensors`, url: blobUrl(EPOCH_1) } },
+      { epochNumber: 1, model: { id: `${EPOCH_1}.safetensors`, url: runUrl(EPOCH_1) } },
       {
         epochNumber: 2,
-        model: { id: `${EPOCH_2}.safetensors`, url: blobUrl(EPOCH_2), available: true },
-        samples: [{ id: `${SAMPLE}.safetensors`, url: blobUrl(SAMPLE) }],
+        model: { id: `${EPOCH_2}.safetensors`, url: runUrl(EPOCH_2), available: true },
+        samples: [{ id: `${SAMPLE}.safetensors`, url: runUrl(SAMPLE) }],
       },
-      { epochNumber: 3, model: { id: `${UNFINISHED}.safetensors`, available: false } },
+      {
+        epochNumber: 3,
+        model: { id: `${UNFINISHED}.safetensors`, url: runUrl(UNFINISHED), available: false },
+      },
     ],
   };
   return {
@@ -99,6 +102,14 @@ function trainingRun(moderationStatus: string | undefined): Workflow {
         $type: 'training',
         output: moderationStatus === undefined ? output : { ...output, moderationStatus },
       },
+      // A second epoch-bearing step: its blobs are not checkpoints of the training step.
+      {
+        $type: 'imageResourceTraining',
+        output: {
+          moderationStatus: 'approved',
+          epochs: [{ epochNumber: 1, blobUrl: runUrl(OTHER_STEP) }],
+        },
+      },
     ],
   } as unknown as Workflow;
 }
@@ -106,7 +117,7 @@ function trainingRun(moderationStatus: string | undefined): Workflow {
 function legacyRun(moderationStatus: string | undefined): Workflow {
   const output = {
     sampleImagesPrompts: [],
-    epochs: [{ epochNumber: 1, blobUrl: blobUrl(EPOCH_1) }],
+    epochs: [{ epochNumber: 1, blobUrl: runUrl(EPOCH_1) }],
   };
   return {
     id: WORKFLOW_ID,
@@ -130,6 +141,9 @@ const NOT_APPROVED = /dataset has not been approved/;
 const NOT_A_CHECKPOINT = /not a checkpoint from this training run/;
 const RUN_UNAVAILABLE = /training run could not be found/;
 
+const JOB_URL =
+  'https://orchestration.civitai.com/v1/consumer/jobs/0a1b2c3d-0000-4000-8000-000000000000/assets/x.safetensors';
+
 const fetchMock = vi.fn();
 
 function expectNothingCopied() {
@@ -150,30 +164,50 @@ beforeEach(() => {
     bucket: 'b',
     key,
   }));
-  fetchMock.mockResolvedValue(
-    new Response('weights', { status: 200, headers: { 'content-length': '7' } })
+  fetchMock.mockImplementation(
+    async () => new Response('weights', { status: 200, headers: { 'content-length': '7' } })
   );
   mockUploadDone.mockResolvedValue(undefined);
+  mockQueryRaw.mockResolvedValue([
+    {
+      metadata: { trainingResults: { submittedAt: '2024-01-01T00:00:00.000Z' } },
+      updatedAt: new Date(),
+    },
+  ] as never);
+  mockCopyAsset.mockResolvedValue({
+    ok: true,
+    status: 200,
+    data: { jobs: [{ lastEvent: { type: 'Succeeded' }, result: { found: true, fileSize: 9 } }] },
+  });
 });
 
 describe('training.moveAsset — approved checkpoint of an owned run', () => {
-  it('copies an approved epoch checkpoint of the version owner’s run', async () => {
+  it('copies the run’s own URL for an approved epoch checkpoint of the version owner’s run', async () => {
     await expect(move()).resolves.toEqual({
       newUrl: `https://storage.example/modelVersion/${VERSION_ID}/${EPOCH_2}.safetensors`,
       fileSize: 7,
+    });
+    expect(mockFindUnique).toHaveBeenCalledWith({
+      where: { id: VERSION_ID },
+      select: {
+        meta: true,
+        model: { select: { userId: true } },
+        files: { where: { type: 'Training Data' }, select: { metadata: true } },
+      },
     });
     expect(mockGetToken).toHaveBeenCalledWith(OWNER, undefined, { bypassCache: false });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
       path: { workflowId: WORKFLOW_ID },
     });
-    expect(fetchMock).toHaveBeenCalledWith(blobUrl(EPOCH_2));
+    expect(fetchMock.mock.calls).toEqual([[runUrl(EPOCH_2)]]);
     expect(mockUploadDone).toHaveBeenCalledTimes(1);
   });
 
   it('copies an approved checkpoint of a legacy imageResourceTraining run', async () => {
     mockGetWorkflow.mockResolvedValue(legacyRun('approved'));
     await expect(move({ url: blobUrl(EPOCH_1) })).resolves.toMatchObject({ fileSize: 7 });
+    expect(fetchMock.mock.calls).toEqual([[runUrl(EPOCH_1)]]);
   });
 
   it('resolves the run from the version meta when the training file has no results', async () => {
@@ -181,6 +215,17 @@ describe('training.moveAsset — approved checkpoint of an owned run', () => {
       dbVersion({ trainingResults: null, meta: { trainingWorkflowId: WORKFLOW_ID } }) as never
     );
     await expect(move()).resolves.toMatchObject({ fileSize: 7 });
+    expect(mockGetWorkflow).toHaveBeenCalledWith({
+      token: 'owner-token',
+      path: { workflowId: WORKFLOW_ID },
+    });
+  });
+
+  it('prefers the training file’s recorded run over the version meta', async () => {
+    mockFindUnique.mockResolvedValue(
+      dbVersion({ meta: { trainingWorkflowId: 'some-other-run' } }) as never
+    );
+    await move();
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
       path: { workflowId: WORKFLOW_ID },
@@ -207,14 +252,27 @@ describe('training.moveAsset — target version', () => {
     await expect(move()).rejects.toMatchObject({ code: 'NOT_FOUND' });
     expectNothingCopied();
   });
+});
 
-  it('refuses a non-owner on the legacy job-asset path before any copy is requested', async () => {
-    const jobUrl =
-      'https://orchestration.civitai.com/v1/consumer/jobs/0a1b2c3d-0000-4000-8000-000000000000/assets/x.safetensors';
-    await expect(move({ url: jobUrl, userId: STRANGER })).rejects.toMatchObject({
+describe('training.moveAsset — legacy job-asset URL', () => {
+  it('refuses a non-owner before any copy is requested', async () => {
+    await expect(move({ url: JOB_URL, userId: STRANGER })).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
     });
+    expect(mockQueryRaw).not.toHaveBeenCalled();
     expectNothingCopied();
+  });
+
+  it.each([
+    ['the owner', OWNER, false],
+    ['a moderator', MODERATOR, true],
+  ])('lets %s copy, looking the run up under the version OWNER', async (_label, userId, mod) => {
+    await expect(move({ url: JOB_URL, userId, isModerator: mod })).resolves.toMatchObject({
+      fileSize: 9,
+    });
+    expect(mockCopyAsset).toHaveBeenCalledTimes(1);
+    const [, ...values] = mockQueryRaw.mock.calls[0] as unknown[];
+    expect(values).toEqual([VERSION_ID, OWNER]);
   });
 });
 
@@ -246,6 +304,16 @@ describe('training.moveAsset — source run', () => {
     expectNothingCopied();
   });
 
+  it.each([
+    ['has no steps', { id: WORKFLOW_ID, steps: [] }],
+    ['has only an unrelated step', { id: WORKFLOW_ID, steps: [{ $type: 'textToImage' }] }],
+    ['has a training step with no output', { id: WORKFLOW_ID, steps: [{ $type: 'training' }] }],
+  ])('refuses a run that %s', async (_label, workflow) => {
+    mockGetWorkflow.mockResolvedValue(workflow);
+    await expect(move()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expectNothingCopied();
+  });
+
   describe.each([
     ['training', trainingRun],
     ['imageResourceTraining', legacyRun],
@@ -260,18 +328,50 @@ describe('training.moveAsset — source run', () => {
     );
   });
 
-  it('refuses a checkpoint of the run served from an untrusted host', async () => {
-    const url = blobUrl(EPOCH_2).replace('orchestration.civitai.com', 'blobs.example.com');
-    await expect(move({ url })).rejects.toThrow('Invalid asset URL');
+  it('refuses a moderator too when the run is not approved', async () => {
+    mockGetWorkflow.mockResolvedValue(trainingRun('rejected'));
+    await expect(move({ userId: MODERATOR, isModerator: true })).rejects.toThrow(NOT_APPROVED);
+    expectNothingCopied();
+  });
+
+  it('refuses a moderator too when the blob is not a checkpoint of the run', async () => {
+    await expect(
+      move({ url: blobUrl('SOMEOTHERBLOB'), userId: MODERATOR, isModerator: true })
+    ).rejects.toThrow(NOT_A_CHECKPOINT);
     expectNothingCopied();
   });
 
   it.each([
-    ['a blob from no epoch of the run', 'SOMEOTHERBLOB'],
-    ['a sample image of the run', SAMPLE],
-    ['an epoch checkpoint that is not finished', UNFINISHED],
-  ])('refuses %s', async (_label, blobId) => {
-    await expect(move({ url: blobUrl(blobId) })).rejects.toThrow(NOT_A_CHECKPOINT);
+    ['a blob from no epoch of the run', blobUrl('SOMEOTHERBLOB')],
+    ['a sample image of the run', blobUrl(SAMPLE)],
+    ['an epoch checkpoint that is not finished', blobUrl(UNFINISHED)],
+    ['a blob from another step of the run', blobUrl(OTHER_STEP)],
+  ])('refuses %s', async (_label, url) => {
+    await expect(move({ url })).rejects.toThrow(NOT_A_CHECKPOINT);
+    expectNothingCopied();
+  });
+
+  it('never fetches the requested URL — only the run’s own URL for the checkpoint it names', async () => {
+    const requested = blobUrl(EPOCH_2).replace('orchestration.civitai.com', 'blobs.example.com');
+    await expect(move({ url: requested })).resolves.toMatchObject({ fileSize: 7 });
+    expect(fetchMock.mock.calls).toEqual([[runUrl(EPOCH_2)]]);
+  });
+
+  it('refuses a checkpoint whose run URL is on an untrusted host', async () => {
+    const untrusted = 'https://blobs.example.com/v2/consumer/blobs/EPOCHTWO.safetensors?sig=run';
+    mockGetWorkflow.mockResolvedValue({
+      id: WORKFLOW_ID,
+      steps: [
+        {
+          $type: 'training',
+          output: {
+            moderationStatus: 'approved',
+            epochs: [{ epochNumber: 1, model: { id: `${EPOCH_2}.safetensors`, url: untrusted } }],
+          },
+        },
+      ],
+    });
+    await expect(move()).rejects.toThrow('Invalid asset URL');
     expectNothingCopied();
   });
 });

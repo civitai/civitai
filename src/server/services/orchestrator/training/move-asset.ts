@@ -1,6 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import type { MoveAssetInput } from '~/server/schema/training.schema';
-import { assertOwnedApprovedTrainingCheckpoint } from '~/server/services/orchestrator/training/approved-checkpoint';
+import { resolveOwnedApprovedTrainingCheckpoint } from '~/server/services/orchestrator/training/approved-checkpoint';
 import { resolveTrainingWorkflowId } from '~/server/services/orchestrator/training/training-state';
 import {
   isBlobAssetUrl,
@@ -11,8 +11,8 @@ import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/erro
 
 /**
  * Copy a training checkpoint into storage under `modelVersionId`. The caller must own the version's
- * model (or be a moderator), and a blob must be a finished checkpoint of the version's own training
- * run with approved training data.
+ * model (or be a moderator), and a blob must be a finished checkpoint, with approved training data,
+ * of the training run recorded on the version and owned by the version's owner.
  */
 export async function moveAsset({
   url,
@@ -34,13 +34,13 @@ export async function moveAsset({
   if (ownerId !== userId && !isModerator) throw throwAuthorizationError();
 
   if (isBlobAssetUrl(url)) {
-    await assertOwnedApprovedTrainingCheckpoint({
+    const checkpointUrl = await resolveOwnedApprovedTrainingCheckpoint({
       ownerId,
       callerId: userId,
       workflowId: resolveTrainingWorkflowId(version).workflowId,
-      checkpointUrl: url,
+      requestedUrl: url,
     });
-    return moveAssetFromBlob({ url, modelVersionId });
+    return moveAssetFromBlob({ url: checkpointUrl, modelVersionId });
   }
 
   return moveAssetFromJob({ url, modelVersionId, ownerId });
