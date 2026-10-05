@@ -3259,6 +3259,8 @@ export interface Collection {
   metadata: JsonValue;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
@@ -5759,6 +5761,8 @@ export interface Crucible {
   heroImage?: Image | null;
   buzzType: string;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: MediaType;
   entryFee: number;
   seededPrizePool: number;

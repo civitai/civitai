@@ -5357,6 +5357,8 @@ model Collection {
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
   nsfwLevel    Int                          @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   collaborationDisabledAt DateTime?
 
   items        CollectionItem[]
@@ -9060,6 +9062,8 @@ model Crucible {
   heroImage         Image?         @relation("CrucibleHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
   buzzType          String         @default("yellow")
   nsfwLevel         Int            @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   contentType       MediaType      @default(image)
   entryFee          Int            @default(0)
   seededPrizePool   Int            @default(0)
