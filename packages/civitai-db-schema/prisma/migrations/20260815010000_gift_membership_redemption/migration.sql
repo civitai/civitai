@@ -2,12 +2,13 @@
 -- Applied by hand (we do not run `prisma migrate deploy`).
 --
 -- ============================================================================
--- RUN PART 1 ANY TIME. RUN PART 2 ONLY AFTER THE DEPLOY HAS FULLY ROLLED OUT.
+-- RUN PART 1 BEFORE THE DEPLOY. RUN PART 2 ONLY AFTER IT HAS FULLY ROLLED OUT.
 -- ============================================================================
 --
 -- Part 1 is additive: new enum values, new nullable/defaulted columns, an index and a
 -- foreign key. Nothing running today reads any of it, and the build that is live today
--- can keep inserting gifts while it is in place, so it is safe ahead of the deploy.
+-- can keep inserting gifts while it is in place, so it is safe at any point ahead of the
+-- deploy. The new build reads these columns, so it must not ship without them.
 --
 -- Part 2 needs every pod to be on the new build, for three reasons:
 --   * It makes "holderId" NOT NULL. The previous build inserts gifts without it, so

@@ -102,9 +102,12 @@ import {
   getGiftOffer,
   getMyMembershipGifts,
   getRecipientGiftability,
+  holdsOpenMembershipGift,
   honorGiftResidualsForUser,
   keepGiftMembership,
   recordGiftMonthConsumed,
+  releaseArmedGiftMonth,
+  restoreArmedGiftMonth,
   revokeMembershipGift,
   sweepGiftArming,
 } from '~/server/services/membership-gift.service';
@@ -164,7 +167,13 @@ const dbSub = ({
   price: { id: `price_${tier}_${currency}`, interval, currency },
 });
 
-const stripeSub = ({ status = 'active', currency = 'usd', discount = null as any } = {}) => ({
+const stripeSub = ({
+  status = 'active',
+  currency = 'usd',
+  discount = null as any,
+  interval = 'month',
+  unitAmount = 5000,
+} = {}) => ({
   id: 'sub_1',
   status,
   currency,
@@ -174,7 +183,12 @@ const stripeSub = ({ status = 'active', currency = 'usd', discount = null as any
   discount,
   metadata: {},
   items: {
-    data: [{ id: 'si_1', price: { id: 'price_gold_usd', recurring: { interval: 'month' } } }],
+    data: [
+      {
+        id: 'si_1',
+        price: { id: 'price_gold_usd', unit_amount: unitAmount, recurring: { interval } },
+      },
+    ],
   },
 });
 
@@ -421,6 +435,21 @@ describe('getGiftOffer', () => {
     await expect(getGiftOffer({ giftId: 'gift_1', userId: 2 })).rejects.toThrow(/not found/i);
   });
 
+  it('offers the whole cash value to a holder who is billed yearly, whatever the tiers', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, tier: 'gold' });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(
+      dbSub({ tier: 'bronze', interval: 'year', currency: 'jpy' })
+    );
+
+    expect(await getGiftOffer({ giftId: 'gift_1', userId: 2 })).toEqual({
+      kind: 'renewal-discount',
+      tier: 'gold',
+      months: 3,
+      amount: 3 * 7500,
+      currency: 'jpy',
+    });
+  });
+
   it('makes no offer on a gift that was applied in full when it was paid', async () => {
     mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, monthsRemaining: 0 });
     await expect(getGiftOffer({ giftId: 'gift_1', userId: 2 })).rejects.toThrow(
@@ -449,6 +478,19 @@ describe('acceptMembershipGift', () => {
     mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, tier: 'bronze' });
     mockDbWrite.customerSubscription.findUnique.mockResolvedValue(dbSub({ tier: 'gold' }));
     mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub());
+
+    await acceptMembershipGift({ giftId: 'gift_1', userId: 2 });
+
+    const itemChanges = mockStripe.subscriptions.update.mock.calls.filter(([, a]: any) => a.items);
+    expect(itemChanges).toHaveLength(0);
+  });
+
+  it('does NOT move a holder who is billed yearly, even up to a higher tier', async () => {
+    mockDbWrite.membershipGift.findUnique.mockResolvedValue({ ...queued, tier: 'gold' });
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(
+      dbSub({ tier: 'bronze', interval: 'year' })
+    );
+    mockStripe.subscriptions.retrieve.mockResolvedValue(stripeSub({ interval: 'year' }));
 
     await acceptMembershipGift({ giftId: 'gift_1', userId: 2 });
 
@@ -525,6 +567,24 @@ describe('getMyMembershipGifts', () => {
       ['applied_at_payment', false],
       ['in_use', false],
     ]);
+  });
+});
+
+describe('holdsOpenMembershipGift', () => {
+  it('asks for a gift the user holds that still has months to give', async () => {
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue({ id: 'gift_1' });
+
+    expect(await holdsOpenMembershipGift({ userId: 2 })).toBe(true);
+    expect(mockDbWrite.membershipGift.findFirst.mock.calls[0][0].where).toEqual({
+      holderId: 2,
+      status: { in: ['Fulfilled', 'Active'] },
+      monthsRemaining: { gt: 0 },
+    });
+  });
+
+  it('is false when there is none', async () => {
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue(null);
+    expect(await holdsOpenMembershipGift({ userId: 2 })).toBe(false);
   });
 });
 
@@ -611,6 +671,53 @@ describe('armNextGiftMonth', () => {
   });
 });
 
+describe('armNextGiftMonth on a subscription billed yearly', () => {
+  const active = { ...baseGift, status: 'Active', monthsRemaining: 3, acceptedAt: new Date() };
+  const armYearly = async ({ giftTier = 'gold', holderTier = 'gold', unitAmount = 50000 } = {}) => {
+    mockDbWrite.membershipGift.findMany.mockResolvedValue([{ ...active, tier: giftTier }]);
+    mockDbWrite.customerSubscription.findUnique.mockResolvedValue(
+      dbSub({ tier: holderTier, interval: 'year' })
+    );
+    mockStripe.subscriptions.retrieve.mockResolvedValue(
+      stripeSub({ interval: 'year', unitAmount })
+    );
+    await armNextGiftMonth({ userId: 2 });
+    return mockStripe.coupons.create.mock.calls[0][0];
+  };
+
+  it('never arms 100% off — that would zero a whole year for one gifted month', async () => {
+    const coupon = await armYearly({ giftTier: 'gold', holderTier: 'gold' });
+
+    expect(coupon.percent_off).toBeUndefined();
+    expect(coupon.duration).toBe('once');
+  });
+
+  it('arms the cash value of every month the renewal can absorb, in one coupon', async () => {
+    const coupon = await armYearly({ giftTier: 'gold', holderTier: 'bronze', unitAmount: 50000 });
+
+    expect(coupon).toMatchObject({ amount_off: 3 * 5000, currency: 'usd' });
+    expect(coupon.currency_options.jpy).toEqual({ amount_off: 3 * 7500 });
+    expect(coupon.metadata).toMatchObject({ months: '3' });
+    expect(coupon.id).toBe('gift_gift_1_m1_x3');
+  });
+
+  it('leaves on the gift the months a smaller renewal cannot absorb', async () => {
+    // 12000 holds two 5000 months; a third would be capped at the invoice total and lost.
+    const coupon = await armYearly({ giftTier: 'gold', holderTier: 'bronze', unitAmount: 12000 });
+
+    expect(coupon.amount_off).toBe(2 * 5000);
+    expect(coupon.metadata).toMatchObject({ months: '2' });
+    expect(coupon.id).toBe('gift_gift_1_m1_x2');
+  });
+
+  it('still arms one month when a single month is worth more than the renewal', async () => {
+    const coupon = await armYearly({ giftTier: 'gold', holderTier: 'bronze', unitAmount: 3000 });
+
+    expect(coupon.amount_off).toBe(5000);
+    expect(coupon.metadata).toMatchObject({ months: '1' });
+  });
+});
+
 describe('recordGiftMonthConsumed', () => {
   const armed = {
     ...baseGift,
@@ -638,6 +745,27 @@ describe('recordGiftMonthConsumed', () => {
           monthsConsumed: 1,
           armedCouponId: null,
         }),
+      })
+    );
+  });
+
+  it('counts every month a yearly renewal absorbed, and keeps the rest', async () => {
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue({
+      ...armed,
+      armedCouponId: 'gift_gift_1_m1_x2',
+    });
+
+    const result = await recordGiftMonthConsumed({
+      invoice: {
+        id: 'in_1',
+        discount: { coupon: { id: 'gift_gift_1_m1_x2', metadata: { months: '2' } } },
+      } as any,
+    });
+
+    expect(result).toMatchObject({ consumed: true, monthsRemaining: 1 });
+    expect(mockDbWrite.membershipGift.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ monthsRemaining: 1, monthsConsumed: 2 }),
       })
     );
   });
@@ -681,6 +809,50 @@ describe('recordGiftMonthConsumed', () => {
 
     expect(second).toEqual({ consumed: false });
     expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('releaseArmedGiftMonth', () => {
+  it('detaches the armed month without counting it as used', async () => {
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue({
+      id: 'gift_1',
+      armedCouponId: 'gift_gift_1_m1',
+    });
+
+    const released = await releaseArmedGiftMonth({ userId: 2 });
+
+    expect(released).toEqual({ giftId: 'gift_1', couponId: 'gift_gift_1_m1' });
+    const [{ data }] = mockDbWrite.membershipGift.update.mock.calls[0];
+    expect(data).toEqual({ armedCouponId: null, armedAt: null });
+    expect(mockStripe.coupons.del).toHaveBeenCalledWith('gift_gift_1_m1');
+  });
+
+  it('leaves the discount on the subscription for the plan change to clear', async () => {
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue({
+      id: 'gift_1',
+      armedCouponId: 'gift_gift_1_m1',
+    });
+
+    await releaseArmedGiftMonth({ userId: 2 });
+
+    expect(mockStripe.subscriptions.deleteDiscount).not.toHaveBeenCalled();
+    expect(mockStripe.subscriptions.update).not.toHaveBeenCalled();
+  });
+
+  it('does nothing for a holder with no month armed', async () => {
+    mockDbWrite.membershipGift.findFirst.mockResolvedValue(null);
+
+    expect(await releaseArmedGiftMonth({ userId: 2 })).toBeNull();
+    expect(mockDbWrite.membershipGift.update).not.toHaveBeenCalled();
+    expect(mockStripe.coupons.del).not.toHaveBeenCalled();
+  });
+
+  it('can be undone when the plan change fails', async () => {
+    await restoreArmedGiftMonth({ giftId: 'gift_1', couponId: 'gift_gift_1_m1' });
+
+    const [{ where, data }] = mockDbWrite.membershipGift.update.mock.calls[0];
+    expect(where).toEqual({ id: 'gift_1' });
+    expect(data).toMatchObject({ armedCouponId: 'gift_gift_1_m1' });
   });
 });
 

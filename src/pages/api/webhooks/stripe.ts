@@ -154,28 +154,31 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               })
             );
 
-            // Their subscription ended with gifted months still owed: hand over the
-            // remainder as a free membership rather than letting it disappear with the
-            // subscription it happened to be riding on.
-            if (event.type === 'customer.subscription.deleted') {
-              const user = await dbWrite.user.findFirst({
-                where: { customerId },
-                select: { id: true },
-              });
-              if (user) {
-                const { honorGiftResidualsForUser } = await import(
-                  '~/server/services/membership-gift.service'
-                );
-                await honorGiftResidualsForUser({ userId: user.id }).catch((err) =>
-                  log({
-                    type: 'error',
-                    stage: 'gift-residual',
-                    message: 'failed to honor gifted months after cancellation',
-                    userId: user.id,
-                    error: err instanceof Error ? err.message : String(err),
-                  })
-                );
-              }
+            const user = await dbWrite.user.findFirst({
+              where: { customerId },
+              select: { id: true },
+            });
+            if (user) {
+              const { armNextGiftMonth, honorGiftResidualsForUser } = await import(
+                '~/server/services/membership-gift.service'
+              );
+              // Ended with gifted months still owed: hand over the remainder as a free
+              // membership rather than letting it disappear with the subscription it happened
+              // to be riding on. Otherwise the plan may have changed, and an owed month is
+              // armed against the plan as it now stands.
+              const ended = event.type === 'customer.subscription.deleted';
+              const settleGifts = ended ? honorGiftResidualsForUser : armNextGiftMonth;
+              await settleGifts({ userId: user.id }).catch((err) =>
+                log({
+                  type: 'error',
+                  stage: ended ? 'gift-residual' : 'gift-arm',
+                  message: ended
+                    ? 'failed to honor gifted months after cancellation'
+                    : 'failed to arm a gifted month after a subscription change',
+                  userId: user.id,
+                  error: err instanceof Error ? err.message : String(err),
+                })
+              );
             }
             break;
           }

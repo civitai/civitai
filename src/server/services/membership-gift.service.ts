@@ -37,6 +37,23 @@ const tierRank = (tier: string) => constants.memberships.tierOrder.indexOf(tier 
 const isAwaitingAcceptance = (gift: { status: MembershipGiftStatus; monthsRemaining: number }) =>
   gift.status === MembershipGiftStatus.Fulfilled && gift.monthsRemaining > 0;
 
+// A gifted month is priced against one month of billing. On any other interval the next invoice
+// is not a month, so the gift is applied as its cash value instead of as free time.
+const isBilledMonthly = (subscription: { price: { interval: string | null } }) =>
+  subscription.price.interval === 'month';
+
+// Stripe caps a discount at the invoice total and drops the rest, so a renewal is only ever
+// handed the whole months it can absorb; the others stay on the gift for the renewal after.
+const monthsCoveredByRenewal = ({
+  renewalAmount,
+  monthlyValue,
+  monthsRemaining,
+}: {
+  renewalAmount: number;
+  monthlyValue: number;
+  monthsRemaining: number;
+}) => Math.min(monthsRemaining, Math.max(1, Math.floor(renewalAmount / monthlyValue)));
+
 export type RecipientGiftability =
   | { status: 'no-subscription' }
   | { status: 'active'; tier: GiftableTier; renewsAt: Date; cancelsAtPeriodEnd: boolean }
@@ -315,6 +332,7 @@ export type GiftOffer =
       amountPerMonth: number;
       currency: string;
     }
+  | { kind: 'renewal-discount'; tier: string; months: number; amount: number; currency: string }
   | { kind: 'free-subscription'; tier: string; months: number };
 
 /**
@@ -325,6 +343,7 @@ export type GiftOffer =
  *   gift tier == yours  → the months are free
  *   gift tier <  yours  → the gift's monthly value comes off your bill; we never offer to
  *                         move you down
+ *   not billed monthly  → the gift's whole value comes off your renewals, whatever the tiers
  *   no membership       → a free subscription at the gift's tier
  */
 export async function getGiftOffer({
@@ -351,6 +370,18 @@ export async function getGiftOffer({
   const subscription = await getGreenSubscription(userId);
   const live = subscription && !TERMINAL_STATUSES.includes(subscription.status);
   if (!live) return { kind: 'free-subscription', tier: gift.tier, months };
+
+  if (!isBilledMonthly(subscription)) {
+    const { pricesByCurrency, unitAmount, currency } = await getTierMonthlyPrice(gift.tier);
+    const subCurrency = subscription.price.currency ?? currency;
+    return {
+      kind: 'renewal-discount',
+      tier: gift.tier,
+      months,
+      amount: (pricesByCurrency[subCurrency] ?? unitAmount) * months,
+      currency: subCurrency,
+    };
+  }
 
   const holderTier = (subscription.product.metadata as SubscriptionProductMetadata).tier ?? 'free';
   if (tierRank(holderTier) > tierRank(gift.tier)) {
@@ -394,7 +425,8 @@ export async function acceptMembershipGift({ giftId, userId }: { giftId: string;
   // Moving the holder UP to the gifted tier is the one thing acceptance itself does, and it
   // happens once rather than per month. proration_behavior 'none' means Stripe raises no
   // invoice for the change — the accept click is what consents to the new recurring price.
-  if (live) {
+  // Only for monthly billing: swapping a yearly price for a monthly one restarts their billing.
+  if (live && isBilledMonthly(subscription)) {
     const holderTier =
       (subscription.product.metadata as SubscriptionProductMetadata).tier ?? 'free';
     if (tierRank(holderTier) < tierRank(gift.tier)) {
@@ -430,6 +462,9 @@ const monthCouponId = (giftId: string, monthIndex: number) => `gift_${giftId}_m$
  * At most one gifted month is ever live in Stripe. Everything else — how many months are
  * left, which gift is next — lives on our rows, which is what makes a cancellation
  * mid-gift recoverable instead of destroying the unused months.
+ *
+ * A subscription that is not billed monthly is the exception: its next invoice takes the cash
+ * value of as many whole months as it can absorb, in one coupon.
  */
 export async function armNextGiftMonth({ userId }: { userId: number }) {
   const stripe = await getServerStripe();
@@ -477,12 +512,27 @@ export async function armNextGiftMonth({ userId }: { userId: number }) {
   }
 
   const holderTier = (subscription.product.metadata as SubscriptionProductMetadata).tier ?? 'free';
-  const couponId = monthCouponId(gift.id, gift.monthsConsumed + 1);
+  const billedMonthly = isBilledMonthly(subscription);
+  let months = 1;
+  if (!billedMonthly) {
+    const { pricesByCurrency } = await getTierMonthlyPrice(gift.tier);
+    const monthlyValue = pricesByCurrency[stripeSub.currency];
+    if (monthlyValue)
+      months = monthsCoveredByRenewal({
+        renewalAmount: stripeSub.items.data[0]?.price.unit_amount ?? 0,
+        monthlyValue,
+        monthsRemaining: gift.monthsRemaining,
+      });
+  }
+  const firstMonth = gift.monthsConsumed + 1;
   const coupon = await getOrCreateMonthCoupon({
     stripe,
-    couponId,
+    couponId: billedMonthly
+      ? monthCouponId(gift.id, firstMonth)
+      : `${monthCouponId(gift.id, firstMonth)}_x${months}`,
     gift,
-    holderTier,
+    months,
+    asCashValue: !billedMonthly || tierRank(holderTier) > tierRank(gift.tier),
     subCurrency: stripeSub.currency,
   });
 
@@ -498,7 +548,8 @@ export async function armNextGiftMonth({ userId }: { userId: number }) {
     giftId: gift.id,
     userId,
     couponId: coupon.id,
-    month: gift.monthsConsumed + 1,
+    month: firstMonth,
+    months,
   });
   return { armed: true as const, giftId: gift.id, couponId: coupon.id };
 }
@@ -507,13 +558,15 @@ async function getOrCreateMonthCoupon({
   stripe,
   couponId,
   gift,
-  holderTier,
+  months,
+  asCashValue,
   subCurrency,
 }: {
   stripe: Stripe;
   couponId: string;
   gift: { id: string; tier: string };
-  holderTier: string;
+  months: number;
+  asCashValue: boolean;
   subCurrency: string;
 }) {
   // The id is derived from (gift, month), so a retry re-uses the coupon instead of minting
@@ -525,13 +578,11 @@ async function getOrCreateMonthCoupon({
     id: couponId,
     duration: 'once' as const,
     max_redemptions: 1,
-    name: `Gifted ${gift.tier} month`,
-    metadata: { giftId: gift.id },
+    name: months === 1 ? `Gifted ${gift.tier} month` : `Gifted ${gift.tier} months (${months})`,
+    metadata: { giftId: gift.id, months: String(months) },
   };
 
-  if (tierRank(holderTier) <= tierRank(gift.tier)) {
-    return stripe.coupons.create({ ...base, percent_off: 100 });
-  }
+  if (!asCashValue) return stripe.coupons.create({ ...base, percent_off: 100 });
 
   const { pricesByCurrency } = await getTierMonthlyPrice(gift.tier);
   const amountOff = pricesByCurrency[subCurrency];
@@ -544,15 +595,68 @@ async function getOrCreateMonthCoupon({
   }
   return stripe.coupons.create({
     ...base,
-    amount_off: amountOff,
+    amount_off: amountOff * months,
     currency: subCurrency,
     // Invisible when read back on our API version, but Stripe stores and applies it — so a
     // holder who switches billing currency mid-gift still gets the right amount.
     currency_options: Object.fromEntries(
       Object.entries(pricesByCurrency)
         .filter(([c]) => c !== subCurrency)
-        .map(([c, amount]) => [c, { amount_off: amount }])
+        .map(([c, amount]) => [c, { amount_off: amount * months }])
     ),
+  });
+}
+
+/**
+ * Detach the armed month from the holder's gift ahead of a plan change, without counting it as
+ * used. It was priced for the plan they are leaving, and a plan change can raise an invoice
+ * straight away.
+ *
+ * Touches only our row and the coupon object: the caller clears the discount in the same Stripe
+ * call that changes the plan, so there is no moment where it is gone and the plan is unchanged.
+ * The month is armed again, for the new plan, once the subscription webhook lands.
+ */
+export async function releaseArmedGiftMonth({ userId }: { userId: number }) {
+  const gift = await dbWrite.membershipGift.findFirst({
+    where: {
+      holderId: userId,
+      status: MembershipGiftStatus.Active,
+      armedCouponId: { not: null },
+    },
+    select: { id: true, armedCouponId: true },
+  });
+  if (!gift?.armedCouponId) return null;
+
+  await dbWrite.membershipGift.update({
+    where: { id: gift.id },
+    data: { armedCouponId: null, armedAt: null },
+  });
+  // Deleting a coupon leaves it on subscriptions already carrying it; this frees its id so the
+  // same month can be armed again with different terms.
+  const stripe = await getServerStripe();
+  await stripe?.coupons.del(gift.armedCouponId).catch(() => null);
+
+  await log({
+    type: 'info',
+    stage: 'release',
+    giftId: gift.id,
+    userId,
+    couponId: gift.armedCouponId,
+  });
+  return { giftId: gift.id, couponId: gift.armedCouponId };
+}
+
+/** The plan change failed, so the discount is still on the subscription: point the gift back at it. */
+export async function restoreArmedGiftMonth({
+  giftId,
+  couponId,
+}: {
+  giftId: string;
+  couponId: string;
+}) {
+  await dbWrite.membershipGift.update({
+    where: { id: giftId },
+    data: { armedCouponId: couponId, armedAt: new Date() },
   });
 }
 
@@ -572,12 +676,16 @@ export async function recordGiftMonthConsumed({ invoice }: { invoice: Stripe.Inv
   });
   if (!gift) return { consumed: false as const };
 
-  const monthsRemaining = Math.max(0, gift.monthsRemaining - 1);
+  const monthsUsed = Math.min(
+    gift.monthsRemaining,
+    Number(invoice.discount?.coupon?.metadata?.months) || 1
+  );
+  const monthsRemaining = gift.monthsRemaining - monthsUsed;
   await dbWrite.membershipGift.update({
     where: { id: gift.id },
     data: {
       monthsRemaining,
-      monthsConsumed: gift.monthsConsumed + 1,
+      monthsConsumed: gift.monthsConsumed + monthsUsed,
       // Clearing this is what makes a webhook redelivery a no-op.
       armedCouponId: null,
       armedAt: null,
@@ -868,6 +976,20 @@ export async function keepGiftMembership({ userId }: { userId: number }) {
   await log({ type: 'info', stage: 'keep', userId, stripeSubscriptionId: stripeSub.id });
 
   return { kept: true as const };
+}
+
+/** Whether the user holds a gift they can still accept or are part-way through using. */
+export async function holdsOpenMembershipGift({ userId }: { userId: number }) {
+  // dbWrite: the recipient follows the notification seconds after the webhook writes the row
+  const gift = await dbWrite.membershipGift.findFirst({
+    where: {
+      holderId: userId,
+      status: { in: [MembershipGiftStatus.Fulfilled, MembershipGiftStatus.Active] },
+      monthsRemaining: { gt: 0 },
+    },
+    select: { id: true },
+  });
+  return !!gift;
 }
 
 export async function getMyMembershipGifts({ userId }: { userId: number }) {

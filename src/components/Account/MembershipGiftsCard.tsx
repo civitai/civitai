@@ -79,6 +79,11 @@ function PendingGiftItem({
         return `Takes ${formatMoney(offer.amountPerMonth, offer.currency)} off each of your next ${
           offer.months
         } ${offer.months === 1 ? 'bill' : 'bills'}. Your membership stays where it is.`;
+      case 'renewal-discount':
+        return `Takes ${formatMoney(
+          offer.amount,
+          offer.currency
+        )} off your next renewal, and anything left over off the one after. Your membership stays where it is.`;
       case 'free-subscription':
         return `Starts ${offer.months} free ${
           offer.months === 1 ? 'month' : 'months'
