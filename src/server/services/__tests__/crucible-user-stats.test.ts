@@ -69,6 +69,30 @@ describe('getUserCrucibleStats — prizes won', () => {
     expect(stats.prizesWon).toBe(0);
   });
 
+  it('counts a prize paid from entry fees alone', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
+      { ...entry(1, 1, 1, 0), crucible: { prizePositions, entryFee: 100, seededPrizePool: 0 } },
+    ]);
+    dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValueOnce([
+      { crucibleId: 1, _count: { _all: 5 } },
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(placings(1, 1, 5));
+
+    const stats = await getUserCrucibleStats({ userId: USER_ID });
+
+    expect(stats.prizesWon).toBe(1);
+    // The mock answers whatever is selected, so the pool's inputs must be asked for by name.
+    expect(dbMock.dbRead.crucibleEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({
+          crucible: {
+            select: expect.objectContaining({ entryFee: true, seededPrizePool: true }),
+          },
+        }),
+      })
+    );
+  });
+
   it('asks nothing about placings when the creator never placed', async () => {
     dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([entry(4, 1, null)]);
 
