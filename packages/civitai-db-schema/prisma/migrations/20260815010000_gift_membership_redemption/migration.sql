@@ -2,17 +2,23 @@
 -- Applied by hand (we do not run `prisma migrate deploy`).
 --
 -- ============================================================================
--- RUN PART 1 ANY TIME. RUN PART 2 ONLY WHEN THE CODE IS DEPLOYED.
+-- RUN PART 1 ANY TIME. RUN PART 2 ONLY AFTER THE DEPLOY HAS FULLY ROLLED OUT.
 -- ============================================================================
 --
--- Part 1 is additive: new enum values, new columns, an index and a foreign key.
--- Nothing running today reads any of it, so it is safe ahead of the deploy.
+-- Part 1 is additive: new enum values, new nullable/defaulted columns, an index and a
+-- foreign key. Nothing running today reads any of it, and the build that is live today
+-- can keep inserting gifts while it is in place, so it is safe ahead of the deploy.
 --
--- Part 2 rewrites the status of gifts that were fulfilled under the OLD design.
--- The currently deployed `getMyMembershipGifts` lists a user's received gifts with
--- `status = 'Fulfilled'`, so running Part 2 early makes those gifts disappear from
--- /user/account and /user/membership for the people who hold them, until the new
--- code ships. Run it in the same window as the deploy, not before.
+-- Part 2 needs every pod to be on the new build, for three reasons:
+--   * It makes "holderId" NOT NULL. The previous build inserts gifts without it, so
+--     while any old pod is serving, that constraint fails every gift purchase.
+--   * It writes the new 'Completed' status. The previous build's Prisma client does not
+--     know that label and throws on reading a row that carries it.
+--   * The previous build lists a user's received gifts with status = 'Fulfilled', so
+--     those gifts would disappear from /user/account for the people who hold them.
+--
+-- Do not leave a long gap after the deploy either: until Part 2 runs, gifts fulfilled
+-- under the old design show in the new queue as unaccepted.
 --
 -- DO NOT WRAP EITHER PART IN AN EXPLICIT BEGIN/COMMIT. Postgres refuses to use an
 -- enum value that was added in the same transaction, so Part 2's UPDATE fails with
@@ -37,8 +43,6 @@ ALTER TABLE "MembershipGift"
 -- read asks "is this gift mine" through holderId so that stays a one-line change.
 UPDATE "MembershipGift" SET "holderId" = "recipientId" WHERE "holderId" IS NULL;
 
-ALTER TABLE "MembershipGift" ALTER COLUMN "holderId" SET NOT NULL;
-
 ALTER TABLE "MembershipGift"
   DROP CONSTRAINT IF EXISTS "MembershipGift_holderId_fkey";
 ALTER TABLE "MembershipGift"
@@ -49,14 +53,21 @@ CREATE INDEX IF NOT EXISTS "MembershipGift_holderId_status_idx" ON "MembershipGi
 CREATE INDEX IF NOT EXISTS "MembershipGift_armedCouponId_idx" ON "MembershipGift"("armedCouponId");
 
 -- ============================== PART 2 ======================================
--- Deploy-time only. See the header.
---
+-- After the deploy only. See the header.
+
+-- Gifts the previous build created between Part 1 and the end of the rollout.
+UPDATE "MembershipGift" SET "holderId" = "recipientId" WHERE "holderId" IS NULL;
+
+ALTER TABLE "MembershipGift" ALTER COLUMN "holderId" SET NOT NULL;
+
 -- Rows fulfilled under the old design already had their whole value applied as a
 -- single multi-month coupon, so they are Completed with nothing left to consume.
--- Leaving them 'Fulfilled' would put them in the new gift queue as unaccepted, and
+-- Leaving them 'Fulfilled' would keep them in the new gift queue as unaccepted, and
 -- accepting one would arm a second discount on top of a coupon that is still running.
--- As of 2026-08-14 this is 9 rows in production.
+--
+-- "monthsRemaining" = 0 is what tells them apart from gifts the new build has already
+-- queued: the new build sets it to the gift's months when it records the payment.
 
 UPDATE "MembershipGift"
-SET "status" = 'Completed', "monthsConsumed" = "months", "monthsRemaining" = 0
-WHERE "status" = 'Fulfilled';
+SET "status" = 'Completed', "monthsConsumed" = "months"
+WHERE "status" = 'Fulfilled' AND "monthsRemaining" = 0;
