@@ -34,8 +34,8 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`, `public-api`. Creating a new file loads nothing, so read the matching rule first;
-  read one directly whenever you need it before touching code.
+  `comments`, `debug-endpoints`, `public-api`. Creating a new file loads nothing, so read the matching
+  rule first; read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
   precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
   `convention-guards.md` (every guard and what it enforces).
