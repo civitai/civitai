@@ -25,7 +25,7 @@ export const membershipGiftNotifications = createNotificationProcessor({
       message: `Your gift of ${details.months} month${details.months === 1 ? '' : 's'} of ${
         details.tier
       } membership has been delivered to @${details.to}`,
-      url: '/user/membership',
+      url: '/pricing/gift#membership-gifts',
     }),
   },
 });

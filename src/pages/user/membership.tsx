@@ -61,6 +61,7 @@ import { getPrepaidTokens, getNextTokenUnlockDate } from '~/shared/utils/subscri
 import { userTierSchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbRead } from '~/server/db/client';
+import { holdsOpenMembershipGift } from '~/server/services/membership-gift.service';
 import {
   BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE,
   getBuzzMembershipPrice,
@@ -78,7 +79,7 @@ import styles from './membership.module.scss';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
+  resolver: async ({ session, ctx, features }) => {
     if (!session || !session.user)
       return {
         redirect: {
@@ -96,8 +97,13 @@ export const getServerSideProps = createServerSideProps({
         where: { userId: session.user.id, buzzType: BUZZ_MEMBERSHIP_SUBSCRIPTION_TYPE },
         select: { id: true },
       });
+      // A gifted membership starts from this page, so its holder has to be able to reach it.
+      const holdsGift =
+        !buzzMembership &&
+        !!features?.giftMemberships &&
+        (await holdsOpenMembershipGift({ userId: session.user.id }));
 
-      if (!buzzMembership)
+      if (!buzzMembership && !holdsGift)
         return {
           redirect: {
             destination: '/pricing',
@@ -157,6 +163,11 @@ export default function UserMembership() {
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
 
   const queryUtils = trpc.useUtils();
+  const { data: gifts } = trpc.membershipGift.getMyGifts.useQuery(undefined, {
+    enabled: !!features.giftMemberships,
+  });
+  // Someone here only for a gift has no membership yet; that is not an error to report.
+  const hereForGiftOnly = isFreeTier && !otherSubscription && !!gifts?.received.length;
   const keepMembershipMutation = trpc.membershipGift.keepMembership.useMutation({
     onSuccess: async (result) => {
       if (result.kept) {
@@ -248,7 +259,7 @@ export default function UserMembership() {
 
             <MembershipGiftsCard />
 
-            {!isFreeTier && !otherSubscription ? (
+            {hereForGiftOnly ? null : !isFreeTier && !otherSubscription ? (
               <Card padding="lg" radius="md" className={styles.noSubscriptionCard}>
                 <Stack gap="md">
                   <Group gap="md" wrap="nowrap">
