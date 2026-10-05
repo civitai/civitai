@@ -1,0 +1,102 @@
+import { Box, Code, CopyButton } from '@mantine/core';
+import { IconClipboard } from '@tabler/icons-react';
+import { copyBodyPaddingRight } from '~/components/CopyAffordance/CopyAffordance';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+
+/** The copy control's accessible name — the icon carries no text, so without it: "button". */
+export const INVITE_LINK_COPY_LABEL = 'Copy the collection invite link';
+
+/**
+ * The control's inset from the body's right edge.
+ *
+ * ⚠️ 10, NOT `COPY_ICON_INSET`'s 8 — AND THAT IS WHY THIS BLOCK NEEDS ITS OWN PADDING RATHER
+ * THAN `COPY_BODY_PADDING_RIGHT`. The value is pre-existing and nothing records a reason for
+ * it; it is kept because moving it is a rendered-output change this fix did not need to make,
+ * not because 10 is better than 8. If it ever moves, the padding below moves with it by
+ * construction.
+ */
+export const INVITE_LINK_ICON_INSET = 10;
+
+/**
+ * The clearance this body reserves, from the one shared rule.
+ *
+ * 🔴 ITS ABSENCE WAS A LIVE OVERLAP. The control is absolutely positioned over the body, so
+ * with no right padding the invite URL's tail rendered underneath the clipboard icon. The
+ * magnitudes are measured in `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`,
+ * which mounts this component and reports the clearance in its own failure messages.
+ *
+ * It is a `rem()` string, via {@link copyBodyPaddingRight}, because the other two terms scale
+ * with the root font size: the inset goes through Mantine's `right=` style prop, and the
+ * control's border box is `--ai-size-md`, which in the stylesheet this app imports is
+ * `calc(1.75rem * var(--mantine-scale))`. A raw px number here would hold at a 16px root font
+ * size and fail above it — the exact defect `COPY_BODY_PADDING_RIGHT`'s own doc records.
+ */
+export const INVITE_LINK_BODY_PADDING_RIGHT = copyBodyPaddingRight(INVITE_LINK_ICON_INSET);
+
+/** Scopes the geometry fixture to this block's `Box`, rather than to any `pre` on the page. */
+export const INVITE_LINK_TESTID = 'collection-invite-link-copy';
+
+/**
+ * The contest collection's invite-link value, with a copy control over its right edge.
+ *
+ * 🔴 EXTRACTED FROM `CollectionEditModal` SO IT CAN BE MOUNTED. Both defects fixed here are
+ * ones a test has to RENDER to see — an empty string reaching the clipboard, and a box
+ * overlapping another box — and the modal itself needs tRPC, a dialog context, form state and
+ * `~/env/client` to mount at all. `joinUrl` is a plain prop, so this component is props-only
+ * (no tRPC / no network / no env) and both its suites mount it with the harness's providers
+ * and nothing else.
+ *
+ * ⚠️ DELIBERATELY NOT ROUTED THROUGH `~/components/CopyAffordance/CopyAffordance`, unlike the
+ * `Code`-block copies in `Account/`. That component models no disabled state, and adding one
+ * for a single caller is API surface nobody asked for; what it shares — the clearance
+ * arithmetic — is imported as {@link copyBodyPaddingRight} instead, so the one thing that was
+ * actually duplicated is not.
+ *
+ * ⚠️ THE CLEARANCE IS A CLAIM ABOUT A URL THAT *FITS*, AND NOTHING MORE. `<Code block>`
+ * computes `white-space: pre` / `overflow-x: auto`, so a URL wider than the content box
+ * scrolls rather than wrapping, and a scrolling `pre` paints across its own right padding.
+ * Same caveat, same mechanism, as `COPY_BODY_PADDING_RIGHT`'s.
+ */
+export function CollectionInviteLink({ joinUrl }: { joinUrl: string }) {
+  return (
+    <CopyButton value={joinUrl}>
+      {({ copied, copy }) => {
+        // 🔴 ONE PREDICATE FOR BOTH THE CONTROL AND THE BODY CLICK. The icon's `disabled` and
+        // the `Box`'s `onClick` are two gates on one condition, and they used to disagree:
+        // `disabled={!joinUrl}` sat on the icon while `onClick={copy}` sat on the wrapping
+        // `Box`, so a click anywhere on the value copied `''` to the clipboard and flipped the
+        // label to "Copied" — telling the user they had copied an invite link when they had
+        // copied nothing. The icon being disabled did not matter: it is not what was clicked.
+        const canCopy = !!joinUrl;
+        return (
+          <Box
+            pos="relative"
+            onClick={canCopy ? copy : undefined}
+            style={canCopy ? { cursor: 'pointer' } : undefined}
+            data-testid={INVITE_LINK_TESTID}
+          >
+            <LegacyActionIcon
+              pos="absolute"
+              top="50%"
+              right={INVITE_LINK_ICON_INSET}
+              variant="transparent"
+              style={{ transform: 'translateY(-50%) !important' }}
+              disabled={!canCopy}
+              aria-label={INVITE_LINK_COPY_LABEL}
+            >
+              <IconClipboard />
+            </LegacyActionIcon>
+            <Code
+              block
+              color={copied ? 'green' : undefined}
+              // The control's own width, reserved — see `INVITE_LINK_BODY_PADDING_RIGHT`.
+              style={{ paddingRight: INVITE_LINK_BODY_PADDING_RIGHT }}
+            >
+              {copied ? 'Copied' : joinUrl}
+            </Code>
+          </Box>
+        );
+      }}
+    </CopyButton>
+  );
+}

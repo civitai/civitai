@@ -1,10 +1,7 @@
 import {
   Alert,
-  Box,
   Button,
   Center,
-  Code,
-  CopyButton,
   Divider,
   Group,
   Input,
@@ -15,10 +12,17 @@ import {
   Text,
 } from '@mantine/core';
 
-import { IconBolt, IconCalendar, IconClipboard } from '@tabler/icons-react';
+import { IconBolt, IconCalendar } from '@tabler/icons-react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
-import { env } from 'process';
+// 🔴 `~/env/client`, NOT `process`. This read used to be `import { env } from 'process'`, the
+// only one of its kind in a client component (the repo's four other `from 'process'` imports
+// are all server-side). Next inlines the LITERAL text `process.env.NEXT_PUBLIC_*` into the
+// client bundle; a destructured `env` binding is not that text, so `env.NEXT_PUBLIC_BASE_URL`
+// read off the browser's `process` shim — i.e. `undefined`, making `joinUrl` below `''`
+// unconditionally. `NEXT_PUBLIC_BASE_URL` is declared in `src/env/client-schema.ts` and every
+// other client consumer of it reads from here.
+import { env } from '~/env/client';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import {
@@ -28,9 +32,9 @@ import {
   useCollection,
   useMutateCollection,
 } from '~/components/Collections/collection.utils';
+import { CollectionInviteLink } from '~/components/Collections/CollectionInviteLink';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -274,35 +278,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         <Text fw={500} size="sm">
                           Here is your Invite Link:
                         </Text>
-                        <CopyButton value={joinUrl}>
-                          {({ copied, copy }) => (
-                            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                              {/* 🔴 NOT ROUTED THROUGH `~/components/CopyAffordance/CopyAffordance`,
-                                  UNLIKE THE FOUR `Code`-BLOCK COPIES IN `Account/`. This
-                                  control is gated on `disabled={!joinUrl}` — `joinUrl` is
-                                  `''` whenever `NEXT_PUBLIC_BASE_URL` or `collectionId` is
-                                  missing — and that component models no disabled state;
-                                  adding one for a single caller is API surface nobody asked
-                                  for. What it was missing is the accessible name, which it
-                                  now has: the icon carries no text, so without this the
-                                  control announced itself as "button". */}
-                              <LegacyActionIcon
-                                pos="absolute"
-                                top="50%"
-                                right={10}
-                                variant="transparent"
-                                style={{ transform: 'translateY(-50%) !important' }}
-                                disabled={!joinUrl}
-                                aria-label="Copy the collection invite link"
-                              >
-                                <IconClipboard />
-                              </LegacyActionIcon>
-                              <Code block color={copied ? 'green' : undefined}>
-                                {copied ? 'Copied' : joinUrl}
-                              </Code>
-                            </Box>
-                          )}
-                        </CopyButton>
+                        <CollectionInviteLink joinUrl={joinUrl} />
                       </Stack>
                     )}
 

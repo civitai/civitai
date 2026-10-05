@@ -314,7 +314,32 @@ export const COPY_CONTROL_SIZE = 28;
  * boundary, so anything that widens the control by one pixel reds it. That is the right
  * direction to fail in, and it is not slack.
  */
-export const COPY_BODY_PADDING_RIGHT = rem(COPY_ICON_INSET + COPY_CONTROL_SIZE);
+export const COPY_BODY_PADDING_RIGHT = copyBodyPaddingRight(COPY_ICON_INSET);
+
+/**
+ * The clearance RULE, for a body whose control sits at an inset other than {@link
+ * COPY_ICON_INSET}.
+ *
+ * 🔴 EXTRACTED SO THE RELATION IS SPELLED ONCE. `COPY_BODY_PADDING_RIGHT` above is this
+ * function at this module's own inset; `Collections/CollectionEditModal.tsx`'s invite-link
+ * block is the second caller, at `right={10}`. Before this existed, the only way to clear a
+ * control at a different inset was to retype `rem(inset + COPY_CONTROL_SIZE)` at the call
+ * site — two copies of one rule, either of which could be the one not updated when the
+ * control's box moves. The `rem()` and the `COPY_CONTROL_SIZE` term are the halves that have
+ * each already been got wrong once (see the two ⚠️ paragraphs above); the inset is the only
+ * part that is legitimately per-call-site, so it is the only parameter.
+ *
+ * ⚠️ NOT A WIDENING OF THE AFFORDANCE'S API. This exports the arithmetic, not a new prop:
+ * `CopyAffordance` itself still renders at one inset and nothing about its component surface
+ * changes. A caller passing its own inset is a caller that keeps its own shell, which is the
+ * situation the ⚠️ counterexample paragraph above describes.
+ *
+ * @param inset the control's distance from the body's right edge, in px at a 16px root font
+ *   size — the same unit the `right=` style prop takes.
+ */
+export function copyBodyPaddingRight(inset: number) {
+  return rem(inset + COPY_CONTROL_SIZE);
+}
 
 /** The default glyph pair, exported so a `renderGlyph` can wrap it rather than restate it. */
 export function CopyGlyph({ copied, size = COPY_ICON_SIZE }: { copied: boolean; size?: number }) {
