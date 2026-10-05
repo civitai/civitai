@@ -39,7 +39,7 @@ export type HubSourceValue = {
 /**
  * The add-another-tag affordance. The Tooltip sits OUTSIDE the Popover rather than
  * inside `Popover.Target`: both clone their child to attach a ref, and stacking them on
- * one element is the shape that silently stops the trigger opening (.claude/rules/convention-guards.md
+ * one element is the shape that silently stops the trigger opening (docs/dev/convention-guards.md
  * records it for `Menu.Target`).
  */
 function AddToGroup({

@@ -63,6 +63,7 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
 ```
 
 - Use a top-level `import type * as PromClient`; an inline `typeof import('...')` trips `consistent-type-imports`.
+- Many existing tests hand-list exports (over 100 mock `~/server/services/image.service` that way). They predate this rule; don't copy that shape into a new test.
 - Before widening a mock, check whether the import edge is needed at all. A failing suite may mean the code pulled in a dependency it doesn't want, and widening hides that.
 
 Why: a hand-listed mock couples the test to the whole transitive import graph. Adding one import can drag in a module that builds `pLimit`/prom collectors at load (e.g. `~/server/search-index` -> `meilisearch/client`) and the suite fails to load far from the change, while typecheck and lint stay green and only CI catches it.

@@ -34,9 +34,11 @@ where it loads on demand:
 ## Where knowledge lives
 - **`.claude/rules/`** — load automatically when you read or edit matching files: `testing`,
   `convention-guards`, `server` (architecture map, jobs), `database`, `sveltekit`, `components`,
-  `comments`, `debug-endpoints`. Read one directly if you need it before touching code.
+  `comments`, `debug-endpoints`. Creating a new file loads nothing, so read the matching rule first;
+  read one directly whenever you need it before touching code.
 - **`docs/dev/`** — `local-setup.md` (env setup and the traps that cost hours: auth hub, SSL, env
-  precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`.
+  precedence, feature flags), `worktrees.md`, `prettier.md`, `filing-follow-ups.md`,
+  `convention-guards.md` (every guard and what it enforces).
 - **`docs/features/`** — check before implementing a feature (index: `docs/features/README.md`).
 - **Skills** — `dev-server` (dev servers **and** worktrees), `postgres-query`, `civitai-review`, etc.
 
@@ -48,14 +50,15 @@ where it loads on demand:
 - **Worktrees: create with `node .claude/skills/dev-server/cli.mjs wt new <name> <branch>`**, remove with
   `wt stale` / `wt rm`. Never the `EnterWorktree` tool or a hand-rolled `git worktree add`.
 - `pnpm run typecheck` (authoritative; `typecheck:fast` is edit-loop only), `pnpm run lint`.
-  In SvelteKit apps use `typecheck`, never `check` (details: `.claude/rules/sveltekit.md`).
+  In SvelteKit apps use `typecheck`, never `check` or a manual `svelte-kit sync`
+  (details: `.claude/rules/sveltekit.md`).
 - **Formatting:** `pnpm run prettier:write` formats uncommitted files only. Never run a repo-wide
   `prettier --write`, and never `prettier --plugin=prettier-plugin-svelte` (it empties `.svelte` files).
 - **Releases** (`pnpm run release[:minor|:major]`) need explicit user approval — they bump, tag and push.
 
 ## Tests
-More in `.claude/rules/testing.md` (loads when you touch a test file) and
-`.claude/rules/convention-guards.md`.
+More in `.claude/rules/testing.md` (loads when you touch a test file),
+`.claude/rules/convention-guards.md` and `docs/dev/convention-guards.md`.
 
 ```bash
 pnpm run test:unit:run     # unit suite over src/ + scripts/
