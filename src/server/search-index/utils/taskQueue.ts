@@ -86,7 +86,8 @@ type TaskStatus = 'queued' | 'processing' | 'completed' | 'failed';
  * which, on a degraded backend where many batches fail, is a large amount of memory retained for
  * the sake of a number. `idCount` is the only field any production consumer reads (via
  * `failedIdCount`); `type` and `retries` are kept for diagnostics and are so far read only by the
- * specs.
+ * specs. A targeted task's ids are kept separately, in `TaskQueue.failedIds`, so they can be
+ * re-queued.
  */
 export type FailedTaskRecord = {
   type: Task['type'];

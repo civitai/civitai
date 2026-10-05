@@ -211,22 +211,25 @@ const logIdsWithoutDocument = (indexName: string, caller: string, queue: TaskQue
  * The queue checkout that supplied them is destructive, so without this a failed batch's ids are
  * gone once `commit()` runs (#5398). Called AFTER `commit()`: a checkout whose bucket-list write
  * failed leaves the drained bucket as the queue's newest, and an id re-queued before `commit()`
- * would land in that bucket and be deleted with it. `addToQueue` falls back to the Postgres parking
- * lot when Redis refuses, so a `false` here means "parked", unless the parking lot also failed —
- * which it reports itself.
+ * would land in that bucket and be deleted with it. `false` means Redis refused and the ids went
+ * to the Postgres parking lot; if that also failed or hit its cap, `persistDroppedEnqueue` reports
+ * it to Axiom.
  */
 const requeueFailedIds = async (indexName: string, caller: string, queue: TaskQueue) => {
-  const ids = [...new Set(queue.failedIds)];
+  const ids = queue.failedIds;
   if (!ids.length) return;
   const queued = await SearchIndexUpdate.queueUpdate({
     indexName,
     items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update })),
   });
-  const prefix = `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName} :: ${queue.failedTasks.length} batches failed`;
-  if (queued) console.error(`${prefix}; re-queued ${ids.length} ids for the next run`);
+  const prefix = `createSearchIndexUpdateProcessor :: ${caller} :: ${indexName}`;
+  if (queued)
+    console.error(
+      `${prefix} :: re-queued ${ids.length} ids from batches that exhausted their retries`
+    );
   else
     console.error(
-      `${prefix}; could not re-queue ${ids.length} ids to Redis, handed them to the search-index-queue-fallback parking lot`
+      `${prefix} :: could not re-queue ${ids.length} ids from failed batches to Redis; attempted the search-index-queue-fallback parking lot (a failure or cap there is logged under that name)`
     );
 };
 
