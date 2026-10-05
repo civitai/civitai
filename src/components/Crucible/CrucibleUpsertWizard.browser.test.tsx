@@ -190,7 +190,7 @@ describe('CrucibleUpsertWizard — prizes', () => {
 
     await vi.waitFor(() =>
       expect(document.body.textContent).toContain(
-        'Each creator can win at most one prize. If you place more than once, your best entry counts and the next creator moves up.'
+        'Each creator can win at most one prize. A creator who places more than once is paid for their best entry, and the next creator moves up.'
       )
     );
   });

@@ -110,7 +110,6 @@ import { CrucibleStatus, Currency, MediaType } from '~/shared/utils/prisma/enums
 import type { RouterOutput } from '~/types/router';
 import {
   baseModelMakesMediaType,
-  CRUCIBLE_ONE_PRIZE_RULE,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
   getCrucibleUrl,
   getFreeEntriesLabel,
@@ -378,7 +377,8 @@ export function CrucibleUpsertWizard(props: Props) {
           ' With no seed, winners only share what paid entries bring in.'}
       </Text>
       <Text size="xs" c="dimmed" mt={4}>
-        {CRUCIBLE_ONE_PRIZE_RULE}
+        Each creator can win at most one prize. A creator who places more than once is paid for
+        their best entry, and the next creator moves up.
       </Text>
     </>
   );

@@ -736,6 +736,10 @@ describe('getCrucibles — running crucibles lead upcoming ones', () => {
   it('keeps the chosen sort among the statuses picked alongside', async () => {
     const all = [CrucibleStatus.Active, CrucibleStatus.Pending, CrucibleStatus.Completed];
     expect((await ids({ limit: 10, status: all })).ids).toEqual([4, 2, 3, 1]);
+    const orderBys = dbMock.dbRead.crucible.findMany.mock.calls.map(([args]) => args!.orderBy);
+    expect(orderBys).toHaveLength(2);
+    expect(orderBys[1]).toEqual(orderBys[0]);
+    expect((orderBys[0] as unknown[])[0]).toEqual({ prizePool: 'desc' });
   });
 
   it('pages across the boundary without repeating or skipping one', async () => {
