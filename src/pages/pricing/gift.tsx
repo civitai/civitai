@@ -377,9 +377,8 @@ export default function GiftMembershipPage() {
                       Continue to payment
                     </Button>
                     <Text size="xs" c="dimmed">
-                      One-time payment via Stripe. If they already have a membership, your gift adds
-                      free months to it; otherwise a membership starts for them right away — no
-                      payment details needed on their end.
+                      One-time payment via Stripe. They get a notification and choose when to start
+                      it — no payment details needed on their end.
                     </Text>
                   </Stack>
                 </Card>
