@@ -1,6 +1,6 @@
 ---
 name: dev-server
-description: Manage Next.js dev servers across worktrees. Start, stop, and read logs from dev servers. Agents can access logs from any running session, regardless of who started it.
+description: Manage Next.js dev servers across worktrees, and the worktrees themselves — create one (`wt new`), find finished ones (`wt stale`), remove them (`wt rm`). Start, stop, and read logs from dev servers. Agents can access logs from any running session, regardless of who started it. Use whenever creating, adding or removing a git worktree in this repo.
 ---
 
 # Dev Server Skill
@@ -194,6 +194,7 @@ node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the cla
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
 node .claude/skills/dev-server/scripts/worktree-remove.integration.selftest.mjs  # `wt rm`'s daemon guard, against a throwaway repo
+node .claude/skills/dev-server/scripts/worktree-create.integration.selftest.mjs  # `wt new`: base, no upstream, refusals
 node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs        # the daemon runs from the primary, never the calling worktree
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
 ```
@@ -222,6 +223,8 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 | `app <name> [subcmd] [worktree]` | App control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `test run [worktree]` | Queue a unit-test run; returns position + the command to wait on it |
+| `wt new <name> <branch> [--base origin/<b>] [--no-install]` | Create a worktree the safe way (see Worktrees) |
+| `wt stale` / `wt rm <path>` | Find finished worktrees / remove one |
 | `test wait <run-id>` | Block until that run finishes; exits with the run's exit code |
 | `test list` / `test show <id>` / `test logs <id>` | Queue state, one run, one run's output |
 | `test cancel <id>` | Cancel a queued or running run |
@@ -655,6 +658,23 @@ Dirs are evicted LRU on every start against **both** budgets: the `DIST_CACHE_KE
 Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.env.example`, which documents all of them: `BRANCH_WATCH_ENABLED`, `BRANCH_WATCH_INTERVAL`, `BRANCH_SWITCH_DEBOUNCE`, `KILL_ON_BRANCH_SWITCH`, `AUTO_INSTALL`, `PREWARM_ROUTES`, `PREWARM_TIMEOUT`, `PER_BRANCH_DIST_DIR`, `DIST_CACHE_KEEP`, `DIST_CACHE_MAX_GB`.
 
 ## Worktrees
+
+### Create one — always `wt new`
+
+```bash
+node .claude/skills/dev-server/cli.mjs wt new <name> <branch>                    # based on origin/main
+node .claude/skills/dev-server/cli.mjs wt new <name> <branch> --base origin/feat/x  # a feature integration branch
+```
+
+It fetches the base, runs `git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track <base>`,
+initialises `event-engine-common`, writes `.envrc` when the primary has one, runs `pnpm install`
+(`--no-install` skips it), and fails unless `git status -sb` prints `## <branch>` alone. It refuses an
+existing branch or path. Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
+the repos root, tracking `origin/main`). Why each flag matters: `docs/dev/worktrees.md`.
+
+Remove one when its PR merges with `wt stale` / `wt rm` (below).
+
+### Dev servers in worktrees
 
 One session per worktree, each on its own port (3000, 3001, …). Start one with:
 

@@ -1,4 +1,5 @@
 import { ecosystemByKey, getEcosystemDefaults } from '~/shared/constants/basemodel.constants';
+import { DRAFT_WORKFLOW } from '~/shared/constants/generation.constants';
 import { getWorkflowsForEcosystem, isWorkflowAvailable } from '~/shared/generation/config';
 import { ecosystemKeyForBaseModel } from './checkpoint';
 import { booguVersionIds } from './image/boogu.graph';
@@ -41,7 +42,7 @@ export function deriveSelectorsFromModel(
   if (
     current.ecosystem &&
     familyOf(modelEco) !== familyOf(current.ecosystem) &&
-    isModelLocked(current.ecosystem)
+    isModelLocked(current.ecosystem, current.workflow)
   )
     return undefined;
 
@@ -67,7 +68,10 @@ function familyOf(ecosystem: string): string {
   return ecosystem;
 }
 
-function isModelLocked(ecosystem: string): boolean {
+function isModelLocked(ecosystem: string, workflow: string | undefined): boolean {
+  // Flux draft locks its picker to the draft build (flux.graph.ts's modelLocked)
+  if ((ecosystem === 'Flux1' || ecosystem === 'FluxKrea') && workflow === DRAFT_WORKFLOW)
+    return true;
   const eco = ecosystemByKey.get(ecosystem);
   if (!eco) return false;
   return getEcosystemDefaults(eco.id)?.modelLocked ?? false;
@@ -93,6 +97,16 @@ export function deriveWorkflowFromModel(
   current: { ecosystem: string | undefined; workflow: string | undefined }
 ): SelectorCorrection | undefined {
   const id = model?.id;
+  // The Flux draft build only runs under the draft workflow. Moving the workflow (not swapping the
+  // model to standard) is what keeps a non-interactive caller — an App Block, a remix — from being
+  // billed for a build it didn't ask for.
+  if (
+    (current.ecosystem === 'Flux1' || current.ecosystem === 'FluxKrea') &&
+    id === FLUX_DRAFT_ID &&
+    current.workflow !== DRAFT_WORKFLOW
+  ) {
+    return { workflow: DRAFT_WORKFLOW };
+  }
   // Vidu Q3 has no reference-to-video operation, so picking the Q3 build drops the
   // workflow back to plain img2vid
   if (
@@ -155,9 +169,38 @@ export const modelSelectorRules = {
   ): SelectorCorrection | undefined => {
     const model = looseModel(value);
     const current = { ecosystem: next.ecosystem, workflow: next.workflow };
-    return deriveCorrectionsFromModel(model, current);
+    const base = deriveCorrectionsFromModel(model, current);
+    const flux = fluxDraftWorkflowFor(model, {
+      ecosystem: base?.ecosystem ?? current.ecosystem,
+      workflow: base?.workflow ?? current.workflow,
+    });
+    if (!base && !flux) return undefined;
+    return { ...base, ...flux };
   },
 };
+
+// flux.graph.ts's fluxVersionIds — inlined, since importing the graph here would cycle.
+// reconcile.test.ts pins the two copies together.
+export const FLUX_DRAFT_ID = 699279;
+export const FLUX_MODE_IDS = new Set([699279, 691639, 922358, 2068000, 1088507]);
+
+/**
+ * STORE LANE ONLY: picking another Flux build while in draft drags the workflow back to txt2img.
+ * At the parse boundary a non-draft build in draft is forced to the draft build instead (the
+ * model correct in flux.graph.ts), so this must never run in reconcileSelectors — and without it
+ * that correct reverts an interactive version pick before the user sees it. The opposite
+ * direction (the draft build moving the workflow into draft) is deriveWorkflowFromModel's.
+ */
+function fluxDraftWorkflowFor(
+  model: { id?: number } | undefined,
+  current: { ecosystem: string | undefined; workflow: string | undefined }
+): SelectorCorrection | undefined {
+  if (current.ecosystem !== 'Flux1' && current.ecosystem !== 'FluxKrea') return undefined;
+  const id = model?.id;
+  if (id == null || !FLUX_MODE_IDS.has(id)) return undefined;
+  if (id !== FLUX_DRAFT_ID && current.workflow === DRAFT_WORKFLOW) return { workflow: 'txt2img' };
+  return undefined;
+}
 
 export interface ReconcileResult {
   raw: Record<string, unknown>;

@@ -7,6 +7,8 @@ description: Interact with ClickUp tasks and documents - get task details, view 
 
 Interact with ClickUp tasks and documents via the API. Get task information, view comments, create tasks, manage assignments, post updates, and create/edit documents.
 
+**Before creating a task, read [`docs/dev/filing-follow-ups.md`](../../../docs/dev/filing-follow-ups.md):** every task needs a closing condition, and agent-generated follow-ups go in `Agent Follow-ups`, not `Synced Team`.
+
 ## Setup
 
 **Install dependencies first — one time, per checkout:**

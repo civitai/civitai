@@ -144,7 +144,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       crucible.status === CrucibleStatus.Active &&
       !!currentUser &&
       currentUser.id !== crucible.userId &&
-      crucible.viewerEntries.length < getMaxUserEntries(crucible);
+      crucible.viewerEntryCount < getMaxUserEntries(crucible);
     if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType));
   }, [crucible, router, currentUser, entryBuzzType]);
 
@@ -253,7 +253,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       state: { imageId, images: images?.some((x) => x.id === imageId) ? images : undefined },
     });
   };
-  const userEntryCount = userEntries.length;
+  const userEntryCount = crucible.viewerEntryCount;
   const maxUserEntries = getMaxUserEntries(crucible);
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
   const allEntriesUsed = !!currentUser && userEntryCount >= maxUserEntries;
@@ -660,7 +660,7 @@ const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBu
   freeEntriesPerUser: crucible.freeEntriesPerUser,
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
-  currentEntryCount: crucible.viewerEntries.length,
+  currentEntryCount: crucible.viewerEntryCount,
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,

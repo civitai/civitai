@@ -167,12 +167,16 @@ describe('setUserSetting — the merge statement', () => {
   });
 
   // The merge must stay a jsonb concatenation onto the existing column, so keys the
-  // caller did not send are left alone rather than replaced wholesale.
+  // caller did not send are left alone rather than replaced wholesale. The base is the
+  // column guarded to an object — what that guard DOES is pinned behaviourally in
+  // `user-settings-nonobject-base.behavior.test.ts`.
   it('merges onto the existing settings column and sends only the given keys', async () => {
     await setUserSetting(USER_ID, { allowAds: true });
 
     const [merge] = statements;
-    expect(merge.text).toContain('COALESCE(settings');
+    expect(merge.text).toContain(
+      `(CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END)`
+    );
     expect(merge.text).toContain('||');
     expect(merge.values).toContainEqual(JSON.stringify({ allowAds: true }));
   });
@@ -297,7 +301,7 @@ describe('patchUserSettings — the nested merge', () => {
     // assertion pins the STATEMENT SHAPE, so both halves are named here: the read of
     // the live column (atomicity) and the guard around it (shape).
     expect(write.text).toMatch(
-      /CASE WHEN jsonb_typeof\(settings->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text *ELSE *'\{\}'::jsonb *END *\|\| *\$\d+::jsonb/
+      /CASE WHEN jsonb_typeof\(settings->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text *ELSE *'\{\}'::jsonb *END\) *\|\| *\$\d+::jsonb/
     );
     expect(write.values).toContainEqual('features');
     expect(write.values).toContainEqual(JSON.stringify({ someFlag: true }));
@@ -331,7 +335,7 @@ describe('patchUserSettings — the deep nested merge', () => {
     // SQL-construction path that reads and guards one level further — the sub-key
     // itself — so a sibling sub-key another writer just added to the same tour survives.
     expect(write.text).toMatch(
-      /CASE WHEN jsonb_typeof\(settings->\$\d+::text->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text->\$\d+::text *ELSE *'\{\}'::jsonb *END *\|\| *\$\d+::jsonb/
+      /CASE WHEN jsonb_typeof\(settings->\$\d+::text->\$\d+::text\) = *'object' *THEN *settings->\$\d+::text->\$\d+::text *ELSE *'\{\}'::jsonb *END\) *\|\| *\$\d+::jsonb/
     );
     expect(write.values).toContainEqual('tourSettings');
     expect(write.values).toContainEqual('welcome');
@@ -394,8 +398,8 @@ describe('setAlertDismissed — the set operation', () => {
     await setAlertDismissed(USER_ID, 'notice-a', true);
 
     const [write] = statements;
-    expect(write.text).toMatch(
-      /jsonb_set\(COALESCE\(settings, '\{\}'::jsonb\), '\{dismissedAlerts\}'/
+    expect(write.text).toContain(
+      `jsonb_set((CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END), '{dismissedAlerts}'`
     );
   });
 });

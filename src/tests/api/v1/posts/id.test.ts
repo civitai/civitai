@@ -37,7 +37,7 @@ vi.mock('~/server/utils/request-bulkhead', async (importOriginal) => ({
 vi.mock('~/server/auth/get-server-auth-session', () => ({ getServerAuthSession: vi.fn() }));
 vi.mock('~/server/prom/http-errors', () => ({ instrumentApiResponse: vi.fn() }));
 
-import { dbMock } from '~/__tests__/mocks/db.mock';
+import '~/__tests__/mocks/db.mock';
 import type * as RequestBulkhead from '~/server/utils/request-bulkhead';
 import { BulkheadFullError } from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
@@ -125,21 +125,14 @@ describe('GET /api/v1/posts/[id]', () => {
     });
   });
 
-  it('returns the post’s images in the post’s own order, not the search’s', async () => {
+  it('asks for the post’s images in post order and returns them as given', async () => {
     mockGetPostDetail.mockResolvedValue(post());
     mockRunImageSearch.mockResolvedValue({ items: [{ id: 2 }, { id: 3 }, { id: 1 }] });
-    dbMock.dbRead.image.findMany.mockResolvedValue([
-      { id: 1, index: 0 },
-      { id: 2, index: 1 },
-      { id: 3, index: 2 },
-    ]);
 
     const { body } = await call({ id: '55288' });
 
-    expect(body?.images).toEqual([{ id: 1 }, { id: 2 }, { id: 3 }]);
-    expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { postId: 55288 } })
-    );
+    expect(mockRunImageSearch.mock.calls[0][0]).toMatchObject({ postOrder: true, limit: 100 });
+    expect(body?.images).toEqual([{ id: 2 }, { id: 3 }, { id: 1 }]);
   });
 
   it('searches this post’s images as anonymous, at every browsable level', async () => {

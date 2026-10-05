@@ -16,6 +16,9 @@ import type {
   SdxlCreateImageGenInput,
 } from '@civitai/orchestration-client';
 import {
+  clampToRange,
+  DRAFT_WORKFLOW,
+  getSdDraftMode,
   samplersToComfySamplers,
   samplersToSdCppSamplers,
   usesComfyEngine,
@@ -81,9 +84,10 @@ export const createStableDiffusionInput = defineHandler<
   const comfyKey = getComfyKey(workflow, hasImages);
 
   const userResources = data.resources ?? [];
-  const sampler = data.sampler ?? 'Euler';
-  const steps = data.steps ?? 25;
-  const cfgScale = data.cfgScale ?? 7;
+  const draft = workflow === DRAFT_WORKFLOW ? getSdDraftMode(data.ecosystem) : undefined;
+  const sampler = draft ? draft.sampler : data.sampler ?? 'Euler';
+  const steps = draft ? clampToRange(data.steps, draft.steps) : data.steps ?? 25;
+  const cfgScale = draft ? clampToRange(data.cfgScale, draft.cfgScale) : data.cfgScale ?? 7;
   const quantity = data.quantity ?? 1;
 
   const seed = data.seed ?? getRandomInt(quantity, maxRandomSeed) - quantity;
@@ -155,6 +159,7 @@ export const createStableDiffusionInput = defineHandler<
     if (r.model?.type === 'TextualInversion') continue;
     loras[ctx.airs.getOrThrow(r.id)] = r.strength ?? 1;
   }
+  if (draft) loras[draft.air] = 1;
 
   const shared = {
     ecosystem,

@@ -403,8 +403,8 @@ const browserModeOptions = () => ({
   // `PLAYWRIGHT_BROWSERS_PATH` case) — it bypasses the revision lookup.
   // The better fix is to point PLAYWRIGHT_BROWSERS_PATH at a bundle whose
   // version EQUALS this repo's `playwright` pin (1.57.x → chromium-1200),
-  // rather than moving the pin; see CLAUDE.md "Browser/component tests on
-  // NixOS". A mismatch does not say "no browser" — it collects every file
+  // rather than moving the pin; see docs/dev/worktrees.md "Browser/component
+  // tests on NixOS". A mismatch does not say "no browser" — it collects every file
   // and executes none, which reads as a broken suite.
   provider: playwright({
     launchOptions: {

@@ -194,6 +194,39 @@ module.exports = {
       },
     ],
 
+    // The SIBLING of the rule above, one level down: that one guards the MODULE's
+    // export surface (does the factory spread `importOriginal`), this one guards
+    // the `trpc` CLIENT's procedure surface inside the object the factory
+    // returns. A mock can be perfect by the first and broken by the second —
+    // #4147 was exactly that, which is why #4178 says the existing rule "has no
+    // view" of it. Deliberately a separate rule rather than an extension: the
+    // `modules` option above is generic across five modules while this check
+    // knows about `trpc` and `makeTrpcProxy` specifically, the two remedies are
+    // different ("spread the original" vs "call makeTrpcProxy"), and one disable
+    // comment must not switch off both guards. Reasoning in full at the rule.
+    //
+    // 'error', matching its siblings and for the same reason spelled out below:
+    // at 'warn' it would gate nothing, because the only BLOCKING ESLint step in
+    // .github/workflows/lint.yml ("ESLint (added files)") runs without
+    // --max-warnings — and a brand-new component test is exactly the authoring
+    // path this rule exists to close.
+    //
+    // Blast radius on the existing tree: 201 files report (census of all 220
+    // `vi.mock('~/utils/trpc', <inline factory>)` calls in `src/`; the other 19
+    // are 8 `new Proxy`, 7 `makeTrpcProxy`, and 4 that override no `trpc` key).
+    // 🔴 That cannot become a permanently-red gate, and the reason is the lint
+    // LANE's shape rather than this rule's severity: the blocking step lints
+    // `--diff-filter=A` paths only, and the modified-file step is
+    // `continue-on-error: true`. Nothing lints the full repo in CI — not in
+    // GitHub Actions (the eslint job is the only ESLint lane and is
+    // `pull_request`-only, diff-vs-base) and not in the in-cluster Tekton
+    // pr-check pipeline, which runs no ESLint at all. So a legacy file annotates
+    // when touched and blocks nothing; a newly ADDED file is blocked. The 201 are
+    // deliberately NOT migrated — migration is a one-line change per file,
+    // taken opportunistically when someone touches one. `pnpm lint` locally does
+    // cover all of `src/` and will show them.
+    'local-rules/no-hand-enumerated-trpc-mock': 'error',
+
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
 

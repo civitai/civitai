@@ -71,7 +71,7 @@ import {
 } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
-import { getTechniqueByName } from '~/server/services/technique.service';
+import { getTechniqueForWorkflow } from '~/server/services/technique.service';
 import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import type {
   getCosmeticsForUsers,
@@ -1279,12 +1279,9 @@ export const addPostImage = async ({
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
     // older meta has type: string, but the updated meta has process: string
-    const rawProcess = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
-    // Graph workflow keys carry a variant suffix (e.g. 'img2img:hires-fix'); techniques are
-    // keyed on the base ('img2img'), so match on the segment before the colon.
-    const process = rawProcess?.split(':')[0];
+    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
     if (process) {
-      techniqueId = (await getTechniqueByName(process))?.id;
+      techniqueId = (await getTechniqueForWorkflow(process))?.id;
     }
   }
 

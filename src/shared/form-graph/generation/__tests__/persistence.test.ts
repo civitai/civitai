@@ -68,6 +68,24 @@ describe('scope layout through the store', () => {
     expect(storage.last()['cfgScale@Boogu/3050010']).toBe(1.5);
   });
 
+  it('draft keeps its own steps per ecosystem, leaving txt2img and the other SD ecosystem intact', () => {
+    const storage = captureAdapter();
+    const store = generationHub.createStore({ ext: CTX, storage });
+    const steps = () => (store.getSnapshot().state as { steps?: number }).steps;
+    store.set({ workflow: 'txt2img', ecosystem: 'SDXL', steps: 30 });
+    store.set({ workflow: 'txt2img:draft' });
+    store.set({ steps: 10 });
+    expect(storage.last()['steps@txt2img:draft/SDXL']).toBe(10);
+
+    store.set({ ecosystem: 'SD1' });
+    expect(steps()).toBeLessThanOrEqual(8);
+    store.set({ ecosystem: 'SDXL' });
+    expect(steps()).toBe(10);
+
+    store.set({ workflow: 'txt2img' });
+    expect(steps()).toBe(30);
+  });
+
   it('images bucket per workflow', () => {
     const storage = captureAdapter();
     const store = generationHub.createStore({ ext: CTX, storage });
