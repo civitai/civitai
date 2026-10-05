@@ -15,6 +15,8 @@ import { trpc } from '~/utils/trpc';
 type GateMessageProps = {
   /** Null or undefined when only the server's refusal is known, which is not the same as zero. */
   score: number | null | undefined;
+  /** The viewer's total, when `score` is another kind (the Creator Program compares the aggregate). */
+  total?: number | null;
   required: number;
 };
 
@@ -31,6 +33,7 @@ export function CreatorScoreGateMessage(props: GateMessageProps) {
 
 export function CreatorScoreGateMessageView({
   score,
+  total,
   required,
   ladder,
 }: GateMessageProps & {
@@ -38,6 +41,7 @@ export function CreatorScoreGateMessageView({
 }) {
   const state = creatorScoreGateState({
     score,
+    total,
     required,
     unlocks: ladder?.unlocks ?? [],
     tiers: ladder?.tiers ?? [],

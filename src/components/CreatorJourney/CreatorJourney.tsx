@@ -12,6 +12,7 @@ import {
   groupCreatorScoreUnlocks,
   isCreatorScoreUnlockReached,
   nextCreatorScoreRung,
+  pendingCreatorScoreUnlocks,
 } from '~/shared/utils/creator-score-unlocks';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -61,7 +62,7 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
               Your Creator Score
             </Text>
             <Text size="2.5rem" fw={700} lh={1}>
-              {journey.scores ? numberWithCommas(Math.floor(total)) : '–'}
+              {journey.scores ? Math.round(total).toLocaleString() : '–'}
             </Text>
             {currentTier && (
               <Badge variant="light" color="yellow" size="lg" className="self-start">
@@ -76,7 +77,7 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
                 or download what you share, and it updates once a day.
               </Text>
             ) : next ? (
-              <NextRung rungs={rungs} next={next} total={total} />
+              <NextRung rungs={rungs} next={next} kinds={kinds} />
             ) : (
               <Text size="sm">You have reached every rung on the ladder.</Text>
             )}
@@ -165,16 +166,17 @@ function rungName(rung: CreatorScoreRung) {
 function NextRung({
   rungs,
   next,
-  total,
+  kinds,
 }: {
   rungs: CreatorScoreRung[];
   next: CreatorScoreRung;
-  total: number;
+  kinds: CreatorScoreKinds;
 }) {
+  const { total } = kinds;
   const index = rungs.indexOf(next);
   const floor = index > 0 ? rungs[index - 1].minScore : 0;
   const progress = Math.min(Math.max(((total - floor) / (next.minScore - floor)) * 100, 0), 100);
-  const pending = next.unlocks.filter((u) => u.minScore > total);
+  const pending = pendingCreatorScoreUnlocks(next, kinds);
 
   return (
     <Stack gap={6}>

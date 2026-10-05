@@ -1,7 +1,8 @@
 import { dbRead } from '~/server/db/client';
 import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import type { UserScoreMeta } from '~/server/schema/user.schema';
+import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 type MilestoneDefinition = {
   key: string;
@@ -22,7 +23,13 @@ export function maskUnearnedMilestone<T extends MilestoneDefinition>(
   earned: boolean
 ) {
   if (!milestone.hidden || earned) return milestone;
-  return { ...milestone, name: '???', description: null };
+  // Keys follow `<track>:<name>`, so the key would give the name away.
+  return {
+    ...milestone,
+    key: `hidden:${milestone.threshold ?? 'unranked'}`,
+    name: '???',
+    description: null,
+  };
 }
 
 const milestoneSelect = {
@@ -58,27 +65,6 @@ export async function getCreatorScoreLadder() {
   return { unlocks, tiers: tiers.map((tier) => toTier(maskUnearnedMilestone(tier, false))) };
 }
 
-type MetaScores = Partial<
-  Record<
-    'total' | 'models' | 'images' | 'articles' | 'users' | 'reportsActioned' | 'reportsAgainst',
-    number
-  >
->;
-
-const finiteOr0 = (value: unknown) =>
-  typeof value === 'number' && Number.isFinite(value) ? value : 0;
-
-/**
- * Mirrors the Creator Program requirement's GREATEST(sum of categories, total), which the `aggregate`
- * gates compare against.
- */
-function aggregateScore(scores: MetaScores) {
-  const sum = (
-    ['models', 'articles', 'images', 'users', 'reportsActioned', 'reportsAgainst'] as const
-  ).reduce((acc, key) => acc + finiteOr0(scores[key]), 0);
-  return Math.max(sum, finiteOr0(scores.total));
-}
-
 export async function getCreatorJourney(userId: number) {
   const [user, unlocks, tierDefinitions, achievements] = await Promise.all([
     dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } }),
@@ -91,15 +77,15 @@ export async function getCreatorJourney(userId: number) {
     }),
   ]);
 
-  const rawScores = (user?.meta as { scores?: MetaScores } | null)?.scores ?? null;
+  const rawScores = (user?.meta as { scores?: Partial<UserScoreMeta> } | null)?.scores ?? null;
   const earnedKeys = new Set(achievements.map((a) => a.milestone.key));
 
   return {
     scores: rawScores
       ? {
           total: creatorScoreFromMeta(user?.meta),
-          aggregate: aggregateScore(rawScores),
-          articles: finiteOr0(rawScores.articles),
+          aggregate: creatorAggregateScoreFromMeta(user?.meta),
+          articles: Number.isFinite(rawScores.articles) ? (rawScores.articles as number) : 0,
           breakdown: rawScores,
         }
       : null,

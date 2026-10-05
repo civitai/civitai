@@ -1532,9 +1532,9 @@ export function ModelVersionUpsertForm({
                                   }
                                   description={`When the window ends the version becomes free.${
                                     earlyAccessUnlockedDays.length > 0
-                                      ? ` Up to ${Math.max(
+                                      ? ` You can set up to ${Math.max(
                                           ...earlyAccessUnlockedDays
-                                        )} days at your current Creator Score.`
+                                        )} days.`
                                       : ''
                                   }`}
                                   error={form.formState.errors.paidAccessConfig?.message}

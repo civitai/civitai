@@ -1,3 +1,5 @@
+import { toStringList } from '~/utils/array-helpers';
+
 export type CreatorScoreUnlockSurface =
   | 'crucibles'
   | 'challenges'
@@ -115,6 +117,11 @@ export function buildCreatorScoreLadder(
   return rungs;
 }
 
+/** The unlocks on a rung not yet reached, each judged against its own kind of score. */
+export function pendingCreatorScoreUnlocks(rung: CreatorScoreRung, scores: CreatorScoreKinds) {
+  return rung.unlocks.filter((u) => !isCreatorScoreUnlockReached(u, scores));
+}
+
 /** The lowest rung above `total`, or null at the top of the ladder. */
 export function nextCreatorScoreRung(rungs: CreatorScoreRung[], total: number) {
   return rungs.find((rung) => rung.minScore > total) ?? null;
@@ -144,21 +151,25 @@ export type CreatorScoreGateState =
  */
 export function creatorScoreGateState({
   score,
+  total = score,
   required,
   unlocks,
   tiers,
 }: {
+  /** The number this gate compares against `required`. */
   score: number | null | undefined;
+  /** The viewer's total, which the ladder is climbed on; defaults to `score` for total-kind gates. */
+  total?: number | null;
   required: number;
   unlocks: CreatorScoreUnlock[];
   tiers: CreatorScoreTier[];
 }): CreatorScoreGateState {
   if (score == null) return { kind: 'unknown' };
-  if (score <= 0) return { kind: 'noScore' };
+  if (score === 0) return { kind: 'noScore' };
   const gap = Math.max(required - score, 0);
   if (score >= required * NEAR_GATE_SHARE) return { kind: 'near', score, gap };
 
-  const nextUnlocks = nextCreatorScoreUnlocks(unlocks, { total: score });
+  const nextUnlocks = nextCreatorScoreUnlocks(unlocks, { total: total ?? score });
   const minScore = nextUnlocks[0]?.minScore;
   if (minScore == null || minScore >= required) return { kind: 'near', score, gap };
 
@@ -172,11 +183,6 @@ export function creatorScoreGateState({
     },
   };
 }
-
-const joinList = (items: string[]) =>
-  items.length <= 1
-    ? items[0] ?? ''
-    : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
 
 export type CreatorScoreUnlockGroup = {
   key: string;
@@ -213,7 +219,7 @@ export function groupCreatorScoreUnlocks(unlocks: CreatorScoreUnlock[]): Creator
       {
         key: members[0].key,
         minScore: members[0].minScore,
-        label: `${prefix} on ${joinList(parts.map((part) => part?.[2] ?? ''))}`,
+        label: `${prefix} on ${toStringList(parts.map((part) => part?.[2] ?? ''))}`,
         unlocks: members,
       },
     ];
@@ -222,7 +228,7 @@ export function groupCreatorScoreUnlocks(unlocks: CreatorScoreUnlock[]): Creator
 
 /** Registry labels as one clause: "judge crucibles, higher comment limits and ...". */
 export function describeCreatorScoreUnlocks(unlocks: CreatorScoreUnlock[]) {
-  return joinList(
+  return toStringList(
     groupCreatorScoreUnlocks(unlocks).map(
       ({ label }) => label.charAt(0).toLowerCase() + label.slice(1)
     )

@@ -5,26 +5,32 @@ import {
   buildCreatorScoreLadder,
   describeCreatorScoreUnlocks,
   nextCreatorScoreRung,
+  pendingCreatorScoreUnlocks,
 } from '~/shared/utils/creator-score-unlocks';
+import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 /** The account score card's pointer to the journey page, naming the next rung when there is one. */
-export function CreatorJourneyCardLink({ total }: { total: number | undefined }) {
+export function CreatorJourneyCardLink({ meta }: { meta: unknown }) {
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery(undefined, {
     staleTime: Infinity,
   });
+  const kinds = {
+    total: creatorScoreFromMeta(meta),
+    aggregate: creatorAggregateScoreFromMeta(meta),
+  };
   const next =
-    ladder && total != null && total > 0
-      ? nextCreatorScoreRung(buildCreatorScoreLadder(ladder.unlocks, ladder.tiers), total)
+    ladder && kinds.total > 0
+      ? nextCreatorScoreRung(buildCreatorScoreLadder(ladder.unlocks, ladder.tiers), kinds.total)
       : null;
-  const pending = next?.unlocks.filter((u) => u.minScore > (total ?? 0)) ?? [];
+  const pending = next ? pendingCreatorScoreUnlocks(next, kinds) : [];
 
   return (
     <Text size="sm" c="dimmed" ta="center" mt="sm">
-      {next && total != null && (
+      {next && (
         <>
-          {numberWithCommas(Math.ceil(next.minScore - total))} to{' '}
+          {numberWithCommas(Math.ceil(next.minScore - kinds.total))} to{' '}
           {next.tier?.name ?? numberWithCommas(next.minScore)}.
           {pending.length > 0 && ` Unlocks: ${describeCreatorScoreUnlocks(pending)}.`}{' '}
         </>

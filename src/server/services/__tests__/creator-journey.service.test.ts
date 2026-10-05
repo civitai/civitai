@@ -20,6 +20,7 @@ const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[
 describe('maskUnearnedMilestone', () => {
   it('masks a hidden milestone the viewer has not earned, keeping only its hint', () => {
     expect(maskUnearnedMilestone(definition(), false)).toMatchObject({
+      key: 'hidden:unranked',
       name: '???',
       description: null,
       hint: 'Someone builds on your work',
@@ -75,6 +76,24 @@ describe('getCreatorJourney', () => {
     expect(scores).toMatchObject({ total: 100, aggregate: 330, articles: 0 });
   });
 
+  it('keeps the total when the categories sum to less', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue({
+      meta: { scores: { total: 900, models: 300 } },
+    } as never);
+
+    expect((await getCreatorJourney(1)).scores).toMatchObject({ total: 900, aggregate: 900 });
+  });
+
+  it('reads only score-track tiers that have a threshold', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockClear();
+    await getCreatorJourney(1);
+    await getCreatorScoreLadder();
+
+    expect(dbMock.dbRead.creatorMilestone.findMany).toHaveBeenCalledTimes(2);
+    for (const [args] of dbMock.dbRead.creatorMilestone.findMany.mock.calls)
+      expect(args).toMatchObject({ where: { track: 'score', threshold: { not: null } } });
+  });
+
   it('masks an unearned hidden tier and reveals an earned one', async () => {
     const hiddenTier = { ...definition({ key: 'score:secret', track: 'score', threshold: 777 }) };
     dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([hiddenTier] as never);
@@ -99,8 +118,9 @@ describe('getCreatorScoreLadder', () => {
       definition({ key: 'score:secret', track: 'score', threshold: 777 }),
     ] as never);
 
+    // The key carries the name by convention (`score:spark` is Spark), so it is masked too.
     expect((await getCreatorScoreLadder()).tiers).toEqual([
-      { key: 'score:secret', name: '???', threshold: 777, hint: 'Someone builds on your work' },
+      { key: 'hidden:777', name: '???', threshold: 777, hint: 'Someone builds on your work' },
     ]);
   });
 });

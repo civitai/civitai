@@ -134,7 +134,7 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
           <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
             <Stack gap="lg">
               <UserScoreDisplay scores={scores} flat abbreviate={false} />
-              <CreatorJourneyCardLink total={scores?.total} />
+              <CreatorJourneyCardLink meta={currentUser?.meta} />
               <CreatorScoreExplainer />
             </Stack>
           </div>
@@ -167,7 +167,7 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
         <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
           <Stack gap="lg">
             <UserScoreDisplay scores={scores} />
-            <CreatorJourneyCardLink total={scores?.total} />
+            <CreatorJourneyCardLink meta={currentUser?.meta} />
             <CreatorScoreExplainer />
           </Stack>
         </div>

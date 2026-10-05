@@ -52,6 +52,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import {
   useCreatorProgramRequirements,
   usePrevMonthStats,
@@ -618,12 +619,17 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                     content={
                       <p className="my-0">
                         {hasEnoughCreatorScore ? (
-                          `Your Creator Score is ${numberWithCommas(
-                            Math.floor(requirements?.score.current ?? 0)
-                          )}.`
+                          <>
+                            Your Creator Score is{' '}
+                            {numberWithCommas(Math.floor(requirements?.score.current ?? 0))}.{' '}
+                            <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} inherit>
+                              See your journey
+                            </Anchor>
+                          </>
                         ) : (
                           <CreatorScoreGateMessage
                             score={requirements?.score.current}
+                            total={currentUser?.meta?.scores?.total}
                             required={requirements?.score.min ?? MIN_CREATOR_SCORE}
                           />
                         )}

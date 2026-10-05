@@ -15,6 +15,7 @@ import {
   describeCreatorScoreUnlocks,
   groupCreatorScoreUnlocks,
   nextCreatorScoreRung,
+  pendingCreatorScoreUnlocks,
 } from '~/shared/utils/creator-score-unlocks';
 
 const unlocks = buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs);
@@ -124,7 +125,26 @@ describe('creatorScoreGateState', () => {
     expect(gate(undefined, CHALLENGE_MIN_CREATOR_SCORE).kind).toBe('unknown');
     expect(gate(null, CHALLENGE_MIN_CREATOR_SCORE).kind).toBe('unknown');
     expect(gate(0, CHALLENGE_MIN_CREATOR_SCORE).kind).toBe('noScore');
-    expect(gate(-40, CHALLENGE_MIN_CREATOR_SCORE).kind).toBe('noScore');
+  });
+
+  // A score pushed below zero by removed content is not "no score yet".
+  it('gives a negative score the nearest rung, not the no-score copy', () => {
+    expect(gate(-40, CHALLENGE_MIN_CREATOR_SCORE)).toMatchObject({
+      kind: 'far',
+      score: -40,
+      next: { minScore: CRUCIBLE_JUDGE_MIN_CREATOR_SCORE },
+    });
+  });
+
+  it('climbs the ladder from the total when the gate compares another score', () => {
+    const state = creatorScoreGateState({
+      score: 4_000,
+      total: 1,
+      required: 40_000,
+      unlocks,
+      tiers: seededTiers,
+    });
+    expect(state).toMatchObject({ kind: 'far', score: 4_000, next: { tier: { name: 'Spark' } } });
   });
 
   it('switches from the nearest rung to the gap at 80% of the gate', () => {
@@ -168,7 +188,7 @@ describe('describeCreatorScoreUnlocks', () => {
 
     expect(describeCreatorScoreUnlocks([a])).toBe(lower(a.label));
     expect(describeCreatorScoreUnlocks([a, b, c])).toBe(
-      `${lower(a.label)}, ${lower(b.label)} and ${lower(c.label)}`
+      `${lower(a.label)}, ${lower(b.label)}, and ${lower(c.label)}`
     );
   });
 });
@@ -204,5 +224,20 @@ describe('groupCreatorScoreUnlocks', () => {
       { ...base, key: 'x:2', label: 'Beta on two' },
     ]);
     expect(groups.map((g) => g.label)).toEqual(['Alpha on one', 'Beta on two']);
+  });
+});
+
+describe('pendingCreatorScoreUnlocks', () => {
+  it('judges each unlock on its own kind of score', () => {
+    const creatorProgram = unlocks.find((u) => u.key === 'creator-program');
+    if (!creatorProgram) throw new Error('no creator-program unlock');
+    const rung = { minScore: creatorProgram.minScore, tier: null, unlocks: [creatorProgram] };
+
+    expect(
+      pendingCreatorScoreUnlocks(rung, { total: 0, aggregate: creatorProgram.minScore })
+    ).toEqual([]);
+    expect(pendingCreatorScoreUnlocks(rung, { total: creatorProgram.minScore - 1 })).toEqual([
+      creatorProgram,
+    ]);
   });
 });
