@@ -440,8 +440,27 @@ export async function setListingVisibilityAsOwner(args: {
  * `setListingVisibilityAsOwner` "would be an unaudited moderator write on someone else's
  * listing", and closed the gap by deferring a dedicated proc rather than relaxing the
  * resolver. This is that proc. The owner path is untouched and still has no mod bypass, so
- * the two audiences cannot be confused at a call site, and a moderator write is
- * structurally incapable of happening without an event row.
+ * the two audiences cannot be confused at a call site.
+ *
+ * ⚠️ AND THIS DOCBLOCK CLOSED WITH THE RETRACTED CLAIM UNTIL ROUND 6 — "a moderator write is
+ * structurally incapable of happening without an event row" — which the `$transaction`
+ * docblock below quotes verbatim and calls "false as written". The retraction was applied to
+ * the module header and did not reach this site, which is the one a reader of THIS function
+ * meets first. It survived both previous sweeps BY CONSTRUCTION: the line contains no
+ * `23514`, and none of the eight claim-shape phrasings those sweeps enumerated appears in
+ * it.
+ *
+ * 🔴 IT MATTERS EVEN THOUGH THE CONCLUSION IS TRUE TODAY, BECAUSE IT IS TRUE FOR THE WRONG
+ * REASON. The sentence derives the no-orphan invariant from PATH SEPARATION — "the owner
+ * path has no mod bypass, therefore every moderator write carries an event". Path separation
+ * does not buy that and never did: the shipped revision had the same separation and still
+ * committed a level change with no audit row. What actually provides the invariant is the
+ * SINGLE INTERACTIVE TRANSACTION below, and nothing else. So a maintainer who removes the
+ * `$transaction` and checks whether the audit invariant still holds reads this paragraph,
+ * finds a derivation their change does not touch, and ships the two-round-trip shape back
+ * in. The true statement, with its real support named: a moderator write cannot commit a
+ * level change without its event row BECAUSE both run on one transaction and a rejected
+ * event aborts it.
  *
  * 🔴 THE REVIEW CEILING STILL BINDS (D7). {@link applyVisibility} enforces it for every
  * caller — a moderator who wants a draft public APPROVES it rather than relabelling it,

@@ -696,15 +696,33 @@ const CALLER_BUSTS: Record<string, string[]> = {
  *      `applyVisibility(` token so the caller set below cannot see it. Nothing in this file
  *      enumerates raw writers — that is the mechanism's own hole, and the reason the guard
  *      is keyed on a HELPER NAME rather than on the hazard.
- *      MEASURED at this commit (re-derived in round 5, not inherited): across
- *      `src`/`apps`/`packages`/`scripts`, the only raw-SQL writer of `app_listings` in
- *      production code is `applyVisibility` itself — the two other mentions are prose about
- *      a Prisma referential-action cascade (`connect_client_id = NULL`), and the one
- *      `INSERT INTO app_listings` is a test fixture. Independently cross-checked: of every
- *      non-test file using `$executeRaw`/`$executeRawUnsafe`, exactly one mentions
- *      `app_listings` at all, and it is this module. So the mechanism is COMPLETE today and
- *      the residual is purely ADDITIVE — it arrives with the second raw writer, and whoever
- *      adds one must add a second key here.
+ *      🔴 MEASURED AT `ac1534378d` (the sha the sweep ran at — named, because "at this
+ *      commit" was undatable and the figure does NOT reproduce at a later one; see the
+ *      reproduction note). Population: `git grep -E '(UPDATE|INSERT INTO|DELETE FROM)
+ *      "?app_listings"?'` over `src apps packages scripts` → **5 hits**, of which exactly
+ *      ONE is a raw-SQL writer of `app_listings` in production code — `applyVisibility`
+ *      itself. ALL FIVE, so the accounting adds up (an earlier version of this paragraph
+ *      listed only four and silently dropped the constants-test assertion):
+ *        1. `app-listing-visibility-write.service.ts` — the real writer, this module.
+ *        2. `app-ownership-transfer.service.ts` — prose about a Prisma
+ *           referential-action cascade (`connect_client_id = NULL`).
+ *        3. `app-transfer.constants.ts` — the same cascade, in prose.
+ *        4. `app-listing-visibility.constants.test.ts` — an ASSERTION that a statement does
+ *           NOT contain `UPDATE "app_listings"`, i.e. a guard, not a writer.
+ *        5. `block-hide-comments.behavior.test.ts` — an `INSERT INTO app_listings` test
+ *           fixture.
+ *      Independently cross-checked: of every non-test file using
+ *      `$executeRaw`/`$executeRawUnsafe`, exactly one mentions `app_listings` at all, and it
+ *      is this module. So the mechanism was COMPLETE at that sha and the residual is purely
+ *      ADDITIVE — it arrives with the second raw writer, and whoever adds one must add a
+ *      second key here.
+ *      ⚠️ REPRODUCTION NOTE, so a re-derivation that disagrees is not read as a failed
+ *      reproduction: the SAME grep returns **7** at `1c59e1846b` and **8** as of this
+ *      paragraph, because THIS DOC COMMENT matches its own grep — two quoting lines at
+ *      `1c59e1846b`, three now that items 4 and 5 above spell the statements out. A
+ *      doc-comment grep population moves whenever the doc comment does, which is precisely
+ *      why the sha is named; the FIVE enumerated above are the CODE population, and they
+ *      are the figure that means anything.
  *
  *   2. ORDERING IS UNASSERTED. The guard below tests caller-set MEMBERSHIP only. Its own
  *      failure message tells the reader to "Bust AFTER the commit (a bust inside the tx
@@ -743,7 +761,8 @@ const BUST_HELPER = 'bustCatalogAfterVisibilityWrite';
  * Both caller-set tests below iterate `Object.entries(<record>)`. With the record emptied
  * the loop body never executes, so EVERY assertion inside it — including the two
  * instrument-first ones that exist precisely to stop a vacuous pass — is skipped and the
- * suite is green. MEASURED on this branch before this pin existed: replacing
+ * suite is green. MEASURED at `ac1534378d`, before this pin existed (the sha is named
+ * because the test COUNT in this figure moves with the file): replacing
  * `RAW_HELPER_BUSTS` with `{}` left the ledger at 12 passed / 0 failed, exit 0. Deleting
  * just the `applyVisibility` key does the same thing.
  *
@@ -766,6 +785,32 @@ const BUST_HELPER = 'bustCatalogAfterVisibilityWrite';
  * both the entry and its pin still goes green. That is deliberate and is the same contract
  * `LEDGER` is under — deriving "which helpers are raw writers of a cached axis" is residual
  * #1 named in {@link RAW_HELPER_BUSTS}, and no guard in this file can see it.
+ *
+ * 🔴 AND THIS TABLE WAS ITSELF LOOP-VACUOUS WHEN IT LANDED — VERBATIM THE SHAPE IT WAS
+ * BUILT TO FIX. Consolidating two copies of the pin into one shared assertion replaced a
+ * loop over a literal with a loop over a TABLE OF literals, which moved the vacuity up one
+ * level instead of closing it: the test below iterates `PINNED_RECORD_KEYS`, so emptying
+ * THE TABLE skips every assertion in it. MEASURED at `1c59e1846b`, before the flat
+ * assertion below existed: `PINNED_RECORD_KEYS = []` with both records untouched left the
+ * ledger at 13 passed / 0 failed, exit 0; emptying all three (table + both records) also
+ * left 13 passed / 0 failed. Worse than the hole it replaced in one respect — disarming
+ * BOTH caller guards used to take two edits in two records and took one edit in one place,
+ * and the test COUNT stayed 13, so a count ratchet could not see it either.
+ *
+ * 🔴 THE REGRESS IS TERMINATED BY A NON-LOOP ASSERTION, NOT BY A FOURTH LAYER. The test
+ * below opens with a flat `expect(PINNED_RECORD_KEYS.map(...)).toEqual([...])` over a
+ * literal. A flat equality cannot iterate zero times, so there is no "empty it and the
+ * assertions vanish" move left: an emptied table fails that one comparison. Adding a fifth
+ * guard over the fourth would regenerate the same defect a level up, which is what the two
+ * previous rounds did.
+ *
+ * ⚠️ WHAT STILL DISARMS IT, STATED PLAINLY INSTEAD OF GUARDED AGAINST: editing the expected
+ * label literal AND the table together — two places in this one file, in one commit. That
+ * is not a loop-vacuity hole (nothing passes by accident); it is the deliberate
+ * "record the decision" contract `LEDGER` and `EXEMPT` are already under, and it is
+ * RECORDED AS A KNOWN RESIDUAL rather than closed. Closing it needs a derivation of which
+ * helpers are raw writers of a cached axis — residual #1 in {@link RAW_HELPER_BUSTS} —
+ * which no guard in this file can provide.
  */
 const PINNED_RECORD_KEYS: ReadonlyArray<
   readonly [label: string, record: Record<string, string[]>, keys: readonly string[]]
@@ -973,6 +1018,20 @@ describe('🔴 /apps catalog freshness ledger', () => {
    * that survives either record being emptied, so it must come BEFORE them.
    */
   it('🔴 the caller records still HAVE their entries (an empty record disarms its own guard)', () => {
+    // 🔴 FLAT, NON-LOOP, AND FIRST — the assertion that terminates the vacuity regress.
+    // Everything after this point iterates `PINNED_RECORD_KEYS`, so emptying the TABLE used
+    // to skip the whole test in silence (13 passed, exit 0 — measured; see the docblock).
+    // A flat equality over a literal cannot iterate zero times, so it fails on an emptied
+    // table and on a widened one. It is deliberately NOT a derivation — see the docblock's
+    // named residual.
+    expect(
+      PINNED_RECORD_KEYS.map(([label]) => label).sort(),
+      'the set of RECORDS under this pin changed. A MISSING label is the dangerous ' +
+        'direction: the loop below then runs ZERO assertions for it and the suite stays ' +
+        "green, so deleting a table row DISARMS that record's guard instead of failing. " +
+        'An EXTRA label is bookkeeping — a third caller record is one row here, and this ' +
+        'assertion is where it gets recorded.'
+    ).toEqual(['CALLER_BUSTS', 'RAW_HELPER_BUSTS']);
     for (const [label, record, keys] of PINNED_RECORD_KEYS) {
       expect(
         Object.keys(record).sort(),
@@ -983,19 +1042,46 @@ describe('🔴 /apps catalog freshness ledger', () => {
           'then runs ZERO assertions and the suite stays green, so deleting an entry ' +
           'DISARMS the guard instead of failing. If the helper was RENAMED, rename it in ' +
           'the record and in `PINNED_RECORD_KEYS`. If it genuinely no longer writes a ' +
-          'cached axis (or no longer exists), delete the record entry, this pin AND the ' +
-          "helper's `EXEMPT` row in ONE commit, and say in the message why the hazard is " +
-          'gone. An EXTRA key is bookkeeping: record it here in the same commit, exactly ' +
+          'cached axis (or no longer exists), delete the record entry and this pin in ONE ' +
+          'commit, and say in the message why the hazard is gone' +
+          // 🔴 THE TWO RECORDS NEED DIFFERENT INSTRUCTIONS HERE, and one shared sentence
+          // misdirected for `RAW_HELPER_BUSTS`. Only `CALLER_BUSTS` keys have an `EXEMPT`
+          // row (required by the LAST assertion of `every EXEMPT entry is a current,
+          // non-busting writer`). `applyVisibility` has NONE and must not be given one:
+          // `RAW_HELPER_BUSTS`'s own docblock spends three bullets on why the
+          // `EXEMPT`⇒`WRITERS` assertion REJECTS such a row. Telling that maintainer to
+          // delete an `EXEMPT` row sends them to add one in order to delete it — the exact
+          // action the docblock forbids, failing a different guard with a different
+          // message. This is the price of consolidating two assertions into one; it is paid
+          // in the message rather than by splitting them back apart.
+          (label === 'CALLER_BUSTS'
+            ? '. `CALLER_BUSTS` only: its helper also has an `EXEMPT` row (the last ' +
+              'assertion of `every EXEMPT entry is a current, non-busting writer` requires ' +
+              'one), so delete that row in the SAME commit.'
+            : `. \`${label}\` keys have NO \`EXEMPT\` row and must not be given one — see ` +
+              "this record's docblock: the `EXEMPT`⇒`WRITERS` assertion rejects a row for a " +
+              'raw-SQL writer, so there is nothing to delete on that side.') +
+          ' An EXTRA key is bookkeeping: record it here in the same commit, exactly ' +
           'as `LEDGER` requires for a new bust site.'
       ).toEqual([...keys].sort());
-      // A key whose caller list is empty is the same disarm one level down: the
-      // membership/pin assertions below would compare `[]` against `[]` and pass.
+      // A key whose RECORDED caller list is empty. ⚠️ THE RATIONALE HERE DESCRIBED AN
+      // UNREACHABLE SCENARIO until this round: it read "the membership/pin assertions below
+      // would compare `[]` against `[]` and pass". That comparison needs the SCANNED caller
+      // set empty too — i.e. a rename — and `expect(callers.length).toBeGreaterThan(0)` is
+      // the FIRST assertion in BOTH loop tests, so the rename goes red there first, naming
+      // its own cause. With only `recorded` emptied the pin compares the 2 real callers
+      // against `[]` and is red as well (measured: that mutant produces TWO failures, this
+      // arm's and the pin's). So what this arm actually is: DEFENCE IN DEPTH should the
+      // instrument-first assertion ever be removed — reachable and failing with its own
+      // message, but not the sole killer of an emptied caller list at this sha.
       for (const [helper, recorded] of Object.entries(record)) {
         expect(
           recorded.length,
-          `\`${label}["${helper}"]\` is empty. The caller set cannot be empty while the ` +
-            'helper is exempt-by-caller — an empty recorded set makes the pin below ' +
-            'compare nothing against nothing.'
+          `\`${label}["${helper}"]\` is empty. The recorded caller set cannot be empty ` +
+            'while the helper is exempt-by-caller: the whole basis of that exemption is ' +
+            'the named callers. (This is defence in depth, not the sole killer — the pin ' +
+            'below also goes red comparing the real callers against `[]`, and a RENAME is ' +
+            "caught first by that test's instrument-first assertion. See the comment here.)"
         ).toBeGreaterThan(0);
       }
     }

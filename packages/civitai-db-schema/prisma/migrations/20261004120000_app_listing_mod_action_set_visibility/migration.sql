@@ -62,12 +62,46 @@
 -- ⚠️ MANUAL APPLY — per datapacket-talos CLAUDE.md DB rule #8 the main civitai CNPG nvme0
 -- DB does NOT auto-apply migrations (no `prisma migrate deploy`). This file is committed for
 -- HISTORY ONLY; a HUMAN applies the SQL below per environment (psql/retool). CI / deploy do
--- NOT run it. Apply to BOTH:
+-- NOT run it. ✅ BOTH TARGETS APPLIED 2026-10-05 — the evidence is the block immediately
+-- below; this list is retained because it is what a REPROVISIONED environment must still do:
 --   1. prod nvme0    (the live civitai DB)
 --   2. the dev clone (cnpg-cluster-dev, ns cnpg-database-dev, db civitai)
 --
--- 🔴 ORDERING — timing-sharp, and sharper than its predecessors for the reason above:
---   * Apply to the DEV CLONE **before** a PR preview exercises
+-- ============================================================
+-- ✅ APPLIED 2026-10-05 TO BOTH ENVIRONMENTS — EVIDENCE, NOT AN UNDATED ASSERTION
+-- ============================================================
+-- The ORDERING bullets below are kept as HISTORY (they record why the sequencing was
+-- timing-sharp) and are marked DONE rather than deleted. This block is the apply record;
+-- an undated "it has been applied" sentence is the same unscoped-state-claim defect this
+-- file corrected elsewhere, so the evidence is here with the date.
+--
+--   WHAT RAN: this file's COMMITTED BYTES piped into `psql -v ON_ERROR_STOP=1` on each
+--   primary — prod `cnpg-cluster-nvme0-5` (re-resolved at apply time, not from a doc) and
+--   dev `cnpg-cluster-dev-1`. Both returned `BEGIN / ALTER TABLE / ALTER TABLE / COMMIT`.
+--
+--   LIVE CONSTRAINT ON BOTH, read back after the commit: **12 actions**, `set-visibility`
+--   present, `purge-user-storage` present — the pending 20260912 widen rode along exactly
+--   as the superset IN-list intended.
+--
+--   VERIFIED BY REPRODUCING THE ORIGINAL SYMPTOM, WITH A NEGATIVE CONTROL, BOTH ROLLED
+--   BACK: `action='set-visibility'` → `INSERT 0 1` (this exact insert raised 23514 before
+--   the apply), and `action='zz-bogus'` → rejected, 23514, against the same constraint —
+--   i.e. the CHECK is still enforcing and the success is the widen, not a dropped
+--   constraint. Row counts unchanged either side: prod 23, dev 61.
+--
+--   PRE-FLIGHT, measured before applying: 0 existing rows would violate the new IN-list,
+--   0 conflicting locks, 0 transactions older than 30s. The table is 23 rows / 112 kB on
+--   prod, so the ACCESS EXCLUSIVE validation scan was effectively instantaneous.
+--
+--   THE DEV-REFRESH WARNING NO LONGER APPLIES TO THIS WIDEN. `cnpg-cluster-dev-refresh` is
+--   `0 3 * * 0` (Sunday 03:00 UTC; last run 2026-10-04T03:00:01Z). Because PROD now carries
+--   the widen, the next refresh INHERITS it rather than wiping it — the bullet below is
+--   retained because it is still the correct rule for the NEXT hand-applied dev-only DDL.
+--
+-- 🔴 ORDERING — timing-sharp, and sharper than its predecessors for the reason above.
+-- ✅ BOTH BULLETS SATISFIED by the apply recorded above; kept as the reasoning, not as a
+-- to-do:
+--   * ✅ DONE — Apply to the DEV CLONE **before** a PR preview exercises
 --     `appListings.setListingVisibilityAsModerator`, or the mod proc 500s on the constraint
 --     for every moderator visibility CHANGE (preview-DB-drift -> smoke-500 trap). ⚠️ This
 --     read "the preview changes a level and 500s on the constraint with no audit row", the
@@ -78,17 +112,19 @@
 --     the `if (!applied.changed) return applied;` short-circuit, so an IDEMPOTENT NO-OP
 --     (the requested level already stored) never reaches the event INSERT, never hits 23514,
 --     and returns 200 whether or not this DDL is applied.
---     🔴 SO A NO-OP IS NOT A VALID SMOKE PROBE FOR THIS WIDEN. Now that the widen HAS been
---     applied to both environments, "the mod proc 500s" is no longer a live observable
---     either — and a reader using it as the check would read a 200 off a no-op as proof the
---     DDL landed. Probe by reading the constraint itself (`\d+ app_listing_moderation_events`
---     / `pg_get_constraintdef`), not by calling the proc.
---   * Apply to PROD nvme0 **before** this ships (main -> release). The OWNER path is
---     unaffected — it writes no event — so only the moderator proc is gated on this.
---   * ⚠️ The dev clone is re-created weekly from prod barman backups
---     (`cnpg-cluster-dev-refresh`, Sun 03:00 UTC), so a hand-applied widen THERE is wiped
---     on the next refresh while one applied to PROD propagates to dev for free. Prefer
---     prod-first; apply to dev by hand only if a preview needs it before the next refresh.
+--     🔴 SO A NO-OP IS NOT A VALID SMOKE PROBE FOR THIS WIDEN — and that point stands
+--     whatever the apply state. As of the 2026-10-05 apply recorded above, "the mod proc
+--     500s" is no longer a live observable either, so a reader using it as the check would
+--     read a 200 off a no-op as proof the DDL landed. Probe by reading the constraint itself
+--     (`\d+ app_listing_moderation_events` / `pg_get_constraintdef`), not by calling the
+--     proc — that is what the apply record above did.
+--   * ✅ DONE — Apply to PROD nvme0 **before** this ships (main -> release). The OWNER path
+--     is unaffected — it writes no event — so only the moderator proc is gated on this.
+--   * ⚠️ STILL THE RULE FOR THE NEXT DEV-ONLY DDL, no longer a risk to THIS one: the dev
+--     clone is re-created weekly from prod barman backups (`cnpg-cluster-dev-refresh`,
+--     `0 3 * * 0`, Sun 03:00 UTC), so a hand-applied widen THERE is wiped on the next
+--     refresh while one applied to PROD propagates to dev for free. Prefer prod-first.
+--     Because prod carries this widen, the next refresh inherits it.
 --
 -- The migration-agreement unit test
 -- (src/server/services/blocks/__tests__/app-listing-mod-action.constants.test.ts) parses
