@@ -29,7 +29,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getFilesByEntity } from '~/server/services/file.service';
 import type { BountyEntryFileMeta } from '~/server/schema/bounty-entry.schema';
 import { Currency, EntityType } from '~/shared/utils/prisma/enums';
-import { getLatestEntityAppeal } from '~/server/services/report.service';
+import { getLatestAppeal } from '~/server/services/report.service';
 import {
   isBountyFlagAppealable,
   resolveFlagScanReasons,
@@ -170,7 +170,7 @@ export const getBountyHandler = async ({ input, ctx }: { input: GetByIdInput; ct
     const poiFlagged = isOwner && isBountyFlagAppealable(bounty);
     const poiAppeal =
       poiFlagged && user
-        ? await getLatestEntityAppeal({
+        ? await getLatestAppeal({
             entityType: EntityType.Bounty,
             entityId: bounty.id,
             userId: user.id,

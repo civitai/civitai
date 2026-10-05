@@ -12,12 +12,41 @@ import {
   STATUS_ACCRUED,
 } from './author-fee-accrual.service';
 import { isSettlementEligible, settlementBoundary } from './author-fee-settlement.service';
+import { blockAuthorFeeChargedCounter, blockAuthorFeeQuotedCounter } from '~/server/prom/client';
+
 import {
   computeBlockAuthorFee,
   BLOCK_AUTHOR_FEE_PRICE_IS_CAP,
   BLOCK_AUTHOR_FEE_BASE_UNAVAILABLE,
+  BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
 } from './author-fee';
 import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-fee';
+import { blockGenerationCoarseType } from './generation-type';
+
+/**
+ * The `workflowLabel` both ESTIMATE call sites pass; the two gating sites pass
+ * the block's external id instead. It is what `surface` on
+ * `blockAuthorFeeQuotedCounter` is derived from.
+ *
+ * 🔴 BOTH ESTIMATE SITES IMPORT THIS, AND THAT IMPORT IS THE ONLY THING HOLDING
+ * THE LABEL TOGETHER. An earlier revision left them spelling `'estimate'` and
+ * claimed the pairing was "pinned behaviourally by
+ * `blocks.router.workflow.test.ts`". It was not: that file never mentions
+ * `workflowLabel`, and a round-1 audit proved the gap by mutation — rewriting
+ * both router literals to `'whatif'` left 482/482 tests green while the entire
+ * unbounded estimate population silently moved onto the `gating` series. A
+ * shared import cannot drift that way; a sentence about a test can.
+ *
+ * The GATING side needs no equivalent: both gating sites pass
+ * `blockExternalId`, which `composeBlockExternalId` /
+ * `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating caller
+ * cannot produce this value by construction.
+ *
+ * ⚠️ Deliberately NOT `as const`: `workflowLabel` is a plain `string` on both
+ * signatures, so widening buys nothing and a literal type would only make a
+ * future non-estimate caller's error message harder to read.
+ */
+export const BLOCK_AUTHOR_FEE_ESTIMATE_LABEL = 'estimate';
 
 // ─────────────────────────────────────────────────────────────────────────────
 // App Blocks PER-GENERATION AUTHOR FEE — slice 2b, THE VIEWER-CHARGE PATH.
@@ -60,18 +89,24 @@ import type { BlockAuthorFeeComputation, BlockAuthorFeeConfig } from './author-f
 // `chargeBlockAuthorFee`.
 //
 // ── THE MONEY SHAPE ─────────────────────────────────────────────────────────
-// Viewer → account 0 at submit (`TransactionType.Fee`), account 0 → author on the
-// daily settlement run. The platform is a CONDUIT, not a party (D1): the author
-// is credited exactly what the viewer was debited, and account 0 is a way-station
-// rather than a share. A reversal is account 0 → viewer (`TransactionType.Refund`)
-// and only ever for a row that has NOT settled.
+// Viewer → account 0 at submit (`TransactionType.AppAuthorFee`), account 0 →
+// author on the daily settlement run under the same type.
+// The platform is a CONDUIT, not a party (D1): the author is credited exactly
+// what the viewer was debited, and account 0 is a way-station rather than a
+// share. A reversal is account 0 → viewer (`TransactionType.Refund`) and only
+// ever for a row that has NOT settled.
 //
-// ── DARK ────────────────────────────────────────────────────────────────────
+// ── LIVE, BEHIND ONE FLAG ───────────────────────────────────────────────────
+// ⚠️ This block was headed "DARK" and ended "merging this changes nothing until
+// the flag is flipped". The flag is flipped: this module has been debiting viewers
+// since 2026-09-25.
+//
 // `quoteBlockAuthorFee` reads `app-blocks-author-fee-enabled` FIRST and
 // fail-closed. With the flag off it returns a non-charging quote before touching
 // the database, so no fee is reserved, and a zero reservation then makes the
-// charge structurally impossible. Merging this changes nothing until the flag is
-// flipped.
+// charge structurally impossible. Turning the flag off therefore stops new fees
+// being quoted, reserved and debited — and does NOT stop `reverseBlockAuthorFee`,
+// which is outside the gate deliberately so refunds cannot be stranded.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Why a quote or a charge did not produce money. */
@@ -81,6 +116,13 @@ export type BlockAuthorFeeSkip =
   | 'base-unavailable'
   | 'zero-fee'
   | 'self-dealing'
+  /**
+   * A PRIVATE RUN of a delisted / suspended app (owner, accepted collaborator, or
+   * moderator). Returned by `resolveBlockAuthorFeePayee` before the owner is
+   * resolved, so it reaches both the quote and the charge — which means an estimate
+   * and a submit agree, and a reviewer is never SHOWN a fee that will not be taken.
+   */
+  | 'private-run'
   | 'app-missing'
   | 'not-reserved'
   | 'debit-failed'
@@ -129,7 +171,19 @@ export async function quoteBlockAuthorFee(args: {
   generationType: unknown;
   appId: string;
   viewerUserId: number;
-  /** Log-only; a whatIf has no workflow id, so callers pass a stable label. */
+  /**
+   * 🔴 NOT LOG-ONLY — AND IT SAID SO UNTIL A ROUND-2 AUDIT. This string has three
+   * readers: the log lines, the payee resolver (as `workflowId`), and — since the
+   * quote counter shipped — the `surface` LABEL on
+   * `block_author_fee_quoted_total`, which is derived from whether it equals
+   * `BLOCK_AUTHOR_FEE_ESTIMATE_LABEL`.
+   *
+   * So do NOT re-spell it for log readability: an estimate caller that stops
+   * passing the estimate label moves its whole population onto the `gating`
+   * series. A whatIf has no workflow id, which is why callers pass a stable
+   * label at all; both estimate sites import the constant rather than spelling
+   * it, and both are pinned in `blocks.router.workflow.test.ts`.
+   */
   workflowLabel: string;
   /**
    * DISCLOSURE-ONLY caller: the result is shown to a viewer and then discarded,
@@ -163,8 +217,91 @@ export async function quoteBlockAuthorFee(args: {
    * better signal anyway because it cannot be drowned by estimate volume.
    */
   suppressQuoteLogs?: boolean;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. Forwarded to `resolveBlockAuthorFeePayee`, which refuses
+   * with `'private-run'`.
+   *
+   * 🔴 THE QUOTE CARRIES IT TOO, NOT JUST THE CHARGE, AND THAT IS THE ANTI-
+   * DIVERGENCE RULE THIS FILE ALREADY OBEYS. If only the charge refused, a
+   * moderator would be SHOWN a fee on every estimate and then not billed it —
+   * re-creating estimate/submit divergence one layer down, which is precisely what
+   * the disclosure callers exist to remove. Routing it through the shared payee
+   * predicate makes both surfaces agree by construction rather than by two
+   * matching edits.
+   */
+  privateRun?: boolean;
   config?: BlockAuthorFeeConfig;
 }): Promise<BlockAuthorFeeQuote> {
+  const quote = await quoteBlockAuthorFeeUncounted(args);
+  // 🔴 ONE INSTRUMENTATION POINT, ON PURPOSE — the function below has SEVEN
+  // return arms, and a counter repeated at each of them is a seven-site ledger
+  // that will be right at six of them. Counting the RESULT instead makes an
+  // uncounted arm structurally impossible, including one added later.
+  //
+  // 🔴 `surface` IS DERIVED FROM `workflowLabel`, NOT FROM `suppressQuoteLogs`,
+  // AND AN EARLIER REVISION OF THIS LINE GOT IT WRONG IN A WAY THE TESTS COULD
+  // NOT SEE. `suppressQuoteLogs` is set at ONE of the two estimate call sites
+  // (the `kind:'step'` estimate) and NOT at the other (the workflow estimate), so deriving from it
+  // reported a genuine estimate as `gating`. The tests passed because they
+  // asserted the label against the flag the test itself passed — the
+  // expectation was taken from the implementation rather than from the router.
+  // `workflowLabel` is `'estimate'` at both estimate sites and the external id at
+  // both gating sites (the two submits), so it discriminates all four.
+  //
+  // ⚠️ THAT MAKES THE LABEL A CLAIM ABOUT A STRING THE ROUTER PASSES, AND THE
+  // ONLY THING ENFORCING IT IS THAT BOTH ESTIMATE SITES NOW IMPORT
+  // `BLOCK_AUTHOR_FEE_ESTIMATE_LABEL` RATHER THAN SPELLING `'estimate'`.
+  //
+  // 🔴 AN EARLIER REVISION OF THIS COMMENT CLAIMED IT WAS "pinned behaviourally
+  // by `blocks.router.workflow.test.ts`, which drives the real router". THAT WAS
+  // FALSE, and a round-1 audit proved it by mutation: changing both router
+  // literals to `'whatif'` left 482/482 tests green. That file contains no
+  // reference to `workflowLabel` at all. A guard a comment CLAIMS and the tree
+  // does not have is worse than no guard, because it stops the next reader
+  // looking — which is exactly the failure the paragraph above describes, one
+  // level up. The coupling is now structural (a shared import) instead of a
+  // sentence about a test.
+  //
+  // The GATING side needs no such pin: both gating sites (the two SUBMIT paths) pass
+  // `blockExternalId`, which `composeBlockExternalId` /
+  // `mintServerBlockExternalId` always prefix with `blk`/`bls`, so a gating
+  // caller cannot produce `'estimate'` by construction.
+  //
+  // Wrapped, because every sibling `blockAuthorFee*` inc in `author-fee.ts`
+  // (`:658`, `:675`, `:693`) is, under the comment "swallow — telemetry must
+  // never back-pressure the caller". This runs on a live money path; a
+  // prom-client throw here must not be what fails a charge.
+  try {
+    blockAuthorFeeQuotedCounter.inc({
+      // 🔴 DERIVED FROM THE ARGUMENT, NOT FROM THE COMPUTATION — so the type is
+      // present on every arm where it is DERIVABLE, not only on the charging
+      // one. Reading it off `quote.computation` labelled `zero-fee`,
+      // `self-dealing` and `app-missing` as `unknown` even though those arms
+      // return AFTER the computation exists, which made
+      // `{outcome="zero-fee"}` unable to separate `chat-completion` (0/0 by
+      // design) from a type that SHOULD be priced and is not — the exact
+      // per-type tuning question this counter is for. It also matches what the
+      // charge wrapper does, so the two agree.
+      coarse_type:
+        blockGenerationCoarseType(args.generationType) ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+      outcome: quote.charge ? 'quoted' : quote.reason,
+      surface: args.workflowLabel === BLOCK_AUTHOR_FEE_ESTIMATE_LABEL ? 'disclosure' : 'gating',
+    });
+  } catch {
+    // swallow — telemetry must never back-pressure the caller
+  }
+  return quote;
+}
+
+/** The quote itself. Wrapped by `quoteBlockAuthorFee`, which counts its result. */
+async function quoteBlockAuthorFeeUncounted(
+  // 🔴 DERIVED FROM THE PUBLIC SIGNATURE, NOT RESTATED. Restating it type-checked
+  // clean in ONE direction: `quoteBlockAuthorFeeUncounted(args)` passes a
+  // variable, so TypeScript's excess-property check does not apply, and a field
+  // added to the public type but not the inner one was silently ignored here.
+  args: Parameters<typeof quoteBlockAuthorFee>[0]
+): Promise<BlockAuthorFeeQuote> {
   try {
     if (!(await isAppBlocksAuthorFeeEnabled())) return { charge: false, reason: 'flag-disabled' };
   } catch {
@@ -208,6 +345,10 @@ export async function quoteBlockAuthorFee(args: {
       // does — its two skip lines. This one is wider by exactly this function's
       // `catch`, which is why the two names differ rather than one being reused.
       suppressSkipLogs: args.suppressQuoteLogs,
+      // Forwarded, never re-derived here — the private-run refusal has ONE
+      // spelling, in the payee resolver, so the quote and the accrual cannot
+      // disagree about it.
+      privateRun: args.privateRun,
     });
     if (!payee.payee) return { charge: false, reason: payee.reason };
 
@@ -331,8 +472,48 @@ export async function chargeBlockAuthorFee(args: {
   generationType: string | null;
   /** 🔴 The quote this path actually reserved. A hard ceiling; 0 forbids a charge. */
   reservedAuthorFeeBuzz: number;
+  /**
+   * PRIVATE RUN of a delisted / suspended app — from the verified token's
+   * `privateRun` claim. Forwarded into the re-price below, whose payee resolve
+   * refuses with `'private-run'` BEFORE this function reaches the debit.
+   *
+   * 🔴 REFUSED BEFORE THE DEBIT, NOT AFTER IT — the same rule the self-dealing arm
+   * obeys. A refusal after `createBuzzTransactionMany` would have already moved the
+   * reviewer's Buzz and would need `reverseBlockAuthorFee` to undo it.
+   */
+  privateRun?: boolean;
   config?: BlockAuthorFeeConfig;
 }): Promise<ChargeBlockAuthorFeeResult> {
+  const result = await chargeBlockAuthorFeeUncounted(args);
+  // Same single-point rule as the quote above: NINE return arms, counted once on
+  // the result. `coarse_type` is resolved from the generation type rather than
+  // from a computation, because the skip arms return before one exists.
+  //
+  // 🔴 THIS IS THE ONE COUNTER ON THIS PATH THAT NOTHING ELSE ANSWERS. All 12
+  // `logToAxiom` sites in this file log a FAILURE, a SKIP or a REVERSAL — there
+  // is NO success log — so "is the fee charging anyone, and when it skips, why"
+  // is otherwise answerable only by querying `block_author_fee_accrual`. That is
+  // why this survived round 0 while three siblings did not.
+  //
+  // Wrapped for the same reason as the quote counter above: every sibling inc in
+  // `author-fee.ts` is, and this runs after a real Buzz debit.
+  try {
+    blockAuthorFeeChargedCounter.inc({
+      coarse_type:
+        blockGenerationCoarseType(args.generationType) ?? BLOCK_AUTHOR_FEE_UNKNOWN_TYPE_LABEL,
+      outcome: result.charged ? 'charged' : result.reason,
+    });
+  } catch {
+    // swallow — telemetry must never back-pressure the caller
+  }
+  return result;
+}
+
+/** The charge itself. Wrapped by `chargeBlockAuthorFee`, which counts its result. */
+async function chargeBlockAuthorFeeUncounted(
+  /** Derived, not restated — see `quoteBlockAuthorFeeUncounted`. */
+  args: Parameters<typeof chargeBlockAuthorFee>[0]
+): Promise<ChargeBlockAuthorFeeResult> {
   const { workflowId, appId, appBlockId, viewerUserId, buzzType } = args;
 
   // THE STRUCTURAL BOUND, AND IT IS FIRST. Nothing below — not the flag read, not
@@ -343,16 +524,40 @@ export async function chargeBlockAuthorFee(args: {
   }
 
   // Re-price against the REALIZED base and re-resolve the payee. This is where
-  // the self-dealing exclusion is read BEFORE the debit: `quoteBlockAuthorFee`
-  // returns `self-dealing` without a fee, and this function returns before it
-  // moves any money.
-  const quote = await quoteBlockAuthorFee({
+  // the self-dealing exclusion is read BEFORE the debit: the quote returns
+  // `self-dealing` without a fee, and this function returns before it moves any
+  // money.
+  //
+  // 🔴 THE *UNCOUNTED* QUOTE, DELIBERATELY — THIS IS THE FIFTH CALLER AND IT
+  // MUST NOT LAND ON `block_author_fee_quoted_total`. It used to call the
+  // counted wrapper, so every charge that got past `not-reserved` ALSO
+  // incremented `quoted_total{surface="gating"}` — inflating the denominator of
+  // `charged_total / quoted_total{surface="gating"}` by up to 2×, and
+  // asymmetrically, since only submits that reserved a fee got the second
+  // count. It also made the help string's "gating = the submit-time quote"
+  // false, and mixed pre-submit decisions with post-submit ones under the same
+  // label.
+  //
+  // Nothing is lost by not counting it: this quote's outcome is returned
+  // verbatim as the charge's `reason` on the very next line, so
+  // `charged_total{outcome=...}` already carries it — counting here recorded the
+  // same decision twice on two different series.
+  //
+  // ⚠️ The comment above the quote counter enumerates the callers by SURFACE, and
+  // this one is neither: it is a re-price, not a quote anybody is shown or
+  // gated on.
+  const quote = await quoteBlockAuthorFeeUncounted({
     baseGenerationBuzz: args.baseGenerationBuzz,
     priceIsCap: args.priceIsCap,
     generationType: args.generationType,
     appId,
     viewerUserId,
     workflowLabel: workflowId,
+    // 🔴 MUST be forwarded. This re-price is the ONLY payee resolve on the charge
+    // path, so dropping it here would let a private run reach the debit at `:530`
+    // even though the estimate correctly refused — the field-exists-but-nothing-
+    // branches-on-it failure, in the one place where it costs real Buzz.
+    privateRun: args.privateRun,
     config: args.config,
   });
   if (!quote.charge) return { charged: false, reason: quote.reason };
@@ -370,7 +575,7 @@ export async function chargeBlockAuthorFee(args: {
         toAccountType: buzzType,
         amount: feeBuzz,
         description: 'App author fee',
-        type: TransactionType.Fee,
+        type: TransactionType.AppAuthorFee,
         externalTransactionId: blockAuthorFeeChargeKey(workflowId),
       },
     ]);
@@ -417,6 +622,25 @@ export async function chargeBlockAuthorFee(args: {
   }
 
   if (feeBuzz !== quote.feeBuzz) {
+    // 🔴 THE ESTIMATE-VS-CHARGE DIVERGENCE IS MEASURED BY THE AXIOM LINE BELOW,
+    // AND DELIBERATELY NOT BY A COUNTER. A round-0 audit killed the counter that
+    // briefly sat here, and the reasoning is worth keeping so it is not re-added:
+    //
+    //   - This log carries strictly MORE than a counter could — `reservedBuzz`,
+    //     `realizedBuzz`, `chargedBuzz`, `workflowId`, `appId`. The MAGNITUDE and
+    //     IDENTITY of a divergence are what diagnose an under-quote; a bare count
+    //     is not.
+    //   - The counter's justification was that "the estimate surface is unbounded,
+    //     so a rate derived from logs is unreliable". That argument is about the
+    //     QUOTE path. This code is inside `chargeBlockAuthorFee`, AFTER a
+    //     successful debit — measured at ~1 charge/day — where it does not hold.
+    //     It was an argument imported from somewhere it was true.
+    //   - Its documented reading was "a RATIO against
+    //     `block_author_fee_charged_total`", and at this volume that denominator
+    //     is routinely 0 over 24h.
+    //
+    // If the fee's volume grows by orders of magnitude, revisit — but measure the
+    // volume first, which is the step that was skipped.
     logToAxiom(
       {
         name: BLOCK_AUTHOR_FEE_LOG_NAME,
@@ -451,6 +675,20 @@ export async function chargeBlockAuthorFee(args: {
       // 🔴 THE CHARGED AMOUNT, not the computed one — see the clamp note above.
       computation: { ...quote.computation, feeBuzz },
       generationType: args.generationType,
+      // Unreachable-but-forwarded: the quote above already refused a private run,
+      // so this accrual cannot be reached with `privateRun: true` today. Forwarded
+      // anyway so the write-side belt is not silently weaker than the read-side
+      // one if the ordering above ever changes.
+      //
+      // 🔴 THIS LINE IS AN UNKILLABLE MUTANT, AND THAT IS RECORDED RATHER THAN
+      // HIDDEN. Deleting it changes nothing any test can observe — reaching it
+      // requires first breaking the quote refusal, which is a DIFFERENT mutation
+      // with its own killing tests. So it survived the sweep by construction, not
+      // for lack of coverage, and "zero mutants survived" would be a false claim
+      // about this rail. Do not try to write a test for it: the only way to make it
+      // observable is to remove the guard that makes it unreachable, which would be
+      // testing for a state the code is designed never to be in.
+      privateRun: args.privateRun,
     });
   } catch (error) {
     logToAxiom(

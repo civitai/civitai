@@ -34,6 +34,7 @@ vi.mock('~/providers/FeatureFlagsProvider', () => ({
     bounties: true,
     comicCreator: true,
     challengePlatform: true,
+    crucible: true,
     cosmeticShop: true,
     model3dFeed: true,
     userHubs: true,
@@ -161,7 +162,7 @@ describe('sub nav tab row geometry', () => {
     // The bug: `overflow-x` computed `visible`, so the row rendered at full content width and was
     // clipped by an ancestor with no way to scroll.
     expect(getComputedStyle(row).overflowX).toBe('auto');
-    // That this OVERFLOWS at 1136 is a property of the fixture — nine flags on and no saved config
+    // That this OVERFLOWS at 1136 is a property of the fixture — ten flags on and no saved config
     // give a ~1334px row (2026-09-15). If a future default nav ships fewer tabs this reddens here,
     // which is the fixture going stale rather than the row breaking.
     expect(row.scrollWidth).toBeGreaterThan(row.clientWidth);

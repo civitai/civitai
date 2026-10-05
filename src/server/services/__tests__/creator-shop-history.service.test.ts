@@ -113,7 +113,11 @@ describe('creator shop item history', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })
+      vi.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => null },
+        arrayBuffer: async () => new ArrayBuffer(8),
+      })
     );
   });
 

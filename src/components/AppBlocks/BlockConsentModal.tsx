@@ -19,6 +19,7 @@ import {
   BLOCK_CONSENT_BUDGET_LOW_WARNING_BODY,
   BLOCK_CONSENT_BUDGET_MAX_PER_DAY,
   BLOCK_CONSENT_BUDGET_MIN_PER_DAY,
+  BLOCK_SPEND_SCOPE,
   isSensitiveBlockScope,
 } from '~/shared/constants/block-scope.constants';
 import { SCOPE_DESCRIPTIONS } from '~/server/services/blocks/scope-descriptions.constants';
@@ -33,8 +34,24 @@ interface BlockConsentModalProps {
   onGranted: () => void;
 }
 
-/** The ONE scope in the vocabulary that can spend the viewer's Buzz. */
-const SPEND_SCOPE = 'ai:write:budgeted';
+/* The ONE scope in the vocabulary that can spend the viewer's Buzz is `BLOCK_SPEND_SCOPE`, imported
+   above from `~/shared/constants/block-scope.constants` and not re-declared here. Three surfaces
+   must agree about it — this modal decides whether to OFFER the budget field, the editor on
+   /apps/activity decides what to SEND, and the revoke dialog says that withdrawing it CLEARS the
+   stored limit — and a local const per surface is exactly the shape that lets them disagree. If the
+   grant modal looks at a different string from the one the server caps against, a spend path stops
+   being bounded.
+
+   ⚠️ RE-ANCHORED, AND THE HAZARD IS THE REASON RATHER THAN TIDINESS. This was a JSDOC DOCBLOCK
+   belonging to a private `const SPEND_SCOPE` that phase 3 deleted, left behind with a blank line
+   under it — so by the time anyone read it, it documented the NEXT declaration, which is the
+   component below. `scope-grant.service.ts` records that exact hazard by name on
+   `WRITE_RETURN_SELECT` ("A docblock separated from its function by another declaration documents
+   that declaration instead") and it was walked into here anyway. A plain block comment cannot
+   attach to a declaration at all, which is what makes this spelling the correct one for prose about
+   an ABSENT declaration — and it is the spelling `src/pages/apps/activity.tsx` already used when
+   the same const was deleted there in the same change. (Do not "restore" the JSDoc stars: a
+   docblock over nothing is the defect, not the formatting.) */
 
 /**
  * Lazy-consent surface (A6 / design-gaps C2). Opened on demand when a block
@@ -80,7 +97,7 @@ export default function BlockConsentModal({
 }: BlockConsentModalProps) {
   const dialog = useDialogContext();
   const [error, setError] = useState<string | null>(null);
-  const grantsSpend = missingScopes.includes(SPEND_SCOPE);
+  const grantsSpend = missingScopes.includes(BLOCK_SPEND_SCOPE);
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [budget, setBudget] = useState<number | string>(BLOCK_CONSENT_BUDGET_DEFAULT_PER_DAY);
   const grant = trpc.blocks.grantScopes.useMutation({

@@ -187,7 +187,7 @@ const arByResolution = (
     aspectRatioDef({ options: table[resolution] ?? table[fallback]!, default: dflt })
   );
 
-const wan22MultiStepAspectRatiosByResolution = {
+const wan22AspectRatiosByResolution = {
   '480p': getAspectRatioOptions('480p', wan22AspectRatioList),
   '720p': getAspectRatioOptions('720p', wan22AspectRatioList),
 };
@@ -202,7 +202,7 @@ const wan30AspectRatiosByResolution = {
 };
 
 const AR_21 = arByResolution(wan21AspectRatiosByResolution, '480p', '1:1');
-const AR_22_MULTISTEP = arByResolution(wan22MultiStepAspectRatiosByResolution, '480p', '1:1');
+const AR_22 = arByResolution(wan22AspectRatiosByResolution, '480p', '1:1');
 const AR_25 = arByResolution(wan25AspectRatiosByResolution, '480p', '1:1');
 const AR_27 = arByResolution(wan27AspectRatiosByResolution, '720p', '16:9');
 const AR_30 = arByResolution(wan30AspectRatiosByResolution, '720p', '16:9');
@@ -345,17 +345,9 @@ const v21 = defineGraph<FamilyExt>({ scope: familyScope })
 const v22 = defineGraph<FamilyExt>({ scope: familyScope })
   .use(shared)
   .use(makeTextBlock())
-  .field('aspectRatio', ({ images, resolution, _ext }) =>
-    noImages(images) ? (_ext.flags?.wan22MultiStep ? AR_22_MULTISTEP : AR_25)(resolution) : null
-  )
+  .field('aspectRatio', ({ images, resolution }) => (noImages(images) ? AR_22(resolution) : null))
   .field('shift', SHIFT)
-  .field('duration', ({ _ext }) =>
-    _ext.flags?.wan22MultiStep === true ? { ...DURATION_WAN, scope: 'wan' } : null
-  )
-  .field('interpolatorModel', ({ _ext }) =>
-    _ext.flags?.wan22MultiStep !== true ? INTERPOLATOR : null
-  )
-  .field('draft', ({ _ext }) => (_ext.flags?.wan22MultiStep !== true ? boolDef(false) : null))
+  .field('duration', { ...DURATION_WAN, scope: 'wan' })
   .field('resources', ({ backendEcosystem }) =>
     resourcesDef({ ecosystem: backendEcosystem, limit: 2 })
   );

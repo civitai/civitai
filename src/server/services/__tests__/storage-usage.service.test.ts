@@ -76,7 +76,7 @@ describe('claimMediaRollups', () => {
     const { text } = lastQuery(dbMock.dbWrite.$queryRaw);
     const where = text.slice(text.indexOf('WHERE ('), text.indexOf(' ORDER BY'));
     expect(where).toBe(
-      `WHERE ("imagesComputedAt" IS NULL OR "imagesRequestedAt" > "imagesComputedAt") AND "imagesRequestedAt" IS NOT NULL AND ("imagesStartedAt" IS NULL OR "imagesStartedAt" < timezone('UTC', now()) - make_interval(mins => ?))`
+      `WHERE ("imagesComputedAt" IS NULL OR "imagesRequestedAt" > "imagesComputedAt") AND "imagesRequestedAt" IS NOT NULL AND ("imagesStartedAt" IS NULL OR "imagesStartedAt" < timezone('UTC', now()) - ?)`
     );
   });
 
@@ -412,7 +412,7 @@ describe('runMediaStorageUsage', () => {
 describe('media lease', () => {
   // The lease must outlast both the job lock and a tick's budget, or the next tick reclaims a creator
   // whose scan is still running and a second Image scan starts for them.
-  it('outlasts the job lock, which outlasts the tick budget, and is what the claim binds', async () => {
+  it('outlasts the job lock, which outlasts the tick budget, and is what the claim uses', async () => {
     expect(MEDIA_LEASE_MINUTES * 60).toBeGreaterThan(MEDIA_JOB_LOCK_SECONDS);
     expect(MEDIA_TICK_BUDGET_MS / 1000).toBeLessThan(MEDIA_JOB_LOCK_SECONDS);
     // The budget is checked before a claim, so a creator claimed at the last moment still scans in full.
@@ -421,7 +421,10 @@ describe('media lease', () => {
     );
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([]);
     await claimMediaRollups();
-    expect(lastQuery(dbMock.dbWrite.$queryRaw).values).toContain(MEDIA_LEASE_MINUTES);
+    const { values } = lastQuery(dbMock.dbWrite.$queryRaw);
+    expect(values.map((v) => (v as { sql?: string }).sql)).toContain(
+      `make_interval(mins => ${MEDIA_LEASE_MINUTES})`
+    );
   });
 });
 

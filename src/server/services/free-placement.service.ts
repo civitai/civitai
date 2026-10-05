@@ -8,7 +8,7 @@ import {
 } from '~/server/services/placement-space.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type {
-  PlacementSpaceEntity,
+  PlacementTargetType,
   PlacementSpaceMode,
   PlacementSurface,
 } from '~/shared/utils/placement';
@@ -82,14 +82,14 @@ const LOCK_TIMEOUT = '3s';
  */
 const spaceLockKey = (
   surface: PlacementSurface,
-  targetType: PlacementSpaceEntity,
+  targetType: PlacementTargetType,
   targetId: number
 ) => `${surface}:${targetType}:${targetId}`;
 
 type PlacementClient = Pick<typeof dbWrite, 'placement'>;
 type SpaceTarget = {
   surface: PlacementSurface;
-  targetType: PlacementSpaceEntity;
+  targetType: PlacementTargetType;
   targetId: number;
 };
 

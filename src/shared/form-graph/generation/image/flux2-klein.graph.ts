@@ -1,6 +1,6 @@
 import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SDXL_SQUARE_AR, SEED, selectDef, sliderDef } from '../defs';
+import { img2imgImages, SDXL_FULL_AR, SEED, selectDef, sliderDef } from '../defs';
 import { familyResources, familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
@@ -53,7 +53,7 @@ const ecosystemToMode: Record<string, Flux2KleinMode> = {
 
 const distilled = defineGraph<FamilyExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   // scoped per arm: base's 20-50 range shares the family bucket and its
   // values fail distilled's max(12) at validate
   .field('steps', { ...sliderDef({ min: 4, max: 12, default: 8 }), scope: 'distilled' })
@@ -61,7 +61,7 @@ const distilled = defineGraph<FamilyExt>()
 
 const base = defineGraph<FamilyExt>()
   .field('resources', familyResources)
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR)
   .field('sampler', selectDef({ options: flux2KleinSamplers, default: 'euler' }))
   .field('scheduler', selectDef({ options: flux2KleinSchedules, default: 'simple' }))
   .field('cfgScale', sliderDef({ min: 2, max: 20, default: 7, step: 0.5 }))

@@ -137,3 +137,34 @@ export function coveredByForUser(
     ) ?? undefined
   );
 }
+
+/**
+ * Both answers `isGenerationEligible` needs, from one row.
+ *
+ * It takes the audience-gated answer AND the live one, and the two have the same type — so passing
+ * the flag-picked value for both silently disables the model-locked rule, with nothing to fail.
+ * Resolving the pair here makes a mismatched pair unexpressible, which is the shape that bit twice
+ * while this was being written: once through a `gate as unknown as` cast and once through a
+ * destructured `generationCoverage`.
+ *
+ * Both coerce to `false`, unlike `pickCovered`'s `null`: a gate bag's absent-row answer is pinned as
+ * `false` by `workflow.service`'s tests, and every consumer treats the three as equal anyway.
+ */
+export function coveragePair(row: CoverageColumns | null | undefined, next: boolean) {
+  return {
+    covered: pickCovered(row, next) ?? false,
+    coveredLive: pickCovered(row, false) ?? false,
+  };
+}
+
+/** `coveragePair` where the audience gate applies and coverage arrives as a relation. */
+export function coveragePairForUser(
+  version: Parameters<typeof coveredByForUser>[0],
+  next: boolean,
+  audience: { member: boolean; isCheckpoint: boolean }
+) {
+  return {
+    covered: coveredByForUser(version, next, audience) ?? false,
+    coveredLive: coveredBy(version, false) ?? false,
+  };
+}

@@ -47,14 +47,12 @@ export function buildV1MigrationIntent(
   take(global, 'workflow');
   take(global, 'prompt');
   take(global, 'negativePrompt');
-  take(global, 'quantity');
+  // v1 kept one quantity for every output; it was almost always an image count
+  take(global, 'quantity', scopedAddress('quantity', 'image'));
 
   const preferences = readRecord(read, `${V1_KEY}.preferences`);
   take(preferences, 'outputFormat');
   take(preferences, 'priority');
-
-  const draft = readRecord(read, `${V1_KEY}.workflow.txt2img:draft`);
-  take(draft, 'quantity', scopedAddress('quantity', 'txt2img:draft'));
 
   for (const output of OUTPUT_TYPES) {
     const record = readRecord(read, `${V1_KEY}.output.${output}`);

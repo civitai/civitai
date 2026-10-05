@@ -1,10 +1,10 @@
 import type { ButtonProps } from '@mantine/core';
-import { Badge, Button, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
-import { IconBolt, IconBrush } from '@tabler/icons-react';
+import { Button, Group, Text, Tooltip } from '@mantine/core';
+import { IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
-import { abbreviateNumber } from '~/utils/number-helpers';
+import { PaidAccessPriceBadge } from '~/components/Model/ModelVersions/PaidAccessPriceBadge';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 
 export function GenerateButton({
@@ -13,6 +13,7 @@ export function GenerateButton({
   children,
   generationPrice,
   listedPrice,
+  acceptsBlueBuzz,
   onPurchase,
   onClick,
   epochNumber,
@@ -21,7 +22,6 @@ export function GenerateButton({
   wildcardSetId,
   ...buttonProps
 }: Props) {
-  const theme = useMantineTheme();
   const { trackAction } = useTrackEvent();
   // `generationPrice` is what THIS viewer must pay and turns the button into a purchase action.
   // `listedPrice` is what buyers pay, shown to the owner/mod who already has access — it must never
@@ -85,38 +85,13 @@ export function GenerateButton({
       style: { cursor: 'pointer' },
     });
 
-  const priceBadge = (
-    <Badge
-      radius="sm"
-      size="sm"
-      variant="filled"
-      color="yellow.7"
-      style={{
-        position: 'absolute',
-        top: '-8px',
-        right: '-8px',
-        boxShadow: theme.shadows.sm,
-        padding: '4px 2px',
-        paddingRight: '6px',
-      }}
-    >
-      <Group gap={0} wrap="nowrap">
-        <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={14} />{' '}
-        <Text size="xs" fz={11} c="dark.9">
-          {abbreviateNumber(shownPrice ?? 0, { decimals: 0 })}
-        </Text>
-      </Group>
-    </Badge>
-  );
-  const purchaseIcon = isListedOnly ? (
-    <Tooltip
-      label={`Buyers pay ${abbreviateNumber(listedPrice ?? 0, { decimals: 0 })} Buzz`}
-      withArrow
-    >
-      {priceBadge}
-    </Tooltip>
-  ) : (
-    priceBadge
+  const purchaseIcon = (
+    <PaidAccessPriceBadge
+      price={shownPrice ?? 0}
+      acceptsBlueBuzz={acceptsBlueBuzz}
+      listedOnly={isListedOnly}
+      decimals={0}
+    />
   );
 
   const button = (
@@ -170,6 +145,8 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   generationPrice?: number;
   /** What buyers pay for generation. Informational only — never triggers the purchase flow. */
   listedPrice?: number;
+  /** The paid-access terms accept Blue Buzz — colours the price chip to say so. */
+  acceptsBlueBuzz?: boolean;
   onPurchase?: () => void;
   onClick?: () => void;
   epochNumber?: number;

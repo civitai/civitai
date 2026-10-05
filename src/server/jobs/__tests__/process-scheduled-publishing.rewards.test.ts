@@ -54,6 +54,7 @@ vi.mock('~/server/jobs/job', () => ({
 
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockLogToAxiom = loggingMock.logToAxiom;
@@ -72,11 +73,13 @@ type Follower = { projectId: number; userId: number };
 
 // Routed on SQL text rather than call order so adding a read doesn't shift these.
 const stubReads = ({
+  versions = [],
   scheduled = [],
   newlyLive = [],
   chapters = [],
   followers = [],
 }: {
+  versions?: (Row & { extras: { modelId: number } })[];
   scheduled?: Row[];
   newlyLive?: Row[];
   chapters?: Chapter[];
@@ -89,6 +92,7 @@ const stubReads = ({
     if (sql.includes('"ComicEngagement"'))
       throw new Error('relation "ComicEngagement" does not exist');
     if (sql.includes('"ComicProjectEngagement"')) return followers;
+    if (sql.includes("'hasEarlyAccess'")) return versions;
     if (sql.includes('"ComicChapter"')) return chapters;
     if (sql.includes('JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"')) return scheduled;
     if (sql.includes('FROM "Post" p')) return newlyLive;
@@ -323,7 +327,46 @@ describe('processScheduledPublishing :: standalone sweep window', () => {
     const interval = standaloneCall().find(
       (value) => typeof (value as Prisma.Sql)?.sql === 'string'
     ) as Prisma.Sql;
-    expect(interval.sql).toBe('make_interval(mins => 60)');
+    expect(interval.sql).toBe('make_interval(mins => 10)');
     expect(interval.values).toEqual([]);
+  });
+
+  // To whoever is about to give the sweep its own, larger offset: post.controller skips the
+  // inline reward for any post scheduled at least POST_MINIMUM_SCHEDULE_MINUTES out, and this
+  // sweep is then its only reward. A post created and scheduled the same minimum ahead sits
+  // only about that far past createdAt, so an offset above the minimum never pays it at all.
+  // Model and version publishes also stamp Post.publishedAt with no inline reward, so this
+  // offset decides which of their gallery posts earn it too.
+  it('offsets the sweep by no more than the schedule minimum', async () => {
+    await runJob();
+    const interval = standaloneCall().find(
+      (value) => typeof (value as Prisma.Sql)?.sql === 'string'
+    ) as Prisma.Sql;
+    const offset = Number(/mins => (\d+)/.exec(interval.sql)?.[1]);
+    expect(offset).toBeLessThanOrEqual(POST_MINIMUM_SCHEDULE_MINUTES);
+  });
+});
+
+describe('processScheduledPublishing :: lastVersionAt', () => {
+  // sync_model_to_metric skips a lastVersionAt later than the DB's NOW(); a JS timestamp from a
+  // pod clock running ahead, or a bare NOW() rounded up by the timestamp(3) column, left
+  // ModelMetric.lastVersionAt NULL and the model off the Newest feed.
+  it('stamps lastVersionAt from the database clock, not the job clock', async () => {
+    const txExecuteRaw = vi.fn();
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
+      fn({ $executeRaw: txExecuteRaw, $queryRaw: vi.fn().mockResolvedValue([]) })
+    );
+    stubReads({ versions: [{ id: 100, userId: 10, extras: { modelId: 42 } }] });
+
+    await runJob();
+
+    const call = txExecuteRaw.mock.calls.find((args) =>
+      (args[0] as string[]).join(' ').includes('SET "lastVersionAt"')
+    );
+    expect(call).toBeDefined();
+    expect((call![0] as string[]).join('?')).toContain(
+      `SET "lastVersionAt" = date_trunc('milliseconds', NOW())`
+    );
+    expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
   });
 });

@@ -45,7 +45,7 @@ off. Moderator-database slices *can* be ticked once they work: the app reads and
 
 ## The moderator database (`retool_db` in the exports)
 
-User notes and image help requests live in a database of their own, never in Civitai's. (Legacy
+User notes, model notes and image help requests live in a database of their own, never in Civitai's. (Legacy
 `UserStrikes` and `TimedMutes` are there too but are **not** the live implementations — strikes go
 through `strike/create` and timed mutes are `User.muteExpiresAt`. `TimedMutes` is not even typed.)
 
@@ -63,14 +63,16 @@ const notes = await getModeratorDb()
   .execute();
 ```
 
-It points at Retool's Postgres today, so **Retool and the moderator app are writing to the same tables
-during the transition** — which is what makes an incremental cutover possible. Keep writes compatible
-with what Retool expects to read back.
+Since 2026-08-21 it points at the **moderator** database (`MODERATOR_DATABASE_URL`), not Retool's — the
+two were consolidated. Retool may still be live for tables it owns, so keep writes compatible with what
+it expects to read back until it is switched off; see
+[`retool-db-cutover.md`](../../../docs/moderator-app/retool-db-cutover.md).
 
 ### Attribution: write the name, ids come later
 
-`createdBy` / `lastUpdateBy` / `handledBy` are free text holding Retool *display names*, and only 5 of
-37 map to a Civitai account. A name → userId table is being assembled separately.
+`createdBy` / `lastUpdateBy` / `handledBy` are free text holding Retool *display names*, and the
+name → id map is being assembled separately — 53 distinct names across nine columns; see
+[`moderator-db-backfill-tasks.md`](../../../docs/moderator-app/moderator-db-backfill-tasks.md).
 
 Until it lands, **write `locals.user.username` into those columns** and do not invent an id column. New
 rows are then at least resolvable (a Civitai username maps to an account trivially), while historical

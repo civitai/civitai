@@ -7,6 +7,7 @@
     VERDICT_CLASS,
     VERDICT_HINT,
     VERDICT_LABEL,
+    VERDICT_QUESTION,
     verdictAttribution,
   } from './finding-presentation';
 
@@ -77,10 +78,13 @@
 {#if canRule || shown !== null}
   <div class="border-dark-4 mt-4 border-t pt-4">
     <div class="mb-2 flex flex-wrap items-baseline gap-x-3 gap-y-1">
-      <!-- 🔴 A SEPARATE JUDGEMENT FROM THE DETECTOR'S "acted", and the label says whose it is. The
-           two are independent: the common finding is one the detector left alone and a moderator
-           rules correct. -->
-      <span class="text-dark-2 text-sm">Your verdict</span>
+      <!-- 🔴 A SEPARATE JUDGEMENT FROM THE DETECTOR'S "acted", and it is asked AS A QUESTION ABOUT THE
+           ACCOUNT. The two are independent — the commonest finding is one the detector left alone and
+           a moderator rules `tp` (yes, abuse) — and while the buttons were named after the detector's
+           correctness the answer's meaning inverted between two populations of this board with
+           nothing on screen saying which. The wording lives in `finding-presentation.ts`, where it is
+           pinned; see `VERDICT_QUESTION` there for the inversion. -->
+      <span class="text-dark-2 text-sm">{VERDICT_QUESTION}</span>
       {#if shown === null}
         <span class="text-dark-2 text-sm">— not yet ruled</span>
       {:else}

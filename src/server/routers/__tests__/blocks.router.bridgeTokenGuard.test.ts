@@ -57,9 +57,18 @@ vi.mock('~/server/services/blocks/app-analytics.service', () => ({
   emptyAnalytics: vi.fn(),
   resolveRange: vi.fn(),
 }));
-vi.mock('~/server/services/blocks/buzz-attribution.service', () => ({
+// 🔴 SPREAD, NOT A HAND-LISTED FACTORY. This suite tests nothing about revenue; it
+// mocks this module only because `blocks.router` imports it at module scope. A
+// factory naming individual exports therefore fails to LOAD the moment the router
+// gains one more import from here — in CI, in a file nobody was looking at, with a
+// green typecheck. It has already had to be edited once for exactly that reason.
+// `~/server/services/blocks/dev-tunnel.service` below is mocked this way for the
+// same stated reason.
+vi.mock('~/server/services/blocks/buzz-attribution.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
   getRevenueForOwner: vi.fn(),
   getRecentAttributionsForOwner: vi.fn(),
+  getGoodsSalesForOwner: vi.fn(),
   emptyRevenue: vi.fn(),
   recordSpendAttribution: vi.fn(),
 }));
@@ -291,6 +300,103 @@ describe('bridge guard — approved status', () => {
     await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
       code: 'FORBIDDEN',
       message: 'block instance revoked',
+    });
+  });
+
+  /**
+   * 🔴 THE PRIVATE-RUN EXEMPTION, ON THE BRIDGE — and this describe exists because the
+   * REST half was covered and this one was not.
+   *
+   * The `private_run_exempt` verdict was pinned at the predicate and admitted at TWO
+   * readers: `withBlockScope` (REST) and `assertAppBlockApproved` (here). Only the REST
+   * admission had a test. The mutant that matters is subtle: DELETING the term from the
+   * bridge's allow-condition is caught by the `verdict satisfies never` exhaustiveness
+   * check, so the compiler holds that line — but RELOCATING it into the refusal branch
+   * (`verdict === 'not_approved' || … || verdict === 'private_run_exempt'`) narrows to
+   * `never` correctly and COMPILES CLEAN. Every private-run bridge call then throws
+   * `FORBIDDEN: app block is not approved`, which is verbatim the failure this feature's
+   * own docblock names — "the iframe boots and then every single bridge call 403s" — and
+   * before these rows nothing in the repo went red for it.
+   *
+   * The bridge also records that it emits no verdict counter, so there is no metric that
+   * would have surfaced this in production either.
+   */
+  describe('bridge guard — the PRIVATE-RUN exemption', () => {
+    it('admits a private-run token on a SUSPENDED app, for every audience', async () => {
+      for (const privateRunAudience of ['owner', 'editor', 'moderator'] as const) {
+        mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'suspended' });
+        mockIsRevoked.mockResolvedValue(false);
+        mockVerifyBlockToken.mockResolvedValue(
+          validClaims({ privateRun: true, privateRunAudience })
+        );
+        // Must NOT throw. Asserted as a resolution rather than "no error thrown", so a
+        // proc that returned a rejected promise is not silently tolerated.
+        await expect(caller().getMyBuzzBalance({ blockToken: 't' })).resolves.toBeDefined();
+      }
+    });
+
+    it('🔴 NEGATIVE CONTROL: the SAME suspended fixture refuses a PLAIN token', async () => {
+      // Without this, the row above cannot distinguish "the claim admitted it" from "the
+      // fixture was never refused". Same row, same proc, no private-run claim.
+      mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'suspended' });
+      mockIsRevoked.mockResolvedValue(false);
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'app block is not approved',
+      });
+    });
+
+    it('🔴 a LONE privateRun claim with no audience is REFUSED — the pair is the guard', async () => {
+      mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'suspended' });
+      mockIsRevoked.mockResolvedValue(false);
+      mockVerifyBlockToken.mockResolvedValue(validClaims({ privateRun: true }));
+      await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'app block is not approved',
+      });
+    });
+
+    it('🔴 an UNRECOGNISED audience is REFUSED — the closed-set test, not typeof-string', async () => {
+      for (const bogus of ['Editor', 'admin', '']) {
+        mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'suspended' });
+        mockIsRevoked.mockResolvedValue(false);
+        mockVerifyBlockToken.mockResolvedValue(
+          validClaims({ privateRun: true, privateRunAudience: bogus })
+        );
+        await expect(
+          caller().getMyBuzzBalance({ blockToken: 't' }),
+          `audience=${JSON.stringify(bogus)}`
+        ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+      }
+    });
+
+    it('still REVOKES a private-run token — the exemption is the approved check only', async () => {
+      // Exactly the property the dev-token row above pins, for the new audience. A
+      // banned publisher's app is refused at the revocation layer even for an admitted
+      // audience, which is the free half of the ban protection that the predicate's own
+      // owner-ban gate backs up (the Redis markers are time-boxed).
+      mockDbRead.appBlock.findUnique.mockResolvedValue({ id: 'apb_test', status: 'suspended' });
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({ privateRun: true, privateRunAudience: 'moderator' })
+      );
+      mockIsRevoked.mockResolvedValue(true);
+      await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
+        code: 'FORBIDDEN',
+        message: 'block instance revoked',
+      });
+    });
+
+    it('a MISSING backing row still 404s for a private-run token', async () => {
+      // The exemption is answered BEFORE the row read, so this row proves the read still
+      // happens for the populations that need it — i.e. the exemption did not turn the
+      // whole guard into a no-op for every claim shape.
+      mockDbRead.appBlock.findUnique.mockResolvedValue(null);
+      mockIsRevoked.mockResolvedValue(false);
+      mockVerifyBlockToken.mockResolvedValue(validClaims());
+      await expect(caller().getMyBuzzBalance({ blockToken: 't' })).rejects.toMatchObject({
+        code: 'NOT_FOUND',
+      });
     });
   });
 });

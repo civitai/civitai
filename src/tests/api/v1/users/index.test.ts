@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 
 // 1. Hoisted mocks. The handler builds a tRPC caller via publicApiContext2 and
 // calls `apiCaller.user.getAll(...)`. We mock publicApiContext2 to return a
@@ -257,5 +258,35 @@ describe('/api/v1/users transient-upstream 503 reclassification', () => {
 
     expect(res._getStatusCode()).not.toBe(503);
     expect(res._getHeader('Retry-After')).toBeUndefined();
+  });
+});
+
+describe('/api/v1/users system-request token', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockPublicApiContext2.mockResolvedValue({ user: { getAll: mockGetAll } });
+    mockGetAll.mockResolvedValue([]);
+  });
+
+  const includeSentFor = async (query: Record<string, string>) => {
+    const { req, res } = createMocks({ query: { ...query, include: 'status' } });
+    await handler(req, res);
+    return mockGetAll.mock.calls.at(-1)?.[0]?.include;
+  };
+
+  it.each([
+    ['an empty token against an empty secret', '', { token: '' }],
+    ['whitespace against a whitespace secret', '  ', { token: '  ' }],
+    ['no token against an unset secret', undefined, {}],
+  ])('does not treat %s as a system request', async (_label, secret, query) => {
+    setEnv({ WEBHOOK_TOKEN: secret });
+
+    expect(await includeSentFor(query)).toEqual([]);
+  });
+
+  it('POSITIVE CONTROL: the configured secret is a system request', async () => {
+    setEnv({ WEBHOOK_TOKEN: 'a-real-secret' });
+
+    expect(await includeSentFor({ token: 'a-real-secret' })).toEqual(['status']);
   });
 });

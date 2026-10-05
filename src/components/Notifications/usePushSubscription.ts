@@ -1,8 +1,14 @@
 import { useCallback, useEffect } from 'react';
+import {
+  classifyPushEnableError,
+  describePushEnableFailure,
+} from '~/components/Notifications/pushEnableErrors';
+import type { PushEnableFailure } from '~/components/Notifications/pushEnableErrors';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usePushSubscriptionStore } from '~/store/push-subscription.store';
 import type { PushSupport } from '~/store/push-subscription.store';
+import { isBraveBrowser } from '~/utils/device-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -29,6 +35,16 @@ function urlBase64ToUint8Array(base64String: string) {
 async function getSubscription() {
   const registration = await navigator.serviceWorker.register('/sw.js');
   return { registration, subscription: await registration.pushManager.getSubscription() };
+}
+
+/** Single exit point for a failed `enable()`, so no branch can go quiet again. */
+function reportPushEnableFailure(failure: PushEnableFailure) {
+  const { title, message, persist } = describePushEnableFailure(failure);
+  showErrorNotification({
+    title,
+    error: { message },
+    autoClose: persist ? false : 8000,
+  });
 }
 
 /**
@@ -98,7 +114,15 @@ export function usePushSubscription() {
     try {
       const result = await Notification.requestPermission();
       setState({ permission: result });
-      if (result !== 'granted') return false;
+      if (result !== 'granted') {
+        // Previously a bare `return false`, which made the button look inert: no toast, no state
+        // change, nothing on screen. A denial and a dismissal need different advice — a denial
+        // cannot be re-asked from the page at all, so it has to send the user to site settings.
+        reportPushEnableFailure(
+          result === 'denied' ? { kind: 'permission-denied' } : { kind: 'permission-dismissed' }
+        );
+        return false;
+      }
 
       const { registration } = await getSubscription();
       await navigator.serviceWorker.ready;
@@ -107,7 +131,11 @@ export function usePushSubscription() {
         applicationServerKey: urlBase64ToUint8Array(env.NEXT_PUBLIC_VAPID_PUBLIC_KEY as string),
       });
       const json = subscription.toJSON();
-      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) return false;
+      if (!json.endpoint || !json.keys?.p256dh || !json.keys?.auth) {
+        // Also silent before. We have nothing to send to, so it is a failure, not a no-op.
+        reportPushEnableFailure({ kind: 'subscription-incomplete' });
+        return false;
+      }
       await subscribeMutation.mutateAsync({
         endpoint: json.endpoint,
         keys: { p256dh: json.keys.p256dh, auth: json.keys.auth },
@@ -115,10 +143,9 @@ export function usePushSubscription() {
       setState({ subscribed: true, currentEndpoint: json.endpoint });
       return true;
     } catch (error) {
-      showErrorNotification({
-        title: 'Could not enable push notifications',
-        error: error as Error,
-      });
+      // `Registration failed - push service error` is the common one and is useless on its own;
+      // classify it into something actionable. Brave detection is awaited only on the failure path.
+      reportPushEnableFailure(classifyPushEnableError(error, { isBrave: await isBraveBrowser() }));
       return false;
     } finally {
       setState({ busy: false });

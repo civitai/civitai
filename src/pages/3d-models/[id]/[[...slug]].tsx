@@ -52,7 +52,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Gated } from '~/components/Gated/Gated';
 import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
+import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
+import { isAppealableModel3D } from '~/shared/utils/appeal';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
@@ -68,7 +69,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
+import { CollectionType, EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getModel3DUrl } from '~/utils/string-helpers';
@@ -384,7 +385,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         <Stack gap="md">
           {/* Mod-takedown appeal CTA — surfaces when the owner sees their own
               Unpublished/Deleted Model3D. Mirrors the Image appeal pattern. */}
-          {isOwner && (isUnpublished || model3d.status === Model3DStatus.Deleted) && (
+          {isOwner && isAppealableModel3D(model3d) && (
             <AlertWithIcon
               icon={<IconCube />}
               color="yellow"
@@ -392,20 +393,8 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               title="Removed by moderators"
               radius="md"
             >
-              This 3D model has been {isUnpublished ? 'unpublished' : 'removed'} by our moderators.
-              We can make mistakes — if you believe this was done in error,{' '}
-              <Anchor
-                type="button"
-                onClick={() =>
-                  dialogStore.trigger({
-                    component: AppealDialog,
-                    props: { entityId: model3d.id, entityType: EntityType.Model3D },
-                  })
-                }
-              >
-                appeal this removal
-              </Anchor>
-              .
+              This 3D model has been {isUnpublished ? 'unpublished' : 'removed'} by our moderators.{' '}
+              <AppealRemovalPrompt entityId={model3d.id} entityType={EntityType.Model3D} />
             </AlertWithIcon>
           )}
 
@@ -466,6 +455,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <ShareButton
                   url={getModel3DUrl({ id: model3d.id, name: model3d.name })}
                   title={model3d.name}
+                  collect={{ model3dId: model3d.id, type: CollectionType.Model3D }}
                 >
                   <LegacyActionIcon variant="light" size="lg" aria-label="Share">
                     <IconShare3 size={20} />
@@ -611,22 +601,19 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   })}
                 >
                   <Accordion.Item value="details">
-                    <Accordion.Control>
-                      <Group justify="space-between">
-                        Details
-                        <Button
-                          size="compact-xs"
-                          variant="light"
-                          leftSection={<IconWand size={12} />}
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            openReviewModal();
-                          }}
-                        >
-                          Write a review
-                        </Button>
-                      </Group>
-                    </Accordion.Control>
+                    {/* Beside the control, not inside it — the control is a <button>. */}
+                    <div className="flex items-center">
+                      <Accordion.Control className="flex-1">Details</Accordion.Control>
+                      <Button
+                        className="mr-3 shrink-0"
+                        size="compact-xs"
+                        variant="light"
+                        leftSection={<IconWand size={12} />}
+                        onClick={openReviewModal}
+                      >
+                        Write a review
+                      </Button>
+                    </div>
                     <Accordion.Panel p={0}>
                       <Stack
                         gap={0}

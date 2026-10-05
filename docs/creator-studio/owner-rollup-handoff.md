@@ -75,8 +75,11 @@ or the dashboard's headline totals. **It does not delete the dictionary** — se
 
 `TransactionType.LicenseFee = 27`, but the ClickHouse ingest MV (`buzz.tx_to_staged_mv`) has a hand-written
 `caseWithExpression` map that only enumerates `0..26` and falls back to `toString(Type)`. So **every license fee
-payout since 2026-05-21 is labelled `'27'`** — 92 rows, growing nightly at 02:00. It is the only numeric type
-value in the table's history.
+payout since 2026-05-21 is labelled `'27'`** — 92 rows, growing nightly at 02:00.
+
+**It is no longer the only one: `TransactionType.AppAuthorFee = 28` is a second value past the map**, so App Blocks
+author-fee rows (both the viewer debit and the settlement mint) land as `'28'` from their cutover onward. Any
+`0..26` assumption about this column is unsafe — treat "numeric `type`" as an open set, not as `'27'`.
 
 Until fixed, filter `type IN ('licenseFee','27')`, or the license-fee card reads zero. **Justin owns this fix**
 (he built the MV chain); the root cause, the verified swap procedure, and the backfill live in his private plan
@@ -239,7 +242,9 @@ in this repo inserts into it).
 
 - [ ] Confirm the `byToAccount` projection actually serves the query plan (`EXPLAIN indexes=1`) for a
       `toAccountId = X AND date BETWEEN …` read. If yes, **no MV is needed at all** for v1.
-- [ ] Filter `type IN ('licenseFee','27')` until Justin's ingest fix + backfill lands, then drop the `'27'`.
+- [ ] Filter `type IN ('licenseFee','27')` until Justin's ingest fix + backfill lands, then drop the `'27'`. The
+      MV mislabels `AppAuthorFee` (28) the same way; that one is a **separate product decision**, so decide
+      explicitly whether App Blocks author fees belong in this page's earnings before adding `'28'` to any filter.
 - [ ] Exclude `accountId = 0`; isolate access sales by `externalTransactionId LIKE 'early-access-%'`.
 - [x] ~~Decide whether "top-earning models" is answerable from `buzzTransactions`~~ — **it is not, and Justin
       confirmed the tile ships**, so it is driven by `resourceCompensations` + the Part 2 dictionary (with the

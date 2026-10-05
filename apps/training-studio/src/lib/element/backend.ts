@@ -35,6 +35,21 @@ export interface StudioElementHost {
      *  mode to it — no user toggle, and nothing persisted to localStorage. Omit to leave the
      *  user's own toggle in charge. */
     buzzMode?: 'yellow' | 'green';
+    /** Whether this user may generate with UNPUBLISHED training results — the main app gates that
+     *  on membership (member or moderator). Pass `false` for a non-member: the per-epoch Generate
+     *  affordance disables with a membership explanation instead of silently doing nothing. Omit
+     *  when the host doesn't know (behaves as before). */
+    canGenerateUnpublished?: boolean;
+    /** Whether this user holds a paid membership (tier other than `free`). Without one, Blue Buzz
+     *  can't pay for a mature dataset, and Review warns the run will be charged in full. Omit when
+     *  the host doesn't know. */
+    isPaidMember?: boolean;
+    /** The host's membership-plans page, linked from that explanation. Relative = same-tab
+     *  in-host navigation, absolute = new tab. Omit to render the explanation without a link. */
+    pricingUrl?: string;
+    /** The per-model catalog gates (`ModelCard.flagKey`) this user may see — the embed's stand-in
+     *  for the shell's server-side `allowedModelFlags`. Omitted => every gated model stays hidden. */
+    enabledModelFlags?: string[];
   };
   hrefFor(loc: StudioLocation): string;
   navigate(loc: StudioLocation, opts?: { refreshAll?: boolean }): Promise<void>;
@@ -144,6 +159,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       call((client) => train.submitTrainingBatch(client, runs, submitOpts())),
 
     rename: (workflowId, name) => call((client) => train.renameTraining(client, workflowId, name)),
+
+    epochArchive: (workflowId) => call((client) => orch.createEpochArchive(client, workflowId)),
+    deleteTraining: (workflowId) => call((client) => train.deleteTraining(client, workflowId)),
 
     continueQuote: (workflowId, fromEpoch, addEpochs) =>
       call((client) =>

@@ -135,11 +135,20 @@ describe('resolveExistingPostTags — a block may NEVER mint a site tag', () => 
 describe('resolveGalleryTarget', () => {
   const OTHER_OWNER = 555;
 
-  function version(over: { model?: Record<string, unknown>; status?: string } = {}) {
+  function version(
+    over: {
+      model?: Record<string, unknown>;
+      status?: string;
+      availability?: string;
+      publishedAt?: Date;
+    } = {}
+  ) {
     return {
       id: 3100,
       name: 'v1.5',
       status: 'Published',
+      publishedAt: over.publishedAt ?? new Date(Date.now() - 24 * 60 * 60 * 1000),
+      availability: over.availability ?? 'Public',
       modelId: 800,
       model: {
         id: 800,
@@ -231,6 +240,28 @@ describe('resolveGalleryTarget', () => {
       ['a version whose MODEL is unpublished', version({ model: { status: 'Draft' } })],
       ['a DELETED model', version({ model: { deletedAt: new Date() } })],
       ['a PRIVATE model', version({ model: { availability: 'Private' } })],
+      ['a PRIVATE version', version({ availability: 'Private' })],
+      [
+        // Gallery posts are public, so a private version is refused outright, not by visibility:
+        // its own owner can see it and would otherwise pass.
+        "the poster's OWN private version",
+        version({ availability: 'Private', model: { userId: VIEWER_USER_ID } }),
+      ],
+      [
+        'a version scheduled for later',
+        version({ publishedAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }),
+      ],
+      [
+        "the poster's OWN version scheduled for later",
+        version({
+          publishedAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+          model: { userId: VIEWER_USER_ID },
+        }),
+      ],
+      [
+        "the poster's OWN private model",
+        version({ model: { userId: VIEWER_USER_ID, availability: 'Private' } }),
+      ],
     ])('refuses %s', async (_label, row) => {
       dbMock.dbRead.modelVersion.findUnique.mockResolvedValue(row);
       dbMock.dbRead.oauthClient.findUnique.mockResolvedValue({ userId: PUBLISHER_USER_ID });
@@ -934,6 +965,30 @@ describe('🔴 the attribution marker is NOT client-settable — a structural cl
     );
     expect(BLOCK_POST_APP_ID_META_KEY).toBe(BLOCK_PUBLISHED_APP_ID_META_KEY);
     expect(BLOCK_POST_APP_ID_META_KEY).toBe('blockPublishedAppId');
+  });
+
+  it('the WRITER and the post-detail chip READER share one declaration', async () => {
+    // ⚠️ A READER now exists as well as the two writers above, and the ledger has
+    // to name it or a reader of the ledger concludes there are two holders when
+    // there are three.
+    //
+    // 🔴 This one is an IDENTITY, not an agreement: the post-detail "Published
+    // with <app>" chip imports the same constant out of `block-post.logic.ts`
+    // (the pure module) rather than re-spelling the literal, so the write side
+    // and the read side cannot disagree by construction. That is the whole reason
+    // the declaration lives there — a reader cannot import the SERVICE without
+    // pulling Prisma into a pure projection, and before the move it had to
+    // re-spell `'blockPublishedAppId'`, which made a rename here a silently dead
+    // chip with nothing failing.
+    const { BLOCK_POST_APP_ID_META_KEY: fromLogic } = await import(
+      '~/server/services/blocks/block-post.logic'
+    );
+    expect(BLOCK_POST_APP_ID_META_KEY).toBe(fromLogic);
+    // And the reader actually reads THAT key, not a coincidentally-equal one.
+    const { readBlockPublishedAppId } = await import(
+      '~/server/services/blocks/post-app-chip.logic'
+    );
+    expect(readBlockPublishedAppId({ [fromLogic]: 'appblk-x' })).toBe('appblk-x');
   });
 
   it('no post input schema exposes `metadata`, so no client can forge or suppress it', async () => {

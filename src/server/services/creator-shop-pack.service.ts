@@ -15,6 +15,7 @@ import {
   creatorCosmeticTypes,
   isCreatorCosmeticType,
   isConsumableCosmeticType,
+  packMembersMissing,
   packPriceFloor,
   type PackMemberPricing,
 } from '~/server/schema/creator-shop.schema';
@@ -562,7 +563,7 @@ export const getPackDetail = async ({
       : undefined,
     // A member the pack no longer resolves is a member that can't be sold; the
     // purchase refuses on the same condition, so say so before they try.
-    unavailableCount: item.members.length - members.length,
+    unavailableCount: packMembersMissing(packMeta.packMemberCount, members.length),
     // The purchase refuses the lister outright, and without this the client
     // cannot tell them apart — it would render a priced, enabled button that
     // always fails.

@@ -5,6 +5,7 @@
   import type { AbuseVerdict } from '$lib/abuse-verdicts';
   import { groupFindings, storedVerdict } from '$lib/abuse-decisions';
   import FindingCard from './FindingCard.svelte';
+  import ProseDisclosure from './ProseDisclosure.svelte';
   import RunCounters from './RunCounters.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -65,7 +66,21 @@
 <p class="mb-4"><a class={LINK_CLASS} href="/abuse">← All runs</a></p>
 
 {#if data.run.summary}
-  <p class="mb-4 break-words whitespace-normal">{data.run.summary}</p>
+  <!-- 🔴 COLLAPSED, AND THE STRUCTURED FACTS LEAD. A producer's run summary is one unbroken paragraph
+       — the longest on this board is near a thousand characters — and it sat between the heading and
+       the counters, so opening a run put a wall of prose where the scannable facts belong. The
+       detector name, the run's timing, the counters and the "still to review" count now lead; the
+       paragraph is one click away and nothing is deleted. -->
+  <!-- 🔴 `{#key}` BECAUSE `<details>` HOLDS ITS OPEN STATE IN THE DOM. `/abuse/1` → `/abuse/2` is the
+       same route id, so this page does not remount — `data` just updates — and a summary a moderator
+       opened on one run would stay expanded on every run they opened after it. -->
+  {#key data.run.id}
+    <div class="mb-4">
+      <ProseDisclosure label="Detector's own account of this run">
+        <p class="break-words whitespace-normal">{data.run.summary}</p>
+      </ProseDisclosure>
+    </div>
+  {/key}
 {/if}
 
 <RunCounters counters={data.run.counters} />

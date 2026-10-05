@@ -33,6 +33,11 @@ import {
   useCarriedSearchText,
 } from '~/components/Search/useCarriedSearchText';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
+import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope';
+import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { isDefined } from '~/utils/type-guards';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { emptySearchClient } from '~/components/Search/emptySearchClient';
@@ -156,7 +161,7 @@ export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   onHits?: (ids: number[]) => void;
 };
 
-export const QuickSearchDropdown = ({
+const QuickSearchDropdownInner = ({
   filters,
   dropdownItemLimit = 5,
   startingIndex,
@@ -165,6 +170,8 @@ export const QuickSearchDropdown = ({
   ...props
 }: QuickSearchDropdownProps) => {
   const features = useFeatureFlags();
+  const { settings: addons } = useBrowsingSettingsAddons();
+  const currentUser = useCurrentUser();
   // The target is clamped to `supportedIndexes` — the set the CALLER declared, which is not
   // necessarily the set the selector offers: the offered list below narrows it further by feature
   // flag, and this fallback does not. A bare `models` fallback would leave the component searching
@@ -186,9 +193,16 @@ export const QuickSearchDropdown = ({
   const carriedSearchText = useRef('');
 
   const indexName = searchIndexMap[targetIndex];
+  const indexFilters = [
+    filters,
+    buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
+  ].filter(isDefined);
 
-  // Images stays selectable while image search is retired, but the images_v6 index is gone — so
-  // swap to a client that returns nothing (no request to the deleted index) and show a notice.
+  // Images stays selectable while image search is retired, but the images_v6 index is empty and
+  // declares no filterable attributes — so swap to a client that returns nothing (no request to an
+  // index that errors on a filtered query) and show a notice.
+  // 🔴 The index EXISTS, and `imageSearchEntry` offers the Images target to every user, so this
+  // swap is the only thing keeping a public query off it. Do not remove it as dead code.
   const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
 
   // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
@@ -279,7 +293,7 @@ export const QuickSearchDropdown = ({
       >
         <BrowsingLevelFilter
           indexKey={targetIndex}
-          filters={filters}
+          filters={indexFilters}
           hitsPerPage={dropdownItemLimit}
         />
 
@@ -294,6 +308,8 @@ export const QuickSearchDropdown = ({
     </Group>
   );
 };
+
+export const QuickSearchDropdown = withSearchBrowsingScope(QuickSearchDropdownInner);
 
 function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   indexName: indexNameProp,

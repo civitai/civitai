@@ -1,5 +1,6 @@
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/client';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { isDefined } from '~/utils/type-guards';
 
 /**
@@ -127,7 +128,7 @@ export const SRCSET_DPR = 2;
  */
 export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'> = {}) {
   const { width, original, sourceWidth } = options;
-  if (!src || src.startsWith('http') || src.startsWith('blob')) return undefined;
+  if (isEdgeUrlPassthrough(src)) return undefined;
   if (!width || original) return undefined;
 
   const base = clampEdgeWidth(snapWidthToCommonSize(width));
@@ -184,6 +185,13 @@ function srcSetSafe(url: string) {
   );
 }
 
+/** Asks the cacher for a JPEG still of a video instead of the video itself. */
+export const videoStillEdgeOptions = {
+  type: MediaType.image,
+  anim: false,
+  transcode: true,
+} satisfies Omit<EdgeUrlProps, 'src'>;
+
 export function getEdgeUrl(
   src: string,
   {
@@ -205,7 +213,8 @@ export function getEdgeUrl(
     skip,
   }: Omit<EdgeUrlProps, 'src'> = {}
 ) {
-  if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
+  // Shared with the image-scan ingestion allowlist — see edge-url-passthrough.ts.
+  if (isEdgeUrlPassthrough(src)) return src;
 
   if (!width && !height && original === undefined) original = true;
   if (original) {

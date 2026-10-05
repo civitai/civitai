@@ -232,8 +232,9 @@ describe('GET /api/v1/blocks/gated-images — delegation and pass-through', () =
   });
 
   it('REJECTS on a body failure — never 200 with an empty envelope', async () => {
-    // Property 1.
-    const failure = new TRPCError({ code: 'FORBIDDEN', message: 'nope' });
+    // Property 1. This asserts IDENTITY, so any code passes — which is how a code
+    // the body never throws survives here. Use one it does.
+    const failure = new TRPCError({ code: 'UNAUTHORIZED', message: 'nope' });
     mockResolve.mockRejectedValue(failure);
 
     const { req, res } = createMocks();

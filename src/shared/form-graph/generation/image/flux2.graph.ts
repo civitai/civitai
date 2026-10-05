@@ -2,7 +2,7 @@ import { branch, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
 import {
   img2imgImages,
-  SDXL_SQUARE_AR,
+  SDXL_FULL_AR_4MP,
   SEED,
   guidancePresetsLowBalHigh,
   sliderDef,
@@ -57,13 +57,13 @@ const CFG = sliderDef({
 const STEPS = sliderDef({ min: 20, max: 50, default: 25 });
 
 const noResources = defineGraph<Flux2ModeExt>()
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR_4MP)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
   .field('seed', SEED);
 
 const dev = defineGraph<Flux2ModeExt>()
-  .field('aspectRatio', SDXL_SQUARE_AR)
+  .field('aspectRatio', SDXL_FULL_AR_4MP)
   .field('cfgScale', CFG)
   .field('steps', STEPS)
   .field('seed', SEED)

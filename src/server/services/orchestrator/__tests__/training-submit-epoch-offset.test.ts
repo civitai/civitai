@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * every future continuation silently unshifted.
  */
 
-vi.mock('@civitai/client', () => ({ handleError: vi.fn() }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow: vi.fn() }));
 vi.mock('~/server/services/training.service', () => ({
   getTrainingServiceStatus: vi.fn(async () => ({ available: true, blockedModels: [] })),
@@ -18,8 +17,10 @@ vi.mock('~/utils/s3-utils', () => ({
   isB2Url: vi.fn(() => false),
 }));
 
+import { TRPCError } from '@trpc/server';
 import { createTrainingWorkflow } from '~/server/services/orchestrator/training/training.orch';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { getTrainingServiceStatus } from '~/server/services/training.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 
@@ -95,6 +96,7 @@ describe('createTrainingWorkflow epoch offset', () => {
     } as never);
     dbMock.dbWrite.modelFile.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('stamps the source epoch when the run continues another', async () => {
@@ -141,9 +143,13 @@ describe('createTrainingWorkflow domain gate', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setEnv({ WEBHOOK_URL: 'https://webhook.test', WEBHOOK_TOKEN: 't' });
-    vi.mocked(submitWorkflow).mockResolvedValue({ id: 'wf-1', transactions: { list: [] } } as never);
+    vi.mocked(submitWorkflow).mockResolvedValue({
+      id: 'wf-1',
+      transactions: { list: [] },
+    } as never);
     dbMock.dbWrite.modelFile.update.mockResolvedValue({});
     dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
   });
 
   it('refuses a red-prepared dataset paid for on green, without submitting', async () => {
@@ -151,6 +157,7 @@ describe('createTrainingWorkflow domain gate', () => {
 
     await expect(submit('green')).rejects.toThrow('must be submitted there');
     expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 
   it('allows a red-prepared dataset to be submitted on red', async () => {
@@ -175,5 +182,83 @@ describe('createTrainingWorkflow domain gate', () => {
     await submit('green');
 
     expect(submitWorkflow).toHaveBeenCalledOnce();
+  });
+});
+
+describe('createTrainingWorkflow single submission per version', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setEnv({ WEBHOOK_URL: 'https://webhook.test', WEBHOOK_TOKEN: 't' });
+    vi.mocked(submitWorkflow).mockResolvedValue({
+      id: 'wf-1',
+      transactions: { list: [] },
+    } as never);
+    dbMock.dbWrite.modelFile.update.mockResolvedValue({});
+    dbMock.dbWrite.modelVersion.update.mockResolvedValue({});
+    givenTrainingRow({});
+  });
+
+  it('claims only a Pending or unset version before submitting', async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
+
+    await submit();
+
+    expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: MODEL_VERSION_ID,
+        OR: [{ trainingStatus: null }, { trainingStatus: 'Pending' }],
+      },
+      data: { trainingStatus: 'Submitted' },
+    });
+    expect(submitWorkflow).toHaveBeenCalledOnce();
+  });
+
+  it('refuses a version that is already claimed, without submitting', async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(submit()).rejects.toThrow('already submitted');
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('does not claim a version the submission is refused for', async () => {
+    vi.mocked(getTrainingServiceStatus).mockResolvedValueOnce({
+      available: true,
+      blockedModels: ['krea2'],
+    } as never);
+
+    await expect(submit()).rejects.toThrow('blocked from training');
+    expect(dbMock.dbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('releases the claim when the orchestrator rejects the submission', async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
+    vi.mocked(submitWorkflow).mockRejectedValue(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'insufficient buzz' })
+    );
+
+    await expect(submit()).rejects.toThrow('insufficient buzz');
+    expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenLastCalledWith({
+      where: { id: MODEL_VERSION_ID, trainingStatus: 'Submitted' },
+      data: { trainingStatus: 'Pending' },
+    });
+  });
+
+  it('keeps the claim when the orchestrator may have created the workflow', async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
+    vi.mocked(submitWorkflow).mockRejectedValue(
+      new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'orchestrator unavailable' })
+    );
+
+    await expect(submit()).rejects.toThrow('orchestrator unavailable');
+    expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the claim when a step after a successful submit fails', async () => {
+    dbMock.dbWrite.modelVersion.updateMany.mockResolvedValue({ count: 1 });
+    dbMock.dbWrite.modelFile.update.mockRejectedValue(new Error('db down'));
+
+    await expect(submit()).rejects.toThrow('db down');
+    expect(submitWorkflow).toHaveBeenCalledOnce();
+    expect(dbMock.dbWrite.modelVersion.updateMany).toHaveBeenCalledTimes(1);
   });
 });

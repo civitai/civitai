@@ -49,6 +49,8 @@ type VideoProps = Omit<
   disablePoster?: boolean;
   /** Database image ID — included in drag data so drop targets can look up metadata server-side */
   imageId?: number;
+  /** Play after a second of hover when not autoplaying. */
+  hoverPlay?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -88,6 +90,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disableWebm,
       disablePoster,
       imageId,
+      hoverPlay = true,
       onLoad,
       onError,
       onLoadedData,
@@ -102,6 +105,9 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const [showPlayIndicator, setShowPlayIndicator] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [autoplayFailed, setAutoplayFailed] = useState(false);
+    // The overlay marks a video that came up paused; once the viewer has toggled playback
+    // themselves, the control bar is the indicator.
+    const [userToggled, setUserToggled] = useState(false);
     // hide the audio control for videos with no audio track. Detected reactively from
     // the video's load/play events (hasAudio populates as metadata/decoded bytes become available).
     const [hasAudioState, setHasAudioState] = useState(false);
@@ -130,13 +136,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       setMuted(shouldForceMute);
     }
 
-    // React only controls the muted *attribute* (the initial default), not the live `.muted`
-    // *property* — so a persisted unmute won't reach the element on its own, and autoplay/refresh
-    // can leave the video stuck muted. Sync the property imperatively whenever muted changes.
-    useEffect(() => {
-      if (ref.current) ref.current.muted = muted;
-    }, [muted]);
-
     useImperativeHandle(forwardedRef, () => ({
       stop: () => {
         if (ref.current) {
@@ -161,6 +160,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           ref.current.pause();
         }
 
+        setUserToggled(true);
         setShowPlayIndicator(true);
         // clear() then start() restarts the hide timer on rapid re-toggles.
         clearHideIndicator();
@@ -189,16 +189,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       setHasAudioState(hasAudio(video));
     }, []);
 
-    // Runs from the video's own load events (onLoadedMetadata/onLoadedData/onCanPlay/onPlaying).
-    // No effect needed: this component renders the <video>, so React hands us the events as props.
     const markVideoReady = useCallback(() => {
-      const video = ref.current;
-      if (!video) return;
+      if (!ref.current) return;
       setLoaded(true);
       detectAudio();
-      // Apply persisted volume on load for non-muted videos (replaces the old render-body write).
-      if (!initialMuted) video.volume = volume;
-    }, [detectAudio, initialMuted, volume]);
+    }, [detectAudio]);
 
     const handleLoadedData = useCallback(
       (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -262,6 +257,35 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       transcode: thumbnailUrl ? undefined : true,
       original: thumbnailUrl ? undefined : false,
     });
+
+    // The <video> is server-rendered and starts loading before hydration; a cached file can fire
+    // every load event (and `playing`) before React attaches its listeners — Firefox does this
+    // routinely on reload. Those events are never replayed, so read the element's state on attach.
+    // `key={videoUrl}` attaches a fresh element for a new source, so per-element state starts over.
+    const setVideoRef = useCallback(
+      (video: HTMLVideoElement | null) => {
+        ref.current = video;
+        if (!video) return;
+        setLoaded(false);
+        setHasAudioState(false);
+        setAutoplayFailed(false);
+        setUserToggled(false);
+        if (video.readyState >= HTMLMediaElement.HAVE_METADATA) markVideoReady();
+        setIsPlaying(!video.paused);
+      },
+      [markVideoReady]
+    );
+
+    // `.volume` has no attribute, and React only sets the muted *attribute* (the initial default),
+    // not the live `.muted` property, so both are pushed imperatively. The element mirroring state
+    // is also what lets onVolumeChange tell a native-controls change apart from these writes.
+    // A 0 level is stored as muted instead.
+    useEffect(() => {
+      const video = ref.current;
+      if (!video) return;
+      video.muted = muted;
+      if (volume > 0) video.volume = volume;
+    }, [muted, volume, videoUrl]);
 
     const node = useScrollAreaRef();
 
@@ -350,7 +374,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       >
         <video
           key={videoUrl}
-          ref={ref}
+          ref={setVideoRef}
           // Drag is only enabled when no controls are shown (see draggableEnabled), so scrubbing/
           // volume on custom or native controls can never get hijacked into a video drag.
           draggable={draggableEnabled}
@@ -396,22 +420,27 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             setAutoplayFailed(false);
             detectAudio();
           }}
+          onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           onVolumeChange={(e) => {
             // Native controls own the element's volume/mute here (custom slider/toggle update state
             // directly, so forwarding them would double-fire). Mirror BOTH volume and muted from the
             // element — deriving muted from volume alone fights the native mute button, which mutes
             // while keeping volume > 0.
-            if (!html5Controls || initialMuted) return;
+            if (!html5Controls) return;
             const video = e.currentTarget;
             const nextMuted = video.muted || video.volume === 0;
-            if (video.volume > 0) setVolume(video.volume); // remember level across mute
+            const volumeMoved = volume > 0 && Math.abs(video.volume - volume) > 0.001;
+            // Our own muted/volume syncs also fire this event; only a user change leaves the element
+            // out of step with state.
+            if (nextMuted === muted && !volumeMoved) return;
+            if (video.volume > 0) setVolume(video.volume);
             setMuted(nextMuted);
             onMutedChange?.(nextMuted);
           }}
           playsInline
-          onMouseOver={!options?.anim ? handleMouseEnter : undefined}
-          onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
+          onMouseOver={!options?.anim && hoverPlay ? handleMouseEnter : undefined}
+          onMouseLeave={!options?.anim && hoverPlay ? handleMouseLeave : undefined}
           autoPlay={!!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}
@@ -423,8 +452,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
           <source src={videoUrl} type="video/mp4" />
         </video>
-        {((!options?.anim && !showCustomControls && !html5Controls && !isPlaying) ||
-          autoplayFailed) && (
+        {(autoplayFailed ||
+          (!html5Controls &&
+            !isPlaying &&
+            (showCustomControls ? !userToggled : !options?.anim))) && (
           <IconPlayerPlayFilled
             className={clsx(styles.playButton, 'pointer-events-none z-10 absolute-center')}
           />

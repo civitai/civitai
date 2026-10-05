@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ClientS3 from '@aws-sdk/client-s3';
 
 // Override the global env mock with concrete S3/B2 endpoints so module-load
 // constants (s3Host, b2Host) resolve to predictable values. Any field we
@@ -54,7 +55,7 @@ const mocks = vi.hoisted(() => {
 // by an assertion — nothing here counts this file's tests, and a later draft of this comment
 // claimed otherwise, pointing at an assertion that does not exist.)
 vi.mock('@aws-sdk/client-s3', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@aws-sdk/client-s3')>();
+  const actual = await importOriginal<typeof ClientS3>();
   const mocked = {
     ...actual,
     S3Client: class {
@@ -102,6 +103,7 @@ import {
   checkFileExists,
   headObject,
   objectExists,
+  deleteManyObjects,
 } from '~/utils/s3-utils';
 import { env } from '~/env/server';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -748,5 +750,16 @@ describe('objectExists — the boolean view of headObject keeps its tri-state', 
       send: rejected ? vi.fn().mockRejectedValue(rejected) : vi.fn().mockResolvedValue(resolved),
     } as never;
     await expect(objectExists('test-bucket', 'k', s3)).resolves.toBe(expected);
+  });
+});
+
+describe('deleteManyObjects', () => {
+  it('forwards request options, so a caller can bound the request with an abort signal', async () => {
+    const send = vi.fn().mockResolvedValue({});
+    const options = { abortSignal: new AbortController().signal };
+
+    await deleteManyObjects('vault-bucket', ['a'], { send } as never, options);
+
+    expect(send).toHaveBeenCalledWith(expect.anything(), options);
   });
 });

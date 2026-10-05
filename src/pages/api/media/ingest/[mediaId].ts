@@ -1,9 +1,17 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
+import { matchesConfiguredSecret } from '~/server/utils/configured-secret';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
 import { createImageIngestionRequest } from '~/server/services/orchestrator/orchestrator.service';
+import { ImageIngestionUrlBlockedError } from '~/server/utils/image-scan-url';
+// Lifted out of this file into a shared module when `services/ai/jev.ts` became the second
+// caller — this file's own comment asked the next one to do exactly that rather than grow a
+// third copy. Re-exported so the existing test's import keeps working.
+import { redactKnownValues } from '~/server/utils/redact-known-values';
 import type { MediaType } from '~/shared/utils/prisma/enums';
+
+export { redactKnownValues as redactSecrets };
 
 /**
  * GET /api/media/ingest/:mediaId
@@ -22,7 +30,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const tokenAuthed = !!req.query.token && req.query.token === env.WEBHOOK_TOKEN;
+  const tokenAuthed = matchesConfiguredSecret(req.query.token, env.WEBHOOK_TOKEN);
   if (!tokenAuthed) {
     const session = await getServerAuthSession({ req, res });
     if (!session?.user?.isModerator || session.user.bannedAt) {
@@ -53,11 +61,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       callbackUrl,
     });
     if (!data) {
-      return res.status(502).json({ error: error ?? 'Ingestion request failed', status, body });
+      return res
+        .status(502)
+        .json(
+          redactKnownValues({ error: error ?? 'Ingestion request failed', status, body }, [
+            callbackUrl,
+            env.WEBHOOK_TOKEN,
+          ])
+        );
     }
     return res.status(200).json({ workflowId: data.id });
   } catch (e) {
+    if (e instanceof ImageIngestionUrlBlockedError) {
+      return res.status(400).json({ error: e.message });
+    }
     const err = e as Error;
-    return res.status(500).json({ error: 'Internal Server Error', message: err.message });
+    return res
+      .status(500)
+      .json(
+        redactKnownValues({ error: 'Internal Server Error', message: err.message }, [
+          callbackUrl,
+          env.WEBHOOK_TOKEN,
+        ])
+      );
   }
 }

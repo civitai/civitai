@@ -43,6 +43,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'CommentV2',
   'CommentV2Reaction',
   'Cosmetic',
+  'Crucible',
   'CryptoDeposit',
   'CryptoTransaction',
   'EntityModeration',

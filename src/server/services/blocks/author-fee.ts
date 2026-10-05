@@ -46,32 +46,35 @@ import { blockGenerationCoarseType, isBlockGenerationType } from './generation-t
 //
 //   2. UNITS — PERCENT-OF-USD-CENTS vs BUZZ INTEGERS. Every card field is a
 //      percentage applied to CENTS (`publisherSharePctByScope` is a % of
-//      `gross_cents - provider_fee_cents`; `spendSharePct` is a % of the
-//      spend's USD value), and a flat BUZZ leg has no expression in that unit at
-//      all. Worse, the card's per-row CENT FLOORING is precisely the defect that
-//      made the bounty pay $0.00: at 10 Buzz per cent (`buzzSpendToUsdCents`)
-//      and `spendSharePct: 5`, a per-row `floor(cents × pct / 100)` yields
-//      **0 cents for every generation under 200 ⚡** — i.e. for most of them.
-//      That bounty rail has since been removed. Computing in Buzz and
-//      flooring ONCE, at the end, is what the basis-point arithmetic below
-//      exists for.
+//      `gross_cents - provider_fee_cents`), and a flat BUZZ leg has no
+//      expression in that unit at all. Worse, the card's per-row CENT FLOORING
+//      is precisely the defect that made the retired spend bounty pay $0.00: at
+//      10 Buzz per cent (`buzzSpendToUsdCents`) and the bounty's 5% card rate, a
+//      per-row `floor(cents × pct / 100)` yielded **0 cents for every generation
+//      under 200 ⚡** — i.e. for most of them. Computing in Buzz and flooring
+//      ONCE, at the end, is what the basis-point arithmetic below exists for.
 //
-// ── SLICE 1 IS DARK. IT COMPUTES AND OBSERVES; IT MOVES NO MONEY. ───────────
-// Settlement onto the licensing-fee rail is slice 2; the author-facing config
-// UI and the viewer-facing disclosure are slice 3. Nothing here writes a row,
-// reads a row, or touches a Buzz account. `observeBlockAuthorFee` is the ONLY
-// production entry point and it is fail-closed behind
-// `app-blocks-author-fee-enabled`.
+// ── THE FEE IS LIVE. THIS FILE IS THE PRICING + THE SIZING OBSERVER. ────────
+// ⚠️ An earlier revision headed this block "SLICE 1 IS DARK" and called
+// `observeBlockAuthorFee` the ONLY production entry point. Both are false since
+// 2026-09-25. Nothing in THIS file writes a row or touches a Buzz account, but the
+// hops that do have shipped: `author-fee-charge.service.ts` (the viewer debit at
+// submit), `author-fee-accrual.service.ts` (the ledger) and
+// `author-fee-settlement.service.ts` (the daily mint).
 //
-// 🔴 SLICE 2, READ THIS BEFORE YOU DERIVE A RECIPIENT: an OPEN SECURITY GATE in
-// `src/pages/api/v1/blocks/dev-token.ts` (the APPID MISATTRIBUTION block) is
-// addressed to you by name. Slice 1 carries no recipient, so a mis-resolved
-// `appId` cannot misdirect a fee today; slice 2 is where that stops being true,
-// because the recipient comes from the same spend-attribution app resolution.
-// The gate names what re-confirms it (an existing S1 case in
-// `src/tests/api/v1/blocks/dev-token.test.ts`) and closes when the settlement
-// PR merges with that assertion green. It is pointed at from here because
-// nothing else on this surface would send you to a dev-token mint handler.
+// ⚠️ AND THIS FILE HAS TWO PRODUCTION ENTRY POINTS, NOT ONE. `observeBlockAuthorFee` is
+// the only one that reads the flag itself; the charge path enters at
+// `computeBlockAuthorFee`, whose gate is `quoteBlockAuthorFeeUncounted`'s flag read
+// in `author-fee-charge.service.ts`. So "flag-gated in this file" is not the same
+// set as "reachable in production", and a change to `computeBlockAuthorFee` is a
+// change to the live money path.
+//
+// 🔴 A RECIPIENT IS NOW DERIVED FROM `appId`, SO THE MISATTRIBUTION GATE IN
+// `src/pages/api/v1/blocks/dev-token.ts` IS LIVE RATHER THAN PENDING. The charge
+// path calls `resolveBlockAuthorFeePayee`, which resolves the payee by
+// `OauthClient.id` — exactly the resolution that gate is about. It is pointed at
+// from here because nothing else on this surface would send you to a dev-token
+// mint handler.
 //
 // ── NO MIGRATION IN THIS SLICE, ON PURPOSE ──────────────────────────────────
 // The defaults apply to EVERY app including the ones that already exist, so
@@ -551,7 +554,8 @@ export type BlockAuthorFeeObservation =
   | { readonly observed: true; readonly computation: BlockAuthorFeeComputation };
 
 /**
- * The ONE production entry point, and the dark gate.
+ * The TELEMETRY entry point, and the only flag read in this file — see the banner at
+ * the top for the charge path's gate.
  *
  * 🔴 FAIL-CLOSED AND FIRST. The flag is read before anything else happens —
  * before the base is inspected and before any parameter is resolved. With
@@ -559,22 +563,12 @@ export type BlockAuthorFeeObservation =
  * answers `false` and this returns immediately, so the computation is
  * unreachable from every production path and emits no signal at all.
  *
- * ⚠️ THE FLAG EXISTS IN FLIPT, AT BASE `enabled: false`. An earlier revision of
- * this comment said it does NOT exist and that this is what makes the as-merged
- * behaviour dark. That is no longer true: it was created after this branch's
- * last commit, deliberately, because an ABSENT key makes the evaluation throw,
- * bypass its cache and write a `console.error` on every App Blocks generation
- * submit, indefinitely. Verified live in the `civitai-app` environment:
- * `BOOLEAN_FLAG_TYPE`, `enabled: false`, no variants, no rules, no rollouts, and
- * a global boolean evaluation returning
- * `enabled:false, reason:DEFAULT_EVALUATION_REASON, segmentKeys:[]`.
- *
- * The conclusion survives — as-merged behaviour is dark — but the REASON, and
- * the strength of it, do not. An absent key had to be CREATED by an operator
- * before anyone could turn the fee on. A present base-`false` flag is one toggle
- * away, with no deploy and no review. So this is dark because the flag is OFF,
- * not because turning it on takes a second step. Slice 2 must not treat the
- * off-state as structural.
+ * ⚠️ THAT ORDERING NOW MATTERS MORE, NOT LESS. Earlier revisions of this comment
+ * called this "the dark gate" and described the flag as absent, then as base
+ * `enabled: false`. The fee has been charging since 2026-09-25, so this is a live
+ * gate. `app-blocks-flag.ts` owns the claim about the flag; read the value from
+ * Flipt rather than from a comment. Nothing about the off-state is structural — it
+ * is one toggle, with no deploy and no review.
  *
  * ⚠️ AN EARLIER REVISION ALSO CLAIMED THE FLAG IS READ "before the telemetry
  * module is even imported", and used `await import()` for both dependencies to
@@ -616,8 +610,8 @@ export type BlockAuthorFeeObservation =
  * `outcome` gives the leg mix plus the `base-unavailable` and `price-is-cap`
  * populations — in the SAME spelling the log line's `authorFeeSkipped` uses, so
  * the two instruments join. The OTHER skip — the flag being off — is silent here and
- * visible only as `authorFeeSkipped` on the log line, because a gate that has
- * never been turned on must not emit a per-generation metric.
+ * visible only as `authorFeeSkipped` on the log line, because the flag-off
+ * population is a deployment state rather than a per-generation property.
  *
  * TOTAL AND NON-THROWING. Every caller is on a fire-and-forget path off an
  * already-billed submit. A telemetry failure, a flag-read failure, or anything

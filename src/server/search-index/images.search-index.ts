@@ -247,6 +247,10 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   // redirects and the `imageSearch` flag is off by default). All writes and syncs no-op, so the
   // call sites that still queue image updates cost nothing. Restoring image search means clearing
   // this and re-running a reset to rebuild the index. See ticket 868m4c2dn.
+  // NOTE: the ban-purge flow (processUserContentRemovalQueue in server/meilisearch/util.ts)
+  // intentionally has NO entry for this index anymore — with it retired, that flow's
+  // getOrCreateIndex re-created the index bare and its delete tasks all failed. Re-add the
+  // images entry there as part of the same change as the restoration reset.
   retired: true,
   workerCount: 10,
   indexName: INDEX_ID,

@@ -7,6 +7,7 @@ import type { GenerationCtx } from '~/shared/data-graph/generation/context';
 import {
   MAX_NEGATIVE_PROMPT_LENGTH,
   SNIPPETS,
+  snippetsSchema,
   resourcesDef,
   sliderDef,
   textDef,
@@ -49,6 +50,11 @@ export type TextBlockNeeds = FamilyExt & {
  * itself through an effect that writes an empty target slice. The editor set of
  * a given graph is static, so the port bakes the same result into the value
  * rather than converging on it — same output, no evaluation-order dependence.
+ *
+ * It has to be baked on BOTH paths. `coerce` alone covers trusted `set()` writes
+ * only — the lib says so — so a parse that SUPPLIED a snippets value kept whatever
+ * targets the caller sent and registered none of the editors, while v1's effects
+ * added them. Measured as the largest single shadow-parse divergence class.
  */
 const withTargets = (value: SnippetsValue, names: readonly string[]): SnippetsValue => {
   const targets = { ...(value.targets ?? {}) };
@@ -124,6 +130,9 @@ export function makeTextBlock(
           ? {
               ...SNIPPETS,
               default: withTargets(SNIPPETS.default as SnippetsValue, editorsFor(_ext)),
+              input: snippetsSchema
+                .optional()
+                .transform((v) => (v ? withTargets(v, editorsFor(_ext)) : v)),
               coerce: (raw: unknown) => withTargets(raw as SnippetsValue, editorsFor(_ext)),
             }
           : null
@@ -256,15 +265,17 @@ export const promptOnlyTextBlock = makeTextBlock({ negativePrompt: false });
 
 /**
  * The per-output hubs' `ecosystem` field schemas, memoized on what they
- * actually depend on — the workflow (the input transform redirects
- * unsupported selections) and the hidden/disabled sets (the output refuses
- * them). Unmemoized these rebuilt every pass, the single hottest schema on
- * the keystroke path. Meta and the default stay per-pass at the call site.
+ * actually depend on — the workflow (`correct` redirects unsupported
+ * selections) and the hidden/disabled/usable sets (the output refuses the
+ * first two, `correct` redirects into the third). Unmemoized these rebuilt
+ * every pass, the single hottest schema on the keystroke path. Meta and the
+ * default stay per-pass at the call site.
  */
 export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchemas(
   workflow: string,
   hiddenEcosystems: readonly string[],
-  disabledKeys: readonly string[]
+  disabledKeys: readonly string[],
+  usableEcosystems: readonly string[]
 ) {
   const hiddenSet = new Set(hiddenEcosystems);
   const disabledSet = new Set(disabledKeys);
@@ -277,11 +288,9 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
         // Hidden values are dropped at the boundary so a stale stored value
         // falls back to the default; disabled/memberOnly are kept so the
         // picker can explain them, and refused on output. An unknown key
-        // would have no member graph — it falls to the default too. A value
-        // that doesn't support the workflow redirects to the workflow's
-        // default (v1's sync effect).
+        // would have no member graph — it falls to the default too.
         if (!ecosystemByKey.has(v) || hiddenSet.has(v)) return undefined;
-        return resolveCompatibleEcosystem(workflow, v);
+        return v;
       }),
     output:
       hiddenSet.size || disabledSet.size
@@ -289,5 +298,14 @@ export const ecosystemFieldSchemas = cachedFactory(function ecosystemFieldSchema
             message: 'Ecosystem is currently unavailable',
           })
         : z.string(),
+    // v1 did this in an effect keyed on `workflow`, so a one-shot parse that
+    // supplied `ecosystem` without `workflow` skipped it and failed validation
+    // instead. On the field it runs whatever the caller sent.
+    correct: (value: string) => {
+      const target = resolveCompatibleEcosystem(workflow, value, usableEcosystems);
+      return target === value
+        ? undefined
+        : { value: target, reason: 'ecosystem_workflow_unavailable' };
+    },
   };
 });

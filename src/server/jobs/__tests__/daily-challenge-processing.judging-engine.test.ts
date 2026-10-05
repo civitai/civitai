@@ -170,7 +170,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: vi.fn().mockResolvedValue('yellow'),
   reportPoolFundingShortfall: vi.fn(),
 }));

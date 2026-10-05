@@ -51,6 +51,38 @@ const AD_SCRIPT_FRAME = {
   colno: 419,
 };
 
+/**
+ * A third-party script on a host that is NOT one of the enumerated ad/analytics domains. Real
+ * host, measured on this stream and deliberately left off `AD_NETWORK_FRAME_HOST_RES`: it
+ * appeared on 2 of the 4,000 beacons sampled across two 6h windows, below any threshold worth
+ * widening a denylist for. The path is synthetic — the real one carries an opaque 32-char token,
+ * which is the class `redact.ts` scrubs, so it does not belong in a fixture.
+ */
+const UNLISTED_THIRD_PARTY_FRAME = {
+  filename: 'https://static-lib.com/s/example-bundle-id/base.min.js?v=20.9',
+  function: 'n',
+  lineno: 1,
+  colno: 5504,
+};
+
+/**
+ * A minified first-party chunk — how our bundled code is spelled in the browser. (Our own code
+ * also reaches the browser as `/workers/*.worker.js`, which is why `FIRST_PARTY_ASSET_PATH_RE`
+ * admits `/workers/` too.)
+ */
+const MINIFIED_CHUNK_FRAME = {
+  filename: 'https://civitai.com/_next/static/chunks/31x1i4exiz8mm.js',
+  function: 'o',
+  lineno: 19,
+  colno: 7373,
+};
+const MINIFIED_CHUNK_FRAME_2 = {
+  filename: 'https://civitai.com/_next/static/chunks/1tpwgcnp2976m.js',
+  function: 'r.fetch',
+  lineno: 11,
+  colno: 96602,
+};
+
 /** A genuine first-party caller — OUR code asking for something over the network. */
 const OUR_FETCH_CALLER_FRAME = {
   filename: 'turbopack:///[project]/src/components/Generate/useGenerate.ts',
@@ -404,10 +436,21 @@ describe('classifyException — project-source frame edges', () => {
   // Without this, `frames.some(...)` and `isProjectSourceFrame(frames[frames.length - 1])` are
   // indistinguishable across the whole file: every other fixture puts its app frame last.
   // Shape: a third-party script invokes OUR callback, which calls fetch.
+  //
+  // 🔴 The outermost frame is deliberately an UNENUMERATED third-party host, not an ad network.
+  // With `AD_SCRIPT_FRAME` last this assertion could not be `drop: false` at all — rule 6b would
+  // fire — so the test would be red rather than merely blind. `static-lib.com` keeps the
+  // assertion reachable AND still pins `.some(...)`: under a last-frame-only mutation the middle
+  // app frame stops counting, rule 6 fires, and this goes red.
   it('KEEPS a stack whose only app frame is in the MIDDLE, not at either end', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
-        frames: [OTEL_FETCH_FRAME, UPDATE_WATCHER_FRAME, OUR_FETCH_CALLER_FRAME, AD_SCRIPT_FRAME],
+        frames: [
+          OTEL_FETCH_FRAME,
+          UPDATE_WATCHER_FRAME,
+          OUR_FETCH_CALLER_FRAME,
+          UNLISTED_THIRD_PARTY_FRAME,
+        ],
       })
     );
     expect(r.drop).toBe(false);
@@ -428,27 +471,19 @@ describe('classifyException — project-source frame edges', () => {
     expect(r.category).toBe('network');
   });
 
-  // 🔴 DOCUMENTS AN ASSUMPTION THE WHOLE FIX RESTS ON. These exclusions can only work while
-  // beacons carry source-resolved paths. If frames ever arrive as minified bundle URLs, our code
-  // and our dependencies are indistinguishable — everything is `/_next/`, the guard says
-  // "project source", and this fix drops NOTHING. That is the safe direction (no false drops),
-  // but it is silent, so pin it: this test passing with `real` is the tell.
-  it('an all-minified-bundle stack is KEPT as real (the fix is inert on unmapped frames)', () => {
+  // 🔴 THE PRODUCTION SHAPE, and the one stack in this describe that a real browser can produce.
+  // `beforeSend` sees the browser's own frames and the collector resolves source maps afterwards,
+  // so every one of our chunks arrives as `/_next/static/chunks/<hash>.js` —
+  // `hasProjectSourceFrame` answers TRUE and rule 6 cannot fire. Rule 6b decides it on the
+  // OUTERMOST frame: the ad network asked for the request, so it is theirs.
+  it('tags a minified-bundle stack whose OUTERMOST frame is an ad network (the production shape)', () => {
     const r = classifyException(
       exc('TypeError', 'Failed to fetch', {
-        frames: [
-          { filename: 'https://civitai.com/_next/static/chunks/8154-7d2a.js', lineno: 1, colno: 9 },
-          {
-            filename: 'https://civitai.com/_next/static/chunks/main-app-11ab.js',
-            lineno: 1,
-            colno: 4,
-          },
-          AD_SCRIPT_FRAME,
-        ],
+        frames: [MINIFIED_CHUNK_FRAME, MINIFIED_CHUNK_FRAME_2, AD_SCRIPT_FRAME],
       })
     );
     expect(r.drop).toBe(false);
-    expect(r.category).toBe('real');
+    expect(r.category).toBe('ad_initiated');
   });
 
   // The abort rule shares this guard and matches its phrases as UNANCHORED substrings, so
@@ -954,5 +989,756 @@ describe('classifyException — a malformed frames value reaches both guards', (
     }).not.toThrow();
     expect(r.drop).toBe(true);
     expect(r.category).toBe('abort');
+  });
+});
+
+// 🔴 TAG-ONLY scope. Browser extensions and page-injected scripts reference globals that only
+// exist when the injection actually ran, so touching them throws in every OTHER browser —
+// measured live on civitai-dp-prod (24h): `Can't find variable: __firefox__` 1,380×,
+// `undefined is not an object (evaluating 'window.__firefox__.<prop>')` ~2,100×,
+// `undefined is not an object (evaluating 'window.ethereum.selectedAddress = …')` ~2,300/day,
+// `Can't find variable: DarkReader` 132×. Today they land in `real` and pollute the
+// real-app-bug signal. They are TAGGED `extension` and KEPT — no drop, no threshold change.
+//
+// Two engine phrasing families name these errors, and BOTH must be matched — a one-phrasing
+// matcher returned a confident zero for a whole error class. For the bare-global shapes that is
+// `Can't find variable: X` vs `X is not defined`; for property access it is the
+// `undefined is not an object (evaluating '…')` clause (which carries the object PATH) vs V8's
+// `Cannot read properties of … (reading '…')` (which omits the base object entirely, so only a
+// read of a denylisted NAME is attributable from the message).
+describe('classifyException — TAG extension: browser-injected globals (kept, not dropped)', () => {
+  it.each([
+    ['ReferenceError', "Can't find variable: __firefox__"],
+    ['ReferenceError', '__firefox__ is not defined'],
+    ['ReferenceError', "Can't find variable: DarkReader"],
+    ['ReferenceError', 'DarkReader is not defined'],
+    ['ReferenceError', "Can't find variable: __alhWeb"],
+    ['ReferenceError', '__alhWeb is not defined'],
+  ])('tags the bare-global %s / %s as extension', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it.each([
+    "undefined is not an object (evaluating 'window.__firefox__.reader')",
+    // The shipped (post-redact) spelling: the injected property segment is ≥32 opaque chars, so
+    // redact.ts's long-token pass rewrote it to `[redacted-token]` — the stable PATH prefix is
+    // what the matcher may key on, never the segment after it.
+    "undefined is not an object (evaluating 'window.__firefox__.[redacted-token]')",
+    "undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')",
+  ])('tags the injected-object property access %s as extension', (value) => {
+    const r = classifyException(exc('TypeError', value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags a V8 property read whose READ name is a denylisted injected global', () => {
+    const r = classifyException(
+      exc('TypeError', "Cannot read properties of undefined (reading '__firefox__')", APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags the message-only form (type folded into the message)', () => {
+    const r = classifyException({ value: "ReferenceError: Can't find variable: __firefox__" });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags an injected-global error that carries no stack at all', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        "undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')"
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // INVARIANT GUARD, not a regression test (it is green on the pre-extension classifier too):
+  // the tag-only change must not UN-drop anything. A denylisted global behind an all-`undefined:`
+  // stack matched the `injected` DROP before this category existed and must keep matching it —
+  // otherwise the stream would gain every stack-only extension error on top of the re-tag.
+  it('does NOT un-drop a denylisted global whose stack is all-injected — the injected DROP still wins', () => {
+    const r = classifyException(
+      exc('ReferenceError', "Can't find variable: __firefox__", {
+        frames: [{ filename: 'undefined', lineno: 1705, colno: 541 }],
+      })
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('injected');
+  });
+});
+
+// Names measured live that must NOT become `extension`: unlike `__firefox__`/`DarkReader`/
+// `__alhWeb` they can be app code (or third-party libraries the app embeds), so a bare-global
+// error only tags when the referenced name is EXACTLY on the denylist.
+describe('classifyException — extension tag: deliberate negatives (may be app code)', () => {
+  it.each([
+    ['ReferenceError', "Can't find variable: downProgCallback"],
+    ['ReferenceError', 'syncDownloadState is not defined'],
+    ['ReferenceError', "Can't find variable: jQuery"],
+    ['ReferenceError', 'goog is not defined'],
+    ['ReferenceError', "Can't find variable: require"],
+    ['ReferenceError', 'selector is not defined'],
+  ])('does NOT tag %s / %s as extension', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('does NOT tag the generic V8 property-read shape with a non-denylisted name', () => {
+    const r = classifyException(
+      exc('TypeError', "Cannot read properties of undefined (reading 'M_ID')", APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  it('does NOT tag an app error that merely MENTIONS an injected global in prose', () => {
+    const r = classifyException(
+      exc('Error', 'Loader failed: window.__firefox__ handshake did not complete', APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // No-regression pin: the four existing keep-and-tag/default categories still classify
+  // exactly as before the extension rule was inserted.
+  it('existing categories still classify unchanged', () => {
+    expect(classifyException(exc('TRPCClientError', 'insufficientBuzz')).category).toBe('bizlogic');
+    expect(classifyException(exc('ChunkLoadError', 'Loading chunk 4823 failed.')).category).toBe(
+      'chunkload'
+    );
+    expect(
+      classifyException(
+        exc(
+          'MeiliSearchCommunicationError',
+          'request to https://search.civitai.com failed',
+          APP_FRAME
+        )
+      ).category
+    ).toBe('meili');
+    expect(classifyException(exc('TypeError', 'Novel app bug', APP_FRAME)).category).toBe('real');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+// PHRASING VARIANTS. Each rule below already matched ONE spelling of an error the browser or the
+// server emits under several. Measured over 6h of dp-prod beacons (bot-filtered,
+// `context_error_category="real"`): 1,017 of 7,214 real exceptions — 14.1% — were a phrasing
+// variant of something the classifier was already meant to handle.
+//
+// 🔴 The DROP rules differ in whether they carry a SECOND conjunct, and every test group below is
+// shaped by that: the abort DROP is gated on `!hasProjectSourceFrame`, so adding a phrasing to it
+// changes the outcome only for beacons whose stack proves nothing; the autoplay DROP has no such
+// gate, so its new phrasing is anchored to the whole message instead.
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+describe('classifyException — GROUP A: abort phrasing variants (drop is stack-gated)', () => {
+  // Chromium emits a different sentence per reason a play() promise was superseded, and the help
+  // URL is appended on some builds and not others. All four forms are the same benign event.
+  it.each([
+    [
+      'AbortError',
+      'The play() request was interrupted because the media was removed from the document. https://goo.gl/LdLk22',
+    ],
+    [
+      'AbortError',
+      'The play() request was interrupted because video-only background media was paused to save power. https://goo.gl/LdLk22',
+    ],
+    [
+      'AbortError',
+      'The play() request was interrupted because the media was removed from the document.',
+    ],
+    ['AbortError', 'Fetch is aborted'],
+    ['AbortError', 'BodyStreamBuffer was aborted'],
+  ])('drops the abort phrasing %s / %s when the stack proves nothing', (type, value) => {
+    const r = classifyException(exc(type, value));
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('abort');
+  });
+
+  // 🔴 THE BOUND, PINNED. The abort rule is conjoined with `!hasProjectSourceFrame`, so these
+  // phrasings do NOT drop unconditionally — a beacon carrying an app frame is still KEPT. This is
+  // the test that stops the volume figures above being read as "479 beacons stop arriving".
+  it.each([
+    [
+      'AbortError',
+      'The play() request was interrupted because the media was removed from the document.',
+    ],
+    ['AbortError', 'Fetch is aborted'],
+    ['AbortError', 'BodyStreamBuffer was aborted'],
+  ])('KEEPS %s / %s when the stack carries a project-source frame', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The message-only form: Faro sometimes folds the type into the value, and the two short
+  // phrasings are anchored, so their optional `SomeError: ` prefix is the only thing that lets
+  // them match it. Nothing else observes that prefix on these two patterns.
+  it.each([['AbortError: Fetch is aborted'], ['AbortError: BodyStreamBuffer was aborted']])(
+    'drops %s carried entirely in the message',
+    (value) => {
+      const r = classifyException({ value });
+      expect(r.drop).toBe(true);
+      expect(r.category).toBe('abort');
+    }
+  );
+
+  // 🔴 SAFETY (invariant guards — green before this change too, kept as false-drop guards). The
+  // two short phrasings are anchored BECAUSE they are short. These fixtures deliberately carry NO
+  // stack at all, so the rule's `!hasProjectSourceFrame` conjunct offers no protection and the
+  // anchoring is the only thing keeping them: relaxing either pattern to a substring turns all
+  // three red.
+  it.each([
+    ['Error', 'Model fetch is aborted by the retry budget after 3 attempts'],
+    [
+      'Error',
+      'BodyStreamBuffer was aborted while streaming the user upload, so the draft was lost',
+    ],
+    ['Error', 'Upload cancelled: fetch is aborted downstream'],
+  ])('does NOT drop the real app error %s / %s (anchoring is the only guard)', (type, value) => {
+    const r = classifyException(exc(type, value));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Invariant guard: the enumerated reason clauses must not collapse into a bare
+  // `The play() request was interrupted` prefix match, which would drop an unmeasured phrasing.
+  it('does NOT drop an unenumerated play() interruption reason', () => {
+    const r = classifyException(
+      exc(
+        'AbortError',
+        'The play() request was interrupted by a smoke alarm. https://goo.gl/LdLk22'
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+describe('classifyException — GROUP B: the autoplay gesture phrasing (drop is UNGATED)', () => {
+  it('drops the Chromium gesture-required phrasing', () => {
+    const r = classifyException(
+      exc('NotAllowedError', 'play() can only be initiated by a user gesture.')
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('autoplay');
+  });
+
+  it('drops the gesture phrasing carried entirely in the message', () => {
+    const r = classifyException({
+      value: 'NotAllowedError: play() can only be initiated by a user gesture.',
+    });
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('autoplay');
+  });
+
+  // 🔴 The rule consults NO stack, so an app frame does not protect this one — pinned so the
+  // asymmetry with GROUP A is visible rather than inferred.
+  it('drops the gesture phrasing even with a project-source app frame (rule 3 is ungated)', () => {
+    const r = classifyException(
+      exc('NotAllowedError', 'play() can only be initiated by a user gesture.', APP_FRAME)
+    );
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('autoplay');
+  });
+
+  // 🔴 THE DELIBERATE EXCLUSION (invariant guard — green before this change, and it must stay
+  // green after). Same error TYPE, nearly the same sentence, entirely different meaning: this is a
+  // user permission denial (camera / microphone / clipboard), which may be a real bug in our own
+  // gating. `The play method is not allowed…` drops; `The request is not allowed…` must not.
+  it.each([[APP_FRAME], [undefined]])(
+    'does NOT drop the NotAllowedError PERMISSION-denial sibling (frames: %#)',
+    (frames) => {
+      const r = classifyException(
+        exc(
+          'NotAllowedError',
+          'The request is not allowed by the user agent or the platform in the current context, possibly because the user denied permission.',
+          frames
+        )
+      );
+      expect(r.drop).toBe(false);
+      expect(r.category).toBe('real');
+    }
+  );
+
+  // Invariant guard: anchoring is what makes an ungated DROP safe. No stack here either.
+  it('does NOT drop a real app error that merely QUOTES the gesture phrasing', () => {
+    const r = classifyException(
+      exc('Error', 'Autoplay bootstrap failed: play() can only be initiated by a user gesture.')
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+describe('classifyException — GROUP C: TAG the MetaMask extension (kept, never dropped)', () => {
+  // The exception `type` arrives MINIFIED (`i`), so it carries no information and the match is on
+  // the VALUE alone. This is the shape that made 206 beacons land in `real`.
+  it('tags a minified-type MetaMask connect failure as extension', () => {
+    const r = classifyException(exc('i', 'Failed to connect to MetaMask'));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  it('tags a MetaMask connect failure that carries an app frame', () => {
+    const r = classifyException(exc('i', 'Failed to connect to MetaMask', APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // 🔴 KEEP+TAG, never DROP. A tag is recoverable — the beacon is in Loki and queryable by
+  // `context_error_category="extension"` — so if a first-party wallet connector ever ships, a
+  // mis-tag can be undone from the data. A drop could not be.
+  it('never drops a MetaMask error, whatever the stack shape', () => {
+    for (const frames of [undefined, APP_FRAME, { frames: [OTEL_FETCH_FRAME] }]) {
+      expect(classifyException(exc('i', 'Failed to connect to MetaMask', frames)).drop).toBe(false);
+    }
+  });
+
+  // Anchored at the start, so a mid-message occurrence is not evidence. Documented consequence,
+  // not an accident: this stays `real`.
+  it('does NOT tag a message that merely mentions the MetaMask failure mid-sentence', () => {
+    const r = classifyException(
+      exc('TypeError', 'Wallet bridge threw: Failed to connect to MetaMask', APP_FRAME)
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+});
+
+describe('classifyException — GROUP D: bizlogic phrasings (moderation + SFW-model block)', () => {
+  // The server builds this as `Your prompt was flagged: ${blockedFor.join(', ')}`, so the suffix
+  // is an open set. The pattern is anchored at the START and open at the end.
+  it.each([
+    ['Your prompt was flagged: breasts'],
+    ['Your prompt was flagged: Inappropriate minor content'],
+    // The `green`-currency variant appends a two-newline redirect hint after the reasons.
+    ['Your prompt was flagged: minor\n\nTry the SFW model instead.'],
+    // Matches what two live components already branch on: `startsWith('Your prompt was flagged')`,
+    // with no colon required.
+    ['Your prompt was flagged'],
+  ])('tags the moderation phrasing %j as bizlogic', (value) => {
+    const r = classifyException(exc('TRPCClientError', value));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('bizlogic');
+  });
+
+  it('tags the moderation phrasing carried entirely in the message', () => {
+    const r = classifyException({ value: 'TRPCClientError: Your prompt was flagged: breasts' });
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('bizlogic');
+  });
+
+  // The `green`/SFW-model rewrite of `Prompt requires mature content but workflow does not allow
+  // it` — same user state, different sentence. The tail is left unmatched so a reworded tail
+  // cannot silently make the pattern inert.
+  it.each([
+    [
+      'The prompt has been blocked due to mature content which is not supported by the current model',
+    ],
+    ['The prompt has been blocked due to mature content which this model cannot produce'],
+  ])('tags the SFW-model block %j as bizlogic', (value) => {
+    const r = classifyException(exc('TRPCClientError', value));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('bizlogic');
+  });
+
+  // Invariant guards: neither pattern may be reachable from the middle of an app message. The
+  // moderation one is anchored; the SFW one is a distinctive full clause. Both are KEEP+TAG, so
+  // the cost of a false positive is a mis-tag rather than lost data — but a mis-tag still hides a
+  // real bug from the `real` stream, which is what the dashboards and alerts count.
+  it.each([
+    ['Error', 'Could not determine whether your prompt was flagged: the audit call timed out'],
+    ['Error', 'Moderation sync failed while replaying flagged prompts'],
+    ['Error', 'The prompt has been saved to drafts'],
+  ])('does NOT tag %s / %s as bizlogic', (type, value) => {
+    const r = classifyException(exc(type, value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // A bizlogic tag must never become a drop.
+  it('keeps every new bizlogic phrasing (tag-only, no drop)', () => {
+    for (const value of [
+      'Your prompt was flagged: breasts',
+      'The prompt has been blocked due to mature content which is not supported by the current model',
+    ]) {
+      expect(classifyException(exc('TRPCClientError', value)).drop).toBe(false);
+    }
+  });
+});
+
+// 🔴 GROUP E. Before this change, `/\(evaluating ['"]window\.ethereum/i` was the only DROP-or-TAG
+// predicate in the module that was an unanchored substring with NO second conjunct, and it fires
+// by design on beacons carrying app frames (rule 7 runs after every DROP). `viem` and
+// `@coinbase/cdp-sdk` are live dependencies, so the day a wallet connector ships,
+// `window.ethereum.*` becomes APP code and its genuine failures would be tagged out of `real`.
+// Requiring `.selectedAddress` costs nothing measurable: 0 of 364 hits referenced any other
+// property.
+describe('classifyException — GROUP E: window.ethereum narrowed to .selectedAddress', () => {
+  // No-regression pin: the shape that actually occurs still tags.
+  it.each([
+    ["undefined is not an object (evaluating 'window.ethereum.selectedAddress = undefined')"],
+    ["undefined is not an object (evaluating 'window.ethereum.selectedAddress')"],
+  ])('still tags the injected read %j as extension', (value) => {
+    const r = classifyException(exc('TypeError', value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+
+  // The prefix trap named in the brief: `window.ethereumProvider` matched the OLD pattern, because
+  // `window\.ethereum` is a prefix of it and nothing terminated the match.
+  it('does NOT tag window.ethereumProvider — it only matched as a PREFIX', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        "undefined is not an object (evaluating 'window.ethereumProvider.selectedAddress')",
+        APP_FRAME
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Any OTHER property on the object is now app-attributable. These are the shapes a first-party
+  // wallet connector would produce.
+  it.each([
+    ["undefined is not an object (evaluating 'window.ethereum.request')"],
+    ["undefined is not an object (evaluating 'window.ethereum.enable()')"],
+    ["undefined is not an object (evaluating 'window.ethereum.on')"],
+  ])('does NOT tag the non-selectedAddress access %j', (value) => {
+    const r = classifyException(exc('TypeError', value, APP_FRAME));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // Invariant guard: narrowing one entry must not have touched its siblings on the same array.
+  it('still tags the __firefox__ object path (sibling pattern untouched)', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        "undefined is not an object (evaluating 'window.__firefox__.reader')",
+        APP_FRAME
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('extension');
+  });
+});
+
+// A single sweep asserting the pre-existing categories are all still reachable and unchanged.
+// Every phrasing added above went into an EXISTING rule, so the risk is a regex that swallowed a
+// neighbour rather than a new category behaving oddly.
+describe('classifyException — no-regression sweep across every category', () => {
+  it.each([
+    ['abort', true, exc('AbortError', 'The user aborted a request.')],
+    [
+      'adblock',
+      true,
+      exc(
+        'UnhandledRejection',
+        'Failed to load script: //securepubads.g.doubleclick.net/tag/js/gpt.js'
+      ),
+    ],
+    [
+      'autoplay',
+      true,
+      exc('NotAllowedError', 'The play method is not allowed by the user agent in this context'),
+    ],
+    ['script_error', true, exc('Error', 'Script error.')],
+    [
+      'injected',
+      true,
+      exc('ReferenceError', "Can't find variable: EmptyRanges", {
+        frames: [{ filename: 'undefined', lineno: 1705, colno: 541 }],
+      }),
+    ],
+    ['network', true, exc('TypeError', 'Failed to fetch')],
+    ['extension', false, exc('ReferenceError', "Can't find variable: __firefox__", APP_FRAME)],
+    ['bizlogic', false, exc('TRPCClientError', 'insufficientBuzz')],
+    ['chunkload', false, exc('ChunkLoadError', 'Loading chunk 4823 failed.')],
+    [
+      'meili',
+      false,
+      exc('MeiliSearchCommunicationError', 'request to https://search.civitai.com failed'),
+    ],
+    [
+      'real',
+      false,
+      exc('TypeError', "Cannot read properties of undefined (reading 'M_ID')", APP_FRAME),
+    ],
+  ])('%s still classifies as before (drop=%s)', (category, drop, payload) => {
+    const r = classifyException(payload as ClassifiableException);
+    expect(r.category).toBe(category);
+    expect(r.drop).toBe(drop);
+  });
+});
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+// RULE 6b — third-party ad/analytics REQUEST INITIATORS
+//
+// 🔴 WHY THESE FIXTURES LOOK DIFFERENT FROM EVERY FIXTURE ABOVE. This classifier runs on the
+// frames the BROWSER produced, where each of our chunks is spelled
+// `https://<our-host>/_next/static/chunks/<hash>.js`. The `turbopack:///[project]/…` and
+// `webpack://…` paths used by the fixtures above are a source-map `sources` spelling, produced by
+// the collector after `beforeSend` has returned — so the rule 6 conjunct those fixtures exercise
+// cannot fire on a real browser stack, and rule 6b is the only rule in this file with
+// production-shaped coverage.
+//
+// That rests on first principles, not a count: a browser does not consult source maps to build
+// `error.stack`, so a browser-produced frame cannot carry a post-resolution path. The test
+// `tags a minified-bundle stack whose OUTERMOST frame is an ad network` is what pins it here.
+// A tally of STORED beacons cannot support it either way — storage holds the post-resolution
+// spelling, so such a count reads the same whether the claim is true or false.
+// ──────────────────────────────────────────────────────────────────────────────────────────────
+
+/** Build the production stack shape: minified first-party plumbing, then the initiator outermost. */
+const prodStack = (initiator: { filename: string }) => ({
+  frames: [MINIFIED_CHUNK_FRAME, MINIFIED_CHUNK_FRAME_2, initiator],
+});
+
+describe('classifyException — rule 6b: TAG a bare network failure an ad network initiated', () => {
+  // One case per enumerated domain, each spelled with the subdomain it was MEASURED under (which
+  // is why the patterns are domain-anchored rather than hostname-exact). Deleting any one pattern
+  // flips exactly the matching row.
+  it.each([
+    ['https://securepubads.g.doubleclick.net/pagead/managed/js/gpt/m202609250101/pubads_impl.js'],
+    ['https://www.googletagmanager.com/gtag/js?id=G-TESTID001'],
+    ['https://cdn.snigelweb.com/prebid/11.29.0-snpbjs/prebid.js?v=20389'],
+  ])('tags a `Failed to fetch` whose outermost frame is %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
+  });
+
+  // The `(?:^|\.)` alternation, both halves. Without the `^` an apex-only host stops matching;
+  // without the alternation being an alternation, `notdoubleclick.net` starts matching.
+  it('tags on the bare apex domain', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', prodStack({ filename: 'https://doubleclick.net/gpt.js' }))
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
+  });
+  it('does NOT drop a host that merely ENDS with the domain text', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        'Failed to fetch',
+        prodStack({ filename: 'https://notdoubleclick.net/gpt.js' })
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The `$` anchor. A host that only CONTAINS an enumerated domain as a left-hand label is a
+  // different site.
+  it.each([
+    ['https://doubleclick.net.example.com/x.js'],
+    ['https://googletagmanager.com.cdn.example/x.js'],
+  ])('does NOT drop a look-alike host: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // 🔴 The host is PARSED out of the authority, never substring-matched against the filename —
+  // and these fixtures have to be built carefully to observe that. A first-party URL merely
+  // CONTAINING an ad domain is not enough: `…/chunks/doubleclick-shim.js` has no `.net` at all,
+  // and `…?provider=googletagmanager.com` fails the `(?:^|\.)` because the preceding character is
+  // `=`. The observing shape needs the domain terminal AND dot-prefixed inside the path or query.
+  // The pathless row additionally observes the `?` in the authority char class: without it the
+  // authority runs on into the query string and the whole thing reads as an ad host.
+  it.each([
+    ['https://civitai.com/_next/static/chunks/a.js?ref=.doubleclick.net'],
+    ['https://civitai.com?ref=x.doubleclick.net'],
+    ['https://civitai.com/_next/static/chunks/doubleclick-shim.js'],
+  ])('does NOT drop a FIRST-PARTY url that merely contains an ad host: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The authority parse: userinfo, port, the FQDN root label, and case are all normalised before
+  // the host is tested. Each row is the sole observer of one of those.
+  //
+  // 🔴 The userinfo row puts the credentials IMMEDIATELY before the matched domain on purpose.
+  // Spelled `user:pw@securepubads.g.doubleclick.net` the character before `doubleclick` is still
+  // a `.`, so the pattern matches with or without the strip and the fixture observes nothing — it
+  // survived exactly that mutant. Spelled `…@doubleclick.net` the preceding character is `@`, the
+  // `(?:^|\.)` fails, and the strip is the only reason this is attributed to the ad network.
+  it.each([
+    ['https://user:pw@doubleclick.net/gpt/pubads_impl.js'],
+    ['https://securepubads.g.doubleclick.net:443/gpt/pubads_impl.js'],
+    ['https://doubleclick.net./gpt.js'],
+    ['//securepubads.g.doubleclick.net/gpt/pubads_impl.js'],
+    ['HTTPS://WWW.GOOGLETAGMANAGER.COM/gtag/js?id=G-TESTID002'],
+    ['  https://securepubads.g.doubleclick.net/gpt/pubads_impl.js  '],
+  ])(
+    'tags regardless of userinfo / port / root label / scheme / case / padding: %s',
+    (filename) => {
+      const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+      expect(r.drop).toBe(false);
+      expect(r.category).toBe('ad_initiated');
+    }
+  );
+
+  // `lastIndexOf('@')`, not `indexOf`. With two `@` the first-index variant leaves
+  // `b@doubleclick.net`, whose `@` defeats the `(?:^|\.)` — so this row flips to KEEP under that
+  // mutant and is its only observer.
+  it('tags when the authority carries more than one @', () => {
+    const r = classifyException(
+      exc(
+        'TypeError',
+        'Failed to fetch',
+        prodStack({ filename: 'https://a@b@doubleclick.net/x.js' })
+      )
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
+  });
+});
+
+describe('classifyException — rule 6b: deliberate negatives (a false tag hides a real bug)', () => {
+  // 🔴 THE SAFETY TEST THIS RULE EXISTS AROUND. Browser extensions demonstrably patch
+  // `window.fetch` — over one measured 6h window, 1,175 of that window's 1,727 sampled
+  // `TypeError: Failed to fetch` beacons carried a `chrome-extension://…` frame, our own requests
+  // included. If an ad script ever does the same, its frame joins every fetch rejection as one
+  // more unconditional layer, and an "ad-host frame anywhere on the stack" rule would re-tag the
+  // WHOLE bare-network stream out of `real`, genuine first-party bugs included. Requiring the ad frame to be
+  // OUTERMOST is what makes that impossible: replace `frames[length - 1]` with a `.some(...)` and
+  // only this test fails.
+  it('KEEPS our own fetch failure when an ad script merely WRAPPED fetch (frame not outermost)', () => {
+    const r = classifyException(
+      exc('TypeError', 'Failed to fetch', {
+        frames: [
+          AD_SCRIPT_FRAME,
+          MINIFIED_CHUNK_FRAME,
+          MINIFIED_CHUNK_FRAME_2,
+          {
+            filename: 'https://civitai.com/_next/static/chunks/upload-4f2a.js',
+            function: 'uploadSourceImage',
+          },
+        ],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The message conjunct, in both directions. A real app bug whose message merely NAMES an ad
+  // network, or carries the network phrase inside a larger sentence, is kept even though its
+  // stack is identical to the re-tagged population's.
+  it.each([
+    ['TypeError', "Cannot read properties of undefined (reading 'googletag')"],
+    ['TypeError', 'Failed to fetch the ad slot configuration'],
+    ['TypeError', 'Ad refresh failed: Failed to fetch'],
+  ])('KEEPS a non-anchored message with an ad initiator: %s / %s', (type, value) => {
+    const r = classifyException(exc(type, value, prodStack(AD_SCRIPT_FRAME)));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // 🔴 The authority parse accepts ONLY `http(s)` and protocol-relative frames, and both halves
+  // of that are safety properties with their own observer here. An extension-scheme frame is not
+  // initiator evidence (extensions wrap fetch — see the safety test above), and `blob:` is a real
+  // frame spelling for worker code whose host is merely the origin that CREATED the blob. Each
+  // row carries an ad domain as its host, so it flips to `ad_initiated` the moment the scheme
+  // or the `^` anchor is relaxed — varying the scheme against a matching host, rather than the
+  // host against a fixed scheme, is what makes them observe anything.
+  it.each([
+    ['chrome-extension://doubleclick.net/injectScriptAdjust.js'],
+    ['moz-extension://googletagmanager.com/content.js'],
+    ['blob:https://securepubads.g.doubleclick.net/9f2c-1d'],
+  ])('does NOT drop on an ad-domain host behind a non-http(s) scheme: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // `frameHost` returns null for a frame that is not an absolute URL, or that has no authority at
+  // all. These are the spellings that actually occur on this stream.
+  it.each([
+    ['turbopack:///[project]/src/components/TrackView/TrackPageView.tsx'],
+    ['<anonymous>'],
+    ['//'],
+  ])('does NOT drop on a frame with no parseable host: %s', (filename) => {
+    const r = classifyException(exc('TypeError', 'Failed to fetch', prodStack({ filename })));
+    expect(r.drop).toBe(false);
+  });
+
+  // Fails OPEN on an unreadable outermost frame: no filename to parse means no host, so no drop.
+  //
+  // 🔴 Of the malformed-frame shapes, only these two reach rule 6b — getting that wrong is how a
+  // test reads as coverage while providing none. Both start with a `/_next/` frame, so
+  // `hasProjectSourceFrame` answers TRUE, rule 6 declines, and 6b is genuinely the rule under
+  // test. An EMPTY or NON-ARRAY `frames` cannot get here at all: `hasProjectSourceFrame` returns
+  // `false` from its own malformed guard, so rule 6 drops the beacon as `network` first — which
+  // is asserted separately below, and is why 6b's own `Array.isArray` guard has no behavioural
+  // observer (its docstring says so).
+  it.each<[string, unknown]>([
+    ['a frame with no filename', { frames: [MINIFIED_CHUNK_FRAME, {}] }],
+    ['an undefined trailing frame', { frames: [MINIFIED_CHUNK_FRAME, undefined] }],
+  ])('does not throw, and keeps as real, on %s', (_name, stacktrace) => {
+    const r = classifyException({
+      type: 'TypeError',
+      value: 'Failed to fetch',
+      stacktrace,
+    } as ClassifiableException);
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+
+  // The ordering fact the note above rests on. This does NOT observe 6b's malformed guard — no
+  // single-point change to `isAdNetworkInitiatedRequest` can move these, because rule 6 decides
+  // them first. It pins that rule 6 is what decides them, which is the premise.
+  it.each<[string, unknown]>([
+    ['empty frames array', { frames: [] }],
+    ['malformed non-array frames', { frames: 'not-an-array' }],
+    [
+      'an array-LIKE object indexable to an ad host',
+      { frames: { length: 1, 0: { filename: 'https://securepubads.g.doubleclick.net/gpt.js' } } },
+    ],
+  ])('rule 6 — not 6b — decides a bare-network message with %s', (_name, stacktrace) => {
+    const r = classifyException({
+      type: 'TypeError',
+      value: 'Failed to fetch',
+      stacktrace,
+    } as ClassifiableException);
+    expect(r.drop).toBe(true);
+    expect(r.category).toBe('network');
+  });
+
+  // 🔴 The TRPC differential, pinned because the mechanism inverts on inspection.
+  // `BARE_NETWORK_VALUE_RES` permits only a `TypeError:` prefix, so the `type + ': ' + value`
+  // composite does NOT match for a `TRPCClientError` — but the bare `value` DOES, so these
+  // beacons are fully eligible for rules 6 and 6b and survive on the frame conjunct alone.
+  // MEASURED over three adjacent 6h windows on 2026-09-30: 448–460 per window, every sampled one
+  // a two-frame stack of our own minified chunks with no foreign frame at any position.
+  it('KEEPS a TRPCClientError `Failed to fetch` whose stack is two of our own chunks', () => {
+    const r = classifyException(
+      exc('TRPCClientError', 'Failed to fetch', {
+        frames: [MINIFIED_CHUNK_FRAME_2, MINIFIED_CHUNK_FRAME],
+      })
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('real');
+  });
+  it('tags a TRPCClientError `Failed to fetch` that an ad network initiated', () => {
+    const r = classifyException(
+      exc('TRPCClientError', 'Failed to fetch', prodStack(AD_SCRIPT_FRAME))
+    );
+    expect(r.drop).toBe(false);
+    expect(r.category).toBe('ad_initiated');
   });
 });

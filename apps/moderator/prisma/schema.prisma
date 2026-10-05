@@ -409,6 +409,48 @@ model Temp_FailedLoRATrain {
 
 /// Retool-era history, and the app must not read or write it. A timed mute is `User.muteExpiresAt` in
 /// the MAIN database, drained hourly by `processTimedUnmutesJob`; a mute recorded only here never lifts.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model text_relabel_answer {
+  id                BigInt            @id @default(autoincrement())
+  item_id           BigInt
+  labeler_id        Int
+  label             String
+  note              String?
+  duration_ms       Int?
+  handed_off_at     DateTime?         @db.Timestamptz(6)
+  created_at        DateTime          @default(now()) @db.Timestamptz(6)
+  updated_at        DateTime          @default(now()) @db.Timestamptz(6)
+  text_relabel_item text_relabel_item @relation(fields: [item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([item_id, labeler_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model text_relabel_item {
+  id                  BigInt                @id @default(autoincrement())
+  token               String                @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch               String
+  report_id           Int
+  tag                 String
+  wave                Int                   @db.SmallInt
+  entity_type         String
+  entity_id           Int?
+  author_id           Int?
+  visibility          String
+  confidence          Int                   @db.SmallInt
+  confidence_band     String
+  stratum_key         String
+  cell_population     Int
+  text_value          String?
+  flagged_at          DateTime              @db.Timestamptz(6)
+  purge_after         DateTime              @db.Timestamptz(6)
+  created_at          DateTime              @default(now()) @db.Timestamptz(6)
+  text_relabel_answer text_relabel_answer[]
+
+  @@unique([report_id, tag])
+  @@index([batch], map: "text_relabel_item_batch_idx")
+}
+
 model TimedMutes {
   id         Int       @id @default(autoincrement())
   userId     String?
@@ -643,6 +685,64 @@ model products {
   updated_at       DateTime? @db.Timestamp(6)
   image_url        String?
   part_number      String?
+}
+
+/// Removal-label pilot. Written by hand from apps/moderator/removal-label-eval/schema.sql ahead of
+/// that SQL being applied; a pull after applying it should reproduce these models.
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model relabel_answer {
+  id             BigInt       @id @default(autoincrement())
+  item_id        BigInt
+  labeler_id     Int
+  minor_present  String
+  sexual_level   String
+  violence       String
+  school_setting String
+  duration_ms    Int?
+  created_at     DateTime     @default(now()) @db.Timestamptz(6)
+  updated_at     DateTime     @default(now()) @db.Timestamptz(6)
+  relabel_item   relabel_item @relation(fields: [item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([item_id, labeler_id])
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model relabel_item {
+  id                 BigInt               @id @default(autoincrement())
+  token              String               @unique @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  batch              String
+  image_id           Int                  @unique
+  stratum            String
+  bucket             String?
+  nsfw_level         String?
+  stratum_key        String
+  owner_id           Int
+  removed_at         DateTime?            @db.Timestamptz(6)
+  removed_by         Int?
+  purge_after        DateTime?            @db.Timestamptz(6)
+  appeal_status      String?
+  appeal_resolved_at DateTime?            @db.Timestamptz(6)
+  relabel            Boolean              @default(true)
+  created_at         DateTime             @default(now()) @db.Timestamptz(6)
+  relabel_answer     relabel_answer[]
+  relabel_prediction relabel_prediction[]
+
+  @@index([batch], map: "relabel_item_batch_idx")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model relabel_prediction {
+  id           BigInt       @id @default(autoincrement())
+  item_id      BigInt
+  run_id       String
+  arm          String
+  model        String
+  answers      Json
+  created_at   DateTime     @default(now()) @db.Timestamptz(6)
+  relabel_item relabel_item @relation(fields: [item_id], references: [id], onDelete: Cascade, onUpdate: NoAction)
+
+  @@unique([run_id, arm, item_id])
+  @@index([item_id], map: "relabel_prediction_item_idx")
 }
 
 model sample {

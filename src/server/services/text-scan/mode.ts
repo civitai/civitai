@@ -1,27 +1,33 @@
 import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
 import type { TextScanEntityType, TextScanMode } from '~/server/services/text-scan/types';
 
-export const TEXT_SCAN_FLAG: Record<TextScanEntityType, FLIPT_FEATURE_FLAGS> = {
-  Model: FLIPT_FEATURE_FLAGS.TEXT_SCAN_MODEL,
-  Article: FLIPT_FEATURE_FLAGS.TEXT_SCAN_ARTICLE,
-  Post: FLIPT_FEATURE_FLAGS.TEXT_SCAN_POST,
-  Bounty: FLIPT_FEATURE_FLAGS.TEXT_SCAN_BOUNTY,
-  BountyEntry: FLIPT_FEATURE_FLAGS.TEXT_SCAN_BOUNTY_ENTRY,
-  Challenge: FLIPT_FEATURE_FLAGS.TEXT_SCAN_CHALLENGE,
-  ChatMessage: FLIPT_FEATURE_FLAGS.TEXT_SCAN_CHAT,
-  Comment: FLIPT_FEATURE_FLAGS.TEXT_SCAN_COMMENT,
-  CommentV2: FLIPT_FEATURE_FLAGS.TEXT_SCAN_COMMENT_V2,
-  ResourceReview: FLIPT_FEATURE_FLAGS.TEXT_SCAN_RESOURCE_REVIEW,
-  User: FLIPT_FEATURE_FLAGS.TEXT_SCAN_USER,
-  UserProfile: FLIPT_FEATURE_FLAGS.TEXT_SCAN_USER_PROFILE,
-};
+// Enum KEYS, not values: read at module scope, the enum breaks every suite that hand-lists a
+// `~/server/flipt/client` mock without it, and this module is in model.service's import graph.
+export const TEXT_SCAN_FLAG_KEY = {
+  Model: 'TEXT_SCAN_MODEL',
+  Article: 'TEXT_SCAN_ARTICLE',
+  Post: 'TEXT_SCAN_POST',
+  Bounty: 'TEXT_SCAN_BOUNTY',
+  BountyEntry: 'TEXT_SCAN_BOUNTY_ENTRY',
+  Challenge: 'TEXT_SCAN_CHALLENGE',
+  ChatMessage: 'TEXT_SCAN_CHAT',
+  Comment: 'TEXT_SCAN_COMMENT',
+  CommentV2: 'TEXT_SCAN_COMMENT_V2',
+  ResourceReview: 'TEXT_SCAN_RESOURCE_REVIEW',
+  User: 'TEXT_SCAN_USER',
+  UserProfile: 'TEXT_SCAN_USER_PROFILE',
+} as const satisfies Record<TextScanEntityType, keyof typeof FLIPT_FEATURE_FLAGS>;
+
+export function textScanFlag(entityType: TextScanEntityType): FLIPT_FEATURE_FLAGS {
+  return FLIPT_FEATURE_FLAGS[TEXT_SCAN_FLAG_KEY[entityType]];
+}
 
 export async function getTextScanMode(
   entityType: TextScanEntityType,
   entityId: number
 ): Promise<TextScanMode> {
   try {
-    const variant = await getFliptVariant(TEXT_SCAN_FLAG[entityType], String(entityId));
+    const variant = await getFliptVariant(textScanFlag(entityType), String(entityId));
     return variant === 'shadow' || variant === 'active' ? variant : 'off';
   } catch {
     return 'off';

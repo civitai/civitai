@@ -39,13 +39,18 @@ import {
   getTransactionByExternalId,
   refundMultiAccountTransaction,
 } from '~/server/services/buzz.service';
+import type { PrizeInput } from '~/server/services/prize.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
   CHALLENGE_ENTRY_HOUSE_CUT,
   getEntryPoolContribution,
 } from '~/shared/constants/challenge.constants';
-import { ChallengeSource, CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import {
+  ChallengeSource,
+  CollectionItemStatus,
+  PrizeSourceType,
+} from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 import {
   recordChallengeEntryFeesBuzz,
@@ -84,8 +89,11 @@ export async function chargeInitialPrize({
     // Trailing `-creator` keeps prefix matches unambiguous vs other challenge ids (challenge 5 would
     // otherwise prefix-match 50, 51, ...). The currency suffix scopes the id per wallet: a refunded
     // green charge leaves its id occupied in the ledger, so a later yellow re-charge on a shared id
-    // would be silently dropped (createBuzzTransaction dedups on externalTransactionId) — leaving an
-    // unfunded pool. `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
+    // would be REFUSED — leaving an unfunded pool. (Refused, not silently dropped: the header above
+    // records that a retry gets an idempotency `conflict`, and `CreateTransactionResponse` has no
+    // conflict field to report one in band, so it arrives as a throw. Either way the pool goes
+    // unfunded, which is what the suffix prevents.)
+    // `-creator` prefix matchers still match both `-creator-green` and `-creator-yellow`.
     externalTransactionId: `challenge-initial-prize-${challengeId}-creator-${fromAccountType}`,
     details: { challengeId },
   });
@@ -403,22 +411,21 @@ function winnerPayoutExternalId(challengeId: number, userId: number, position: n
 }
 
 /**
- * Build the winner-prize transactions for a challenge, paid in its stored currency.
+ * Build the winner prizes for a challenge. Each is plain Buzz: the winner picks the currency when
+ * claiming, whatever the pool was funded in.
  *
  * Pure apart from one never-throwing counter increment on the duplicate-drop branch — see below for
  * why a silent drop here would be the worst possible failure.
  */
-export function buildWinnerPayoutTransactions({
+export function buildWinnerPrizes({
   challengeId,
   title,
-  buzzType,
   winners,
 }: {
   challengeId: number;
   title: string;
-  buzzType: ChallengeBuzzType;
-  winners: Array<{ userId: number; position: number; prize: number }>;
-}) {
+  winners: Array<{ userId: number; imageId?: number | null; position: number; prize: number }>;
+}): PrizeInput[] {
   // Both callers dedupe before they get here (so they can report the anomaly with the challenge
   // context they hold), which makes this a no-op on every current path. It is applied anyway
   // because this function is the single choke point every winner payout passes through, and a
@@ -435,13 +442,14 @@ export function buildWinnerPayoutTransactions({
   if (dropped.length)
     recordChallengeWinnerDuplicatePick({ count: dropped.length, origin: 'chokepoint' });
   return payable.map((entry) => ({
-    type: TransactionType.Reward,
-    toAccountId: entry.userId,
-    fromAccountId: 0,
+    userId: entry.userId,
+    sourceType: PrizeSourceType.Challenge,
+    sourceId: challengeId,
+    subjectId: entry.imageId ?? null,
+    position: entry.position,
     amount: entry.prize,
-    description: `Challenge Winner Prize #${entry.position}: ${title}`,
+    title: `Challenge Winner Prize #${entry.position}: ${title}`,
     externalTransactionId: winnerPayoutExternalId(challengeId, entry.userId, entry.position),
-    toAccountType: buzzType,
   }));
 }
 

@@ -170,6 +170,20 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     requiredScope: 'social:tip:self',
     allowOpaqueOrigin: true,
   },
+  // The DIGITAL GOODS pair. Both are direct-fetched by an unverified block from
+  // an opaque origin — the checkout is a button inside the app frame and the
+  // entitlement read runs on mount — so both need `ACAO: null` for exactly the
+  // reason tip.ts does.
+  {
+    module: '~/pages/api/v1/blocks/goods/purchase',
+    requiredScope: 'goods:purchase:self',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/entitlements',
+    requiredScope: 'goods:read:self',
+    allowOpaqueOrigin: true,
+  },
   // The BALANCE self-read is a withBlockScope REST route again — restored so a
   // block can direct-fetch it without a page host in the middle — so it DOES
   // have CORS wiring to guard here. The other three buzz self-reads

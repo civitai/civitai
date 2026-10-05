@@ -17,6 +17,7 @@ import type {
   EquipCosmeticInput,
   GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
+  SetCosmeticFlagInput,
 } from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
@@ -115,6 +116,23 @@ export async function getStickerAttribution({ ids }: GetStickerCosmeticsInput) {
       shopHref: username && shopEnabled ? `/user/${username}/shop` : null,
     };
   });
+}
+
+/**
+ * Sets or clears one moderator flag in a single statement, so two moderators
+ * flipping different bits cannot overwrite each other's.
+ */
+export async function setCosmeticFlag({ id, flag, enabled }: SetCosmeticFlagInput) {
+  const [row] = await dbWrite.$queryRaw<{ flags: number }[]>`
+    UPDATE "Cosmetic"
+    SET flags = CASE WHEN ${enabled} THEN flags | ${flag} ELSE flags & ~${flag}::int END
+    WHERE id = ${id}
+    RETURNING flags
+  `;
+  if (!row) throw throwBadRequestError("That cosmetic doesn't exist");
+
+  await cosmeticCache.refresh(id);
+  return { id, flags: row.flags };
 }
 
 export async function getOwnedStickerCosmetics(userId: number) {

@@ -83,8 +83,16 @@ export const TOS_REASONS: CannedReason[] = [
   },
   {
     label: 'NSFW potential minor in a school environment',
-    message: 'NSFW potential minors in a school environment is not allowed',
+    message:
+      'School settings are moderated more strictly, and this was removed under that stricter standard.',
     violation: 'schoolNsfw',
+    tos: '9.6',
+  },
+  {
+    label: 'Minor with violence',
+    message:
+      'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed.',
+    violation: 'minorViolence',
     tos: '9.6',
   },
   {

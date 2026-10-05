@@ -2,10 +2,15 @@ import fs from 'fs';
 import path from 'path';
 import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
+// 🔴 THE TWO CARD-LIST CONSTANTS COME FROM THEIR OWNER, NOT FROM `appsWideLayout`, WHICH ONLY
+// IMPORTS THEM. `pnpm typecheck` excludes `__tests__`, and vite's SSR transform resolves a
+// missing named export to `undefined` rather than throwing — so the previous import made
+// `expect(HIDDEN_TAB_GAP).not.toBe(APPS_CARD_LIST_GAP)` compare `12` against `undefined` and
+// prove nothing, while the equivalence loop below survived only because
+// `appsCardGridColumnsAt`'s DEFAULT PARAMETERS substituted the real 16 for what it was handed.
+import { APPS_CARD_LIST_GAP, APPS_CARD_LIST_MIN_COLUMN } from '~/components/Apps/appsPageWidths';
 import {
   APPS_ACTIVE_PREVIEWS_COLUMNS,
-  APPS_CARD_LIST_GAP,
-  APPS_CARD_LIST_MIN_COLUMN,
   APPS_AGENT_REPORT_SCOPE_COLUMNS,
   APPS_FULL_MEASURE_CONTENT_WIDTH,
   APPS_LEGACY_CONTENT_WIDTH,
@@ -148,8 +153,9 @@ describe('every shipped ledger is valid', () => {
     // GREEN for every table, and green at BOTH tiers for two of them. The relationship is
     // now checked against the parsed tables, further down; this stays as what it always
     // was — a value pin, honestly labelled, so a silent re-tune is still visible.
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy).toHaveLength(5); // Kind App Submitter date action
-    expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy).toHaveLength(6); // …plus Deploy
+    // Kind App Version Submitter Plays date action
+    expect(APPS_REVIEW_QUEUE_COLUMNS.withoutDeploy).toHaveLength(7);
+    expect(APPS_REVIEW_QUEUE_COLUMNS.withDeploy).toHaveLength(8); // …plus Deploy
     expect(APPS_MINE_COLUMNS).toHaveLength(4); // App Cover Status Updated
     expect(APPS_MOD_LISTINGS_COLUMNS).toHaveLength(5); // App Owner Category Reviews actions
     expect(APPS_REVENUE_COLUMNS.withApp).toHaveLength(7); // Date App Scope Buzz Gross Share Status
@@ -265,18 +271,24 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
    *                   Verified by searching the whole of `src` for a JSX render of it.
    *   `no-surplus`  — the table is rendered, but its natural layout already fills the
    *                   container at the NARROW end, so every ledger either wraps a cell
-   *                   there or reproduces natural layout at the wide end. Verified by a
-   *                   named geometry arm that keeps measuring it.
+   *                   there or reproduces natural layout at the wide end. Verified by the
+   *                   named geometry arms that keep measuring it.
    *
    * 🔴 VERIFIED, NOT TRUSTED — the same rule the chrome allowlist in
    * `appsPageWidths.test.ts` holds itself to. An exemption keyed on a name is exactly where
    * a live table would hide, so adding a name here cannot silence the guard: each kind has
    * a check below that has to pass.
+   *
+   * 🔴 `geometryArms` IS A LIST, AND THE PLURAL IS LOAD-BEARING. A `no-surplus` exemption can
+   * be bounded on more than one axis — `AppActivityPanel`'s holds at container widths ≥768 and
+   * below ~560 it is a different layout entirely — and a single-name field records whichever
+   * half somebody wrote down first, leaving the other an unmeasured claim while the entry still
+   * reads as verified.
    */
   const EXEMPT: Record<
     string,
     | { kind: 'unrendered'; component: string; why: string }
-    | { kind: 'no-surplus'; component: string; why: string; geometryArm: string }
+    | { kind: 'no-surplus'; component: string; why: string; geometryArms: readonly string[] }
   > = {
     'src/components/Apps/OffsiteReviewQueue.tsx#0': {
       kind: 'unrendered',
@@ -301,7 +313,7 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
         '86 + actions 414 = 1259px in 1168px of container, so something is under-served ' +
         'there whatever the split. Every candidate ledger was taller than natural at 1200 ' +
         'or clipped the lineClamp-ed details harder. See the note in appsWideLayout.tsx.',
-      geometryArm: 'the reports table is no worse than natural at every width',
+      geometryArms: ['the reports table is no worse than natural at every width'],
     },
     'src/components/Apps/AppActivityPanel.tsx#0': {
       kind: 'no-surplus',
@@ -311,8 +323,13 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
         'surplus to place at the narrow end. Two ledgers shipped and both regressed row ' +
         'height (48.09 and 64.89 against a natural 36.19); the only configuration that ' +
         'holds one line everywhere reproduces natural layout at 2560 to within ~15px on ' +
-        'three of five columns. See the note in appsWideLayout.tsx.',
-      geometryArm: 'the activity table renders ONE LINE per cell at every width',
+        'three of five columns. BOUNDED AT >=768: in the ~408px permissions drawer the panel ' +
+        'renders the STACKED (card) variant, where there are no columns to ledger at all. ' +
+        'See the note in appsWideLayout.tsx.',
+      geometryArms: [
+        'the activity table renders ONE LINE per cell at every width',
+        "the drawer's activity feed renders the STACKED variant, and the wide page does not",
+      ],
     },
   };
 
@@ -530,13 +547,29 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
         // render search would reject it. What has to hold instead is that the measurement
         // the exemption rests on is still being TAKEN: a named geometry arm covering it.
         // Without this the reason decays into prose the moment the table's content changes.
-        const geometry = srcOf('src/components/Apps/AppsWideLayout.geometry.test.tsx');
-        if (!geometry.includes(entry.geometryArm)) {
-          offenders.push(
-            `${entry.component} is exempted as NO-SURPLUS but its geometry arm ` +
-              `"${entry.geometryArm}" is not in AppsWideLayout.geometry.test.tsx — the ` +
-              'exemption would be an unmeasured claim'
-          );
+        // 🔴 THE NAME MUST BE ON A LIVE `test(` LINE, NOT MERELY PRESENT IN THE SOURCE. A plain
+        // `includes` is satisfied by a commented-out arm, a `test.skip`, or the name quoted
+        // inside a docblock — i.e. by every shape in which the measurement has stopped running.
+        const geometryTestNames = srcOf('src/components/Apps/AppsWideLayout.geometry.test.tsx')
+          .split('\n')
+          // `/^\s*test\(/` only. ⚠️ An earlier revision wrote `/^\s*test(\.each\()?\(/`, whose
+          // alternative can never match: consuming `.each(` then requires `(` where the source has
+          // `[`. It contributed nothing and read as though it did. A `test.each` arm would be
+          // reported as not-live, which is the safe direction — an exempted measurement should be
+          // a plain `test(` so this check can see it.
+          .filter((line) => /^\s*test\(/.test(line));
+        expect(
+          entry.geometryArms.length,
+          `${entry.component} is exempted as NO-SURPLUS but names no geometry arm`
+        ).toBeGreaterThan(0);
+        for (const arm of entry.geometryArms) {
+          if (!geometryTestNames.some((line) => line.includes(arm))) {
+            offenders.push(
+              `${entry.component} is exempted as NO-SURPLUS but its geometry arm ` +
+                `"${arm}" is not a live \`test(\` in AppsWideLayout.geometry.test.tsx — the ` +
+                'exemption would be an unmeasured claim'
+            );
+          }
         }
         if (renderSitesOf(entry.component).length === 0) {
           offenders.push(
@@ -695,6 +728,20 @@ describe('appsCardGridColumnsAt — the auto-fill ladder', () => {
     // claim was arithmetically true and the citation was false, which is the same shape as
     // the findings that produced this paragraph.
     const HIDDEN_TAB_GAP = 12;
+    // 🔴 THE IMPORTED CONSTANTS ARE ASSERTED TO BE NUMBERS, WHICH IS THE MECHANISM AND NOT A
+    // NICETY. They used to be imported from `appsWideLayout`, which only IMPORTS them, and vite's
+    // SSR transform resolves a missing named export to `undefined` rather than throwing — so
+    // `not.toBe(APPS_CARD_LIST_GAP)` compared 12 against `undefined` and passed, while the loop
+    // below survived on `appsCardGridColumnsAt`'s DEFAULT PARAMETERS substituting the real
+    // values. Correcting the import removed that symptom; without these two lines a rename in
+    // `appsPageWidths` reinstates it silently, and `pnpm typecheck` cannot see it because
+    // `tsconfig.json` excludes `src/**/__tests__/**`. Not value pins — a value is the owner's to
+    // change; `undefined` is the failure.
+    expect(Number.isFinite(APPS_CARD_LIST_GAP), 'APPS_CARD_LIST_GAP did not resolve').toBe(true);
+    expect(
+      Number.isFinite(APPS_CARD_LIST_MIN_COLUMN),
+      'APPS_CARD_LIST_MIN_COLUMN did not resolve'
+    ).toBe(true);
     expect(HIDDEN_TAB_GAP).not.toBe(APPS_CARD_LIST_GAP);
     for (const width of [APPS_LEGACY_CONTENT_WIDTH, APPS_FULL_MEASURE_CONTENT_WIDTH, 1408, 2416]) {
       expect(

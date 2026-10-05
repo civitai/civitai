@@ -34,13 +34,21 @@ export function downloadLaneLabel(lane: string | null | undefined) {
   return LANES.find((x) => x.key === lane)?.label ?? lane;
 }
 
+/** The one lane with no per-stream cap, which is what a boost buys. */
+const UNCAPPED_LANE = 'high';
+
 /**
- * A lane's per-stream cap as the orchestrator reports it. `null` is uncapped — the high lane, which
- * is what a boost buys — and `undefined` is not reported.
+ * A lane's per-stream cap as the orchestrator reports it, where `undefined` is not reported.
+ *
+ * `null` reads as uncapped ONLY on the high lane. Anywhere else it is a figure we do not have, and
+ * calling it "no speed cap" would advertise the slowest lane as the fastest.
  */
-export function formatLaneSpeed(rateLimitBytesPerSecond: number | null | undefined) {
+export function formatLaneSpeed(
+  rateLimitBytesPerSecond: number | null | undefined,
+  lane?: string | null
+) {
   if (rateLimitBytesPerSecond === undefined) return undefined;
-  if (rateLimitBytesPerSecond === null) return 'no speed cap';
+  if (rateLimitBytesPerSecond === null) return lane === UNCAPPED_LANE ? 'no speed cap' : undefined;
   return `up to ${Math.round((rateLimitBytesPerSecond * 8) / 1_000_000)} Mbps`;
 }
 
@@ -76,9 +84,9 @@ export function DownloadLanes({ placement }: { placement?: DownloadLanePlacement
           const eta = here ? placement.etaSeconds : buy ? placement.boostedEtaSeconds : undefined;
           // Only the viewer's own lane reports its cap; the high lane is uncapped by definition.
           const speed = here
-            ? formatLaneSpeed(placement.rateLimitBytesPerSecond)
+            ? formatLaneSpeed(placement.rateLimitBytesPerSecond, lane.key)
             : lane.key === 'high'
-            ? formatLaneSpeed(null)
+            ? formatLaneSpeed(null, lane.key)
             : undefined;
           return (
             <div

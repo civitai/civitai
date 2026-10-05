@@ -1,3 +1,4 @@
+import { blockAuthorFeeQuotedCounter } from '~/server/prom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 // Type-only: names the shape `importOriginal()` returns for the step registry
@@ -1121,6 +1122,50 @@ describe('blocks.cancelWorkflow', () => {
     await expect(
       caller.cancelWorkflow({ blockToken: 'tok', workflowId: 'wf_1' })
     ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  });
+});
+
+// 🔴 THE GUARD THAT DID NOT EXIST, AND ITS ABSENCE WAS MUTATION-PROVEN.
+//
+// `blockAuthorFeeQuotedCounter`'s `surface` label is derived from the
+// `workflowLabel` this router passes to `quoteBlockAuthorFee`. Two comments in
+// `author-fee-charge.service.ts` claimed that pairing was "pinned behaviourally
+// by blocks.router.workflow.test.ts". It was not: this file had no reference to
+// `workflowLabel` at all, and rewriting BOTH router literals to `'whatif'` left
+// the whole suite green.
+//
+// Making the router import the shared constant was necessary and NOT sufficient
+// — re-running that same mutant against the import-only fix STILL passed,
+// because the mutant replaces the reference with a literal rather than changing
+// the constant. Only an assertion on what the router actually passes closes it.
+//
+// This asserts through the REAL fee service (it is not mocked here) onto the
+// GLOBAL prom stub, so it reads the label the counter genuinely received rather
+// than one this test supplied. It does not depend on the author-fee flag: the
+// `surface` label is computed on every arm, `flag-disabled` included.
+describe("blocks — the author-fee quote counter's surface label", () => {
+  it('an ESTIMATE reaches the fee quote as the disclosure surface', async () => {
+    vi.mocked(blockAuthorFeeQuotedCounter.inc).mockClear();
+    mockVerifyBlockToken.mockResolvedValue(validClaims());
+    happyVersionLookup();
+    happyUser();
+    mockSubmitWorkflow.mockResolvedValue({
+      id: '',
+      status: 'succeeded',
+      cost: { total: 12 },
+      steps: [],
+    });
+    const caller = blocksRouter.createCaller(fakeCtx() as never);
+    await caller.estimateWorkflow({ blockToken: 'tok', body: validBody() });
+
+    const labels = vi
+      .mocked(blockAuthorFeeQuotedCounter.inc)
+      .mock.calls.map((c) => c[0] as Record<string, string>);
+    expect(labels.length).toBeGreaterThan(0);
+    // EVERY quote this estimate produced must be on the disclosure surface. A
+    // `.some()` here would pass while a second, mislabelled quote leaked onto
+    // `gating` — which is the shape of the defect this guards.
+    expect(labels.every((l) => l.surface === 'disclosure')).toBe(true);
   });
 });
 
@@ -7974,6 +8019,37 @@ describe("step-type registry bridge (kind: 'step')", () => {
       expect(estimate.snapshot.cost.total).toBe(9);
     });
 
+    // 🔴 THE SECOND ESTIMATE CALL SITE. The guard above `blocks.estimateWorkflow`
+    // drives the `textToImage` branch, which reaches ONE of the two router sites
+    // that quote the author fee. A round-2 audit mutated the OTHER one — the
+    // `kind:'step'` branch — on its own and the whole suite stayed green at
+    // 486/486. The shared-constant import cannot catch that: it stops the
+    // constant DRIFTING, not a caller re-spelling the literal, which is exactly
+    // the reasoning that made the import insufficient for the first site.
+    //
+    // Consequence if it regresses: every registered-step estimate — an unbounded,
+    // unrate-limited `publicProcedure` surface — lands on
+    // `block_author_fee_quoted_total{surface="gating"}`, and the conversion ratio
+    // that counter exists for becomes meaningless.
+    it('a STEP estimate also reaches the fee quote as the disclosure surface', async () => {
+      vi.mocked(blockAuthorFeeQuotedCounter.inc).mockClear();
+      mockVerifyBlockToken.mockResolvedValue(stepClaims());
+      happyUser();
+      stepSubmitQuoting(2, 2);
+      await caller().estimateWorkflow({
+        blockToken: 'tok',
+        body: { kind: 'step' as const, step: SPLIT_FLOOR_STEP_ID, params: { cheap: true } },
+      });
+
+      const labels = vi
+        .mocked(blockAuthorFeeQuotedCounter.inc)
+        .mock.calls.map((c) => c[0] as Record<string, string>);
+      // Reachability control: if the step branch stopped quoting the fee at all,
+      // an empty set would make the `.every()` below vacuously true.
+      expect(labels.length).toBeGreaterThan(0);
+      expect(labels.every((l) => l.surface === 'disclosure')).toBe(true);
+    });
+
     it('mirrors the submit’s max(floor, quoted) — a quote BELOW the floor never under-displays', async () => {
       // 🔴 THE UNDER-DISPLAY DIRECTION, which a block cannot defend against: the
       // submit gates and reserves `max(Math.ceil(plan.reserveBuzz), quoted)`, so
@@ -9576,6 +9652,127 @@ describe('blocks — #3520 model substitution observability', () => {
     });
   });
 
+  /**
+   * 🔴 THE FOURTH CAP-BREACH ARM — private run. [INV] on the wording, [REG] on nothing:
+   * this surface did not exist before this PR, so none of these rows can be watched to
+   * fail at `f7f5eb4996`. They are INVARIANT pins, not regression coverage, and are
+   * labelled as such deliberately.
+   *
+   * Why they are worth having anyway: the `else` arm they displace describes the WRONG
+   * CEILING in a message that a moderator reads while blocked. It says "already spent
+   * today across your installed apps … daily cap is 50000" for a reservation that is
+   * actually per-(viewer, app) on a rolling ~25h key with a cap three orders of
+   * magnitude smaller. A viewer who trips it and reads that sentence has been told to
+   * look at a counter that is nowhere near its limit.
+   *
+   * The ternary is the mutable thing here — three arms selected by two booleans — so
+   * each row pins one arm AND asserts it is not any of the others, which is what makes
+   * an arm-swap mutant visible rather than merely possible.
+   */
+  describe('🔴 the PRIVATE-RUN Buzz cap reply names the right window and scope [INV]', () => {
+    function reachesTheCapAsPrivateRun(extra: Record<string, unknown> = {}) {
+      mockVerifyBlockToken.mockResolvedValue(
+        validClaims({
+          buzzBudget: 1000,
+          privateRun: true,
+          privateRunAudience: 'moderator',
+          ...extra,
+        })
+      );
+      happyVersionLookup();
+      happyUser();
+      // Every OTHER cap driver neutralised, so the only reachable exit is the
+      // cumulative one. Without this the test could pass off the per-app cap's
+      // message and never evaluate the ternary at all.
+      mockReserveAppSpend.mockResolvedValue({
+        allowed: true,
+        dailyTotal: 0,
+        velocityCount: 1,
+        dailyKey: 'system:blocks:app-spend-cap:apb_test:day',
+      });
+      mockGetActiveDevTunnel.mockResolvedValue(null);
+      mockReserveDevSessionBuzz.mockResolvedValue({ allowed: true, total: 0 });
+      mockSubmitWorkflow.mockResolvedValueOnce({
+        id: '',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+    }
+
+    it('quotes the per-app private-run cap, NOT the daily one', async () => {
+      reachesTheCapAsPrivateRun();
+      // 2515 > PRIVATE_RUN_BUZZ_CAP (2500) but FAR below the 50,000 daily cap — so a
+      // reply mentioning the daily cap here is not merely worded badly, it is a reply
+      // from a branch that read the wrong ceiling. This value is the discriminator.
+      mockSysRedis.incrBy.mockResolvedValue(2515);
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.status).toBe('failed');
+      expect(result.snapshot.error).toMatch(/private-run Buzz cap reached/);
+      expect(result.snapshot.error).toMatch(/cap is 2500 per app/);
+      // 🔴 THE ARM-EXCLUSION HALF. Pinning the right substring does not exclude the
+      // wrong branch having run; these do.
+      expect(result.snapshot.error).not.toMatch(/daily/);
+      expect(result.snapshot.error).not.toMatch(/installed apps/);
+      expect(result.snapshot.error).not.toMatch(/review session/);
+      expect(result.snapshot.error).not.toMatch(/50000/);
+      expect(mockSubmitWorkflow).toHaveBeenCalledTimes(1); // whatIf only, no submit
+    });
+
+    it('🔴 POSITIVE CONTROL: the SAME 2515 total on a PLAIN token is UNDER the cap', async () => {
+      // This is what proves the row above is reading the private-run ceiling rather
+      // than any ceiling at all. Same driver, same number, no private-run claim: the
+      // 50,000 daily cap is not reached, so the request runs to completion. If this
+      // ever starts returning a cap-breach, the discriminator above has gone blunt.
+      reachesTheCapAsPrivateRun({ privateRun: undefined, privateRunAudience: undefined });
+      mockSysRedis.incrBy.mockResolvedValue(2515);
+      mockSubmitWorkflow.mockResolvedValue({
+        id: 'wf_1',
+        status: 'succeeded',
+        cost: { total: 25 },
+        steps: [],
+      });
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toBeUndefined();
+      expect(result.snapshot.status).not.toBe('failed');
+    });
+
+    it('🔴 NEGATIVE CONTROL: a plain token DOES still get the daily arm when IT breaches', async () => {
+      // The mirror of the row above, and the thing that keeps the arm-exclusion
+      // assertions honest: the `else` branch is still reachable and still says what it
+      // always said, so the new arm narrowed the ternary rather than swallowing it.
+      reachesTheCapAsPrivateRun({ privateRun: undefined, privateRunAudience: undefined });
+      mockSysRedis.incrBy.mockResolvedValue(50015);
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/daily Buzz cap reached/);
+      expect(result.snapshot.error).not.toMatch(/private-run/);
+    });
+
+    it('the breached total is reported NET of this generation, like every other arm', async () => {
+      // `total - Math.ceil(cost)` — the number a viewer can reconcile against what they
+      // have already spent, not the post-reservation figure. Pinned because the three
+      // arms each recompute it and a copy-paste that dropped the subtraction in one of
+      // them would read as plausible.
+      reachesTheCapAsPrivateRun();
+      mockSysRedis.incrBy.mockResolvedValue(2515);
+
+      const caller = blocksRouter.createCaller(fakeCtx() as never);
+      const result = await caller.submitWorkflow({ blockToken: 'tok', body: validBody() });
+
+      expect(result.snapshot.error).toMatch(/2490 already spent/); // 2515 - 25
+      expect(result.snapshot.error).toMatch(/on this app's private run/);
+    });
+  });
+
   describe('estimateWorkflow', () => {
     it('reports the substitutions on the estimate reply (nothing is persisted there)', async () => {
       // A whatIf creates no persisted workflow, so the reply is the ONLY place
@@ -10622,7 +10819,7 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(stamped).toBe('step:imageBackgroundRemoval');
     });
 
-    it('NAMESPACES a $type that collides with a kind key — never bare `textToImage`', async () => {
+    it('NAMESPACES a $type that collides with a kind key — never bare `customComfy`', async () => {
       // 🔴 THE REASON THE VALUE IS PREFIXED, asserted at the call site the money
       // flows through. `textToImage` is itself a live orchestrator `$type`
       // (measured against `WorkflowStepTemplate.discriminator.mapping`), so a bare
@@ -10633,12 +10830,26 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       ptQuoting(5, 5);
       await caller().submitWorkflow({
         blockToken: 'tok',
-        body: ptBody({ $type: 'textToImage' }),
+        body: ptBody({ $type: 'customComfy' }),
       });
       await vi.waitFor(() => expect(mockRecordSpendAttribution).toHaveBeenCalledTimes(1));
       const stamped = mockRecordSpendAttribution.mock.calls[0][0].generationType;
-      expect(stamped).toBe('step:textToImage');
-      expect(stamped).not.toBe('textToImage');
+      expect(stamped).toBe('step:customComfy');
+      expect(stamped).not.toBe('customComfy');
+    });
+
+    // The collision this namespacing was written for is now closed at the door instead:
+    // `textToImage` is retired, so the arm refuses it rather than stamping it. The
+    // namespacing above is what proves no PAST submit was miscounted as a body-kind one
+    // — prod recorded `step:imageBackgroundRemoval` and no `step:textToImage` at all.
+    it('refuses a bare textToImage outright — the step type is retired', async () => {
+      mockVerifyBlockToken.mockResolvedValue(ptClaims());
+      happyUser();
+      ptQuoting(5, 5);
+      await expect(
+        caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type: 'textToImage' }) })
+      ).rejects.toThrow(/platform-internal and cannot be submitted by an app block/);
+      expect(mockRecordSpendAttribution).not.toHaveBeenCalled();
     });
 
     it('DEGRADES to the bare `step` for a wire-legal but unusable $type', async () => {

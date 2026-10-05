@@ -30,8 +30,8 @@ orchestrator source at `9306e7333`.
 
 - **Generation is always accepted**, with one exception: a non-member is refused a checkpoint only
   the `coveredNext` expansion covers, until it is resident
-  ([paid-model-loading-members-gate.md](paid-model-loading-members-gate.md)) — built, and inert until
-  `generation-coverage-next` is on. Otherwise a cold checkpoint does not block a submit.
+  ([paid-model-loading-members-gate.md](paid-model-loading-members-gate.md)) — **live since 2026-09-25**.
+  Otherwise a cold checkpoint does not block a submit.
 - **Downloads are free.** Lanes, the queue slot, and cancellation removing a job's downloads are the
   abuse controls — not a price.
 - **Boost = the high lane.** `PUT /v2/consumer/workflows/{id}` with `{ downloadPriority: "high" }`,
@@ -129,7 +129,10 @@ from `external`, so the picker marks both **Ready** and only the live read says 
 `no-divergent-generator-readiness` keeps the derivation single-sourced.
 
 The rest is live, from `resourceLoad.getResidency`: signed-in, ≤50 ids (`RESIDENCY_MAX_IDS`),
-rate-limited, cached 30s per version. That is the generator's marks, whose resources do not come from
+rate-limited, cached 30s per version (`resource-residency.service.ts`) and marked stale for any version
+whose `generatorLoaded` the webhook or the backstop job flips — otherwise the **Generation** rows name
+the pre-change state while the column-driven **Create** badge already shows the new one. That is the
+generator's marks, whose resources do not come from
 page data — the added-resource list batches into one request (`ResidencyBatchProvider`), while the
 checkpoint input, the two **Generation** rows (version details, picker card's back) and every
 `ResourceItemContent` outside that provider — the compatibility confirm, the image-metadata modal and
@@ -139,10 +142,11 @@ also holds: an `ExternalGeneration` version is answered `{ status: 'external' }`
 and the orchestrator is never called — its availability union has no state for "a third party serves
 this", so asking would return `unavailable`, which the UI reads as a download the user must wait for.
 
-Nothing pushes residency, so those live marks refresh two ways: they poll every 60s while anything on
-screen is cold and stop once everything is loaded or external, and the queue card's uncached download-status poll
-invalidates every residency query the moment a model reports `available`, so an open generator flips
-to **Loaded** as the download lands rather than waiting out the backstop.
+Nothing pushes residency to the client and the marks do not poll. Opening the generation panel
+invalidates every residency query once; otherwise a mount or a window focus re-reads only past the
+30s stale window, so remounts inside the panel do not refetch. The queue card's uncached
+download-status poll invalidates every residency query the moment a model reports `available`, so an
+open generator flips to **Loaded** as the download lands rather than waiting out the backstop.
 
 **A "Loaded only" filter** in the generation resource picker, beside the type and base-model chips. It
 filters on `versions.generatorLoaded`, which carries **readiness** (see **Load indicators**) — so a
@@ -319,9 +323,57 @@ type. File-less API models are covered and never loadable — "file-less" means 
 that from `usageControl = 'ExternalGeneration'`, not from files, so an API model's label is what makes
 it read as ready — which is why the 51 relabelled versions were worth relabelling. A model a moderator has taken down or archived (`Model.mode`) is **not covered for any
 type**, which is how moderation blocks generation server-side rather than only greying out a button.
-Zero covered versions lack `RentCivit`, so refusing anything outside coverage inherits the licence
-rule instead of restating it. The numbers, the audit and the readers list are in
+A community checkpoint on a `modelLocked` ecosystem is held to the **live**
+rule — not in the view, which does not know about `modelLocked`, but in `isGenerationEligible`,
+because the generation graph rewrites any foreign version id to the workflow default. Zero covered versions lack `RentCivit`, so refusing anything outside coverage inherits
+the licence rule instead of restating it. The numbers, the audit and the readers list are in
 [paid-model-loading-coverage.md](paid-model-loading-coverage.md).
+
+---
+
+## Which FILE loads, for a multi-precision version
+
+The AIR names a version, not a file; the orchestrator resolves the bytes through
+`GET /api/v1/model-versions/mini/<id>`, which serves `getGenerationFile`'s pick — current public
+files, oldest id first, scored by `getPrimaryFile`. That scores each file on format (weight 100),
+size (10), fp (1) and quantType (0.5) against the caller's preferences, defaulting to
+`SafeTensor / pruned / fp16 / Q4_K_M`.
+
+A version published at several precisions — bf16, fp8, int8, int4 — **ties on every one of those**:
+same format, same type, no `size`, and no `fp` matches `fp16`, so each file scores identically and
+the winner fell to whichever row Postgres returned first. Two versions of the same model therefore
+went out on different precisions with nothing choosing: 3171380 served int8, 3248918 served fp8.
+520 versions site-wide were decided this way (measured 2026-09-29).
+
+An exact tie is now settled by an explicit serving order, **fp8 first**
+(`fpServingPreference` in `model-helpers.ts`): fp8 → fp8_scaled → fp8_mixed → bf16 → fp16 → fp32 →
+int8 → mxfp8 → nvfp4 → nf4 → int4. fp8 leads because it is roughly half the bytes of the 16-bit
+build, so the load is cheaper and quicker.
+
+A file carrying no `fp` at all never reaches the tie-break: with the default `fp16` preference an
+untagged file takes no penalty while every tagged build that is not fp16 takes −1, so the untagged
+one outscores them and is served. The tie-break only orders files that already score equally, and
+among those an unranked precision sorts last. When neither file states an `fp` the order is the input
+order — which is why `/api/v1/model-versions/mini/[id]` now `ORDER BY mf.id`: its `requestedFile`
+runs the bare `getPrimaryFile` over the unfiltered files and that pick decides the epoch branch.
+`getGenerationFile` sorts its pool by id itself, so every other reader is already deterministic.
+
+Two properties worth keeping:
+
+* It applies **only to a tie**, so an explicit `format`/`size`/`fp` preference still decides —
+  a user whose `filePreferences.fp` is `bf16` gets bf16.
+* It is **not** `fpQualityRank`, the fidelity order the model sidebar sorts variants by — and not
+  its reverse either: fp8 leads on serving cost while fp32 leads on fidelity, but int4/nf4/nvfp4
+  sort last in both. Two different questions over the same vocabulary.
+* It **never crosses `ModelFile.type`**. `Model`, `Pruned Model`, `Diffusion Model` and `UNet` all
+  score +1000, so a tie can span them, and `fileTypeUrnMap` gives them different AIR type segments —
+  choosing across them would move the AIR string the orchestrator caches by. 10 prod versions have
+  such a spread (measured 2026-09-29), so the tie-break is scoped to one type and needs no cache bust.
+
+Not addressed: neither the creator nor the user can **choose** which precision is served. The AIR
+already carries `+<fileId>` and the mini endpoint already accepts `modelFileId`, so the plumbing
+exists; only the surface is missing. No owner and no closing condition, so it is recorded here rather
+than filed.
 
 ---
 
@@ -411,11 +463,10 @@ Everything here is the deploying engineer's, before this branch merges.
       global. An unknown key evaluates false, which is the same answer as "off" — so verify the key is
       present rather than inferring it from the site behaving as expected.
       *Closes when:* the flag is listed in Flipt with its default off.
-- [ ] **Create `generation-loading-open-to-all` in Flipt, OFF, before `generation-coverage-next` goes
-      on.** An absent key evaluates false, which is the same answer as off — so this step buys the
-      ability to ramp, not the gate itself. Steps and ramp semantics:
-      [paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
-      *Closes when:* the flag is listed in Flipt with its default off.
+- [x] **Create `generation-loading-open-to-all` in Flipt, OFF, before `generation-coverage-next` goes
+      on.** Done at the 2026-09-25 release. `generation-coverage-next` was ALREADY on, so the gate was
+      live at the deploy rather than dark — the ordering this item assumed did not happen. Ramp
+      semantics: [paid-model-loading-members-gate.md](paid-model-loading-members-gate.md).
 - [x] **`pnpm run db:check-generated`** after `GenerationCoverage` gained `coveredNext` — passes; the
       generated change is the new column on the Kysely type and the model list.
 
@@ -423,6 +474,17 @@ Everything here is the deploying engineer's, before this branch merges.
 
 ## Post-deploy checklist
 
+- [ ] **Re-queue the models a locked ecosystem's community checkpoints belong to — after this
+      deploys, not before.** A re-index on the previous build writes the old answer back, because the
+      index writer computes `canGenerateNext` through the deployed `isGenerationEligible`. That helper
+      now holds those checkpoints to the live rule, so 738 of them (measured on the replica
+      2026-09-29; 8 already loaded) stop reading generatable. No migration and no cache purge — the
+      rule is in code and the view is unchanged — but the index **stores** the answer, so search keeps
+      offering them until those models are rebuilt. The full re-queue below covers it if that runs
+      first. Why, and the per-base-model table:
+      [paid-model-loading-coverage.md](paid-model-loading-coverage.md), "Model-locked ecosystems".
+      *Closes when:* a search filtered to generatable returns no community checkpoint on a locked base
+      model.
 - [ ] **Re-queue EVERY model before turning `generation-coverage-next` on** — not only the ~12,900
       that change answer. `canGenerateNext` exists only on documents written since `db635a3a45`, and a
       Meilisearch filter matches nothing on a document missing the attribute, so once the picker gates

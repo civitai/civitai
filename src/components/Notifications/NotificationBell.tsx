@@ -4,7 +4,10 @@ import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import {
+  formatBellCount,
+  useQueryNotificationsCount,
+} from '~/components/Notifications/notifications.utils';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const NotificationsDrawer = dynamic(
@@ -34,7 +37,7 @@ export function NotificationBell() {
       <div onClick={toggleDrawer} ref={setToggle} style={{ height: '28px' }}>
         <Indicator
           color="red"
-          label={count.all > 99 ? '99+' : count.all}
+          label={formatBellCount(count)}
           size={16}
           offset={4}
           className="flex items-center text-sm font-bold"

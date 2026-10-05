@@ -13,10 +13,14 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconPlus, IconX, IconCube } from '@tabler/icons-react';
-import { useState, useEffect } from 'react';
+import { useMemo, useState, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import type { GenerationResource } from '~/shared/types/generation.types';
+import type { MediaType } from '~/shared/utils/prisma/enums';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { baseModelMakesMediaType } from '~/utils/crucible-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
@@ -24,7 +28,13 @@ type Props = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   onChange?: (ids: number[]) => void;
   maxSelections?: number;
   disabled?: boolean;
+  /** When false, any published model can be picked, not only ones the generator can run. */
+  generatableOnly?: boolean;
+  /** Only models that make this media type can be picked. */
+  mediaType?: MediaType;
 };
+
+const RESOURCE_TYPES = [ModelType.Checkpoint, ModelType.LORA, ModelType.LoCon, ModelType.DoRA];
 
 /**
  * Multi-select component for model versions using the resource select modal.
@@ -36,8 +46,19 @@ export function ModelVersionMultiSelect({
   onChange,
   maxSelections = 10,
   disabled,
+  generatableOnly = true,
+  mediaType,
   ...inputWrapperProps
 }: Props) {
+  const makesMediaType = (baseModel: string) =>
+    !mediaType || baseModelMakesMediaType(baseModel, mediaType);
+  const mediaBaseModels = useMemo(
+    () =>
+      mediaType
+        ? baseModels.filter((baseModel) => baseModelMakesMediaType(baseModel, mediaType))
+        : undefined,
+    [mediaType]
+  );
   // Track selected resources for display
   const [selectedResources, setSelectedResources] = useState<GenerationResource[]>([]);
 
@@ -76,26 +97,35 @@ export function ModelVersionMultiSelect({
 
   const canAdd = value.length < maxSelections;
 
+  const addResources = (resources: GenerationResource[]) => {
+    const misfits = resources.filter((resource) => !makesMediaType(resource.baseModel));
+    if (misfits.length)
+      showErrorNotification({
+        title: `Only models that make ${mediaType}s`,
+        error: new Error(
+          `${misfits.map((resource) => resource.model.name).join(', ')} can't be required here.`
+        ),
+      });
+    const added = resources
+      .filter((resource) => makesMediaType(resource.baseModel) && !value.includes(resource.id))
+      .slice(0, maxSelections - value.length);
+    if (!added.length) return;
+    setSelectedResources((prev) => [...prev, ...added]);
+    onChange?.([...value, ...added.map((resource) => resource.id)]);
+  };
+
   const handleOpenResourceSelect = () => {
     openResourceSelectModal({
-      title: 'Select Model Version',
-      onSelect: (resource) => {
-        if (resource && !value.includes(resource.id)) {
-          setSelectedResources((prev) => [...prev, resource]);
-          onChange?.([...value, resource.id]);
-        }
-      },
+      title: 'Select Model Versions',
+      onSelect: (resource) => addResources([resource]),
+      onSelectMultiple: addResources,
+      limit: maxSelections - value.length,
       options: {
-        canGenerate: true,
-        resources: [
-          { type: ModelType.Checkpoint },
-          { type: ModelType.LORA },
-          { type: ModelType.LoCon },
-          { type: ModelType.DoRA },
-        ],
+        canGenerate: generatableOnly || undefined,
+        resources: RESOURCE_TYPES.map((type) => ({ type, baseModels: mediaBaseModels })),
         excludeIds: value,
       },
-      selectSource: 'generation',
+      selectSource: generatableOnly ? 'generation' : 'addResource',
     });
   };
 
@@ -149,6 +179,11 @@ export function ModelVersionMultiSelect({
                           {resource.baseModel}
                         </Badge>
                       </Group>
+                      {!makesMediaType(resource.baseModel) && (
+                        <Text size="xs" c="red">
+                          Doesn&apos;t make {mediaType}s, remove it
+                        </Text>
+                      )}
                     </div>
                   </Group>
                   {!disabled && (

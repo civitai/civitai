@@ -598,7 +598,17 @@ export const serverSchema = z
     POST_QUERY_CACHING: zc.booleanString,
     EXTERNAL_MODERATION_ENDPOINT: z.url().optional(),
     EXTERNAL_MODERATION_TOKEN: z.string().optional(),
+    // Which classifier categories block, as `provider_category:our_label,...` (a bare
+    // `cat` means `cat:cat`). Its PRESENCE switches `deriveModerationVerdict` between two
+    // modes — see that function; the consequence worth knowing here is that setting this
+    // var narrows what blocks and unsetting it widens, so an empty deploy is not a safe
+    // default.
+    //
+    // 🔴 The value stays in the environment deliberately rather than defaulting here: the
+    // mapping is content-safety policy and this repo is public (CLAUDE.md → Security).
     EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
+    // Only consulted when EXTERNAL_MODERATION_CATEGORIES is unset; in category mode
+    // membership decides and the score is never read.
     EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
     // Hard request timeout (ms) for the external moderation call. Bounds the
     // fail-soft path: when the moderation gateway is slow/hanging (503/504 waves),
@@ -821,7 +831,6 @@ export const serverSchema = z
     NOW_PAYMENTS_IPN_KEY: z.string().optional(),
     NOW_PAYMENTS_EMAIL: z.string().optional(),
     NOW_PAYMENTS_PASSWORD: z.string().optional(),
-    NOW_PAYMENTS_PAYOUT_ADDRESS: z.string().optional(),
     NOWPAYMENTS_IPN_URL: z.string().optional(), // Override IPN callback URL (e.g., webhook.site for dev)
     NOWPAYMENTS_SUPPORT_EMAIL: z.string().optional(), // NP support inbox for stuck-deposit tickets; unset disables the notifier
 

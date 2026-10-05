@@ -5,14 +5,17 @@ import type { createCivitaiClient } from '@civitai/client';
 import {
   getConsumerBlobUploadUrl,
   getWorkflow,
+  invokeBlobArchiveStepTemplate,
   queryWorkflows,
   submitWorkflow,
+  type BlobArchiveEntry,
   type BuzzClientAccount,
   type WorkflowStepTemplate,
 } from '@civitai/client';
 import {
   CIVITAI_TAG,
   TRAINING_TAG,
+  epochArchiveEntries,
   workflowToDetail,
   workflowToRow,
   type GenerationItem,
@@ -53,7 +56,7 @@ export function describeSubmitError(error: unknown): string {
  *  is an AIR URN (`urn:air:…:blob@<key>` — the key is after `@`); a generation is a full
  *  `/v2/consumer/blobs/{key}.ext` URL (the key is the last path segment); anything else is already a bare
  *  key. Query/signature is stripped in every case. */
-function blobIdFromAir(air: string): string {
+export function blobIdFromAir(air: string): string {
   const marker = '/v2/consumer/blobs/';
   const idx = air.indexOf(marker);
   if (idx >= 0) return air.slice(idx + marker.length).split('?')[0];
@@ -95,6 +98,7 @@ interface OutputBlob {
   previewUrl?: string | null;
   blockedReason?: string | null;
   type?: string;
+  nsfwLevel?: string | null;
 }
 interface RawStep {
   $type?: string;
@@ -145,7 +149,8 @@ function stepBlobsForMedia(step: RawStep, media: Media): OutputBlob[] {
     }
   }
   // audio: aceStepAudio emits a VideoBlob (audio + cover) or an AudioBlob — only the latter is trainable audio.
-  if (step.$type === 'aceStepAudio' && output.blob?.type === 'audio') return one(output.blob);
+  if ((step.$type === 'aceStepAudio' || step.$type === 'yuE2') && output.blob?.type === 'audio')
+    return one(output.blob);
   return [];
 }
 
@@ -176,7 +181,12 @@ export async function listGenerations(
       for (const blob of stepBlobsForMedia(step, media)) {
         if (blob.available && !blob.blockedReason && blob.url && !seen.has(blob.id)) {
           seen.add(blob.id);
-          items.push({ blobId: blob.id, url: blob.url, previewUrl: blob.previewUrl ?? blob.url });
+          items.push({
+            blobId: blob.id,
+            url: blob.url,
+            previewUrl: blob.previewUrl ?? blob.url,
+            nsfwLevel: blob.nsfwLevel ?? undefined,
+          });
         }
       }
     }
@@ -309,4 +319,47 @@ export async function getRunDataset(
 ): Promise<{ air: string; caption: string }[]> {
   const detail = await getTrainingWorkflow(client, workflowId);
   return detail?.dataset ?? [];
+}
+
+/** The run id names no workflow the caller can read. */
+export class RunNotFoundError extends Error {}
+/** The run has no epoch with a downloadable blob yet. */
+export class NothingToArchiveError extends Error {}
+/** The orchestrator refused the archive request itself (a 4xx) — not retryable as-is. */
+export class ArchiveRejectedError extends Error {}
+
+export interface EpochArchive {
+  /** Signed URL that streams the zip. */
+  url: string;
+  entryCount: number;
+  expiresAt?: string;
+}
+
+/** One zip of every checkpoint's weights (plus each epoch's samples) for a run — the orchestrator's
+ *  blobArchive recipe over the run's own blobs. The workflow is re-read here rather than trusting a
+ *  client-supplied blob list, so a caller can only archive blobs the token already scopes to. The zip
+ *  is built and streamed by the orchestrator; nothing is buffered here. */
+export async function createEpochArchive(
+  client: OrchestratorClient,
+  workflowId: string
+): Promise<EpochArchive> {
+  const { data: wf, error: getError } = await getWorkflow({ client, path: { workflowId } });
+  if (!wf) {
+    if (getError?.status === 404) throw new RunNotFoundError('archive: run not found');
+    throw new Error(`archive: getWorkflow failed (${getError?.detail ?? 'no data returned'})`);
+  }
+  const { entries, archiveName } = epochArchiveEntries(wf);
+  if (entries.length === 0)
+    throw new NothingToArchiveError('archive: no checkpoint weights are ready yet');
+  const { data, error } = await invokeBlobArchiveStepTemplate({
+    client,
+    body: { entries: entries as BlobArchiveEntry[], archiveName, format: 'zip' },
+  });
+  if (!data?.url) {
+    const status = (error as { status?: number } | undefined)?.status;
+    if (typeof status === 'number' && status >= 400 && status < 500)
+      throw new ArchiveRejectedError(`archive refused: ${describeSubmitError(error)}`);
+    throw new Error(`archive failed: ${describeSubmitError(error)}`);
+  }
+  return { url: data.url, entryCount: data.entryCount, expiresAt: data.expiresAt ?? undefined };
 }

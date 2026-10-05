@@ -37,6 +37,12 @@ const {
 // The read middleware now resolves a store-visibility SCOPE.
 vi.mock('~/server/services/app-blocks-flag', () => ({
   resolveStoreVisibilityScope: mockResolveStoreVisibilityScope,
+  // 🔴 THE READ MIDDLEWARE NOW RESOLVES TWO AXES. A one-key factory here makes the WHOLE
+  // file fail to import (`No "resolveViewerAudienceFloor" export is defined on the … mock`)
+  // rather than failing one case, which is why it is stubbed rather than left out.
+  // `public` is the least-privileged floor, so these scope cases keep asserting the SURFACE
+  // gate in isolation — exactly what they were written to cover.
+  resolveViewerAudienceFloor: vi.fn(async () => 'public'),
 }));
 // The read services are dynamically imported by the procs; mock them so the DB /
 // generated client is never loaded, and so we can assert "NOT consulted" + scope.
@@ -70,7 +76,9 @@ type ScopeUser = { isModerator?: boolean } | undefined;
  * flag is toggled ON, any viewer (incl. anon) → `public-external`; else → `none`.
  */
 let publicExternal = false;
-function fakeResolveScope(opts?: { user?: ScopeUser }): Promise<'full' | 'public-external' | 'none'> {
+function fakeResolveScope(opts?: {
+  user?: ScopeUser;
+}): Promise<'full' | 'public-external' | 'none'> {
   if (opts?.user?.isModerator) return Promise.resolve('full');
   if (publicExternal) return Promise.resolve('public-external');
   return Promise.resolve('none');

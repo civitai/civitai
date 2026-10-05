@@ -138,6 +138,8 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/generator-restrictions', label: 'Generator Restrictions' },
       { path: '/audit/training-models', label: 'Training Models' },
       { path: '/audit/training-data', label: 'Training Data Review' },
+      { path: '/audit/relabel', label: 'Removal Label Relabel' },
+      { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
     ],
   },
   {
@@ -151,6 +153,7 @@ export const NAVIGATION: NavLink[] = [
       { path: '/retool/image-lookup', label: 'Image Lookup' },
       { path: '/retool/reactor-lookup', label: 'Reactor Lookup' },
       { path: '/retool/article-lookup', label: 'Article Lookup' },
+      { path: '/retool/model-lookup', label: 'Model Lookup' },
       { path: '/retool/user-reports', label: 'User Reports' },
       { path: '/retool/post-reports', label: 'Post Reports' },
       { path: '/retool/bulk-image-manager', label: 'Bulk Image Manager' },
@@ -170,6 +173,9 @@ export const NAVIGATION: NavLink[] = [
   { path: '/comics-review', label: 'Comics Review' },
   // Not `informational`: this is a queue somebody works through, so it belongs in the dashboard's
   // "needs attention" total — unlike the stuck-scan counts beside it.
+  // One grant covers the queue and its per-report page (`/feedback/<id>`), which resolves here by
+  // prefix rather than being listed — the same shape as `/abuse` below. A report is a row of this
+  // queue, and granting the list without the rows would show a moderator a count they cannot open.
   { path: '/feedback', label: 'Feedback', countKey: 'feedbackNew' },
   // One grant covers the section. Its detail view (`/abuse/<runId>`) resolves here by prefix rather
   // than being listed: a run and its findings are one thing, and granting the list without the rows

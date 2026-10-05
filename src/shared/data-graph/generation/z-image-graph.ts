@@ -14,7 +14,7 @@
 import { DataGraph } from '~/libs/data-graph/data-graph';
 import type { GenerationCtx } from './context';
 import {
-  aspectRatioNode,
+  sdxlFullAspectRatioNode,
   controlNetsNode,
   CONTROLNET_LIMIT,
   createCheckpointGraph,
@@ -28,7 +28,6 @@ import {
   snippetsGraph,
   triggerWordsGraph,
 } from './common';
-import { sdxlAspectRatioBuckets } from '~/shared/constants/generation.constants';
 import { zImageControlNetPreprocessors } from '~/shared/constants/controlnets.constants';
 
 // =============================================================================
@@ -72,7 +71,7 @@ type ZImageModeCtx = {
  */
 const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('cfgScale', sliderNode({ min: 1, max: 2, step: 0.1, defaultValue: 1 }))
   .node('steps', sliderNode({ min: 1, max: 15, defaultValue: 9 }))
   // ControlNets — only available for txt2img workflows.
@@ -93,7 +92,7 @@ const turboModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
 const baseModeGraph = new DataGraph<ZImageModeCtx, GenerationCtx>()
   .merge(createResourcesGraph())
   .merge(negativePromptGraph)
-  .node('aspectRatio', aspectRatioNode({ options: sdxlAspectRatioBuckets, defaultValue: '1:1' }))
+  .node('aspectRatio', sdxlFullAspectRatioNode())
   .node('sampler', samplerNode({ options: zImageSamplers, defaultValue: 'euler' }))
   .node('scheduler', schedulerNode({ options: zImageSchedules, defaultValue: 'simple' }))
   .node('cfgScale', sliderNode({ min: 1, max: 10, step: 0.5, defaultValue: 4 }))

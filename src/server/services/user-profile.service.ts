@@ -15,7 +15,11 @@ import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   getUserContentOverview as getUserContentOverviewFromCache,
   getUserContentOverviewPublic as getUserContentOverviewPublicFromCache,
@@ -220,6 +224,54 @@ export const getUserWithProfile = async ({
   return user;
 };
 
+const isSameShowcaseItem = (a: ShowcaseItemSchema, b: ShowcaseItemSchema) =>
+  a.entityType === b.entityType && a.entityId === b.entityId;
+
+// Items already on the stored showcase are not re-checked: a model can be transferred away after
+// it was showcased, and refusing it would make the whole profile form unsaveable.
+export const assertShowcaseItemsOwned = async ({
+  userId,
+  isModerator,
+  showcaseItems,
+  currentShowcaseItems,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  showcaseItems: ShowcaseItemSchema[];
+  currentShowcaseItems: ShowcaseItemSchema[];
+}) => {
+  const addedItems = showcaseItems.filter(
+    (item) => !currentShowcaseItems.some((current) => isSameShowcaseItem(current, item))
+  );
+  if (!addedItems.length) return;
+
+  if (addedItems.some((item) => item.entityType !== 'Model' && item.entityType !== 'Image'))
+    throw throwBadRequestError('Only models and images can be added to a showcase');
+
+  if (isModerator) return;
+
+  const idsOf = (entityType: ShowcaseItemSchema['entityType']) => [
+    ...new Set(
+      addedItems.filter((item) => item.entityType === entityType).map((item) => item.entityId)
+    ),
+  ];
+  const imageIds = idsOf('Image');
+  const modelIds = idsOf('Model');
+
+  // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
+  const [ownedImages, ownedModels] = await Promise.all([
+    imageIds.length
+      ? dbWrite.image.findMany({ where: { id: { in: imageIds }, userId }, select: { id: true } })
+      : [],
+    modelIds.length
+      ? dbWrite.model.findMany({ where: { id: { in: modelIds }, userId }, select: { id: true } })
+      : [],
+  ]);
+
+  if (ownedImages.length !== imageIds.length || ownedModels.length !== modelIds.length)
+    throw throwAuthorizationError('You can only add your own models and images to your showcase');
+};
+
 export const updateUserProfile = async ({
   // profileImage,
   isModerator,
@@ -266,6 +318,14 @@ export const updateUserProfile = async ({
   // withheld from anyone who can't edit the profile. Drop it and both read back null, so every
   // save looks like a changed announcement and re-stamps `messageAddedAt`.
   const current = await getUserWithProfile({ id: userId, sessionUserId: userId }); // Ensures user exists && has a profile record.
+
+  if (profile.showcaseItems)
+    await assertShowcaseItemsOwned({
+      userId,
+      isModerator,
+      showcaseItems: profile.showcaseItems,
+      currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
+    });
 
   // We can safely update creatorCardStatsPreferences out of the transaction as it's not critical
   if (creatorCardStatsPreferences) {

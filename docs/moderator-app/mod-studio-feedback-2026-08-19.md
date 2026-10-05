@@ -202,6 +202,14 @@ round still reads as the record of what was reported that day.
         takes `source` + `q`, not the `postId` Retool used.
       - **model** — stays removed. Explicitly waived: Bulk Image Manager sourced by model is not what
         the old Retool model lookup did, and nobody asked for it back.
+
+        **Reversed 2026-09-25 (CU-868ma865x).** Ellie asked for it back. The waiver's first clause held
+        — Bulk Image Manager keyed to a model shows the model's images and nothing about the model —
+        so the answer is a model-level page rather than the old repoint: `/retool/model-lookup`, with a
+        link across to Bulk Image Manager for the images. "Lookup Model" opens it (model page kebab,
+        model card, category card) and "Lookup Version" opens it scoped to a version (version menu,
+        and each row of an image's "Resources used"). Note what still stands from the 08-17 round:
+        there is **no Retool Model Lookup export**, so the page was designed rather than ported.
       - **chat** — `NEXT_PUBLIC_CHAT_LOOKUP_URL` had no reader left in `src/`; its only call site went
         with the reports page in `95157404b0`. Removed from `client-schema.ts` rather than repointed.
 - **Finish the environment and database steps** *(first raised 08-17)* — handover blockers

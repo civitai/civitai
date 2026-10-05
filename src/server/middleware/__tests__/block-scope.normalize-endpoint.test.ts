@@ -332,6 +332,14 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       // scan from a point read.
       'counts',
       'delete',
+      // `entitlements` / `goods` / `purchase` — the DIGITAL GOODS surface
+      // (`v1/blocks/entitlements.ts`, `v1/blocks/goods/purchase.ts`). Both
+      // routes are fully static: the app and the viewer come from the JWT and
+      // the good id rides the POST body, so neither has a `:seg` position.
+      // Without these entries the checkout row normalises to
+      // `/api/v1/blocks/:seg/purchase` and the Activity panel's exact-match arm
+      // has nothing to match.
+      'entitlements',
       'estimate',
       'follow',
       // `gated-images` — the PER-VIEWER gated image read
@@ -345,6 +353,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'gated-images',
       'generation-resources',
       'get',
+      'goods',
       'images',
       'increment',
       'item',
@@ -352,11 +361,16 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'me',
       'models',
       'poll',
+      'purchase',
       // `v1/blocks/workflows/query.ts` — the app-subqueue read. The cursor and
       // page size ride the POST body, so there is no `:seg` position to lose.
       'query',
       'quota',
       'report',
+      // `v1/blocks/resource-intent.ts` — the Jev resource-intent primitive. The
+      // prompt and every parameter ride the POST body, so there is no `:seg`
+      // position to lose. Added deliberately with the route.
+      'resource-intent',
       'set',
       'shared-storage',
       'submit',

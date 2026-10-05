@@ -1,10 +1,21 @@
 import { TRPCError } from '@trpc/server';
 import {
+  parseSubjectUserId,
   verifyBlockToken,
   type BlockTokenClaims,
 } from '~/server/middleware/block-scope.middleware';
-import { recordBlockRevocationRefusal } from '~/server/metrics/app-block-runtime.metrics';
+import {
+  recordBlockConsentMarkerUnavailable,
+  recordBlockRevocationRefusal,
+  recordConsentStrip,
+} from '~/server/metrics/app-block-runtime.metrics';
 import { BlockRevocation } from '~/server/services/block-revocation.service';
+import {
+  applyRevocations,
+  ConsentRevocation,
+  revokedScopesForToken,
+  shouldConsultMarker,
+} from '~/server/services/blocks/consent-revocation.service';
 import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-approval.service';
 
 /**
@@ -36,7 +47,7 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  * ORDER, and why it is this order:
  *   1. TOKEN VALIDITY — nothing downstream can be trusted before it; an unverifiable
  *      token also has no `blockInstanceId` to key a revocation lookup on.
- *   2. REVOCATION — two pipelined Redis GETs, so it is still the cheap check and it runs
+ *   2. REVOCATION — pipelined Redis GETs, so it is still the cheap check and it runs
  *      before the DB read. It is also the one that responds to a user action (uninstall /
  *      toggle-off) within seconds rather than at the next approval change.
  *      🔴 A PUBLISHER BAN IS NOW ALSO CONTAINED HERE, and this line has been
@@ -49,25 +60,30 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *      banned user OWNS, so those tokens are refused on their next bridge call
  *      rather than running to natural `exp`.
  *   3. APPROVED STATUS — the backing `app_blocks` row must still say `approved`.
+ *   4. PER-SCOPE CONSENT — the viewer may have withdrawn a scope this token still carries. Its
+ *      Redis read is STARTED before step 2 is awaited, so it costs no extra round trip in the
+ *      ordering sense; it is listed last because that is where its verdict is CONSUMED.
  *
- * Each step fails closed EXCEPT revocation, which fails OPEN by construction inside
+ * Each step fails closed. ⚠️ THE INSTANCE-revocation step still fails OPEN by construction, but
+ * the PER-SCOPE consent step added below fails CLOSED — as a retryable 503, so a cache incident
+ * refuses without telling the client to give up. This sentence used to say "EXCEPT revocation,
+ * which fails OPEN", which is now true of only one of the two revocation legs inside
  * `BlockRevocation.isRevoked` (a Redis incident must not take the bridge down; exposure
  * is bounded by the token lifetime instead of by Redis recovery time — see that
  * service's own note). That is a property of the primitive, deliberately inherited here
  * rather than re-decided, so the REST and tRPC paths cannot drift apart on it.
  *
- * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling
- * ones. Steps 2 and 3 add TWO Redis GETs — three for a `page_ephemeral-*` id, the only
- * shape carrying a subject-scoped ban marker — plus ONE indexed `appBlock.findUnique` (the
- * `(appId, blockId)` unique, on the replica — never the primary) to every bridge request.
+ * 🔴 THE PER-REQUEST COST, because this runs on EVERY bridge call including the polling ones.
+ * Steps 2 and 4 issue Redis GETs; step 3 issues ONE indexed `appBlock.findUnique` (the
+ * `(appId, blockId)` unique, on the replica — never the primary).
  *
- * ⚠️ THIS COUNT HAS NOW BEEN WRONG THREE TIMES — "ONE Redis GET" before the ban keyspace
- * was split out, "TWO" after the subject keyspace was added, and the sibling copy in
- * `block-revocation.service.ts` was corrected while this one was missed. A number in prose
- * about a function two other files also describe is a claim with three places to rot. It is
- * kept only because the per-request cost of THIS step is the argument for the step order
- * below; if it goes wrong a fourth time, delete the count rather than correct it — the
- * ordering argument survives without it. The history, which is the part worth keeping:
+ * ⚠️ THE GET COUNT IS DELIBERATELY GONE, ON THIS FILE'S OWN INSTRUCTION. It said: "if it goes
+ * wrong a fourth time, delete the count rather than correct it — the ordering argument survives
+ * without it." It went wrong a fourth time: the per-scope consent read (step 4) was added while
+ * the sentence still said "TWO Redis GETs", and by then the middleware was citing THIS file as the
+ * authority on the repeat offence, so the stale number had a second reader. Count the GETs at the
+ * call sites if you need the number; the ordering argument below needs only "Redis is cheaper than
+ * the DB read". The history, which is the part worth keeping:
  * introduced the split claimed the count was unchanged because it used `mGet`. That was
  * wrong: this repo's client WRAPS `mGet` into `Promise.all(keys.map(get))` to avoid
  * CROSSSLOT on the cluster, so the array path never reaches the native `MGET`. The two
@@ -104,7 +120,7 @@ import { resolveAppBlockApprovalVerdict } from '~/server/services/blocks/block-a
  *     which only exists once the token has been verified — there is no earlier key to
  *     throttle on, so step 1 is a hard floor beneath it.
  *   - Moving it INTO this helper, between steps 1 and 2, would apply a 120-req/10s
- *     ceiling to ALL FIFTEEN bridge procedures rather than the seven that opted in —
+ *     ceiling to EVERY bridge procedure rather than the seven that opted in —
  *     `pollWorkflow` and `submitWorkflow` among them. Those are deliberately not on the
  *     catalog bucket, and a polling proc is exactly the one a shared ceiling would start
  *     refusing legitimately. That is an availability change, not a cleanup.
@@ -131,6 +147,23 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   const claims = await verifyBlockToken(blockToken);
   if (!claims) throw new TRPCError({ code: 'UNAUTHORIZED', message: 'invalid block token' });
 
+  // 🔴 STARTED HERE, AWAITED AFTER THE APPROVAL READ — so the consent GET pipelines with
+  // `isRevoked`'s instead of adding a serial round trip. The first cut of this seam awaited it
+  // last, which put a full Redis RTT on the critical path of every bridge call including the
+  // timer-driven `pollWorkflow`; the REST side had already taken this shape and only one of the
+  // two seams got it. Every input is available the moment the token verifies.
+  //
+  // Safe to leave unawaited on the refusal paths below: `ConsentRevocation.lookup` catches
+  // everything and resolves to a verdict, so an early throw cannot strand a rejection.
+  const consentUserId = parseSubjectUserId(claims.sub);
+  const consentLookup = shouldConsultMarker({ userId: consentUserId, scopes: claims.scopes })
+    ? ConsentRevocation.lookup({
+        // Non-null by `shouldConsultMarker`, which returns false for a null userId.
+        userId: consentUserId as number,
+        appBlockId: claims.appBlockId,
+      })
+    : null;
+
   // Per-instance revocation. Keyed on the token's OWN `blockInstanceId` claim, never on
   // anything the caller sent. Dev and review-sandbox tokens carry a synthetic but stable
   // instance id minted for exactly this purpose, so they are covered too.
@@ -145,6 +178,73 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
   }
 
   await assertAppBlockApproved(claims);
+
+  // ── PER-SCOPE CONSENT REVOCATION, ON THE BRIDGE.
+  //
+  // 🔴 THE BRIDGE WAS THE HALF THE FIRST CUT LEFT OPEN, AND IT HOLDS THE SCOPE THE REPO CALLS
+  // THE MOST SENSITIVE. `posts:write:self` is authorized HERE — by `authorizeBlockPostRequest`'s
+  // `claims.scopes.includes('posts:write:self')` — and the REST middleware, where the consent
+  // marker was first wired, is never on that path. Nor are `buzz:read:self` and
+  // `user:read:self`, which several bridge procs read off `claims.scopes` directly.
+  //
+  // 🔴 A STRIP, NOT A PER-PROC GATE, which is why one site covers all of them. Every bridge proc
+  // authorizes off `claims.scopes.includes(...)`; removing the revoked members from the claims
+  // this function RETURNS makes all of them honour the revoke with no enumeration to keep
+  // current. The procs then refuse with their own existing "block lacks <scope> scope".
+  //
+  // ⚠️ KNOWN AND ACCEPTED: that message is INDISTINGUISHABLE from a never-granted scope. The
+  // REST seam can say `consent_revoked` because it knows the route's required scope; this one
+  // does not.
+  //
+  // ⚠️ AND THE COST ARGUMENT THIS COMMENT FIRST GAVE WAS FALSIFIED BY ITS OWN COMMIT. It said
+  // threading a reason through the per-proc refusals is "the per-gate list the strip exists to
+  // avoid" — but most of those refusals are the IDENTICAL `ai:write:budgeted` throw, and the same
+  // commit mechanically rewrote every one of them to use `CONSENT_SPEND_SCOPE`. Consolidating that
+  // repeated throw into one `assertBridgeScope(claims, scope)` helper would let a reason ride on
+  // the claims object with no per-proc enumeration at all. So the deferral stands on effort and
+  // blast radius inside a fix delta, NOT on impossibility — "this cannot be done cheaply" is
+  // exactly the kind of recorded claim that stops the next person looking. The security property (the scope stops working) is
+  // delivered; the message quality on this seam is not, and that is a stated limitation rather
+  // than an oversight.
+  if (consentLookup !== null) {
+    const verdict = await consentLookup;
+
+    // 🔴 AN UNREADABLE MARKER IS A **RETRYABLE** REFUSAL, NOT A SILENT STRIP — AND THE FIRST CUT
+    // GOT THIS WRONG IN A WAY THAT BREAKS PAID WORK. On `unavailable` the strip removed every
+    // revokable scope, so `pollWorkflow` threw `FORBIDDEN "block lacks ai:write:budgeted scope"`:
+    // a Redis blip presented to the SDK as a permanent manifest/approval problem, whose rational
+    // response is to STOP POLLING. A generation the viewer had already paid for then looked
+    // permanently broken — the exact harm `block-catalog-rate-limit.ts` says never to inflict.
+    // This file's own docblock also promised revocation "fails OPEN … a Redis incident must not
+    // take the bridge down", which the strip had quietly made false.
+    //
+    // So: fail CLOSED (the request is refused) but say it is TRANSIENT, so a client retries
+    // instead of giving up. `SERVICE_UNAVAILABLE` rather than `FORBIDDEN` is the whole point —
+    // and it is the one tRPC 5xx whose message survives `client-safe-error.ts`.
+    if (verdict.kind === 'unavailable') {
+      // 🔴 EMITTED, BECAUSE THIS REFUSAL WAS OTHERWISE INVISIBLE. The throw happens before
+      // `recordConsentStrip` ever runs and there is no bridge request counter at all
+      // (`civitai_app_block_requests_total` is REST-only), so during a cache incident every
+      // bridge call 503'd while the consent series read a flat ZERO on `surface=bridge` — and
+      // that series' help text tells the operator to expect the opposite. Same defect as the
+      // REST strip branch emitting nothing, one round later and one surface over.
+      recordBlockConsentMarkerUnavailable('bridge');
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'permission state is temporarily unavailable — retry shortly',
+      });
+    }
+
+    const revoked = revokedScopesForToken(verdict, claims.scopes);
+    const narrowed = applyRevocations(claims, revoked);
+    if (narrowed !== claims) {
+      // `applyRevocations` returns the SAME object when nothing changed, so identity is the
+      // cheap test for "did this request lose a scope". The emitter is SHARED with the REST seam
+      // so the two cannot report different things under one counter name.
+      recordConsentStrip('bridge', claims.scopes, revoked);
+      return narrowed;
+    }
+  }
 
   return claims;
 }
@@ -206,7 +306,14 @@ export async function authorizeBlockBridgeToken(blockToken: string): Promise<Blo
  */
 async function assertAppBlockApproved(claims: BlockTokenClaims): Promise<void> {
   const verdict = await resolveAppBlockApprovalVerdict(claims);
-  if (verdict === 'ok' || verdict === 'dev_exempt') return;
+  // 🔴 `private_run_exempt` IS ADMITTED HERE, and it is the one exemption that lets a
+  // NON-OWNER reach the bridge on a non-approved app. Listed explicitly rather than
+  // folded into `dev_exempt` upstream so this line is where a reader looking for "who
+  // can drive the bridge on a taken-down app" finds the answer. The containment is
+  // NOT here — it is the mint: a self-bound `sub`, scopes clamped to the app's last
+  // moderator-approved snapshot with the tip rail stripped, a per-call budget and a
+  // per-(viewer, app) aggregate ceiling.
+  if (verdict === 'ok' || verdict === 'dev_exempt' || verdict === 'private_run_exempt') return;
   if (verdict === 'not_found') {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'app block not found' });
   }

@@ -1,3 +1,4 @@
+import { EXTERNAL_CLASSIFIER_REWRITES } from '@civitai/mod-utils/prompt-audit/lists';
 import { env } from '~/env/server';
 import { probeModerationCacheRepeat } from '~/server/integrations/moderation-cache-probe';
 import { probeShadowModel } from '~/server/integrations/moderation-shadow-probe';
@@ -26,14 +27,10 @@ import { setActiveSpanAttributes, withSpan } from '~/server/utils/otel-helpers';
  */
 const MODERATION_MODEL = 'omni-moderation-latest';
 
-const falsePositiveTriggers = Object.entries({
-  '\\d*girl': 'woman',
-  '\\d*boy': 'man',
-  '\\d*girls': 'women',
-  '\\d*boys': 'men',
-  'school uniform': 'uniform',
-  'breasts?': 'chest',
-}).map(([k, v]) => ({ regex: new RegExp(`\\b${k}\\b`, 'gi'), replacement: v }));
+const falsePositiveTriggers = Object.entries(EXTERNAL_CLASSIFIER_REWRITES).map(([k, v]) => ({
+  regex: new RegExp(`\\b${k}\\b`, 'gi'),
+  replacement: v,
+}));
 function removeFalsePositiveTriggers(prompt: string) {
   for (const trigger of falsePositiveTriggers) {
     prompt = prompt.replace(trigger.regex, trigger.replacement);

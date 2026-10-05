@@ -69,6 +69,8 @@ import { Air } from '@civitai/client';
 import handler from '~/pages/api/v1/model-versions/mini/[id]';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { modelVersionToAir } from '~/server/utils/resource-air';
+import { ModelVersionFlag } from '~/shared/constants/model-version-flags.constants';
 
 const VERSION_ID = 555;
 const OWNER_ID = 4242;
@@ -231,6 +233,7 @@ type Body = {
   hashes: Record<string, string>;
   downloadUrls: string[];
   isPromoted?: boolean;
+  evictable?: boolean;
 };
 
 async function run(
@@ -750,5 +753,91 @@ describe('GET /api/v1/model-versions/mini/[id] — the training-results/epoch pa
     const { body } = await run([TRAINING_FILE, SAFETENSOR]);
     expect(body.fileName).toBe(SAFETENSOR.name);
     expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+});
+
+describe('GET /api/v1/model-versions/mini/[id] — the generation file', () => {
+  it('never advertises a replaced file, even the best-scoring one', async () => {
+    const replaced = {
+      ...PRIVATE_MODEL,
+      id: 707,
+      visibility: 'Public',
+      name: 'replaced-pruned.safetensors',
+      replacedAt: new Date('2026-01-01T00:00:00Z'),
+    };
+    const { body } = await run([replaced, SAFETENSOR]);
+    expect(body.fileName).toBe(SAFETENSOR.name);
+    expect(urlFileId(body)).toBe(String(SAFETENSOR.id));
+  });
+
+  it('hands the orchestrator the AIR type the cache bust invalidates', async () => {
+    const files = [PRIVATE_MODEL, PUBLIC_DIFFUSION];
+    const { status } = await run(files);
+    expect(status).toBe(200);
+    const miniType = lastAirArgs()?.type;
+
+    modelVersionToAir({
+      id: VERSION_ID,
+      baseModel: versionRow.baseModel,
+      model: { id: versionRow.modelId, type: 'Checkpoint' },
+      files,
+    });
+
+    expect(miniType).toBe('diffusionmodel');
+    expect(lastAirArgs()?.type).toBe(miniType);
+  });
+});
+
+describe('evictable', () => {
+  it.each([
+    [0, true],
+    [ModelVersionFlag.NotEvictable, false],
+    [ModelVersionFlag.NotEvictable | ModelVersionFlag.GenerationDisabled, false],
+    [ModelVersionFlag.GenerationDisabled | ModelVersionFlag.NotDerivative, true],
+  ])('versionFlags %i -> evictable %s', async (versionFlags, evictable) => {
+    const { status, body } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(body.evictable).toBe(evictable);
+  });
+
+  it('is the same whichever file the caller asks about', async () => {
+    const versionFlags = ModelVersionFlag.NotEvictable;
+    const byDefault = await run([SAFETENSOR, GGUF], {}, { versionFlags });
+    const byFileId = await run(
+      [SAFETENSOR, GGUF],
+      { modelFileId: String(GGUF.id) },
+      { versionFlags }
+    );
+    expect(byFileId.body.fileName).toBe(GGUF.name);
+    expect(byDefault.body.evictable).toBe(false);
+    expect(byFileId.body.evictable).toBe(false);
+  });
+});
+
+describe('additionalResourceCharge', () => {
+  // The orchestrator charges the additional-resource fee off this field, so the version's
+  // flags have to reach the charge decision, not just the response.
+  it('hands the version flags to the charge decision', async () => {
+    const versionFlags =
+      ModelVersionFlag.NoAdditionalResourceFee | ModelVersionFlag.GenerationDisabled;
+    const { status } = await run([SAFETENSOR], {}, { versionFlags });
+    expect(status).toBe(200);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledWith([
+      {
+        modelType: versionRow.type,
+        modelId: versionRow.modelId,
+        fileSizeKB: SAFETENSOR.sizeKB,
+        versionFlags,
+      },
+    ]);
+    expect(mockGetShouldChargeForResources).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([true, false])('reports the charge decision for the version (%s)', async (charge) => {
+    mockGetShouldChargeForResources.mockResolvedValue({ [versionRow.modelId]: charge });
+    const { body } = await run([SAFETENSOR]);
+    expect((body as Body & { additionalResourceCharge?: boolean }).additionalResourceCharge).toBe(
+      charge
+    );
   });
 });

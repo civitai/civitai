@@ -71,6 +71,36 @@ describe('deriveTrainingWorkflowState', () => {
     expect(derived.transactionData).toEqual([{ amount: 500, type: 'debit', accountType: 'blue' }]);
   });
 
+  it('keeps a failed or unavailable sample as an empty slot on a training step', () => {
+    const derived = deriveTrainingWorkflowState(
+      {
+        id: 'wf-2',
+        steps: [
+          {
+            $type: 'training',
+            metadata: { modelFileId: MODEL_FILE_ID },
+            output: {
+              epochs: [
+                {
+                  epochNumber: 1,
+                  model: { url: 'https://blob/e1.safetensors', available: true },
+                  samples: [
+                    { url: null },
+                    { url: 'https://blob/s2.jpeg', available: true },
+                    { url: 'https://blob/s3.jpeg', available: false },
+                  ],
+                },
+              ],
+            },
+          },
+        ],
+      } as unknown as Workflow,
+      'succeeded' as never
+    );
+
+    expect(derived.epochs[0].sampleImages).toEqual(['', 'https://blob/s2.jpeg', '']);
+  });
+
   it('lets moderation override the workflow status', () => {
     expect(
       deriveTrainingWorkflowState(
@@ -103,6 +133,26 @@ describe('deriveTrainingWorkflowState', () => {
 });
 
 describe('applyTrainingWorkflowOverlay', () => {
+  it("numbers a continuation's live epochs past its source run, as the stored copy does", () => {
+    const row = version(TrainingStatus.Processing, {
+      version: 2,
+      workflowId: 'wf-1',
+      epochOffset: 10,
+    });
+    const wf = workflow({
+      epochs: [
+        { epochNumber: 1, blobUrl: 'https://blob/e1.safetensors', blobSize: 10 },
+        { epochNumber: -1, blobUrl: 'https://blob/unnumbered.safetensors', blobSize: 10 },
+      ],
+    });
+
+    const results = applyTrainingWorkflowOverlay(row, overlayOf(wf)).files[0].metadata
+      .trainingResults as TrainingResultsV2;
+
+    expect(results.epochs.map((e) => e.epochNumber)).toEqual([11, -1]);
+    expect(results.epochOffset).toBe(10);
+  });
+
   it('replaces a stale stored status with the live one', () => {
     const row = version(TrainingStatus.Processing, {
       version: 2,

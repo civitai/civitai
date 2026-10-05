@@ -7,7 +7,7 @@ import ContentErrorBoundary from '~/components/ErrorBoundary/ContentErrorBoundar
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { remarkTimestamp } from '~/components/Markdown/remark-timestamp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openExternalLinkWarning } from '~/components/ExternalLinkWarning/openExternalLinkWarning';
+import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
 import { useInternalHosts } from '~/hooks/useInternalHosts';
 import { isExternalHref } from '~/utils/external-link';
 
@@ -87,24 +87,18 @@ export function CustomMarkdown({
 
       href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
 
-      // Unlike the CTA button, this href is kept — prose text needs it for copy-link and
-      // screen-reader destination announcement — so middle-click and copy-link stay ungated.
-      const warn = warnOnExternalLinks && isExternalHref(href, internalHosts);
+      // A plain anchor, not `Link`: the href is then the `/leaving` page, which `Link` would
+      // treat as an in-app route.
+      if (warnOnExternalLinks && isExternalHref(href, internalHosts))
+        return (
+          <a target="_blank" rel="nofollow noreferrer" {...externalLinkAnchorProps(href)}>
+            {props.children}
+          </a>
+        );
 
       return (
         <Link legacyBehavior href={href} passHref>
-          <a
-            target={isExternalLink ? '_blank' : '_self'}
-            rel="nofollow noreferrer"
-            onClick={
-              warn
-                ? (e) => {
-                    e.preventDefault();
-                    openExternalLinkWarning(href);
-                  }
-                : undefined
-            }
-          >
+          <a target={isExternalLink ? '_blank' : '_self'} rel="nofollow noreferrer">
             {props.children}
           </a>
         </Link>

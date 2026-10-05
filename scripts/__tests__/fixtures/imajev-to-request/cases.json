@@ -1,0 +1,2590 @@
+[
+  {
+    "name": "choice with an empty option description",
+    "state": {
+      "subject": "Card declined",
+      "body": "I tried to buy Buzz and the card was refused."
+    },
+    "questions": [
+      {
+        "id": "topic",
+        "type": "choice",
+        "instructions": "What is the customer mainly asking civitai.com support about?",
+        "options": [
+          {
+            "key": "billing_buzz",
+            "description": "Buying Buzz or memberships by card or PayPal"
+          },
+          {
+            "key": "other",
+            "description": "None of the above"
+          },
+          {
+            "key": "cannot_tell",
+            "description": ""
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "noul",
+    "state": {
+      "text": "refund please"
+    },
+    "questions": [
+      {
+        "id": "wants_refund",
+        "type": "noul",
+        "instructions": "Does the customer ask for money back?"
+      }
+    ]
+  },
+  {
+    "name": "score",
+    "state": {},
+    "questions": [
+      {
+        "id": "urgency",
+        "type": "score",
+        "instructions": "How urgent is it?",
+        "criteria": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "three questions, non-ASCII state",
+    "state": {
+      "subject": "Zahlung fehlgeschlagen — 返金",
+      "lang": "de"
+    },
+    "questions": [
+      {
+        "id": "topic",
+        "type": "choice",
+        "instructions": "Which topic?",
+        "options": [
+          {
+            "key": "a",
+            "description": "topic a"
+          },
+          {
+            "key": "b",
+            "description": "topic b"
+          }
+        ]
+      },
+      {
+        "id": "angry",
+        "type": "noul",
+        "instructions": "Is the customer angry?"
+      },
+      {
+        "id": "effort",
+        "type": "score",
+        "instructions": "How much effort to resolve?",
+        "criteria": [
+          "none",
+          "some"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: empty instructions",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": ""
+      }
+    ]
+  },
+  {
+    "name": "error: empty score level",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "score",
+        "instructions": "Rate it",
+        "criteria": [
+          "low",
+          ""
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: reserved option key",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "a",
+            "description": "a"
+          },
+          {
+            "key": "__unknown__",
+            "description": "u"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: one option",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "a",
+            "description": "a"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: invalid field id",
+    "state": {},
+    "questions": [
+      {
+        "id": "1bad",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  },
+  {
+    "name": "error: duplicate option keys",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "a",
+            "description": "a"
+          },
+          {
+            "key": "a",
+            "description": "again"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: nine questions",
+    "state": {},
+    "questions": [
+      {
+        "id": "q1",
+        "type": "noul",
+        "instructions": "1?"
+      },
+      {
+        "id": "q2",
+        "type": "noul",
+        "instructions": "2?"
+      },
+      {
+        "id": "q3",
+        "type": "noul",
+        "instructions": "3?"
+      },
+      {
+        "id": "q4",
+        "type": "noul",
+        "instructions": "4?"
+      },
+      {
+        "id": "q5",
+        "type": "noul",
+        "instructions": "5?"
+      },
+      {
+        "id": "q6",
+        "type": "noul",
+        "instructions": "6?"
+      },
+      {
+        "id": "q7",
+        "type": "noul",
+        "instructions": "7?"
+      },
+      {
+        "id": "q8",
+        "type": "noul",
+        "instructions": "8?"
+      },
+      {
+        "id": "q9",
+        "type": "noul",
+        "instructions": "9?"
+      }
+    ]
+  },
+  {
+    "name": "error: eleven score levels",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "score",
+        "instructions": "Rate it",
+        "criteria": [
+          "0",
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6",
+          "7",
+          "8",
+          "9",
+          "10"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "integer-like option keys, in the order serving sends them",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "b",
+            "description": "b"
+          },
+          {
+            "key": "2",
+            "description": "two"
+          },
+          {
+            "key": "1",
+            "description": "one"
+          },
+          {
+            "key": "01",
+            "description": "zero one"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "option keys that are Object.prototype names",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "__proto__",
+            "description": "p"
+          },
+          {
+            "key": "constructor",
+            "description": "c"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "2000 astral characters of instructions",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": {
+          "$repeat": "😀",
+          "times": 2000
+        }
+      }
+    ]
+  },
+  {
+    "name": "error: 2001 characters of instructions",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": {
+          "$repeat": "a",
+          "times": 2001
+        }
+      }
+    ]
+  },
+  {
+    "name": "254 options",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "k0",
+            "description": "option 0"
+          },
+          {
+            "key": "k1",
+            "description": "option 1"
+          },
+          {
+            "key": "k2",
+            "description": "option 2"
+          },
+          {
+            "key": "k3",
+            "description": "option 3"
+          },
+          {
+            "key": "k4",
+            "description": "option 4"
+          },
+          {
+            "key": "k5",
+            "description": "option 5"
+          },
+          {
+            "key": "k6",
+            "description": "option 6"
+          },
+          {
+            "key": "k7",
+            "description": "option 7"
+          },
+          {
+            "key": "k8",
+            "description": "option 8"
+          },
+          {
+            "key": "k9",
+            "description": "option 9"
+          },
+          {
+            "key": "k10",
+            "description": "option 10"
+          },
+          {
+            "key": "k11",
+            "description": "option 11"
+          },
+          {
+            "key": "k12",
+            "description": "option 12"
+          },
+          {
+            "key": "k13",
+            "description": "option 13"
+          },
+          {
+            "key": "k14",
+            "description": "option 14"
+          },
+          {
+            "key": "k15",
+            "description": "option 15"
+          },
+          {
+            "key": "k16",
+            "description": "option 16"
+          },
+          {
+            "key": "k17",
+            "description": "option 17"
+          },
+          {
+            "key": "k18",
+            "description": "option 18"
+          },
+          {
+            "key": "k19",
+            "description": "option 19"
+          },
+          {
+            "key": "k20",
+            "description": "option 20"
+          },
+          {
+            "key": "k21",
+            "description": "option 21"
+          },
+          {
+            "key": "k22",
+            "description": "option 22"
+          },
+          {
+            "key": "k23",
+            "description": "option 23"
+          },
+          {
+            "key": "k24",
+            "description": "option 24"
+          },
+          {
+            "key": "k25",
+            "description": "option 25"
+          },
+          {
+            "key": "k26",
+            "description": "option 26"
+          },
+          {
+            "key": "k27",
+            "description": "option 27"
+          },
+          {
+            "key": "k28",
+            "description": "option 28"
+          },
+          {
+            "key": "k29",
+            "description": "option 29"
+          },
+          {
+            "key": "k30",
+            "description": "option 30"
+          },
+          {
+            "key": "k31",
+            "description": "option 31"
+          },
+          {
+            "key": "k32",
+            "description": "option 32"
+          },
+          {
+            "key": "k33",
+            "description": "option 33"
+          },
+          {
+            "key": "k34",
+            "description": "option 34"
+          },
+          {
+            "key": "k35",
+            "description": "option 35"
+          },
+          {
+            "key": "k36",
+            "description": "option 36"
+          },
+          {
+            "key": "k37",
+            "description": "option 37"
+          },
+          {
+            "key": "k38",
+            "description": "option 38"
+          },
+          {
+            "key": "k39",
+            "description": "option 39"
+          },
+          {
+            "key": "k40",
+            "description": "option 40"
+          },
+          {
+            "key": "k41",
+            "description": "option 41"
+          },
+          {
+            "key": "k42",
+            "description": "option 42"
+          },
+          {
+            "key": "k43",
+            "description": "option 43"
+          },
+          {
+            "key": "k44",
+            "description": "option 44"
+          },
+          {
+            "key": "k45",
+            "description": "option 45"
+          },
+          {
+            "key": "k46",
+            "description": "option 46"
+          },
+          {
+            "key": "k47",
+            "description": "option 47"
+          },
+          {
+            "key": "k48",
+            "description": "option 48"
+          },
+          {
+            "key": "k49",
+            "description": "option 49"
+          },
+          {
+            "key": "k50",
+            "description": "option 50"
+          },
+          {
+            "key": "k51",
+            "description": "option 51"
+          },
+          {
+            "key": "k52",
+            "description": "option 52"
+          },
+          {
+            "key": "k53",
+            "description": "option 53"
+          },
+          {
+            "key": "k54",
+            "description": "option 54"
+          },
+          {
+            "key": "k55",
+            "description": "option 55"
+          },
+          {
+            "key": "k56",
+            "description": "option 56"
+          },
+          {
+            "key": "k57",
+            "description": "option 57"
+          },
+          {
+            "key": "k58",
+            "description": "option 58"
+          },
+          {
+            "key": "k59",
+            "description": "option 59"
+          },
+          {
+            "key": "k60",
+            "description": "option 60"
+          },
+          {
+            "key": "k61",
+            "description": "option 61"
+          },
+          {
+            "key": "k62",
+            "description": "option 62"
+          },
+          {
+            "key": "k63",
+            "description": "option 63"
+          },
+          {
+            "key": "k64",
+            "description": "option 64"
+          },
+          {
+            "key": "k65",
+            "description": "option 65"
+          },
+          {
+            "key": "k66",
+            "description": "option 66"
+          },
+          {
+            "key": "k67",
+            "description": "option 67"
+          },
+          {
+            "key": "k68",
+            "description": "option 68"
+          },
+          {
+            "key": "k69",
+            "description": "option 69"
+          },
+          {
+            "key": "k70",
+            "description": "option 70"
+          },
+          {
+            "key": "k71",
+            "description": "option 71"
+          },
+          {
+            "key": "k72",
+            "description": "option 72"
+          },
+          {
+            "key": "k73",
+            "description": "option 73"
+          },
+          {
+            "key": "k74",
+            "description": "option 74"
+          },
+          {
+            "key": "k75",
+            "description": "option 75"
+          },
+          {
+            "key": "k76",
+            "description": "option 76"
+          },
+          {
+            "key": "k77",
+            "description": "option 77"
+          },
+          {
+            "key": "k78",
+            "description": "option 78"
+          },
+          {
+            "key": "k79",
+            "description": "option 79"
+          },
+          {
+            "key": "k80",
+            "description": "option 80"
+          },
+          {
+            "key": "k81",
+            "description": "option 81"
+          },
+          {
+            "key": "k82",
+            "description": "option 82"
+          },
+          {
+            "key": "k83",
+            "description": "option 83"
+          },
+          {
+            "key": "k84",
+            "description": "option 84"
+          },
+          {
+            "key": "k85",
+            "description": "option 85"
+          },
+          {
+            "key": "k86",
+            "description": "option 86"
+          },
+          {
+            "key": "k87",
+            "description": "option 87"
+          },
+          {
+            "key": "k88",
+            "description": "option 88"
+          },
+          {
+            "key": "k89",
+            "description": "option 89"
+          },
+          {
+            "key": "k90",
+            "description": "option 90"
+          },
+          {
+            "key": "k91",
+            "description": "option 91"
+          },
+          {
+            "key": "k92",
+            "description": "option 92"
+          },
+          {
+            "key": "k93",
+            "description": "option 93"
+          },
+          {
+            "key": "k94",
+            "description": "option 94"
+          },
+          {
+            "key": "k95",
+            "description": "option 95"
+          },
+          {
+            "key": "k96",
+            "description": "option 96"
+          },
+          {
+            "key": "k97",
+            "description": "option 97"
+          },
+          {
+            "key": "k98",
+            "description": "option 98"
+          },
+          {
+            "key": "k99",
+            "description": "option 99"
+          },
+          {
+            "key": "k100",
+            "description": "option 100"
+          },
+          {
+            "key": "k101",
+            "description": "option 101"
+          },
+          {
+            "key": "k102",
+            "description": "option 102"
+          },
+          {
+            "key": "k103",
+            "description": "option 103"
+          },
+          {
+            "key": "k104",
+            "description": "option 104"
+          },
+          {
+            "key": "k105",
+            "description": "option 105"
+          },
+          {
+            "key": "k106",
+            "description": "option 106"
+          },
+          {
+            "key": "k107",
+            "description": "option 107"
+          },
+          {
+            "key": "k108",
+            "description": "option 108"
+          },
+          {
+            "key": "k109",
+            "description": "option 109"
+          },
+          {
+            "key": "k110",
+            "description": "option 110"
+          },
+          {
+            "key": "k111",
+            "description": "option 111"
+          },
+          {
+            "key": "k112",
+            "description": "option 112"
+          },
+          {
+            "key": "k113",
+            "description": "option 113"
+          },
+          {
+            "key": "k114",
+            "description": "option 114"
+          },
+          {
+            "key": "k115",
+            "description": "option 115"
+          },
+          {
+            "key": "k116",
+            "description": "option 116"
+          },
+          {
+            "key": "k117",
+            "description": "option 117"
+          },
+          {
+            "key": "k118",
+            "description": "option 118"
+          },
+          {
+            "key": "k119",
+            "description": "option 119"
+          },
+          {
+            "key": "k120",
+            "description": "option 120"
+          },
+          {
+            "key": "k121",
+            "description": "option 121"
+          },
+          {
+            "key": "k122",
+            "description": "option 122"
+          },
+          {
+            "key": "k123",
+            "description": "option 123"
+          },
+          {
+            "key": "k124",
+            "description": "option 124"
+          },
+          {
+            "key": "k125",
+            "description": "option 125"
+          },
+          {
+            "key": "k126",
+            "description": "option 126"
+          },
+          {
+            "key": "k127",
+            "description": "option 127"
+          },
+          {
+            "key": "k128",
+            "description": "option 128"
+          },
+          {
+            "key": "k129",
+            "description": "option 129"
+          },
+          {
+            "key": "k130",
+            "description": "option 130"
+          },
+          {
+            "key": "k131",
+            "description": "option 131"
+          },
+          {
+            "key": "k132",
+            "description": "option 132"
+          },
+          {
+            "key": "k133",
+            "description": "option 133"
+          },
+          {
+            "key": "k134",
+            "description": "option 134"
+          },
+          {
+            "key": "k135",
+            "description": "option 135"
+          },
+          {
+            "key": "k136",
+            "description": "option 136"
+          },
+          {
+            "key": "k137",
+            "description": "option 137"
+          },
+          {
+            "key": "k138",
+            "description": "option 138"
+          },
+          {
+            "key": "k139",
+            "description": "option 139"
+          },
+          {
+            "key": "k140",
+            "description": "option 140"
+          },
+          {
+            "key": "k141",
+            "description": "option 141"
+          },
+          {
+            "key": "k142",
+            "description": "option 142"
+          },
+          {
+            "key": "k143",
+            "description": "option 143"
+          },
+          {
+            "key": "k144",
+            "description": "option 144"
+          },
+          {
+            "key": "k145",
+            "description": "option 145"
+          },
+          {
+            "key": "k146",
+            "description": "option 146"
+          },
+          {
+            "key": "k147",
+            "description": "option 147"
+          },
+          {
+            "key": "k148",
+            "description": "option 148"
+          },
+          {
+            "key": "k149",
+            "description": "option 149"
+          },
+          {
+            "key": "k150",
+            "description": "option 150"
+          },
+          {
+            "key": "k151",
+            "description": "option 151"
+          },
+          {
+            "key": "k152",
+            "description": "option 152"
+          },
+          {
+            "key": "k153",
+            "description": "option 153"
+          },
+          {
+            "key": "k154",
+            "description": "option 154"
+          },
+          {
+            "key": "k155",
+            "description": "option 155"
+          },
+          {
+            "key": "k156",
+            "description": "option 156"
+          },
+          {
+            "key": "k157",
+            "description": "option 157"
+          },
+          {
+            "key": "k158",
+            "description": "option 158"
+          },
+          {
+            "key": "k159",
+            "description": "option 159"
+          },
+          {
+            "key": "k160",
+            "description": "option 160"
+          },
+          {
+            "key": "k161",
+            "description": "option 161"
+          },
+          {
+            "key": "k162",
+            "description": "option 162"
+          },
+          {
+            "key": "k163",
+            "description": "option 163"
+          },
+          {
+            "key": "k164",
+            "description": "option 164"
+          },
+          {
+            "key": "k165",
+            "description": "option 165"
+          },
+          {
+            "key": "k166",
+            "description": "option 166"
+          },
+          {
+            "key": "k167",
+            "description": "option 167"
+          },
+          {
+            "key": "k168",
+            "description": "option 168"
+          },
+          {
+            "key": "k169",
+            "description": "option 169"
+          },
+          {
+            "key": "k170",
+            "description": "option 170"
+          },
+          {
+            "key": "k171",
+            "description": "option 171"
+          },
+          {
+            "key": "k172",
+            "description": "option 172"
+          },
+          {
+            "key": "k173",
+            "description": "option 173"
+          },
+          {
+            "key": "k174",
+            "description": "option 174"
+          },
+          {
+            "key": "k175",
+            "description": "option 175"
+          },
+          {
+            "key": "k176",
+            "description": "option 176"
+          },
+          {
+            "key": "k177",
+            "description": "option 177"
+          },
+          {
+            "key": "k178",
+            "description": "option 178"
+          },
+          {
+            "key": "k179",
+            "description": "option 179"
+          },
+          {
+            "key": "k180",
+            "description": "option 180"
+          },
+          {
+            "key": "k181",
+            "description": "option 181"
+          },
+          {
+            "key": "k182",
+            "description": "option 182"
+          },
+          {
+            "key": "k183",
+            "description": "option 183"
+          },
+          {
+            "key": "k184",
+            "description": "option 184"
+          },
+          {
+            "key": "k185",
+            "description": "option 185"
+          },
+          {
+            "key": "k186",
+            "description": "option 186"
+          },
+          {
+            "key": "k187",
+            "description": "option 187"
+          },
+          {
+            "key": "k188",
+            "description": "option 188"
+          },
+          {
+            "key": "k189",
+            "description": "option 189"
+          },
+          {
+            "key": "k190",
+            "description": "option 190"
+          },
+          {
+            "key": "k191",
+            "description": "option 191"
+          },
+          {
+            "key": "k192",
+            "description": "option 192"
+          },
+          {
+            "key": "k193",
+            "description": "option 193"
+          },
+          {
+            "key": "k194",
+            "description": "option 194"
+          },
+          {
+            "key": "k195",
+            "description": "option 195"
+          },
+          {
+            "key": "k196",
+            "description": "option 196"
+          },
+          {
+            "key": "k197",
+            "description": "option 197"
+          },
+          {
+            "key": "k198",
+            "description": "option 198"
+          },
+          {
+            "key": "k199",
+            "description": "option 199"
+          },
+          {
+            "key": "k200",
+            "description": "option 200"
+          },
+          {
+            "key": "k201",
+            "description": "option 201"
+          },
+          {
+            "key": "k202",
+            "description": "option 202"
+          },
+          {
+            "key": "k203",
+            "description": "option 203"
+          },
+          {
+            "key": "k204",
+            "description": "option 204"
+          },
+          {
+            "key": "k205",
+            "description": "option 205"
+          },
+          {
+            "key": "k206",
+            "description": "option 206"
+          },
+          {
+            "key": "k207",
+            "description": "option 207"
+          },
+          {
+            "key": "k208",
+            "description": "option 208"
+          },
+          {
+            "key": "k209",
+            "description": "option 209"
+          },
+          {
+            "key": "k210",
+            "description": "option 210"
+          },
+          {
+            "key": "k211",
+            "description": "option 211"
+          },
+          {
+            "key": "k212",
+            "description": "option 212"
+          },
+          {
+            "key": "k213",
+            "description": "option 213"
+          },
+          {
+            "key": "k214",
+            "description": "option 214"
+          },
+          {
+            "key": "k215",
+            "description": "option 215"
+          },
+          {
+            "key": "k216",
+            "description": "option 216"
+          },
+          {
+            "key": "k217",
+            "description": "option 217"
+          },
+          {
+            "key": "k218",
+            "description": "option 218"
+          },
+          {
+            "key": "k219",
+            "description": "option 219"
+          },
+          {
+            "key": "k220",
+            "description": "option 220"
+          },
+          {
+            "key": "k221",
+            "description": "option 221"
+          },
+          {
+            "key": "k222",
+            "description": "option 222"
+          },
+          {
+            "key": "k223",
+            "description": "option 223"
+          },
+          {
+            "key": "k224",
+            "description": "option 224"
+          },
+          {
+            "key": "k225",
+            "description": "option 225"
+          },
+          {
+            "key": "k226",
+            "description": "option 226"
+          },
+          {
+            "key": "k227",
+            "description": "option 227"
+          },
+          {
+            "key": "k228",
+            "description": "option 228"
+          },
+          {
+            "key": "k229",
+            "description": "option 229"
+          },
+          {
+            "key": "k230",
+            "description": "option 230"
+          },
+          {
+            "key": "k231",
+            "description": "option 231"
+          },
+          {
+            "key": "k232",
+            "description": "option 232"
+          },
+          {
+            "key": "k233",
+            "description": "option 233"
+          },
+          {
+            "key": "k234",
+            "description": "option 234"
+          },
+          {
+            "key": "k235",
+            "description": "option 235"
+          },
+          {
+            "key": "k236",
+            "description": "option 236"
+          },
+          {
+            "key": "k237",
+            "description": "option 237"
+          },
+          {
+            "key": "k238",
+            "description": "option 238"
+          },
+          {
+            "key": "k239",
+            "description": "option 239"
+          },
+          {
+            "key": "k240",
+            "description": "option 240"
+          },
+          {
+            "key": "k241",
+            "description": "option 241"
+          },
+          {
+            "key": "k242",
+            "description": "option 242"
+          },
+          {
+            "key": "k243",
+            "description": "option 243"
+          },
+          {
+            "key": "k244",
+            "description": "option 244"
+          },
+          {
+            "key": "k245",
+            "description": "option 245"
+          },
+          {
+            "key": "k246",
+            "description": "option 246"
+          },
+          {
+            "key": "k247",
+            "description": "option 247"
+          },
+          {
+            "key": "k248",
+            "description": "option 248"
+          },
+          {
+            "key": "k249",
+            "description": "option 249"
+          },
+          {
+            "key": "k250",
+            "description": "option 250"
+          },
+          {
+            "key": "k251",
+            "description": "option 251"
+          },
+          {
+            "key": "k252",
+            "description": "option 252"
+          },
+          {
+            "key": "k253",
+            "description": "option 253"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: 255 options",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "k0",
+            "description": "option 0"
+          },
+          {
+            "key": "k1",
+            "description": "option 1"
+          },
+          {
+            "key": "k2",
+            "description": "option 2"
+          },
+          {
+            "key": "k3",
+            "description": "option 3"
+          },
+          {
+            "key": "k4",
+            "description": "option 4"
+          },
+          {
+            "key": "k5",
+            "description": "option 5"
+          },
+          {
+            "key": "k6",
+            "description": "option 6"
+          },
+          {
+            "key": "k7",
+            "description": "option 7"
+          },
+          {
+            "key": "k8",
+            "description": "option 8"
+          },
+          {
+            "key": "k9",
+            "description": "option 9"
+          },
+          {
+            "key": "k10",
+            "description": "option 10"
+          },
+          {
+            "key": "k11",
+            "description": "option 11"
+          },
+          {
+            "key": "k12",
+            "description": "option 12"
+          },
+          {
+            "key": "k13",
+            "description": "option 13"
+          },
+          {
+            "key": "k14",
+            "description": "option 14"
+          },
+          {
+            "key": "k15",
+            "description": "option 15"
+          },
+          {
+            "key": "k16",
+            "description": "option 16"
+          },
+          {
+            "key": "k17",
+            "description": "option 17"
+          },
+          {
+            "key": "k18",
+            "description": "option 18"
+          },
+          {
+            "key": "k19",
+            "description": "option 19"
+          },
+          {
+            "key": "k20",
+            "description": "option 20"
+          },
+          {
+            "key": "k21",
+            "description": "option 21"
+          },
+          {
+            "key": "k22",
+            "description": "option 22"
+          },
+          {
+            "key": "k23",
+            "description": "option 23"
+          },
+          {
+            "key": "k24",
+            "description": "option 24"
+          },
+          {
+            "key": "k25",
+            "description": "option 25"
+          },
+          {
+            "key": "k26",
+            "description": "option 26"
+          },
+          {
+            "key": "k27",
+            "description": "option 27"
+          },
+          {
+            "key": "k28",
+            "description": "option 28"
+          },
+          {
+            "key": "k29",
+            "description": "option 29"
+          },
+          {
+            "key": "k30",
+            "description": "option 30"
+          },
+          {
+            "key": "k31",
+            "description": "option 31"
+          },
+          {
+            "key": "k32",
+            "description": "option 32"
+          },
+          {
+            "key": "k33",
+            "description": "option 33"
+          },
+          {
+            "key": "k34",
+            "description": "option 34"
+          },
+          {
+            "key": "k35",
+            "description": "option 35"
+          },
+          {
+            "key": "k36",
+            "description": "option 36"
+          },
+          {
+            "key": "k37",
+            "description": "option 37"
+          },
+          {
+            "key": "k38",
+            "description": "option 38"
+          },
+          {
+            "key": "k39",
+            "description": "option 39"
+          },
+          {
+            "key": "k40",
+            "description": "option 40"
+          },
+          {
+            "key": "k41",
+            "description": "option 41"
+          },
+          {
+            "key": "k42",
+            "description": "option 42"
+          },
+          {
+            "key": "k43",
+            "description": "option 43"
+          },
+          {
+            "key": "k44",
+            "description": "option 44"
+          },
+          {
+            "key": "k45",
+            "description": "option 45"
+          },
+          {
+            "key": "k46",
+            "description": "option 46"
+          },
+          {
+            "key": "k47",
+            "description": "option 47"
+          },
+          {
+            "key": "k48",
+            "description": "option 48"
+          },
+          {
+            "key": "k49",
+            "description": "option 49"
+          },
+          {
+            "key": "k50",
+            "description": "option 50"
+          },
+          {
+            "key": "k51",
+            "description": "option 51"
+          },
+          {
+            "key": "k52",
+            "description": "option 52"
+          },
+          {
+            "key": "k53",
+            "description": "option 53"
+          },
+          {
+            "key": "k54",
+            "description": "option 54"
+          },
+          {
+            "key": "k55",
+            "description": "option 55"
+          },
+          {
+            "key": "k56",
+            "description": "option 56"
+          },
+          {
+            "key": "k57",
+            "description": "option 57"
+          },
+          {
+            "key": "k58",
+            "description": "option 58"
+          },
+          {
+            "key": "k59",
+            "description": "option 59"
+          },
+          {
+            "key": "k60",
+            "description": "option 60"
+          },
+          {
+            "key": "k61",
+            "description": "option 61"
+          },
+          {
+            "key": "k62",
+            "description": "option 62"
+          },
+          {
+            "key": "k63",
+            "description": "option 63"
+          },
+          {
+            "key": "k64",
+            "description": "option 64"
+          },
+          {
+            "key": "k65",
+            "description": "option 65"
+          },
+          {
+            "key": "k66",
+            "description": "option 66"
+          },
+          {
+            "key": "k67",
+            "description": "option 67"
+          },
+          {
+            "key": "k68",
+            "description": "option 68"
+          },
+          {
+            "key": "k69",
+            "description": "option 69"
+          },
+          {
+            "key": "k70",
+            "description": "option 70"
+          },
+          {
+            "key": "k71",
+            "description": "option 71"
+          },
+          {
+            "key": "k72",
+            "description": "option 72"
+          },
+          {
+            "key": "k73",
+            "description": "option 73"
+          },
+          {
+            "key": "k74",
+            "description": "option 74"
+          },
+          {
+            "key": "k75",
+            "description": "option 75"
+          },
+          {
+            "key": "k76",
+            "description": "option 76"
+          },
+          {
+            "key": "k77",
+            "description": "option 77"
+          },
+          {
+            "key": "k78",
+            "description": "option 78"
+          },
+          {
+            "key": "k79",
+            "description": "option 79"
+          },
+          {
+            "key": "k80",
+            "description": "option 80"
+          },
+          {
+            "key": "k81",
+            "description": "option 81"
+          },
+          {
+            "key": "k82",
+            "description": "option 82"
+          },
+          {
+            "key": "k83",
+            "description": "option 83"
+          },
+          {
+            "key": "k84",
+            "description": "option 84"
+          },
+          {
+            "key": "k85",
+            "description": "option 85"
+          },
+          {
+            "key": "k86",
+            "description": "option 86"
+          },
+          {
+            "key": "k87",
+            "description": "option 87"
+          },
+          {
+            "key": "k88",
+            "description": "option 88"
+          },
+          {
+            "key": "k89",
+            "description": "option 89"
+          },
+          {
+            "key": "k90",
+            "description": "option 90"
+          },
+          {
+            "key": "k91",
+            "description": "option 91"
+          },
+          {
+            "key": "k92",
+            "description": "option 92"
+          },
+          {
+            "key": "k93",
+            "description": "option 93"
+          },
+          {
+            "key": "k94",
+            "description": "option 94"
+          },
+          {
+            "key": "k95",
+            "description": "option 95"
+          },
+          {
+            "key": "k96",
+            "description": "option 96"
+          },
+          {
+            "key": "k97",
+            "description": "option 97"
+          },
+          {
+            "key": "k98",
+            "description": "option 98"
+          },
+          {
+            "key": "k99",
+            "description": "option 99"
+          },
+          {
+            "key": "k100",
+            "description": "option 100"
+          },
+          {
+            "key": "k101",
+            "description": "option 101"
+          },
+          {
+            "key": "k102",
+            "description": "option 102"
+          },
+          {
+            "key": "k103",
+            "description": "option 103"
+          },
+          {
+            "key": "k104",
+            "description": "option 104"
+          },
+          {
+            "key": "k105",
+            "description": "option 105"
+          },
+          {
+            "key": "k106",
+            "description": "option 106"
+          },
+          {
+            "key": "k107",
+            "description": "option 107"
+          },
+          {
+            "key": "k108",
+            "description": "option 108"
+          },
+          {
+            "key": "k109",
+            "description": "option 109"
+          },
+          {
+            "key": "k110",
+            "description": "option 110"
+          },
+          {
+            "key": "k111",
+            "description": "option 111"
+          },
+          {
+            "key": "k112",
+            "description": "option 112"
+          },
+          {
+            "key": "k113",
+            "description": "option 113"
+          },
+          {
+            "key": "k114",
+            "description": "option 114"
+          },
+          {
+            "key": "k115",
+            "description": "option 115"
+          },
+          {
+            "key": "k116",
+            "description": "option 116"
+          },
+          {
+            "key": "k117",
+            "description": "option 117"
+          },
+          {
+            "key": "k118",
+            "description": "option 118"
+          },
+          {
+            "key": "k119",
+            "description": "option 119"
+          },
+          {
+            "key": "k120",
+            "description": "option 120"
+          },
+          {
+            "key": "k121",
+            "description": "option 121"
+          },
+          {
+            "key": "k122",
+            "description": "option 122"
+          },
+          {
+            "key": "k123",
+            "description": "option 123"
+          },
+          {
+            "key": "k124",
+            "description": "option 124"
+          },
+          {
+            "key": "k125",
+            "description": "option 125"
+          },
+          {
+            "key": "k126",
+            "description": "option 126"
+          },
+          {
+            "key": "k127",
+            "description": "option 127"
+          },
+          {
+            "key": "k128",
+            "description": "option 128"
+          },
+          {
+            "key": "k129",
+            "description": "option 129"
+          },
+          {
+            "key": "k130",
+            "description": "option 130"
+          },
+          {
+            "key": "k131",
+            "description": "option 131"
+          },
+          {
+            "key": "k132",
+            "description": "option 132"
+          },
+          {
+            "key": "k133",
+            "description": "option 133"
+          },
+          {
+            "key": "k134",
+            "description": "option 134"
+          },
+          {
+            "key": "k135",
+            "description": "option 135"
+          },
+          {
+            "key": "k136",
+            "description": "option 136"
+          },
+          {
+            "key": "k137",
+            "description": "option 137"
+          },
+          {
+            "key": "k138",
+            "description": "option 138"
+          },
+          {
+            "key": "k139",
+            "description": "option 139"
+          },
+          {
+            "key": "k140",
+            "description": "option 140"
+          },
+          {
+            "key": "k141",
+            "description": "option 141"
+          },
+          {
+            "key": "k142",
+            "description": "option 142"
+          },
+          {
+            "key": "k143",
+            "description": "option 143"
+          },
+          {
+            "key": "k144",
+            "description": "option 144"
+          },
+          {
+            "key": "k145",
+            "description": "option 145"
+          },
+          {
+            "key": "k146",
+            "description": "option 146"
+          },
+          {
+            "key": "k147",
+            "description": "option 147"
+          },
+          {
+            "key": "k148",
+            "description": "option 148"
+          },
+          {
+            "key": "k149",
+            "description": "option 149"
+          },
+          {
+            "key": "k150",
+            "description": "option 150"
+          },
+          {
+            "key": "k151",
+            "description": "option 151"
+          },
+          {
+            "key": "k152",
+            "description": "option 152"
+          },
+          {
+            "key": "k153",
+            "description": "option 153"
+          },
+          {
+            "key": "k154",
+            "description": "option 154"
+          },
+          {
+            "key": "k155",
+            "description": "option 155"
+          },
+          {
+            "key": "k156",
+            "description": "option 156"
+          },
+          {
+            "key": "k157",
+            "description": "option 157"
+          },
+          {
+            "key": "k158",
+            "description": "option 158"
+          },
+          {
+            "key": "k159",
+            "description": "option 159"
+          },
+          {
+            "key": "k160",
+            "description": "option 160"
+          },
+          {
+            "key": "k161",
+            "description": "option 161"
+          },
+          {
+            "key": "k162",
+            "description": "option 162"
+          },
+          {
+            "key": "k163",
+            "description": "option 163"
+          },
+          {
+            "key": "k164",
+            "description": "option 164"
+          },
+          {
+            "key": "k165",
+            "description": "option 165"
+          },
+          {
+            "key": "k166",
+            "description": "option 166"
+          },
+          {
+            "key": "k167",
+            "description": "option 167"
+          },
+          {
+            "key": "k168",
+            "description": "option 168"
+          },
+          {
+            "key": "k169",
+            "description": "option 169"
+          },
+          {
+            "key": "k170",
+            "description": "option 170"
+          },
+          {
+            "key": "k171",
+            "description": "option 171"
+          },
+          {
+            "key": "k172",
+            "description": "option 172"
+          },
+          {
+            "key": "k173",
+            "description": "option 173"
+          },
+          {
+            "key": "k174",
+            "description": "option 174"
+          },
+          {
+            "key": "k175",
+            "description": "option 175"
+          },
+          {
+            "key": "k176",
+            "description": "option 176"
+          },
+          {
+            "key": "k177",
+            "description": "option 177"
+          },
+          {
+            "key": "k178",
+            "description": "option 178"
+          },
+          {
+            "key": "k179",
+            "description": "option 179"
+          },
+          {
+            "key": "k180",
+            "description": "option 180"
+          },
+          {
+            "key": "k181",
+            "description": "option 181"
+          },
+          {
+            "key": "k182",
+            "description": "option 182"
+          },
+          {
+            "key": "k183",
+            "description": "option 183"
+          },
+          {
+            "key": "k184",
+            "description": "option 184"
+          },
+          {
+            "key": "k185",
+            "description": "option 185"
+          },
+          {
+            "key": "k186",
+            "description": "option 186"
+          },
+          {
+            "key": "k187",
+            "description": "option 187"
+          },
+          {
+            "key": "k188",
+            "description": "option 188"
+          },
+          {
+            "key": "k189",
+            "description": "option 189"
+          },
+          {
+            "key": "k190",
+            "description": "option 190"
+          },
+          {
+            "key": "k191",
+            "description": "option 191"
+          },
+          {
+            "key": "k192",
+            "description": "option 192"
+          },
+          {
+            "key": "k193",
+            "description": "option 193"
+          },
+          {
+            "key": "k194",
+            "description": "option 194"
+          },
+          {
+            "key": "k195",
+            "description": "option 195"
+          },
+          {
+            "key": "k196",
+            "description": "option 196"
+          },
+          {
+            "key": "k197",
+            "description": "option 197"
+          },
+          {
+            "key": "k198",
+            "description": "option 198"
+          },
+          {
+            "key": "k199",
+            "description": "option 199"
+          },
+          {
+            "key": "k200",
+            "description": "option 200"
+          },
+          {
+            "key": "k201",
+            "description": "option 201"
+          },
+          {
+            "key": "k202",
+            "description": "option 202"
+          },
+          {
+            "key": "k203",
+            "description": "option 203"
+          },
+          {
+            "key": "k204",
+            "description": "option 204"
+          },
+          {
+            "key": "k205",
+            "description": "option 205"
+          },
+          {
+            "key": "k206",
+            "description": "option 206"
+          },
+          {
+            "key": "k207",
+            "description": "option 207"
+          },
+          {
+            "key": "k208",
+            "description": "option 208"
+          },
+          {
+            "key": "k209",
+            "description": "option 209"
+          },
+          {
+            "key": "k210",
+            "description": "option 210"
+          },
+          {
+            "key": "k211",
+            "description": "option 211"
+          },
+          {
+            "key": "k212",
+            "description": "option 212"
+          },
+          {
+            "key": "k213",
+            "description": "option 213"
+          },
+          {
+            "key": "k214",
+            "description": "option 214"
+          },
+          {
+            "key": "k215",
+            "description": "option 215"
+          },
+          {
+            "key": "k216",
+            "description": "option 216"
+          },
+          {
+            "key": "k217",
+            "description": "option 217"
+          },
+          {
+            "key": "k218",
+            "description": "option 218"
+          },
+          {
+            "key": "k219",
+            "description": "option 219"
+          },
+          {
+            "key": "k220",
+            "description": "option 220"
+          },
+          {
+            "key": "k221",
+            "description": "option 221"
+          },
+          {
+            "key": "k222",
+            "description": "option 222"
+          },
+          {
+            "key": "k223",
+            "description": "option 223"
+          },
+          {
+            "key": "k224",
+            "description": "option 224"
+          },
+          {
+            "key": "k225",
+            "description": "option 225"
+          },
+          {
+            "key": "k226",
+            "description": "option 226"
+          },
+          {
+            "key": "k227",
+            "description": "option 227"
+          },
+          {
+            "key": "k228",
+            "description": "option 228"
+          },
+          {
+            "key": "k229",
+            "description": "option 229"
+          },
+          {
+            "key": "k230",
+            "description": "option 230"
+          },
+          {
+            "key": "k231",
+            "description": "option 231"
+          },
+          {
+            "key": "k232",
+            "description": "option 232"
+          },
+          {
+            "key": "k233",
+            "description": "option 233"
+          },
+          {
+            "key": "k234",
+            "description": "option 234"
+          },
+          {
+            "key": "k235",
+            "description": "option 235"
+          },
+          {
+            "key": "k236",
+            "description": "option 236"
+          },
+          {
+            "key": "k237",
+            "description": "option 237"
+          },
+          {
+            "key": "k238",
+            "description": "option 238"
+          },
+          {
+            "key": "k239",
+            "description": "option 239"
+          },
+          {
+            "key": "k240",
+            "description": "option 240"
+          },
+          {
+            "key": "k241",
+            "description": "option 241"
+          },
+          {
+            "key": "k242",
+            "description": "option 242"
+          },
+          {
+            "key": "k243",
+            "description": "option 243"
+          },
+          {
+            "key": "k244",
+            "description": "option 244"
+          },
+          {
+            "key": "k245",
+            "description": "option 245"
+          },
+          {
+            "key": "k246",
+            "description": "option 246"
+          },
+          {
+            "key": "k247",
+            "description": "option 247"
+          },
+          {
+            "key": "k248",
+            "description": "option 248"
+          },
+          {
+            "key": "k249",
+            "description": "option 249"
+          },
+          {
+            "key": "k250",
+            "description": "option 250"
+          },
+          {
+            "key": "k251",
+            "description": "option 251"
+          },
+          {
+            "key": "k252",
+            "description": "option 252"
+          },
+          {
+            "key": "k253",
+            "description": "option 253"
+          },
+          {
+            "key": "k254",
+            "description": "option 254"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "128-character option key",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": {
+              "$repeat": "k",
+              "times": 128
+            },
+            "description": "x"
+          },
+          {
+            "key": "b",
+            "description": "y"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: 129-character option key",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": {
+              "$repeat": "k",
+              "times": 129
+            },
+            "description": "x"
+          },
+          {
+            "key": "b",
+            "description": "y"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: empty option key",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "choice",
+        "instructions": "Pick",
+        "options": [
+          {
+            "key": "",
+            "description": "x"
+          },
+          {
+            "key": "b",
+            "description": "y"
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: one score level",
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "score",
+        "instructions": "Rate",
+        "criteria": [
+          "only"
+        ]
+      }
+    ]
+  },
+  {
+    "name": "error: no questions",
+    "state": {},
+    "questions": []
+  },
+  {
+    "name": "state of exactly 131072 bytes",
+    "state": {
+      "text": {
+        "$repeat": "a",
+        "times": 131061
+      }
+    },
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  },
+  {
+    "name": "error: state of 131073 bytes",
+    "state": {
+      "text": {
+        "$repeat": "a",
+        "times": 131062
+      }
+    },
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  },
+  {
+    "name": "error: state over the limit in bytes but not in characters",
+    "state": {
+      "text": {
+        "$repeat": "é",
+        "times": 65531
+      }
+    },
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  },
+  {
+    "name": "non-ASCII state under the limit in UTF-8 bytes, over it if escaped",
+    "state": {
+      "text": {
+        "$repeat": "é",
+        "times": 30000
+      }
+    },
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  },
+  {
+    "name": "128-character request id",
+    "requestId": {
+      "$repeat": "r",
+      "times": 128
+    },
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  },
+  {
+    "name": "error: 129-character request id",
+    "requestId": {
+      "$repeat": "r",
+      "times": 129
+    },
+    "state": {},
+    "questions": [
+      {
+        "id": "q",
+        "type": "noul",
+        "instructions": "Is it?"
+      }
+    ]
+  }
+]

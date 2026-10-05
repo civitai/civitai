@@ -4,8 +4,6 @@ import type * as NotificationService from '~/server/services/notification.servic
 import {
   appealEntityLink,
   getAppealDetails,
-  getLatestEntityAppeal,
-  reopenEntityAppeal,
   resolveEntityAppeal,
 } from '~/server/services/report.service';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
@@ -74,14 +72,14 @@ describe('resolveEntityAppeal — resolved notification key', () => {
       createdAt,
     });
 
-    dbMock.dbRead.appeal.findMany.mockResolvedValueOnce([appealRow(first)]);
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValueOnce([appealRow(first)]);
     await resolveEntityAppeal({
       ids: [9],
       entityType: EntityType.Bounty,
       status: AppealStatus.Rejected,
       userId: 3,
     });
-    dbMock.dbRead.appeal.findMany.mockResolvedValueOnce([appealRow(second)]);
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValueOnce([appealRow(second)]);
     await resolveEntityAppeal({
       ids: [9],
       entityType: EntityType.Bounty,
@@ -94,34 +92,5 @@ describe('resolveEntityAppeal — resolved notification key', () => {
       `entity-appeal-resolved:Bounty:9:11:${first.getTime()}`,
       `entity-appeal-resolved:Bounty:9:11:${second.getTime()}`,
     ]);
-  });
-});
-
-describe('generic appeal row helpers', () => {
-  it('reads the newest appeal for any entity type', async () => {
-    await getLatestEntityAppeal({ entityType: EntityType.Bounty, entityId: 9, userId: 5 });
-    expect(dbMock.dbRead.appeal.findFirst).toHaveBeenCalledWith({
-      where: { entityType: EntityType.Bounty, entityId: 9, userId: 5 },
-      orderBy: { createdAt: 'desc' },
-      select: { status: true, resolvedAt: true },
-    });
-  });
-
-  it('reopens the existing row for any entity type', async () => {
-    await reopenEntityAppeal({
-      entityType: EntityType.Bounty,
-      entityId: 9,
-      userId: 5,
-      message: 'm',
-    });
-    const { where, data } = dbMock.dbWrite.appeal.update.mock.calls[0][0];
-    expect(where).toEqual({
-      entityType_entityId_userId: { entityType: EntityType.Bounty, entityId: 9, userId: 5 },
-    });
-    expect(data).toMatchObject({
-      status: AppealStatus.Pending,
-      appealMessage: 'm',
-      resolvedAt: null,
-    });
   });
 });

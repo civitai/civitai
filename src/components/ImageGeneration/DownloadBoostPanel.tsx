@@ -19,6 +19,7 @@ import {
   describeDownload,
   downloadPollIds,
   isAwaitingDownload,
+  isBoostedLane,
   isDownloadBoosted,
   isWorthBoosting,
   toDownloadRow,
@@ -178,8 +179,8 @@ export function DownloadBoostPanel({
           <Readout
             icon={IconGauge}
             label="Lane speed"
-            value={formatLaneSpeed(summary.rateLimitBytesPerSecond) ?? '—'}
-            note={summary.rateLimitBytesPerSecond === null ? 'boosted lane' : 'per download'}
+            value={formatLaneSpeed(summary.rateLimitBytesPerSecond, summary.lane) ?? '—'}
+            note={isBoostedLane(summary.lane) ? 'boosted lane' : 'per download'}
           />
           <Readout
             icon={IconClock}

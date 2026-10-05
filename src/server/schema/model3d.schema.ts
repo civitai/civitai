@@ -82,6 +82,7 @@ export const getModel3DsInfiniteSchema = infiniteQuerySchema
     status: z.enum(Model3DStatus).optional(),
     statuses: z.array(z.enum(Model3DStatus)).optional(),
     tagIds: z.array(z.number().int().positive()).optional(),
+    collectionId: z.number().int().positive().optional(),
     includeDrafts: z.boolean().optional(),
     sort: z.enum(Object.values(Model3DSort) as [Model3DSort, ...Model3DSort[]]).optional(),
     period: z.enum(MetricTimeframe).optional(),

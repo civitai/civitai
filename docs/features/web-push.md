@@ -29,6 +29,7 @@ producer → apps/notifications POST /notifications     (opt-out filter, queue r
 | Render endpoint    | `src/pages/api/internal/notifications/render-push.ts`                          | `WEBHOOK_TOKEN`-gated; the processor registry (`prepareMessage`) only exists in the monolith                                  |
 | Service worker     | `public/sw.js`                                                                 | `push`, `notificationclick`, `pushsubscriptionchange` — nothing else                                                          |
 | Client state       | `src/components/Notifications/usePushSubscription.ts`                          | the only caller of subscribe/unsubscribe in the app bundle (sw.js also subscribes, on rotation); reads/writes the store below |
+| Enable failures    | `src/components/Notifications/pushEnableErrors.ts`                             | classifies a failed `enable()` into an actionable message; pure, so every string is pinned by unit tests                      |
 | Browser push state | `src/store/push-subscription.store.ts`                                         | module-level singleton — permission/subscribed/endpoint/busy, shared by all five mounting components                          |
 | UI                 | `PushSoftAsk`, `PushDeviceToggle`, `PushDeviceList`, `NotificationTypeControl` | rendered by BOTH `NotificationsCard` (legacy) and `NotificationsPane` (accountSettingsV2)                                     |
 | tRPC               | `notification.router.ts`                                                       | `subscribePush` / `unsubscribePush` / `getPushSubscriptions` / `getPushSettings` / `updatePushSettings`                       |
@@ -93,6 +94,20 @@ was inert until 2026-09-24, though push was never enabled in that window) · 201
 - **New surface showing push controls** → compose the existing pieces (`NotificationTypeControl`,
   `PushSoftAsk`, `PushDeviceToggle`, `PushDeviceList`); they own the transition logic and the
   server-reconciled state. Don't re-derive Off/On/Push from raw queries.
+- **Change what a user sees when enabling push fails** →
+  `src/components/Notifications/pushEnableErrors.ts`. It is pure data (classification + copy), so the
+  strings are pinned literally in
+  `src/components/Notifications/__tests__/pushEnableErrors.test.ts`, while
+  `src/components/Notifications/__tests__/push-enable-failures.test.ts` pins that `enable()` really
+  reaches each branch — a mapper-only test cannot see a branch that never calls it, and two branches
+  used to `return false` silently, so the button looked inert. Keep every failure path routed through
+  `reportPushEnableFailure`.
+  🔴 **Do not restate the browser-specific rationale here.** Which engine says what, why the Brave copy
+  instructs a _check_ rather than asserting any setting's value, and which wordings are observed versus
+  taken from research all live in the `push-service-unavailable` branch of `pushEnableErrors.ts`. This
+  paragraph has twice carried a duplicate of it — the second time asserting a Brave default that the
+  classifier had since been narrowed to stop assuming, so the doc contradicted the code it points at.
+  One copy, in the branch that uses it.
 - **iOS work** → the mechanism already works for installed PWAs (iOS 16.4+): `needs-standalone`
   detection shows the Add-to-Home-Screen card, manifest is `display: standalone`, apple-touch-icon
   is set. What's missing is install-prompting UX, deliberately deferred.

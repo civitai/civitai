@@ -22,6 +22,7 @@ import {
   validateContestCollectionEntry,
 } from '~/server/services/collection.service';
 import { sendMessagesToCollaborators } from '~/server/services/entity-collaborator.service';
+import { readPostAppChip } from '~/server/services/blocks/post-app-chip.service';
 import { publishModel3D } from '~/server/services/model3d.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
@@ -556,7 +557,31 @@ export const getPostHandler = async ({ input, ctx }: { input: GetByIdInput; ctx:
       if (blocked) throw throwNotFoundError();
     }
 
-    return post;
+    // "Published with <app>" chip. Resolved HERE rather than inside
+    // `getPostDetail` for two reasons: this is the single tRPC read the post
+    // page actually renders from, and the chip needs the REQUEST's viewer and
+    // host to resolve a store-visibility scope and a maturity gate — both
+    // request-scoped concerns, like the block check above. `getPostDetail` has
+    // two other callers (the page's SSR gating read, which throws its result
+    // away, and `getPostEditDetail`) that would each pay for a resolution
+    // nothing renders.
+    //
+    // 🔴 AFTER the authorisation above, never before, and keyed on `post.id` —
+    // the id of the row that was actually RETURNED — never on `input.id`. The
+    // resolver takes the post as already-admitted for this viewer and does not
+    // re-derive its visibility, so handing it an unvetted id would disclose
+    // whether that post was app-published. Fail-open by construction (`null` on
+    // any error), so it cannot take the post page down.
+    //
+    // `host` drives the store's maturity gate and is fail-closed on absence: a
+    // missing host refuses a mature app, i.e. under-links rather than over-links.
+    const publishedWithApp = await readPostAppChip({
+      postId: post.id,
+      user: ctx.user,
+      host: ctx.req?.headers?.host ?? '',
+    });
+
+    return { ...post, publishedWithApp };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

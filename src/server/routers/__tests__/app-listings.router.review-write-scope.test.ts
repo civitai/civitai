@@ -69,6 +69,11 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: vi.fn(async () => false),
   isAppBlocksAuthorEnabled: vi.fn(async () => false),
   resolveStoreVisibilityScope: mockResolveStoreVisibilityScope,
+  // 🔴 THE READ MIDDLEWARE NOW RESOLVES TWO AXES, so omitting this makes the WHOLE file
+  // fail to import rather than failing one case. `public` is the least-privileged floor,
+  // which keeps every assertion in this file a statement about the SURFACE scope alone —
+  // exactly the seam it was written for.
+  resolveViewerAudienceFloor: vi.fn(async () => 'public'),
 }));
 vi.mock('~/server/services/blocks/app-listing-review.service', () => ({
   upsertAppListingReview: (...a: unknown[]) => mockUpsertReview(...a),

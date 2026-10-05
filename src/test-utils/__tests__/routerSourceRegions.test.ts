@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   blankComments,
+  callSites,
+  ALL_THREADED_SPELLINGS,
+  ROUTER_THREADED_SPELLINGS,
+  countPrivateRunThreading,
   declRegions,
   enclosingDecl,
   MONEY_MARKERS,
@@ -8,6 +12,7 @@ import {
   moneyMarkersIn,
   sourceDecls,
   structuralQuoteRole,
+  topLevelPropertyText,
 } from '../routerSourceRegions';
 
 /**
@@ -187,5 +192,175 @@ describe('money classification', () => {
         `${marker} is not matched by the pattern`
       ).toEqual([marker.slice(0, -1)]);
     }
+  });
+});
+
+/**
+ * `callSites` + `topLevelPropertyText` — THE BRACE WALK, EXERCISED DIRECTLY.
+ *
+ * 🔴 THIS BLOCK EXISTS BECAUSE A MUTATION SWEEP FOUND THE WALK UNCOVERED, AND THE
+ * WAY IT FOUND IT IS THE POINT. Breaking `callSites` so it stops at the FIRST `}`
+ * instead of the matching one — destroying the entire reason the function walks
+ * braces at all — left **both** consuming money ledgers green across 46 tests.
+ *
+ * The cause is corpus shape, not a weak assertion: 6 of the 10 governed argument
+ * objects in the router are flat, and in the 2 nested ones the nested object closes
+ * AFTER the field the ledgers look for, so a truncated slice happened to still
+ * contain it. The walk's whole purpose was therefore unexercised by either
+ * consumer, and would have stayed that way until someone added a call site whose
+ * nested object came first — at which point the guard silently under-counts.
+ *
+ * A guard over a real corpus cannot be relied on to exercise its own instrument:
+ * it covers the shapes that corpus happens to contain. These fixtures are
+ * synthetic on purpose, and they contain the shapes the router currently does not.
+ */
+describe('callSites — brace-matched extraction', () => {
+  it('🔴 does not end a slice at a NESTED closing brace', () => {
+    // The case a break-on-first-`}` mutant gets wrong, and which no real call site
+    // currently expresses: the nested object closes BEFORE the trailing field.
+    const src = 'fn({ a: 1, nested: { b: 2 }, tail: 3 });';
+    const [site] = callSites(src, 'fn({');
+    expect(site).toBe('fn({ a: 1, nested: { b: 2 }, tail: 3 }');
+    expect(site, 'the slice must reach past the nested close').toContain('tail: 3');
+  });
+
+  it('handles several levels of nesting', () => {
+    const src = 'fn({ a: { b: { c: 1 } }, tail: 2 });';
+    expect(callSites(src, 'fn({')[0]).toContain('tail: 2');
+  });
+
+  it('finds every occurrence, and does not re-find inside a slice it already took', () => {
+    const src = 'fn({ a: 1 }); fn({ b: { c: 2 } }); fn({ d: 3 });';
+    const sites = callSites(src, 'fn({');
+    expect(sites).toHaveLength(3);
+    expect(sites[1]).toContain('c: 2');
+  });
+
+  it('returns [] for an opener that does not occur — the vacuous-green trap', () => {
+    // Documented rather than merely true: every consumer must assert a positive
+    // control, because `[].every(…)` is `true` and a misspelled opener would make a
+    // whole guard pass while covering nothing.
+    expect(callSites('fn({ a: 1 });', 'nope({')).toEqual([]);
+  });
+});
+
+describe('topLevelPropertyText — depth filtering', () => {
+  const site = callSites('fn({ a: 1, opts: build({ hidden: true }), tail: 2 });', 'fn({')[0];
+
+  it('🔴 a field nested inside another call does NOT count as present', () => {
+    // The walk-past shape: the field is in the slice, but not on the argument
+    // object. A guard greping the raw slice is satisfied; this must not be.
+    expect(site, 'the raw slice does contain it').toContain('hidden: true');
+    expect(topLevelPropertyText(site)).not.toContain('hidden: true');
+  });
+
+  it('keeps the argument object own properties', () => {
+    const text = topLevelPropertyText(site);
+    expect(text).toContain('a: 1');
+    expect(text).toContain('tail: 2');
+    expect(text).toContain('opts:');
+  });
+
+  it('preserves length and newlines so offsets still line up', () => {
+    const multi = callSites('fn({\n  a: 1,\n  o: g({\n    z: 9,\n  }),\n});', 'fn({')[0];
+    const text = topLevelPropertyText(multi);
+    expect(text).toHaveLength(multi.length);
+    expect(text.split('\n')).toHaveLength(multi.split('\n').length);
+    expect(text).not.toContain('z: 9');
+  });
+
+  it('blanks a nested ARRAY and a nested plain object, not just a nested call', () => {
+    const arr = callSites('fn({ a: [ { q: 1 } ], b: { r: 2 }, c: 3 });', 'fn({')[0];
+    const text = topLevelPropertyText(arr);
+    expect(text).not.toContain('q: 1');
+    expect(text).not.toContain('r: 2');
+    expect(text).toContain('c: 3');
+  });
+
+  it('🔴 tracks PARENS, not only braces — a nested call with no braces still blanks', () => {
+    // Without `(` in the increment set every other fixture here still passes, because
+    // each nested span also opens a `{`. This is the one that isolates the paren.
+    const s = callSites("fn({ a: 1, note: label('hidden: yes'), tail: 2 });", 'fn({')[0];
+    expect(s).toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).not.toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).toContain('tail: 2');
+  });
+
+  it('🔴 tracks BRACKETS, not only braces — an array of primitives still blanks', () => {
+    // Same isolation for `[`: the existing array fixture nests an object inside, so
+    // `{` alone would carry it.
+    const s = callSites("fn({ a: 1, list: ['hidden: yes'], tail: 2 });", 'fn({')[0];
+    expect(s).toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).not.toContain('hidden: yes');
+    expect(topLevelPropertyText(s)).toContain('tail: 2');
+  });
+
+  it('returns empty for a slice with no object at all', () => {
+    expect(topLevelPropertyText('fn(')).toBe('');
+  });
+});
+
+describe('private-run threading spellings', () => {
+  /**
+   * 🔴 THE PROPERTY TWO LEDGERS DEPEND ON, PROVEN ONCE HERE. Both assert an EXACT total of
+   * threading occurrences against a ledgered call-site count. That total is only exact if no
+   * accepted spelling is a substring of another — otherwise one site scores twice and the
+   * ledger needs a WRONG number to stay green, which is the failure mode that reads as
+   * working.
+   */
+  it('no spelling is a substring of another', () => {
+    for (const a of ALL_THREADED_SPELLINGS) {
+      for (const b of ALL_THREADED_SPELLINGS) {
+        if (a === b) continue;
+        expect(b, `\`${a}\` must not be a substring of \`${b}\``).not.toContain(a);
+      }
+    }
+  });
+
+  it('the ROUTER set is a strict subset of the full set', () => {
+    // 🔴 THE DIRECTION THAT MATTERS. The router ledger governs sites where the claims object
+    // is always in scope, so it must accept FEWER spellings than the cross-file ledger —
+    // never more. If these ever invert, the stricter guard silently becomes the looser one,
+    // which is exactly what a single shared set did before this split.
+    for (const t of ROUTER_THREADED_SPELLINGS) {
+      expect(ALL_THREADED_SPELLINGS as readonly string[]).toContain(t);
+    }
+    expect(ROUTER_THREADED_SPELLINGS.length).toBeLessThan(ALL_THREADED_SPELLINGS.length);
+    // And the one it must NOT accept: a bare local carries no provenance.
+    expect(ROUTER_THREADED_SPELLINGS as readonly string[]).not.toContain(
+      'privateRun: privateRun === true'
+    );
+  });
+
+  it('counts each spelling once, and a mixed source exactly', () => {
+    // Positive control first: the counter CAN return non-zero, so a zero below would be a
+    // measurement rather than a function wired to nothing.
+    for (const t of ALL_THREADED_SPELLINGS) {
+      expect(countPrivateRunThreading(`a: ${t},`, ALL_THREADED_SPELLINGS)).toBe(1);
+    }
+    const mixed = ALL_THREADED_SPELLINGS.map((t, i) => `k${i}: ${t},`).join(' ');
+    expect(countPrivateRunThreading(mixed, ALL_THREADED_SPELLINGS)).toBe(
+      ALL_THREADED_SPELLINGS.length
+    );
+  });
+
+  it('counting with the ROUTER set ignores the storage-only spelling', () => {
+    // 🔴 THE ASSERTION THAT MAKES THE SET A PARAMETER RATHER THAN DECORATION. If the router
+    // ledger were handed the wider set, its exact total would pass for a site its own
+    // per-site check rejects — a green total over an unguarded value.
+    const local = `k: privateRun: privateRun === true,`;
+    expect(countPrivateRunThreading(local, ALL_THREADED_SPELLINGS)).toBe(1);
+    expect(countPrivateRunThreading(local, ROUTER_THREADED_SPELLINGS)).toBe(0);
+  });
+
+  it('counts a source with no threading as zero', () => {
+    // The negative control. `privateRun` alone must not count — the whole point of pinning
+    // the expression is that `privateRun: false` and a drifted local do NOT qualify.
+    expect(
+      countPrivateRunThreading(
+        'privateRun: false, privateRun: true, privateRun',
+        ALL_THREADED_SPELLINGS
+      )
+    ).toBe(0);
   });
 });

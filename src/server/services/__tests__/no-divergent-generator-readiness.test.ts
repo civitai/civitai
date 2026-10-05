@@ -15,6 +15,7 @@ const HELPER = 'src/shared/generation/generator-readiness.ts';
 const ALLOWLIST = [
   HELPER,
   // Write or report the column itself — the raw fact, before the rule.
+  'src/server/services/generator-loaded.service.ts',
   'src/server/jobs/sync-generator-loaded-resources.ts',
   'src/pages/api/webhooks/resource-availability.ts',
   'src/pages/api/testing/generator-loaded.ts',
@@ -122,6 +123,25 @@ describe('generator readiness is derived in one place', () => {
     expect(text, 'the SQL must also accept an ExternalGeneration version').toMatch(
       /ExternalGeneration/
     );
+  });
+
+  // A second writer has to restate the cache busts too, and the last copy didn't.
+  it('only setGeneratorLoaded writes the column', () => {
+    const writers = sourceFiles
+      .filter((f) => /SET\s+"generatorLoaded"\s*=/.test(stripComments(f.text)))
+      .map((f) => f.rel);
+    expect(writers).toEqual(['src/server/services/generator-loaded.service.ts']);
+  });
+
+  it('every caller of setGeneratorLoaded also busts the caches that serve residency', () => {
+    const callers = sourceFiles.filter(
+      (f) =>
+        f.rel !== 'src/server/services/generator-loaded.service.ts' &&
+        /\bsetGeneratorLoaded\(/.test(stripComments(f.text))
+    );
+    expect(callers.length).toBeGreaterThan(0);
+    for (const f of callers)
+      expect(stripComments(f.text), f.rel).toMatch(/\bbustGeneratorLoadedCaches\b/);
   });
 
   it('the allowlisted index writers compose the field through the helper', () => {
