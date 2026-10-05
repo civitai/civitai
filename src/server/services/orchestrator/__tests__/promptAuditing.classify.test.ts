@@ -65,14 +65,17 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const sysRedis = redisMock.sysRedis;
 const logToAxiom = loggingMock.logToAxiom;
 
-// `daughter` is a real soft-tier blocklist entry; `rape` and `poi` are hard. Severity is per word.
-const trigger = (category: PromptTriggerCategory, message: string): PromptTrigger => ({
-  category,
-  message,
-  matchedWord: message,
-});
-const SOFT = trigger('nsfw_blocklist', 'daughter');
-const HARD = trigger('poi', 'Prompt cannot include celebrity names');
+// `daughter` is a real soft-tier blocklist entry; `poi` is hard. Severity is per matched WORD, so
+// SOFT's matchedWord must stay `daughter`. Every fixture's `message` differs from its
+// `matchedWord` on purpose: with them equal, a mutant that builds `blockedFor` (or the stored
+// entry) from the wrong field passes every assertion.
+const trigger = (
+  category: PromptTriggerCategory,
+  message: string,
+  matchedWord: string
+): PromptTrigger => ({ category, message, matchedWord });
+const SOFT = trigger('nsfw_blocklist', 'Mature term in prompt', 'daughter');
+const HARD = trigger('poi', 'Prompt cannot include celebrity names', 'some famous person');
 
 const flagWith = (...triggers: PromptTrigger[]) =>
   mockAuditPromptEnriched.mockReturnValue({
@@ -143,7 +146,7 @@ describe('classifyPromptServer — the verdict', () => {
       outcome: 'soft',
       source: 'regex',
       triggers: [SOFT],
-      blockedFor: ['daughter'],
+      blockedFor: ['Mature term in prompt'],
       categories: [],
       externalError: null,
     });
@@ -180,6 +183,27 @@ describe('classifyPromptServer — the verdict', () => {
     await expect(classifyPromptServer({ prompt: PROMPT, isGreen: true })).resolves.toMatchObject({
       outcome: 'pass',
       source: null,
+    });
+  });
+
+  /**
+   * `categories` is evidence whenever the classifier RAN, including when it did not flag. A
+   * non-empty unflagged result is what distinguishes that from a mutant that only carries
+   * categories on a flag.
+   */
+  it('carries unflagged categories on a pass and on a held soft block', async () => {
+    mockModeratePrompt.mockResolvedValueOnce({ flagged: false, categories: ['borderline'] });
+    await expect(classifyPromptServer({ prompt: PROMPT, isGreen: true })).resolves.toMatchObject({
+      outcome: 'pass',
+      categories: ['borderline'],
+    });
+
+    flagWith(SOFT);
+    mockModeratePrompt.mockResolvedValueOnce({ flagged: false, categories: ['borderline'] });
+    await expect(classifyPromptServer({ prompt: PROMPT, isGreen: false })).resolves.toMatchObject({
+      outcome: 'soft',
+      source: 'regex',
+      categories: ['borderline'],
     });
   });
 
@@ -273,7 +297,7 @@ describe('auditPromptServer — still produces today’s side effects', () => {
       negativePrompt: 'blurry',
       source: 'Regex',
       category: 'poi',
-      matchedWord: 'Prompt cannot include celebrity names',
+      matchedWord: 'some famous person',
       imageId: null,
       remixOfId: 11,
       inputImages: ['img-a'],
@@ -309,10 +333,10 @@ describe('auditPromptServer — still produces today’s side effects', () => {
     expect(track.prohibitedRequest).not.toHaveBeenCalled();
   });
 
-  it('soft block: reported once (count 0, so never toward a mute), no counter write', async () => {
+  it('soft block: reported once, with no counter write (the only route to a non-zero count)', async () => {
     flagWith(SOFT);
     await expect(auditPromptServer({ ...base, isGreen: true })).rejects.toThrow(
-      /^Your prompt was flagged: daughter$/
+      /^Your prompt was flagged: Mature term in prompt$/
     );
     expect(track.prohibitedRequest).toHaveBeenCalledTimes(1);
     expect(track.prohibitedRequest).toHaveBeenCalledWith(
@@ -326,6 +350,30 @@ describe('auditPromptServer — still produces today’s side effects', () => {
     mockModeratePrompt.mockRejectedValueOnce(new Error('classifier down'));
     await expect(auditPromptServer({ ...base, isGreen: false })).resolves.toBeUndefined();
     expect(logToAxiom).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith({
+      name: 'external-moderation-error',
+      type: 'error',
+      message: 'classifier down',
+    });
+  });
+
+  /**
+   * The split created a seam: the wrapper must hand ITS isGreen to the classifier. The wrapper
+   * also reads isGreen itself for the redirect message, so a dropped pass-through would leave
+   * every message assertion green while .com silently stopped applying its extra list.
+   */
+  it('passes isGreen through to the regex audit', async () => {
+    await auditPromptServer({ ...base, isGreen: true });
+    await auditPromptServer({ ...base, isGreen: false });
+    expect(mockAuditPromptEnriched.mock.calls.map((c) => c[2])).toEqual([true, false]);
+  });
+
+  it('logs an external-moderation failure even when a soft block then throws', async () => {
+    flagWith(SOFT);
+    mockModeratePrompt.mockRejectedValueOnce(new Error('classifier down'));
+    await expect(auditPromptServer({ ...base, isGreen: false })).rejects.toThrow(
+      /^Your prompt was flagged: Mature term in prompt$/
+    );
     expect(logToAxiom).toHaveBeenCalledWith({
       name: 'external-moderation-error',
       type: 'error',
