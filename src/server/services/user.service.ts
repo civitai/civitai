@@ -3084,6 +3084,11 @@ type CachedUserSettings = UserSettingsSchema & {
   autoplayGifs: boolean | null;
 };
 
+/** A stored `settings` value that is a JSON object (not null, not an array, not a scalar). */
+function isPlainSettingsObject(value: unknown): value is UserSettingsSchema {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 // Built on first USE, not on import. A module-scope createCachedObject() runs during module
 // evaluation, so any suite that wholesale-mocks `~/server/utils/cache-helpers` or
 // `~/server/redis/client` and merely reaches this service transitively fails at COLLECTION —
@@ -3113,7 +3118,10 @@ function createUserSettingsCache() {
           x.id,
           {
             userId: x.id,
-            ...((x.settings ?? {}) as UserSettingsSchema),
+            // Spread only a plain object. Nothing enforces a shape on the JSON column, and
+            // spreading an array yields `"0"`, `"1"`, … keys — fed back into a write, that
+            // nests each copy of the blob inside the next.
+            ...(isPlainSettingsObject(x.settings) ? x.settings : {}),
             showNsfw: x.showNsfw,
             blurNsfw: x.blurNsfw,
             autoplayGifs: x.autoplayGifs,
@@ -3220,6 +3228,22 @@ export type UserSettingsPatch = {
 
 type RawClient = Pick<typeof dbWrite, '$queryRawUnsafe'>;
 
+/**
+ * The stored `settings` column as a jsonb OBJECT: the stored value when it is one, `{}`
+ * otherwise. Every writer of `User.settings` starts from this, never from the bare column.
+ *
+ * 🔴 `COALESCE(settings, '{}')` is NOT this. It replaces only SQL NULL, so a stored JSON
+ * `null` or an array passes straight through, and the two operations the writers build on
+ * both go wrong on it: `jsonb || jsonb` CONCATENATES instead of merging
+ * (`'null' || '{"a":1}'` is `[null, {"a": 1}]`, and every later write appends another
+ * element — unbounded growth, with every key permanently unreadable), and `jsonb_set`
+ * RAISES (`path element at position 1 is not an integer` on an array, `cannot set path in
+ * scalar` on a scalar), so the write fails outright for that user. Treating a non-object as
+ * `{}` makes the next write repair the row — the same self-healing property the nested-key
+ * guards in `patchUserSettings` restore one level down.
+ */
+const SETTINGS_AS_OBJECT = `(CASE WHEN jsonb_typeof(settings) = 'object' THEN settings ELSE '{}'::jsonb END)`;
+
 export async function patchUserSettings(
   userId: number,
   patch: UserSettingsPatch,
@@ -3257,14 +3281,18 @@ export async function patchUserSettings(
       userId
     );
     if (!current.length) throw throwNotFoundError(`No user with id ${userId}`);
-    return current[0]?.settings ?? {};
+    // Same shape rule as the write path, which can only ever RETURN an object.
+    const stored: unknown = current[0]?.settings;
+    return isPlainSettingsObject(stored) ? stored : {};
   }
 
   const values: unknown[] = [];
   // Returns the `$N` placeholder for a newly bound value.
   const bind = (value: unknown) => `$${values.push(value)}`;
 
-  let expr = `COALESCE(settings, '{}'::jsonb)`;
+  // The base is the guarded column, not `COALESCE(settings, …)`: the top level carries the
+  // same concatenate-instead-of-merge hazard as the nested keys below (see SETTINGS_AS_OBJECT).
+  let expr = SETTINGS_AS_OBJECT;
   if (set) expr = `(${expr} || ${bind(JSON.stringify(set))}::jsonb)`;
   for (const [key, value] of mergeInto) {
     // `settings->$key` reads the CURRENT column inside the same statement — that is
@@ -3402,7 +3430,8 @@ export async function setAlertDismissed(userId: number, alertId: string, dismiss
   // shape on a JSON column, and `jsonb_array_elements` raises on a non-array, which
   // would turn one malformed row into a permanent 500 on every dismissal for that user.
   // Treating a non-array as empty self-heals it on the next write, which is what the
-  // whole-array rewrite used to do implicitly.
+  // whole-array rewrite used to do implicitly. The same holds one level up: `jsonb_set`
+  // raises on a non-object `settings`, hence SETTINGS_AS_OBJECT rather than a COALESCE.
   const current = `CASE WHEN jsonb_typeof(settings->'dismissedAlerts') = 'array'
                         THEN settings->'dismissedAlerts' ELSE '[]'::jsonb END`;
   const next = dismissed
@@ -3416,7 +3445,7 @@ export async function setAlertDismissed(userId: number, alertId: string, dismiss
 
   const rows = await dbWrite.$queryRawUnsafe<{ settings: UserSettingsSchema | null }[]>(
     `UPDATE "User"
-     SET settings = jsonb_set(COALESCE(settings, '{}'::jsonb), '{dismissedAlerts}', ${next})
+     SET settings = jsonb_set(${SETTINGS_AS_OBJECT}, '{dismissedAlerts}', ${next})
      WHERE id = $2
      RETURNING settings`,
     alertId,
