@@ -601,6 +601,7 @@ export interface User {
   referralRewards?: ReferralReward[];
   referralRewardsAsReferee?: ReferralReward[];
   referralMilestones?: ReferralMilestone[];
+  creatorMilestones?: UserCreatorMilestone[];
   referralRedemptions?: ReferralRedemption[];
   referralAttributions?: ReferralAttribution[];
   clubs?: Club[];
@@ -2959,6 +2960,7 @@ export interface Cosmetic {
   purchaseComponents?: UserCosmeticShopPurchaseCosmetic[];
   cosmeticShopItems?: CosmeticShopItem[];
   packMemberships?: CosmeticShopItemCosmetic[];
+  creatorMilestones?: CreatorMilestone[];
 }
 
 export interface UserCosmetic {
@@ -2975,6 +2977,29 @@ export interface UserCosmetic {
   forId: number | null;
   forType: CosmeticEntity | null;
   remaining: number | null;
+}
+
+export interface CreatorMilestone {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: boolean;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
+  sortOrder: number;
+  achievements?: UserCreatorMilestone[];
+}
+
+export interface UserCreatorMilestone {
+  userId: number;
+  user?: User;
+  milestoneKey: string;
+  milestone?: CreatorMilestone;
+  achievedAt: Date;
+  seenAt: Date | null;
 }
 
 export interface CosmeticShopSection {

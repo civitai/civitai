@@ -520,6 +520,7 @@ model User {
   referralRewards            ReferralReward[]                @relation("ReferralRewardUser")
   referralRewardsAsReferee   ReferralReward[]                @relation("ReferralRewardReferee")
   referralMilestones         ReferralMilestone[]
+  creatorMilestones          UserCreatorMilestone[]
   referralRedemptions        ReferralRedemption[]
   referralAttributions       ReferralAttribution[]
   clubs                      Club[]
@@ -4899,6 +4900,7 @@ model Cosmetic {
   purchaseComponents  UserCosmeticShopPurchaseCosmetic[]
   cosmeticShopItems   CosmeticShopItem[]
   packMemberships     CosmeticShopItemCosmetic[]
+  creatorMilestones   CreatorMilestone[]
 
   @@index([createdById])
 }
@@ -4927,6 +4929,34 @@ model UserCosmetic {
   remaining      Int? // Consumable balance; NULL = unlimited (every pre-existing row)
 
   @@id([userId, cosmeticId, claimKey])
+}
+
+/// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
+model CreatorMilestone {
+  key          String                 @id
+  track        String
+  threshold    Int?
+  hidden       Boolean                @default(false)
+  hint         String?
+  name         String
+  description  String?
+  cosmeticId   Int?
+  cosmetic     Cosmetic?              @relation(fields: [cosmeticId], references: [id], onDelete: SetNull)
+  sortOrder    Int                    @default(0)
+  achievements UserCreatorMilestone[]
+}
+
+/// Badges are permanent by product decision: no revocation columns.
+model UserCreatorMilestone {
+  userId       Int
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  milestoneKey String
+  milestone    CreatorMilestone @relation(fields: [milestoneKey], references: [key], onDelete: Restrict, onUpdate: Cascade)
+  achievedAt   DateTime         @default(now())
+  seenAt       DateTime?
+
+  @@id([userId, milestoneKey])
+  @@index([milestoneKey])
 }
 
 model CosmeticShopSection {
