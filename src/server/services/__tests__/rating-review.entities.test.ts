@@ -102,6 +102,37 @@ describe('loadRatingReviewSubject', () => {
     expect((await loadRatingReviewSubject('Challenge', 1))?.ownerId).toBe(9);
   });
 
+  it('Crucible subject: owner, highest rated bit, override pair', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      userId: 9,
+      nsfwLevel: 1 | 4,
+      updatedAt: new Date(0),
+      name: 'C',
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    });
+    expect(await loadRatingReviewSubject('Crucible', 1)).toMatchObject({
+      ownerId: 9,
+      currentLevel: 4,
+      title: 'C',
+    });
+  });
+
+  it('Collection subject: bucket read as PG or R', async () => {
+    const row = {
+      userId: 9,
+      nsfwLevel: 29,
+      updatedAt: new Date(0),
+      name: 'L',
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    };
+    dbMock.dbRead.collection.findUnique.mockResolvedValueOnce(row);
+    expect(await loadRatingReviewSubject('Collection', 1)).toMatchObject({ currentLevel: 4 });
+    dbMock.dbRead.collection.findUnique.mockResolvedValueOnce({ ...row, nsfwLevel: 1 });
+    expect(await loadRatingReviewSubject('Collection', 1)).toMatchObject({ currentLevel: 1 });
+  });
+
   it('carries the bounty id of an entry', async () => {
     dbMock.dbRead.bountyEntry.findUnique.mockResolvedValue({
       userId: 3,

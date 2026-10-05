@@ -1,4 +1,9 @@
-import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit } from '@civitai/shared';
+import {
+  allBrowsingLevelsFlag,
+  getHighestBrowsingLevelBit,
+  NsfwLevel,
+  nsfwBrowsingLevelsFlag,
+} from '@civitai/shared';
 import {
   modelRatingLevel,
   textScanNsfwReason,
@@ -145,6 +150,38 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
         currentLevel: ratedLevel(c.nsfwLevel),
         updatedAt: c.updatedAt,
         title: c.title,
+        parentId: null,
+        ...overridePair(c),
+      }
+    );
+  },
+  Crucible: async (id, db) => {
+    const c = await db.crucible.findUnique({
+      where: { id },
+      select: { userId: true, nsfwLevel: true, updatedAt: true, name: true, ...overrideSelect },
+    });
+    return (
+      c && {
+        ownerId: c.userId,
+        currentLevel: ratedLevel(c.nsfwLevel),
+        updatedAt: c.updatedAt,
+        title: c.name,
+        parentId: null,
+        ...overridePair(c),
+      }
+    );
+  },
+  Collection: async (id, db) => {
+    const c = await db.collection.findUnique({
+      where: { id },
+      select: { userId: true, nsfwLevel: true, updatedAt: true, name: true, ...overrideSelect },
+    });
+    return (
+      c && {
+        ownerId: c.userId,
+        currentLevel: c.nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG,
+        updatedAt: c.updatedAt,
+        title: c.name,
         parentId: null,
         ...overridePair(c),
       }

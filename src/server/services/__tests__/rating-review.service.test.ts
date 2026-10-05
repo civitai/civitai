@@ -323,15 +323,24 @@ describe('createRatingReview', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('sends a challenge dispute to a moderator without asking the gate', async () => {
-    loadSubject.mockResolvedValue(subject({ currentLevel: 8, override: 8, overrideBasis: 8 }));
-    overrideGate.mockResolvedValue({ eligible: true, derivedLevel: 2 });
-    await expect(file({ entityType: 'Challenge', suggestedLevel: 2 })).resolves.toMatchObject({
-      status: 'Pending',
-    });
-    expect(overrideGate).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['Challenge', 8, 2],
+    ['Crucible', 8, 2],
+    ['Collection', 4, 1],
+  ] as const)(
+    'sends a %s dispute to a moderator without asking the gate',
+    async (entityType, currentLevel, suggestedLevel) => {
+      loadSubject.mockResolvedValue(
+        subject({ currentLevel, override: currentLevel, overrideBasis: currentLevel })
+      );
+      overrideGate.mockResolvedValue({ eligible: true, derivedLevel: 1 });
+      await expect(file({ entityType, suggestedLevel })).resolves.toMatchObject({
+        status: 'Pending',
+      });
+      expect(overrideGate).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('maybeAutoResolveRatingDisputeAfterScan', () => {
@@ -373,11 +382,16 @@ describe('maybeAutoResolveRatingDisputeAfterScan', () => {
     expect(getScan).toHaveBeenCalledWith('Post', 7, dbMock.dbWrite);
   });
 
-  it('leaves a challenge dispute for a moderator without reading anything', async () => {
-    await maybeAutoResolveRatingDisputeAfterScan('Challenge', 7);
-    expect(dbMock.dbRead.ratingReview.findFirst).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
-  });
+  it.each(['Challenge', 'Crucible', 'Collection'] as const)(
+    'leaves a %s dispute Pending for a moderator, even after a raising scan',
+    async (entityType) => {
+      getScan.mockResolvedValue(scan({ raised: true }));
+      await maybeAutoResolveRatingDisputeAfterScan(entityType, 7);
+      expect(dbMock.dbRead.ratingReview.findFirst).not.toHaveBeenCalled();
+      expect(overrideGate).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
+    }
+  );
 
   it('does nothing without a pending dispute, with the flag off for the owner, or when the gate refuses', async () => {
     dbMock.dbRead.ratingReview.findFirst.mockResolvedValueOnce(null);

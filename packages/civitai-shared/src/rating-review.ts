@@ -7,6 +7,8 @@ export const RATING_REVIEW_ENTITY_TYPES = [
   'Bounty',
   'BountyEntry',
   'Challenge',
+  'Crucible',
+  'Collection',
 ] as const;
 export type RatingReviewEntityType = (typeof RATING_REVIEW_ENTITY_TYPES)[number];
 
@@ -21,13 +23,18 @@ export const ratingReviewEntityLabels: Record<RatingReviewEntityType, string> = 
   Bounty: 'Bounty',
   BountyEntry: 'Bounty entry',
   Challenge: 'Challenge',
+  Crucible: 'Crucible',
+  Collection: 'Collection',
 };
 
 // A Model's rating override is its `nsfw` flag, not a level, so it is represented as PG (off) / R (on).
 export const modelRatingLevel = (nsfw: boolean): number => (nsfw ? NsfwLevel.R : NsfwLevel.PG);
 
+// A collection's nsfwLevel is a bucket (SFW or every NSFW bit), so it has no level finer than PG/R.
 export function ratingReviewLevels(entityType: RatingReviewEntityType): number[] {
-  return entityType === 'Model' ? [NsfwLevel.PG, NsfwLevel.R] : [...browsingLevels];
+  return entityType === 'Model' || entityType === 'Collection'
+    ? [NsfwLevel.PG, NsfwLevel.R]
+    : [...browsingLevels];
 }
 
 // Raising a challenge runs the void/refund escalation, which only the main app can do.
@@ -73,6 +80,10 @@ export function ratingReviewEntityPath(
       return parentId ? `/bounties/${parentId}/entries/${entityId}` : null;
     case 'Challenge':
       return `/challenges/${entityId}`;
+    case 'Crucible':
+      return `/crucibles/${entityId}`;
+    case 'Collection':
+      return `/collections/${entityId}`;
   }
 }
 

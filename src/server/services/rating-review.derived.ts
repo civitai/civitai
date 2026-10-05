@@ -9,10 +9,31 @@ import type {
 import { computeRatedEntityDerivedNsfwLevel } from '~/server/services/text-scan/derived-level';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 
-export type OverrideEntityType = 'Post' | 'Bounty' | 'BountyEntry' | 'Challenge';
-const OVERRIDE_ENTITY_TYPES = new Set<string>(['Post', 'Bounty', 'BountyEntry', 'Challenge']);
+export type OverrideEntityType =
+  | 'Post'
+  | 'Bounty'
+  | 'BountyEntry'
+  | 'Challenge'
+  | 'Crucible'
+  | 'Collection';
+const OVERRIDE_ENTITY_TYPES = new Set<string>([
+  'Post',
+  'Bounty',
+  'BountyEntry',
+  'Challenge',
+  'Crucible',
+  'Collection',
+]);
 export const isOverrideEntityType = (t: string): t is OverrideEntityType =>
   OVERRIDE_ENTITY_TYPES.has(t);
+
+// Resolving these writes more than the level (a challenge's allowed mask and collection gate, a
+// crucible's textNsfw, a collection's bucket recompute), which only the spoke's resolve does, so their
+// disputes always go to a moderator.
+export type ModeratorOnlyEntityType = 'Challenge' | 'Crucible' | 'Collection';
+const MODERATOR_ONLY = new Set<string>(['Challenge', 'Crucible', 'Collection']);
+export const isModeratorOnlyEntityType = (t: string): t is ModeratorOnlyEntityType =>
+  MODERATOR_ONLY.has(t);
 
 const UNSETTLED_IMAGE = [
   ImageIngestionStatus.Pending,
@@ -42,9 +63,9 @@ export async function getStaleOverrideSignal(
   entityId: number,
   subject: Pick<RatingReviewSubject, 'override' | 'overrideBasis'>
 ): Promise<StaleOverrideSignal> {
-  // A challenge's basis is its allowed mask, which the resolve that wrote the override itself narrows,
-  // so a lowered challenge would always read as dropped. It never auto-approves either.
-  if (subject.override == null || entityType === 'Challenge')
+  // Nothing auto-approves these, and a challenge's basis is its allowed mask, which the resolve that
+  // wrote the override itself narrows, so a lowered challenge would always read as dropped.
+  if (subject.override == null || isModeratorOnlyEntityType(entityType))
     return { derivedLevel: null, derivedRatingDroppedBelowOverride: false };
   const derivedLevel = await computeDerivedNsfwLevel(entityType, entityId);
   return {
@@ -62,7 +83,7 @@ export type OverrideGateResult =
   | { eligible: false; reason: string; derivedLevel: number | null };
 
 async function hasUnsettledImages(entityType: OverrideEntityType, entityId: number) {
-  if (entityType === 'Challenge') return false;
+  if (isModeratorOnlyEntityType(entityType)) return false;
   const count =
     entityType === 'Post'
       ? await dbRead.image.count({
@@ -95,7 +116,7 @@ export async function evaluateOverrideAutoApprove({
   if (subject.override == null) return no('no-override');
   if (subject.override === NsfwLevel.Blocked) return no('override-blocked');
   if (suggestedLevel >= subject.currentLevel) return no('not-down-direction');
-  if (entityType === 'Challenge') return no('challenge-manual');
+  if (isModeratorOnlyEntityType(entityType)) return no('moderator-only');
   if (scan?.pending) return no('text-scan-pending');
   if (await hasUnsettledImages(entityType, entityId)) return no('images-not-clean');
 

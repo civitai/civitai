@@ -21,7 +21,9 @@ import { createNotification } from '~/server/services/notification.service';
 import {
   evaluateOverrideAutoApprove,
   getStaleOverrideSignal,
+  isModeratorOnlyEntityType,
   isOverrideEntityType,
+  type ModeratorOnlyEntityType,
   type OverrideEntityType,
 } from '~/server/services/rating-review.derived';
 import {
@@ -99,12 +101,10 @@ function assertOwner(ownerId: number | null, userId: number) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Only the owner can dispute this rating' });
 }
 
-type AutoApprovableEntityType = Exclude<OverrideEntityType, 'Challenge'>;
+type AutoApprovableEntityType = Exclude<OverrideEntityType, ModeratorOnlyEntityType>;
 
-// Lowering a challenge also narrows its allowed mask and collection gate, which only the spoke's
-// resolve writes, so a challenge dispute always goes to a moderator.
 const isAutoApprovable = (t: string): t is AutoApprovableEntityType =>
-  isOverrideEntityType(t) && t !== 'Challenge';
+  isOverrideEntityType(t) && !isModeratorOnlyEntityType(t);
 
 const OVERRIDE_TABLE: Record<AutoApprovableEntityType, Prisma.Sql> = {
   Post: Prisma.raw('"Post"'),

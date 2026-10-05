@@ -3,6 +3,7 @@ import { NsfwLevel } from '../browsing-levels';
 import {
   buildRatingReviewNotification,
   isRatingReviewEntityType,
+  ratingReviewEntityLabels,
   modelRatingLevel,
   ratingReviewEntityPath,
   ratingReviewLevelLabel,
@@ -14,11 +15,18 @@ import {
 } from '../rating-review';
 
 describe('rating-review constants', () => {
-  it('recognises exactly the six entity types, case-sensitively, and not Collection', () => {
+  it('recognises the entity types case-sensitively', () => {
     expect(isRatingReviewEntityType('BountyEntry')).toBe(true);
     expect(isRatingReviewEntityType('bountyEntry')).toBe(false);
     expect(isRatingReviewEntityType('Image')).toBe(false);
-    expect(isRatingReviewEntityType('Collection')).toBe(false);
+  });
+
+  it('Crucible and Collection are disputable; Collection is binary', () => {
+    expect(isRatingReviewEntityType('Crucible')).toBe(true);
+    expect(isRatingReviewEntityType('Collection')).toBe(true);
+    expect(ratingReviewLevels('Collection')).toEqual([NsfwLevel.PG, NsfwLevel.R]);
+    expect(ratingReviewLevels('Crucible')).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewEntityLabels.Crucible).toBe('Crucible');
   });
 
   it('gives Model a binary SFW/NSFW choice and everyone else the five browsing levels', () => {

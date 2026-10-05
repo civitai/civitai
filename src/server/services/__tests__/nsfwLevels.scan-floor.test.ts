@@ -158,4 +158,22 @@ describe('computeRatedEntityDerivedNsfwLevel', () => {
     dbMock.dbWrite.challenge.findUnique.mockResolvedValue(null);
     expect(await computeRatedEntityDerivedNsfwLevel('Challenge', 3)).toBeNull();
   });
+
+  it('derives a crucible from the highest bit of its mask', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ nsfwLevel: 1 | 8 });
+    expect(await computeRatedEntityDerivedNsfwLevel('Crucible', 3)).toBe(8);
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ nsfwLevel: 0 });
+    expect(await computeRatedEntityDerivedNsfwLevel('Crucible', 3)).toBe(1);
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue(null);
+    expect(await computeRatedEntityDerivedNsfwLevel('Crucible', 3)).toBeNull();
+  });
+
+  it('derives a collection from its bucket as PG or R', async () => {
+    dbMock.dbWrite.collection.findUnique.mockResolvedValue({ nsfwLevel: 28 });
+    expect(await computeRatedEntityDerivedNsfwLevel('Collection', 3)).toBe(4);
+    dbMock.dbWrite.collection.findUnique.mockResolvedValue({ nsfwLevel: 1 });
+    expect(await computeRatedEntityDerivedNsfwLevel('Collection', 3)).toBe(1);
+    dbMock.dbWrite.collection.findUnique.mockResolvedValue(null);
+    expect(await computeRatedEntityDerivedNsfwLevel('Collection', 3)).toBeNull();
+  });
 });
