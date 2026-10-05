@@ -1604,6 +1604,14 @@ const noUnboundedPagingFake = {
  * WHAT IT DOES NOT COVER, stated rather than left to be discovered:
  *   - a banned hook RE-EXPORTED from an intermediate module under a new name. The rule
  *     is single-file (ESLint rules see one module at a time) and cannot follow that.
+ *   - widening the set FROM `.eslintrc.js`. There was an `extraHooks` option for that and
+ *     it is DELETED, unconfigured, having never named a hook anywhere. 🔴 Not merely
+ *     unused — the wrong SHAPE for the only job it could have had. Whether a hook has a
+ *     server answer is a property of the HOOK, not of the surface reading it, so a new one
+ *     belongs in `SSR_DIVERGENT_HOOKS` below; and because the rule is off by default and
+ *     switched on per-surface, adding a name there costs nothing anywhere it is not
+ *     enabled. A per-surface widener could therefore only ever express "this hook is
+ *     SSR-divergent here and safe elsewhere", which is not a thing that can be true.
  *   - a call made through a value the rule cannot name statically — stored in an
  *     object, passed as a prop, or assembled at runtime.
  *   - the raw `window.matchMedia` API itself. That is deliberate: its UNGUARDED form
@@ -1627,23 +1635,17 @@ const noSsrDivergentMediaQuery = {
         'Disallow viewport/container hooks that have no server answer on surfaces where the server render must match the first client paint. Off by default; enable per-surface via .eslintrc overrides.',
       recommended: false,
     },
-    schema: [
-      {
-        type: 'object',
-        properties: {
-          extraHooks: { type: 'array', items: { type: 'string' } },
-        },
-        additionalProperties: false,
-      },
-    ],
+    // No options. `additionalProperties: false` on an empty property set makes any option
+    // object a CONFIG error rather than something silently ignored — which is what the
+    // deleted `extraHooks` would otherwise become for anyone who still passes it.
+    schema: [{ type: 'object', properties: {}, additionalProperties: false }],
     messages: {
       ssrDivergentMediaQuery:
         "`{{spelled}}` has NO SERVER ANSWER, so branching a render on it makes the server markup differ from the first client paint — a hydration mismatch on a surface that is configured not to tolerate one. ({{spelled}} resolves to `{{name}}`.) The rail/drawer swap on `/apps/*` is a CSS media query on purpose, precisely so React never has to know the breakpoint. If you genuinely need the breakpoint in JS, read it in a `useEffect` that only CLOSES something — an effect runs after paint and cannot decide what was rendered. If this call really is safe here, say why: // eslint-disable-next-line local-rules/no-ssr-divergent-media-query -- <reason>",
     },
   },
   create(context) {
-    const options = context.options[0] || {};
-    const banned = new Set([...SSR_DIVERGENT_HOOKS, ...(options.extraHooks || [])]);
+    const banned = SSR_DIVERGENT_HOOKS;
     /** local name -> the banned name it was imported as. */
     const aliases = new Map();
 

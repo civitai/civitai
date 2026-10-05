@@ -4,6 +4,7 @@ import {
   notBlockedBetween,
 } from '~/server/notifications/base.notifications';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
+import { getPrizeClaimUrl } from '~/utils/prize-helpers';
 
 // `crucibleName` is null when the text hadn't passed its scan as safe for everyone.
 const quotedName = (name?: string | null) => (name ? ` "${name}"` : '');
@@ -94,6 +95,9 @@ export const crucibleNotifications = createNotificationProcessor({
           url: `/crucibles/${details.crucibleId}`,
         };
       }
+      // No prize id on a notification sent before prizes were claimable: those were paid outright.
+      const claimUrl = getPrizeClaimUrl(details);
+      const claim = claimUrl ? ' Claim your prize!' : '';
       // Not the position: a creator holds one prize, so 4th place can take 2nd prize.
       if (details.prizePlace != null)
         return {
@@ -101,15 +105,15 @@ export const crucibleNotifications = createNotificationProcessor({
             details.prizePlace
           )} prize in the crucible${quotedName(details.crucibleName)} and won ${numberWithCommas(
             details.prizeAmount
-          )} Buzz.`,
-          url: `/crucibles/${details.crucibleId}`,
+          )} Buzz.${claim}`,
+          url: claimUrl ?? `/crucibles/${details.crucibleId}`,
         };
       // Sent before prize places existed.
       return {
         message: `Congrats! You placed ${asOrdinal(details.position)} in the crucible${quotedName(
           details.crucibleName
-        )}! You've won ${numberWithCommas(details.prizeAmount)} Buzz.`,
-        url: `/crucibles/${details.crucibleId}`,
+        )}! You've won ${numberWithCommas(details.prizeAmount)} Buzz.${claim}`,
+        url: claimUrl ?? `/crucibles/${details.crucibleId}`,
       };
     },
   },

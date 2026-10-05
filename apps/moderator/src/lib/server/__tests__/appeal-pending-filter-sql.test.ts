@@ -2,8 +2,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 /**
  * An image can hold several appeals over time (an approved one, then a pending one after a re-block).
- * The moderator resolve paths pick and close "the" appeal by `status = 'Pending'` alone, so that filter
- * is what keeps a decision from landing on an earlier appeal and refunding its fee a second time.
+ * The moderator resolve paths close "the" appeal by `status = 'Pending'` alone, so that filter is what
+ * keeps a decision from landing on an earlier appeal and refunding its fee a second time.
  */
 
 const { sql, params, rows } = vi.hoisted(() => ({
@@ -38,7 +38,7 @@ async function appealStatementsOf(run: () => Promise<unknown>) {
 }
 
 function expectPendingOnly(statements: { text: string; params: unknown[] }[]) {
-  expect(statements.map(({ text }) => text.split(' ')[0])).toEqual(['select', 'update']);
+  expect(statements.map(({ text }) => text.split(' ')[0])).toEqual(['update']);
   // Read from the WHERE clause: the update's SET also binds a status.
   for (const { text, params: bound } of statements) {
     const placeholder = / where .*"status" = \$(\d+)/.exec(text)?.[1];
@@ -48,7 +48,7 @@ function expectPendingOnly(statements: { text: string; params: unknown[] }[]) {
 }
 
 describe('the moderator appeal resolve paths', () => {
-  it('resolveImageAppeal reads and closes only the pending appeal', async () => {
+  it('resolveImageAppeal closes only the pending appeal', async () => {
     rows.length = 0;
     expectPendingOnly(
       await appealStatementsOf(() =>
@@ -57,7 +57,7 @@ describe('the moderator appeal resolve paths', () => {
     );
   });
 
-  it('acceptImage on an appealed image reads and closes only the pending appeal', async () => {
+  it('acceptImage on an appealed image closes only the pending appeal', async () => {
     rows.length = 0;
     rows.push({
       id: 41,

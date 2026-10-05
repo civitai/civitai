@@ -135,6 +135,15 @@ async function renderBody() {
 }
 
 const seen = (testId: string) => page.getByTestId(testId).elements().length;
+
+/**
+ * The heading elements INSIDE one card, by tag name — the observable the card's `tone`
+ * decides. Reads tag names rather than `role`, because the question is what lands in the
+ * document outline and `<Title order={3}>` renders a literal `h3`.
+ */
+const headingsIn = (el: Element): string[] =>
+  Array.from(el.querySelectorAll('h1, h2, h3, h4, h5, h6')).map((h) => h.tagName);
+
 const writeText = () => vi.mocked(navigator.clipboard.writeText);
 
 beforeEach(() => {
@@ -217,6 +226,52 @@ describe('the agent card renders in ALL THREE states', () => {
     const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
     await expect.element(card).toBeInTheDocument();
     expect(card.element().getAttribute('data-motion')).toBe('off');
+  });
+
+  /**
+   * 🔴 THE OTHER HALF OF STATE C'S DEMOTION, AND IT WAS UNPINNED. `animated={false}` had a
+   * guard (above); `tone="inline"` had none, and a mutation flipping the workbench call site
+   * to `tone="prominent"` SURVIVED a 54-assertion sweep twice over. The two props are
+   * independent — the strip would have gone back to leading with an `<h3>` and the hero
+   * paragraph, inside a collapse, with every suite green.
+   *
+   * 🔴 THE CLAIM IS THE HEADING ELEMENT, NOT THE WORDING, and that is deliberate. `prominent`
+   * renders `<Title order={3}>` and `inline` renders a plain `<Text fw={600}>`, so the tone
+   * decides whether this card injects an `h3` into the document outline — which is the part
+   * that MATTERS about being demoted inside a collapsed "Developer resources" strip, and the
+   * part a copy edit cannot move. Asserting the two strings instead would tax every future
+   * wording change for a weaker claim.
+   */
+  test('🔴 C · the workbench card is the INLINE tone — no heading in the document outline', async () => {
+    mocks.isFetched = true;
+    mocks.navSummary = { ...SUMMARY_WITH_APPS };
+    await renderBody();
+
+    const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
+    await expect.element(card).toBeInTheDocument();
+    expect(
+      headingsIn(card.element()),
+      'the demoted card must not put a heading in the outline'
+    ).toEqual([]);
+  });
+
+  /**
+   * POSITIVE CONTROL FOR THE ASSERTION ABOVE. An empty heading list is indistinguishable
+   * from a card that renders no headings in ANY tone — so the pitch card, the one placement
+   * that passes `tone="prominent"`, has to report a non-empty one. This also pins state A's
+   * own tone, which was equally unpinned: `GetStartedBody` flipping to `inline` would have
+   * been invisible too.
+   *
+   * State B is deliberately not asserted here: it passes `tone="inline"` like C, so it could
+   * only ever restate C's claim.
+   */
+  test('POSITIVE CONTROL: the state-A pitch card IS the prominent tone — it has a heading', async () => {
+    mocks.flags = { appBlocks: true, appBlocksAuthor: false };
+    await renderBody();
+
+    const card = page.getByTestId(AGENT_ONBOARDING_TESTID);
+    await expect.element(card).toBeInTheDocument();
+    expect(headingsIn(card.element())).toEqual(['H3']);
   });
 
   /**

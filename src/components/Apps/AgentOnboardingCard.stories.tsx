@@ -21,13 +21,25 @@ import { CopyableCommand } from '~/components/Apps/CopyableCommand';
  * `component-preview` skill's default ("stories for one-off reviews can be deleted after;
  * stories for reusable components can stay"). The card is animated, so its tests can pin
  * behaviour but not whether it LOOKS right, and every future change to the ring, the caret
- * or the entrance needs the same five frames re-shot in both themes. The repo already
- * commits four stories, so this is the existing convention rather than a new one.
+ * or the entrance needs the same five frames re-shot in both themes. Committed stories are
+ * the existing convention here rather than a new one — no count is given, because the two
+ * hand-maintained counts this family already shipped were both wrong; `find src -name
+ * '*.stories.tsx'` is the answer.
+ *
+ * 🔴 WHAT READS THIS FILE, SINCE "`@ladle/react` IS A devDependency WITH NO npm SCRIPT" HAS
+ * BEEN MISREAD AS "NOTHING". The reader is `npx ladle serve`, driven by the committed
+ * `.claude/skills/component-preview/SKILL.md` against `.ladle/config.mjs`
+ * (`stories: 'src/**'+'/*.stories.tsx'`), and `docs/previews/apps-review-detail/capture.mjs`
+ * is the worked precedent for turning a story set into committed, floor-checked PNGs. A
+ * script in `package.json` would be a convenience, not the difference between read and dead.
  *
  * It also earned its keep once already: the dark and light captures are what caught the copy
  * control sitting on top of the prompt's first line — a Tailwind `p-3` shorthand resetting
  * the right padding `AgentOnboardingCard.module.scss` sets to clear it. No assertion in the
- * three suites could have seen that.
+ * three suites could see that AT THE TIME; one can now —
+ * `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx` measures the control
+ * against this panel's text box, so that specific defect no longer depends on somebody
+ * looking at a screenshot. The frames are still the only check on whether it looks GOOD.
  *
  * The three surrounding contexts are reproduced here (hero text for A, the three CLI commands
  * for B, the collapse for C) rather than mounting the real bodies, which would need the tRPC

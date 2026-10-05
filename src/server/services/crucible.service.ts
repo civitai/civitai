@@ -13,6 +13,7 @@ import {
   MediaType,
   ModelStatus,
   ModelType,
+  PrizeSourceType,
 } from '~/shared/utils/prisma/enums';
 import { CrucibleSort } from '../schema/crucible.schema';
 import { dbRead, dbWrite } from '../db/client';
@@ -24,7 +25,6 @@ import {
   throwAuthorizationError,
 } from '~/server/utils/errorHandling';
 import {
-  createBuzzTransactionMany,
   createMultiAccountBuzzTransaction,
   getUserBuzzAccount,
   refundMultiAccountTransaction,
@@ -77,7 +77,7 @@ import {
   resolveWatchSeconds,
 } from '~/server/services/crucible-judging-session';
 import type { RedisKeyTemplateSys, RedisKeyTemplateCache } from '~/server/redis/client';
-import { redis, sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
+import { sysRedis, REDIS_SYS_KEYS, REDIS_KEYS } from '~/server/redis/client';
 import { CacheTTL, constants } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
@@ -99,6 +99,8 @@ import { imageResourcesCache } from '~/server/redis/caches';
 import {
   getCrucibleMinVotes,
   baseModelMakesMediaType,
+  getAverageFinishTopPercent,
+  getCreatorFinish,
   getCruciblePrizeWinners,
   getCrucibleTotalPrizePool,
   getCruciblePublishableName,
@@ -129,6 +131,7 @@ import {
 import { submitTextModeration } from '~/server/services/text-moderation.service';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
+import { createPrizes, voidPrizes } from '~/server/services/prize.service';
 import { removeTags } from '~/utils/string-helpers';
 
 const log = createLogger('crucible-service', 'cyan');
@@ -1043,19 +1046,20 @@ export type CrucibleDetail = CrucibleDetailRow & {
 
 type PrizeCrucible = { id: number; prizePositions: PrizePosition[]; totalPrizePool: number };
 
+const getPlacedEntries = (crucibleIds: number[]) =>
+  dbRead.$queryRaw<{ crucibleId: number; entryId: number; userId: number; position: number }[]>`
+    SELECT ce."crucibleId", ce.id AS "entryId", ce."userId", ce.position
+    FROM "CrucibleEntry" ce
+    WHERE ce."crucibleId" = ANY(${crucibleIds}::int[])
+      AND ce.position IS NOT NULL
+  `;
+
 /** From the stored placings, so it agrees with what finalize paid. */
 export const getCruciblesPrizeWinners = async (crucibles: PrizeCrucible[]) => {
   const winners = new Map<number, CruciblePrizeWinner[]>(crucibles.map(({ id }) => [id, []]));
   if (!crucibles.some(({ prizePositions }) => prizePositions.length)) return winners;
 
-  const placed = await dbRead.$queryRaw<
-    { crucibleId: number; entryId: number; userId: number; position: number }[]
-  >`
-    SELECT ce."crucibleId", ce.id AS "entryId", ce."userId", ce.position
-    FROM "CrucibleEntry" ce
-    WHERE ce."crucibleId" = ANY(${crucibles.map(({ id }) => id)}::int[])
-      AND ce.position IS NOT NULL
-  `;
+  const placed = await getPlacedEntries(crucibles.map(({ id }) => id));
   for (const { id, prizePositions, totalPrizePool } of crucibles)
     winners.set(
       id,
@@ -1380,7 +1384,6 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     : [CrucibleStatus.Active, CrucibleStatus.Pending];
   const statuses = isModerator ? picked : picked.filter((s) => s !== CrucibleStatus.Cancelled);
   if (!statuses.length) return { items: [], nextCursor: undefined };
-  where.status = { in: statuses };
   if (contentType) where.contentType = contentType;
 
   if (excludedUserIds.length > 0) {
@@ -1410,16 +1413,39 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
   // across that boundary can skip or repeat them.
   orderBy.push({ id: 'desc' });
 
+  // A running crucible leads an upcoming one whatever the sort, so a bigger upcoming prize can't
+  // bury the ones open now. No single direction of the status enum orders Active ahead of both
+  // Pending and Completed, so each segment is its own query under the chosen sort.
+  const segments =
+    statuses.includes(CrucibleStatus.Active) && statuses.includes(CrucibleStatus.Pending)
+      ? [[CrucibleStatus.Active], statuses.filter((s) => s !== CrucibleStatus.Active)]
+      : [statuses];
+  let segmentIndex = 0;
+  if (cursor && segments.length > 1) {
+    const at = await dbRead.crucible.findUnique({
+      where: { id: cursor },
+      select: { status: true },
+    });
+    segmentIndex = Math.max(
+      0,
+      segments.findIndex((segment) => at && segment.includes(at.status))
+    );
+  }
+
   // One row beyond the page is how "is there more?" gets answered. Asking for exactly `take`
   // leaves the caller guessing, and the guess it made — a non-empty page always has more — meant
   // the feed never ended.
-  const rows = await dbRead.crucible.findMany({
-    take: take + 1,
-    cursor: cursor ? { id: cursor } : undefined,
-    where,
-    orderBy,
-    select,
-  });
+  const rows: Awaited<ReturnType<typeof dbRead.crucible.findMany<{ select: TSelect }>>> = [];
+  for (let i = segmentIndex; i < segments.length && rows.length <= take; i++) {
+    const page = await dbRead.crucible.findMany({
+      take: take + 1 - rows.length,
+      cursor: cursor && i === segmentIndex ? { id: cursor } : undefined,
+      where: { ...where, status: { in: segments[i] } },
+      orderBy,
+      select,
+    });
+    rows.push(...page);
+  }
 
   // Prisma's cursor is INCLUSIVE, so the extra row's id is exactly the right cursor: the next
   // page starts AT it, and it has not been served yet. Handing back the last SERVED row's id
@@ -3028,7 +3054,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       !!crucible.seedTransactionId &&
       (await refundUnawardedSeed(crucibleId, crucible.seedTransactionId, 'no-entries'));
 
-    if (await claimCrucibleCompletion(crucibleId, { prizesPaid: false })) {
+    if (await claimCrucibleCompletion(crucibleId, { prizesAwarded: false })) {
       await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
       sendCrucibleNotification({
         userId: crucible.userId,
@@ -3172,56 +3198,33 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
       entry.position !== null && entry.prizePlace !== null && entry.prizeAmount > 0
   );
 
+  // Awarded, not paid: each winner claims theirs and picks the currency. The key is the one this
+  // payout has always used, so a prize an earlier build already paid conflicts instead of paying.
+  let prizes: Awaited<ReturnType<typeof createPrizes>> = [];
   if (prizeWinners.length > 0) {
-    // Build transactions for prize distribution
-    // Transfer from central bank (account 0) to each winner's yellow account
-    const prizeTransactions = prizeWinners.map((winner) => ({
-      fromAccountId: 0, // Central bank
-      fromAccountType: 'yellow' as const,
-      toAccountId: winner.userId,
-      toAccountType: CRUCIBLE_PRIZE_BUZZ_TYPE,
-      amount: winner.prizeAmount,
-      type: TransactionType.Reward,
-      description: getCrucibleTransactionDescription(
-        `Crucible ${asOrdinal(winner.prizePlace)} prize`,
-        crucible
-      ),
-      details: {
-        entityId: crucibleId,
-        entityType: 'Crucible',
-        position: winner.position,
-        prizePlace: winner.prizePlace,
-      },
-      externalTransactionId: `crucible-prize-${crucibleId}-${winner.entryId}-${winner.position}`,
-    }));
-
     try {
-      const result = await createBuzzTransactionMany(prizeTransactions);
-      // A transfer the ledger dropped (neither made nor a duplicate) is still owed: stay Active.
-      const unaccounted =
-        prizeTransactions.length - result.transactions.length - result.conflicts.length;
-      if (unaccounted > 0)
-        throw new Error(
-          `${unaccounted} of ${prizeTransactions.length} prize transfers were not made`
-        );
-      log(
-        `Distributed prizes for crucible ${crucibleId}: ${prizeWinners.length} winners, ${result.transactions.length} transactions`
+      prizes = await createPrizes(
+        prizeWinners.map((winner) => ({
+          userId: winner.userId,
+          sourceType: PrizeSourceType.Crucible,
+          sourceId: crucibleId,
+          subjectId: winner.entryId,
+          position: winner.prizePlace,
+          amount: winner.prizeAmount,
+          title: getCrucibleTransactionDescription(
+            `Crucible ${asOrdinal(winner.prizePlace)} prize`,
+            crucible
+          ),
+          externalTransactionId: `crucible-prize-${crucibleId}-${winner.entryId}-${winner.position}`,
+        }))
       );
-
-      // Invalidate buzz won cache for all winners so their stats reflect the new prize
-      const uniqueWinnerUserIds = [...new Set(prizeWinners.map((w) => w.userId))];
-      await Promise.all(
-        uniqueWinnerUserIds.map((winnerId) =>
-          redis.del(`${REDIS_KEYS.CRUCIBLE.USER_BUZZ_WON}:${winnerId}` as RedisKeyTemplateCache)
-        )
-      );
+      log(`Awarded ${prizes.length} prizes for crucible ${crucibleId}`);
     } catch (error) {
-      // Still Active, so the next run retries; prize ids are keyed per entry and place, so a payout
-      // that partly landed is not paid twice.
+      // Still Active, so the next run retries; the insert is keyed per entry and place.
       logToAxiom({
         type: 'error',
-        name: 'crucible-prize-payout-failed',
-        message: `Failed to pay prizes for crucible ${crucibleId}: ${
+        name: 'crucible-prize-award-failed',
+        message: `Failed to award prizes for crucible ${crucibleId}: ${
           error instanceof Error ? error.message : String(error)
         }`,
         crucibleId,
@@ -3244,8 +3247,10 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     finalEntries: finalizedEntries,
     totalPrizesDistributed,
   };
-  if (!(await claimCrucibleCompletion(crucibleId, { prizesPaid: prizeWinners.length > 0 })))
+  if (!(await claimCrucibleCompletion(crucibleId, { prizesAwarded: prizeWinners.length > 0 }))) {
+    await voidPrizes(PrizeSourceType.Crucible, crucibleId);
     return result;
+  }
 
   // Kept a week in case the results need checking against the votes.
   await crucibleEloRedis.setTTL(crucibleId, 7 * 24 * 60 * 60);
@@ -3291,6 +3296,7 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
     // Skip notifying the crucible creator about their own entries (they already got crucible-ended)
     if (participantUserId === crucible.userId) continue;
 
+    const userPrizes = prizes.filter((prize) => prize.userId === participantUserId);
     sendCrucibleNotification({
       userId: participantUserId,
       type: 'crucible-won',
@@ -3302,6 +3308,8 @@ export const finalizeCrucible = async (crucibleId: number): Promise<FinalizeCruc
         position: bestEntry.position,
         prizePlace: bestEntry.prizePlace,
         prizeAmount: bestEntry.prizeAmount,
+        prizeId: userPrizes.length === 1 ? userPrizes[0].id : undefined,
+        prizeCount: userPrizes.length,
       },
     });
   }
@@ -3421,11 +3429,11 @@ function withStoredPlaces(
 
 /**
  * Completed only from Active: past its end nothing else may move it, so a lost claim means a
- * cancel got there first and anything this run paid is now owed back to the bank.
+ * cancel got there first, so the prizes this run awarded are voided.
  */
 const claimCrucibleCompletion = async (
   crucibleId: number,
-  { prizesPaid }: { prizesPaid: boolean }
+  { prizesAwarded }: { prizesAwarded: boolean }
 ) => {
   const { count } = await dbWrite.crucible.updateMany({
     where: { id: crucibleId, status: CrucibleStatus.Active },
@@ -3436,10 +3444,10 @@ const claimCrucibleCompletion = async (
       type: 'error',
       name: 'crucible-finalize-claim-lost',
       message: `Crucible ${crucibleId} left Active while it was being finalized${
-        prizesPaid ? ' after its prizes were paid; check for refunds of the same pool' : ''
+        prizesAwarded ? ' after its prizes were awarded; they have been voided' : ''
       }.`,
       crucibleId,
-      prizesPaid,
+      prizesAwarded,
     });
   return count > 0;
 };
@@ -4088,7 +4096,8 @@ export const cancelCrucible = async ({
  * - Total crucibles entered (not created)
  * - Total Buzz won from crucible prizes
  * - Best placement (lowest position number)
- * - Win rate (percentage of crucibles where user placed in prize positions)
+ * - Average finish, as the top percent of the field
+ * - Prizes won (crucibles where the user took a prize)
  */
 export const getUserCrucibleStats = async ({
   userId,
@@ -4098,7 +4107,8 @@ export const getUserCrucibleStats = async ({
   totalCrucibles: number;
   buzzWon: number;
   bestPlacement: number | null;
-  winRate: number;
+  avgFinishTopPercent: number | null;
+  prizesWon: number;
 }> => {
   // Get all entries for this user in completed crucibles
   const entries = await dbRead.crucibleEntry.findMany({
@@ -4115,6 +4125,8 @@ export const getUserCrucibleStats = async ({
       crucible: {
         select: {
           prizePositions: true,
+          entryFee: true,
+          seededPrizePool: true,
         },
       },
     },
@@ -4125,7 +4137,8 @@ export const getUserCrucibleStats = async ({
       totalCrucibles: 0,
       buzzWon: 0,
       bestPlacement: null,
-      winRate: 0,
+      avgFinishTopPercent: null,
+      prizesWon: 0,
     };
   }
 
@@ -4137,26 +4150,43 @@ export const getUserCrucibleStats = async ({
   const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
   const bestPlacement = positions.length > 0 ? Math.min(...positions) : null;
 
-  // Win rate is per crucible: a creator holds at most one prize, which may sit below their best
-  // placing's position number.
-  const prizePositionsByCrucible = new Map(
-    entries.map((e) => [e.crucibleId, parsePrizePositions(e.crucible.prizePositions)])
-  );
+  const cruciblesById = new Map(entries.map((e) => [e.crucibleId, e.crucible]));
   const placedCrucibleIds = [
     ...new Set(entries.filter((e) => e.position !== null).map((e) => e.crucibleId)),
   ];
-  const winnersByCrucible = await getCruciblesPrizeWinners(
-    placedCrucibleIds.map((id) => ({
-      id,
-      prizePositions: prizePositionsByCrucible.get(id) ?? [],
-      totalPrizePool: 0,
-    }))
-  );
-  const cruciblesWon = placedCrucibleIds.filter((id) =>
-    winnersByCrucible.get(id)?.some((winner) => winner.userId === userId)
-  ).length;
+  const [placed, paidEntryCounts] = placedCrucibleIds.length
+    ? await Promise.all([
+        getPlacedEntries(placedCrucibleIds),
+        getPaidEntryCounts(placedCrucibleIds),
+      ])
+    : [[], new Map<number, number>()];
+  const placedByCrucible = new Map<number, typeof placed>();
+  for (const row of placed) {
+    const rows = placedByCrucible.get(row.crucibleId);
+    if (rows) rows.push(row);
+    else placedByCrucible.set(row.crucibleId, [row]);
+  }
 
-  const winRate = totalCrucibles > 0 ? Math.round((cruciblesWon / totalCrucibles) * 100) : 0;
+  let prizesWon = 0;
+  const finishes: { rank: number; field: number }[] = [];
+  for (const crucibleId of placedCrucibleIds) {
+    const crucible = cruciblesById.get(crucibleId);
+    const crucibleRows = placedByCrucible.get(crucibleId) ?? [];
+    // Counted as finalize pays: a place whose share of the pool comes to 0 Buzz is not a prize.
+    const winners = getCruciblePrizeWinners({
+      placed: crucibleRows,
+      prizePositions: parsePrizePositions(crucible?.prizePositions),
+      totalPrizePool: getCrucibleTotalPrizePool({
+        entryFee: crucible?.entryFee ?? 0,
+        paidEntryCount: paidEntryCounts.get(crucibleId) ?? 0,
+        seededPrizePool: crucible?.seededPrizePool ?? 0,
+      }),
+    });
+    if (winners.some((winner) => winner.userId === userId && winner.prizeAmount > 0)) prizesWon++;
+    const finish = getCreatorFinish({ placed: crucibleRows, userId });
+    if (finish) finishes.push(finish);
+  }
+  const avgFinishTopPercent = getAverageFinishTopPercent(finishes);
 
   // Calculate total Buzz won from crucible prizes
   // Uses externalTransactionId prefix which is more specific and potentially better indexed
@@ -4180,7 +4210,8 @@ export const getUserCrucibleStats = async ({
     totalCrucibles,
     buzzWon,
     bestPlacement,
-    winRate,
+    avgFinishTopPercent,
+    prizesWon,
   };
 };
 

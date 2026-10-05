@@ -15,7 +15,7 @@ import {
   revealTransition,
 } from '~/components/Apps/agentOnboardingMotion';
 import { AGENT_BUILD_PROMPT } from '~/components/Apps/cliCommands';
-import { CopyAffordance, CopyGlyph } from '~/components/Apps/CopyAffordance';
+import { CopyAffordance, CopyGlyph } from '~/components/CopyAffordance/CopyAffordance';
 import classes from './AgentOnboardingCard.module.scss';
 
 /** Stable handles for the three placements' assertions. */
@@ -94,10 +94,13 @@ const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default
  * argument for the same reason. Consequence for tests: `off` is every card's first-commit
  * value, so a static assertion must settle the effect first — each suite's header says so.
  *
- * ⚠️ NOT ENROLLED IN `local-rules/no-ssr-divergent-media-query`, though the mechanism to enrol
- * it DOES exist (the rule takes an `extraHooks` option). `useReducedMotion(true)` already IS
- * the SSR-safe shape that rule exists to force, and the rule has no discriminator for a hook
- * given an explicit SSR default, so enrolling would red correct code and need a disable comment.
+ * ⚠️ `useReducedMotion` IS NOT IN `local-rules/no-ssr-divergent-media-query`'S BANNED SET, AND
+ * THAT IS THE DECISION, NOT AN OVERSIGHT. `useReducedMotion(true)` already IS the SSR-safe
+ * shape that rule exists to force, and the rule has no discriminator for a hook given an
+ * explicit SSR default — it would red this call and need a disable comment on correct code.
+ * Enrolling it means adding the name to that rule's `SSR_DIVERGENT_HOOKS`, which is the only
+ * widening path there is; an earlier draft of this paragraph justified the decision on the
+ * rule being UNABLE to see the hook, which was false.
  *
  * 🔴 UNDER REDUCED MOTION — OR `animated={false}` — THE TREE SHORT-CIRCUITS TO PLAIN DOM: no
  * `LazyMotion`, no `m` components, no caret, no `.ringAnimated`. The pattern `wizardMotion`

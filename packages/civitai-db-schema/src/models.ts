@@ -262,6 +262,8 @@ export type CrucibleIngestionStatus = "Pending" | "Scanned" | "Blocked" | "Error
 
 export type CrucibleEngagementType = "Notify";
 
+export type PrizeSourceType = "Crucible" | "Challenge";
+
 export interface Account {
   id: number;
   userId: number;
@@ -711,6 +713,7 @@ export interface User {
   crucibles?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
   crucibleEngagements?: CrucibleEngagement[];
+  prizes?: Prize[];
 }
 
 export interface CustomerSubscription {
@@ -5773,6 +5776,26 @@ export interface CrucibleEntry {
   position: number | null;
   buzzTransactionId: string | null;
   createdAt: Date;
+}
+
+export interface Prize {
+  id: number;
+  userId: number;
+  user?: User;
+  sourceType: PrizeSourceType;
+  sourceId: number;
+  subjectId: number | null;
+  position: number | null;
+  amount: number;
+  title: string;
+  externalTransactionId: string;
+  createdAt: Date;
+  autoClaimAt: Date;
+  claimedAt: Date | null;
+  buzzType: string | null;
+  autoClaimed: boolean;
+  paidAt: Date | null;
+  voidedAt: Date | null;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

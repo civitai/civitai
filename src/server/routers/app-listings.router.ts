@@ -57,6 +57,7 @@ import {
   republishOwnListingSchema,
   resetListingToPendingSchema,
   resolveReportSchema,
+  setListingVisibilityAsModeratorSchema,
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
@@ -1846,11 +1847,22 @@ export const appListingsRouter = router({
    * Rate-limited on the same budget as `updateListing`: this is an authored edit, and a
    * level change busts the store catalog cache, so it is not free to repeat.
    *
-   * ⚠️ THE MODERATOR COUNTERPART IS DEFERRED, NOT DROPPED. A `setListingVisibilityAsModerator`
-   * proc — any listing, `moderatorProcedure` + an inner recheck, writing a `set-visibility`
-   * moderation event — is operator-asked (D2) and lands with the UI PR. It was removed from
-   * this one because it existed for a verb no surface could invoke while obliging a human to
-   * hand-apply a second production DDL. See the write service's header.
+   * ✅ THE MODERATOR COUNTERPART HAS LANDED — `setListingVisibilityAsModerator`, 44 lines
+   * below. ⚠️ This paragraph said "DEFERRED, NOT DROPPED" and outlived the proc arriving; it
+   * is the kind of claim a maintainer asks ("can a moderator set a level?") and gets a
+   * confident wrong NO from. What still holds: it is a SEPARATE proc rather than a mod bypass
+   * here, with a required audited reason and its event in the same transaction as the write.
+   * It does oblige a human to hand-apply a DDL — the action-CHECK widen
+   * `20261004120000_app_listing_mod_action_set_visibility`.
+   *
+   * ⚠️ WHAT SHIPPING WITHOUT THAT DDL COSTS, CORRECTED: the mod proc REFUSES CLEANLY — it
+   * 500s and writes nothing. This sentence read "shipping without that is exactly how the
+   * first live use changed a level and then 23514'd with no audit row", which is a true
+   * account of the PRE-round-1 code (two separate round trips) and a wrong prediction about
+   * this one: the level write and its event now share one interactive transaction, so the
+   * 23514 rolls the level back with it. Left-as-history is not enough here, because the
+   * sentence was framed as a consequence of shipping — and the wrong version inverts the
+   * remediation, sending a maintainer to reconcile orphaned level changes that cannot exist.
    */
   setListingVisibility: appDeveloperProcedure
     .use(
@@ -1870,6 +1882,47 @@ export const appListingsRouter = router({
         appListingId: input.listingId,
         visibility: input.visibility,
         userId: ctx.user.id,
+      });
+    }),
+
+  /**
+   * MOD: set the per-listing VISIBILITY LEVEL on ANY listing — D2's moderator half, which
+   * the backend PR deferred to this one.
+   *
+   * 🔴 A SEPARATE PROC RATHER THAN A MOD BYPASS IN `setListingVisibility`, and the write
+   * service's header says why: admitting a moderator to the owner path would be an
+   * unaudited write on someone else's listing. This one takes a REQUIRED `reason` and
+   * lands a `set-visibility` moderation event in the SAME interactive transaction as the
+   * level write, so a moderator cannot change a stranger's discoverability without leaving
+   * a row the OWNER can read in their own listing history. 🔴 The ATOMICITY is what carries
+   * that, not the write order — the shipped two-round-trip version wrote the event second
+   * and a rejected insert left a committed level change with no audit row.
+   *
+   * 🔴 `moderatorProcedure` IS THE GATE, AND THE SERVICE DOES NOT RE-CHECK IT. That matches
+   * every other mod proc in this file (`delistListing`, `relistListing`, `claimListing`,
+   * `purgeListing`): the router owns the role test, the service owns the lifecycle rules.
+   * The acting moderator is bound to `ctx.user.id` and is never supplied by the client.
+   *
+   * 🔴 THE REVIEW CEILING AND D1 STILL BIND. `applyVisibility` enforces both for every
+   * caller, so a moderator cannot make a `draft` public (they approve it instead) and
+   * cannot set a level on a `removed`/`rejected` listing. Moderator-ness buys the right to
+   * act on someone else's listing, not the right to skip the lifecycle.
+   *
+   * NOT rate-limited, matching its mod siblings — a moderator acting through the queue is
+   * not the abuse shape the owner path's 30/hour budget exists for.
+   */
+  setListingVisibilityAsModerator: moderatorProcedure
+    .input(setListingVisibilityAsModeratorSchema)
+    .mutation(async ({ ctx, input }) => {
+      if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+      const { setListingVisibilityAsModerator } = await import(
+        '~/server/services/blocks/app-listing-visibility-write.service'
+      );
+      return setListingVisibilityAsModerator({
+        appListingId: input.appListingId,
+        visibility: input.visibility,
+        reason: input.reason,
+        moderatorUserId: ctx.user.id,
       });
     }),
 

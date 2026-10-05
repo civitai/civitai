@@ -5,6 +5,7 @@ import { violationUserMessage } from '$lib/violations';
 import { deprecatedNsfwName } from '$lib/nsfw-levels';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { NotificationCategory } from '@civitai/notifications';
+import { isSafeToRetry } from '@civitai/buzz';
 import { dbRead } from './db';
 import { getBuzz } from './buzz';
 import { bustCacheTag, bustCachedObject } from './cache';
@@ -363,13 +364,19 @@ export async function refundAppealFee(appeal: {
   const description = `Refunded appeal ${appeal.id} for Image ${appeal.entityId}`;
   try {
     if (isAppealPrefix(appeal.buzzTransactionId))
-      await getBuzz().refundMultiTransaction({
-        externalTransactionIdPrefix: appeal.buzzTransactionId,
-        description,
-      });
+      // A timed-out refund may still land, so only a request that never reached Buzz is retried.
+      await getBuzz().refundMultiTransaction(
+        { externalTransactionIdPrefix: appeal.buzzTransactionId, description },
+        { shouldRetry: isSafeToRetry }
+      );
     else await getBuzz().refundTransaction(appeal.buzzTransactionId, { description });
   } catch (e) {
-    console.error('refundAppealFee failed', { appealId: appeal.id, error: (e as Error).message });
+    // The appeal is already closed, so this is the only record that the fee is still owed.
+    void logAxiomError(e, {
+      event: 'appeal fee refund failed',
+      appealId: appeal.id,
+      buzzTransactionId: appeal.buzzTransactionId,
+    });
   }
 }
 

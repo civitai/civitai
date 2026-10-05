@@ -50,6 +50,48 @@ describe('crucible-won notification message', () => {
     expect(msg!.message).toContain('enough votes');
     expect(msg!.url).toBe('/crucibles/7');
   });
+
+  it('sends a winner to the claim screen for their prize', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 4,
+        prizePlace: 2,
+        prizeAmount: 1500,
+        prizeId: 42,
+        prizeCount: 1,
+      },
+    });
+
+    expect(msg!.url).toBe('/prizes/42');
+    expect(msg!.message).toBe(
+      'Congrats! You took 2nd prize in the crucible "Neon" and won 1,500 Buzz. Claim your prize!'
+    );
+  });
+
+  it('sends a winner of several prizes to their prize list', () => {
+    const msg = def.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        position: 1,
+        prizeAmount: 1500,
+        prizeCount: 2,
+      },
+    });
+
+    expect(msg!.url).toBe('/prizes');
+  });
+
+  it('keeps an already-paid winner, notified before prizes were claimable, on the crucible', () => {
+    const msg = def.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', position: 1, prizeAmount: 1500 },
+    });
+
+    expect(msg!.url).toBe('/crucibles/7');
+    expect(msg!.message).not.toContain('Claim');
+  });
 });
 
 describe('crucible notifications without a name', () => {
