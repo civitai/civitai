@@ -315,19 +315,16 @@ describe('attachUploadSettlement', () => {
 /**
  * `relayImageFallback` is the multipart upload's execution half of the relay rescue —
  * the POST to `/api/v1/image-upload/relay` (with its 429-shed retry), returning the
- * relay-minted key or `null`. The DECISION to call it lives in
- * `shouldRelayOnPartFailure` (~/utils/upload-retry), pinned there; this function is what
- * runs when the decision is yes, extracted from `useS3Upload` so the fallback can be
- * driven directly and can never mask the original failure it is rescuing. (This said the
- * hook "has no test file". `src/hooks/__tests__/useS3Upload.test.ts` exists, and this very
- * change adds the multipart producer assertion to it.)
+ * relay-minted key or the reason the rescue did not produce one. The DECISION to call it
+ * lives in `shouldRelayOnPartFailure` (~/utils/upload-retry), pinned there; this function is
+ * what runs when the decision is yes, extracted from `useS3Upload` so the fallback can be
+ * driven directly and can never mask the original failure it is rescuing.
  *
  * 🔴 `ok: false` is the contract for EVERY failure — a rejected relay, a non-ok response, a
  * mid-relay cancel. The caller falls through to the normal terminal-error path, so a
  * broken fallback must degrade to "upload failed" (the pre-existing outcome), never to a
  * thrown error that replaces the user's real diagnosis. The `reason` beside it is telemetry;
- * each case below pins the one it carries, because a single collapsed failure value is what
- * made the relay's server-side success count unfalsifiable.
+ * each case below pins the one it carries.
  */
 describe('relayImageFallback', () => {
   const opts = () => ({
@@ -433,9 +430,8 @@ describe('relayImageFallback', () => {
   });
 
   it('reports bad_body, not transport_error, on a 2xx whose body will not parse', async () => {
-    // 🔴 The one mode the relay's own counter has ALREADY recorded as `outcome="success"`:
-    // the bytes are stored and the route answered 200, so classifying it as a transport
-    // failure would say the request never arrived — the opposite of what happened.
+    // 🔴 A 2xx we cannot parse is not a request that never arrived, and classifying it as a
+    // transport failure would say exactly that.
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
@@ -475,6 +471,36 @@ describe('relayImageFallback', () => {
       ok: false,
       reason: 'aborted',
     });
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    [
+      'the body read rejects with an AbortError',
+      () => new DOMException('The operation was aborted.', 'AbortError'),
+    ],
+    // 🔴 THE CASE A SHAPE-ONLY CLASSIFIER CANNOT SEE. `abort(reason)` rejects the body read
+    // with that reason VERBATIM, so a cancel carrying a plain `Error` — an ordinary idiom —
+    // reads as a 2xx we could not parse. That is `bad_body`, the one bucket this field exists
+    // to measure, so a future cancel button would inflate exactly the figure being read.
+    ['the cancel carries a non-DOMException reason', () => new Error('cancelled')],
+  ])('reports aborted, not bad_body, when %s', async (_why, makeReason) => {
+    // The relay answered 2xx and the cancel lands while the body is being read, so it is the
+    // INNER catch that sees it — the only abort classifier used to be in the outer one.
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        controller.abort(makeReason());
+        throw makeReason();
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      relayImageFallback(file(), { ...opts(), signal: controller.signal })
+    ).resolves.toEqual({ ok: false, reason: 'aborted' });
     vi.unstubAllGlobals();
   });
 

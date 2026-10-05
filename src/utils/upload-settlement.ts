@@ -165,8 +165,9 @@ export function attachUploadSettlement(
           resolve({ kind: 'relayed', id: relayedId });
         })
         .catch((relayError: unknown) => {
-          // A cancel during the fallback is a cancel, not an upload failure.
-          if (relayError instanceof DOMException && relayError.name === 'AbortError') {
+          // A cancel during the fallback is a cancel, not an upload failure. No signal to
+          // consult here — the relay closure owns it — so this site is shape-only.
+          if (isClientAbort(relayError)) {
             callbacks.onAborted();
             reject(new Error('Upload canceled'));
             return;
@@ -256,6 +257,18 @@ function abortError() {
   return new DOMException('The operation was aborted.', 'AbortError');
 }
 
+/**
+ * Did the person cancel? Answered from the SIGNAL where one is available, not from the
+ * error's shape alone: `abort(reason)` rejects with that reason verbatim, so a cancel
+ * carrying a plain `Error` — an ordinary idiom — is indistinguishable by shape from a
+ * genuine failure. (`isClientAbortError` in `~/server/utils/errorHandling` is the
+ * server-side equivalent and is not importable from client code.)
+ */
+function isClientAbort(err: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted) return true;
+  return err instanceof DOMException && err.name === 'AbortError';
+}
+
 export type RelayFallbackResult =
   | { ok: true; id: string }
   | { ok: false; reason: RelayFallbackFailureReason };
@@ -269,23 +282,10 @@ export type RelayFallbackResult =
  * this is the execution half, extracted from `useS3Upload` so it is unit-testable the
  * same way `attachUploadSettlement` is.
  *
- * ⚠ This used to add "that hook has no test file", and that was the reasoning that made
- * unit-testing the two halves separately look sufficient. It was not: both halves were
- * correct in isolation while the feature was inert, because the hook handed this function
- * an ALREADY-ABORTED signal and handed the gate an always-true flag. The hook now has a
- * test file — `src/hooks/__tests__/useS3Upload.test.ts` — and it is the one that can see
- * that class of defect, because it drives the hook rather than these functions.
- *
  * 🔴 NEVER THROWS, for any failure. The caller falls through to the normal terminal-error
  * path on `ok: false`, so a broken fallback degrades to "the upload failed" (the
  * pre-existing outcome) rather than replacing the user's real diagnosis with a fallback
- * error. The 429 shed is retried once via `relayWithRetry`, honoured with the same
- * clamp and cancellability the single-PUT path gets.
- *
- * 🔴 The four failures are DISTINGUISHED rather than collapsed, and `reason` is telemetry
- * only — nothing branches on it. They used to share one bare `null`, which made the
- * server's own `outcome="success"` count unfalsifiable: `bad_body` is a relay the route
- * already counted as a rescue while the person saw a failed upload.
+ * error.
  *
  * The relay mints its OWN key server-side (an overwrite guard it enforces by accepting
  * no caller key), so the returned id is NOT the presigned key the multipart session was
@@ -313,7 +313,11 @@ export async function relayImageFallback(
     let id: unknown;
     try {
       id = ((await res.json()) as { id?: unknown }).id;
-    } catch {
+    } catch (err) {
+      // A cancel after the headers arrived rejects the body read, not the `fetch`, so it
+      // lands here rather than in the outer catch — and `bad_body` is the one bucket this
+      // result exists to measure, so a cancel must not inflate it.
+      if (isClientAbort(err, opts.signal)) return { ok: false, reason: 'aborted' };
       // A 2xx body we cannot read is the SAME mode as one carrying no id — the route stored
       // the bytes and counted a success either way. Merging this into the outer catch would
       // report it as a transport failure, i.e. as a request that never arrived.
@@ -321,7 +325,9 @@ export async function relayImageFallback(
     }
     return typeof id === 'string' && id ? { ok: true, id } : { ok: false, reason: 'bad_body' };
   } catch (err) {
-    const aborted = err instanceof DOMException && err.name === 'AbortError';
-    return { ok: false, reason: aborted ? 'aborted' : 'transport_error' };
+    return {
+      ok: false,
+      reason: isClientAbort(err, opts.signal) ? 'aborted' : 'transport_error',
+    };
   }
 }

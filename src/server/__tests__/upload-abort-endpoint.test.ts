@@ -13,8 +13,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *
  * 409-vs-204 decision for abort: aborting an already-gone upload is IDEMPOTENT — the
  * desired end-state (the upload no longer exists) ALREADY holds, so it's a success,
- * not a conflict. We return 204 (the sole caller, s3-upload.store.ts, fire-and-forgets
- * abort and ignores the response, so 204 is safe and terminal). Transient/real-fault
+ * not a conflict. We return 204 (both callers — s3-upload.store.ts and useS3Upload.tsx —
+ * ignore the response entirely, so 204 is safe and terminal). Transient/real-fault
  * mapping matches complete (503 / 500).
  *
  * Fails before the fix (everything is a raw 500); passes after.
@@ -112,6 +112,11 @@ const s3Error = (props: Record<string, unknown>) =>
 
 beforeEach(() => {
   mockAbortMultipartUpload.mockReset();
+  // 🔴 Every `mock.calls.at(-1)` reader below is measuring the LAST log event, so a test whose
+  // own log never fired reads the preceding test's. Measured: with the success-path
+  // `logToAxiom` deleted from the handler, `passes the declarable value rescued through
+  // unchanged` stayed GREEN on the `rescued` left behind by the abort-error case above it.
+  vi.mocked(logToAxiom).mockClear();
 });
 
 describe('/api/upload/abort — error classification', () => {
@@ -415,13 +420,9 @@ describe('/api/upload/abort — client failure reason', () => {
 });
 
 /**
- * The client's account of what the relay fallback did. The relay's own counter records
- * `outcome="success"` once the route stores the bytes, so it cannot see a rescue the browser
- * could not use — it overstates user-visible rescues, and by how much was unmeasurable while
- * every client-side failure collapsed into one value.
- *
- * Caller-supplied JSON on an unauthenticated-body route, so it is narrowed against a closed set
- * before it becomes a log field.
+ * The client's account of what the relay fallback did — caller-supplied JSON on an
+ * unauthenticated-body route, so it is narrowed against a closed set before it becomes a log
+ * field.
  */
 describe('/api/upload/abort — relay fallback outcome', () => {
   const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;

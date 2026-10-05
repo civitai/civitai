@@ -22,14 +22,11 @@ export const RELAY_FALLBACK_FAILURE_REASONS = [
 ] as const;
 export type RelayFallbackFailureReason = (typeof RELAY_FALLBACK_FAILURE_REASONS)[number];
 
-/**
- * Each tier SPREADS the one below rather than restating it, so a value cannot exist in one tier
- * and be missing from another — the drift a `satisfies` annotation only catches after the fact.
- */
+// Spread, not restated: a value added to a lower tier cannot go missing from a higher one.
 export const CLIENT_DECLARABLE_RELAY_FALLBACK_OUTCOMES = [
   ...RELAY_FALLBACK_FAILURE_REASONS,
   'rescued',
-  /** The gate declined: not an image, wrong backend, or over the relay's body cap. */
+  /** `shouldRelayOnPartFailure` (`~/utils/upload-retry`) returned false; see its clauses. */
   'not_attempted',
 ] as const;
 export type ClientDeclarableRelayFallbackOutcome =
@@ -44,7 +41,7 @@ export const RELAY_FALLBACK_OUTCOMES = [
    * the store client) — because neither is a statement about the relay.
    */
   'unknown',
-  /** Arrived and not declarable. Apart from `unknown`, which is a claim about the REQUEST. */
+  /** Arrived and not declarable, as distinct from `unknown`, which is a claim about the REQUEST. */
   'other',
 ] as const;
 export type RelayFallbackOutcome = (typeof RELAY_FALLBACK_OUTCOMES)[number];

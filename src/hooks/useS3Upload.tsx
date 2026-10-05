@@ -434,9 +434,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
         // the fallback endpoint deliberately accepts no caller key, so the id this
         // returns is not the one the multipart session was opened with.
 
-        // Reported on the abort POST below so the relay's own success counter can be read
-        // against what the person actually saw. `not_attempted` is the gate declining, which
-        // must stay distinguishable from a relay that ran and failed.
+        // `not_attempted` is the gate declining, distinct from a relay that ran and failed.
         let relayOutcome: ClientDeclarableRelayFallbackOutcome = 'not_attempted';
 
         if (

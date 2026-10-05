@@ -404,9 +404,6 @@ describe('useS3Upload relay fallback', () => {
     // one open session apiece, and the abort stream would lose the reason that explains
     // why the direct path was abandoned.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
-    // 🔴 The rescue the relay's own counter has always been able to see — recorded here so the
-    // counter can be read against it. Without a client-side `rescued`, the counter's total is
-    // the only number available and it cannot be compared with anything.
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
     h.unmount();
   });
@@ -452,8 +449,7 @@ describe('useS3Upload relay fallback', () => {
     expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
     expect(h.statuses()).toEqual(['error']);
     // 🔴 THE DISCRIMINATION THAT MATTERS: the gate declining and the relay running-and-failing
-    // are different populations, and reporting both as one failure value is the shape that made
-    // 659 server-counted successes impossible to reconcile against 722 eligible failures.
+    // are different populations, and one failure value put them on one row.
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
     h.unmount();
   });
@@ -520,16 +516,17 @@ describe('useS3Upload relay fallback', () => {
   });
 
   it('falls back to the original failure when the relay itself refuses', async () => {
-    // `relayImageFallback` returns null for EVERY failure, so a broken fallback degrades
-    // to the pre-existing outcome — "the upload failed" — rather than replacing the
+    // `relayImageFallback` returns `ok: false` for EVERY failure, so a broken fallback
+    // degrades to the pre-existing outcome — "the upload failed" — rather than replacing the
     // user's real diagnosis with a fallback error. Without this case the refusal path is
     // declared by the harness and exercised by nothing.
     vi.stubGlobal('fetch', makeFetch(1));
     partHandler = () => ({ status: 0, networkError: true });
     // 🔴 The refusal carries an id ANYWAY. With `{ ok: false }` alone it is the MISSING id
-    // that produces null, so deleting `relayImageFallback`'s `if (!res.ok) return null`
-    // would leave this green — the case would be pinning the harness rather than the
-    // status check. Measured: it survives that mutation without this id.
+    // that produces the failure, so deleting `relayImageFallback`'s
+    // `if (!res.ok) return { ok: false, reason: 'non_2xx' }` would leave this green — the
+    // case would be pinning the harness rather than the status check. Measured: it survives
+    // that mutation without this id.
     relayResponse = { ok: false, id: RELAY_KEY };
     const h = await mountHook();
 
@@ -566,9 +563,6 @@ describe('useS3Upload relay fallback', () => {
       },
     ],
   ])('reports %s on the abort POST when %s', async (expected, _why, arrange) => {
-    // 🔴 ASSERTED THROUGH THE HOOK, not against `relayImageFallback`. The reason is useless
-    // unless it reaches the request the server reads, and this feature has already shipped a
-    // defect where both halves were correct in isolation while the wiring was inert.
     vi.stubGlobal('fetch', makeFetch(1));
     partHandler = () => ({ status: 0, networkError: true });
     arrange();
