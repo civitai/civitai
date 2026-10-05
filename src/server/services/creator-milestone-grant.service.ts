@@ -1,11 +1,12 @@
-import type { AugmentedPool } from '~/server/db/db-helpers';
+import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
+import type { AugmentedPool } from '~/server/db/db-helpers';
 import type { CreatorScoreUnlock } from '~/server/services/creator-score-unlocks.service';
 import { nextCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
-export const SYSTEM_USER_ID = -1;
+export const SYSTEM_USER_ID = constants.system.user.id;
 
 export type ScoreTotalTransition = { userId: number; oldTotal: number | null; newTotal: number };
 
@@ -204,6 +205,6 @@ export async function notifyScoreTierCrossings(
           details: getScoreTierNotificationDetails(crossing, unlocks),
         })
     ),
-    10
+    4
   );
 }

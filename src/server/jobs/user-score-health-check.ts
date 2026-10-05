@@ -1,11 +1,10 @@
 /**
  * Alerts when the nightly `update-user-score` run has stopped succeeding. It stalled for 39 nights in
- * 2026 with nobody noticing, and score tier badges are granted by that run, so a stall now also
- * stops every badge.
+ * 2026 with nobody noticing, and score tier badges are granted by that run.
  *
- * Reads the per-category checkpoints rather than a heartbeat the job writes, because a category that
- * throws keeps its checkpoint frozen while the rest of the run succeeds, and that partial failure is
- * the one this needs to see.
+ * Reads one checkpoint per score category plus one for tier grants rather than a single heartbeat,
+ * because each can freeze while the rest of the run succeeds, and that partial failure is the one
+ * this needs to see.
  */
 
 import { notifyModAlert } from '~/server/common/mod-alert';
@@ -44,8 +43,9 @@ export async function checkUserScoreHealth(now = new Date()) {
       `\`${key}\` last succeeded ${lastSuccess ? lastSuccess.toISOString() : 'never'}`
   );
   const message =
-    `Creator Score has not updated in over ${STALE_AFTER_HOURS}h, so tier badges are not being granted ` +
-    `either. Check \`update-user-score\` (55 23 * * *).\n\n${lines.join('\n')}`;
+    `Part of the nightly Creator Score run has not succeeded in over ${STALE_AFTER_HOURS}h. A stale ` +
+    `category means those scores are frozen; a stale \`tierGrants\` means tier badges are not being ` +
+    `granted. Check \`update-user-score\` (55 23 * * *).\n\n${lines.join('\n')}`;
 
   await logToAxiom({
     type: 'warning',

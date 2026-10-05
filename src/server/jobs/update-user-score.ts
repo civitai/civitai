@@ -8,7 +8,12 @@ import { templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
+import type { CreatorScoreUnlock } from '~/server/services/creator-score-unlocks.service';
+import {
+  buildCreatorScoreUnlocks,
+  compiledCreatorScoreUnlockInputs,
+  getCreatorScoreUnlocks,
+} from '~/server/services/creator-score-unlocks.service';
 import type {
   ScoreTierCrossing,
   ScoreTotalTransition,
@@ -45,7 +50,7 @@ export const updateUserScore = createJob(
       scoreMultipliers: await getScoreMultipliers(),
       lastUpdate: legacyLastUpdate,
       toUpdate: {},
-      tierCrossings: [],
+      tierUnlocks: [],
       tierGrantErrors: [],
       setScore: (id, category, score) => {
         if (!ctx.toUpdate[id]) ctx.toUpdate[id] = {};
@@ -64,7 +69,7 @@ export const updateUserScore = createJob(
     const failures: Array<{ category: string; error: unknown }> = [];
     for (const [category, fetcher] of Object.entries(scoreFetchers)) {
       const [lastUpdate, setLastUpdate] = await getJobDate(
-        `${jobKey}:${category}`,
+        checkpointKey(category),
         legacyLastUpdate
       );
       ctx.lastUpdate = lastUpdate;
@@ -76,6 +81,13 @@ export const updateUserScore = createJob(
         log('score category failed; leaving its checkpoint frozen', category, e);
         failures.push({ category, error: e });
       }
+    }
+
+    try {
+      ctx.tierUnlocks = await getCreatorScoreUnlocks();
+    } catch (e) {
+      failures.push({ category: 'tierUnlocks', error: e });
+      ctx.tierUnlocks = buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs);
     }
 
     // Update score totals
@@ -90,16 +102,10 @@ export const updateUserScore = createJob(
     // `images` category (see getImageScore). Accepted; force-backfill reconciles.
     for (const setLastUpdate of advanceCheckpoint) await setLastUpdate();
 
-    if (ctx.tierGrantErrors.length) {
-      failures.push({ category: 'tierGrants', error: ctx.tierGrantErrors[0] });
-    }
-    if (ctx.tierCrossings.length) {
-      try {
-        await notifyScoreTierCrossings(ctx.tierCrossings, await getCreatorScoreUnlocks());
-      } catch (e) {
-        failures.push({ category: 'tierNotifications', error: e });
-      }
-    }
+    await settleTierGrants(ctx.tierGrantErrors, failures, async () => {
+      const [, setTierGrantsCheckpoint] = await getJobDate(checkpointKey(TIER_GRANTS_CHECKPOINT));
+      await setTierGrantsCheckpoint();
+    });
 
     // Re-throw so the run still surfaces as failed. Each category's original stack
     // is embedded into the thrown error's own stack: the job runner logs
@@ -135,7 +141,7 @@ type Context = {
   toUpdate: Record<number, Partial<Record<ScoreCategory, number>>>;
   setScore: (id: number, category: ScoreCategory, score: number) => void;
   lastUpdate: Date;
-  tierCrossings: ScoreTierCrossing[];
+  tierUnlocks: CreatorScoreUnlock[];
   tierGrantErrors: unknown[];
 };
 
@@ -148,9 +154,15 @@ const scoreFetchers = {
   images: getImageScore,
 } as const;
 
-/** One per category, each advanced only by a run in which that category scored cleanly. */
-export const userScoreCheckpointKeys = Object.keys(scoreFetchers).map(
-  (category) => `${jobKey}:${category}`
+const TIER_GRANTS_CHECKPOINT = 'tierGrants';
+const checkpointKey = (name: string) => `${jobKey}:${name}`;
+
+/**
+ * One per category, advanced only by a run in which that category scored cleanly, plus one advanced
+ * only by a run in which every tier grant succeeded.
+ */
+export const userScoreCheckpointKeys = [...Object.keys(scoreFetchers), TIER_GRANTS_CHECKPOINT].map(
+  checkpointKey
 );
 
 async function getModelScore(ctx: Context) {
@@ -341,22 +353,41 @@ async function getReportAgainstScore(ctx: Context) {
 }
 
 async function getUpdateTotalTasks(ctx: Context) {
-  const tasks = chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map((records) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
-    const transitions = await applyUserScoreUpdates(ctx.pg, records, onCancel);
-    userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
-    // Scores are already committed, so a failed grant must not fail the batch. The next run that
-    // touches these users grants silently, and the backfill endpoint reconciles everyone else.
-    try {
-      ctx.tierCrossings.push(...(await grantScoreTierMilestones(ctx.pg, transitions, onCancel)));
-    } catch (e) {
-      log('tier grant failed for batch', e);
-      ctx.tierGrantErrors.push(e);
-    }
-  });
+  return chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map(
+    (records) => () => persistScoreBatch(ctx, records)
+  );
+}
 
-  return tasks;
+export async function settleTierGrants(
+  tierGrantErrors: unknown[],
+  failures: { category: string; error: unknown }[],
+  advanceCheckpoint: () => Promise<void>
+) {
+  if (tierGrantErrors.length) failures.push({ category: 'tierGrants', error: tierGrantErrors[0] });
+  else await advanceCheckpoint();
+}
+
+export async function persistScoreBatch(
+  ctx: Pick<Context, 'pg' | 'jobContext' | 'tierUnlocks' | 'tierGrantErrors'>,
+  records: [string, Partial<Record<ScoreCategory, number>>][]
+) {
+  ctx.jobContext.checkIfCanceled();
+  const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
+  const transitions = await applyUserScoreUpdates(ctx.pg, records, onCancel);
+  userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
+
+  // Scores are already committed, so a failed grant must not fail the batch. The next run that
+  // touches these users grants silently, and the backfill endpoint reconciles everyone else.
+  let crossings: ScoreTierCrossing[];
+  try {
+    crossings = await grantScoreTierMilestones(ctx.pg, transitions, onCancel);
+  } catch (e) {
+    log('tier grant failed for batch', e);
+    ctx.tierGrantErrors.push(e);
+    return;
+  }
+  // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
+  await notifyScoreTierCrossings(crossings, ctx.tierUnlocks);
 }
 
 // Persist per-category scores and recompute `total` for a batch of users in one

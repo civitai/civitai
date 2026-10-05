@@ -1,10 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
+import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import type { MilestoneBatchResult } from '~/server/services/creator-milestone-grant.service';
 import {
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
+  SYSTEM_USER_ID,
 } from '~/server/services/creator-milestone-grant.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
@@ -20,7 +21,7 @@ import { booleanString } from '~/utils/zod-helpers';
  *              existing holders. Optional `&milestoneKey=score:flame` limits it to one definition.
  *
  * Params:
- *   dryRun     default true: counts what would be granted, on the replica, and writes nothing.
+ *   dryRun     default true: counts what would be granted, on the long-read pool, and writes nothing.
  *   batchSize  users per statement, default 4000. Each statement commits on its own, and a user's
  *              rows are never split across two, so a batch writes at most 9 x batchSize rows.
  *   start      resume after this userId (the `lastUserId` a previous run returned). Default 0.
@@ -66,7 +67,20 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   let users = 0;
   let inserted = 0;
   for (;;) {
-    const batch = await runBatch(cursor);
+    let batch: MilestoneBatchResult;
+    try {
+      batch = await runBatch(cursor);
+    } catch (e) {
+      // Every committed batch stays committed, so resume with `start` set to this `lastUserId`.
+      return res.status(500).json({
+        action: params.action,
+        error: (e as Error).message,
+        batches,
+        users,
+        inserted,
+        lastUserId: cursor,
+      });
+    }
     if (!batch.users || batch.lastUserId == null) break;
     batches++;
     users += batch.users;
@@ -103,7 +117,7 @@ async function previewBackfill(params: z.infer<typeof schema>) {
         JOIN "CreatorMilestone" m
           ON m.track = 'score' AND m.threshold IS NOT NULL
           AND (u.meta->'scores'->>'total')::numeric >= m.threshold
-        WHERE u.id > $1 AND ($2::int IS NULL OR u.id <= $2) AND u.id <> -1
+        WHERE u.id > $1 AND ($2::int IS NULL OR u.id <= $2) AND u.id <> ${SYSTEM_USER_ID}
           AND NOT EXISTS (
             SELECT 1 FROM "UserCreatorMilestone" ucm
             WHERE ucm."userId" = u.id AND ucm."milestoneKey" = m.key
@@ -111,6 +125,6 @@ async function previewBackfill(params: z.infer<typeof schema>) {
       `;
   const binds: unknown[] = [params.start, params.end ?? null];
   if (params.action === 'cosmetics') binds.push(params.milestoneKey ?? null);
-  const result = await pgDbRead.query<{ users: number; rows: number }>(query, binds);
+  const result = await pgDbReadLong.query<{ users: number; rows: number }>(query, binds);
   return { wouldGrant: result.rows[0] };
 }

@@ -89,6 +89,21 @@ describe('creator-score-tier-reached notification', () => {
   });
 
   it('caps the named unlocks and counts the rest', () => {
+    const many = ['a', 'b', 'c', 'd', 'e'].map((label) => ({
+      ...unlocks[0],
+      key: label,
+      label,
+      minScore: 10000,
+    }));
+    expect(
+      getScoreTierNotificationDetails(
+        { userId: 1, milestoneKey: 'score:blaze', name: 'Blaze', threshold: 10000 },
+        many
+      )
+    ).toMatchObject({ unlocks: ['a', 'b', 'c'], moreUnlocks: 2 });
+  });
+
+  it('formats a capped list with its remainder', () => {
     const message = getNotificationMessage({
       type: 'creator-score-tier-reached',
       details: {

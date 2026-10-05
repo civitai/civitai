@@ -28,7 +28,7 @@ function checkpoints(ageHours: Record<string, number>) {
 beforeEach(() => vi.clearAllMocks());
 
 describe('checkUserScoreHealth', () => {
-  it('watches one checkpoint per score category', () => {
+  it('watches one checkpoint per score category and one for tier grants', () => {
     expect(userScoreCheckpointKeys).toEqual([
       'update-user-score:models',
       'update-user-score:articles',
@@ -36,6 +36,7 @@ describe('checkUserScoreHealth', () => {
       'update-user-score:reportsActioned',
       'update-user-score:reportsAgainst',
       'update-user-score:images',
+      'update-user-score:tierGrants',
     ]);
   });
 
@@ -60,6 +61,9 @@ describe('checkUserScoreHealth', () => {
 
   it('treats a checkpoint that was never written as stale', async () => {
     checkpoints({});
-    expect(await checkUserScoreHealth(now)).toMatchObject({ healthy: false, stale: 6 });
+    expect(await checkUserScoreHealth(now)).toMatchObject({ healthy: false, stale: 7 });
+    expect(mocks.notifyModAlert).toHaveBeenCalledTimes(1);
+    const [, description] = mocks.notifyModAlert.mock.calls[0] as unknown as [string, string];
+    expect(description).toContain('`update-user-score:tierGrants` last succeeded never');
   });
 });
