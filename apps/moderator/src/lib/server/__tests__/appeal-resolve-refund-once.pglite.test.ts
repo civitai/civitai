@@ -1,0 +1,128 @@
+import { PGlite } from '@electric-sql/pglite';
+import { Kysely } from 'kysely';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Effects from '../image-moderation-effects';
+import { pgliteDialect } from './abuse-detection-pglite.harness';
+
+/**
+ * Two moderators resolving one appeal at once both used to read it Pending, and each refunded the
+ * fee. Rows are what decide which resolution closed the appeal, so this runs against a real Postgres.
+ */
+
+const { dbHandle, refundAppealFee } = vi.hoisted(() => ({
+  dbHandle: { current: null as unknown },
+  refundAppealFee: vi.fn(async () => undefined),
+}));
+
+vi.mock('../db', () => ({
+  get dbRead() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
+  get dbWrite() {
+    if (!dbHandle.current) throw new Error('the pglite client was not installed for this test');
+    return dbHandle.current;
+  },
+}));
+vi.mock('../image-moderation-effects', async (importOriginal) => ({
+  ...(await importOriginal<typeof Effects>()),
+  refundAppealFee,
+  notifyAppealResolved: vi.fn(async () => undefined),
+  emailAppealResolution: vi.fn(async () => undefined),
+  applyAcceptSideEffects: vi.fn(async () => undefined),
+  applyVisibilitySideEffects: vi.fn(async () => undefined),
+}));
+vi.mock('../mod-activity', () => ({ recordModActivity: vi.fn(async () => undefined) }));
+vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
+vi.mock('../cache', () => ({ bustCachedObject: vi.fn(async () => undefined) }));
+vi.mock('../clickhouse', () => ({ getClickhouse: () => ({}) }));
+
+const { acceptImage, resolveImageAppeal } = await import('../image-moderation.service');
+
+// Stand-ins cut to the columns the two resolve paths touch.
+const SCHEMA = `
+CREATE TABLE "Image" (
+  "id" INTEGER PRIMARY KEY,
+  "needsReview" TEXT,
+  "blockedFor" TEXT,
+  "ingestion" TEXT,
+  "metadata" JSONB,
+  "pHash" BIGINT,
+  "postId" INTEGER,
+  "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
+);
+CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "email" TEXT, "username" TEXT);
+CREATE TABLE "Appeal" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER NOT NULL,
+  "entityType" TEXT NOT NULL,
+  "entityId" INTEGER NOT NULL,
+  "status" TEXT NOT NULL DEFAULT 'Pending',
+  "resolvedBy" INTEGER,
+  "resolvedAt" TIMESTAMP(3),
+  "resolvedMessage" TEXT,
+  "buzzTransactionId" TEXT
+);
+CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
+`;
+
+const IMAGE_ID = 41;
+const FEE = 'appeal-7-1790000000000-abcd1234';
+
+let db: PGlite;
+
+beforeEach(async () => {
+  refundAppealFee.mockClear();
+  db = await PGlite.create();
+  await db.exec(SCHEMA);
+  await db.query(
+    `INSERT INTO "Image" ("id", "needsReview", "blockedFor") VALUES ($1, 'appeal', 'moderated')`,
+    [IMAGE_ID]
+  );
+  await db.query(
+    `INSERT INTO "Appeal" ("userId", "entityType", "entityId", "buzzTransactionId") VALUES (7, 'Image', $1, $2)`,
+    [IMAGE_ID, FEE]
+  );
+  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+});
+
+afterEach(async () => {
+  dbHandle.current = null;
+  await db.close();
+});
+
+const appealStatuses = async () =>
+  (await db.query<{ status: string }>(`SELECT "status" FROM "Appeal" ORDER BY "id"`)).rows.map(
+    ({ status }) => status
+  );
+
+describe('resolving one appeal twice at once', () => {
+  it('resolveImageAppeal refunds the fee once', async () => {
+    const approve = () => resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
+
+    await Promise.all([approve(), approve()]);
+
+    expect(refundAppealFee).toHaveBeenCalledTimes(1);
+    expect(await appealStatuses()).toEqual(['Approved']);
+  });
+
+  it('acceptImage refunds the fee once', async () => {
+    const accept = () => acceptImage({ imageId: IMAGE_ID, userId: 2 });
+
+    await Promise.all([accept(), accept()]);
+
+    expect(refundAppealFee).toHaveBeenCalledTimes(1);
+    expect(await appealStatuses()).toEqual(['Approved']);
+  });
+
+  it('refunds nothing when another resolution already closed the appeal', async () => {
+    await db.query(`UPDATE "Appeal" SET "status" = 'Rejected'`);
+
+    await resolveImageAppeal({ imageId: IMAGE_ID, status: 'Approved', userId: 2 });
+
+    expect(refundAppealFee).not.toHaveBeenCalled();
+    expect(await appealStatuses()).toEqual(['Rejected']);
+  });
+});

@@ -122,20 +122,11 @@ export async function acceptImage({
   await applyAcceptSideEffects(img, imageId);
 
   if (nr === 'appeal') {
-    const appeal = await dbRead
-      .selectFrom('Appeal')
-      .select(['id', 'userId', 'buzzTransactionId'])
-      .where('entityType', '=', 'Image')
-      .where('entityId', '=', imageId)
-      .where('status', '=', 'Pending')
-      .executeTakeFirst();
-    await dbWrite
-      .updateTable('Appeal')
-      .set({ status: 'Approved', resolvedBy: userId, resolvedAt: new Date() })
-      .where('entityType', '=', 'Image')
-      .where('entityId', '=', imageId)
-      .where('status', '=', 'Pending')
-      .execute();
+    const appeal = await closePendingAppeal(imageId, {
+      status: 'Approved',
+      resolvedBy: userId,
+      resolvedAt: new Date(),
+    });
     if (appeal) await runAppealCascade(appeal, imageId, true, undefined, !deferAppealEmail);
   }
 }
@@ -199,7 +190,29 @@ export async function blockImage({
 
 export type AppealDecision = 'Approved' | 'Rejected';
 
-// `appeal` must be read while still Pending (before the row is closed) — the buzz txn id is needed here.
+/**
+ * Closes the image's pending appeal and returns it, or nothing when another resolution closed it
+ * first. Read-then-update let two concurrent resolutions both see it Pending and both refund the fee.
+ */
+function closePendingAppeal(
+  imageId: number,
+  decision: {
+    status: AppealDecision;
+    resolvedBy: number;
+    resolvedAt: Date;
+    resolvedMessage?: string | null;
+  }
+) {
+  return dbWrite
+    .updateTable('Appeal')
+    .set(decision)
+    .where('entityType', '=', 'Image')
+    .where('entityId', '=', imageId)
+    .where('status', '=', 'Pending')
+    .returning(['id', 'userId', 'buzzTransactionId'])
+    .executeTakeFirst();
+}
+
 async function runAppealCascade(
   appeal: { id: number; userId: number; buzzTransactionId: string | null },
   imageId: number,
@@ -294,27 +307,12 @@ export async function resolveImageAppeal({
 }): Promise<void> {
   const approved = status === 'Approved';
 
-  // Read the pending appeal (appellant + buzz txn) BEFORE closing it — the cascade below needs them.
-  const appeal = await dbRead
-    .selectFrom('Appeal')
-    .select(['id', 'userId', 'buzzTransactionId'])
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .where('status', '=', 'Pending')
-    .executeTakeFirst();
-
-  await dbWrite
-    .updateTable('Appeal')
-    .set({
-      status,
-      resolvedBy: userId,
-      resolvedMessage: resolvedMessage ?? null,
-      resolvedAt: new Date(),
-    })
-    .where('entityType', '=', 'Image')
-    .where('entityId', '=', imageId)
-    .where('status', '=', 'Pending')
-    .execute();
+  const appeal = await closePendingAppeal(imageId, {
+    status,
+    resolvedBy: userId,
+    resolvedMessage: resolvedMessage ?? null,
+    resolvedAt: new Date(),
+  });
 
   const img = await dbRead
     .selectFrom('Image')
