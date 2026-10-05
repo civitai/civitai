@@ -29,11 +29,16 @@ import {
   INVITE_LINK_COPY_LABEL,
   INVITE_LINK_TESTID,
 } from '~/components/Collections/CollectionInviteLink';
-// 🔴 `INVITE_LINK_ICON_INSET` IS DELIBERATELY NOT IMPORTED. It is BOTH the control's `right=`
-// prop and a term in the padding derived from it, so an assertion naming it would be the
-// implementation checking itself on both sides. The invite-link block below relates the
-// RENDERED padding to the RENDERED inset and the RENDERED control width instead; the only
-// constant it names is `COPY_CONTROL_SIZE`, which the cascade — not this repo — produces.
+// 🔴 `INVITE_LINK_ICON_INSET` IS DELIBERATELY NOT IMPORTED — and as of this PR it is not even
+// EXPORTED, so the convention is now structural. It is BOTH the control's `right=` prop and a
+// term in the padding derived from it, so an assertion naming it would be the implementation
+// checking itself on both sides. The invite-link block below relates the RENDERED padding to
+// the RENDERED inset and the RENDERED control width instead.
+//
+// ⚠️ THAT BLOCK DOES NAME `COPY_ICON_INSET`, AND AN EARLIER WORDING HERE SAID IT NAMED NO
+// REPO-OWNED CONSTANT AT ALL. It names it as a value to EXCLUDE (`.not.toBeCloseTo`), never as
+// an expectation — a different thing, but not "none". `COPY_CONTROL_SIZE` is named as an
+// expectation, and that one the cascade produces rather than this repo.
 
 /**
  * 🔒 THE COPY CONTROL DOES NOT SIT ON TOP OF THE TEXT IT COPIES.
@@ -800,6 +805,37 @@ describe('🔒 the collection invite-link body reserves the control`s width', ()
         'is derived from it, so update the constant rather than the padding.'
     ).toBe(COPY_CONTROL_SIZE);
 
+    // 🔴 THE VERTICAL AXIS, WHICH EVERY OTHER ASSERTION IN THIS BLOCK IS BLIND TO. The three
+    // lines above and the clearance tests are all horizontal, so they passed while the control
+    // hung 8.7px below the body: `transform: 'translateY(-50%) !important'` was dropped entirely
+    // (React assigns non-custom style properties through the CSSOM property setter, which
+    // rejects `!important`), leaving `top: 50%` uncorrected. Containment is the user-visible
+    // claim — an icon outside the box it belongs to — and centring is the mechanism.
+    // ⚠️ ORDERED STATE-FIRST, MECHANISM-LAST, AND THAT ORDER IS THE POINT. An earlier draft put
+    // the `transform !== 'none'` check first; it reds on the same mutant, but it is a claim
+    // about a CSS property SPELLING, and running first it shadowed the two assertions that say
+    // what is actually wrong on screen. A guard on a spelling can also be satisfied by any
+    // other transform. So containment reports first, centring second, and the spelling last as
+    // a diagnosis hint. All three were watched to fail on this mutant independently.
+    expect(
+      controlBox.bottom,
+      `the control's box ends at ${controlBox.bottom}, below the body's ${bodyBox.bottom} — it ` +
+        'is rendered outside the element it is positioned within'
+    ).toBeLessThanOrEqual(bodyBox.bottom);
+    expect(controlBox.top, 'the control starts above the body it sits in').toBeGreaterThanOrEqual(
+      bodyBox.top
+    );
+    expect(
+      (controlBox.top + controlBox.bottom) / 2,
+      `the control's vertical centre (${(controlBox.top + controlBox.bottom) / 2}) is not the ` +
+        `body's (${(bodyBox.top + bodyBox.bottom) / 2})`
+    ).toBeCloseTo((bodyBox.top + bodyBox.bottom) / 2, 1);
+    expect(
+      getComputedStyle(control.element()).transform,
+      'the control has no transform, so `top: 50%` is uncorrected and it hangs below the body. ' +
+        '`!important` in a React `style` value is dropped by the CSSOM property setter.'
+    ).not.toBe('none');
+
     const renderedInset = parseFloat(getComputedStyle(control.element()).right);
     expect(
       parseFloat(getComputedStyle(body).paddingRight),
@@ -808,9 +844,14 @@ describe('🔒 the collection invite-link body reserves the control`s width', ()
         'the inset moved without the padding following, or `copyBodyPaddingRight` stopped ' +
         'expressing the relation.'
     ).toBeCloseTo(renderedInset + controlBox.width, 1);
-    // And that the inset is this block's OWN, not the shared one — 10, not 8. A silent
-    // convergence onto `COPY_ICON_INSET` would be a 2px rendered-output change that every
-    // assertion above would still pass, because they are all self-consistent in the inset.
+    // And that the inset is NOT the shared one. ⚠️ THIS EXCLUDES ~8; IT DOES NOT PIN 10, AND
+    // THE COMMENT HERE USED TO SAY "10, not 8". Every assertion in this block is
+    // self-consistent in the inset, so `INVITE_LINK_ICON_INSET = 0` or `= 24` passes all of
+    // them (padding tracks, clearance stays 0.00). That is a cosmetic drift, not an overlap,
+    // so it is deliberately not guarded — but the distinction belongs in the comment, because
+    // "pins 10" reads as coverage this does not have. What it does catch is the one change
+    // with a real consequence: a silent convergence onto `COPY_ICON_INSET`, after which this
+    // body should drop its local constant and use `COPY_BODY_PADDING_RIGHT`.
     expect(
       renderedInset,
       `the invite control's inset rendered at ${renderedInset}px. This block is the repo's one ` +
@@ -854,12 +895,37 @@ describe('🔒 the collection invite-link body reserves the control`s width', ()
           `${getComputedStyle(control.element()).right} from the edge at ` +
           `${box(control.element()).width}px wide`
       ).toBeGreaterThanOrEqual(0);
-      // ⚠️ NO "THE PADDING TRACKED R" ASSERTION HERE — one was written, then deleted, because no
-      // mutant makes it report. A de-rem-ified padding (fixed `38px`) is caught by the clearance
-      // above at −9.5px, and an oversized one by the POSITIVE CONTROL's derivation at R=16; with
-      // that derivation pinning 38px at R=16, no px spelling leaves this clearance non-negative.
-      // `AgentOnboardingCard`'s prose panel does need its equivalent — a `.panel` 1px border
-      // lands its gap on exactly 0.00px at R=20 — and this body has no such term.
+
+      // 🔴 THE DERIVATION AGAIN, AT THIS ROOT FONT SIZE — RENDERED AGAINST RENDERED. This
+      // replaces a deleted "padding tracked R" check that compared the R=20 padding against the
+      // R=16 reading × 1.25. That form was both weaker and partly self-referential, and the
+      // comment justifying its deletion claimed "no mutant could be constructed in which it
+      // reports" — which is false, and is corrected here rather than reworded: a padding that
+      // OVER-tracks R (e.g. `calc(4.75rem - 38px)`, which is 38px at R=16 and 57px at R=20)
+      // passes the R=16 derivation AND leaves this clearance at +9.5px, so the clearance above
+      // genuinely cannot see it. The true statement is narrower: no PURE px spelling survives,
+      // because with 38px pinned at R=16 any fixed value drives this clearance negative.
+      //
+      // This line closes that gap in both directions at once, and it is strictly stronger than
+      // what it replaces: it also pins the control's border box as REM-SCALED at this R. If
+      // Mantine's cascade ever switched to the literal `--ai-size-md: 28px` of the
+      // per-component stylesheet, the control would measure 28 here instead of 35 and
+      // `47.5 ≈ 12.5 + 28` is false. Until now that fact lived only in a transient mutant run.
+      expect(
+        parseFloat(getComputedStyle(body).paddingRight),
+        `at a ${ROOT_FONT_SIZE} root font size the reserved padding ` +
+          `(${getComputedStyle(body).paddingRight}) is not the rendered inset ` +
+          `(${getComputedStyle(control.element()).right}) plus the rendered control width ` +
+          `(${box(control.element()).width}px). Too SMALL means the padding stopped scaling; ` +
+          'too LARGE means it over-scales, which the clearance above cannot see; and a flat 28 ' +
+          'for the control means the cascade moved to the px spelling of `--ai-size-md`.'
+      ).toBeCloseTo(
+        parseFloat(getComputedStyle(control.element()).right) + box(control.element()).width,
+        1
+      );
+      // `AgentOnboardingCard`'s prose panel needs a TRACKING check rather than this derivation:
+      // it reserves half a rem more than the minimum, so a derivation would red on the correct
+      // stylesheet, and its `.panel` 1px border lands its gap on exactly 0.00px at R=20.
     } finally {
       document.documentElement.style.removeProperty('font-size');
     }

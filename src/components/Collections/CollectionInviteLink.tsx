@@ -26,9 +26,17 @@ const INVITE_LINK_ICON_INSET = 10;
 /**
  * The clearance this body reserves, from the one shared rule.
  *
- * 🔴 ITS ABSENCE WAS A LIVE OVERLAP. The control is absolutely positioned over the body, so
- * with no right padding the invite URL's tail rendered underneath the clipboard icon. The
- * magnitudes are measured in `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`,
+ * 🔴 ITS ABSENCE WAS A **LATENT** OVERLAP, NOT A LIVE ONE — AND THIS SENTENCE SAID "LIVE"
+ * UNTIL REVIEW CAUGHT THAT THE SAME COMMIT REFUTES IT. The control is absolutely positioned
+ * over the body, so with no right padding the invite URL's tail falls underneath the clipboard
+ * icon. But no invite URL ever reached the browser: the `env` read backing it was
+ * `import { env } from 'process'` (see `CollectionEditModal.tsx`), so `joinUrl` was `''`
+ * unconditionally and the body was always empty. Nothing was under the icon because nothing
+ * was there at all. Fixing that import is what makes this overlap REACHABLE, which is why both
+ * fixes belong in one commit — and the honest basis for this padding is "the body reserves no
+ * clearance, and a non-empty URL now renders here", not a user-visible symptom anyone saw.
+ *
+ * The magnitudes are measured in `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`,
  * which mounts this component and reports the clearance in its own failure messages.
  *
  * Module-local for the same reason as the inset: nothing outside needs it, and it looks enough
@@ -94,7 +102,18 @@ export function CollectionInviteLink({ joinUrl }: { joinUrl: string }) {
               top="50%"
               right={INVITE_LINK_ICON_INSET}
               variant="transparent"
-              style={{ transform: 'translateY(-50%) !important' }}
+              // 🔴 NO `!important` HERE, AND REMOVING IT IS A BEHAVIOUR FIX, NOT A TIDY-UP.
+              // This read `translateY(-50%) !important`, and `!important` is not valid in a
+              // value assigned through the CSSOM property setter — which is how React writes
+              // non-custom style properties — so the whole declaration was DROPPED. Measured
+              // at 390x844: `getComputedStyle(control).transform` was `none`, leaving the
+              // control at `top: 50%` with no correction, its box running 19.3→47.3 against a
+              // body of 0→38.59 — hanging 8.7px BELOW the body it sits in, rather than
+              // centred on it. With the `!important` gone the declaration applies and the
+              // control centres. Pinned by the vertical assertions in
+              // `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`; found by
+              // review, because every assertion in that block was horizontal.
+              style={{ transform: 'translateY(-50%)' }}
               disabled={!canCopy}
               aria-label={INVITE_LINK_COPY_LABEL}
             >

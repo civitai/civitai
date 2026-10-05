@@ -221,6 +221,13 @@ export function CopyAffordance({
  * R=20**, i.e. −1.75·R at both points. Recorded because a derivation that was confirmed is
  * worth distinguishing from the three in this file's history that were overturned.
  *
+ * ⚠️ BUT THE OVERLAP WAS **LATENT**, NOT LIVE, AND THE OLD PARAGRAPH IMPLIED OTHERWISE BY
+ * SAYING "on a full URL whose tail therefore scroll-paints under the icon". No full URL ever
+ * reached that body: its `env` read came from `process` rather than `~/env/client`, so the
+ * value was `''` unconditionally in the browser. The geometry above is what the body does to a
+ * URL that renders — which only became possible when that import was fixed, in the same commit
+ * as the padding. A measured clearance is not by itself evidence that anyone saw the defect.
+ *
  * ⚠️ THE CLEARANCE IS A CLAIM ABOUT A BODY WHOSE VALUE *FITS*, AND NOTHING MORE. Measured at
  * 390px: `<Code block>` computes `white-space: pre` / `text-wrap-mode: nowrap` /
  * `overflow-x: auto`, so a value wider than the content box does not wrap — it scrolls, and a
