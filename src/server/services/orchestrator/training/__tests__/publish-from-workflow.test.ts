@@ -532,6 +532,54 @@ function expiredRun(moderationStatus: string | undefined): Workflow {
   });
 }
 
+describe('approval stamp on re-entry', () => {
+  it('stamps an approved re-entry on a draft that has no stamp yet', async () => {
+    mockFindFirst.mockResolvedValue({
+      id: 77,
+      meta: { trainingStudioWorkflowId: 'wf-studio-1' },
+      modelVersions: [{ id: 88 }],
+    });
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 3,
+    });
+    expect(dbMock.dbWrite.$executeRaw).toHaveBeenCalledTimes(1);
+    const [sql, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(sql.join('?')).toMatch(/'\{trainingStudioModerationApproved\}', 'true'::jsonb/);
+    expect(values).toEqual([77]);
+  });
+
+  it('does not write when the draft already carries the stamp', async () => {
+    mockFindFirst.mockResolvedValue({
+      id: 77,
+      meta: { trainingStudioWorkflowId: 'wf-studio-1', trainingStudioModerationApproved: true },
+      modelVersions: [{ id: 88 }],
+    });
+    await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 3,
+    });
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
+  it('does not stamp a re-entry the gate refuses', async () => {
+    mockFindFirst.mockResolvedValue({ id: 77, meta: null, modelVersions: [{ id: 88 }] });
+    await expect(
+      createDraftModelFromWorkflow({
+        user: USER,
+        workflow: runWithModeration('rejected'),
+        selectedEpochNumber: 1,
+      })
+    ).rejects.toThrow(NOT_APPROVED);
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+});
+
 describe('training moderation gate — runs whose blobs have expired', () => {
   it('re-entry on an existing draft of an approved expired run resolves with a null epoch', async () => {
     mockFindFirst.mockResolvedValue({ id: 77, modelVersions: [{ id: 88 }] });

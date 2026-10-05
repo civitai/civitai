@@ -267,15 +267,25 @@ export async function createDraftModelFromWorkflow({
     },
     select: {
       id: true,
+      meta: true,
       modelVersions: { select: { id: true }, take: 1, orderBy: { index: 'asc' } },
     },
   });
-  if (existing?.modelVersions[0])
+  if (existing?.modelVersions[0]) {
+    // A draft materialized before the approval stamp existed gets it here: the run was just
+    // checked above. Set as one key, so a concurrent meta write is not overwritten.
+    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
+      await dbWrite.$executeRaw`
+        UPDATE "Model"
+        SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
+        WHERE id = ${existing.id}
+      `;
     return {
       modelId: existing.id,
       modelVersionId: existing.modelVersions[0].id,
       selectedEpoch: selectedEpoch?.modelUrl ? selectedEpoch : null,
     };
+  }
 
   if (!selectedEpoch?.modelUrl)
     throw throwBadRequestError('This training run has no downloadable checkpoint to publish.');
