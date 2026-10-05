@@ -5,6 +5,7 @@ import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import {
+  CREATOR_SCORE_EXPLAINER_HREF,
   CreatorScoreExplainer,
   creatorScoreSources,
 } from '~/components/Account/CreatorScoreExplainer';
@@ -74,6 +75,11 @@ describe('CreatorScoreExplainer', () => {
     const hrefs = [...withLink.querySelectorAll('a')].map((a) => a.getAttribute('href'));
     expect(hrefs).toEqual(['/journey-route-under-test']);
   });
+});
+
+// Score-gate refusals and the Creator Program pages already link to this exact URL.
+it('keeps the explainer at the account creator-score anchor', () => {
+  expect(CREATOR_SCORE_EXPLAINER_HREF).toBe('/user/account#creator-score');
 });
 
 describe('UserScoreDisplay category legend', () => {
