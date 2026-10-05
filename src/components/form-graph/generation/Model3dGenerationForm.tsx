@@ -1,4 +1,5 @@
 import { Checkbox, NumberInput, Stack, Textarea } from '@mantine/core';
+import { FieldCorrectionNote } from './FieldCorrectionNote';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller } from 'form-graph/react';
 
@@ -515,8 +516,11 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
         <Controller
           graph={model3dHub}
           name="seed"
-          render={({ value, onChange }) => (
-            <SeedInput value={value} onChange={onChange} label="Seed" />
+          render={({ value, onChange, note }) => (
+            <div className="flex flex-col gap-1">
+              <SeedInput value={value} onChange={onChange} label="Seed" />
+              <FieldCorrectionNote note={note} />
+            </div>
           )}
         />
       </AccordionLayout>

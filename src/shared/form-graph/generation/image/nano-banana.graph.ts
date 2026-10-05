@@ -1,17 +1,22 @@
 import { z } from 'zod';
 import { branch, defFamily, defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { img2imgImages, SEED, aspectRatioDef, boolDef, type AspectRatioOption } from '../defs';
+import {
+  optionFallback,
+  img2imgImages,
+  SEED,
+  aspectRatioDef,
+  boolDef,
+  type AspectRatioOption,
+} from '../defs';
 import { versionModeOf, familyScope, makeTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Nano Banana (standard / pro / v2 / v2 lite), ported from
- * `nano-banana-graph.ts`. Modes by version id: standard is seed-only, pro adds
+ * Nano Banana (standard / pro / v2 / v2 lite). Modes by version id: standard is
+ * seed-only, pro adds
  * negative prompt + resolution tiers, v2 swaps the negative prompt for a
  * web-search toggle, v2 lite is aspect ratio + seed at 1K.
  */
-
-// ---- copied from nano-banana-graph.ts / version-ids.ts ----------------------
 
 export type NanoBananaMode = 'standard' | 'pro' | 'v2' | 'v2lite';
 
@@ -60,14 +65,13 @@ function getNanoBananaAspectRatios(resolution: string): AspectRatioOption[] {
   }));
 }
 
-// ---- end of nano-banana-graph.ts copies -------------------------------------
-
 type NanoBananaModeExt = FamilyExt & { model?: unknown };
 
 const RESOLUTION = {
   input: z.enum(resolutionOptions).optional(),
   output: z.enum(resolutionOptions),
   default: '1K' as (typeof resolutionOptions)[number],
+  correct: optionFallback(resolutionOptions, '1K' as (typeof resolutionOptions)[number]),
   meta: { options: resolutionOptions.map((r) => ({ label: r, value: r })) },
 };
 
@@ -104,7 +108,7 @@ const v2lite = defineGraph<NanoBananaModeExt>()
   )
   .field('seed', SEED);
 
-/** Tagged: v1's `nanoBananaMode` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `nanoBananaMode`. */
 const modes = branch('nanoBananaMode', (ext: NanoBananaModeExt) => nanoBananaModeOf(ext.model), {
   standard,
   pro,
