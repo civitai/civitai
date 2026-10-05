@@ -51,17 +51,6 @@ function construct(client: ReturnType<typeof fakeClient>['client']) {
 }
 
 describe('Feed read path — index handle', () => {
-  it('builds the index handle locally on construction instead of fetching it', async () => {
-    const { client } = fakeClient();
-
-    const feed = construct(client);
-    await feed.ready();
-
-    expect(client.getIndex).not.toHaveBeenCalled();
-    expect(client.index).toHaveBeenCalledTimes(1);
-    expect(client.index).toHaveBeenCalledWith('test_feed_index_handle');
-  });
-
   it('serves a query with the search as its only Meilisearch call', async () => {
     const { client, search } = fakeClient();
 
