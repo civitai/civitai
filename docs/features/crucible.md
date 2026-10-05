@@ -48,7 +48,7 @@ The pool is the seeded amount plus the fee of every paid entry. Free entries add
 
 At the end, entries need a minimum share of votes to place; ties go to the earlier entry. Prizes follow the prize distribution, but a creator takes at most one: their best-placed entry. Their other entries keep their positions on the leaderboard and win nothing, and the next creator takes the next prize. When fewer creators place than there are prizes, the unfilled shares go to the winners in proportion to their own. Entries whose media was blocked, taken down or re-rated outside the crucible's levels can't place, and their fees stay in the pool. If nobody entered, or nothing could be awarded, the seed goes back to the creator.
 
-The discovery page's Prize Pool sort uses the same pool.
+The discovery page's Prize Pool sort uses the same pool. Whenever upcoming crucibles are listed alongside running ones, every running crucible comes first, whatever the sort.
 
 Prizes are plain Buzz. A winner claims theirs from the link in their results notification (or the banner on the crucible page): on civitai.com it is paid in green, and on civitai.red the winner picks green or yellow. A prize nobody claims is paid in green after 30 days. A banned winner's prize is held, neither claimable nor auto-paid, until the ban is lifted. Claiming is shared with challenge winner prizes; see `src/server/services/prize.service.ts`.
 
