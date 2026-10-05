@@ -51,7 +51,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 //     `resourceLoad.getResidency` read. What the stub KEEPS observable is the row's
 //     own `{!isDisabled}` render guard and the `resource.id -> modelVersionId` prop,
 //     both pinned in Layer 2 ("residency row"). Nothing else about residency is
-//     asserted here — nor anywhere else in the repo; see the vi.mock note.
+//     asserted here — nor by any other COMPONENT test; see the vi.mock note.
 //
 //   Mantine is NOT mocked (resolve.dedupe handles dual-React at the scaffold).
 //
@@ -131,14 +131,20 @@ vi.mock('~/providers/AppProvider', () => ({
 //
 // 🔴 WHAT THE STUB SHADOWS — do NOT read it as "covered elsewhere". The residency
 // dot, its label and the live `resourceLoad.getResidency` read are asserted nowhere
-// in this file, before this stub or after. They are asserted nowhere ELSE either:
-// the repo's only residency test is
-// `src/components/ResourceLoad/__tests__/resource-residency.test.ts`, which
-// exercises the pure `describeResidency` availability->label mapping and renders
-// nothing. `ResourceResidencyStatus`, `ResidencyBatchProvider`, `useResidency`,
-// `useResourceResidency`, `LoadedMark`, `LoadedCornerBadge` and `StatusDot` have no
-// tests at all. So the component layer of residency is untested repo-wide, and a
-// boundary stub here is exactly what makes that invisible to the next reader.
+// in this file, before this stub or after, and nowhere else at the COMPONENT layer:
+// `ResourceResidencyStatus`, `ResidencyBatchProvider`, `useResidency`,
+// `useResourceResidency`, `LoadedMark`, `LoadedCornerBadge` and `StatusDot` are the
+// subject of no test, and the two files naming `useRefreshResidencyOnOpen` only
+// `vi.fn()` it. The one residency test under `src/components/` is
+// `src/components/ResourceLoad/__tests__/resource-residency.test.ts`, which exercises
+// the pure `describeResidency` availability->label mapping and renders nothing.
+//
+// Scope that claim to the component layer and no wider: the SERVER side is covered.
+// `resourceLoad.getResidency` is a thin delegate to `getResourceResidency`
+// (`src/server/routers/resource-load.router.ts`), and that function plus
+// `bustResourceResidency` have tests in
+// `src/server/services/__tests__/resource-load.service.test.ts`. So what a boundary
+// stub here hides from the next reader is the RENDERED row, not the data behind it.
 // (Derive rather than trust this paragraph:
 // `grep -rl 'ResourceResidencyStatus\|ResidencyBatchProvider' src --include='*.test.ts*'`.)
 //

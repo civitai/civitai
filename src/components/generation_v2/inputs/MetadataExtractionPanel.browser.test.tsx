@@ -119,11 +119,14 @@ import { renderWithProviders } from '../../../../test/component-setup';
 // watching this file still pass 8/8. Two independent fixes in one commit, not one fix
 // with a prerequisite.
 //
-// It is also NOT a consolidation of the class. Measured at the time of writing, 57 other
-// test files still mock `~/utils/trpc` with a bare factory (60 counting three that use
-// both forms), 52 of them with no `eslint-disable` — so the mechanism survives everywhere
-// but here. Derive rather than trust that figure:
-//   grep -rl "vi.mock('~/utils/trpc'" src --include='*.test.ts*'
+// It is also NOT a consolidation of the class: many other test files still mock
+// `~/utils/trpc` with a bare factory, nearly all of them with no `eslint-disable` — so
+// the mechanism survives everywhere but here. The three figures that used to sit here
+// are deleted rather than restated: two did not reproduce, and the `grep -l` offered
+// alongside them matches every form of the mock (this comment included), so it cannot
+// produce any of them. Telling a bare factory from an `importOriginal` one needs a
+// paren-balanced, comment-stripped walk of each `vi.mock` call — and a figure nobody
+// can re-derive is worse than none.
 //
 // This mock used to name its exports by hand (`trpc`, `trpcVanilla`, `queryClient`,
 // `handleTRPCError`), which `local-rules/no-wholesale-module-mock` flags at
@@ -197,12 +200,16 @@ vi.mock('~/components/ResourceLoad/ResourceResidency', async (importOriginal) =>
 }));
 
 // 🔴 LOAD-BEARING BEYOND THE "Resources (N)" BRANCH — do not delete this stub to
-// "widen coverage". The residency mock above overrides only `ResidencyBatchProvider`,
-// so its `importOriginal` spread re-exports the REAL `ResourceResidencyStatus`, which
-// the real `ResourceItemContent` renders (ResourceItemContent.tsx:306-312). Dropping
-// this stub therefore re-introduces the civitai#5364 render throw and takes the whole
-// file red again — with the same misleading "Cannot find element" message. If you want
-// the real child here, stub `ResourceResidencyStatus` in the mock above first.
+// "widen coverage". The reason is the one section (3) above already gives for stubbing
+// it: the real `ResourceItemContent` reads AppProvider context
+// (`ResourceItemContent.tsx:165` calls `useAppContext`), and this file mocks no
+// `~/providers/AppProvider`. Measured by deleting only this stub: 1 of the 8 tests
+// fails — `store.resolvedResources render the Resources card`, on the 15s locator
+// timeout, with `missing AppProvider in tree` thrown at
+// `src/providers/AppProvider.tsx:78` from inside `ResourceItemContent`. Not the
+// civitai#5364 residency throw: `missing CivitaiSessionContext` does not appear in that
+// run at all, because the residency leaf sits further down this child and is never
+// reached.
 vi.mock('./ResourceItemContent', () => ({
   ResourceItemContent: ({ resource, actions }: { resource: { id: number }; actions: any }) => (
     <div data-testid="resource-item" data-resource-id={resource.id}>
