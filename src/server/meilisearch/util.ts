@@ -95,13 +95,21 @@ const swapIndex = async ({
 /**
  * Discards a swap index that will not be promoted.
  *
- * `swapIndex` deletes the swap index as its last step, so for a reset that completes in a swap this
- * is unnecessary. It exists for the reset that ABANDONS its rebuild: without it the half-built
- * `<indexName>_NEW` stays resident, and because `getOrCreateIndex` only creates on
- * `index_not_found` — it never clears an index that already exists — the NEXT reset would push its
- * documents on top of the abandoned ones. A later successful swap would then promote a corpus
- * carrying documents for ids that are no longer eligible, which is a different and quieter
- * corruption than the one the abandoning exists to prevent.
+ * `swapIndex` deletes the swap index as its last step, so a reset that completes in a swap does not
+ * need this. It exists for the reset that ABANDONS its rebuild: without it the half-built
+ * `<indexName>_NEW` stays resident, holding a near-complete copy of the corpus until some later run
+ * happens to swap.
+ *
+ * 🔴 BEST-EFFORT, AND NOT A CORRECTNESS MECHANISM. The deletion is a Meilisearch TASK and this
+ * resolves when that task is ENQUEUED, not when it completes (`Index.delete` returns an
+ * `EnqueuedTask`). So it does not establish "the swap index is gone" for anything that runs after
+ * it — a caller that needs to know an index is empty has to READ, which is what
+ * `countIndexDocuments` is for. Do not reintroduce a call to this before a rebuild and treat it as
+ * a guarantee: the deletion lands AFTER the rebuild's `setup` has already read the old settings,
+ * so the rebuild gets a bare auto-created index and the swap promotes one with no settings at all.
+ *
+ * `deleteIndexIfExists`, not `deleteIndex`: the latter throws `index_not_found`, and an absent swap
+ * index is an ordinary case. Returns false when there was nothing there.
  */
 const deleteSwapIndex = async ({
   swapIndexName,
@@ -114,7 +122,37 @@ const deleteSwapIndex = async ({
     return;
   }
 
-  await client.deleteIndex(swapIndexName);
+  return await client.deleteIndexIfExists(swapIndexName);
+};
+
+/**
+ * How many documents an index holds, or `null` when there is no search client to ask.
+ *
+ * A READ, deliberately, and that is the whole point: Meilisearch mutations are tasks that complete
+ * asynchronously, so no sequence of deletes can prove an index is empty at the moment a rebuild
+ * starts writing into it. A stats read can, because it answers about now.
+ *
+ * An absent index counts as 0 rather than an error — "not there" and "there and empty" are the same
+ * answer to the question the callers ask.
+ */
+const countIndexDocuments = async ({
+  indexName,
+  client = searchClient,
+}: {
+  indexName: string;
+  client?: MeiliSearch | null;
+}): Promise<number | null> => {
+  if (!client) {
+    return null;
+  }
+
+  try {
+    const stats = await client.index(indexName).getStats();
+    return stats.numberOfDocuments;
+  } catch (e) {
+    if ((e as MeiliSearchErrorInfo)?.code === 'index_not_found') return 0;
+    throw e;
+  }
 };
 
 const onSearchIndexDocumentsCleanup = async ({
@@ -318,6 +356,7 @@ export const processUserContentRemovalQueue = async () => {
 export {
   swapIndex,
   deleteSwapIndex,
+  countIndexDocuments,
   getOrCreateIndex,
   onSearchIndexDocumentsCleanup,
   waitForTasksWithRetries,

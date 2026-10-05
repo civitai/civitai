@@ -8,12 +8,23 @@ const swapIndex = vi.fn();
 const deleteSwapIndex = vi.fn();
 const getOrCreateIndex = vi.fn();
 const clearQueue = vi.fn();
+/**
+ * How many documents an index holds. `reset` reads this twice and the two reads mean different
+ * things, so cases set it per index name: the SWAP index (is there a stale rebuild to refuse?) and
+ * the LIVE index (is there anything for an empty rebuild to destroy?). Default 0 for both, which is
+ * the "nothing at stake" baseline every other case wants.
+ */
+const documentCounts = new Map<string, number | null>();
+const countIndexDocuments = vi.fn(async ({ indexName }: { indexName: string }) =>
+  documentCounts.has(indexName) ? documentCounts.get(indexName)! : 0
+);
 
 vi.mock('~/server/meilisearch/util', async (importOriginal) => ({
   ...(await importOriginal<typeof MeiliUtil>()),
   getOrCreateIndex,
   swapIndex,
   deleteSwapIndex,
+  countIndexDocuments,
   onSearchIndexDocumentsCleanup: vi.fn(),
 }));
 
@@ -110,18 +121,35 @@ afterEach(() => {
   deleteSwapIndex.mockReset();
   getOrCreateIndex.mockReset();
   clearQueue.mockReset();
+  // `mockClear`, not `mockReset`: this one carries an implementation that reads `documentCounts`,
+  // and `mockReset` would strip it, so every later case would see `undefined` document counts.
+  // Clearing the call log is still required — without it the counts accumulate across cases and a
+  // `not.toHaveBeenCalled()` assertion fails on calls another case made.
+  countIndexDocuments.mockClear();
+  documentCounts.clear();
 });
 
 /** The swap index a non-partial reset builds into, named once so the assertions agree. */
 const SWAP_INDEX = 'test_index_NEW';
 
-/** Resolves to the error `reset` refused with, failing loudly if it resolved instead. */
+/**
+ * Resolves to the error `reset` refused with, failing loudly if it resolved instead.
+ *
+ * It RE-THROWS anything that is not a refusal, which is the difference between this and a bare
+ * `.catch`. A helper that hands back any rejection lets a case assert against, say, a `TypeError`
+ * from a typo in the production path and still pass — measured: with `refuse` made to throw a
+ * `TypeError`, one case in this file went green on a crash. Tightened here rather than in each
+ * case, so the property holds for every current and future user.
+ */
 const expectRefusal = (promise: Promise<unknown>) =>
   promise.then(
     () => {
       throw new Error('reset resolved; expected it to refuse the swap');
     },
-    (e: unknown) => e as InstanceType<typeof SearchIndexResetIncompleteError>
+    (e: unknown) => {
+      if (!(e instanceof SearchIndexResetIncompleteError)) throw e;
+      return e;
+    }
   );
 
 describe('reset :: refuses to publish a truncated index', () => {
@@ -220,26 +248,42 @@ describe('reset :: refuses to publish a truncated index', () => {
     expect(swapIndex).not.toHaveBeenCalled();
   }, 60_000);
 
-  it('names at most FAILED_RANGE_MESSAGE_LIMIT ranges in the message, and all of them on the field', async () => {
-    // Every batch failing is the backend-down shape. Unbounded, the joined list is ~25 KB for a
-    // real corpus and rides into the log sink inside the stack; the full list stays queryable on
-    // the error. 28 batches is deliberately more than the limit of 20 and not a multiple of it.
-    const BATCHES = 28;
-    const index = buildIndex({
-      prepareBatches: async () => ({ batchSize: 10, startId: 0, endId: BATCHES * 10 }),
-      pullData: vi.fn().mockRejectedValue(statementTimeout()),
-    });
+  it.each([
+    // The boundary is what the single-size case could not see: with only `remaining = 8` tested,
+    // both `remaining >= 0` (always appends "…and 0 more") and `remaining > 1` (silently withholds
+    // exactly one range) survive. AT the limit there must be no suffix; one past it there must be.
+    { batches: FAILED_RANGE_MESSAGE_LIMIT, expectedWithheld: 0 },
+    { batches: FAILED_RANGE_MESSAGE_LIMIT + 1, expectedWithheld: 1 },
+    { batches: FAILED_RANGE_MESSAGE_LIMIT + 8, expectedWithheld: 8 },
+  ])(
+    'names at most FAILED_RANGE_MESSAGE_LIMIT of $batches ranges, and all of them on the field',
+    async ({ batches, expectedWithheld }) => {
+      // Every batch failing is the backend-down shape. Unbounded, the joined list is ~25 KB for a
+      // real corpus and rides into the log sink inside the stack; the full list stays on the error.
+      const index = buildIndex({
+        prepareBatches: async () => ({ batchSize: 10, startId: 0, endId: batches * 10 }),
+        pullData: vi.fn().mockRejectedValue(statementTimeout()),
+      });
 
-    const error = await expectRefusal(index.reset(jobContext));
+      const error = await expectRefusal(index.reset(jobContext));
 
-    expect(error.totalTasks).toBe(BATCHES);
-    expect(error.failedTasks).toBe(BATCHES);
-    // The field is complete...
-    expect(error.failedRanges).toHaveLength(BATCHES);
-    // ...the message is capped, and says how many it withheld.
-    expect(error.message).toContain(`…and ${BATCHES - FAILED_RANGE_MESSAGE_LIMIT} more`);
-    expect(error.message.match(/\d+-\d+/g) ?? []).toHaveLength(FAILED_RANGE_MESSAGE_LIMIT);
-  }, 120_000);
+      expect(error.totalTasks).toBe(batches);
+      expect(error.failedTasks).toBe(batches);
+      // The field is complete...
+      expect(error.failedRanges).toHaveLength(batches);
+      // ...the message is capped, and the number of rendered ranges never exceeds the limit.
+      expect(error.message.match(/\d+-\d+/g) ?? []).toHaveLength(
+        Math.min(batches, FAILED_RANGE_MESSAGE_LIMIT)
+      );
+      if (expectedWithheld === 0) {
+        // AT the limit nothing was withheld, so there must be no suffix at all.
+        expect(error.message).not.toContain('more');
+      } else {
+        expect(error.message).toContain(`…and ${expectedWithheld} more`);
+      }
+    },
+    180_000
+  );
 
   it('reports a single failed batch as one, not as every batch', async () => {
     // A second, differently-sized failure so the count cannot be a hardcoded 2 and still pass.
@@ -284,6 +328,66 @@ describe('reset :: positive control — a clean run still publishes', () => {
     expect(pushData).toHaveBeenCalledTimes(TOTAL_BATCHES);
   }, 60_000);
 
+  it('names the right index in every lifecycle call, and clears the queue only AFTER the swap', async () => {
+    // Each of these is a wrong-ARGUMENT or wrong-ORDER mutation that the assertions above cannot
+    // see, because they only check that a call happened:
+    //  - `setup` against the live index reconfigures the SERVING index instead of the rebuild;
+    //  - `getOrCreateIndex` against the swap index never ensures the base index a swap requires;
+    //  - `clearQueue` before `swapIndex` wipes the repair channel while the promotion can still
+    //    fail — the permanent half of the original incident, by a third route.
+    const order: string[] = [];
+    const setup = vi.fn(async () => void order.push('setup'));
+    getOrCreateIndex.mockImplementation(async () => void order.push('getOrCreateIndex'));
+    swapIndex.mockImplementation(async () => void order.push('swapIndex'));
+    clearQueue.mockImplementation(async () => void order.push('clearQueue'));
+    const index = buildIndex({ setup, pushData: async () => void order.push('push') });
+
+    await index.reset(jobContext);
+
+    expect(setup).toHaveBeenCalledTimes(1);
+    expect(setup).toHaveBeenCalledWith({ indexName: SWAP_INDEX });
+    // Compare the index NAME positionally rather than with `toHaveBeenCalledWith`:
+    // `expect.anything()` does not match `undefined`, and the fixture passes no client, so a
+    // whole-argument matcher fails for a reason that has nothing to do with the claim.
+    const ensuredIndexNames = getOrCreateIndex.mock.calls.map((call) => call[0]);
+    expect(ensuredIndexNames).toContain('test_index');
+    expect(ensuredIndexNames).not.toContain(SWAP_INDEX);
+    // The base index is ensured, then the rebuild is configured, then documents land, then the
+    // promotion, and only then the queue.
+    expect(order.indexOf('getOrCreateIndex')).toBeLessThan(order.indexOf('setup'));
+    expect(order.indexOf('setup')).toBeLessThan(order.indexOf('push'));
+    expect(order.indexOf('push')).toBeLessThan(order.indexOf('swapIndex'));
+    expect(order.indexOf('swapIndex')).toBeLessThan(order.indexOf('clearQueue'));
+    // `indexOf` returns -1 for an absent entry, which would satisfy a `toBeLessThan` by absence,
+    // so pin presence separately.
+    expect(order).toContain('swapIndex');
+    expect(order).toContain('clearQueue');
+  }, 60_000);
+
+  it('still promotes a corpus that fits in a SINGLE batch, over a POPULATED index', async () => {
+    // `tasks < 1` -> `tasks <= 1` survives every other case in this file, because no other fixture
+    // produces exactly one batch. A one-batch corpus is the normal state of the smaller indexes, so
+    // that mutant would refuse every reset of them.
+    //
+    // 🔴 The populated live index is load-bearing, and the first version of this case lacked it and
+    // let the mutant live. With an EMPTY live index the off-by-one mutant reaches the no-batches
+    // branch, finds nothing at stake, falls through and swaps anyway — indistinguishable from
+    // correct. Only an index with documents to lose makes the wrong boundary refuse.
+    documentCounts.set('test_index', 250);
+    const pushData = vi.fn().mockResolvedValue(undefined);
+    const index = buildIndex({
+      prepareBatches: async () => ({ batchSize: 1000, startId: 0, endId: 500 }),
+      pushData,
+    });
+
+    const result = await index.reset(jobContext);
+
+    expect(result.totalTasks).toBe(1);
+    expect(result.swapped).toBe(true);
+    expect(pushData).toHaveBeenCalledTimes(1);
+    expect(swapIndex).toHaveBeenCalledTimes(1);
+  }, 60_000);
+
   it('swaps even when a batch failed once and then succeeded on retry', async () => {
     // A retried-then-successful batch is NOT a dropped batch. `failTask` only records a task that
     // exhausted its retries, so the guard must not fire here — otherwise one transient timeout
@@ -310,33 +414,57 @@ describe('reset :: positive control — a clean run still publishes', () => {
 
 describe('reset :: refuses a rebuild that has no batches at all', () => {
   // The dropped-batch gate is satisfied by a run that enqueued NOTHING: `failedTasks === 0`, so
-  // before this guard it swapped a freshly-created EMPTY index over a populated one and then
-  // cleared the update queue — this file's own harm, at its maximum, by a different route.
+  // without this it swapped a freshly-created EMPTY index over a populated one and then cleared the
+  // update queue — this file's own harm, at its maximum, by a different route.
   //
-  // Both shapes come straight from `prepareBatches`, which is `SELECT MIN(id), MAX(id)` in every
-  // processor here with no null guard.
-  it.each([
+  // Both shapes come from `prepareBatches`: six processors derive their bounds from
+  // `MIN(id)/MAX(id)` and two from `ORDER BY "createdAt" LIMIT 1` subqueries, and all of them
+  // return `null` on an empty eligible set.
+  const NO_BATCH_SHAPES = [
     {
       label: 'an empty eligible corpus (null bounds)',
-      // `startId = 0` destructuring default does NOT fire for null, and `null - null` is 0.
+      // The `startId = 0` destructuring default does NOT fire for null, and `null - null` is 0.
       batches: { batchSize: BATCH_SIZE, startId: null, endId: null },
+      expectedTotalTasks: 0,
     },
     {
-      label: 'a single eligible row (startId === endId)',
+      // NOT "a corpus of one row is empty" — it is not. This yields 0 batches because of a
+      // pre-existing off-by-one: `tasks` is `ceil((endId - startId) / batchSize)` while each batch
+      // closes at `min(start + batchSize - 1, endId)`, so equal bounds produce no batch at all.
+      // Pinned as a route to `tasks === 0`, not as a statement about empty corpora. If that
+      // arithmetic is ever fixed, this row is expected to fail and should be deleted.
+      label: 'equal bounds (startId === endId), via the batch-count off-by-one',
       batches: { batchSize: BATCH_SIZE, startId: 500, endId: 500 },
+      expectedTotalTasks: 0,
     },
-  ])(
-    'refuses rather than swapping an empty index in for $label',
+    {
+      // 🔴 The ONLY row that reaches the `!Number.isFinite(tasks)` half of the guard:
+      // `Math.ceil(0 / 0)` is `NaN`, and `NaN < 1` is FALSE, so without that clause a NaN batch
+      // count falls through both gates, the enqueue loop runs zero times, and an empty rebuild is
+      // promoted. `{ batchSize: 0, startId: 0, endId: 0 }` is not invented — it is the literal
+      // shape `metrics-images--update-metrics` returns when it has no ClickHouse client.
+      label: 'a NaN batch count (batchSize 0)',
+      batches: { batchSize: 0, startId: 0, endId: 0 },
+      // `Math.ceil(0 / 0)` is NaN, and `totalTasks` reports it verbatim.
+      expectedTotalTasks: NaN,
+    },
+  ];
+
+  /**
+   * Cast on the FUNCTION, not its result: the declared return type says `startId: number`, while
+   * the real implementations return whatever the query gave them — `null` on an empty table.
+   * Reproducing that is the point, so the cast models production rather than dodging the type.
+   */
+  const withBatches = (batches: unknown) =>
+    ({ prepareBatches: async () => batches } as unknown as Partial<Processor>);
+
+  it.each(NO_BATCH_SHAPES)(
+    'refuses rather than replacing a populated index with nothing, for $label',
     async ({ batches }) => {
+      // The live index HAS documents, so an empty rebuild would destroy them.
+      documentCounts.set('test_index', 4321);
       const pushData = vi.fn();
-      const index = buildIndex({
-        // Cast on the FUNCTION, not its result: the declared return type says
-        // `startId: number`, while the real `prepareBatches` implementations return whatever
-        // `SELECT MIN(id), MAX(id)` gave them — `null` on an empty table. Reproducing that is the
-        // point of this case, so the cast is modelling production, not dodging the type.
-        prepareBatches: (async () => batches) as unknown as Processor['prepareBatches'],
-        pushData,
-      });
+      const index = buildIndex({ ...withBatches(batches), pushData });
 
       const error = await expectRefusal(index.reset(jobContext));
 
@@ -350,45 +478,126 @@ describe('reset :: refuses a rebuild that has no batches at all', () => {
     },
     60_000
   );
+
+  it.each(NO_BATCH_SHAPES)(
+    'still swaps for $label when the live index is EMPTY, so a new index gets its settings',
+    async ({ batches, expectedTotalTasks }) => {
+      // The positive control for this guard, and not a nicety: `setup` runs only against the swap
+      // index, so being swapped in is the ONLY way a brand-new index ever receives its settings.
+      // Refusing here would strand it unconfigured forever and every filtered query would error.
+      // That is the state of an index before launch, and of every index on a dev database.
+      // `documentCounts` is left empty, i.e. 0 documents live.
+      const setup = vi.fn();
+      const index = buildIndex({ ...withBatches(batches), setup });
+
+      const result = await index.reset(jobContext);
+
+      expect(result).toEqual({
+        indexName: 'test_index',
+        totalTasks: expectedTotalTasks,
+        failedTasks: 0,
+        failedRanges: [],
+        swapped: true,
+      });
+      expect(setup).toHaveBeenCalledWith({ indexName: SWAP_INDEX });
+      expect(swapIndex).toHaveBeenCalledTimes(1);
+      expect(clearQueue).toHaveBeenCalledTimes(1);
+    },
+    60_000
+  );
+
+  it('refuses when the live document count is unknown only if it is positive, never on null', async () => {
+    // `countIndexDocuments` returns null when there is no search client. Nothing reaches the index
+    // at all in that case, so nothing can be destroyed and the run must not fail.
+    documentCounts.set('test_index', null);
+    const index = buildIndex(withBatches(NO_BATCH_SHAPES[0].batches));
+
+    await expect(index.reset(jobContext)).resolves.toMatchObject({ swapped: true });
+  }, 60_000);
 });
 
-describe('reset :: the rebuild starts and ends without a stale swap index', () => {
-  it('discards the swap index before rebuilding, so a push cannot land on stale documents', async () => {
+describe('reset :: a rebuild must start from an empty swap index', () => {
+  it('refuses when the swap index already holds documents', async () => {
     // `setup` does not clear the swap index and `pushData` upserts by primary key, so documents
-    // left by an earlier abandoned rebuild would survive a run that simply does not rewrite those
-    // ids — and the swap would promote rows that are no longer eligible.
-    const order: string[] = [];
-    deleteSwapIndex.mockImplementation(async () => void order.push('delete'));
-    const index = buildIndex({
-      setup: async () => void order.push('setup'),
-      pushData: async () => void order.push('push'),
-    });
+    // left by an earlier run survive a rebuild that does not rewrite those ids — and the swap would
+    // then promote rows that are no longer eligible.
+    documentCounts.set(SWAP_INDEX, 17);
+    const pushData = vi.fn();
+    const index = buildIndex({ pushData });
+
+    const error = await expectRefusal(index.reset(jobContext));
+
+    expect(error.reason).toBe('stale-swap-index');
+    expect(error.message).toContain('already held documents');
+    expect(swapIndex).not.toHaveBeenCalled();
+    expect(clearQueue).not.toHaveBeenCalled();
+    // 🔴 And it refuses BEFORE rebuilding: pushing first would be hours of work thrown away, and
+    // would also be the thing that makes the stale documents unrecoverable.
+    expect(pushData).not.toHaveBeenCalled();
+  }, 60_000);
+
+  it('proceeds when the swap index is empty', async () => {
+    // Positive control: without it, a guard that refused on every swap-index state would pass the
+    // case above and break every reset.
+    const index = buildIndex();
+
+    const result = await index.reset(jobContext);
+
+    expect(result.swapped).toBe(true);
+    expect(countIndexDocuments).toHaveBeenCalledWith(
+      expect.objectContaining({ indexName: SWAP_INDEX })
+    );
+    expect(swapIndex).toHaveBeenCalledTimes(1);
+  }, 60_000);
+
+  it('reads the swap index rather than deleting it before the rebuild', async () => {
+    // 🔴 The ordering trap this design exists to avoid. Every Meilisearch mutation is a TASK, and
+    // `deleteIndex` resolves when the deletion is ENQUEUED. A delete here would land AFTER `setup`
+    // had read the OLD settings and found nothing to change, so no settings task would be
+    // enqueued; the deletion would then remove the index, `updateDocuments` would auto-create a
+    // bare one, and the swap would promote an index with NO attributes configured at all.
+    const index = buildIndex();
 
     await index.reset(jobContext);
 
-    expect(deleteSwapIndex).toHaveBeenCalledWith(
-      expect.objectContaining({ swapIndexName: SWAP_INDEX })
-    );
-    // Order is the whole point: a discard after `setup`, or after the first push, would delete the
-    // rebuild instead of the leftovers.
-    expect(order[0]).toBe('delete');
-    expect(order[1]).toBe('setup');
-    expect(order.indexOf('delete')).toBeLessThan(order.indexOf('push'));
+    // No delete on a clean run at all: `swapIndex` disposes of the swap index as its own last step.
+    expect(deleteSwapIndex).not.toHaveBeenCalled();
   }, 60_000);
+});
 
-  it('discards the unpromoted swap index when it refuses', async () => {
-    // Otherwise a near-complete copy of the corpus sits resident until the next run.
+describe('reset :: discards the rebuild it refuses to promote', () => {
+  it('deletes the SWAP index — never the live one — after refusing', async () => {
+    // 🔴 The argument is the assertion. A mutant passing `indexName` here deletes the PRODUCTION
+    // index on every refusal, which is strictly worse than the truncation this whole change
+    // prevents: not a short corpus, an absent one. A call-count assertion cannot see that.
     const pullData = pullDataFailingSomeBatches();
     const index = buildIndex({ pullData });
 
     await expectRefusal(index.reset(jobContext));
 
-    // Twice: once before the rebuild, once after refusing to promote it.
-    expect(deleteSwapIndex).toHaveBeenCalledTimes(2);
+    expect(deleteSwapIndex).toHaveBeenCalledTimes(1);
+    expect(deleteSwapIndex).toHaveBeenCalledWith(
+      expect.objectContaining({ swapIndexName: SWAP_INDEX })
+    );
+    // Stated as its own assertion so the intent survives a refactor of the matcher above.
+    expect(deleteSwapIndex).not.toHaveBeenCalledWith(
+      expect.objectContaining({ swapIndexName: 'test_index' })
+    );
     expect(swapIndex).not.toHaveBeenCalled();
   }, 60_000);
 
-  it('still refuses, with its own error, when discarding the swap index throws', async () => {
+  it('discards the rebuild on a stale-swap-index refusal too', async () => {
+    documentCounts.set(SWAP_INDEX, 3);
+    const index = buildIndex();
+
+    await expectRefusal(index.reset(jobContext));
+
+    expect(deleteSwapIndex).toHaveBeenCalledWith(
+      expect.objectContaining({ swapIndexName: SWAP_INDEX })
+    );
+  }, 60_000);
+
+  it('still refuses, with its own error, when discarding the rebuild throws', async () => {
     // A cleanup failure must not replace the diagnosis with something less informative.
     const pullData = pullDataFailingSomeBatches();
     deleteSwapIndex.mockRejectedValue(new Error('meilisearch rejected deleteIndex'));
@@ -401,16 +610,13 @@ describe('reset :: the rebuild starts and ends without a stale swap index', () =
     expect(error.failedTasks).toBe(EXPECTED_FAILED_TASK_COUNT);
     expect(swapIndex).not.toHaveBeenCalled();
     expect(clearQueue).not.toHaveBeenCalled();
-  }, 60_000);
-
-  it('does not delete the swap index on a clean run, because the swap already does', async () => {
-    const index = buildIndex();
-
-    const result = await index.reset(jobContext);
-
-    expect(result.swapped).toBe(true);
-    // Only the pre-rebuild discard; `swapIndex` deletes it as its own last step.
-    expect(deleteSwapIndex).toHaveBeenCalledTimes(1);
+    // The code's comment says the cleanup failure is reported rather than swallowed, so hold it to
+    // that. `beforeEach` stubs `console.error`, which is exactly what would otherwise make this
+    // claim unobservable.
+    expect(console.error).toHaveBeenCalledWith(
+      expect.stringContaining(`could not discard ${SWAP_INDEX}`),
+      expect.anything()
+    );
   }, 60_000);
 });
 
@@ -435,6 +641,7 @@ describe('reset :: a retired index does nothing', () => {
     expect(swapIndex).not.toHaveBeenCalled();
     expect(clearQueue).not.toHaveBeenCalled();
     expect(deleteSwapIndex).not.toHaveBeenCalled();
+    expect(countIndexDocuments).not.toHaveBeenCalled();
   }, 60_000);
 });
 
@@ -457,8 +664,10 @@ describe('reset :: partial mode is unchanged', () => {
     // None of these was called BEFORE the change either — a partial reset never reached them.
     expect(swapIndex).not.toHaveBeenCalled();
     expect(clearQueue).not.toHaveBeenCalled();
-    // And it must not acquire the swap-index lifecycle: there is no swap index on this path.
+    // And it must not acquire the swap-index lifecycle: there is no swap index on this path, so
+    // neither the stale-swap read nor the discard may run.
     expect(deleteSwapIndex).not.toHaveBeenCalled();
+    expect(countIndexDocuments).not.toHaveBeenCalled();
   }, 60_000);
 
   it('writes a partial reset into the live index, not a swap index', async () => {
@@ -477,5 +686,6 @@ describe('reset :: partial mode is unchanged', () => {
     expect(swapIndex).not.toHaveBeenCalled();
     expect(clearQueue).not.toHaveBeenCalled();
     expect(deleteSwapIndex).not.toHaveBeenCalled();
+    expect(countIndexDocuments).not.toHaveBeenCalled();
   }, 60_000);
 });
