@@ -155,12 +155,15 @@ const lastRawQuery = () => {
   };
 };
 
-/** A review hold, a ToS flag or an unpublished post after submission takes the entry out. */
-const expectPublishedEntryImage = (sql: string) => {
+/**
+ * A review hold, a ToS flag or an unpublished post after submission takes the entry out; a post
+ * scheduled for the crucible's end does not.
+ */
+const expectEnteredEntryImage = (sql: string) => {
   expect(sql).toContain('i."needsReview" IS NULL');
   expect(sql).toContain('NOT i."tosViolation"');
   expect(sql).toMatch(
-    /EXISTS \( ?SELECT 1 FROM "Post" ep WHERE ep\.id = i\."postId" AND ep\."publishedAt" <= now\(\) ?\)/
+    /EXISTS \( ?SELECT 1 FROM "Post" ep WHERE ep\.id = i\."postId" AND ep\."publishedAt" IS NOT NULL ?\)/
   );
 };
 
@@ -345,7 +348,7 @@ describe('crucible.getEntries — podium', () => {
     const sql = podiumQuery();
     expect(sql).toBeDefined();
     expect(sql).toMatch(/WHERE ce\.id = ANY\(\$\d+::int\[\]\) AND \( ?\(/);
-    expectPublishedEntryImage(sql!);
+    expectEnteredEntryImage(sql!);
   });
 
   it('leaves a winner the viewer cannot see off the podium', async () => {
@@ -607,7 +610,7 @@ describe('crucible.getMinVotesToPlace', () => {
         ingestion: { not: 'Blocked' },
         needsReview: null,
         tosViolation: false,
-        post: { publishedAt: { lte: expect.any(Date) } },
+        post: { publishedAt: { not: null } },
       },
     });
   });
@@ -856,7 +859,7 @@ describe('crucible.getEntries — what a viewer may see', () => {
     expect(sql).toContain('JOIN "Image" i');
     expect(sql).toContain('ce."userId" =');
     expect(sql).toContain('i.ingestion =');
-    expectPublishedEntryImage(sql);
+    expectEnteredEntryImage(sql);
   });
 
   it('once over, applies the same rule in the entries query', async () => {
@@ -869,7 +872,7 @@ describe('crucible.getEntries — what a viewer may see', () => {
     expect(sql).toContain('JOIN "Image" i');
     expect(sql).toContain('ce."userId" =');
     expect(sql).toContain('i.ingestion =');
-    expectPublishedEntryImage(sql);
+    expectEnteredEntryImage(sql);
   });
 
   it('is not found for others while the crucible is under review', async () => {
