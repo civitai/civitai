@@ -175,7 +175,7 @@ describe('createRatingReview', () => {
   it('refuses a flag-restricted model even though the scan raised it, and inserts nothing', async () => {
     loadSubject.mockResolvedValue(subject({ flagRestricted: true }));
     await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toThrow(
-      /Request a review of that flag/
+      /while the flag stands/
     );
     expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
   });

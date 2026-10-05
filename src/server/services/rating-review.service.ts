@@ -62,7 +62,7 @@ export type RatingReviewRow = {
 
 const PENDING_MESSAGE = 'A dispute is already pending for this item';
 const FLAG_RESTRICTED_MESSAGE =
-  'This model is restricted to SFW by a flag. Request a review of that flag instead.';
+  'A model flagged as depicting a real person or a minor cannot have its rating disputed while the flag stands.';
 
 export function textChangedSinceResolution(
   last: { resolvedAt: Date | null; resolvedTextHash: string | null } | null,

@@ -17,7 +17,7 @@ export type RatingReviewSubject = {
   parentId: number | null;
   override: number | null;
   overrideBasis: number | null;
-  // A Model's POI/minor/sfwOnly restriction pins it SFW; only an appeal of that flag can move it.
+  // A POI/minor flag forces the model SFW, so a rating dispute cannot move it while the flag stands.
   flagRestricted?: boolean;
 };
 
@@ -58,7 +58,6 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
         deletedAt: true,
         poi: true,
         minor: true,
-        sfwOnly: true,
       },
     });
     if (!m || m.deletedAt) return null;
@@ -70,7 +69,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       parentId: null,
       override: null,
       overrideBasis: null,
-      flagRestricted: m.poi || m.minor || m.sfwOnly,
+      flagRestricted: m.poi || m.minor,
     };
   },
   Post: async (id, db) => {
