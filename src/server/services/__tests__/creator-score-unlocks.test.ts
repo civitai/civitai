@@ -290,6 +290,8 @@ describe('nextCreatorScoreUnlocks', () => {
 });
 
 describe('live values', () => {
+  // The studio's sale FORM check. Its scheduleSale action compares separately (sales/+page.server.ts) and is
+  // not driven from here.
   const saleBlocked = (creatorScore: number, minCreatorScore?: number) =>
     resolveSaleEligibility({
       selectedCount: 1,
@@ -309,7 +311,7 @@ describe('live values', () => {
       resolving: false,
     }).blockedReason?.startsWith('Sales unlock') ?? false;
 
-  it('reads the sale floor from the sale-limits row, as the studio gate does', async () => {
+  it('reads the sale floor from the sale-limits row, as the studio sale form does', async () => {
     keyValueRows({ 'sale-limits': { minCreatorScore: 22_000 } });
     const { minScore } = unlock('monetize-sales', await getCreatorScoreUnlocks());
 
@@ -318,7 +320,7 @@ describe('live values', () => {
     expect(saleBlocked(minScore, 22_000)).toBe(false);
   });
 
-  it('falls back to the compiled sale floor when the row is absent or malformed, as the studio does', async () => {
+  it('falls back to the compiled sale floor when the row is absent or malformed, as the studio sale form does', async () => {
     const { minScore } = unlock('monetize-sales', await getCreatorScoreUnlocks());
     expect(saleBlocked(minScore - 1)).toBe(true);
     expect(saleBlocked(minScore)).toBe(false);
