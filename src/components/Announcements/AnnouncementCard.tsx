@@ -12,9 +12,9 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 import type { ImpressionTarget } from '~/components/TrackView/useTrackImpression';
-import { openExternalLinkWarning } from '~/components/ExternalLinkWarning/openExternalLinkWarning';
+import { externalLinkAnchorProps } from '~/components/ExternalLinkWarning/externalLinkAnchorProps';
 import { useInternalHosts } from '~/hooks/useInternalHosts';
-import { externalLinkInterstitialHref, isExternalHref } from '~/utils/external-link';
+import { isExternalHref } from '~/utils/external-link';
 
 export type AnnouncementCardAction = {
   link: string;
@@ -198,25 +198,11 @@ export function AnnouncementCard({
                   />
                 );
 
-              // The href is the leaving-Civitai page rather than the destination, so a
-              // middle-click, cmd-click or copied link reaches the same warning a plain click
-              // opens in place.
               return (
                 <Button
                   key={index}
                   component="a"
-                  href={externalLinkInterstitialHref(action.link)}
-                  onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-                    onActionClick?.(action, index);
-                    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
-                    e.preventDefault();
-                    openExternalLinkWarning(action.link);
-                  }}
-                  // Middle-click fires `auxclick`, not `click`. Narrowed to button 1 because
-                  // right-click fires it too.
-                  onAuxClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-                    if (e.button === 1) onActionClick?.(action, index);
-                  }}
+                  {...externalLinkAnchorProps(action.link, () => onActionClick?.(action, index))}
                   {...shared}
                 />
               );

@@ -190,16 +190,30 @@ describe('AnnouncementCard actions', () => {
     expect(onActionClick).toHaveBeenCalledWith(action, 0);
   });
 
-  test('an external link in the body opens the interstitial', async () => {
+  test('an external link in the body links to the warning page and opens the interstitial', async () => {
     const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
     renderWithProviders(
       <AnnouncementCard {...base} content="grab them at [my telegram](https://t.me/SomeGroup)" />
     );
 
     const link = page.getByRole('link', { name: 'my telegram' });
-    await expect.element(link).toBeVisible();
-    await link.click();
+    await expect.element(link).toHaveAttribute('href', '/leaving?url=https://t.me/SomeGroup');
+    const cardPrevented = await withDefaultObserved('click', () => link.click());
+    expect(cardPrevented).toBe(true);
     expect(mocks.openExternalLinkWarning).toHaveBeenCalledWith('https://t.me/SomeGroup');
+  });
+
+  test('a ctrl/cmd-click on an external body link leaves the browser to open the warning page', async () => {
+    const { AnnouncementCard } = await import('~/components/Announcements/AnnouncementCard');
+    renderWithProviders(
+      <AnnouncementCard {...base} content="grab them at [my telegram](https://t.me/SomeGroup)" />
+    );
+
+    const cardPrevented = await withDefaultObserved('click', () =>
+      page.getByRole('link', { name: 'my telegram' }).click({ modifiers: ['ControlOrMeta'] })
+    );
+    expect(cardPrevented).toBe(false);
+    expect(mocks.openExternalLinkWarning).not.toHaveBeenCalled();
   });
 
   test('an internal link in the body is left alone', async () => {

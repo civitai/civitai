@@ -45,7 +45,15 @@ describe('AnnouncementCard body line breaks', () => {
   it('still strips markup other than links and breaks', () => {
     const html = render({ content: '# heading\n\n**bold** and [a link](https://t.me/x)' });
     expect(html).not.toMatch(/<h1|<strong/);
-    expect(html).toContain('href="https://t.me/x"');
+    expect(html).toContain('a link</a>');
+  });
+});
+
+describe('AnnouncementCard off-site link in the body', () => {
+  it('links to the leaving-Civitai page rather than the destination', () => {
+    const html = render({ content: 'grab them at [my telegram](https://t.me/SomeGroup)' });
+    const href = html.match(/<a[^>]*href="([^"]*)"[^>]*>my telegram<\/a>/)?.[1];
+    expect(href).toBe('/leaving?url=https://t.me/SomeGroup');
   });
 });
 
