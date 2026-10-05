@@ -1,5 +1,7 @@
-import { defineGraph } from 'form-graph';
+import { defineGraph, rootScope } from 'form-graph';
 import {
+  DRAFT_WORKFLOW,
+  getSdDraftMode,
   sd1AspectRatioBuckets,
   sd1CustomDimensionLimits,
   samplers,
@@ -66,6 +68,10 @@ const STEPS = sliderDef({
 });
 const CLIP_SKIP = sliderDef({ min: 1, max: 3, default: 2 });
 
+// Draft's narrow ranges would clamp the stored values one-way, so draft keeps its own, per
+// ecosystem since SD1's and SDXL's ranges differ too.
+const draftScope = (ecosystem: string) => rootScope(DRAFT_WORKFLOW, ecosystem);
+
 const hasImages = (images: ImageEntry[] | undefined) => Array.isArray(images) && images.length > 0;
 
 const upscaleDims = (
@@ -120,9 +126,24 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
       : SDXL_FULL_AR
   )
   .use(textBlock)
-  .field('sampler', SAMPLER)
-  .field('cfgScale', CFG)
-  .field('steps', STEPS)
+  .field('sampler', ({ effectiveEcosystem, _ext }) => {
+    if (_ext.workflow !== DRAFT_WORKFLOW) return SAMPLER;
+    const { sampler } = getSdDraftMode(effectiveEcosystem);
+    return {
+      ...selectDef({ options: [sampler], default: sampler }),
+      scope: draftScope(effectiveEcosystem),
+    };
+  })
+  .field('cfgScale', ({ effectiveEcosystem, _ext }) => {
+    if (_ext.workflow !== DRAFT_WORKFLOW) return CFG;
+    const { cfgScale } = getSdDraftMode(effectiveEcosystem);
+    return { ...sliderDef({ ...cfgScale, step: 0.5 }), scope: draftScope(effectiveEcosystem) };
+  })
+  .field('steps', ({ effectiveEcosystem, _ext }) => {
+    if (_ext.workflow !== DRAFT_WORKFLOW) return STEPS;
+    const { steps } = getSdDraftMode(effectiveEcosystem);
+    return { ...sliderDef(steps), scope: draftScope(effectiveEcosystem) };
+  })
   .field('clipSkip', CLIP_SKIP)
   .field('controlNets', ({ effectiveEcosystem, _ext }) =>
     _ext.workflow === 'txt2img'

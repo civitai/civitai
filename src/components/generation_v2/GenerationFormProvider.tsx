@@ -29,7 +29,7 @@ import {
   getEcosystemGroup,
   MODEL3D_ECOSYSTEM_KEYS,
 } from '~/shared/constants/basemodel.constants';
-import { VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
+import { DRAFT_WORKFLOW, VID_QUANTITY_BY_TIER } from '~/shared/constants/generation.constants';
 import {
   workflowConfigByKey,
   isWorkflowAvailable,
@@ -236,6 +236,14 @@ const storageAdapter = createLocalStorageAdapter({
         if (model?.id == null) return false;
         return TURBO_VARIANT_ECOSYSTEMS.has(ctx.ecosystem as string);
       },
+    },
+    // Draft's narrow ranges would clamp the stored values one-way (steps 30 → 12, back on txt2img
+    // still 12), so draft keeps its own — per ecosystem, since SD1's and SDXL's ranges differ.
+    {
+      name: 'workflow',
+      keys: ['cfgScale', 'steps', 'sampler'],
+      scope: ['workflow', 'ecosystem'],
+      condition: (ctx) => ctx.workflow === DRAFT_WORKFLOW,
     },
     // Model-family specific settings scoped to individual ecosystem (for standalone ecosystems)
     // Values for inactive nodes are automatically retained in storage

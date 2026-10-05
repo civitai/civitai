@@ -183,6 +183,13 @@ export const workflowConfigs: WorkflowConfigs = {
     excludeModelVersionIds: [grokVersionIds['v1.5']],
   },
 
+  'txt2img:draft': {
+    label: 'Draft',
+    description: 'Fast generation for quick iterations',
+    category: 'image',
+    ecosystemIds: [...SD_FAMILY_IDS, ECO.Flux1],
+  },
+
   'txt2img:face-fix': {
     label: 'Create + Face Fix',
     modeLabel: 'Text to Image',

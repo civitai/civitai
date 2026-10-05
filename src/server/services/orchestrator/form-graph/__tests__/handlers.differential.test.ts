@@ -878,6 +878,74 @@ const firstInput = (steps: unknown[]) => (steps[0] as { input: unknown }).input;
 const IMAGE2 = { url: 'https://example.com/b.png', width: 1216, height: 832 };
 
 describe('form-graph handlers emit the same steps as the data-graph handlers', () => {
+  it('sd draft: adds the accelerator LoRA and narrows steps, CFG and sampler to its range', async () => {
+    // Out of draft's range; the parse narrows these before either handler sees them.
+    const outOfRange = { prompt: 'a cat', seed: 42, steps: 30, cfgScale: 7, sampler: 'DPM++ 2M' };
+
+    const sdxl = await bothLanes({ workflow: 'txt2img:draft', ecosystem: 'SDXL', ...outOfRange });
+    expect(sdxl.v2).toEqual(sdxl.v1);
+    expect(firstInput(sdxl.v2)).toMatchObject({
+      steps: 12,
+      cfgScale: 2,
+      sampleMethod: 'euler',
+      loras: { 'urn:air:sdxl:lora:civitai:350450@391999': 1 },
+    });
+
+    const pony = await bothLanes({ workflow: 'txt2img:draft', ecosystem: 'Pony', ...outOfRange });
+    expect(pony.v2).toEqual(pony.v1);
+    expect(firstInput(pony.v2)).toMatchObject({
+      loras: { 'urn:air:sdxl:lora:civitai:350450@391999': 1 },
+    });
+
+    const sd1 = await bothLanes({ workflow: 'txt2img:draft', ecosystem: 'SD1', ...outOfRange });
+    expect(sd1.v2).toEqual(sd1.v1);
+    expect(firstInput(sd1.v2)).toMatchObject({
+      steps: 8,
+      cfgScale: 2,
+      loras: { 'urn:air:sd1:lora:civitai:195519@424706': 1 },
+    });
+  });
+
+  it('sd draft: each handler clamps an unparsed out-of-range submit itself', async () => {
+    for (const [ecosystem, expected] of [
+      ['SDXL', { steps: 12, cfgScale: 2, sampleMethod: 'euler' }],
+      ['SD1', { steps: 8, cfgScale: 2, sampleMethod: 'lcm' }],
+    ] as const) {
+      const parsed = generationHub.parse(
+        { workflow: 'txt2img', ecosystem, prompt: 'a cat', seed: 42 },
+        BASE
+      );
+      if (!parsed.success) throw new Error(`parse failed: ${JSON.stringify(parsed.errors)}`);
+      const data = {
+        ...(parsed.data as object),
+        workflow: 'txt2img:draft',
+        steps: 30,
+        cfgScale: 7,
+        sampler: 'DPM++ 2M',
+      } as unknown as GenerationData;
+
+      for (const steps of [
+        await createEcosystemStepInput(data, ctx),
+        await createFormGraphStepInput(data, ctx),
+      ]) {
+        expect(firstInput(steps)).toMatchObject(expected);
+      }
+    }
+  });
+
+  it('sd txt2img: carries no draft LoRA and keeps the ordinary range', async () => {
+    const plain = await bothLanes({
+      workflow: 'txt2img',
+      ecosystem: 'SDXL',
+      prompt: 'a cat',
+      seed: 42,
+      steps: 30,
+      cfgScale: 7,
+    });
+    expect(firstInput(plain.v2)).toMatchObject({ steps: 30, cfgScale: 7 });
+    expect((firstInput(plain.v2) as { loras?: object }).loras).toBeUndefined();
+  });
+
   it('flux3: create and edit reach fal with the expected inputs', async () => {
     const create = await bothLanes({
       workflow: 'txt2img',
