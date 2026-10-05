@@ -292,6 +292,19 @@ export const CRUCIBLE_ONE_PRIZE_RULE =
   'Each creator can win at most one prize. If you place more than once, your best entry counts and the next creator moves up.';
 
 /**
+ * Creators in finishing order, each represented by their best-placed entry. Prizes and average
+ * finish both rank creators with this, so the two cannot disagree about where a creator finished.
+ */
+export function rankCreatorsByBestEntry<T extends { userId: number; position: number }>(
+  placed: T[]
+): T[] {
+  const seen = new Set<number>();
+  return [...placed]
+    .sort((a, b) => a.position - b.position)
+    .filter(({ userId }) => !seen.has(userId) && !!seen.add(userId));
+}
+
+/**
  * A creator takes at most one prize: their best-placed entry. Prize places go to creators in
  * placing order, so a creator's other entries keep their positions but the next creator moves up
  * a prize. Placings below the prize places don't change the result, so `placed` may be cut short
@@ -307,14 +320,9 @@ export function getCruciblePrizeWinners({
   totalPrizePool: number;
 }): CruciblePrizeWinner[] {
   const lastPrizePlace = Math.max(0, ...prizePositions.map((p) => p.position));
-  const creatorsBest: { entryId: number; userId: number; position: number }[] = [];
-  const seen = new Set<number>();
-  for (const entry of [...placed].sort((a, b) => a.position - b.position)) {
-    if (creatorsBest.length >= lastPrizePlace) break;
-    if (seen.has(entry.userId)) continue;
-    seen.add(entry.userId);
-    creatorsBest.push({ entryId: entry.entryId, userId: entry.userId, position: entry.position });
-  }
+  const creatorsBest = rankCreatorsByBestEntry(placed)
+    .slice(0, lastPrizePlace)
+    .map(({ entryId, userId, position }) => ({ entryId, userId, position }));
 
   return creatorsBest
     .map((entry, index) => ({ ...entry, prizePlace: index + 1 }))
@@ -335,10 +343,7 @@ export const AVG_FINISH_MIN_FIELD = 5;
 /** Below this, one lucky crucible would read as the creator's standing. */
 export const AVG_FINISH_MIN_CRUCIBLES = 3;
 
-/**
- * Where a creator finished among the creators who placed, ranked by each creator's best entry —
- * the same one-place-per-creator ordering prizes use. Null when the creator did not place.
- */
+/** Where a creator finished among the creators who placed; null when the creator did not place. */
 export function getCreatorFinish({
   placed,
   userId,
@@ -346,13 +351,9 @@ export function getCreatorFinish({
   placed: { userId: number; position: number }[];
   userId: number;
 }): { rank: number; field: number } | null {
-  const bestByCreator = new Map<number, number>();
-  for (const { userId: creator, position } of placed)
-    bestByCreator.set(creator, Math.min(position, bestByCreator.get(creator) ?? Infinity));
-  if (!bestByCreator.has(userId)) return null;
-
-  const ranked = [...bestByCreator.entries()].sort(([, a], [, b]) => a - b);
-  return { rank: ranked.findIndex(([creator]) => creator === userId) + 1, field: ranked.length };
+  const ranked = rankCreatorsByBestEntry(placed);
+  const index = ranked.findIndex((creator) => creator.userId === userId);
+  return index === -1 ? null : { rank: index + 1, field: ranked.length };
 }
 
 /**

@@ -4080,6 +4080,8 @@ export const getUserCrucibleStats = async ({
       crucible: {
         select: {
           prizePositions: true,
+          entryFee: true,
+          seededPrizePool: true,
         },
       },
     },
@@ -4103,25 +4105,39 @@ export const getUserCrucibleStats = async ({
   const positions = entries.map((e) => e.position).filter((p): p is number => p !== null);
   const bestPlacement = positions.length > 0 ? Math.min(...positions) : null;
 
-  // A creator holds at most one prize, which may sit below their best placing's position number.
-  const prizePositionsByCrucible = new Map(
-    entries.map((e) => [e.crucibleId, parsePrizePositions(e.crucible.prizePositions)])
-  );
+  const cruciblesById = new Map(entries.map((e) => [e.crucibleId, e.crucible]));
   const placedCrucibleIds = [
     ...new Set(entries.filter((e) => e.position !== null).map((e) => e.crucibleId)),
   ];
-  const placed = placedCrucibleIds.length ? await getPlacedEntries(placedCrucibleIds) : [];
+  const [placed, paidEntryCounts] = placedCrucibleIds.length
+    ? await Promise.all([
+        getPlacedEntries(placedCrucibleIds),
+        getPaidEntryCounts(placedCrucibleIds),
+      ])
+    : [[], new Map<number, number>()];
+  const placedByCrucible = new Map<number, typeof placed>();
+  for (const row of placed) {
+    const rows = placedByCrucible.get(row.crucibleId);
+    if (rows) rows.push(row);
+    else placedByCrucible.set(row.crucibleId, [row]);
+  }
 
   let prizesWon = 0;
   const finishes: { rank: number; field: number }[] = [];
   for (const crucibleId of placedCrucibleIds) {
-    const crucibleRows = placed.filter((row) => row.crucibleId === crucibleId);
+    const crucible = cruciblesById.get(crucibleId);
+    const crucibleRows = placedByCrucible.get(crucibleId) ?? [];
+    // Counted as finalize pays: a place whose share of the pool comes to 0 Buzz is not a prize.
     const winners = getCruciblePrizeWinners({
       placed: crucibleRows,
-      prizePositions: prizePositionsByCrucible.get(crucibleId) ?? [],
-      totalPrizePool: 0,
+      prizePositions: parsePrizePositions(crucible?.prizePositions),
+      totalPrizePool: getCrucibleTotalPrizePool({
+        entryFee: crucible?.entryFee ?? 0,
+        paidEntryCount: paidEntryCounts.get(crucibleId) ?? 0,
+        seededPrizePool: crucible?.seededPrizePool ?? 0,
+      }),
     });
-    if (winners.some((winner) => winner.userId === userId)) prizesWon++;
+    if (winners.some((winner) => winner.userId === userId && winner.prizeAmount > 0)) prizesWon++;
     const finish = getCreatorFinish({ placed: crucibleRows, userId });
     if (finish) finishes.push(finish);
   }

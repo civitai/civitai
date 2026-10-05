@@ -589,11 +589,11 @@ describe('canSeeCrucibleEntryDetails', () => {
 describe('getCreatorFinish', () => {
   it('ranks each creator by their best entry, so extra entries take no extra places', () => {
     const placed = [
-      { userId: 1, position: 1 },
-      { userId: 1, position: 2 },
-      { userId: 2, position: 3 },
-      { userId: 3, position: 4 },
       { userId: 3, position: 5 },
+      { userId: 1, position: 2 },
+      { userId: 3, position: 4 },
+      { userId: 2, position: 3 },
+      { userId: 1, position: 1 },
     ];
 
     expect(getCreatorFinish({ placed, userId: 3 })).toEqual({ rank: 3, field: 3 });
@@ -613,5 +613,10 @@ describe('getAverageFinishTopPercent', () => {
         { rank: 5, field: 10 },
       ])
     ).toBe(53);
+  });
+
+  it('rounds to the nearest percent', () => {
+    const firstOfEight = { rank: 1, field: 8 };
+    expect(getAverageFinishTopPercent([firstOfEight, firstOfEight, firstOfEight])).toBe(13);
   });
 });

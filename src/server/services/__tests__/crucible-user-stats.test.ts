@@ -11,25 +11,33 @@ const { getUserCrucibleStats } = await import('~/server/services/crucible.servic
 
 const USER_ID = 11;
 const prizePositions = { '1': 50, '2': 30, '3': 20 };
-const entry = (id: number, crucibleId: number, position: number | null) => ({
+const entry = (
+  id: number,
+  crucibleId: number,
+  position: number | null,
+  seededPrizePool = 1000
+) => ({
   id,
   crucibleId,
   position,
-  crucible: { prizePositions },
+  crucible: { prizePositions, entryFee: 0, seededPrizePool },
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
 });
 
-/** `fieldSize` creators placed 1..fieldSize, with the user at `rank`. */
+/**
+ * `fieldSize` creators placed 1..fieldSize, with the user at `rank`. Listed last place first:
+ * the placings query has no ORDER BY, so ranking must not lean on row order.
+ */
 const placings = (crucibleId: number, rank: number, fieldSize: number) =>
   Array.from({ length: fieldSize }, (_, i) => ({
     crucibleId,
     entryId: crucibleId * 1000 + i,
     userId: i + 1 === rank ? USER_ID : 100 + i,
     position: i + 1,
-  }));
+  })).reverse();
 
 describe('getUserCrucibleStats — prizes won', () => {
   it('counts a crucible won when the creator took a prize from below the prize positions', async () => {
@@ -50,6 +58,15 @@ describe('getUserCrucibleStats — prizes won', () => {
     const stats = await getUserCrucibleStats({ userId: USER_ID });
 
     expect(stats).toMatchObject({ totalCrucibles: 2, bestPlacement: 4, prizesWon: 1 });
+  });
+
+  it('does not count a place whose share of the pool came to 0 Buzz, as finalize pays nothing', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([entry(1, 1, 1, 0)]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(placings(1, 1, 5));
+
+    const stats = await getUserCrucibleStats({ userId: USER_ID });
+
+    expect(stats.prizesWon).toBe(0);
   });
 
   it('asks nothing about placings when the creator never placed', async () => {
@@ -85,6 +102,27 @@ describe('getUserCrucibleStats — average finish', () => {
     const stats = await getUserCrucibleStats({ userId: USER_ID });
 
     expect(stats.avgFinishTopPercent).toBe(13);
+  });
+
+  // Decided by Justin, 2026-10-05: a crucible where none of your entries placed is skipped, not
+  // counted as last place. Changing it changes what the number means; ask before you do.
+  it('skips a crucible where the creator entered but did not place', async () => {
+    dbMock.dbRead.crucibleEntry.findMany.mockResolvedValue([
+      entry(1, 1, 1),
+      entry(2, 2, 1),
+      entry(3, 3, 1),
+      entry(4, 4, null),
+    ]);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      ...placings(1, 1, 10),
+      ...placings(2, 1, 10),
+      ...placings(3, 1, 10),
+      ...placings(4, 0, 50),
+    ]);
+
+    const stats = await getUserCrucibleStats({ userId: USER_ID });
+
+    expect(stats.avgFinishTopPercent).toBe(10);
   });
 
   it('is not shown until three crucibles with a big enough field count', async () => {
