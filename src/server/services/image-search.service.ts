@@ -51,6 +51,12 @@ export type RunImageSearchInput = {
   withMeta: boolean;
   flatMeta?: boolean;
   withTags: boolean;
+  /**
+   * Serve `data.postId`'s images in the uploader's order instead of by `sort`. Only the DB path
+   * keeps that order; feed search ranks the whole post first, so re-sorting a page of it is not
+   * the same thing.
+   */
+  postOrder?: boolean;
   /** The remaining `...data` fields off the parsed schema (postId/modelId/username/etc). */
   data: Record<string, unknown>;
 };
@@ -108,7 +114,7 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
-  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, data } = input;
+  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, postOrder, data } = input;
 
   const features = getFeatureFlags({ user, req });
 
@@ -153,7 +159,9 @@ export async function runImageSearch(
   // those sorts are honored.
   const batchIds = (data as { ids?: unknown }).ids;
   const useLegacyMethod =
-    (Array.isArray(batchIds) && batchIds.length > 0) || (data as { imageId?: unknown }).imageId
+    (Array.isArray(batchIds) && batchIds.length > 0) ||
+    (data as { imageId?: unknown }).imageId ||
+    (postOrder && (data as { postId?: unknown }).postId)
       ? true
       : !!(data as { modelId?: unknown }).modelId &&
         !(data as { modelVersionId?: unknown }).modelVersionId;
