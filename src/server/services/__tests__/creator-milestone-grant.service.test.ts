@@ -22,37 +22,13 @@ import {
 
 const unlocks = buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs);
 
-function fakePool(rows: unknown[] = []) {
-  const calls: { sql: string; params: unknown[] }[] = [];
-  const pool = {
-    cancellableQuery: vi.fn(async (sql: string, params: unknown[]) => {
-      calls.push({ sql, params });
-      return { result: async () => rows, cancel: async () => undefined };
-    }),
-  };
-  return { pool: pool as never, calls };
-}
-
 beforeEach(() => vi.clearAllMocks());
 
 describe('grantScoreTierMilestones', () => {
-  it('never sends the system account to the database', async () => {
-    const { pool, calls } = fakePool();
-    await grantScoreTierMilestones(pool, [
-      { userId: -1, oldTotal: 0, newTotal: 2_000_000_000 },
-      { userId: 7, oldTotal: 400, newTotal: 600 },
-    ]);
-    expect(JSON.parse(calls[0].params[0] as string)).toEqual([
-      { userId: 7, oldTotal: 400, newTotal: 600 },
-    ]);
-  });
-
-  it('skips the query when only the system account moved', async () => {
-    const { pool, calls } = fakePool();
-    expect(
-      await grantScoreTierMilestones(pool, [{ userId: -1, oldTotal: 0, newTotal: 10 }])
-    ).toEqual([]);
-    expect(calls).toHaveLength(0);
+  it('skips the query when no score moved', async () => {
+    const cancellableQuery = vi.fn();
+    expect(await grantScoreTierMilestones({ cancellableQuery } as never, [])).toEqual([]);
+    expect(cancellableQuery).not.toHaveBeenCalled();
   });
 });
 

@@ -1,12 +1,10 @@
-import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import type { CreatorScoreUnlock } from '~/server/services/creator-score-unlocks.service';
 import { nextCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
+import { milestoneGrantableUserSql } from '~/server/services/creator-milestone-exclusions';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-
-export const SYSTEM_USER_ID = constants.system.user.id;
 
 export type ScoreTotalTransition = { userId: number; oldTotal: number | null; newTotal: number };
 
@@ -30,8 +28,7 @@ export async function grantScoreTierMilestones(
   transitions: ScoreTotalTransition[],
   onCancel?: CancelHook
 ): Promise<ScoreTierCrossing[]> {
-  const rows = transitions.filter((t) => t.userId !== SYSTEM_USER_ID);
-  if (!rows.length) return [];
+  if (!transitions.length) return [];
 
   const query = await pg.cancellableQuery<ScoreTierCrossing>(
     `
@@ -43,9 +40,10 @@ export async function grantScoreTierMilestones(
       SELECT t."userId", m.key,
         CASE WHEN COALESCE(t."oldTotal", 0) < m.threshold THEN NULL ELSE now() END
       FROM t
+      JOIN "User" u ON u.id = t."userId"
       JOIN "CreatorMilestone" m
         ON m.track = 'score' AND m.threshold IS NOT NULL AND t."newTotal" >= m.threshold
-      WHERE t."userId" <> ${SYSTEM_USER_ID}
+      WHERE ${milestoneGrantableUserSql('u')}
       ON CONFLICT DO NOTHING
       RETURNING "userId", "milestoneKey", "seenAt"
     ), cosmetics AS (
@@ -61,7 +59,7 @@ export async function grantScoreTierMilestones(
     JOIN "CreatorMilestone" m ON m.key = g."milestoneKey"
     WHERE g."seenAt" IS NULL
     `,
-    [JSON.stringify(rows)]
+    [JSON.stringify(transitions)]
   );
   onCancel?.(query.cancel);
   return query.result();
@@ -80,23 +78,23 @@ export async function backfillScoreTierBatch(
 ): Promise<MilestoneBatchResult> {
   const query = await pg.cancellableQuery<MilestoneBatchResult>(
     `
-    WITH u AS (
-      SELECT id, (meta->'scores'->>'total')::numeric AS total
-      FROM "User"
-      WHERE id > $1
-        AND ($2::int IS NULL OR id <= $2)
-        AND id <> ${SYSTEM_USER_ID}
-        AND (meta->'scores'->>'total')::numeric >= (
+    WITH batch AS (
+      SELECT u.id, (u.meta->'scores'->>'total')::numeric AS total
+      FROM "User" u
+      WHERE u.id > $1
+        AND ($2::int IS NULL OR u.id <= $2)
+        AND ${milestoneGrantableUserSql('u')}
+        AND (u.meta->'scores'->>'total')::numeric >= (
           SELECT min(threshold) FROM "CreatorMilestone" WHERE track = 'score'
         )
-      ORDER BY id
+      ORDER BY u.id
       LIMIT $3
     ), granted AS (
       INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey", "seenAt")
-      SELECT u.id, m.key, now()
-      FROM u
+      SELECT batch.id, m.key, now()
+      FROM batch
       JOIN "CreatorMilestone" m
-        ON m.track = 'score' AND m.threshold IS NOT NULL AND u.total >= m.threshold
+        ON m.track = 'score' AND m.threshold IS NOT NULL AND batch.total >= m.threshold
       ON CONFLICT DO NOTHING
       RETURNING "userId", "milestoneKey"
     ), cosmetics AS (
@@ -108,9 +106,9 @@ export async function backfillScoreTierBatch(
       ON CONFLICT DO NOTHING
     )
     SELECT
-      (SELECT count(*) FROM u)::int AS users,
+      (SELECT count(*) FROM batch)::int AS users,
       (SELECT count(*) FROM granted)::int AS inserted,
-      (SELECT max(id) FROM u) AS "lastUserId"
+      (SELECT max(id) FROM batch) AS "lastUserId"
     `,
     [afterUserId, maxUserId ?? null, limit]
   );
@@ -138,29 +136,85 @@ export async function grantMilestoneCosmeticsBatch(
       SELECT key, "cosmeticId"
       FROM "CreatorMilestone"
       WHERE "cosmeticId" IS NOT NULL AND ($4::text IS NULL OR key = $4)
-    ), u AS (
+    ), batch AS (
       SELECT DISTINCT ucm."userId" AS id
       FROM "UserCreatorMilestone" ucm
+      JOIN "User" u ON u.id = ucm."userId"
       WHERE ucm."userId" > $1
         AND ($2::int IS NULL OR ucm."userId" <= $2)
         AND ucm."milestoneKey" IN (SELECT key FROM m)
+        AND ${milestoneGrantableUserSql('u')}
       ORDER BY 1
       LIMIT $3
     ), granted AS (
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
       SELECT ucm."userId", m."cosmeticId", m.key
-      FROM u
-      JOIN "UserCreatorMilestone" ucm ON ucm."userId" = u.id
+      FROM batch
+      JOIN "UserCreatorMilestone" ucm ON ucm."userId" = batch.id
       JOIN m ON m.key = ucm."milestoneKey"
       ON CONFLICT DO NOTHING
       RETURNING "userId"
     )
     SELECT
-      (SELECT count(*) FROM u)::int AS users,
+      (SELECT count(*) FROM batch)::int AS users,
       (SELECT count(*) FROM granted)::int AS inserted,
-      (SELECT max(id) FROM u) AS "lastUserId"
+      (SELECT max(id) FROM batch) AS "lastUserId"
     `,
     [afterUserId, maxUserId ?? null, limit, milestoneKey ?? null]
+  );
+  const [row] = await query.result();
+  return row;
+}
+
+type UserRange = { afterUserId: number; maxUserId?: number };
+export type BackfillPreview = { users: number; rows: number };
+
+/** What `backfillScoreTierBatch` would insert over the whole range, read only. */
+export async function previewScoreTierBackfill(
+  pg: AugmentedPool,
+  { afterUserId, maxUserId }: UserRange
+): Promise<BackfillPreview> {
+  const query = await pg.cancellableQuery<BackfillPreview>(
+    `
+    SELECT count(DISTINCT u.id)::int AS users, count(*)::int AS rows
+    FROM "User" u
+    JOIN "CreatorMilestone" m
+      ON m.track = 'score' AND m.threshold IS NOT NULL
+      AND (u.meta->'scores'->>'total')::numeric >= m.threshold
+    WHERE u.id > $1 AND ($2::int IS NULL OR u.id <= $2)
+      AND ${milestoneGrantableUserSql('u')}
+      AND NOT EXISTS (
+        SELECT 1 FROM "UserCreatorMilestone" ucm
+        WHERE ucm."userId" = u.id AND ucm."milestoneKey" = m.key
+      )
+    `,
+    [afterUserId, maxUserId ?? null]
+  );
+  const [row] = await query.result();
+  return row;
+}
+
+/** What `grantMilestoneCosmeticsBatch` would insert over the whole range, read only. */
+export async function previewMilestoneCosmetics(
+  pg: AugmentedPool,
+  { afterUserId, maxUserId, milestoneKey }: UserRange & { milestoneKey?: string }
+): Promise<BackfillPreview> {
+  const query = await pg.cancellableQuery<BackfillPreview>(
+    `
+    SELECT count(DISTINCT ucm."userId")::int AS users, count(*)::int AS rows
+    FROM "UserCreatorMilestone" ucm
+    JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
+    JOIN "User" u ON u.id = ucm."userId"
+    WHERE m."cosmeticId" IS NOT NULL
+      AND ($3::text IS NULL OR m.key = $3)
+      AND ucm."userId" > $1 AND ($2::int IS NULL OR ucm."userId" <= $2)
+      AND ${milestoneGrantableUserSql('u')}
+      AND NOT EXISTS (
+        SELECT 1 FROM "UserCosmetic" uc
+        WHERE uc."userId" = ucm."userId" AND uc."cosmeticId" = m."cosmeticId" AND uc."claimKey" = m.key
+      )
+    `,
+    [afterUserId, maxUserId ?? null, milestoneKey ?? null]
   );
   const [row] = await query.result();
   return row;

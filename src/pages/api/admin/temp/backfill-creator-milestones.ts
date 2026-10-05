@@ -5,7 +5,8 @@ import type { MilestoneBatchResult } from '~/server/services/creator-milestone-g
 import {
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
-  SYSTEM_USER_ID,
+  previewMilestoneCosmetics,
+  previewScoreTierBackfill,
 } from '~/server/services/creator-milestone-grant.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
@@ -44,8 +45,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const params = schema.parse(req.query);
 
   if (params.dryRun) {
-    const preview = await previewBackfill(params);
-    return res.status(200).json({ ...params, ...preview });
+    const wouldGrant = await previewBackfill(params);
+    return res.status(200).json({ ...params, wouldGrant });
   }
 
   const runBatch = (afterUserId: number): Promise<MilestoneBatchResult> =>
@@ -96,35 +97,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     .json({ action: params.action, batches, users, inserted, lastUserId: cursor });
 });
 
-async function previewBackfill(params: z.infer<typeof schema>) {
-  const query =
-    params.action === 'cosmetics'
-      ? `
-        SELECT count(DISTINCT ucm."userId")::int AS users, count(*)::int AS rows
-        FROM "UserCreatorMilestone" ucm
-        JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
-        WHERE m."cosmeticId" IS NOT NULL
-          AND ($3::text IS NULL OR m.key = $3)
-          AND ucm."userId" > $1 AND ($2::int IS NULL OR ucm."userId" <= $2)
-          AND NOT EXISTS (
-            SELECT 1 FROM "UserCosmetic" uc
-            WHERE uc."userId" = ucm."userId" AND uc."cosmeticId" = m."cosmeticId" AND uc."claimKey" = m.key
-          )
-      `
-      : `
-        SELECT count(DISTINCT u.id)::int AS users, count(*)::int AS rows
-        FROM "User" u
-        JOIN "CreatorMilestone" m
-          ON m.track = 'score' AND m.threshold IS NOT NULL
-          AND (u.meta->'scores'->>'total')::numeric >= m.threshold
-        WHERE u.id > $1 AND ($2::int IS NULL OR u.id <= $2) AND u.id <> ${SYSTEM_USER_ID}
-          AND NOT EXISTS (
-            SELECT 1 FROM "UserCreatorMilestone" ucm
-            WHERE ucm."userId" = u.id AND ucm."milestoneKey" = m.key
-          )
-      `;
-  const binds: unknown[] = [params.start, params.end ?? null];
-  if (params.action === 'cosmetics') binds.push(params.milestoneKey ?? null);
-  const result = await pgDbReadLong.query<{ users: number; rows: number }>(query, binds);
-  return { wouldGrant: result.rows[0] };
+function previewBackfill(params: z.infer<typeof schema>) {
+  const range = { afterUserId: params.start, maxUserId: params.end };
+  return params.action === 'cosmetics'
+    ? previewMilestoneCosmetics(pgDbReadLong, { ...range, milestoneKey: params.milestoneKey })
+    : previewScoreTierBackfill(pgDbReadLong, range);
 }
