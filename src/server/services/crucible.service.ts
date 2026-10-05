@@ -1040,6 +1040,8 @@ export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
+  /** Also counts entries whose image was deleted, as `submitEntry`'s limit does. */
+  viewerEntryCount: number;
   /** Empty until completed. No user ids: a winner's entry may be hidden from this viewer. */
   prizeWinners: CrucibleDisplayPrize[];
 };
@@ -1083,7 +1085,7 @@ export const getCrucibleDetail = async ({
 
   if (!crucible) return null;
 
-  const [paidEntryCounts, viewerEntries] = await Promise.all([
+  const [paidEntryCounts, { viewerEntries, viewerEntryCount }] = await Promise.all([
     getPaidEntryCounts([id]),
     userId
       ? dbRead.crucibleEntry
@@ -1092,8 +1094,11 @@ export const getCrucibleDetail = async ({
             select: crucibleEntrySelect,
             orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
           })
-          .then((entries) => entries.filter(hasEntryImage))
-      : [],
+          .then((entries) => ({
+            viewerEntries: entries.filter(hasEntryImage),
+            viewerEntryCount: entries.length,
+          }))
+      : { viewerEntries: [], viewerEntryCount: 0 },
   ]);
 
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
@@ -1120,6 +1125,7 @@ export const getCrucibleDetail = async ({
     ...crucible,
     paidEntryCount,
     viewerEntries,
+    viewerEntryCount,
     prizeWinners,
   };
 };
