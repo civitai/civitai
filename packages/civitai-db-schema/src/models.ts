@@ -2551,11 +2551,8 @@ export interface AppDevSandbox {
   status: string;
   statusDetail: string | null;
   volumeClaimName: string | null;
-  volumeSizeBytes: bigint | null;
   transcriptKey: string | null;
   lastTunnelHost: string | null;
-  spendInstanceId: string | null;
-  spendCapBuzz: number;
   createdAt: Date;
   updatedAt: Date;
   lastActiveAt: Date | null;

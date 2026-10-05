@@ -408,8 +408,16 @@ export type AppDevSandbox = {
   app_block_id: string | null;
   /**
    * 'provisioning' | 'active' | 'paused' | 'resuming' | 'reaped' | 'failed'.
-   * `paused` and `failed` BOTH retain the volume; `reaped` is the only state that
-   * has deleted data, and only the retention janitor writes it.
+   *
+   * 🔴 `reaped` IS THE ONLY TERMINAL STATE. `paused` AND `failed` BOTH STILL HOLD A
+   * VOLUME, so neither is done, and the uniqueness index below excludes only
+   * `reaped` for exactly that reason — a `failed` sandbox occupies the single live
+   * slot for its pair until it is resumed or carried through the ordinary
+   * retention path. Writing `failed` must therefore ALSO set
+   * `retention_expires_at`, or the row holds storage on no clock; the retention
+   * index covers both states so one sweep and one `warned_at` guard serve both.
+   * `reaped` is the only state that has released its storage, and only the
+   * retention janitor writes it.
    */
   status: Generated<string>;
   /**
@@ -424,11 +432,6 @@ export type AppDevSandbox = {
    */
   volume_claim_name: string | null;
   /**
-   * Provisioned size, for the storage-GB-day meter. BigInt mirrors
-   * AppBlockPublishRequest.bundleSizeBytes.
-   */
-  volume_size_bytes: string | null;
-  /**
    * Object-storage KEY for the agent transcript — never the transcript itself.
    * Keeps rows small and makes a ban / account-deletion purge a single object
    * delete. Mirrors AppBlockPublishRequest.bundleKey.
@@ -442,40 +445,16 @@ export type AppDevSandbox = {
    * retries, and it leaves no durable trace of a DELETE that did not land. A sandbox
    * mints a NEW host on every resume, so the number of records needing cleanup grows
    * with resume count; recording the host is what makes a missed cleanup
-   * RECOVERABLE instead of unreachable. NOT a credential: it is a public DNS name,
-   * and the only property that matters is that it gets cleaned up.
+   * RECOVERABLE instead of unreachable. Once a session is torn down, the host is
+   * recoverable from nowhere else: `deleteDevTunnelRoute` reads it off the
+   * IngressRoute annotation, and that object is deleted by the teardown.
+   *
+   * It is also the only host -> sandbox reverse lookup available, which is what lets
+   * the forwardAuth gate's host-keyed idle touch reach `last_active_at`.
+   * NOT a credential: it is a public DNS name, and the only property that matters is
+   * that it gets cleaned up.
    */
   last_tunnel_host: string | null;
-  /**
-   * The synthetic PAGE instance id the dev mint stamps into the block token —
-   * `page_<appBlockId>` | `page_pubreq_<id>` | `page_local_<slug>`, resolved in
-   * `src/pages/api/v1/blocks/dev-token.ts` — i.e. BlockSpendAttribution's
-   * `block_instance_id`. Stored RESOLVED so deriving this sandbox's generation spend
-   * is ONE equality rather than a second copy of a three-arm resolver.
-   *
-   * 🔴 NOT the tunnel sessionId: spend rows never carry that, and a join on it would
-   * silently return zero rows. The synthetic id is also stable ACROSS resumes, which
-   * is what a durable sandbox needs.
-   */
-  spend_instance_id: string | null;
-  /**
-   * CUMULATIVE Buzz ceiling for this SANDBOX, re-anchored here off the tunnel session.
-   *
-   * 🔴 WHY THIS COLUMN EXISTS IN M2.5 RATHER THAN M4. Dev-session spend is already
-   * bounded three ways that this does not change: the per-call budget cap, the
-   * per-user DAILY cap, and self-binding (the spender is the minter, so it is their
-   * own Buzz). On top of those sits a cumulative per-session BACKSTOP, and that one
-   * is accounted against the TUNNEL session id — which a durable sandbox rotates on
-   * every resume. So the backstop needs a durable anchor to keep meaning what it
-   * says once pause/resume exists; this column is that anchor.
-   *
-   * 🔴 A CEILING, NEVER A RUNNING TOTAL. Generation spend already has an append-only
-   * Postgres ledger (BlockSpendAttribution, keyed on workflowId as the idempotency
-   * anchor); a mutable total beside it is a second source of truth that cannot be
-   * reconciled, where a SUM over the ledger can. Sandbox-side costs (agent tokens,
-   * CPU/RAM-hours, storage-GB-days) want a ledger of their own for the same reason.
-   */
-  spend_cap_buzz: number;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
   /**

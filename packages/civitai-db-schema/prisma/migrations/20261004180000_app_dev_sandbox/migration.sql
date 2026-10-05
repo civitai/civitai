@@ -7,6 +7,11 @@
 --   1. the production primary (the live civitai DB)
 --   2. the dev clone
 --
+-- Idempotent: every CREATE is IF NOT EXISTS and the two FKs are added only when absent,
+-- so a re-run on an environment that already has the table is a no-op. This matters
+-- because the apply is a manual step repeated across two environments — the same reason
+-- `20260811170000_rekey_app_collaborators_step_b_create_listing_keyed` gives for its own.
+--
 -- ------------------------------------------------------------
 -- ORDERING: SAFE TO APPLY AHEAD OF THE CODE, IN EITHER ORDER
 -- ------------------------------------------------------------
@@ -42,7 +47,7 @@
 -- script less atomic for no benefit.
 -- ============================================================
 
-CREATE TABLE "app_dev_sandbox" (
+CREATE TABLE IF NOT EXISTS "app_dev_sandbox" (
     "id"                   TEXT           NOT NULL,
     "user_id"              INTEGER        NOT NULL,
     "block_id"             TEXT           NOT NULL,
@@ -50,11 +55,8 @@ CREATE TABLE "app_dev_sandbox" (
     "status"               TEXT           NOT NULL DEFAULT 'provisioning',
     "status_detail"        TEXT,
     "volume_claim_name"    TEXT,
-    "volume_size_bytes"    BIGINT,
     "transcript_key"       TEXT,
     "last_tunnel_host"     TEXT,
-    "spend_instance_id"    TEXT,
-    "spend_cap_buzz"       INTEGER        NOT NULL,
     "created_at"           TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updated_at"           TIMESTAMPTZ(6) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "last_active_at"       TIMESTAMPTZ(6),
@@ -68,40 +70,66 @@ CREATE TABLE "app_dev_sandbox" (
     )
 );
 
--- CASCADE: an account deletion takes the row with it. The volume is reclaimed by the
--- orphan-resource sweep, which keys on "a sandbox PVC with no non-terminal row".
-ALTER TABLE "app_dev_sandbox"
-    ADD CONSTRAINT "app_dev_sandbox_user_id_fkey"
-    FOREIGN KEY ("user_id") REFERENCES "User"("id")
-    ON DELETE CASCADE ON UPDATE CASCADE;
+-- 🔴 NOT a purge mechanism, and nothing here should be read as one. `deleteUser` is a
+-- SOFT delete — `dbWrite.user.update({ data: { deletedAt } })` in user.service.ts, which
+-- states twice in its own comments that "the FK cascade never fires ... because this is a
+-- SOFT delete". So this CASCADE does not fire on account deletion, and a deleted user's
+-- sandbox row, transcript object and volume all SURVIVE it. Reclaiming those needs an
+-- explicit hook on the delete/ban paths; it does not exist yet and this FK is not a
+-- substitute for it. The CASCADE is here only so a genuine hard delete of a User row
+-- cannot leave a dangling child.
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'app_dev_sandbox_user_id_fkey') THEN
+    ALTER TABLE "app_dev_sandbox"
+      ADD CONSTRAINT "app_dev_sandbox_user_id_fkey"
+      FOREIGN KEY ("user_id") REFERENCES "User"("id")
+      ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- SET NULL, NOT CASCADE or RESTRICT: deleting the block must leave this row reachable by
 -- the janitor, because there is still a volume to delete. A cascade would orphan storage
 -- with no handle left to it.
-ALTER TABLE "app_dev_sandbox"
-    ADD CONSTRAINT "app_dev_sandbox_app_block_id_fkey"
-    FOREIGN KEY ("app_block_id") REFERENCES "app_blocks"("id")
-    ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'app_dev_sandbox_app_block_id_fkey') THEN
+    ALTER TABLE "app_dev_sandbox"
+      ADD CONSTRAINT "app_dev_sandbox_app_block_id_fkey"
+      FOREIGN KEY ("app_block_id") REFERENCES "app_blocks"("id")
+      ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END $$;
 
 -- Idle-pause sweep: status='active' AND last_active_at older than the idle window.
-CREATE INDEX "app_dev_sandbox_idle_sweep_idx"
+CREATE INDEX IF NOT EXISTS "app_dev_sandbox_idle_sweep_idx"
     ON "app_dev_sandbox" ("status", "last_active_at");
 
 -- "my sandboxes" reads.
-CREATE INDEX "app_dev_sandbox_user_idx"
+CREATE INDEX IF NOT EXISTS "app_dev_sandbox_user_idx"
     ON "app_dev_sandbox" ("user_id", "status");
 
--- 🔴 At most ONE non-terminal sandbox per (user, app). Not expressible in Prisma (it
--- carries a WHERE), mirroring "app_block_publish_requests_one_pending_per_slug". This is
--- LOAD-BEARING, not hygiene: the provision path relies on its P2002 to close the
--- read-then-write race, so two concurrent resume clicks cannot each provision a volume
--- and leak the one that loses.
-CREATE UNIQUE INDEX "app_dev_sandbox_one_live_per_user_block"
+-- 🔴 At most ONE non-reaped sandbox per (user, app). Not expressible in Prisma (it carries
+-- a WHERE), mirroring "app_block_publish_requests_one_pending_per_slug". LOAD-BEARING, not
+-- hygiene: the provision path relies on its P2002 to close the read-then-write race, so
+-- two concurrent resume clicks cannot each provision a volume and leak the one that loses.
+--
+-- 🔴 `reaped` IS THE ONLY EXCLUSION, AND `failed` IS DELIBERATELY *NOT* ONE. A `failed`
+-- sandbox still HOLDS ITS VOLUME, so treating it as terminal here would have been a
+-- contradiction with two bad branches: nothing would ever reclaim it (the retention sweep
+-- below is paused-only and a never-paused row carries a NULL deadline), and a user could
+-- accumulate unbounded `failed` rows for one pair, each holding a volume. Keeping `failed`
+-- inside the uniqueness scope means it occupies the single live slot until it is either
+-- resumed or carried through the ordinary pause -> retention path, which is the path that
+-- honours the warn-before-delete guard. `reaped` has already released its storage, so it
+-- is the only state that is genuinely done.
+CREATE UNIQUE INDEX IF NOT EXISTS "app_dev_sandbox_one_live_per_user_block"
     ON "app_dev_sandbox" ("user_id", "block_id")
-    WHERE "status" NOT IN ('reaped', 'failed');
+    WHERE "status" <> 'reaped';
 
--- Retention sweep: status='paused' AND retention_expires_at <= now(). Partial, because
--- only paused rows ever carry a retention deadline.
-CREATE INDEX "app_dev_sandbox_retention_sweep_idx"
+-- Retention sweep. Covers BOTH states that retain a volume and carry a deadline, so a
+-- `failed` sandbox is reclaimable on the same clock and under the same `warned_at` guard
+-- as a paused one.
+CREATE INDEX IF NOT EXISTS "app_dev_sandbox_retention_sweep_idx"
     ON "app_dev_sandbox" ("retention_expires_at")
-    WHERE "status" = 'paused';
+    WHERE "status" IN ('paused', 'failed');
