@@ -133,7 +133,8 @@ describe('startRun', () => {
         { key: String(caseIds[0]), fields: [{ heading: 'Name', text: 'model 1' }] },
         { key: String(caseIds[1]), fields: [{ heading: 'Name', text: 'model 2' }] },
       ],
-      undefined
+      undefined,
+      { keyLabel: 'case' }
     );
     expect((await results(run.id)).map((r) => [r.status, r.output.nsfw.level])).toEqual([
       ['ok', 'x'],
@@ -199,6 +200,36 @@ describe('startRun', () => {
     const rows = await results(run.id);
     expect(rows).toHaveLength(60);
     expect(rows.every((r) => r.status === 'error' && r.output.error === 'Not allowed')).toBe(true);
+  });
+
+  it('a refused first chunk errors the rest of the type without sending it', async () => {
+    const { setId } = await setWithCases(150);
+    harness.scanTexts.mockRejectedValue(new LabHarnessError('chunk 1 refused'));
+
+    const run = await startRun({ setId, version: 'active' }, MOD);
+
+    expect(harness.scanTexts).toHaveBeenCalledTimes(1);
+    expect(harness.scanTexts.mock.calls[0][3]).toEqual({ keyLabel: 'case' });
+    const statuses = (await results(run.id)).map((r) => r.status);
+    expect(statuses.filter((s) => s === 'error')).toHaveLength(150);
+    expect(run.status).toBe('failed');
+  });
+
+  it('a refusal after the first chunk does not stop the type', async () => {
+    const { setId } = await setWithCases(150);
+    harness.scanTexts
+      .mockImplementation(allOk())
+      .mockImplementationOnce(allOk())
+      .mockImplementationOnce(async () => {
+        throw new LabHarnessError('case 60: too big');
+      });
+
+    const run = await startRun({ setId, version: 'active' }, MOD);
+
+    expect(harness.scanTexts).toHaveBeenCalledTimes(3);
+    const rows = await results(run.id);
+    expect(rows.filter((r) => r.status === 'error')).toHaveLength(50);
+    expect(rows.filter((r) => r.status === 'ok')).toHaveLength(100);
   });
 
   it("keeps scanning another entity type after one type's first request is refused", async () => {
@@ -513,11 +544,20 @@ describe('a wiped case', () => {
       return allOk()(type, texts);
     });
     const run = await startRun({ setId, version: 'active' }, MOD);
-    const rows = await holder.pg!.query<{ case_id: string; status: string; output: unknown; workflow_id: string }>(
+    const rows = await holder.pg!.query<{
+      case_id: string;
+      status: string;
+      output: unknown;
+      workflow_id: string;
+    }>(
       'SELECT case_id, status, output, workflow_id FROM text_scan_test_result WHERE run_id = $1 ORDER BY case_id',
       [run.id]
     );
-    expect(rows.rows[0]).toMatchObject({ status: 'ok', output: null, workflow_id: `wf-${caseIds[0]}` });
+    expect(rows.rows[0]).toMatchObject({
+      status: 'ok',
+      output: null,
+      workflow_id: `wf-${caseIds[0]}`,
+    });
     expect(rows.rows[1].output).not.toBeNull();
     expect((await runRow(run.id)).totals.nsfw.scored).toBe(1);
   });

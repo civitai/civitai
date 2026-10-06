@@ -202,8 +202,7 @@ async function writeResults(runId: number, rows: ResultRow[]) {
       run_id: String(runId),
       case_id: String(r.case_id),
       status: r.status,
-      output:
-        r.output === null || present.get(r.case_id) ? null : JSON.stringify(r.output),
+      output: r.output === null || present.get(r.case_id) ? null : JSON.stringify(r.output),
       workflow_id: r.workflow_id,
     }));
   if (!values.length) return;
@@ -236,10 +235,9 @@ async function scanCases(
 ): Promise<Record<string, number> | null> {
   let promptIds: Record<string, number> | null = null;
   for (const [entityType, group] of byEntityType(cases)) {
-    // Set when this type's first request is refused before anything of it scanned: its later chunks
-    // would be refused the same way. Another type's texts can still go through.
+    // Set when this type's first request is refused: its later chunks would be refused the same way.
+    // A refusal after that is about its own chunk's texts. Another type's texts can still go through.
     let refusal: string | null = null;
-    let scannedAny = false;
     for (let i = 0; i < group.length; i += RUN_CHUNK) {
       const chunk = group.slice(i, i + RUN_CHUNK);
       if (refusal !== null) {
@@ -251,19 +249,18 @@ async function scanCases(
       }
       let results: LabScanResult[];
       try {
-        results = await scanTexts(entityType, toTexts(chunk), overrides);
+        results = await scanTexts(entityType, toTexts(chunk), overrides, { keyLabel: 'case' });
       } catch (e) {
         const message =
           e instanceof LabHarnessError ? e.message : 'The scan request failed unexpectedly.';
         if (!(e instanceof LabHarnessError))
           console.error('text-scan run: scan request failed', (e as Error)?.message);
-        if (!scannedAny && e instanceof LabHarnessError) refusal = message;
+        if (i === 0 && e instanceof LabHarnessError) refusal = message;
         results = chunk.map((c) => ({ key: String(c.id), ok: false as const, error: message }));
       }
       const byKey = new Map(results.map((r) => [r.key, r]));
       for (const r of results) {
         if (!r.ok) continue;
-        scannedAny = true;
         promptIds = { ...r.promptIds, ...(promptIds ?? {}) };
       }
       await writeResults(

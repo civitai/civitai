@@ -1,11 +1,10 @@
 import { callModEndpoint } from '../user-actions.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
+import { HARNESS_LIMITS, chunk, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
 import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
 // The main app's text-scan harness (`/api/mod/text-scan`). Every scan is a billed workflow.
 
-/** The harness refuses more than this many texts or ids in one request. */
-const HARNESS_BATCH_LIMIT = 50;
 // One chunk is one wave (chunk size = concurrency), so a request takes at most one workflow wait, well
 // inside the timeout and the harness's 120s budget; a timed-out request still bills every workflow it
 // submitted.
@@ -34,10 +33,22 @@ async function callHarness<T>(
   return result.body as T;
 }
 
-function chunk<T>(items: T[], size = HARNESS_BATCH_LIMIT): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
-  return chunks;
+/** The harness reports a refused text by its position (`texts.7.fields`); name it by its key instead. */
+const nameTexts = (error: string, batch: LabText[], keyLabel: string) =>
+  error.replace(/\btexts\.(\d+)/g, (match, i: string) =>
+    batch[Number(i)] ? `${keyLabel} ${batch[Number(i)].key}` : match
+  );
+
+/** Texts the harness would refuse become their own errors, so they never sink a shared request. */
+function splitOversize(texts: LabText[]) {
+  const fitting: LabText[] = [];
+  const oversize: LabScanResult[] = [];
+  for (const text of texts) {
+    const tooLarge = textTooLarge(text.fields);
+    if (tooLarge) oversize.push({ key: text.key, ok: false, error: tooLarge });
+    else fitting.push(text);
+  }
+  return { fitting, oversize };
 }
 
 export type LabPrompt = { id: number; key: string; content: string };
@@ -92,14 +103,19 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
  * because earlier chunks were already billed and the caller re-runs only what failed. It throws only
  * when the first request is refused outright (no session, not signed in, not allowed, invalid
  * request such as a blank prompt override): nothing was billed and every chunk would fail the same way.
+ * A text over the harness limits is never sent; it comes back as its own error. Results keep the
+ * order of `texts`.
  */
 export async function scanTexts(
   entityType: LabEntityType,
   texts: LabText[],
-  promptOverrides?: Record<string, string>
+  promptOverrides?: Record<string, string>,
+  { keyLabel = 'text' }: { keyLabel?: string } = {}
 ): Promise<LabScanResult[]> {
-  const results: LabScanResult[] = [];
-  for (const batch of chunk(texts, SCAN_CHUNK_SIZE)) {
+  const { fitting, oversize } = splitOversize(texts);
+  const byKey = new Map(oversize.map((r) => [r.key, r]));
+  let sent = 0;
+  for (const batch of chunkTexts(fitting, SCAN_CHUNK_SIZE)) {
     const result = await postHarness(
       'scanTexts',
       {
@@ -111,19 +127,25 @@ export async function scanTexts(
       },
       'Text-scan scan'
     );
+    sent++;
     if (result.ok) {
-      results.push(...(result.body.results as HarnessScanResult[]).map(toLabScanResult));
+      for (const r of (result.body.results as HarnessScanResult[]).map(toLabScanResult))
+        byKey.set(r.key, r);
       continue;
     }
+    const error = nameTexts(result.error, batch, keyLabel);
     const refused =
       result.requestNeverSent ||
       result.status === 400 ||
       result.status === 401 ||
       result.status === 403;
-    if (refused && results.length === 0) throw new LabHarnessError(result.error);
-    results.push(...batch.map(({ key }) => ({ key, ok: false as const, error: result.error })));
+    if (refused && sent === 1) throw new LabHarnessError(error);
+    for (const { key } of batch) byKey.set(key, { key, ok: false, error });
   }
-  return results;
+  return texts.flatMap(({ key }) => {
+    const r = byKey.get(key);
+    return r ? [r] : [];
+  });
 }
 
 export async function quoteTexts(
@@ -133,7 +155,8 @@ export async function quoteTexts(
 ): Promise<{ meanCostTotal: number | null; count: number }> {
   let quoted = 0;
   let costSum = 0;
-  for (const batch of chunk(texts)) {
+  // An oversize text would refuse the whole request; it is left unquoted, as it will not run.
+  for (const batch of chunkTexts(splitOversize(texts).fitting, HARNESS_LIMITS.textsPerRequest)) {
     const body = await callHarness<{ quoted: number; meanCostTotal: number | null }>(
       'quoteTexts',
       { entityType, texts: batch, promptOverrides },
@@ -174,7 +197,7 @@ export async function composeEntities(
   ids: number[]
 ): Promise<LabComposedEntity[]> {
   const results: LabComposedEntity[] = [];
-  for (const entityIds of chunk(ids)) {
+  for (const entityIds of chunk(ids, HARNESS_LIMITS.textsPerRequest)) {
     const body = await callHarness<{ results: HarnessComposedEntity[] }>(
       'composeEntities',
       { entityType, entityIds },

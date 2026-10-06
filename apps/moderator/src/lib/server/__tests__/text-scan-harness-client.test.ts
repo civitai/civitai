@@ -89,7 +89,11 @@ describe('scanTexts', () => {
       },
     });
 
-    const results = await scanTexts('Model', texts(3), { base: 'BASE PROMPT' });
+    const results = await scanTexts(
+      'Model',
+      ['a', 'b', 'c'].map((key) => ({ key, fields: [{ heading: 'Name', text: key }] })),
+      { base: 'BASE PROMPT' }
+    );
 
     expect(results).toEqual([
       {
@@ -176,6 +180,83 @@ describe('scanTexts', () => {
 
     expect(results.filter((r) => r.ok)).toHaveLength(8);
     expect(results[8]).toEqual({ key: 't8', ok: false, error: 'Text-scan scan: sign in again' });
+  });
+});
+
+describe('harness limits', () => {
+  const huge = (key: string, n = 200_001) => ({
+    key,
+    fields: [{ heading: 'Description', text: 'x'.repeat(n) }],
+  });
+  const manyFields = (key: string) => ({
+    key,
+    fields: Array.from({ length: 501 }, () => ({ heading: 'Version name', text: 'v' })),
+  });
+
+  it('keeps an oversize text out of every request and reports it as its own error, in order', async () => {
+    call.mockImplementation(async (_path, body) => ({
+      ok: true,
+      body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
+    }));
+
+    const results = await scanTexts('Model', [
+      ...texts(2),
+      huge('big'),
+      manyFields('wide'),
+      ...texts(3).slice(2),
+    ]);
+
+    const sent = call.mock.calls.flatMap(([, body]) =>
+      (body.texts as Array<{ key: string }>).map((t) => t.key)
+    );
+    expect(sent).toEqual(['t0', 't1', 't2']);
+    expect(results.map((r) => r.key)).toEqual(['t0', 't1', 'big', 'wide', 't2']);
+    expect(results[2]).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/^too large: 1 fields \/ 200001 chars/),
+    });
+    expect(results[3]).toMatchObject({
+      ok: false,
+      error: expect.stringMatching(/^too large: 501 fields \/ 501 chars/),
+    });
+  });
+
+  it('splits a request at the per-request character cap', async () => {
+    call.mockImplementation(async (_path, body) => ({
+      ok: true,
+      body: { results: (body.texts as Array<{ key: string }>).map(({ key }) => scannedOk(key)) },
+    }));
+    await scanTexts(
+      'Model',
+      Array.from({ length: 6 }, (_, i) => huge(`h${i}`, 190_000))
+    );
+    expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([5, 1]);
+  });
+
+  it('names a refused text by its key, not its position', async () => {
+    call
+      .mockResolvedValueOnce({ ok: true, body: { results: texts(8).map((t) => scannedOk(t.key)) } })
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        error: 'Invalid request: texts.1.fields: Too big',
+      });
+
+    const results = await scanTexts('Model', texts(16), undefined, { keyLabel: 'case' });
+
+    expect(results[9]).toEqual({
+      key: 't9',
+      ok: false,
+      error: 'Invalid request: case t9.fields: Too big',
+    });
+  });
+
+  it('quotes only the texts that fit', async () => {
+    call.mockResolvedValue({ ok: true, body: { count: 1, quoted: 1, meanCostTotal: 1 } });
+    await quoteTexts('Model', [huge('big'), ...texts(1)]);
+    expect(
+      call.mock.calls.map(([, body]) => (body.texts as Array<{ key: string }>).map((t) => t.key))
+    ).toEqual([['t0']]);
   });
 });
 
