@@ -24,7 +24,7 @@ export const TEXT_MAX_CHARS = 50_000;
 /** Deepest list indent drawn. Nesting past it still bullets, flush with this level. */
 const MAX_INDENT = 8;
 
-/** Elements whose CONTENT is never shown — dropped whole, up to their closing tag. */
+/** Elements whose content is dropped, up to their closing tag (see SWALLOWS_REST for an unclosed one). */
 const DROPPED = new Set([
   'script',
   'style',
@@ -37,8 +37,9 @@ const DROPPED = new Set([
 ]);
 
 /**
- * Of those, the ones a browser treats as raw text: an unclosed one swallows the rest of the document.
- * The others (`</head>` is optional, for one) only lose their own tag when unclosed.
+ * Of those, the ones whose unclosed form swallows the rest of the input. The others only lose their
+ * own tag when unclosed — a deliberate choice to show MORE, not browser parity: `</head>` is optional,
+ * and hiding a real message behind a missing end tag is the worse failure on a moderation screen.
  */
 const SWALLOWS_REST = new Set(['script', 'style', 'title', 'textarea']);
 
