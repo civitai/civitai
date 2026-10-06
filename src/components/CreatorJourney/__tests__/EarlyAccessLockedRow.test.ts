@@ -1,10 +1,17 @@
 // @vitest-environment happy-dom
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import { EarlyAccessLockedRow } from '~/components/CreatorJourney/EarlyAccessLockedRow';
+
+const features = vi.hoisted(() => ({ creatorJourney: true }));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsProvider>()),
+  useFeatureFlags: () => features,
+}));
 import { getEarlyAccessEntryRung } from '~/server/utils/early-access-helpers';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 
@@ -32,6 +39,10 @@ function render(score: number | undefined) {
     hrefs: [...container.querySelectorAll('a')].map((a) => a.getAttribute('href')),
   };
 }
+
+beforeEach(() => {
+  features.creatorJourney = true;
+});
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -61,5 +72,15 @@ describe('EarlyAccessLockedRow', () => {
     act(() => root?.unmount());
     container?.remove();
     expect(render(0).text).toMatch(/\| You're at 0\. At /);
+  });
+
+  // Creator Journey is flagged: without it the page is a 404, so nothing may link there.
+  it('drops the journey link, and keeps the numbers, while Creator Journey is off', () => {
+    features.creatorJourney = false;
+    const { text, hrefs } = render(4321.7);
+
+    expect(text).toMatch(/Higher scores raise both\.$/);
+    expect(text).toContain(`Early access unlocks at a Creator Score of ${threshold}`);
+    expect(hrefs).toEqual([]);
   });
 });

@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
-import { showCreatePostError } from '~/components/Post/showCreatePostError';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -37,6 +37,7 @@ export default function Model3DReviewModal({
   const dialog = useDialogContext();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
+  const showCreatePostError = useShowCreatePostError();
 
   // Thumbs up / thumbs down — `undefined` means "user hasn't picked yet" so
   // we can require a choice on submit. Existing reviews always have a value.

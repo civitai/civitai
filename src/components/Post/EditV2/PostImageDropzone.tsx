@@ -4,7 +4,7 @@ import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { showCreatePostError } from '~/components/Post/showCreatePostError';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -42,6 +42,7 @@ export function PostImageDropzone({
   ]);
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
+  const showCreatePostError = useShowCreatePostError();
   const { src, modelVersionId, model3dId, tag, collectionId } = params;
   // #endregion
 

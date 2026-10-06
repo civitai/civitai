@@ -17,7 +17,7 @@ import React, { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
-import { showCreatePostError } from '~/components/Post/showCreatePostError';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -87,6 +87,7 @@ type ParseProgress = {
 };
 
 export default function IntentPost() {
+  const showCreatePostError = useShowCreatePostError();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const [readyData, setReadyData] = useState<PostQuerySchema | undefined>();

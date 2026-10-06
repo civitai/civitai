@@ -19,7 +19,7 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
-import { showCreatePostError } from '~/components/Post/showCreatePostError';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { getStepMeta } from './GenerationForm/generation.utils';
@@ -41,6 +41,7 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
+  const showCreatePostError = useShowCreatePostError();
   const { data, markerTags } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
   const selectableImages = useMemo(
