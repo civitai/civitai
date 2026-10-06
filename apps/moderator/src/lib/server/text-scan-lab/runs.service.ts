@@ -5,6 +5,7 @@ import type { text_scan_test_run } from '../moderator-db/types';
 import { LabError } from './errors';
 import {
   DraftError,
+  getDraft,
   getVisibleDraft,
   validateDraftPrompts,
   type DraftPrompts,
@@ -18,8 +19,10 @@ import { caseCorrect, diffRuns, totals, type LabelTotals } from '$lib/text-scan-
 import type { RunRow } from '$lib/text-scan-lab/run-summary';
 import type { Expected, LabEntityType, LabField, LabScanResult } from '$lib/text-scan-lab/types';
 
-/** The most cases one run scans: the run executes inside one request. */
+/** The most cases one run scans. */
 export const MAX_RUN_CASES = 500;
+/** A running run with no chunk landing for this long was interrupted (its process stopped). */
+export const RUN_STALE_MS = 5 * 60_000;
 /** Results are written after each chunk, so a run cut short keeps what it already scanned. */
 const RUN_CHUNK = 50;
 
@@ -37,12 +40,22 @@ export type TestRun = {
   draftUpdatedAt: Date | null;
   promptIds: Record<string, number> | null;
   model: string | null;
-  status: 'running' | 'done' | 'failed';
+  /** 'interrupted' is read, never stored: a 'running' row whose progress went stale. */
+  status: 'running' | 'done' | 'failed' | 'interrupted';
   totals: RunTotals | null;
   runBy: number;
   startedAt: Date;
   finishedAt: Date | null;
+  /** The scan in flight, or the last one: cases it scans and cases scanned so far. */
+  scanTotal: number | null;
+  scanDone: number;
 };
+
+/** A run whose scan was started and goes on after the request: `finished` settles when it ends. */
+export type StartedRun = { run: TestRun; finished: Promise<TestRun> };
+
+const isStale = (r: Pick<Selectable<text_scan_test_run>, 'progress_at' | 'started_at'>) =>
+  Date.now() - new Date(r.progress_at ?? r.started_at).getTime() > RUN_STALE_MS;
 
 // Deliberately leaves out `prompts`: the overrides are only ever read back to re-run them.
 const toRun = (r: Selectable<text_scan_test_run>): TestRun => ({
@@ -53,11 +66,13 @@ const toRun = (r: Selectable<text_scan_test_run>): TestRun => ({
   draftUpdatedAt: r.draft_updated_at ? new Date(r.draft_updated_at) : null,
   promptIds: (r.prompt_ids as Record<string, number> | null) ?? null,
   model: r.model,
-  status: r.status as TestRun['status'],
+  status: r.status === 'running' && isStale(r) ? 'interrupted' : (r.status as TestRun['status']),
   totals: (r.totals as RunTotals | null) ?? null,
   runBy: r.run_by,
   startedAt: new Date(r.started_at),
   finishedAt: r.finished_at ? new Date(r.finished_at) : null,
+  scanTotal: r.scan_total,
+  scanDone: r.scan_done,
 });
 
 type RunCase = { id: number; entityType: LabEntityType; fields: LabField[]; expected: Expected };
@@ -140,7 +155,7 @@ const toTexts = (cases: RunCase[]) => cases.map((c) => ({ key: String(c.id), fie
 export async function prepareRun(
   input: { setId: number; version: RunVersion },
   userId: number
-): Promise<PlannedRun<TestRun>> {
+): Promise<PlannedRun<StartedRun>> {
   const plan = await planRun(input.setId, input.version, userId);
   return {
     count: plan.runnable.length,
@@ -216,6 +231,14 @@ async function writeResults(runId: number, rows: ResultRow[]) {
     .execute();
 }
 
+async function recordProgress(runId: number, scanned: number) {
+  await getModeratorDb()
+    .updateTable('text_scan_test_run')
+    .set((eb) => ({ scan_done: eb('scan_done', '+', scanned), progress_at: sql`now()` }))
+    .where('id', '=', String(runId))
+    .execute();
+}
+
 const skippedRows = (caseIds: number[]): ResultRow[] =>
   caseIds.map((id) => ({
     case_id: id,
@@ -241,6 +264,7 @@ async function scanCases(
           runId,
           part.map((c) => toResultRow(c, { key: String(c.id), ok: false, error: refusal! }))
         );
+        await recordProgress(runId, part.length);
         continue;
       }
       let results: LabScanResult[];
@@ -263,6 +287,7 @@ async function scanCases(
         runId,
         part.map((c) => toResultRow(c, byKey.get(String(c.id))))
       );
+      await recordProgress(runId, part.length);
     }
   }
   return promptIds;
@@ -355,14 +380,38 @@ async function execute(runId: number, cases: RunCase[], overrides: DraftPrompts 
   }
 }
 
+/**
+ * Scans in the background: a set run outlasts the request (and a proxy's timeout), so the caller gets
+ * the run at once and follows it with `getRunProgress`. A failure is logged here and left on the run as
+ * 'failed'; `finished` still rejects for a caller that awaits it.
+ */
+async function launch(
+  runId: number,
+  cases: RunCase[],
+  overrides: DraftPrompts | undefined
+): Promise<StartedRun> {
+  const finished = execute(runId, cases, overrides);
+  finished.catch((e) =>
+    console.error(`text-scan run ${runId}: failed`, (e as Error | undefined)?.message)
+  );
+  const row = await getModeratorDb()
+    .selectFrom('text_scan_test_run')
+    .selectAll()
+    .where('id', '=', String(runId))
+    .executeTakeFirstOrThrow();
+  return { run: toRun(row), finished };
+}
+
+/** Starts a run and waits for it to finish. */
 export async function startRun(
   input: { setId: number; version: RunVersion },
   userId: number
 ): Promise<TestRun> {
-  return startPlanned(await planRun(input.setId, input.version, userId), userId);
+  const started = await startPlanned(await planRun(input.setId, input.version, userId), userId);
+  return started.finished;
 }
 
-async function startPlanned(plan: Plan, userId: number): Promise<TestRun> {
+async function startPlanned(plan: Plan, userId: number): Promise<StartedRun> {
   const config = await getPrompts().then(
     (p) => p.config,
     () => null
@@ -379,12 +428,14 @@ async function startPlanned(plan: Plan, userId: number): Promise<TestRun> {
       thinking: config?.thinking ?? null,
       status: 'running',
       run_by: userId,
+      scan_total: plan.runnable.length,
+      progress_at: sql`now()`,
     })
     .returning('id')
     .executeTakeFirstOrThrow();
   const runId = Number(run.id);
   await writeResults(runId, skippedRows(plan.skipped));
-  return execute(runId, plan.runnable, plan.overrides);
+  return launch(runId, plan.runnable, plan.overrides);
 }
 
 async function getRunRow(setId: number, runId: number) {
@@ -398,15 +449,59 @@ async function getRunRow(setId: number, runId: number) {
   return row;
 }
 
-async function planRerun(setId: number, runId: number) {
+const INTERRUPTED = 'The run was interrupted before this case was scanned.';
+
+/**
+ * Closes an interrupted run as failed, with an error for each case it never reached, so re-running its
+ * errors finishes it. Guarded on the stale progress it was judged by, so a run that moves meanwhile is
+ * left alone.
+ */
+async function closeInterrupted(setId: number, run: Selectable<text_scan_test_run>) {
+  const db = getModeratorDb();
+  const claimed = await db
+    .updateTable('text_scan_test_run')
+    .set({ progress_at: sql`now()` })
+    .where('id', '=', run.id)
+    .where('status', '=', 'running')
+    .where(sql<boolean>`progress_at IS NOT DISTINCT FROM ${run.progress_at}`)
+    .executeTakeFirst();
+  if (!claimed.numUpdatedRows) return;
+  const seen = new Set(
+    (
+      await db
+        .selectFrom('text_scan_test_result')
+        .select('case_id')
+        .where('run_id', '=', run.id)
+        .execute()
+    ).map((r) => Number(r.case_id))
+  );
+  const missed = splitCases(await listCases(setId)).runnable.filter((c) => !seen.has(c.id));
+  await writeResults(
+    Number(run.id),
+    missed.map((c) => toResultRow(c, { key: String(c.id), ok: false, error: INTERRUPTED }))
+  );
+  await finishRun(Number(run.id), null, { failed: missed.length > 0 });
+}
+
+/** `userId` re-runs: a run of another moderator's working copy is theirs alone, like the copy. */
+async function planRerun(setId: number, runId: number, userId: number) {
   const set = await getSet(setId);
   if (set?.archivedAt) throw new RunError(`Test set "${set.name}" is archived.`, 409);
-  const run = await getRunRow(setId, runId);
-  if (run.status === 'running')
-    throw new RunError(
-      'This run has not finished. If it was interrupted, start a new run instead.',
-      409
-    );
+  let run = await getRunRow(setId, runId);
+  if (run.draft_id !== null) {
+    const draft = await getDraft(Number(run.draft_id));
+    if (draft?.kind === 'working' && draft.createdBy !== userId)
+      throw new RunError(
+        "This run tested another moderator's unpublished changes — only they can re-run it.",
+        403
+      );
+  }
+  if (run.status === 'running') {
+    if (!isStale(run)) throw new RunError('This run has not finished yet.', 409);
+    await closeInterrupted(setId, run);
+    run = await getRunRow(setId, runId);
+    if (run.status === 'running') throw new RunError('This run has not finished yet.', 409);
+  }
 
   let overrides: DraftPrompts | undefined;
   if (run.version !== 'active') {
@@ -454,8 +549,12 @@ async function changedSinceRun(run: Selectable<text_scan_test_run>): Promise<str
 }
 
 /** A planned re-run of a run's errors; its stamp binds a confirmation to the error count. */
-export async function prepareRerun(setId: number, runId: number): Promise<PlannedRun<TestRun>> {
-  const plan = await planRerun(setId, runId);
+export async function prepareRerun(
+  setId: number,
+  runId: number,
+  userId: number
+): Promise<PlannedRun<StartedRun>> {
+  const plan = await planRerun(setId, runId, userId);
   return {
     count: plan.runnable.length,
     skipped: plan.skipped.length,
@@ -465,15 +564,15 @@ export async function prepareRerun(setId: number, runId: number): Promise<Planne
 }
 
 /** Re-scans only the run's error rows, with the prompts the run recorded — never the draft's current
- *  text — and recomputes its totals. */
-export async function rerunErrors(setId: number, runId: number): Promise<TestRun> {
-  return rerunPlanned(runId, await planRerun(setId, runId));
+ *  text — and recomputes its totals. Waits for it to finish. */
+export async function rerunErrors(setId: number, runId: number, userId: number): Promise<TestRun> {
+  return (await rerunPlanned(runId, await planRerun(setId, runId, userId))).finished;
 }
 
 async function rerunPlanned(
   runId: number,
   { run, overrides, runnable, skipped }: Awaited<ReturnType<typeof planRerun>>
-): Promise<TestRun> {
+): Promise<StartedRun> {
   if (run.model === null || run.thinking === null)
     throw new RunError(
       "This run did not record its model or thinking setting, so it can't be re-run safely — start a new run.",
@@ -490,17 +589,22 @@ async function rerunPlanned(
     );
   }
 
-  // Claimed first so a second click cannot bill the same errors twice.
+  // Claimed first so a second click cannot scan the same errors twice.
   const claimed = await getModeratorDb()
     .updateTable('text_scan_test_run')
-    .set({ status: 'running' })
+    .set({
+      status: 'running',
+      scan_total: runnable.length,
+      scan_done: 0,
+      progress_at: sql`now()`,
+    })
     .where('id', '=', String(runId))
     .where('status', '=', run.status)
     .executeTakeFirst();
   if (!claimed.numUpdatedRows) throw new RunError('This run is already being re-run.', 409);
 
   await writeResults(runId, skippedRows(skipped));
-  return execute(runId, runnable, overrides);
+  return launch(runId, runnable, overrides);
 }
 
 export type RunListItem = TestRun & {
@@ -688,4 +792,17 @@ export async function getRunOutcome(setId: number, runId: number): Promise<RunOu
         return { caseId: r.caseId, error: typeof error === 'string' ? error : 'Unknown error' };
       }),
   };
+}
+
+export type RunProgress = {
+  runId: number;
+  status: TestRun['status'];
+  done: number;
+  total: number | null;
+};
+
+/** One run's state, cheap enough to poll while it scans. */
+export async function getRunProgress(setId: number, runId: number): Promise<RunProgress> {
+  const run = toRun(await getRunRow(setId, runId));
+  return { runId: run.id, status: run.status, done: run.scanDone, total: run.scanTotal };
 }

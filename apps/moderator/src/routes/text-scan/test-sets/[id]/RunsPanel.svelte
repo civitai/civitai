@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -10,6 +11,7 @@
   import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
   import type { RunListItem, TestRun } from '$lib/server/text-scan-lab/runs.service';
   import { CONFIRM_ABOVE } from '$lib/text-scan-lab/limits';
+  import { fetchRunProgress, pollRuns, progressText } from '$lib/text-scan-lab/run-poll';
   import { scoreChips } from '$lib/text-scan-lab/score';
 
   let {
@@ -70,6 +72,34 @@
         if (result.type !== 'success') pending = null;
       },
     });
+  // Runs scan after the request that started them: follow the running ones, then reload the page.
+  const runningKey = $derived(
+    runs
+      .filter((r) => r.status === 'running')
+      .map((r) => `${r.setId}:${r.id}`)
+      .join(',')
+  );
+  let progress = $state<Record<number, string>>({});
+  let followError = $state<string | null>(null);
+  $effect(() => {
+    if (!runningKey) return;
+    const running = runningKey.split(',').map((k) => k.split(':').map(Number));
+    const controller = new AbortController();
+    pollRuns({
+      runIds: running.map(([, runId]) => runId),
+      read: (runId) => fetchRunProgress(running[0][0], runId),
+      onProgress: (p) =>
+        (progress = Object.fromEntries(p.map((x) => [x.runId, progressText([x], [''])]))),
+      signal: controller.signal,
+    }).then(
+      (done) => {
+        if (done) void invalidateAll();
+      },
+      (e: Error) => (followError = e.message)
+    );
+    return () => controller.abort();
+  });
+
   const runForm = confirmed();
   const rerunForm = confirmed();
   const submitting = $derived(runForm.submitting || rerunForm.submitting);
@@ -116,11 +146,11 @@
         </Select.Root>
       </div>
       <Button type="submit" disabled={submitting}>
-        {runForm.submitting && !pending ? 'Running…' : 'Run'}
+        {runForm.submitting && !pending ? 'Starting…' : 'Run'}
       </Button>
       <p class="pb-2 text-xs text-dark-2">
         One scan per case with text, up to {num(maxRunCases)}. Over {CONFIRM_ABOVE} you confirm
-        first. The page waits until the run finishes.
+        first. A run keeps going if you leave the page.
       </p>
     </form>
     {#if runForm.error}<p class="mt-2 whitespace-pre-wrap text-sm text-red-300">{runForm.error}</p>{/if}
@@ -148,7 +178,7 @@
             </Table.Cell>
             <Table.Cell class="align-top">
               <Badge
-                variant={run.status === 'failed'
+                variant={run.status === 'failed' || run.status === 'interrupted'
                   ? 'destructive'
                   : run.status === 'running'
                   ? 'outline'
@@ -156,6 +186,9 @@
               >
                 {run.status}
               </Badge>
+              {#if run.status === 'running' && progress[run.id]}
+                <p class="mt-1 text-xs text-dark-2">{progress[run.id]}</p>
+              {/if}
             </Table.Cell>
             <Table.Cell class="align-top text-xs text-dark-2">{dateTime(run.startedAt)}</Table.Cell>
             <Table.Cell class="align-top text-xs text-dark-2">{duration(run)}</Table.Cell>
@@ -185,7 +218,7 @@
             </Table.Cell>
             {#if canRun}
               <Table.Cell class="text-right align-top">
-                {#if run.errors.length && run.status !== 'running'}
+                {#if (run.errors.length && run.status !== 'running') || run.status === 'interrupted'}
                   <form
                     id="rerun-{run.id}"
                     method="POST"
@@ -195,7 +228,9 @@
                     <input type="hidden" name="runId" value={run.id} />
                     <Button type="submit" size="sm" variant="outline" disabled={submitting}>
                       {rerunForm.submitting && submittedFormId === `rerun-${run.id}` && !pending
-                        ? 'Re-running…'
+                        ? 'Starting…'
+                        : run.status === 'interrupted'
+                        ? 'Finish the run'
                         : `Re-run ${plural(run.errors.length, 'error')}`}
                     </Button>
                   </form>
@@ -207,6 +242,7 @@
       </Table.Body>
     </Table.Root>
     {#if rerunForm.error}<p class="mt-2 whitespace-pre-wrap text-sm text-red-300">{rerunForm.error}</p>{/if}
+    {#if followError}<p class="mt-2 text-sm text-red-300">{followError}</p>{/if}
 
     {#if runs.length > 1}
       <form method="GET" class="mt-4 flex flex-wrap items-end gap-3 border-t border-dark-4 pt-4">

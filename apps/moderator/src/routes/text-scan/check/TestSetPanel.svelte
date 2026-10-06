@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { browser } from '$app/environment';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -6,9 +7,10 @@
   import ConfirmRunDialog from '$lib/components/text-scan-lab/ConfirmRunDialog.svelte';
   import { num, plural } from '$lib/format';
   import { ENTITY_TYPE_NAMES, describeExpected } from '$lib/text-scan-lab/labels';
+  import { fetchRunProgress, pollRuns, progressText } from '$lib/text-scan-lab/run-poll';
   import type { Expected } from '$lib/text-scan-lab/types';
   import type { CaseListItem } from '../test-sets/[id]/cases/+server';
-  import type { CheckResult, SetRunView } from './+page.server';
+  import type { CheckResult, SetRunStarted, SetRunView } from './+page.server';
   import { actionError, type ChangesState } from './changes';
   import { postAction } from './post-action';
   import SetRunSummary from './SetRunSummary.svelte';
@@ -39,9 +41,8 @@
   const cases = $derived(
     browser && setId
       ? fetch(`/text-scan/test-sets/${setId}/cases`).then(async (res) => {
-          const body = await res.json();
-          if (!res.ok) throw new Error(body.error ?? 'Could not load the cases.');
-          return body.cases as CaseListItem[];
+          if (!res.ok) throw new Error('Could not load the cases.');
+          return ((await res.json()) as { cases: CaseListItem[] }).cases;
         })
       : null
   );
@@ -96,7 +97,11 @@
 
   let running = $state(false);
   let runError = $state<string | null>(null);
+  let progress = $state<string | null>(null);
   let view = $state<SetRunView | null>(null);
+  let changedError = $state<string | null>(null);
+  let following: AbortController | null = null;
+  onDestroy(() => following?.abort());
   let pending = $state<{
     request: ConfirmAsk;
     note: string | null;
@@ -104,6 +109,38 @@
   } | null>(null);
   const withChanges = $derived(changes.keys.length > 0);
   const shownView = $derived(view && String(view.setId) === setId ? view : null);
+
+  /** Follows started runs until they finish, then shows their summary. */
+  async function follow(started: SetRunStarted) {
+    const runIds = [started.currentRunId];
+    if (started.changedRunId !== null) runIds.push(started.changedRunId);
+    const titles = runIds.length > 1 ? ['Current', changedTitle] : [''];
+    following?.abort();
+    following = new AbortController();
+    try {
+      const done = await pollRuns({
+        runIds,
+        read: (runId) => fetchRunProgress(started.setId, runId),
+        onProgress: (p) => (progress = progressText(p, titles)),
+        signal: following.signal,
+      });
+      if (!done) return;
+    } catch (e) {
+      runError = (e as Error).message;
+      return;
+    } finally {
+      progress = null;
+    }
+    const summary = await postAction('setRunSummary', {
+      setId: String(started.setId),
+      currentRunId: String(started.currentRunId),
+      changedRunId: started.changedRunId === null ? '' : String(started.changedRunId),
+    });
+    if (summary.type === 'success') {
+      view = summary.data as SetRunView;
+      changedError = started.changedError;
+    } else runError = actionError(summary);
+  }
 
   /** Posts a set run, asking first when the server wants a confirmation. */
   async function submitRun(
@@ -114,24 +151,27 @@
   ) {
     running = true;
     runError = null;
-    const result = await postAction(action, { ...fields, confirmed });
-    running = false;
-    if (result.type !== 'success') {
+    try {
+      const result = await postAction(action, { ...fields, confirmed });
+      if (result.type !== 'success') {
+        pending = null;
+        runError = actionError(result);
+        return;
+      }
+      const data = result.data as SetRunStarted | ConfirmAsk;
+      if ('needsConfirm' in data) {
+        pending = {
+          request: data,
+          note,
+          confirm: (stamp) => void submitRun(action, fields, note, stamp),
+        };
+        return;
+      }
       pending = null;
-      runError = actionError(result);
-      return;
+      await follow(data);
+    } finally {
+      running = false;
     }
-    const data = result.data as SetRunView | ConfirmAsk;
-    if ('needsConfirm' in data) {
-      pending = {
-        request: data,
-        note,
-        confirm: (stamp) => void submitRun(action, fields, note, stamp),
-      };
-      return;
-    }
-    pending = null;
-    view = data;
   }
 
   async function runSet() {
@@ -201,10 +241,13 @@
       <p class="text-xs text-dark-2">
         Runs every case with the current prompts{withChanges
           ? ` and ${changedTitle.toLowerCase()}`
-          : ''}. The page waits until it finishes.
+          : ''}. It keeps running if you leave the page; its results stay on Test sets.
       </p>
     {/if}
   </div>
+  {#if progress !== null}
+    <p class="mt-2 text-sm text-dark-0">Running… {progress}</p>
+  {/if}
   {#if runError}
     <p class="mt-2 whitespace-pre-wrap text-sm text-red-300">{runError}</p>
   {/if}
@@ -260,6 +303,7 @@
   {#if shownView}
     <SetRunSummary
       view={shownView}
+      {changedError}
       {changedTitle}
       {changesName}
       {civitaiUrl}

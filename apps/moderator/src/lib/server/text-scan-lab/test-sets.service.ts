@@ -219,6 +219,18 @@ export async function getCase(setId: number, caseId: number): Promise<TestCase |
   return row ? toCase(row) : null;
 }
 
+export async function getCases(setId: number, caseIds: number[]): Promise<TestCase[]> {
+  if (!caseIds.length) return [];
+  const rows = await getModeratorDb()
+    .selectFrom('text_scan_test_case')
+    .selectAll()
+    .where('set_id', '=', String(setId))
+    .where('id', 'in', caseIds.map(String))
+    .orderBy('id')
+    .execute();
+  return rows.map(toCase);
+}
+
 const caseNotFound = (caseId: number) =>
   new TestSetError(`Test case ${caseId} not found in this set.`, 404);
 

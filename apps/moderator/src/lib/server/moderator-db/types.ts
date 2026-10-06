@@ -643,6 +643,9 @@ export type text_scan_test_run = {
   run_by: number;
   started_at: Generated<Timestamp>;
   finished_at: Timestamp | null;
+  scan_total: number | null;
+  scan_done: Generated<number>;
+  progress_at: Timestamp | null;
 };
 export type text_scan_test_set = {
   id: Generated<string>;

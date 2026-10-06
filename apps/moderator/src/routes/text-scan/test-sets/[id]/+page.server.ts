@@ -19,6 +19,7 @@ import {
   prepareRerun,
   prepareRun,
   type RunComparison,
+  type StartedRun,
   type TestRun,
 } from '$lib/server/text-scan-lab/runs.service';
 import {
@@ -153,7 +154,7 @@ const versionField = z.union([
 const confirmedAction =
   <S extends z.ZodType>(
     schema: S,
-    prepare: (setId: number, input: z.infer<S>, userId: number) => Promise<PlannedRun<TestRun>>
+    prepare: (setId: number, input: z.infer<S>, userId: number) => Promise<PlannedRun<StartedRun>>
   ): Action =>
   async ({ request, params, locals }) => {
     const setId = setIdOf(params.id ?? '');
@@ -167,8 +168,9 @@ const confirmedAction =
         estimateSeconds(planned.count, await casesPerSecond(setId))
       );
       if (ask) return ask;
-      const result = await planned.execute(locals.user.id);
-      return { ran: true as const, runId: result.id, status: result.status };
+      // Scans after the response; the page polls the run until it finishes.
+      const { run } = await planned.execute(locals.user.id);
+      return { ran: true as const, runId: run.id, status: run.status };
     } catch (e) {
       return refused(e);
     }
@@ -181,7 +183,7 @@ export const actions: Actions = {
 
   rerunErrors: confirmedAction(
     z.object({ runId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
-    (setId, input) => prepareRerun(setId, input.runId)
+    (setId, input, userId) => prepareRerun(setId, input.runId, userId)
   ),
 
   // Also the playground's "Save as test case". An entity case is keyed by its id, so saving one that

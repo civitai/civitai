@@ -76,9 +76,18 @@ CREATE TABLE IF NOT EXISTS text_scan_test_run (
   totals      jsonb,
   run_by      integer NOT NULL,
   started_at  timestamptz NOT NULL DEFAULT now(),
-  finished_at timestamptz
+  finished_at timestamptz,
+  -- Progress of the scan in flight (a run or a re-run of its errors), which runs after the request
+  -- that started it: cases it scans, cases scanned so far, and when the last chunk landed. A running
+  -- run whose progress_at goes stale was interrupted.
+  scan_total  integer,
+  scan_done   integer NOT NULL DEFAULT 0,
+  progress_at timestamptz
 );
 ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS thinking boolean;
+ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS scan_total integer;
+ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS scan_done integer NOT NULL DEFAULT 0;
+ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS progress_at timestamptz;
 CREATE INDEX IF NOT EXISTS text_scan_test_run_set_idx ON text_scan_test_run (set_id, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS text_scan_test_result (

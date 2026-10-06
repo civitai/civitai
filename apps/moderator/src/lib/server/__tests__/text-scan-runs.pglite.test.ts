@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
 /**
- * Test-set runs over the REAL `text-scan-lab/schema.sql`, with only the billed harness faked: what a
+ * Test-set runs over the REAL `text-scan-lab/schema.sql`, with only the harness faked: what a
  * failed chunk, a deleted source or a re-run leaves behind is rows and statuses, which only a real table
  * can show.
  */
@@ -53,10 +53,12 @@ const { createDraft, saveWorkingCopy, updateDraft } = await import(
 );
 const { addCase, createSet, updateExpected } = await import('../text-scan-lab/test-sets.service');
 const {
+  RUN_STALE_MS,
   RunError,
   casesPerSecond,
   compareRuns,
   getRunOutcome,
+  getRunProgress,
   latestRunTotals,
   listRuns,
   prepareRerun,
@@ -428,7 +430,9 @@ describe('prepareRun', () => {
     const mine = (await saveWorkingCopy(MOD, { 'label:nsfw': 'MY NSFW' }, null))!;
     harness.scanTexts.mockImplementation(allOk());
 
-    const run = await (await prepareRun({ setId, version: mine.id }, MOD)).execute(MOD);
+    const run = await (
+      await (await prepareRun({ setId, version: mine.id }, MOD)).execute(MOD)
+    ).finished;
 
     expect(harness.scanTexts.mock.calls[0][2]).toEqual({ 'label:nsfw': 'MY NSFW' });
     expect(run).toMatchObject({ version: String(mine.id), draftId: mine.id });
@@ -472,7 +476,7 @@ describe('prepareRerun', () => {
       texts.map((t) => ({ key: t.key, ok: false, error: 'x' }))
     );
     const run = await startRun({ setId, version: 'active' }, MOD);
-    const prepared = await prepareRerun(setId, run.id);
+    const prepared = await prepareRerun(setId, run.id, MOD);
     expect(prepared).toMatchObject({ count: 3, skipped: 0, stamp: '3:' });
   });
 });
@@ -497,7 +501,7 @@ describe('rerunErrors', () => {
 
     harness.scanTexts.mockReset().mockImplementation(allOk('pg13'));
     purge.purgeDeletedSources.mockClear();
-    const rerun = await rerunErrors(setId, run.id);
+    const rerun = await rerunErrors(setId, run.id, MOD);
 
     expect(purge.purgeDeletedSources).toHaveBeenCalledWith(expect.anything(), setId);
     expect(harness.scanTexts).toHaveBeenCalledTimes(1);
@@ -545,7 +549,7 @@ describe('rerunErrors', () => {
     });
     harness.scanTexts.mockClear();
 
-    await expect(rerunErrors(setId, run.id)).rejects.toThrow(/label:nsfw/);
+    await expect(rerunErrors(setId, run.id, MOD)).rejects.toThrow(/label:nsfw/);
     expect(harness.scanTexts).not.toHaveBeenCalled();
   });
 
@@ -568,7 +572,7 @@ describe('rerunErrors', () => {
     });
     harness.scanTexts.mockClear();
 
-    await expect(rerunErrors(setId, run.id)).rejects.toThrow(message);
+    await expect(rerunErrors(setId, run.id, MOD)).rejects.toThrow(message);
     expect(harness.scanTexts).not.toHaveBeenCalled();
   });
 
@@ -584,7 +588,7 @@ describe('rerunErrors', () => {
     );
     harness.scanTexts.mockClear();
 
-    await expect(rerunErrors(setId, run.id)).rejects.toThrow(/did not record its model/);
+    await expect(rerunErrors(setId, run.id, MOD)).rejects.toThrow(/did not record its model/);
     expect(harness.scanTexts).not.toHaveBeenCalled();
   });
 });
@@ -758,5 +762,120 @@ describe('getRunOutcome', () => {
     harness.scanTexts.mockImplementation(allOk());
     const run = await startRun({ setId, version: 'active' }, MOD);
     await expect(getRunOutcome(other.id, run.id)).rejects.toThrow('not found in this set');
+  });
+});
+
+describe('runs scan after the request', () => {
+  it('returns the run as running at once, and records progress per chunk until it finishes', async () => {
+    const { setId } = await setWithCases(60);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    harness.scanTexts.mockImplementation(async (type: string, texts: LabText[]) => {
+      if (texts.length === 10) await gate;
+      return allOk()(type, texts);
+    });
+
+    const started = await (await prepareRun({ setId, version: 'active' }, MOD)).execute(MOD);
+
+    expect(started.run).toMatchObject({ status: 'running', scanTotal: 60, scanDone: 0 });
+    await vi.waitFor(async () =>
+      expect(await getRunProgress(setId, started.run.id)).toEqual({
+        runId: started.run.id,
+        status: 'running',
+        done: 50,
+        total: 60,
+      })
+    );
+    release();
+    const finished = await started.finished;
+    expect(finished.status).toBe('done');
+    expect(await getRunProgress(setId, finished.id)).toMatchObject({
+      status: 'done',
+      done: 60,
+      total: 60,
+    });
+  });
+
+  it('logs a run that throws, rejecting only for a caller that waits', async () => {
+    const { setId } = await setWithCases(1);
+    harness.scanTexts.mockImplementation(allOk());
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const started = await (await prepareRun({ setId, version: 'active' }, MOD)).execute(MOD);
+    // Fails the run's final write, after the scan.
+    await holder.pg!.query('DROP TABLE text_scan_test_case CASCADE');
+    await expect(started.finished).rejects.toThrow();
+    expect(error).toHaveBeenCalledWith(
+      `text-scan run ${started.run.id}: failed`,
+      expect.any(String)
+    );
+    error.mockRestore();
+  });
+});
+
+describe('an interrupted run', () => {
+  /** A run left 'running' by a process that stopped after scanning `scanned` of its cases. */
+  async function abandoned(scanned: number) {
+    const { setId, caseIds } = await setWithCases(3);
+    const { rows } = await holder.pg!.query<{ id: string }>(
+      `INSERT INTO text_scan_test_run (set_id, version, status, run_by, model, thinking, scan_total,
+         scan_done, progress_at)
+       VALUES ($1, 'active', 'running', $2, 'fake-model', false, 3, $3,
+         now() - make_interval(secs => $4))
+       RETURNING id`,
+      [setId, MOD, scanned, RUN_STALE_MS / 1000 + 1]
+    );
+    const runId = Number(rows[0].id);
+    for (const caseId of caseIds.slice(0, scanned))
+      await holder.pg!.query(
+        `INSERT INTO text_scan_test_result (run_id, case_id, status, output)
+         VALUES ($1, $2, 'ok', '{"nsfw":{"level":"r"}}')`,
+        [runId, caseId]
+      );
+    return { setId, caseIds, runId };
+  }
+
+  it('reads as interrupted once its progress is stale', async () => {
+    const { setId, runId } = await abandoned(1);
+    expect(await getRunProgress(setId, runId)).toMatchObject({ status: 'interrupted', done: 1 });
+    expect((await listRuns(setId))[0].status).toBe('interrupted');
+  });
+
+  it('is finished by re-running: the cases it never reached become errors and are scanned', async () => {
+    const { setId, caseIds, runId } = await abandoned(1);
+    harness.scanTexts.mockImplementation(allOk());
+
+    const prepared = await prepareRerun(setId, runId, MOD);
+    expect(prepared.count).toBe(2);
+    const run = await (await prepared.execute(MOD)).finished;
+
+    expect(harness.scanTexts.mock.calls[0][1].map((t: LabText) => t.key)).toEqual(
+      caseIds.slice(1).map(String)
+    );
+    expect(run.status).toBe('done');
+    expect((await results(runId)).map((r) => r.status)).toEqual(['ok', 'ok', 'ok']);
+  });
+
+  it('is not re-run while it is still moving', async () => {
+    const { setId, runId } = await abandoned(1);
+    await holder.pg!.query('UPDATE text_scan_test_run SET progress_at = now() WHERE id = $1', [
+      runId,
+    ]);
+    await expect(prepareRerun(setId, runId, MOD)).rejects.toThrow('not finished');
+  });
+});
+
+describe("re-running another moderator's working-copy run", () => {
+  it('is refused; the owner may', async () => {
+    const { setId } = await setWithCases(1);
+    const theirs = (await saveWorkingCopy(MOD + 1, { 'label:nsfw': 'THEIR NSFW' }, null))!;
+    harness.scanTexts.mockImplementation(async (_t: string, texts: LabText[]) =>
+      texts.map((t) => ({ key: t.key, ok: false, error: 'x' }))
+    );
+    const run = await startRun({ setId, version: theirs.id }, MOD + 1);
+
+    const refusal = prepareRerun(setId, run.id, MOD);
+    await expect(refusal).rejects.toBeInstanceOf(RunError);
+    await expect(refusal).rejects.toThrow(/another moderator's unpublished changes/);
+    await expect(prepareRerun(setId, run.id, MOD + 1)).resolves.toMatchObject({ count: 1 });
   });
 });

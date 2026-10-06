@@ -104,9 +104,9 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
 
 /**
  * Chunks run one after another. A failed chunk becomes a per-text error and the run continues,
- * because earlier chunks were already billed and the caller re-runs only what failed. It throws only
+ * because earlier chunks already scanned and the caller re-runs only what failed. It throws only
  * when the first request is refused outright (no session, not signed in, not allowed, invalid
- * request such as a blank prompt override): nothing was billed and every chunk would fail the same way.
+ * request such as a blank prompt override): nothing was scanned and every chunk would fail the same way.
  * A text over the harness limits is never sent; it comes back as its own error. Results keep the
  * order of `texts`.
  */

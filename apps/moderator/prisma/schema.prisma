@@ -521,6 +521,9 @@ model text_scan_test_run {
   run_by                 Int
   started_at             DateTime                @default(now()) @db.Timestamptz(6)
   finished_at            DateTime?               @db.Timestamptz(6)
+  scan_total             Int?
+  scan_done              Int                     @default(0)
+  progress_at            DateTime?               @db.Timestamptz(6)
   text_scan_test_result  text_scan_test_result[]
   text_scan_prompt_draft text_scan_prompt_draft? @relation(fields: [draft_id], references: [id], onUpdate: NoAction)
   text_scan_test_set     text_scan_test_set      @relation(fields: [set_id], references: [id], onDelete: Cascade, onUpdate: NoAction)

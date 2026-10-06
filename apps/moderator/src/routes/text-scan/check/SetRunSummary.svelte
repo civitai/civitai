@@ -8,6 +8,7 @@
 
   let {
     view,
+    changedError,
     changedTitle,
     changesName,
     civitaiUrl,
@@ -16,6 +17,8 @@
     onrerun,
   }: {
     view: SetRunView;
+    /** Why the run with changes did not start, when Current did. */
+    changedError: string | null;
     /** Heading of the second column ("With my changes"). */
     changedTitle: string;
     /** Who fixed or broke cases ("Your changes"). */
@@ -102,8 +105,18 @@
         {/each}
       </ul>
     </details>
-    <Button class="mt-2" size="sm" variant="outline" disabled={busy} onclick={() => onrerun(side.runId)}>
-      Re-run {plural(side.errors.length, 'error')}
+  {/if}
+  {#if side.errors.length || side.status === 'interrupted'}
+    <Button
+      class="mt-2"
+      size="sm"
+      variant="outline"
+      disabled={busy}
+      onclick={() => onrerun(side.runId)}
+    >
+      {side.status === 'interrupted'
+        ? 'Finish the run'
+        : `Re-run ${plural(side.errors.length, 'error')}`}
     </Button>
   {/if}
 {/snippet}
@@ -119,7 +132,14 @@
       <div class="rounded-lg border border-dark-4 bg-dark-7 p-4">
         <p class="text-xs text-dark-2">{column.title}</p>
         {#if column.side.status === 'failed'}
-          <p class="mt-1 text-sm text-red-300">This run failed.</p>
+          <p class="mt-1 text-sm text-red-300">
+            This run failed — <a href="/text-scan/test-sets/{view.setId}" class={LINK_CLASS}>see it on
+              Test sets</a>.
+          </p>
+        {:else if column.side.status === 'interrupted'}
+          <p class="mt-1 text-sm text-red-300">
+            This run was interrupted. Finish it below, or run the set again.
+          </p>
         {/if}
         <ul class="mt-1 space-y-1 text-sm text-dark-0">
           {#each view.summary.labels as l (l.label)}
@@ -133,9 +153,9 @@
     {/each}
   </div>
 
-  {#if view.changedError}
+  {#if changedError}
     <p class="whitespace-pre-wrap text-sm text-red-300">
-      {changedTitle} did not run: {view.changedError}
+      {changedTitle} did not run: {changedError}
     </p>
   {/if}
 

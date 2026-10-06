@@ -39,7 +39,7 @@ import {
   prepareRun,
   type TestRun,
 } from '$lib/server/text-scan-lab/runs.service';
-import { getCase, listSets } from '$lib/server/text-scan-lab/test-sets.service';
+import { getCase, getCases, listSets } from '$lib/server/text-scan-lab/test-sets.service';
 import { userIdByUsername } from '$lib/server/users.service';
 import { casePreview } from '$lib/text-scan-lab/case-view';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
@@ -314,8 +314,6 @@ export type SetRunView = {
   setId: number;
   current: SetRunSide;
   changed: SetRunSide | null;
-  /** Why the run with changes did not finish, when the current one did. */
-  changedError: string | null;
   summary: RunSummary;
   /** Preview and source of every case the summary lists. */
   cases: Record<
@@ -324,11 +322,19 @@ export type SetRunView = {
   >;
 };
 
+/** A set run just started. `changedError`: why the run with changes did not start, when Current did. */
+export type SetRunStarted = {
+  started: true;
+  setId: number;
+  currentRunId: number;
+  changedRunId: number | null;
+  changedError: string | null;
+};
+
 async function setRunView(
   setId: number,
   currentRunId: number,
-  changedRunId: number | null,
-  changedError: string | null = null
+  changedRunId: number | null
 ): Promise<SetRunView> {
   const [current, changed] = await Promise.all([
     getRunOutcome(setId, currentRunId),
@@ -352,7 +358,6 @@ async function setRunView(
     setId,
     current: side(current),
     changed: changed ? side(changed) : null,
-    changedError,
     summary,
     cases,
   };
@@ -360,19 +365,13 @@ async function setRunView(
 
 async function listCasesById(setId: number, ids: Set<number>) {
   if (!ids.size) return [];
-  const cases = await Promise.all([...ids].map((id) => getCase(setId, id)));
-  return cases.flatMap((c) =>
-    c
-      ? [
-          {
-            id: c.id,
-            entityType: c.entityType,
-            entityId: c.entityId,
-            preview: casePreview(c.fields),
-          },
-        ]
-      : []
-  );
+  const cases = await getCases(setId, [...ids]);
+  return cases.map((c) => ({
+    id: c.id,
+    entityType: c.entityType,
+    entityId: c.entityId,
+    preview: casePreview(c.fields),
+  }));
 }
 
 const setIdField = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
@@ -474,8 +473,9 @@ export const actions: Actions = {
   },
 
   /**
-   * Runs a whole set with the current prompts and, given `draftId` (my saved changes, or the draft
-   * being viewed), with those too. Both are ordinary runs, listed on the set's page.
+   * Starts a whole set with the current prompts and, given `draftId` (my saved changes, or the draft
+   * being viewed), with those too. Both are ordinary runs, listed on the set's page. They scan after
+   * the response: the page follows them by run id, then asks for `setRunSummary`.
    */
   runSet: async ({ request, locals }) => {
     if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
@@ -507,18 +507,19 @@ export const actions: Actions = {
         if (!(b.reason instanceof LabError)) throw b.reason;
         changedError = b.reason.message;
       }
-      return await setRunView(
-        input.setId,
-        a.value.id,
-        b.status === 'fulfilled' ? b.value?.id ?? null : null,
-        changedError
-      );
+      return {
+        started: true,
+        setId: input.setId,
+        currentRunId: a.value.run.id,
+        changedRunId: b.status === 'fulfilled' ? b.value?.run.id ?? null : null,
+        changedError,
+      } satisfies SetRunStarted;
     } catch (e) {
       return refused(e);
     }
   },
 
-  /** Re-runs one of a set run's two runs' errors, then shows the pair again. */
+  /** Starts a re-run of one of a set run's two runs' errors; the page follows it like `runSet`. */
   rerunSetErrors: async ({ request, locals }) => {
     if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
     const form = await request.formData();
@@ -535,12 +536,33 @@ export const actions: Actions = {
     if (input.runId !== input.currentRunId && input.runId !== input.changedRunId)
       return fail(400, { error: 'That run is not part of this set run.' });
     try {
-      const planned = await prepareRerun(input.setId, input.runId);
+      const planned = await prepareRerun(input.setId, input.runId, locals.user.id);
       const ask = await confirmRequest(form, planned, async () =>
         estimateSeconds(planned.count, await casesPerSecond(input.setId))
       );
       if (ask) return ask;
       await planned.execute(locals.user.id);
+      return {
+        started: true,
+        setId: input.setId,
+        currentRunId: input.currentRunId,
+        changedRunId: input.changedRunId,
+        changedError: null,
+      } satisfies SetRunStarted;
+    } catch (e) {
+      return refused(e);
+    }
+  },
+
+  /** The finished pair's scores per label and what the changes fixed or broke. */
+  setRunSummary: async ({ request, locals }) => {
+    if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
+    const input = parseForm(
+      z.object({ setId: setIdField, currentRunId: setIdField, changedRunId: optionalRunId }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    try {
       return await setRunView(input.setId, input.currentRunId, input.changedRunId);
     } catch (e) {
       return refused(e);

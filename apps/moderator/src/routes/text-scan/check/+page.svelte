@@ -14,7 +14,6 @@
 
   let { data } = $props();
 
-
   const changesInit = (source: ChangesSource): ChangesInit => ({
     prompts: source.draft?.prompts ?? {},
     draftId: source.draft?.id ?? null,

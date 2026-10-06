@@ -32,7 +32,7 @@ vi.mock('$lib/server/text-scan-lab/runs.service', async (importOriginal) => ({
   ...runs,
 }));
 
-const sets = vi.hoisted(() => ({ getCase: vi.fn(), listSets: vi.fn() }));
+const sets = vi.hoisted(() => ({ getCase: vi.fn(), getCases: vi.fn(), listSets: vi.fn() }));
 vi.mock('$lib/server/text-scan-lab/test-sets.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/text-scan-lab/test-sets.service')>()),
   ...sets,
@@ -43,7 +43,7 @@ const { RunError } = await import('$lib/server/text-scan-lab/runs.service');
 
 const ME = 11;
 
-type ActionName = 'checkCase' | 'runSet' | 'rerunSetErrors';
+type ActionName = 'checkCase' | 'runSet' | 'rerunSetErrors' | 'setRunSummary';
 const post = (name: ActionName, fields: Record<string, string>) => {
   const data = new FormData();
   for (const [k, v] of Object.entries(fields)) data.append(k, v);
@@ -75,12 +75,15 @@ const scanned = (key: string, scam: boolean) => ({
   elapsedMs: 5,
 });
 
-/** A planned run of `count` cases whose execute resolves to run `runId`. */
+/** A planned run of `count` cases whose execute starts run `runId`, which never finishes here. */
 const planned = (count: number, runId: number, stamp = `${count}:`) => ({
   count,
   skipped: 0,
   stamp,
-  execute: vi.fn(async () => ({ id: runId, status: 'done' })),
+  execute: vi.fn(async () => ({
+    run: { id: runId, status: 'running' },
+    finished: new Promise(() => {}),
+  })),
 });
 
 const outcome = (runId: number, rows: unknown[] = [], errors: unknown[] = []) => ({
@@ -102,6 +105,7 @@ describe('test-set actions need the test-sets page', () => {
     ['checkCase', { setId: '3', caseId: '5' }],
     ['runSet', { setId: '3' }],
     ['rerunSetErrors', { setId: '3', runId: '1', currentRunId: '1' }],
+    ['setRunSummary', { setId: '3', currentRunId: '1' }],
   ])('%s refuses without it, before anything runs', async (name, fields) => {
     access.canAccess.mockReturnValue(false);
     expect(await post(name, fields)).toMatchObject({ status: 403 });
@@ -109,6 +113,7 @@ describe('test-set actions need the test-sets page', () => {
     expect(sets.getCase).not.toHaveBeenCalled();
     expect(runs.prepareRun).not.toHaveBeenCalled();
     expect(runs.prepareRerun).not.toHaveBeenCalled();
+    expect(runs.getRunOutcome).not.toHaveBeenCalled();
   });
 });
 
@@ -165,9 +170,28 @@ describe('checkCase', () => {
 });
 
 describe('runSet', () => {
-  it('runs a small set with the current prompts only, as me, and summarises it', async () => {
+  it('starts a small set with the current prompts only, as me, answering before it scans', async () => {
     const current = planned(2, 40);
     runs.prepareRun.mockResolvedValueOnce(current);
+
+    const res = await post('runSet', { setId: '3' });
+
+    expect(runs.prepareRun).toHaveBeenCalledTimes(1);
+    expect(runs.prepareRun).toHaveBeenCalledWith({ setId: 3, version: 'active' }, ME);
+    expect(current.execute).toHaveBeenCalledWith(ME);
+    expect(res).toEqual({
+      started: true,
+      setId: 3,
+      currentRunId: 40,
+      changedRunId: null,
+      changedError: null,
+    });
+    expect(runs.getRunOutcome).not.toHaveBeenCalled();
+  });
+});
+
+describe('setRunSummary', () => {
+  it('scores the finished runs and names the cases it lists, in one lookup', async () => {
     runs.getRunOutcome.mockResolvedValueOnce(
       outcome(
         40,
@@ -191,11 +215,13 @@ describe('runSet', () => {
       )
     );
 
-    const res = await post('runSet', { setId: '3' });
+    sets.getCases.mockImplementation(async (_set: number, ids: number[]) =>
+      ids.map((id) => testCase({ id }))
+    );
 
-    expect(runs.prepareRun).toHaveBeenCalledTimes(1);
-    expect(runs.prepareRun).toHaveBeenCalledWith({ setId: 3, version: 'active' }, ME);
-    expect(current.execute).toHaveBeenCalledWith(ME);
+    const res = await post('setRunSummary', { setId: '3', currentRunId: '40', changedRunId: '' });
+
+    expect(sets.getCases).toHaveBeenCalledWith(3, [6]);
     expect(res).toMatchObject({
       setRun: true,
       setId: 3,
@@ -205,7 +231,9 @@ describe('runSet', () => {
     });
     expect(Object.keys(res.cases)).toEqual(['6']);
   });
+});
 
+describe('runSet — confirming', () => {
   it('asks before running more than 10 cases twice, estimating from both runs', async () => {
     const current = planned(40, 1, '40:');
     const changed = planned(40, 2, '40:2026-10-06T00:00:00.000Z');
@@ -236,9 +264,7 @@ describe('runSet', () => {
 
     expect(current.execute).toHaveBeenCalledWith(ME);
     expect(changed.execute).toHaveBeenCalledWith(ME);
-    expect(runs.getRunOutcome).toHaveBeenCalledWith(3, 1);
-    expect(runs.getRunOutcome).toHaveBeenCalledWith(3, 2);
-    expect(res).toMatchObject({ current: { runId: 1 }, changed: { runId: 2 }, changedError: null });
+    expect(res).toMatchObject({ currentRunId: 1, changedRunId: 2, changedError: null });
   });
 
   it('keeps the current results when the run with changes is refused', async () => {
@@ -249,8 +275,8 @@ describe('runSet', () => {
     const res = await post('runSet', { setId: '3', draftId: '12' });
 
     expect(res).toMatchObject({
-      current: { runId: 1 },
-      changed: null,
+      currentRunId: 1,
+      changedRunId: null,
       changedError: 'Draft overrides no prompt.',
     });
   });
@@ -274,7 +300,7 @@ describe('rerunSetErrors', () => {
     expect(runs.prepareRerun).not.toHaveBeenCalled();
   });
 
-  it('re-runs the errors, then shows the pair again', async () => {
+  it('starts the re-run as me and answers with the pair to follow', async () => {
     const rerun = planned(3, 2);
     runs.prepareRerun.mockResolvedValueOnce(rerun);
 
@@ -285,8 +311,14 @@ describe('rerunSetErrors', () => {
       changedRunId: '2',
     });
 
-    expect(runs.prepareRerun).toHaveBeenCalledWith(3, 2);
+    expect(runs.prepareRerun).toHaveBeenCalledWith(3, 2, ME);
     expect(rerun.execute).toHaveBeenCalledWith(ME);
-    expect(res).toMatchObject({ current: { runId: 1 }, changed: { runId: 2 } });
+    expect(res).toEqual({
+      started: true,
+      setId: 3,
+      currentRunId: 1,
+      changedRunId: 2,
+      changedError: null,
+    });
   });
 });

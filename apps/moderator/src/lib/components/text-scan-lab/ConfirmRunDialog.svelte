@@ -31,8 +31,10 @@
   } = $props();
 
   // Kept through the close animation, which otherwise renders the cleared request's empty values.
-  let last: Request | null = null;
-  const shown = $derived(request ? (last = request) : last);
+  let shown = $state<Request | null>(null);
+  $effect.pre(() => {
+    if (request) shown = request;
+  });
 </script>
 
 <AlertDialog.Root
@@ -65,7 +67,7 @@
             {submitting ? 'Running…' : 'Run'}
           </Button>
         {:else}
-          <Button disabled={submitting} onclick={() => onconfirm?.(shown.stamp)}>
+          <Button disabled={submitting} onclick={() => shown && onconfirm?.(shown.stamp)}>
             {submitting ? 'Running…' : 'Run'}
           </Button>
         {/if}
