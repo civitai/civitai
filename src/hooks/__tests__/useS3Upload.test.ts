@@ -32,6 +32,10 @@ const act = (React as unknown as { act: ActFn }).act;
  */
 
 const CHUNK = 1024;
+/** Under the hook's 30s silence window, so a steady trickle has to keep re-arming it. */
+const SLOW_BODY_STEP_MS = 20_000;
+/** 20s x 30 = ten minutes of body, which is what 25 MB on a weak mobile link looks like. */
+const SLOW_BODY_STEPS = 30;
 const RELAY_ENDPOINT = '/api/v1/image-upload/relay';
 /** The key the relay mints server-side. Deliberately unlike the presigned key. */
 const RELAY_KEY = 'relayed/9f1c2d-4a.png';
@@ -73,6 +77,18 @@ let hangAfterProgressBytes: number | null;
  * nothing left to send, not because the connection died.
  */
 let responseDelayMs: number;
+/**
+ * Fake-clock gap between a part's `upload.progress` events, and how many it emits before the
+ * body is fully sent. `null` sends the whole body in one event.
+ *
+ * 🔴 BYTES MOVING SLOWLY BUT STEADILY — the shape no other knob here can express, and the one
+ * the watchdog's entire design rests on. Without it every fixture sends a part's whole body
+ * inside a single tick, so nothing distinguishes "bounds the silence between chunks" from
+ * "caps each part attempt's total body duration", and the second reading loses every part on
+ * any link slow enough to need 30s for a 25 MB chunk.
+ */
+let bodyProgressStepMs: number | null;
+let bodyProgressSteps: number;
 /** PUT attempts per part number, so a case can assert a part was never aborted and re-sent. */
 let partSendCounts: Map<number, number>;
 /**
@@ -116,6 +132,7 @@ let abortCalls: AbortBody[];
 class FakeXHR {
   readyState = 0;
   status = 0;
+  timeout = 0;
   private url = '';
   private headers: Record<string, string> = {};
   private listeners: Record<string, ((e: unknown) => void)[]> = {};
@@ -163,11 +180,29 @@ class FakeXHR {
     this.emit('load');
     this.emit('loadend');
   }
+  /**
+   * XHR's own total-duration timer. The spec measures `timeout` from `send()` rather than from
+   * whenever it was assigned, so a flat window set at `upload.loadend` has ALREADY expired on a
+   * part whose body took longer than it — modelled here because that is the trap, and because a
+   * fake that started the clock at assignment time would make the bug untestable.
+   */
+  private armTimeout(sentAt: number) {
+    if (!this.timeout) return;
+    setTimeout(() => {
+      if (this.settled) return;
+      this.settled = true;
+      this.readyState = 4;
+      this.status = 0;
+      this.emit('timeout');
+      this.emit('loadend');
+    }, Math.max(0, this.timeout - (Date.now() - sentAt)));
+  }
   send(body: Blob) {
     const partNumber = Number(new URL(this.url, 'https://store.test').searchParams.get('part'));
     const attempt = (partSendCounts.get(partNumber) ?? 0) + 1;
     partSendCounts.set(partNumber, attempt);
     inFlight.set(partNumber, this);
+    const sentAt = Date.now();
     setTimeout(() => {
       if (this.settled) return;
       if (
@@ -213,8 +248,6 @@ class FakeXHR {
         this.emit('loadend');
         return;
       }
-      this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
-      this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
       // The response phase. Kept un-`settled` until the answer lands so an abort DURING the
       // wait still emits its events — otherwise a watchdog that wrongly policed this phase
       // would be invisible here, and the mutation proving it does not would pass.
@@ -228,8 +261,28 @@ class FakeXHR {
         this.emit('load');
         this.emit('loadend');
       };
-      if (responseDelayMs > 0) setTimeout(respond, responseDelayMs);
-      else respond();
+      const bodySent = () => {
+        this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
+        // Read AFTER the handler, since `upload.loadend` is where the hook assigns it.
+        this.armTimeout(sentAt);
+        if (responseDelayMs > 0) setTimeout(respond, responseDelayMs);
+        else respond();
+      };
+      if (bodyProgressStepMs === null) {
+        this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
+        return bodySent();
+      }
+      let sentSteps = 0;
+      const emitStep = () => {
+        if (this.settled) return;
+        sentSteps++;
+        this.upload.listeners['progress']?.forEach((cb) =>
+          cb({ loaded: Math.round((body.size * sentSteps) / bodyProgressSteps) })
+        );
+        if (sentSteps < bodyProgressSteps) setTimeout(emitStep, bodyProgressStepMs as number);
+        else bodySent();
+      };
+      setTimeout(emitStep, bodyProgressStepMs);
     }, 0);
   }
   private emit(type: string) {
@@ -324,8 +377,25 @@ type Harness = {
   progresses: () => number[];
   /** Cancel the way the UI does: the `abort` the hook hands out on the tracked file. */
   cancel: () => void;
-  unmount: () => void;
 };
+
+/**
+ * Teardown for everything a case mounted, run from `afterEach`.
+ *
+ * 🔴 NOT the last statement of each `it`, which is what this file used to do. A case that throws
+ * inside `runUpload` never reaches its own teardown, and what it leaks is not inert: the upload
+ * keeps RUNNING, and `partSendCounts` is a module-level map the fake writes to by reference at
+ * send time — so the leaked retry ladder lands its PUTs in the NEXT case's freshly reset map.
+ * Measured: ONE broken `arm()` reported as THREE failing tests, two of them in a describe that
+ * was fine, each off by exactly the leaked ladder's remaining attempts, which sends a bisect at
+ * the wrong file.
+ *
+ * 🔴 Unmounting is NOT enough, and that is the measurement worth keeping: React unmount does not
+ * cancel an in-flight upload (`FileUploadProvider`'s own unmount effect aborts nothing either),
+ * so the counts stayed inflated until the cancel below was added. The cancel is also what drops
+ * the leaked `visibilitychange` listener, since that happens in the watchdog's `clear`.
+ */
+let mountedRoots: (() => Promise<void>)[];
 
 async function mountHook(): Promise<Harness> {
   let api: ReturnType<typeof useS3Upload> | undefined;
@@ -338,13 +408,18 @@ async function mountHook(): Promise<Harness> {
   await act(async () => {
     root.render(React.createElement(Probe));
   });
+  mountedRoots.push(async () => {
+    await act(async () => {
+      for (const f of api?.files ?? []) f.abort();
+    });
+    await act(() => root.unmount());
+  });
   return {
     upload: (file, type) =>
       api!.uploadToS3(file, type) as Promise<{ url: string | null; key: string }>,
     statuses: () => api!.files.map((f) => f.status),
     progresses: () => api!.files.map((f) => f.progress),
     cancel: () => api!.files[0].abort(),
-    unmount: () => act(() => root.unmount()),
   };
 }
 
@@ -427,11 +502,14 @@ function makeFile(bytes: number) {
 
 beforeEach(() => {
   vi.useFakeTimers();
+  mountedRoots = [];
   backend = 'backblaze';
   hangPartNumbers = [];
   hangAttemptLimit = null;
   hangAfterProgressBytes = null;
   responseDelayMs = 0;
+  bodyProgressStepMs = null;
+  bodyProgressSteps = 1;
   partSendCounts = new Map();
   inFlight = new Map();
   partLoadTimes = [];
@@ -449,7 +527,8 @@ beforeEach(() => {
   vi.stubGlobal('XMLHttpRequest', FakeXHR);
 });
 
-afterEach(() => {
+afterEach(async () => {
+  for (const unmount of mountedRoots) await unmount();
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
@@ -489,7 +568,6 @@ describe('useS3Upload relay fallback', () => {
     // why the direct path was abandoned.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
-    h.unmount();
   });
 
   it('🔴 identifies itself as the MULTIPART producer on the relay POST', async () => {
@@ -513,7 +591,6 @@ describe('useS3Upload relay fallback', () => {
     // mutation that silently restores the attribution error while looking like a working
     // discriminator, and only an equality can see it.
     expect(relayRequestHeaders[0][IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe('multipart');
-    h.unmount();
   });
 
   it('reports error, not aborted, when a part dies at the network layer and cannot relay', async () => {
@@ -535,7 +612,6 @@ describe('useS3Upload relay fallback', () => {
     // 🔴 THE DISCRIMINATION THAT MATTERS: the gate declining and the relay running-and-failing
     // are different populations, and one failure value put them on one row.
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
-    h.unmount();
   });
 
   it('does not relay when the storage host answered with an HTTP status, and reports error', async () => {
@@ -553,7 +629,6 @@ describe('useS3Upload relay fallback', () => {
     expect(abortCalls.map((c) => c.failure)).toEqual([
       { kind: 'part-status', partNumber: 1, status: 400 },
     ]);
-    h.unmount();
   });
 
   it('reports aborted when the user cancels while the relay is in flight', async () => {
@@ -596,7 +671,6 @@ describe('useS3Upload relay fallback', () => {
     // A cancel mid-relay is not a relay that failed, and it reaches the same `catch` as a dead
     // network — so without this the two are one row.
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['aborted']);
-    h.unmount();
   });
 
   it('falls back to the original failure when the relay itself refuses', async () => {
@@ -621,7 +695,6 @@ describe('useS3Upload relay fallback', () => {
     expect(h.statuses()).toEqual(['error']);
     // The abort still reports the ORIGINAL network failure, not the relay's refusal.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
-    h.unmount();
   });
 
   it.each([
@@ -662,7 +735,6 @@ describe('useS3Upload relay fallback', () => {
     // degrades to the pre-existing terminal error, reporting the presigned key and no url.
     expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
     expect(h.statuses()).toEqual(['error']);
-    h.unmount();
   });
 
   it('waits out the relay\u2019s Retry-After before re-posting a shed file', async () => {
@@ -687,7 +759,6 @@ describe('useS3Upload relay fallback', () => {
     expect(relayTimes[1] - relayTimes[0]).toBeGreaterThanOrEqual(8_000);
     expect(result.key).toBe(RELAY_KEY);
     expect(h.statuses()).toEqual(['success']);
-    h.unmount();
   });
 
   it('does not relay a cancelled upload, and reports it as aborted', async () => {
@@ -713,7 +784,6 @@ describe('useS3Upload relay fallback', () => {
     expect(result).toMatchObject({ url: null, key: UPLOAD_IDENTITY.key });
     expect(h.statuses()).toEqual(['aborted']);
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'client-aborted' }]);
-    h.unmount();
   });
 });
 
@@ -755,7 +825,55 @@ describe('useS3Upload part stall watchdog', () => {
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
     // The ladder was walked, not short-circuited — MAX_PART_ATTEMPTS PUTs for the one part.
     expect(partSendCounts.get(1)).toBe(MAX_PART_ATTEMPTS);
-    h.unmount();
+  });
+
+  it('🔴 does not abort a part whose body moves slowly but steadily for ten minutes', async () => {
+    // 🔴 THE CENTRAL DESIGN PROPERTY, and the only case that can see it: the window bounds the
+    // SILENCE between chunks, not how long a part takes to send. Delete the `arm()` in the
+    // `upload.progress` handler and the watchdog becomes a flat 30s cap on each part attempt's
+    // body — at the production 25 MB chunk size, every link under ~6.7 Mbps then loses EVERY
+    // part at 30s, five attempts deep, each re-sent from byte 0 and reported as a stall. Mobile
+    // is the population this PR is for, so that is the expensive direction.
+    vi.stubGlobal('fetch', makeFetch(1));
+    bodyProgressStepMs = SLOW_BODY_STEP_MS;
+    bodyProgressSteps = SLOW_BODY_STEPS;
+    const h = await mountHook();
+
+    const t0 = Date.now();
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    // ONE PUT: never aborted, never re-sent. First, because it is the legible reading of a
+    // watchdog that bounds duration instead of silence — `expected 5 to be 1`.
+    expect(partSendCounts.get(1)).toBe(1);
+    expect(relayCalls).toBe(0);
+    expect(abortCalls).toEqual([]);
+    expect(result).toMatchObject({ key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['success']);
+    // 🔴 THE POSITIVE CONTROL, and the case is vacuous without it: if the harness ignored the
+    // step knob the body would leave in one event, there would be no silence to survive at all,
+    // and every assertion above would hold against a watchdog that never re-arms.
+    expect(partLoadTimes[0] - t0).toBeGreaterThanOrEqual(SLOW_BODY_STEP_MS * SLOW_BODY_STEPS);
+  });
+
+  it('relays a part that never sent a single byte', async () => {
+    // The connect/TLS stall, and the only case that reaches the `arm()` before `send()`: no
+    // `upload.progress` ever fires, so with the progress handler's `arm()` alone nothing arms
+    // and the upload never settles. That is the shape a future consolidation of the two `arm()`
+    // calls into the progress handler would reintroduce.
+    vi.stubGlobal('fetch', makeFetch(1));
+    hangPartNumbers = [1];
+    hangAfterProgressBytes = null;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    expect(relayCalls).toBe(1);
+    expect(result).toMatchObject({ url: RELAY_KEY, key: RELAY_KEY });
+    expect(h.statuses()).toEqual(['success']);
+    expect(h.progresses()).toEqual([100]);
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
+    expect(partSendCounts.get(1)).toBe(MAX_PART_ATTEMPTS);
   });
 
   it('retries a stall that recovers, and never reaches the relay', async () => {
@@ -776,7 +894,6 @@ describe('useS3Upload part stall watchdog', () => {
     expect(h.statuses()).toEqual(['success']);
     // Nothing gave up, so the session was completed rather than torn down.
     expect(abortCalls).toEqual([]);
-    h.unmount();
   });
 
   it('does not abort a part whose body is sent and whose response is slow', async () => {
@@ -804,7 +921,6 @@ describe('useS3Upload part stall watchdog', () => {
     // all, and every assertion above would hold against a watchdog that polices this phase.
     // Last, so a real regression reports itself before this reports the harness.
     expect(partLoadTimes[0] - t0).toBeGreaterThanOrEqual(SLOW_RESPONSE_MS);
-    h.unmount();
   });
 
   it('reports error, not a stall, when a stalled part cannot relay', async () => {
@@ -823,7 +939,67 @@ describe('useS3Upload part stall watchdog', () => {
     expect(h.statuses()).toEqual(['error']);
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
-    h.unmount();
+  });
+});
+
+/**
+ * THE RESPONSE PHASE, which the progress watchdog deliberately does not police.
+ *
+ * `upload.progress` stops when the body is fully sent, so treating the wait that follows as
+ * silence would kill a healthy upload against a slow backend — and that left the response wait
+ * bounded by nothing at all, because `xhr.timeout` defaults to 0. A connection going half-open
+ * AFTER the body is sent therefore never ended: `useMediaUpload` runs two workers and decrements
+ * its counter in a `finally`, so one such part holds a slot for the life of the page, and the
+ * dropzone then accepts files that never upload — the symptom this PR exists to remove.
+ */
+describe('useS3Upload part response timeout', () => {
+  /** Mirrors `PART_RESPONSE_TIMEOUT_MS` in the hook, which is not exported. */
+  const RESPONSE_WINDOW_MS = 5 * 60_000;
+  /** Past the window by enough that no clock-turn granularity can confuse the two. */
+  const NEVER_RESPONDS_MS = 60 * 60_000;
+
+  it('gives up on a part whose response never arrives, and relays it', async () => {
+    vi.stubGlobal('fetch', makeFetch(1));
+    responseDelayMs = NEVER_RESPONDS_MS;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    // 🔴 THE POSITIVE CONTROL: no part ever answered, so what ended the request was the bound
+    // and not the backend. Without it the case holds against a harness that responded promptly.
+    expect(partLoadTimes).toEqual([]);
+    // The ladder was walked, and the same relay-eligible shape the progress watchdog produces
+    // carried it to the rescue — a `timeout` rejecting as a user cancel reaches no relay.
+    expect(partSendCounts.get(1)).toBe(MAX_PART_ATTEMPTS);
+    expect(relayCalls).toBe(1);
+    expect(result).toMatchObject({ url: RELAY_KEY, key: RELAY_KEY });
+    expect(h.statuses()).toEqual(['success']);
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
+  });
+
+  it('🔴 does not time out a slow body whose response then arrives promptly', async () => {
+    // 🔴 WHY THE BOUND ADDS THE BODY'S OWN DURATION BACK. `xhr.timeout` is measured from
+    // `send()`, not from when it is assigned, so a flat window written at `upload.loadend` has
+    // already expired on any part whose body outlasted it — the part dies the instant its last
+    // byte lands, which is precisely the slow-link harm a total-duration bound on the body would
+    // have caused, reintroduced one phase later.
+    vi.stubGlobal('fetch', makeFetch(1));
+    bodyProgressStepMs = SLOW_BODY_STEP_MS;
+    bodyProgressSteps = SLOW_BODY_STEPS;
+    responseDelayMs = 30_000;
+    const h = await mountHook();
+
+    const t0 = Date.now();
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image);
+
+    expect(partSendCounts.get(1)).toBe(1);
+    expect(abortCalls).toEqual([]);
+    expect(result).toMatchObject({ key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['success']);
+    // 🔴 THE POSITIVE CONTROL: the body alone has to outlast the response window, or a flat
+    // window would never have expired and the case would pin nothing.
+    expect(partLoadTimes[0] - t0).toBeGreaterThan(RESPONSE_WINDOW_MS);
   });
 });
 
@@ -928,7 +1104,6 @@ describe('useS3Upload part stall watchdog across a backgrounded tab', () => {
     expect(abortCalls).toEqual([]);
     expect(result).toMatchObject({ key: UPLOAD_IDENTITY.key });
     expect(h.statuses()).toEqual(['success']);
-    h.unmount();
   });
 
   it('aborts a part still silent a full window after the tab comes back, and relays it', async () => {
@@ -962,7 +1137,6 @@ describe('useS3Upload part stall watchdog across a backgrounded tab', () => {
     // Five aborted attempts' worth of listeners, all gone. The abort path's half of the leak
     // assertion below, which rides the success path.
     expect(liveListeners.size).toBe(0);
-    h.unmount();
   });
 
   it('leaves no visibilitychange listener behind once the parts have settled', async () => {
@@ -980,6 +1154,5 @@ describe('useS3Upload part stall watchdog across a backgrounded tab', () => {
     // nothing at all also ends with zero live listeners.
     expect(listenerAdds).toBe(PARTS);
     expect(liveListeners.size).toBe(0);
-    h.unmount();
   });
 });

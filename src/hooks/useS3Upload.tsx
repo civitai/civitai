@@ -21,6 +21,9 @@ import type { ClientDeclarableRelayFallbackOutcome } from '~/utils/relay-fallbac
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
+// A fully-sent part is only waiting on a small ETag reply, so a total-duration bound fits here
+// where it never could on the body; 5 min is far past any real reply and survives a suspended tab.
+const PART_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 
 // Abort-aware sleep so cancelling during a long Retry-After window
 // short-circuits the backoff instead of waiting it out.
@@ -327,6 +330,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       const uploadPart = (url: string, i: number) =>
         new Promise<void>((resolve, reject) => {
           let eTag: string;
+          const sentAt = Date.now();
           const start = (i - 1) * chunkSize;
           const end = i * chunkSize;
           const part = i === partsCount ? file.slice(start) : file.slice(start, end);
@@ -337,6 +341,14 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           // the two shapes makes the watchdog fire into a gate it cannot pass: the upload still
           // fails and the relay still never runs.
           const stalledRef = { value: false };
+          const rejectStalled = () =>
+            reject({
+              status: null,
+              networkError: true,
+              aborted: false,
+              stalled: true,
+              partNumber: i,
+            } as UploadPartError);
           const watchdog = createPartStallWatchdog(() => {
             stalledRef.value = true;
             xhr.abort();
@@ -348,8 +360,13 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           });
           xhr.upload.addEventListener('loadend', ({ loaded }) => {
             // The body is fully sent, so what follows is the response wait — a different phase.
-            // Policing it with a progress watchdog would kill a slow-but-healthy server.
+            // Policing it with a progress watchdog would kill a slow-but-healthy server, while
+            // leaving it unpoliced lets a connection that goes half-open AFTER the body hold a
+            // `useMediaUpload` worker slot for the life of the page.
             watchdog.clear();
+            // 🔴 XHR measures `timeout` from `send()`, not from now, so the body's own duration
+            // has to be added back or a slow 25 MB part times out the instant it finishes.
+            xhr.timeout = Date.now() - sentAt + PART_RESPONSE_TIMEOUT_MS;
             partProgress.set(i, loaded);
           });
           xhr.addEventListener('load', () => {
@@ -377,18 +394,13 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             activeXhrs.delete(xhr);
             reject({ status: null, networkError: true, partNumber: i } as UploadPartError);
           });
+          xhr.addEventListener('timeout', () => {
+            activeXhrs.delete(xhr);
+            rejectStalled();
+          });
           xhr.addEventListener('abort', () => {
             activeXhrs.delete(xhr);
-            if (stalledRef.value) {
-              reject({
-                status: null,
-                networkError: true,
-                aborted: false,
-                stalled: true,
-                partNumber: i,
-              } as UploadPartError);
-              return;
-            }
+            if (stalledRef.value) return rejectStalled();
             reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
           });
           xhr.open('PUT', url);
