@@ -107,6 +107,7 @@ export function SpotlightGlow({
   size = 400,
   fade = 70,
   local,
+  duration = 500,
   className = 'inset-0',
 }: {
   color?: string;
@@ -114,6 +115,8 @@ export function SpotlightGlow({
   /** Where the gradient reaches transparent, as a percentage of `size`. */
   fade?: number;
   local?: boolean;
+  /** Fade in/out time in ms. */
+  duration?: number;
   /** Placement; defaults to `inset-0`. */
   className?: string;
 }) {
@@ -121,9 +124,10 @@ export function SpotlightGlow({
     <div
       aria-hidden
       data-spotlight-local={local || undefined}
-      className={clsx('pointer-events-none absolute transition-opacity duration-500', className)}
+      className={clsx('pointer-events-none absolute transition-opacity', className)}
       style={{
         opacity: 'var(--spotlight-opacity, 0)',
+        transitionDuration: `${duration}ms`,
         background: `radial-gradient(${size}px circle at var(--spotlight-x) var(--spotlight-y), ${color}, transparent ${fade}%)`,
       }}
     />
@@ -131,9 +135,8 @@ export function SpotlightGlow({
 }
 
 /**
- * A 1px rule that lights under the cursor's x position whenever its surface is hovered.
- * `overlay` draws only the glow, along the top edge of its positioned parent, for a section
- * whose own `border-top` is the rule.
+ * A 1px rule that lights from its surface's cursor. `overlay` draws only the glow, along the
+ * top edge of its positioned parent, for a section whose own `border-top` is the rule.
  */
 export function SpotlightDivider({
   color = 'var(--spotlight-color)',
@@ -157,10 +160,17 @@ export function SpotlightDivider({
       )}
     >
       <div
-        className="absolute inset-0 transition-opacity duration-500"
+        className={clsx(
+          'absolute inset-0 transition-opacity',
+          overlay ? 'duration-500' : 'duration-300'
+        )}
         style={{
           opacity: 'var(--spotlight-opacity, 0)',
-          background: `radial-gradient(${size}px circle at var(--spotlight-x) 50%, ${color}, transparent 70%)`,
+          // An overlay lights along its whole edge wherever the cursor is in the surface; an
+          // inline rule fades with the cursor's distance from it.
+          background: `radial-gradient(${size}px circle at var(--spotlight-x) ${
+            overlay ? '50%' : 'var(--spotlight-y)'
+          }, ${color}, transparent 70%)`,
         }}
       />
     </div>
@@ -197,7 +207,11 @@ export function SpotlightBorderCard({
       className={clsx('rounded-md bg-gray-3 p-px dark:bg-dark-4', className)}
       style={style}
     >
-      <SpotlightGlow size={Math.round((size * 2) / 3)} className="inset-0 rounded-[inherit]" />
+      <SpotlightGlow
+        size={Math.round((size * 2) / 3)}
+        duration={300}
+        className="inset-0 rounded-[inherit]"
+      />
       <div
         className={clsx(
           'relative h-full overflow-hidden rounded-[calc(var(--mantine-radius-md)-1px)] bg-white dark:bg-dark-6',

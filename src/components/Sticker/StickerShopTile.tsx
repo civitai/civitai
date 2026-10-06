@@ -38,13 +38,22 @@ export function StickerShopTile({ open, onClick }: { open: boolean; onClick: () 
       >
         {/* Brighter and tighter than the face: it is drawn under a 1px edge, so it has
             very little area to read in. */}
-        <SpotlightGlow className="inset-0 rounded-lg" color="rgba(255,196,64,0.95)" size={90} />
+        <SpotlightGlow
+          duration={300}
+          className="inset-0 rounded-lg"
+          color="rgba(255,196,64,0.95)"
+          size={90}
+        />
 
         {/* The face sits above the border layer and covers all but its 1px edge.
             Near-flat and quiet on purpose: a filled gradient here both rounded
             the tile visually and drowned the glow it exists to show. */}
         <div className="relative flex size-full flex-col items-center justify-center gap-0.5 overflow-hidden rounded-[7px] bg-white text-yellow-7 dark:bg-dark-7 dark:text-yellow-5">
-          <SpotlightGlow color="light-dark(rgba(245,159,0,0.35), rgba(245,159,0,0.4))" size={120} />
+          <SpotlightGlow
+            duration={300}
+            color="light-dark(rgba(245,159,0,0.35), rgba(245,159,0,0.4))"
+            size={120}
+          />
           <IconPlus size={18} stroke={2.5} className="relative z-[1]" />
           <Text size="9px" fw={700} className="relative z-[1] leading-none">
             Shop
