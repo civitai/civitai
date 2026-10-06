@@ -162,7 +162,7 @@ export const modelsFilterableAttributes = [
   // (`scripts/eval-resource-intent-retrieval.ts`, run from the gold-set runner), but its
   // arms are different ones: the shipped purpose-first matcher against the popularity seed
   // alone, both over the same gate filter, neither filtering on this attribute's nullness.
-  // It runs its own, much looser control (>= 100 documents with a non-`none`
+  // It runs its own, much looser control (`labeledIndexFloor` documents with a non-`none`
   // `insight.role`), which likewise catches only a total fault. So the `IS NOT NULL`
   // control above still belongs to whatever labeled-vs-unlabeled comparison gets built.
   //

@@ -79,8 +79,14 @@ export const GOLDSET_CALIBRATION_BUCKETS = 10;
  * ARRAY.
  *
  * Which images may enter the study at all — and so have their prompt sent to the
- * vendor: public meta, a non-empty prompt, inside the window, scanned, and not
- * ToS-violating, blocked, or flagged minor or POI. One fragment, used by both queries.
+ * vendor: the conditions of `imageWhere` in `src/server/search-index/images.search-index.ts`
+ * (the publicly searchable image: not in a review queue, not ToS-violating, minor or POI,
+ * in a post that is published, not scheduled, and neither Private nor Unsearchable),
+ * plus public meta, a non-empty prompt, no `blockedFor`, and the window.
+ * ⚠️ `ingestion = 'Scanned'` is deliberately STRICTER than `imageWhere`'s
+ * `imageReviewedSql()`, which also admits locked-rating images whose scan never ran — do
+ * not "align" it. Requires the caller to join `"Post" p ON p.id = i."postId"`. One
+ * fragment, used by both queries.
  */
 const GOLDSET_ELIGIBLE_IMAGE = (days: number) => Prisma.sql`
       i."createdAt" > now() - make_interval(days => ${days}::int)
@@ -88,9 +94,14 @@ const GOLDSET_ELIGIBLE_IMAGE = (days: number) => Prisma.sql`
   AND length(i.meta->>'prompt') > 0
   AND i.ingestion = 'Scanned'
   AND i."tosViolation" = false
+  AND i."needsReview" IS NULL
   AND i."blockedFor" IS NULL
   AND i.minor = false
   AND i.poi = false
+  AND p."publishedAt" IS NOT NULL
+  AND p."publishedAt" <= now()
+  AND p.availability != 'Private'::"Availability"
+  AND p.availability != 'Unsearchable'::"Availability"
 `;
 
 /**
@@ -104,6 +115,7 @@ export const GOLDSET_MATCHED_SQL = (days: number, limit: number) => Prisma.sql`
   WITH sampled AS (
     SELECT i.id, i.meta->>'prompt' AS prompt, random() AS rnd
     FROM "Image" i
+    JOIN "Post" p ON p.id = i."postId"
     WHERE ${GOLDSET_ELIGIBLE_IMAGE(days)}
       AND EXISTS (SELECT 1 FROM "ImageResourceNew" r WHERE r."imageId" = i.id)
     ORDER BY rnd
@@ -133,6 +145,7 @@ export const GOLDSET_UNMATCHED_SQL = (days: number, limit: number) => Prisma.sql
          ARRAY[]::text[] AS "attachedTypes",
          ARRAY[]::text[] AS "attachedBaseModels"
   FROM "Image" i
+  JOIN "Post" p ON p.id = i."postId"
   WHERE ${GOLDSET_ELIGIBLE_IMAGE(days)}
     AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" irn WHERE irn."imageId" = i.id)
   ORDER BY random()
@@ -453,7 +466,6 @@ export async function main(): Promise<void> {
     GOLDSET_UNMATCHED_SQL(days, unmatchedLimit)
   );
 
-  // Part one: stage-1 agreement.
   const partOneRows: GoldsetRow[] = [...matched.slice(0, matchedLimit), ...unmatched];
   const pairs: { row: GoldsetRow; judgment: GoldsetJudgment }[] = [];
   for (const row of partOneRows) {

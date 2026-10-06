@@ -283,9 +283,21 @@ describe('the gold-set SQL — invariant guards on the query TEXT', () => {
 
   it('admits only eligible images to either query', () => {
     for (const sql of [matched, unmatched]) {
-      expect(sql).toContain("i.ingestion = 'Scanned'");
-      expect(sql).toContain('i.minor = false');
-      expect(sql).toContain('i.poi = false');
+      for (const predicate of [
+        "i.ingestion = 'Scanned'",
+        'i."needsReview" IS NULL',
+        'i.minor = false',
+        'i.poi = false',
+        "length(i.meta->>'prompt') > 0",
+        'i."createdAt" > now() - make_interval(days =>',
+        'JOIN "Post" p ON p.id = i."postId"',
+        'p."publishedAt" IS NOT NULL',
+        'p."publishedAt" <= now()',
+        `p.availability != 'Private'::"Availability"`,
+        `p.availability != 'Unsearchable'::"Availability"`,
+      ]) {
+        expect(sql).toContain(predicate);
+      }
     }
   });
 
@@ -1175,6 +1187,53 @@ describe('main — the --execute gate', () => {
       }
     }
   );
+
+  it('🔴 the shared matched draw: part one takes a prefix plus the unmatched rows, part two the first sampleSize', async () => {
+    controlReturns(7000);
+    const matchedRows = [11, 12, 13].map((imageId) => ({
+      imageId,
+      prompt: `matched prompt ${imageId}`,
+      attachedTypes: ['Checkpoint', 'LORA'],
+      attachedBaseModels: [BASE_MODEL],
+      attachedModels: [
+        { modelId: 900, modelType: 'Checkpoint' },
+        { modelId: 4, modelType: 'LORA' },
+      ],
+      checkpointBaseModels: [BASE_MODEL],
+    }));
+    const unmatchedRow = {
+      imageId: 21,
+      prompt: 'unmatched prompt',
+      attachedTypes: [],
+      attachedBaseModels: [],
+    };
+    dbMock.dbRead.$queryRaw.mockImplementation((async (query: { sql: string }) =>
+      query.sql.includes('WITH sampled AS') ? matchedRows : [unmatchedRow]) as never);
+    askJev.mockImplementation(async () => ({
+      answers: STAGE1_ANSWERS('style'),
+      model: 'typesafe/jev-1.13-20260917',
+      usage: { promptTokens: 1, completionTokens: 1 },
+    }));
+
+    // --limit 2 → part one: 1 matched + 1 unmatched; --retrieval-sample 2 → draw 2.
+    const { result, log } = await runMain(['--execute', '--limit', '2', '--retrieval-sample', '2']);
+    expect(result).toBe('ok');
+    const matchedQuery = dbMock.dbRead.$queryRaw.mock.calls[0][0] as unknown as {
+      values: unknown[];
+    };
+    expect(matchedQuery.values).toEqual([30, 2]);
+    expect(askJev.mock.calls.map((call) => call[0])).toEqual([
+      // part one: the first matched row, then the unmatched row, no baseModel
+      buildResourceIntentStage1Request('matched prompt 11', null),
+      buildResourceIntentStage1Request('unmatched prompt', null),
+      // part two: the first TWO matched rows (the mock returned three), checkpoint baseModel
+      buildResourceIntentStage1Request('matched prompt 11', BASE_MODEL),
+      buildResourceIntentStage1Request('matched prompt 12', BASE_MODEL),
+    ]);
+    const report = log.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(report).toContain('Judged 2 of 2 drawn rows; 0 skipped on a stage-1 failure.');
+    expect(report).toContain('| **scored** | **2** |');
+  });
 
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
     controlReturns(7000);

@@ -59,8 +59,9 @@ import {
  *     at 100 and 0.93 at 140. Reaching 100 discordant pairs needs ≥667 of the 1000 to
  *     survive the exclusions if the arms disagree on 15% of scored prompts — both
  *     ASSUMPTIONS, which is why the report prints the scored and discordant counts. The
- *     cost is one stage-1 vendor call per drawn image, plus two or three index pages when
- *     the arms run.
+ *     cost is one stage-1 vendor call per drawn image plus two or three index pages when
+ *     the arms run, on top of part one's own ~`--limit` stage-1 calls (about half of them
+ *     re-judging prompts in this sample, with no baseModel).
  *   - `bootstrapResamples` 10000 / `bootstrapSeed` 20261006: enough resamples that the
  *     2.5/97.5 percentiles are stable to well under a point; the seed is the date this
  *     was registered, chosen before any data existed.
@@ -120,8 +121,10 @@ export function renderRetrievalPreregistration(): string {
     'people actually attached more often than the popularity seed alone (POPULARITY arm)?',
     '',
     `Sample: ${p.sampleSize} images drawn at random from the last ${p.sampleDays} days with a`,
-    'non-empty public prompt (hideMeta false), >=1 attached resource, scanned, and not',
-    'ToS-violating, blocked, or flagged minor or POI.',
+    'non-empty public prompt (hideMeta false) and >=1 attached resource, that are publicly',
+    'searchable: scanned, not in a review queue, not ToS-violating, blocked, or flagged',
+    'minor or POI, in a published (not scheduled) post that is neither Private nor',
+    'Unsearchable.',
     "Stage 1: run per prompt through the endpoint's own request builder and answer parser,",
     "with baseModel = the base model of the image's attached checkpoint when exactly one",
     'is attached, otherwise none. Stage 3 is not run by either arm.',

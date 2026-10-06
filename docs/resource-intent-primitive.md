@@ -440,9 +440,11 @@ version of this section said the study had been "removed before merge" and was
 "parked on a branch" — that was wrong in the direction that wastes someone's day,
 since the runnable evaluator was in the tree the whole time.
 
-It has two parts, drawn from ONE sample of past generations (eligible images only:
-public prompt, scanned, not ToS-violating, blocked, or flagged minor or POI — their
-prompts go to the vendor). **Part one** measures **stage-1 agreement** against that
+It has two parts, both drawn under ONE eligibility rule — the publicly searchable image
+(`imageWhere` in `src/server/search-index/images.search-index.ts`) with a public,
+non-empty prompt, since those prompts go to the vendor. The matched draw is shared:
+part one takes a prefix, part two the first `sampleSize`; part one's unmatched half is
+a separate draw. **Part one** measures **stage-1 agreement** against that
 corpus (role vs the resource types a prompt actually attached, `needsResource`
 calibration, review-rate curves). It runs stage 1 through the endpoint's own
 `buildResourceIntentStage1Request` / `parseResourceIntentStage1Answers`, and its report
@@ -467,8 +469,10 @@ Question: does the shipped purpose-first matcher (PURPOSE arm) retrieve a resour
 people actually attached more often than the popularity seed alone (POPULARITY arm)?
 
 Sample: 1000 images drawn at random from the last 30 days with a
-non-empty public prompt (hideMeta false), >=1 attached resource, scanned, and not
-ToS-violating, blocked, or flagged minor or POI.
+non-empty public prompt (hideMeta false) and >=1 attached resource, that are publicly
+searchable: scanned, not in a review queue, not ToS-violating, blocked, or flagged
+minor or POI, in a published (not scheduled) post that is neither Private nor
+Unsearchable.
 Stage 1: run per prompt through the endpoint's own request builder and answer parser,
 with baseModel = the base model of the image's attached checkpoint when exactly one
 is attached, otherwise none. Stage 3 is not run by either arm.
@@ -517,7 +521,7 @@ confound the pre-registration states.
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
 - **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index seed** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. 🔴 It carries an operational precondition of the same kind as the two above, and it is likewise not automatic: the purpose page SORTS on `insight.qualityScore` and FILTERS on `insight.role`, so an index whose settings lack either rejects that page, and the matcher fails the whole seed rather than falling back to the popularity page alone. The sortable list reaches a live index only via a manual full reset; the filterable list also via `src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts`. Checked 2026-10-06: the production models index carries both (and `insight.styleFamily` filterable), and the purpose-page query shape returned results there without error. Other environments may differ — check both settings on the target index before opening the flag there.
-- **M3 (committed, never run):** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the arc's "purpose-query arm beats the popularity arm" clause. Run it only once the purpose-first seed serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison-never-run).
+- **M3 (committed, never run):** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the arc's last closing clause, quoted in that section. Run it only once the purpose-first seed serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison-never-run).
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.
   ⚠️ **The volume half is NOT affected, and the clause above is the reason:** the shadow write is unconditional, so rows/day tracks calls/day and is invariant to the miss rate. A volume reading stays trustworthy under this fault — do not discount it.
