@@ -451,9 +451,9 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
   // 🔴 The SEED ADVANTAGE of a cross-base-model match, pinned as the behaviour it is. Model
   // 3701's projected `clothing` role came from its SDXL version; the request is for Pony, so
   // only its UNLABELED Pony version enters the pool. The re-rank leaves that version neutral
-  // — but neutral keeps seed order, so it still leads the whole popularity fill. If this
-  // changes, it should change on purpose.
-  it('🔴 a role matched on ANOTHER base model still seeds its neutral version ahead of the fill', async () => {
+  // — but neutral keeps seed order, so it leads every unlabeled fill candidate. (Not every
+  // fill candidate: see the next case.) If this changes, it should change on purpose.
+  it('🔴 a role matched on ANOTHER base model still seeds its neutral version ahead of the unlabeled fill', async () => {
     const clothingLabel = {
       role: 'clothing',
       styleFamily: 'photorealistic',
@@ -480,5 +480,60 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
     });
 
     expect(entries.map((e) => e.versionId)).toEqual([370002, 550000, 550001]);
+  });
+
+  // 🔴 The other direction of that seed advantage. It holds only WITHIN the neutral bucket:
+  // the re-rank sorts bucket-first, and a fill version promoted on STYLE FAMILY alone (a
+  // `character` label agreeing on `anime_manga`) lands in bucket 1 and outranks the neutral
+  // purpose-page version. A demoted fill version (`character` + `photorealistic`, more
+  // popular than every unlabeled one) sorts below it and below the unlabeled fill.
+  it('🔴 that neutral version is outranked by a style-promoted fill version, and outranks a demoted one', async () => {
+    const clothingLabel = {
+      role: 'clothing',
+      styleFamily: 'photorealistic',
+      qualityScore: 0.8,
+      confidence: 0.9,
+    };
+    const styleAgrees = {
+      role: 'character',
+      styleFamily: 'anime_manga',
+      qualityScore: 0.5,
+      confidence: 0.9,
+    };
+    const disagrees = {
+      role: 'character',
+      styleFamily: 'photorealistic',
+      qualityScore: 0.6,
+      confidence: 0.9,
+    };
+    busyCell([], {
+      docs: [
+        docOf(3701, 370002, 1, clothingLabel, {
+          versions: [
+            { id: 370001, name: 'sdxl', baseModel: 'SDXL 1.0', canGenerate: true },
+            { id: 370002, name: 'pony', baseModel: BASE_MODEL, canGenerate: true },
+          ],
+          labelVersionId: 370001,
+        }),
+        docOf(5600, 560000, 9500, styleAgrees),
+        docOf(5601, 560100, 9400, disagrees),
+      ],
+      labels: [
+        [370001, clothingLabel],
+        [560000, styleAgrees],
+        [560100, disagrees],
+      ],
+    });
+
+    // cap 4 -> pool of 8: the purpose page holds only 3701, the fill the 7 most popular.
+    const { entries } = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 4,
+    });
+
+    // 5601 is seeded ahead of every unlabeled version (it is more popular), so its absence
+    // from the first four is the demotion putting it behind 370002 and the unlabeled fill.
+    expect(entries.map((e) => e.versionId)).toEqual([560000, 370002, 550000, 550001]);
   });
 });

@@ -102,9 +102,10 @@ of the model (including one on a different base model, since the filter matches
 `versions.baseModel` across all versions), a row re-labelled since, or a moved floor can
 each reach the ordering with a label that disagrees or sits below the floor, where it is
 treated like any other candidate. A version left NEUTRAL that way keeps its seed
-advantage, since neutral candidates keep seed order: an unlabeled version on the
-requested base model, of a model whose role came from a version on another, still sorts
-ahead of the whole popularity fill.
+position within the neutral bucket: an unlabeled version on the requested base model, of
+a model whose role came from a version on another, sorts ahead of every unlabeled,
+neutral or demoted fill candidate — but a fill version promoted on role or on style
+family alone still outranks it.
 
 The seed reaches `applyInsightRanking` only as the tiebreak index.
 
@@ -287,7 +288,9 @@ page is non-empty, its hits displace the least popular models a popularity-only 
 would have held — by design, since that displacement is the point of seeding by
 purpose. What is bounded is the WIDTH: the merged pool is at most `poolCap` documents,
 and a request fetches at most one page of `poolCap` when the purpose page is full, two
-(≤ 2 × `poolCap` documents) when it is short. Whether that width still fills the pool
+(≤ 2 × `poolCap` documents) when it is short. The two pages are sequential, so an index
+that is slow but answering can hold the seed for up to 2 × `MEILI_RESOURCE_SELECT_TIMEOUT_MS`
+(20s at the 10s default). Whether that width still fills the pool
 under the purpose-first order has not been re-swept.
 
 Four details that are decisions, not oversights.

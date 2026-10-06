@@ -79,9 +79,10 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  * document was written, or a floor moved since, can each reach `insightBucket` with a
  * label that does not agree or sits below the floor for its direction — and the re-rank
  * then leaves it neutral or demotes it as for any other candidate. 🔴 A NEUTRAL one keeps
- * its seed advantage, though: neutral candidates keep seed order, so such a version (say
- * an unlabeled version on the requested base model, of a model whose role came from a
- * version on another) still sorts ahead of the entire popularity fill.
+ * its seed position within the neutral bucket, though: such a version (say an unlabeled
+ * version on the requested base model, of a model whose role came from a version on
+ * another) sorts ahead of every unlabeled, neutral or demoted fill candidate — but a fill
+ * version promoted on role OR on style family alone still outranks it.
  *
  * `applyInsightRanking` permutes the pool it is handed and tiebreaks on the seed index
  * (the merged purpose-then-popularity order).
@@ -395,7 +396,8 @@ async function searchShortlistModels(
   // two different versions and expand to zero. The merged pool is at most `poolCap`
   // documents. The FETCH is one page (≤ poolCap documents) when the purpose page comes
   // back full, and two sequential pages (≤ 2 x poolCap documents, two round trips) when it
-  // comes back short. Whether this width still fills the pool under the purpose-first
+  // comes back short — so an index that is slow but answering can hold the seed for up to
+  // 2 x MEILI_RESOURCE_SELECT_TIMEOUT_MS (20s at the 10s default). Whether this width still fills the pool under the purpose-first
   // order has not been re-swept.
   const { purpose, popularity } = buildResourceIntentSeedQueries({ filter, role, poolCap });
   const search = (request: SearchParams) =>
