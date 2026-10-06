@@ -438,17 +438,18 @@ export async function stampWorkflowDraftModel({
 }
 
 /**
- * The publish-time half of `assertTrainingModerationApproved`: every path that makes a model (or one
- * of its versions) published or public calls this with the stored model. A model whose meta names no
- * source workflow is not training-studio-born and is not checked. Otherwise:
+ * Called by every path that makes a model (or one of its versions) published or public, with the
+ * stored model. A model whose meta names no source workflow is not training-studio-born and is not
+ * checked. Otherwise:
  *
- * 1. Meta carries the approval stamp → passes without reading the workflow.
+ * 1. Meta carries the approval stamp → passes without reading the workflow. The stamp records an
+ *    approval already seen, so a stamped model is not re-checked.
  * 2. The workflow can be read (with the model OWNER's token — a moderator can publish someone else's
  *    model) → it must report an approved status, or this throws; when it does, the stamp is written
  *    (best-effort).
- * 3. The orchestrator no longer returns the workflow (NOT_FOUND) and there is no stamp → passes. Every
- *    model `createDraftModelFromWorkflow` creates carries the stamp, so this case is a model created
- *    before the stamp existed; it is let through without a check.
+ * 3. The orchestrator returns NOT_FOUND for the workflow, for whatever reason, and there is no stamp →
+ *    passes unchecked. Every model `createDraftModelFromWorkflow` creates carries the stamp, so this
+ *    only reaches models created before the stamp existed; they are grandfathered.
  *
  * Any other read failure is rethrown, so the publish fails and can be retried rather than going
  * ahead unchecked. Both meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`).
