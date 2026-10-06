@@ -98,6 +98,11 @@ async function getSubmittedAt(modelVersionId: number, userId: number) {
 const assetUrlRegex =
   /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
 
+export function parseJobAssetUrl(url: string): { jobId: string; assetName: string } | undefined {
+  const groups = url.match(assetUrlRegex)?.groups;
+  return groups ? { jobId: groups.jobId, assetName: groups.assetName } : undefined;
+}
+
 const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
 
 export const isBlobAssetUrl = (url: string) => blobUrlRegex.test(url);
@@ -191,9 +196,9 @@ export async function moveAssetFromJob({
   modelVersionId: number;
   ownerId: number;
 }) {
-  const urlMatch = url.match(assetUrlRegex);
-  if (!urlMatch || !urlMatch.groups) throw throwBadRequestError('Invalid URL');
-  const { jobId, assetName } = urlMatch.groups;
+  const parsed = parseJobAssetUrl(url);
+  if (!parsed) throw throwBadRequestError('Invalid URL');
+  const { jobId, assetName } = parsed;
 
   const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
 

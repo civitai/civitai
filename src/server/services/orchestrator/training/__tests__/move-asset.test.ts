@@ -141,8 +141,28 @@ const NOT_APPROVED = /dataset has not been approved/;
 const NOT_A_CHECKPOINT = /not a checkpoint from this training run/;
 const RUN_UNAVAILABLE = /training run could not be found/;
 
-const JOB_URL =
-  'https://orchestration.civitai.com/v1/consumer/jobs/0a1b2c3d-0000-4000-8000-000000000000/assets/x.safetensors';
+const jobUrl = (jobId: string, asset: string) =>
+  `https://orchestration.civitai.com/v1/consumer/jobs/${jobId}/assets/${asset}`;
+const JOB = '0a1b2c3d-0000-4000-8000-00000000000a';
+const RESUBMITTED_JOB = '0a1b2c3d-0000-4000-8000-00000000000b';
+const UNRECORDED_JOB = '0a1b2c3d-0000-4000-8000-00000000000c';
+const JOB_ASSET = 'run_000001.safetensors';
+const JOB_URL = jobUrl(JOB, JOB_ASSET);
+const NOT_RECORDED = /not one of this model version's training outputs/;
+
+/** Stored results of a legacy (pre-workflow) run, as its submit and webhook recorded them. */
+const legacyResults = {
+  jobId: JOB,
+  history: [
+    { time: '2024-01-01T00:00:00.000Z', status: 'Submitted', jobId: RESUBMITTED_JOB },
+    { time: '2024-01-02T00:00:00.000Z', status: 'Submitted', jobId: JOB },
+  ],
+  epochs: [
+    { epoch_number: 1, model_url: JOB_URL },
+    { epoch_number: 2, model_url: jobUrl(RESUBMITTED_JOB, 'earlier_000002.safetensors') },
+    { epoch_number: 3, model_url: jobUrl(UNRECORDED_JOB, 'stray_000003.safetensors') },
+  ],
+};
 
 const fetchMock = vi.fn();
 
@@ -263,16 +283,56 @@ describe('training.moveAsset — legacy job-asset URL', () => {
     expectNothingCopied();
   });
 
-  it.each([
-    ['the owner', OWNER, false],
-    ['a moderator', MODERATOR, true],
-  ])('lets %s copy, looking the run up under the version OWNER', async (_label, userId, mod) => {
-    await expect(move({ url: JOB_URL, userId, isModerator: mod })).resolves.toMatchObject({
-      fileSize: 9,
+  describe('with the version’s recorded legacy run', () => {
+    beforeEach(() => {
+      mockFindUnique.mockResolvedValue(dbVersion({ trainingResults: legacyResults }) as never);
     });
-    expect(mockCopyAsset).toHaveBeenCalledTimes(1);
-    const [, ...values] = mockQueryRaw.mock.calls[0] as unknown[];
-    expect(values).toEqual([VERSION_ID, OWNER]);
+
+    const copiedJob = () =>
+      (mockCopyAsset.mock.calls[0][0] as { payload: { jobId: string; assetName: string } }).payload;
+
+    it.each([
+      ['the owner', OWNER, false],
+      ['a moderator', MODERATOR, true],
+    ])('lets %s copy, looking the run up under the version OWNER', async (_label, userId, mod) => {
+      await expect(move({ url: JOB_URL, userId, isModerator: mod })).resolves.toMatchObject({
+        fileSize: 9,
+      });
+      expect(mockCopyAsset).toHaveBeenCalledTimes(1);
+      expect(copiedJob()).toMatchObject({ jobId: JOB, assetName: JOB_ASSET });
+      const [, ...values] = mockQueryRaw.mock.calls[0] as unknown[];
+      expect(values).toEqual([VERSION_ID, OWNER]);
+    });
+
+    it('copies the RECORDED job id, not the requested spelling of it', async () => {
+      await move({ url: jobUrl(JOB.toUpperCase(), JOB_ASSET) });
+      expect(copiedJob()).toMatchObject({ jobId: JOB, assetName: JOB_ASSET });
+    });
+
+    it('accepts an output of a job recorded only in the run history', async () => {
+      await move({ url: jobUrl(RESUBMITTED_JOB, 'earlier_000002.safetensors') });
+      expect(copiedJob()).toMatchObject({
+        jobId: RESUBMITTED_JOB,
+        assetName: 'earlier_000002.safetensors',
+      });
+    });
+
+    it.each([
+      ['a job the version does not record', jobUrl(UNRECORDED_JOB, JOB_ASSET)],
+      ['an asset name the recorded job did not output', jobUrl(JOB, 'other_000009.safetensors')],
+      [
+        'a recorded output whose job is not one the version submitted',
+        jobUrl(UNRECORDED_JOB, 'stray_000003.safetensors'),
+      ],
+    ])('refuses %s', async (_label, url) => {
+      await expect(move({ url })).rejects.toThrow(NOT_RECORDED);
+      expectNothingCopied();
+    });
+  });
+
+  it('refuses a job asset for a version that records no legacy training job', async () => {
+    await expect(move({ url: JOB_URL })).rejects.toThrow(/no recorded training job/);
+    expectNothingCopied();
   });
 });
 
