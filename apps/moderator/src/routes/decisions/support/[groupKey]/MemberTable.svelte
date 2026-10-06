@@ -65,9 +65,13 @@
               : 'The label was NOT recorded.'
           );
         }
-        // Applies the result (so `form` is current) and reloads on success only.
-        await update({ invalidateAll: result.type === 'success' });
-        if (result.type === 'success') pending.delete(ticketId);
+        // Applies the result (so `form` is current) and reloads on success only. `finally` so the
+        // row can never stay disabled if the reload rejects.
+        try {
+          await update({ invalidateAll: result.type === 'success' });
+        } finally {
+          if (result.type === 'success') pending.delete(ticketId);
+        }
       };
     };
 </script>
@@ -125,7 +129,7 @@
                     aria-pressed={shown === r}
                     class="rounded border px-2 py-0.5 text-xs {shown === r
                       ? 'border-blue-4 bg-blue-4/20 text-white'
-                      : 'border-dark-4 text-dark-2 hover:text-dark-0'}">{MEMBER_RULING_LABEL[r]}</button
+                      : 'border-dark-4 text-dark-2 hover:text-dark-0'} disabled:opacity-50">{MEMBER_RULING_LABEL[r]}</button
                   >
                 </form>
               {/each}

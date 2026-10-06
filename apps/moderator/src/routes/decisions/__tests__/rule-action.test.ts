@@ -161,7 +161,7 @@ describe('the rule action', () => {
     });
   });
 
-  it('the fingerprint LOAD hands the page is the one the action accepts — the real round trip', async () => {
+  it('invariant: the fingerprint LOAD hands the page is one the action accepts', async () => {
     const page = (await (load as unknown as Handler)({
       params: { groupKey: GK },
       url: new URL(`https://moderator.example/decisions/support/${GK}`),
