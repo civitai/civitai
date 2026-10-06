@@ -5956,13 +5956,10 @@ export const blocksRouter = router({
       // dialog offers a top-up, never whether the run is allowed.
       let shortfall: number | null = null;
       try {
-        const { isGreen } = resolveBlockMaturity(claims);
-        const accounts = (await getUserBuzzAccounts({ userId })) as Record<string, number | null>;
-        const balance = getBlockAllowedAccountTypes(isGreen).reduce(
-          (sum, type) => sum + (accounts[type] ?? 0),
-          0
+        shortfall = Math.max(
+          0,
+          quote.total - (await readBlockTrainingSpendableBuzz(claims, userId))
         );
-        shortfall = Math.max(0, quote.total - balance);
       } catch {
         shortfall = null;
       }
@@ -12104,6 +12101,18 @@ async function loadEligibleBlockTrainingDataset(
 }
 
 /**
+ * The viewer's Buzz across the accounts a training run charges: the block's allowed
+ * set for its maturity (`getBlockAllowedAccountTypes`), the same set
+ * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
+ * Throws when the balance cannot be read.
+ */
+async function readBlockTrainingSpendableBuzz(claims: BlockClaims, userId: number) {
+  const { isGreen } = resolveBlockMaturity(claims);
+  const accounts = (await getUserBuzzAccounts({ userId })) as Record<string, number | null>;
+  return getBlockAllowedAccountTypes(isGreen).reduce((sum, type) => sum + (accounts[type] ?? 0), 0);
+}
+
+/**
  * TRAINING ESTIMATE — prices the run and stores the quote the viewer will confirm.
  * Creates nothing and reserves nothing.
  */
@@ -12332,6 +12341,18 @@ async function submitTrainingWorkflow(opts: {
         code: 'FORBIDDEN',
         message: `insufficient buzz budget: training run ${requote} exceeds the per-run limit ${ceiling}`,
       });
+    }
+    // A definite refusal BEFORE anything is reserved or sent: a viewer who cannot pay
+    // would otherwise reach the orchestrator, whose refusal this arm must treat as
+    // ambiguous. Fail-open on a balance-read error — the orchestrator still checks.
+    let spendable: number | null = null;
+    try {
+      spendable = await readBlockTrainingSpendableBuzz(claims, userId);
+    } catch {
+      spendable = null;
+    }
+    if (spendable !== null && spendable < requote) {
+      throw new TRPCError({ code: 'FORBIDDEN', message: 'Not enough Buzz for this training run.' });
     }
     runBuzz = requote;
   } catch (e) {

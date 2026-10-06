@@ -42,7 +42,7 @@ const h = vi.hoisted(() => ({
   datasetRate: vi.fn(async () => ({ allowed: true })),
   catalogRate: vi.fn(async () => ({ allowed: true })),
   imageUpload: vi.fn(),
-  buzzAccounts: vi.fn(async () => ({ blue: 100, green: 200, yellow: 0 })),
+  buzzAccounts: vi.fn(async (): Promise<Record<string, number>> => ENOUGH_BUZZ),
   getActiveDevTunnel: vi.fn(async (): Promise<unknown> => null),
   reserveDevSessionBuzz: vi.fn(),
   refundDevSessionBuzz: vi.fn(async () => undefined),
@@ -185,6 +185,7 @@ function installRedis() {
   r.expire.mockImplementation(async () => true);
   r.ttl.mockImplementation(async () => 3600);
 }
+const ENOUGH_BUZZ = { blue: 100, green: 20_000, yellow: 0 };
 const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
 const counter = (prefix: string) =>
   keysWith(prefix).reduce((s, k) => s + Number(store.get(k) ?? 0), 0);
@@ -411,6 +412,7 @@ beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockResolvedValue([imageRow({ id: 1 }), imageRow({ id: 2 })]);
   h.getActiveDevTunnel.mockImplementation(async () => null);
   h.reserveDevSessionBuzz.mockReset();
+  h.buzzAccounts.mockImplementation(async () => ENOUGH_BUZZ);
   seedDataset();
 });
 afterEach(() => envMock.reset());
@@ -559,6 +561,7 @@ describe('training CONSENT — session-only, and only the quote’s own subject'
   it('records the confirmation, and preview shows only server-resolved values', async () => {
     const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
     const quoteId = snapshot.trainingQuote.quoteId;
+    h.buzzAccounts.mockImplementation(async () => ({ blue: 100, green: 200, yellow: 0 }));
     const preview = await caller(VIEWER).previewTrainingQuote({ blockToken: 't', quoteId });
     expect(preview).toMatchObject({
       quoteId,
@@ -782,6 +785,59 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
     expect(h.reserveDevSessionBuzz).toHaveBeenCalledWith('s1', 1200, 5000);
     expect(counter('system:blocks:consent-budget')).toBe(1200);
     expect(h.refundDevSessionBuzz).not.toHaveBeenCalled();
+  });
+
+  it('a viewer who cannot pay the re-quoted price is refused BEFORE any reservation or call', async () => {
+    const quoteId = await confirmedQuote();
+    // SFW token: blue + green are what the run charges — 100 + 1099 = 1199 < 1200.
+    h.buzzAccounts.mockImplementation(async () => ({ blue: 100, green: 1099, yellow: 50_000 }));
+    await expect(submit(body({ quoteId }))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'Not enough Buzz for this training run.',
+    });
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(counter('system:blocks:consent-budget')).toBe(0);
+    expect(h.reserveAppSpend).not.toHaveBeenCalled();
+    // The per-quote claim is released.
+    expect(keysWith('system:blocks:gen-idem')).toEqual([]);
+  });
+
+  it('…and exactly enough proceeds', async () => {
+    const quoteId = await confirmedQuote();
+    h.buzzAccounts.mockImplementation(async () => ({ blue: 100, green: 1100, yellow: 0 }));
+    const { snapshot } = (await submit(body({ quoteId }))) as { snapshot: { workflowId: string } };
+    expect(snapshot.workflowId).toBe(workflowId);
+    expect(realSubmits()).toHaveLength(1);
+    // Positive control for the claim-released check above: a finished submit's
+    // replay record is visible under the same prefix.
+    expect(keysWith('system:blocks:gen-idem')).toHaveLength(1);
+  });
+
+  it('the balance is checked against the RE-QUOTED price, not the confirmed one', async () => {
+    const quoteId = await confirmedQuote();
+    whatifPrice = { total: 1000 };
+    chargedPrice = 1000;
+    h.buzzAccounts.mockImplementation(async () => ({ blue: 0, green: 1050, yellow: 0 }));
+    await submit(body({ quoteId }));
+    expect(realSubmits()).toHaveLength(1);
+  });
+
+  it('an all-levels token counts yellow — the accounts the run would charge', async () => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    const quoteId = await confirmedQuote();
+    h.buzzAccounts.mockImplementation(async () => ({ blue: 0, green: 0, yellow: 1300 }));
+    await submit(body({ quoteId }));
+    expect(realSubmits()).toHaveLength(1);
+  });
+
+  it('a balance that cannot be read does not block the run (the orchestrator still checks)', async () => {
+    const quoteId = await confirmedQuote();
+    h.buzzAccounts.mockImplementation(async () => {
+      throw new Error('buzz service unavailable');
+    });
+    await submit(body({ quoteId }));
+    expect(realSubmits()).toHaveLength(1);
   });
 
   it('control: a refusal BEFORE the orchestrator call refunds and is not marked unconfirmed', async () => {

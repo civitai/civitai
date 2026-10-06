@@ -492,7 +492,8 @@ owner's own private run is allowed, under the private-run Buzz cap.
 A confirmed run may cost more than the token's per-call budget, up to
 `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.
 A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
-re-price is refused. Training charges no author fee.
+re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
+reserved). Training charges no author fee.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
