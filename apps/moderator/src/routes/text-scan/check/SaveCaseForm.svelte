@@ -81,6 +81,7 @@
     <input type="hidden" name="entityType" value={entityType} />
     <input type="hidden" name="entityId" value={item.entityId ?? ''} />
     <input type="hidden" name="authorId" value={item.authorId ?? ''} />
+    <input type="hidden" name="sourceIds" value={JSON.stringify(item.sourceIds ?? [])} />
     <input type="hidden" name="fields" value={JSON.stringify(item.fields)} />
     <div class="flex flex-wrap items-center gap-2">
       <span class="text-xs text-dark-2">Save to</span>

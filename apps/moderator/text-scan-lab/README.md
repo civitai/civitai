@@ -33,9 +33,13 @@ When the source entity or its author's account is deleted, `fields` is set to nu
 ## Purge
 
 Clears the text of entity cases whose source row is gone or soft-deleted, or whose author's account is
-deleted, and nulls the stored outputs of those cases' results. Free-text cases are never touched.
+deleted, and nulls the stored outputs of those cases' results. Free-text cases are never touched. A
+ChatMessage case keeps the ids of every message in its window (`source_ids`) and is wiped when any of
+them is gone, soft-deleted or by a deleted account.
 
-**Run it weekly** (the spoke has no scheduler).
+The lab also purges a set whenever it is opened, its cases are listed or it is run, so a deleted
+source never shows there. **Run it weekly** anyway (the spoke has no scheduler), for sets nobody
+opens.
 
 ```bash
 pnpm --filter @civitai/moderator-app exec tsx --env-file=.env text-scan-lab/purge.ts [--set <id>]

@@ -57,7 +57,9 @@ A verdict that arrives after the mode has left `active` is not written to the li
   (`sampleShadow`). Locally, the scan and quote actions are reached through
   `/api/testing/chat-completion-scan`. `composeEntities` and `sampleShadow` read any entity's text
   and author, so they are refused there (403) and only the attributed, audited moderator endpoint
-  `/api/mod/text-scan` serves them. That endpoint also attributes prompt and config writes to the
+  `/api/mod/text-scan` serves them. There, the actions that return entity text (`composeEntities`,
+  `sampleShadow`, `scanEntity`, `batchEntities`) also refuse an API key that is not full-scope. That
+  endpoint also attributes prompt and config writes to the
   signed-in moderator.
 - The moderator app's `/text-scan` lab (Check, Versions with drafts and publish, test sets, scored
   runs) drives those actions. Its tables live in the moderator database and are applied by hand; see

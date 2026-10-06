@@ -153,7 +153,15 @@ export async function scanTexts(
 }
 
 export type LabComposedEntity =
-  | { entityId: number; ok: true; fields: LabField[]; text: string; userId: number | null }
+  | {
+      entityId: number;
+      ok: true;
+      fields: LabField[];
+      text: string;
+      userId: number | null;
+      /** ChatMessage only: every message in the window, which the purge checks. */
+      sourceIds?: number[];
+    }
   | { entityId: number; ok: false; error: string };
 
 type HarnessComposedEntity =
@@ -163,6 +171,7 @@ type HarnessComposedEntity =
       fields: { heading: string; text: string | null }[];
       text: string;
       userId: number | null;
+      sourceIds?: number[];
     }
   | { entityId: number; ok: false; error: string };
 

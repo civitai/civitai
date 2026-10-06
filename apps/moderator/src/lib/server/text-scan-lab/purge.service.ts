@@ -54,6 +54,12 @@ async function goneIds(main: Kysely<MainDB>, source: Source, ids: number[]): Pro
   return ids.filter((id) => !live.has(id));
 }
 
+/** The rows a case's text came from: every message of a ChatMessage window, else the entity itself. */
+function sourceIdsOf(entityId: number, sourceIds: unknown): number[] {
+  const ids = Array.isArray(sourceIds) ? sourceIds.filter((id) => Number.isInteger(id)) : [];
+  return ids.length ? ids : [entityId];
+}
+
 // Free text (no entity id) is never touched.
 export async function purgeDeletedSources(
   { moderator, main }: PurgeDbs,
@@ -61,38 +67,43 @@ export async function purgeDeletedSources(
 ): Promise<{ checked: number; wiped: number }> {
   let q = moderator
     .selectFrom('text_scan_test_case')
-    .select(['entity_type', 'entity_id'])
+    .select(['id', 'entity_type', 'entity_id', 'source_ids'])
     .where('entity_id', 'is not', null)
     .where('fields', 'is not', null);
   if (setId !== undefined) q = q.where('set_id', '=', String(setId));
   const cases = await q.execute();
 
-  const idsByType = new Map<LabEntityType, Set<number>>();
+  const casesBySource = new Map<LabEntityType, Map<number, string[]>>();
   let checked = 0;
   for (const c of cases) {
     const type = c.entity_type as LabEntityType;
     // A type the lab no longer knows is left alone rather than guessed at.
     if (!(type in SOURCES)) continue;
     checked++;
-    idsByType.set(type, (idsByType.get(type) ?? new Set()).add(c.entity_id!));
+    const byId = casesBySource.get(type) ?? new Map<number, string[]>();
+    casesBySource.set(type, byId);
+    for (const id of sourceIdsOf(c.entity_id!, c.source_ids))
+      byId.set(id, [...(byId.get(id) ?? []), c.id]);
+  }
+
+  const goneCases = new Set<string>();
+  for (const [type, byId] of casesBySource) {
+    for (const batch of chunk([...byId.keys()], PURGE_BATCH)) {
+      for (const id of await goneIds(main, SOURCES[type], batch))
+        for (const caseId of byId.get(id)!) goneCases.add(caseId);
+    }
   }
 
   let wiped = 0;
-  for (const [type, ids] of idsByType) {
-    for (const batch of chunk([...ids], PURGE_BATCH)) {
-      const gone = await goneIds(main, SOURCES[type], batch);
-      if (!gone.length) continue;
-      wiped += await moderator.transaction().execute(async (trx) => {
-        let wipe = trx
-          .updateTable('text_scan_test_case')
-          .set({ fields: null, source_deleted_at: sql`now()`, updated_at: sql`now()` })
-          .where('entity_type', '=', type)
-          .where('entity_id', 'in', gone)
-          .where('fields', 'is not', null);
-        if (setId !== undefined) wipe = wipe.where('set_id', '=', String(setId));
-        return (await wipe.returning('id').execute()).length;
-      });
-    }
+  for (const batch of chunk([...goneCases], PURGE_BATCH)) {
+    const rows = await moderator
+      .updateTable('text_scan_test_case')
+      .set({ fields: null, source_deleted_at: sql`now()`, updated_at: sql`now()` })
+      .where('id', 'in', batch)
+      .where('fields', 'is not', null)
+      .returning('id')
+      .execute();
+    wiped += rows.length;
   }
   // A stored output's `reason` can quote the text. Swept for every wiped case, not only those wiped
   // now, so a result a run wrote while its case was being wiped is caught on the next purge.

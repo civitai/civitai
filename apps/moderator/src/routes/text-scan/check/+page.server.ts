@@ -150,6 +150,8 @@ type CheckSubject = {
   fields: LabField[];
   entityId: number | null;
   authorId: number | null;
+  /** Saved with the case so the purge checks every message of a ChatMessage window. */
+  sourceIds?: number[];
 };
 type Skipped = { entityId: number; error: string };
 type Plan = {
@@ -209,6 +211,7 @@ async function entityPlan(
         fields: c.fields,
         entityId: c.entityId,
         authorId: c.userId,
+        sourceIds: c.sourceIds,
       });
     else skipped.push({ entityId: c.entityId, error: c.error });
   }
@@ -454,6 +457,7 @@ export const actions: Actions = {
       fields: found.fields,
       entityId: found.entityId,
       authorId: found.authorId,
+      sourceIds: found.sourceIds,
     };
     try {
       const [item] = await scanSubjects(found.entityType, [subject], overrides);

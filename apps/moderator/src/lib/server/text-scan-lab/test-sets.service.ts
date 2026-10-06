@@ -40,6 +40,7 @@ export type TestCase = {
   entityType: LabEntityType;
   entityId: number | null;
   authorId: number | null;
+  sourceIds: number[];
   fields: LabField[] | null;
   textHash: string;
   expected: Expected;
@@ -57,6 +58,8 @@ export type NewCase = {
   /** Null for free text, which is always a new case. */
   entityId: number | null;
   authorId: number | null;
+  /** ChatMessage: every message the text came from (compose's `sourceIds`). */
+  sourceIds?: number[];
   fields: LabField[];
   expected: unknown;
   synthetic: boolean;
@@ -85,6 +88,7 @@ const toCase = (r: Selectable<text_scan_test_case>): TestCase => ({
   entityType: r.entity_type as LabEntityType,
   entityId: r.entity_id,
   authorId: r.author_id,
+  sourceIds: Array.isArray(r.source_ids) ? r.source_ids.filter((id) => Number.isInteger(id)) : [],
   fields: (r.fields as LabField[] | null) ?? null,
   textHash: r.text_hash,
   expected: (r.expected ?? {}) as Expected,
@@ -259,6 +263,7 @@ async function insertCase(
     entity_type: input.entityType,
     entity_id: input.entityId,
     author_id: input.authorId,
+    source_ids: input.sourceIds?.length ? JSON.stringify(input.sourceIds) : null,
     fields: JSON.stringify(fields),
     text_hash: textHash,
     expected: JSON.stringify(expected),
@@ -272,6 +277,7 @@ async function insertCase(
     q = q.onConflict((oc) =>
       oc.columns(['set_id', 'entity_type', 'entity_id']).doUpdateSet({
         author_id: values.author_id,
+        source_ids: values.source_ids,
         fields: values.fields,
         text_hash: values.text_hash,
         synthetic: values.synthetic,
@@ -361,6 +367,7 @@ export async function addEntities(
         entityType,
         entityId: c.entityId,
         authorId: c.userId,
+        sourceIds: c.sourceIds,
         fields: c.fields,
         expected: {},
         synthetic: false,

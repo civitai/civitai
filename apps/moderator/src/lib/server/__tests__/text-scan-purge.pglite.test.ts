@@ -61,12 +61,13 @@ async function addCase(
     synthetic = false,
     expected = { scam: true } as Record<string, unknown>,
     note = 'kept',
+    sourceIds = null as number[] | null,
   } = {}
 ) {
   const { rows } = await modPg.query<{ id: string }>(
     `INSERT INTO text_scan_test_case
-       (set_id, entity_type, entity_id, fields, text_hash, expected, synthetic, note, added_by)
-     VALUES ($1, $2, $3, $4, 'hash', $5, $6, $7, 1) RETURNING id`,
+       (set_id, entity_type, entity_id, fields, text_hash, expected, synthetic, note, source_ids, added_by)
+     VALUES ($1, $2, $3, $4, 'hash', $5, $6, $7, $8, 1) RETURNING id`,
     [
       set,
       entityType,
@@ -75,6 +76,7 @@ async function addCase(
       JSON.stringify(expected),
       synthetic,
       note,
+      sourceIds && JSON.stringify(sourceIds),
     ]
   );
   return Number(rows[0].id);
@@ -150,6 +152,25 @@ describe('purgeDeletedSources', () => {
     expect(await wipedIds()).toEqual([deletedUser, deletedProfile, deletedMessage]);
     for (const id of [liveUser, liveProfile, systemChallenge, systemMessage])
       expect((await caseRow(id)).fields).not.toBeNull();
+  });
+
+  it('wipes a ChatMessage case when any message of its window is gone, soft-deleted or by a deleted account', async () => {
+    await mainPg.exec(`
+      INSERT INTO "User" VALUES (1, NULL), (2, now());
+      INSERT INTO "ChatMessage" VALUES
+        (50, 1, NULL), (51, 1, now()),
+        (60, 1, NULL), (61, 2, NULL),
+        (70, 1, NULL), (71, 1, NULL),
+        (80, 1, NULL);
+    `);
+    const softDeleted = await addCase('ChatMessage', 50, { sourceIds: [50, 51] });
+    const authorGone = await addCase('ChatMessage', 60, { sourceIds: [60, 61] });
+    const missing = await addCase('ChatMessage', 70, { sourceIds: [70, 79] });
+    const live = await addCase('ChatMessage', 71, { sourceIds: [70, 71] });
+    const noWindow = await addCase('ChatMessage', 80);
+    expect(await purgeDeletedSources(dbs)).toEqual({ checked: 5, wiped: 3 });
+    expect(await wipedIds()).toEqual([softDeleted, authorGone, missing]);
+    for (const id of [live, noWindow]) expect((await caseRow(id)).fields).not.toBeNull();
   });
 
   it('never touches free text, but wipes a synthetic-flagged case that names a real entity', async () => {

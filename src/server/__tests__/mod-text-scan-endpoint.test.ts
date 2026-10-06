@@ -160,7 +160,7 @@ describe('mod/text-scan', () => {
   describe('actions that return entity text', () => {
     const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
     const asApiKey = (tokenScope: number) => {
-      vi.mocked(getSessionFromBearerToken).mockResolvedValue({
+      vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
         user: MOD_USER,
         tokenScope,
       } as never);

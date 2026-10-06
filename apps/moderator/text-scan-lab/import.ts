@@ -34,6 +34,7 @@ type Composed =
       ok: true;
       fields: { heading: string; text: string | null }[];
       userId: number | null;
+      sourceIds?: number[];
     }
   | { entityId: number; ok: false; error: string };
 
@@ -41,6 +42,7 @@ type CaseRow = {
   entity_type: LabEntityType;
   entity_id: number | null;
   author_id: number | null;
+  source_ids: string | null;
   fields: string;
   text_hash: string;
   expected: string;
@@ -101,7 +103,8 @@ function toRow(
   c: SeedCase,
   fields: { heading: string; text: string | null }[],
   entityId: number | null,
-  authorId: number | null
+  authorId: number | null,
+  sourceIds?: number[]
 ): CaseRow | string {
   const kept = normaliseLabFields(fields);
   if (typeof kept === 'string') return kept;
@@ -110,6 +113,7 @@ function toRow(
     entity_type: c.entityType,
     entity_id: entityId,
     author_id: authorId,
+    source_ids: sourceIds?.length ? JSON.stringify(sourceIds) : null,
     fields: JSON.stringify(kept),
     text_hash: hashLabText(kept),
     expected: JSON.stringify(c.expected),
@@ -150,7 +154,7 @@ async function buildRows(cases: SeedCase[], appUrl: string, apiKey: string | und
         skip(r.error);
         continue;
       }
-      const row = toRow(c, r.fields, r.entityId, r.userId);
+      const row = toRow(c, r.fields, r.entityId, r.userId, r.sourceIds);
       if (typeof row === 'string') skip(row);
       else rows.push(row);
     }

@@ -443,10 +443,11 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
-/** A ChatMessage window spans several messages; a test case built from it must outlive none of them. */
+/** Every message a ChatMessage window was composed from: a test case built from it is wiped when any is gone. */
 function sourceIdsOf(subject: TextScanSubject) {
   const ids = subject.meta?.messageIds;
-  return Array.isArray(ids) ? { sourceIds: ids as number[] } : {};
+  if (!Array.isArray(ids)) return {};
+  return { sourceIds: ids.filter((id): id is number => Number.isInteger(id)) };
 }
 
 async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {

@@ -91,7 +91,7 @@ describe('without textScan.testSet.edit', () => {
   });
 });
 
-describe('addCase (the playground save)', () => {
+describe("addCase (Check's save)", () => {
   it('stores an entity case with its author, and replaces it on a second save', async () => {
     expect(await act('addCase', setId, EDIT, playgroundSave())).toMatchObject({ created: true });
     expect(
@@ -114,6 +114,19 @@ describe('addCase (the playground save)', () => {
     expect(c).toMatchObject({ entityId: null, authorId: null, synthetic: true });
   });
 
+  it("stores a ChatMessage window's message ids, and none when the form sends none", async () => {
+    await act(
+      'addCase',
+      setId,
+      EDIT,
+      playgroundSave({ entityType: 'ChatMessage', sourceIds: '[42,41,40]', expected: '{}' })
+    );
+    await act('addCase', setId, EDIT, playgroundSave());
+    const byType = Object.fromEntries((await listCases(setId)).map((c) => [c.entityType, c]));
+    expect(byType.ChatMessage.sourceIds).toEqual([42, 41, 40]);
+    expect(byType.Model.sourceIds).toEqual([]);
+  });
+
   it('refuses min above max', async () => {
     const res = await act(
       'addCase',
@@ -132,5 +145,24 @@ describe('addEntities', () => {
       await act('addEntities', setId, EDIT, { entityType: 'Model', ids: '1, two' })
     ).toMatchObject({ status: 400, data: { error: 'Not an id: two.' } });
     expect(harness.composeEntities).not.toHaveBeenCalled();
+  });
+
+  it("stores compose's source ids, and refreshes them when the entity is added again", async () => {
+    const composed = (sourceIds: number[]) => [
+      {
+        entityId: 40,
+        ok: true,
+        fields: [{ heading: 'Messages', text: 'hi' }],
+        text: 'x',
+        userId: 7,
+        sourceIds,
+      },
+    ];
+    harness.composeEntities.mockResolvedValueOnce(composed([40, 39]));
+    await act('addEntities', setId, EDIT, { entityType: 'ChatMessage', ids: '40' });
+    expect((await listCases(setId))[0].sourceIds).toEqual([40, 39]);
+    harness.composeEntities.mockResolvedValueOnce(composed([40, 39, 38]));
+    await act('addEntities', setId, EDIT, { entityType: 'ChatMessage', ids: '40' });
+    expect((await listCases(setId))[0].sourceIds).toEqual([40, 39, 38]);
   });
 });

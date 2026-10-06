@@ -186,13 +186,16 @@ export const actions: Actions = {
     (setId, input, userId) => prepareRerun(setId, input.runId, userId)
   ),
 
-  // Also the playground's "Save as test case". An entity case is keyed by its id, so saving one that
+  // Also Check's "Save as test case". An entity case is keyed by its id, so saving one that
   // is already in the set replaces it; free text (no entityId) is always new, and counts as synthetic.
   addCase: setAction(
     z.object({
       entityType: z.enum(LAB_ENTITY_TYPES),
       entityId: optionalId,
       authorId: optionalId,
+      sourceIds: jsonField(
+        z.array(z.number().int().positive().max(MAX_INT4)).max(1000)
+      ).optional(),
       fields: fieldsField,
       expected: expectedField,
       note: noteField,
