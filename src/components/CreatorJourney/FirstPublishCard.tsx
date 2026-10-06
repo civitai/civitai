@@ -24,18 +24,17 @@ import { trpc } from '~/utils/trpc';
 
 type Entity = 'model' | 'article';
 
+const countsToward = (activities: string) =>
+  `${capitalize(activities)} on it now count toward your Creator Score.`;
+
 const copy: Record<Entity, { title: string; counts: string }> = {
   model: {
     title: 'Your first model is live',
-    counts: `${capitalize(
-      creatorScoreActivities.models
-    )} on it now count toward your Creator Score.`,
+    counts: countsToward(creatorScoreActivities.models),
   },
   article: {
     title: 'Your first article is live',
-    counts: `${capitalize(
-      creatorScoreActivities.articles
-    )} on it now count toward your Creator Score.`,
+    counts: countsToward(creatorScoreActivities.articles),
   },
 };
 
