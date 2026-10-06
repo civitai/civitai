@@ -474,9 +474,8 @@ const blockPostPayloadShape = {
  * REQUIRED, changed from optional: an integrity check a caller may decline is not
  * an invariant, it is a suggestion. Every caller now states the count it showed.
  *
- * It is safe to trust because it is host chrome, not the block: the block never
- * holds the block token and cannot reach this procedure — it can only post a
- * message the host chooses to act on.
+ * Sent by host chrome, echoed from the server's own preview: an integrity check
+ * against the set the dialog showed, not evidence of a confirm.
  */
 const confirmedImageCountInput = z.number().int().positive().max(100);
 
@@ -489,13 +488,14 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  * ⚠️ IT IS NOT A CLAIM THAT THE TWO PROCEDURES HAVE THE SAME GATE SET, AND
  * READING IT THAT WAY WOULD BE WRONG. The write deliberately carries gates the
  * preview does not — `assertSharedWriteTrust` (#6 in the `createPostFromApp`
- * enumeration) and the two post rate buckets are WRITE-ONLY, because a read that
- * renders a dialog is not the act those gates exist to bound, and charging a rate
- * bucket for a preview would let a dialog the viewer never confirmed consume the
- * budget. The resulting asymmetry — a resolvable preview for a subject who would
- * be refused the post — is the accepted position and is asserted by a test, not
- * an oversight. What this helper guarantees is narrower and exact: NEITHER
- * procedure can be reached without all five of the gates below.
+ * enumeration) and the two post rate buckets are WRITE-ONLY. They are write-only
+ * because a read that renders a dialog is not the act those gates exist to bound,
+ * and charging a rate bucket for a preview would let a dialog the viewer never
+ * confirmed consume the budget. The resulting asymmetry — a resolvable
+ * preview for a subject who would be refused the post — is the accepted position
+ * and is asserted by a test, not an oversight. What this helper guarantees is
+ * narrower and exact: NEITHER procedure can be reached without all five of the
+ * gates below.
  *
  * 🔴 THE GUARD CALL LIVES HERE, AND THAT IS WHY THIS IS A MODULE-SCOPE HELPER
  * RATHER THAN AN IMPORT. `no-unguarded-block-bridge-token.test.ts` computes
@@ -510,7 +510,9 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  *      it is the ONLY place the bridge resolves claims.
  *   2. scope — cheap, and refusing an unscoped app before hydrating a session
  *      keeps the unauthorized path off the auth hub.
- *   3. non-anon subject.
+ *   3. non-anon subject — and that subject IS the signed-in user the request
+ *      arrived with. Both procedures are `protectedProcedure`s and pass that
+ *      user's id; the helper takes it as a required argument.
  *   4. the App-Blocks RUNTIME flag, evaluated on the token SUBJECT.
  *   5. the SUBJECT HYDRATES. Refused on its own terms, with its own message, and
  *      NOT folded into (6) — see the docblock on the refusal itself.
@@ -547,7 +549,8 @@ type BlockPostRequestAuth = {
  */
 async function authorizeBlockPostRequest(
   blockToken: string,
-  surface: AppBlockPostSurface
+  surface: AppBlockPostSurface,
+  sessionUserId: number
 ): Promise<BlockPostRequestAuth> {
   const claims = await authorizeBlockBridgeToken(blockToken);
   // NOT `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
@@ -562,6 +565,15 @@ async function authorizeBlockPostRequest(
     throw new TRPCError({
       code: 'UNAUTHORIZED',
       message: 'posting requires an authenticated viewer',
+    });
+  }
+  // Both halves are bound to the signed-in viewer: the token's subject must be
+  // the session the request arrived with. Checked before any flag or hydration
+  // read, so a mismatched request does no further work.
+  if (sessionUserId !== userId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'this app session belongs to a different account; reload the page to continue',
     });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
@@ -5294,13 +5306,22 @@ export const blocksRouter = router({
    * a caller that skips the preview gets the identical refusals and a
    * preview/commit divergence is a UX bug, never an authorization hole.
    *
+   * Bound the same way as the write: a signed-in browser session whose user is
+   * the token subject (API-key and OAuth-token requests refused), so the preview
+   * and the write cannot disagree about who is asking.
+   *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows), despite
    * being a pure read.
    */
-  previewPostFromApp: publicProcedure
+  previewPostFromApp: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
     .mutation(async ({ ctx, input }) => {
-      const { claims, userId } = await authorizeBlockPostRequest(input.blockToken, 'preview');
+      const { claims, userId } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'preview',
+        ctx.user.id
+      );
       // NOTE: the CATALOG bucket, not the post bucket. The preview writes
       // nothing, so charging it against the 3-posts/hour ceiling would let a
       // block exhaust its own posting budget by rendering dialogs — and the
@@ -5350,13 +5371,16 @@ export const blocksRouter = router({
    * app") is FALSE for a profile post, and that sentence is the security control.
    *
    * GUARDS, in order — those marked ✚ are additions over the publish path:
+   *   0. ✚ a signed-in browser session (`protectedProcedure`, with API-key and
+   *      OAuth-token requests refused).
    *   1. `authorizeBlockBridgeToken` — token validity, instance revocation, and
    *      the backing app still `approved`. All three, in one call, because that
    *      helper is the single gate for every bridge proc.
    *   2. ✚ scope `posts:write:self` — consent-GATED and sensitive, NOT
    *      `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
    *      generation has NOT thereby been authorised to publish under their name.
-   *   3. non-anon subject — there is no anonymous profile to post to.
+   *   3. non-anon subject — there is no anonymous profile to post to — and ✚
+   *      that subject is the signed-in user from (0); anything else is refused.
    *   4. `assertAppBlocksEnabledForTokenUser` — the runtime flag, on the SUBJECT.
    *   5. ✚ `isAppBlocksPostCreationEnabled` — the DEDICATED fail-closed flag, so
    *      a GA widening of the runtime flag does not arm public post creation on
@@ -5384,12 +5408,14 @@ export const blocksRouter = router({
    *
    * 🔴 THE HOST CONFIRM IS NOT ONE OF THESE GUARDS AND MUST NOT BE READ AS ONE.
    * It is the CONSENT boundary and it lives in host chrome, outside this proc's
-   * reach; every line above is enforced server-side and would still refuse a
-   * caller that never rendered a dialog.
+   * reach. The server cannot see whether a dialog was rendered; what it enforces
+   * is that the request carries the viewer's own signed-in session (0, 3) and
+   * passes every check above.
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
-  createPostFromApp: publicProcedure
+  createPostFromApp: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -5402,7 +5428,8 @@ export const blocksRouter = router({
     .mutation(async ({ ctx, input }) => {
       const { claims, userId, subjectUser } = await authorizeBlockPostRequest(
         input.blockToken,
-        'create'
+        'create',
+        ctx.user.id
       );
 
       // WRITE TRUST. Reused from the shared-storage path. "Verified email" is

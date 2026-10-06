@@ -1096,8 +1096,10 @@ export function enforceContextBinding(
         // A Post belongs to a USER — there is no anonymous profile to post to, so
         // an anon subject can never satisfy this scope. Presence of the scope +
         // a non-anon subject is the middleware check; the real authority is
-        // `blocks.createPostFromApp` (approval + revocation + write-trust +
-        // per-source ownership/provenance + the host-chrome consent confirm).
+        // `blocks.createPostFromApp` (approval + revocation + a signed-in session
+        // that is the token subject + write-trust + per-source
+        // ownership/provenance). The consent confirm lives in host chrome and is
+        // not something this server can observe.
         //
         // 🔴 THIS CASE IS NOT OPTIONAL. The `default:` arm below throws, so a
         // known scope with no case here 403s EVERY request to the route that
