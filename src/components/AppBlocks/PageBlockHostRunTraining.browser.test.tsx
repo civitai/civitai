@@ -5,7 +5,7 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
-import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
  * RUN_TRAINING → TRAINING_RESULT on the PAGE host, through a REAL Modal.
@@ -25,18 +25,6 @@ const { previewMutate, consentMutate, submitMutate } = vi.hoisted(() => ({
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 
-/** A sub-router whose every procedure answers with an inert mutation hook. */
-function inertSubRouter() {
-  return new Proxy(
-    {},
-    {
-      has: () => true,
-      get: (_t, key) =>
-        key === 'then' ? undefined : { useMutation: () => ({ mutateAsync: vi.fn() }) },
-    }
-  );
-}
-
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   setTrpcBatchingEnabled: vi.fn(),
@@ -47,8 +35,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       'blocks.submitWorkflow': { useMutation: () => ({ mutateAsync: submitMutate }) },
       // PageBlockHost also reads two NESTED sub-routers (`apps.shared.*`,
       // `apps.storage.*`), one level deeper than the proxy answers on its own.
-      'apps.shared': inertSubRouter(),
-      'apps.storage': inertSubRouter(),
+      'apps.shared': makeInertSubRouter(),
+      'apps.storage': makeInertSubRouter(),
     },
     {
       useUtils: () => ({

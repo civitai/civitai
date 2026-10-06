@@ -665,23 +665,14 @@ export const BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS = 1000;
 export const BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS = 64;
 /** Max characters of a base-model key (`trainingModelInfo` key). */
 export const BLOCK_TRAINING_MODEL_KEY_MAX_CHARS = 64;
-/** Max images in one prepared training dataset (`blocks.prepareTrainingDataset`). */
-export const BLOCK_TRAINING_DATASET_MAX_ITEMS = 50;
-/** Max characters of one training caption. */
-export const BLOCK_TRAINING_CAPTION_MAX_CHARS = 1000;
-
-/** `blocks.prepareTrainingDataset` items: the viewer's image ids and their captions. */
-export const blockTrainingDatasetItemsSchema = z
-  .array(
-    z
-      .object({
-        imageId: z.number().int().positive(),
-        caption: z.string().max(BLOCK_TRAINING_CAPTION_MAX_CHARS),
-      })
-      .strict()
-  )
-  .min(1)
-  .max(BLOCK_TRAINING_DATASET_MAX_ITEMS);
+// The dataset item schema lives in its own dependency-free module so the page host
+// can validate a `PREPARE_TRAINING_DATASET` payload without pulling this file (and
+// the step/recipe registries it imports) into the client bundle.
+export {
+  BLOCK_TRAINING_CAPTION_MAX_CHARS,
+  BLOCK_TRAINING_DATASET_MAX_ITEMS,
+  blockTrainingDatasetItemsSchema,
+} from '~/server/schema/blocks/training-dataset.schema';
 
 export const blockTrainingBodySchema = z
   .object({

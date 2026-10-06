@@ -83,18 +83,30 @@ export type RunTrainingGateDecision =
       request: { requestId: string; quoteId: string; body: Record<string, unknown> };
     };
 
-/**
- * Validate a raw `RUN_TRAINING` payload from an untrusted iframe and decide drop /
- * refuse / proceed. SHAPE ONLY — the server re-validates the body against the wire
- * schema and the stored quote. Dropping is safe only before a `requestId` is known.
- */
-export function resolveRunTrainingRequest(input: {
+export type TrainingBridgeGateInput = {
   raw: unknown;
   ready: boolean;
   signedIn: boolean;
   /** TRUE in the mod-review sandbox with "run for real" OFF. */
   reviewNack: boolean;
-}): RunTrainingGateDecision {
+};
+
+/** The refusals every training bridge message shares, before its own payload check. */
+export type TrainingBridgePreludeError = 'review-mode' | 'block is not ready' | 'sign in to train';
+
+/**
+ * The checks every `kind:'training'` bridge message (`RUN_TRAINING`,
+ * `PREPARE_TRAINING_DATASET`) runs before looking at its own payload, in one place
+ * so the two cannot refuse in a different order or with different codes. Drop only
+ * without a `requestId` (nothing to reply to); the order is review mode, ready,
+ * signed in.
+ */
+export function resolveTrainingBridgePrelude(
+  input: TrainingBridgeGateInput
+):
+  | { kind: 'drop' }
+  | { kind: 'refuse'; requestId: string; error: TrainingBridgePreludeError }
+  | { kind: 'ok'; requestId: string; obj: Record<string, unknown> } {
   const { raw, ready, signedIn, reviewNack } = input;
   if (!raw || typeof raw !== 'object') return { kind: 'drop' };
   const obj = raw as Record<string, unknown>;
@@ -104,6 +116,18 @@ export function resolveRunTrainingRequest(input: {
   if (reviewNack) return { kind: 'refuse', requestId, error: 'review-mode' };
   if (!ready) return { kind: 'refuse', requestId, error: 'block is not ready' };
   if (!signedIn) return { kind: 'refuse', requestId, error: 'sign in to train' };
+  return { kind: 'ok', requestId, obj };
+}
+
+/**
+ * Validate a raw `RUN_TRAINING` payload from an untrusted iframe and decide drop /
+ * refuse / proceed. SHAPE ONLY — the server re-validates the body against the wire
+ * schema and the stored quote. Dropping is safe only before a `requestId` is known.
+ */
+export function resolveRunTrainingRequest(input: TrainingBridgeGateInput): RunTrainingGateDecision {
+  const prelude = resolveTrainingBridgePrelude(input);
+  if (prelude.kind !== 'ok') return prelude;
+  const { requestId, obj } = prelude;
 
   const body = obj.body;
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
