@@ -1059,7 +1059,8 @@ export type BlockWorkflowSnapshot = {
    * checkpoint is ready — the `epoch` a block hands to
    * `/models/train/from-orchestrator?workflowId=…&epoch=…`, the publish wizard.
    * The checkpoint itself is never on the wire (see {@link stepOutputs}). Empty —
-   * so omitted — unless the run's `moderationStatus` is `approved`.
+   * so omitted — unless the run's `moderationStatus` is `approved`. Also on
+   * `AppWorkflow`.
    *
    * OMITTED when there is none, so every other snapshot stays byte-identical.
    * 🔴 WIRE CONTRACT: name and shape are mirrored by `@civitai/app-sdk`.

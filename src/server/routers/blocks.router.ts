@@ -104,7 +104,10 @@ import {
   withdrawRequestSchema,
 } from '~/server/schema/blocks/publish-request.schema';
 import { blockWorkflowBodySchema } from '~/server/schema/blocks/workflow.schema';
-import type { BlockWorkflowBody } from '~/server/schema/blocks/workflow.schema';
+import type {
+  BlockWorkflowBody,
+  BlockWorkflowSnapshot,
+} from '~/server/schema/blocks/workflow.schema';
 import type { Context } from '~/server/createContext';
 import {
   allowMatureContentForCeiling,
@@ -9820,6 +9823,31 @@ function stampUnquotedTimeout(
 }
 
 /**
+ * The refusal for a training `$type` the orchestrator would not quote, or `null`
+ * when the step may proceed. Shared by the pass-through estimate and submit so
+ * the two cannot disagree about which steps are refused.
+ *
+ * A training run takes far longer than any `maxBuzz` an app could sensibly
+ * declare as seconds, so the stamped-timeout fallback (`stampUnquotedTimeout`)
+ * would cancel the run partway through. Refusing up front lets the block retry
+ * once a quote is available.
+ *
+ * The snapshot carries no `cost`: there is no price to show, and the declared
+ * `maxBuzz` is not one.
+ */
+const UNQUOTED_TRAINING_ERROR =
+  'Training needs a price quote and none could be obtained; try again.';
+function refuseUnquotedTraining(
+  stepType: string,
+  quotedBuzz: number | null
+): { snapshot: BlockWorkflowSnapshot } | null {
+  if (quotedBuzz !== null || !isTrainingStepType(stepType)) return null;
+  return {
+    snapshot: { workflowId: 'failed', status: 'failed', error: UNQUOTED_TRAINING_ERROR },
+  };
+}
+
+/**
  * Resolve the registry entry from the (schema-gated) `step` id. The wire
  * schema's `z.enum(REGISTERED_STEP_IDS)` already rejected any unregistered id at
  * the union, so this never returns undefined for a schema-valid body — the
@@ -11116,6 +11144,9 @@ async function submitStepWorkflow(opts: {
  * at the `ceiling` in `submitPassThroughStepWorkflow`: the stamped `timeout`
  * bounds a GPU-second-metered step and nothing else, so for a per-unit-priced
  * `$type` an unquotable submit reserves `maxBuzz` and may bill more.
+ *
+ * Training `$type`s are the exception on BOTH paths: with no quote, the estimate
+ * returns a failed snapshot and the submit refuses (`refuseUnquotedTraining`).
  */
 async function estimatePassThroughStepWorkflow(opts: {
   ctx: Context;
@@ -11145,6 +11176,9 @@ async function estimatePassThroughStepWorkflow(opts: {
     recordStepPriceCheck(PASS_THROUGH_RECIPE_LABEL, 'estimate_absent');
   }
 
+  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  if (refusal) return refusal;
+
   return {
     snapshot: {
       // Non-empty sentinel: the SDK's inbound validator drops empty-workflowId
@@ -11168,7 +11202,8 @@ async function estimatePassThroughStepWorkflow(opts: {
  * 🔴 EVERY OUTCOME IS COUNTED, and it matters MORE here than on the registry arm
  * it borrows the counter from. There a missing quote fails the submit closed, so
  * the outage is loud; here the arm deliberately falls back to the declared
- * `maxBuzz` and proceeds — so without this pair, an orchestrator that stopped
+ * `maxBuzz` and proceeds (a training `$type` excepted, see
+ * `refuseUnquotedTraining`) — so without this pair, an orchestrator that stopped
  * pricing would move every pass-through job onto its declared ceiling with
  * nothing anywhere moving. Read the ratio, not `estimate_absent` alone.
  *
@@ -11306,6 +11341,9 @@ async function submitPassThroughStepWorkflow(opts: {
   // GPU-second-metered `$type` the stamped `timeout` still bounds it, but most
   // reachable types are priced per unit at submit, where a timeout bounds
   // wall-clock and nothing else. Operator decision, recorded in the PR.
+  //
+  // The exception is a training `$type`, refused after the idempotency claim
+  // below — see `refuseUnquotedTraining`.
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
 
   if (quotedBuzz === null) stampUnquotedTimeout(orchestratorStep, body.maxBuzz);
@@ -11358,6 +11396,16 @@ async function submitPassThroughStepWorkflow(opts: {
       });
     }
     genClaimKey = claim.key;
+  }
+
+  // 🔴 AFTER THE CLAIM, NOT BEFORE IT: a same-key retry of a submit that already
+  // went through must get its replay (or CONFLICT while it is in flight), never
+  // a "try again" that invites a second paid run. Still before any reservation,
+  // and the claim is released so the key can be retried once a quote exists.
+  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  if (refusal) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return refusal;
   }
 
   // (2) Reserve the CEILING against the per-user cumulative cap.
