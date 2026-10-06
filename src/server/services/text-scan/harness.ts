@@ -5,6 +5,7 @@ import { dbRead } from '~/server/db/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
+import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
 import { textScanEmEntityType } from '~/server/services/text-scan/mode';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
@@ -262,6 +263,55 @@ function workflowErrorText(error: unknown, fallback: string): string {
   return typeof error === 'string' ? error : JSON.stringify(error);
 }
 
+const FAILED_WORKFLOW_STATUSES = ['failed', 'expired', 'canceled'];
+const ERROR_KEYS = ['error', 'errors', 'reason', 'blockedReason', 'message'];
+
+/** Every error-ish string the orchestrator put on the step, its jobs or its metadata, verbatim. */
+function orchestratorErrorDetail(step: unknown): string {
+  const found: string[] = [];
+  const collect = (node: unknown) => {
+    if (!node || typeof node !== 'object') return;
+    for (const key of ERROR_KEYS) {
+      const value = (node as Record<string, unknown>)[key];
+      if (typeof value === 'string' && value) found.push(value);
+      else if (Array.isArray(value))
+        found.push(...value.filter((v): v is string => typeof v === 'string' && !!v));
+    }
+  };
+  const s = step as { metadata?: unknown; output?: unknown; jobs?: unknown } | undefined;
+  collect(s);
+  collect(s?.metadata);
+  collect(s?.output);
+  const jobs = s?.jobs;
+  if (Array.isArray(jobs)) jobs.forEach(collect);
+  return [...new Set(found)].join('; ');
+}
+
+/**
+ * Why a workflow has no reply to parse, in the orchestrator's own words, or null when it finished.
+ * A workflow still running after `wait` keeps running (and bills); only its result is out of reach.
+ */
+function unfinishedWorkflowError(
+  workflow: { id: string; status?: string; steps?: unknown },
+  step: ChatCompletionStepLike | undefined,
+  wait: number
+): string | null {
+  const status = workflow.status;
+  if (!status || status === 'succeeded') return null;
+  if (FAILED_WORKFLOW_STATUSES.includes(status)) {
+    const stepStatus = (step as { status?: string } | undefined)?.status;
+    const detail = orchestratorErrorDetail(step);
+    return [
+      `workflow ${workflow.id} ${status}`,
+      stepStatus && stepStatus !== status ? `step ${stepStatus}` : null,
+      detail || null,
+    ]
+      .filter(Boolean)
+      .join(': ');
+  }
+  return `workflow ${workflow.id} still ${status} after ${wait}s`;
+}
+
 async function scanComposed(input: ComposeInput & { wait: number }) {
   const ctx = await composeStep(input);
   if (!ctx.ok) return ctx;
@@ -273,7 +323,16 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
   });
   if (!data?.id) return { ok: false as const, error: workflowErrorText(error, 'no workflow id') };
 
-  const step = findChatCompletionStep((data as { steps?: unknown }).steps);
+  const workflow = data as { id: string; status?: string; steps?: unknown };
+  const step = findChatCompletionStep(workflow.steps);
+  const unfinished = unfinishedWorkflowError(workflow, step, input.wait);
+  if (unfinished)
+    return {
+      ok: false as const,
+      error: unfinished,
+      workflowId: workflow.id,
+      workflowStatus: workflow.status,
+    };
   const parse = parseTextScanStep(step, input.profile.labels);
   return {
     ok: true as const,
@@ -332,6 +391,8 @@ function summarizeScans<T extends ScanResult>(entityType: TextScanEntityType, re
       ? 'too_short'
       : 'missingPrompts' in r
       ? 'missing_prompt'
+      : 'workflowStatus' in r
+      ? `workflow_${r.workflowStatus}`
       : 'submit_failed';
     byOutcome[key] = (byOutcome[key] ?? 0) + 1;
     for (const label of (r.ok && r.outcome?.triggeredLabels) || [])

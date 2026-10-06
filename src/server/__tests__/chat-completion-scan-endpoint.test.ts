@@ -780,6 +780,63 @@ describe('free-text actions', () => {
     }
   );
 
+  it.each([
+    {
+      name: 'a failed workflow',
+      data: {
+        id: 'wf-f',
+        status: 'failed',
+        steps: [
+          {
+            $type: 'chatCompletion',
+            status: 'failed',
+            jobs: [{ id: 'j', status: 'failed', reason: 'model air:missing not found' }],
+          },
+        ],
+      },
+      error: 'workflow wf-f failed: model air:missing not found',
+      outcome: 'workflow_failed',
+    },
+    {
+      name: 'an expired workflow with no detail',
+      data: {
+        id: 'wf-e',
+        status: 'expired',
+        steps: [{ $type: 'chatCompletion', status: 'expired' }],
+      },
+      error: 'workflow wf-e expired',
+      outcome: 'workflow_expired',
+    },
+    {
+      name: 'a workflow still running after wait',
+      data: {
+        id: 'wf-p',
+        status: 'processing',
+        steps: [{ $type: 'chatCompletion', status: 'processing' }],
+      },
+      error: 'workflow wf-p still processing after 30s',
+      outcome: 'workflow_processing',
+    },
+  ])("scanTexts reports $name in the orchestrator's words, not as a parse failure", async (c) => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: c.data } as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
+      promptOverrides: SCAM_OVERRIDES,
+      wait: 30,
+    });
+    const body = res._body() as { results: unknown[]; byOutcome: unknown };
+    expect(body.results[0]).toEqual({
+      key: 'a',
+      ok: false,
+      error: c.error,
+      workflowId: c.data.id,
+      workflowStatus: c.data.status,
+    });
+    expect(body.byOutcome).toEqual({ [c.outcome]: 1 });
+  });
+
   it('scanTexts passes wait through to the workflow query', async () => {
     vi.mocked(submitWorkflow).mockResolvedValue(scamWorkflow('wf') as never);
     await call({
