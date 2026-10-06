@@ -74,6 +74,12 @@ export type LabScanResult =
       promptIds: Record<string, number>;
       output: Record<string, unknown> | null;
       parseError?: string;
+      /** The model's raw reply, present only when it failed to parse. */
+      rawContent?: string;
       elapsedMs: number;
     }
   | { key: string; ok: false; error: string };
+
+/** The prompt keys a draft may override; the main app's prompt store keys. */
+export const PROMPT_KEYS = ['base', 'label:nsfw', 'label:poi', 'label:minor', 'label:scam'] as const;
+export type PromptKey = (typeof PROMPT_KEYS)[number];

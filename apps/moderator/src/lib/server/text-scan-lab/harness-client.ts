@@ -1,10 +1,14 @@
 import { callModEndpoint } from '../user-actions.service';
 import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
-/** The main app's text-scan harness (`/api/mod/text-scan`). Every scan is a billed workflow. */
+// The main app's text-scan harness (`/api/mod/text-scan`). Every scan is a billed workflow.
 
 /** The harness refuses more than this many texts or ids in one request. */
 const HARNESS_BATCH_LIMIT = 50;
+// Small scan requests at high concurrency finish in about two workflow waits (90s each), inside
+// the timeout; a timed-out request still bills every workflow it submitted.
+const SCAN_CHUNK_SIZE = 10;
+const SCAN_CONCURRENCY = 5;
 const HARNESS_TIMEOUT_MS = 150_000;
 
 export class LabHarnessError extends Error {
@@ -14,25 +18,22 @@ export class LabHarnessError extends Error {
   }
 }
 
+const postHarness = (action: string, params: Record<string, unknown>, label: string) =>
+  callModEndpoint('text-scan', { action, ...params }, label, HARNESS_TIMEOUT_MS);
+
 async function callHarness<T>(
   action: string,
   params: Record<string, unknown>,
   label: string
 ): Promise<T> {
-  const result = await callModEndpoint(
-    'text-scan',
-    { action, ...params },
-    label,
-    HARNESS_TIMEOUT_MS
-  );
+  const result = await postHarness(action, params, label);
   if (!result.ok) throw new LabHarnessError(result.error);
   return result.body as T;
 }
 
-function chunk<T>(items: T[]): T[][] {
+function chunk<T>(items: T[], size = HARNESS_BATCH_LIMIT): T[][] {
   const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += HARNESS_BATCH_LIMIT)
-    chunks.push(items.slice(i, i + HARNESS_BATCH_LIMIT));
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
   return chunks;
 }
 
@@ -65,6 +66,7 @@ type HarnessScanResult =
       workflowId: string;
       promptIds: Record<string, number>;
       parse: { ok: true; output: Record<string, unknown> } | { ok: false; reason: string };
+      rawContent?: string;
       elapsedMs: number;
     }
   | { key: string; ok: false; error: string };
@@ -77,25 +79,40 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
     workflowId: r.workflowId,
     promptIds: r.promptIds,
     output: r.parse.ok ? r.parse.output : null,
-    ...(r.parse.ok ? {} : { parseError: r.parse.reason }),
+    ...(r.parse.ok ? {} : { parseError: r.parse.reason, rawContent: r.rawContent }),
     elapsedMs: r.elapsedMs,
   };
 }
 
-/** Chunks run one after another so a large run never multiplies the harness's own concurrency. */
+/**
+ * Chunks run one after another. A failed chunk becomes a per-text error and the run continues,
+ * because earlier chunks were already billed and the caller re-runs only what failed. It throws only
+ * when the first request is refused outright (no session, not signed in, not allowed, invalid
+ * request such as a blank prompt override): nothing was billed and every chunk would fail the same way.
+ */
 export async function scanTexts(
   entityType: LabEntityType,
   texts: LabText[],
   promptOverrides?: Record<string, string>
 ): Promise<LabScanResult[]> {
   const results: LabScanResult[] = [];
-  for (const batch of chunk(texts)) {
-    const body = await callHarness<{ results: HarnessScanResult[] }>(
+  for (const batch of chunk(texts, SCAN_CHUNK_SIZE)) {
+    const result = await postHarness(
       'scanTexts',
-      { entityType, texts: batch, promptOverrides },
+      { entityType, texts: batch, promptOverrides, concurrency: SCAN_CONCURRENCY },
       'Text-scan scan'
     );
-    results.push(...body.results.map(toLabScanResult));
+    if (result.ok) {
+      results.push(...(result.body.results as HarnessScanResult[]).map(toLabScanResult));
+      continue;
+    }
+    const refused =
+      result.requestNeverSent ||
+      result.status === 400 ||
+      result.status === 401 ||
+      result.status === 403;
+    if (refused && results.length === 0) throw new LabHarnessError(result.error);
+    results.push(...batch.map(({ key }) => ({ key, ok: false as const, error: result.error })));
   }
   return results;
 }
