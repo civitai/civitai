@@ -32,6 +32,8 @@ const {
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: mockGetAllImages,
   getImagesFromFeedSearch: mockGetImagesFromFeedSearch,
+  // The feed-service branch declines, so every request here reaches feed search as before.
+  getImagesFromFeedServiceForRest: async () => undefined,
 }));
 vi.mock('~/server/redis/caches', () => ({
   imageMetaCache: { fetch: mockImageMetaCacheFetch },

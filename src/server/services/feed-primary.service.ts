@@ -16,8 +16,11 @@ export const FEED_PRIMARY_TIMEOUT_MS = 5_000;
 const requestCounter = registerCounterWithLabels({
   name: 'feed_primary_requests_total',
   help: 'Image-feed searches answered by the feed service instead of Meilisearch, by outcome',
-  labelNames: ['outcome', 'reason'] as const,
+  labelNames: ['outcome', 'reason', 'route'] as const,
 });
+
+/** Which caller asked: the site's image feed or the public REST images endpoint. */
+export type FeedPrimaryRoute = 'website' | 'rest';
 
 // These three mapping reasons carry request text; the rest are a fixed set.
 const UNBOUNDED_REASONS = ['sort', 'period', 'types'];
@@ -25,8 +28,11 @@ export function reasonLabel(reason: string) {
   const head = reason.split(':')[0] as string;
   return UNBOUNDED_REASONS.includes(head) ? head : reason;
 }
-const count = (outcome: string, reason = '') =>
-  requestCounter.inc({ outcome, reason: reasonLabel(reason) });
+export const countFeedPrimary = (
+  outcome: string,
+  reason = '',
+  route: FeedPrimaryRoute = 'website'
+) => requestCounter.inc({ outcome, reason: reasonLabel(reason), route });
 
 const UNMAPPED_LOG_INTERVAL_MS = 60_000;
 const unmappedLoggedAt = new Map<string, number>();
@@ -74,6 +80,7 @@ export type FeedPrimaryDeps<T extends { id: number }> = {
   /** Loads the page's records in any order; the feed's order is restored here. */
   hydrate: (ids: number[]) => Promise<T[]>;
   timeoutMs?: number;
+  route?: FeedPrimaryRoute;
 };
 
 /** The image query for hydrating exactly `ids`: the request's filters without its paging or
@@ -130,6 +137,7 @@ export async function serveFromFeed<T extends { id: number }>(
   input: CapturableSearchInput,
   deps: FeedPrimaryDeps<T>
 ): Promise<FeedPrimaryResult<T>> {
+  const count = (outcome: string, reason = '') => countFeedPrimary(outcome, reason, deps.route);
   // Meilisearch answers a follow list with no creators as an empty feed, whatever else is set,
   // and an unpopulated new-creator board serves nothing rather than the global feed.
   if (
