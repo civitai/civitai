@@ -90,6 +90,15 @@ describe('creator journey flag for a user who is not the session user', () => {
     expect(await isCreatorJourneyOnFor({ id: 1, isModerator: false })).toBe(false);
     expect(await isCreatorJourneyPublic()).toBe(false);
   });
+
+  it('asks whether it is public as someone in no segment', async () => {
+    mocks.isFlipt.mockResolvedValue(true);
+    expect(await isCreatorJourneyPublic()).toBe(true);
+    expect(mocks.isFlipt).toHaveBeenCalledWith('creator-journey', '0', {
+      userId: '0',
+      isModerator: 'false',
+    });
+  });
 });
 
 describe('creatorJourneyAudience', () => {

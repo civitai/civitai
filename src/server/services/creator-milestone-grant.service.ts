@@ -2,7 +2,10 @@ import { NotificationCategory } from '~/server/common/enums';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { nextCreatorScoreUnlocks } from '~/shared/utils/creator-score-unlocks';
-import { milestoneGrantableUserSql } from '~/server/services/creator-milestone-exclusions';
+import {
+  milestoneGrantableUserSql,
+  owedScoreTierSql,
+} from '~/server/services/creator-milestone-exclusions';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -178,15 +181,9 @@ export async function previewScoreTierBackfill(
     `
     SELECT count(DISTINCT u.id)::int AS users, count(*)::int AS rows
     FROM "User" u
-    JOIN "CreatorMilestone" m
-      ON m.track = 'score' AND m.threshold IS NOT NULL
-      AND (u.meta->'scores'->>'total')::numeric >= m.threshold
+    JOIN "CreatorMilestone" m ON ${owedScoreTierSql('u', 'm')}
     WHERE u.id > $1 AND ($2::int IS NULL OR u.id <= $2)
       AND ${milestoneGrantableUserSql('u')}
-      AND NOT EXISTS (
-        SELECT 1 FROM "UserCreatorMilestone" ucm
-        WHERE ucm."userId" = u.id AND ucm."milestoneKey" = m.key
-      )
     `,
     [afterUserId, maxUserId ?? null]
   );

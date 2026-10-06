@@ -111,6 +111,14 @@ describe('persistScoreBatch while Creator Journey is flagged', () => {
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 
+  it('with grants open to everyone, still notifies only flagged users', async () => {
+    mocks.isFlipt.mockResolvedValue(false);
+    const { ctx, grantCalls } = batchCtx({ grant: async () => [crossing] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { grantsRequireFlag: false });
+    expect(grantCalls()).toHaveLength(1);
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+  });
+
   it('asks Flipt nothing about a user who is owed no tier', async () => {
     const { ctx, grantCalls } = batchCtx({ owed: [] });
     await persistScoreBatch(ctx, [['7', { models: 600 }]]);

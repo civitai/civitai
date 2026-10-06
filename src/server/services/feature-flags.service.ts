@@ -419,7 +419,7 @@ const featureFlags = createFeatureFlags({
   // still answer what is already waiting on them.
   creatorPromotions: { availability: ['mod'], fliptKey: 'creator-promotions' },
   // The journey page, its entry points and the tier pointer in score refusals, plus tier badge grants
-  // and their notifications (see creator-journey-flag.ts for the off-session evaluation).
+  // and their notifications (see creator-journey-flag.service.ts for the off-session evaluation).
   creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it

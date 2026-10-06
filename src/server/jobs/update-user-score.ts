@@ -373,7 +373,8 @@ export async function settleTierGrants(
 
 export async function persistScoreBatch(
   ctx: Pick<Context, 'pg' | 'jobContext' | 'tierUnlocks' | 'tierGrantErrors'>,
-  records: [string, Partial<Record<ScoreCategory, number>>][]
+  records: [string, Partial<Record<ScoreCategory, number>>][],
+  { grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG } = {}
 ) {
   ctx.jobContext.checkIfCanceled();
   const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
@@ -389,7 +390,7 @@ export async function persistScoreBatch(
       ctx.pg,
       transitions.map((t) => t.userId)
     );
-    const grantable = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG
+    const grantable = grantsRequireFlag
       ? transitions.filter((t) => audience.has(t.userId))
       : transitions;
     crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel);

@@ -10,7 +10,7 @@ import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScor
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
 
 const getLadder = vi.hoisted(() => vi.fn());
-const features = vi.hoisted(() => ({ creatorJourney: true }));
+const features = vi.hoisted((): { creatorJourney?: boolean } => ({ creatorJourney: true }));
 
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlagsProvider>()),
@@ -35,6 +35,7 @@ let container: HTMLDivElement | undefined;
 afterEach(() => {
   act(() => root?.unmount());
   container?.remove();
+  features.creatorJourney = true;
 });
 
 function renderGate() {
@@ -59,7 +60,8 @@ function renderGate() {
 
 describe('CreatorScoreGateMessage', () => {
   it('does not fetch the ladder or name a tier while Creator Journey is off', () => {
-    features.creatorJourney = false;
+    // Feature flags are sparse: a flag that is off is absent, never false.
+    delete features.creatorJourney;
     getLadder.mockReturnValue({ data: undefined });
     const p = renderGate();
     expect(getLadder).toHaveBeenLastCalledWith(
@@ -70,7 +72,6 @@ describe('CreatorScoreGateMessage', () => {
     expect([...(p?.querySelectorAll('a') ?? [])].map((a) => a.getAttribute('href'))).not.toContain(
       '/creators/journey'
     );
-    features.creatorJourney = true;
   });
 
   it('reads the live ladder and climbs it from the total it is handed', async () => {
