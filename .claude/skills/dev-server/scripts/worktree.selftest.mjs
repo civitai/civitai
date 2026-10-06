@@ -21,7 +21,13 @@ import {
   describePrune,
   keepReasons,
   partitionStale,
+  prStatus,
+  tipIsIn,
 } from './worktree.mjs';
+import { execFileSync } from 'child_process';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 
 let failures = 0;
 function check(name, actual, expected) {
@@ -30,36 +36,100 @@ function check(name, actual, expected) {
   console.log(`${pass ? 'PASS' : 'FAIL'}  ${name}\n        got=${JSON.stringify(actual)}\n       want=${JSON.stringify(expected)}`);
 }
 
-check('merged PR', describePrRows([{ number: 4321, state: 'MERGED' }]).label, 'PR #4321 merged');
-check('merged PR carries the number', describePrRows([{ number: 4321, state: 'MERGED' }]).merged, 4321);
+const TIP = 'a'.repeat(40);
+const own = (r) => ({ isCrossRepository: false, headRefOid: TIP, ...r });
+const holdsTip = (sha) => sha === TIP;
+
+check('merged PR', describePrRows([own({ number: 4321, state: 'MERGED' })], holdsTip).label, 'PR #4321 merged');
+check('merged PR carries the number', describePrRows([own({ number: 4321, state: 'MERGED' })], holdsTip).merged, 4321);
 
 // The four cases that used to collapse into one string. Each must differ from the others.
-check('open PR', describePrRows([{ number: 99, state: 'OPEN', isDraft: false }]).label, 'PR #99 still OPEN');
-check('draft PR', describePrRows([{ number: 99, state: 'OPEN', isDraft: true }]).label, 'PR #99 still OPEN (draft)');
-check('closed unmerged', describePrRows([{ number: 12, state: 'CLOSED' }]).label, 'PR #12 closed WITHOUT merging');
-check('gh found none', describePrRows([]).label, 'gh found no PR for this branch');
+check('open PR', describePrRows([own({ number: 99, state: 'OPEN', isDraft: false })], holdsTip).label, 'PR #99 still OPEN');
+check('draft PR', describePrRows([own({ number: 99, state: 'OPEN', isDraft: true })], holdsTip).label, 'PR #99 still OPEN (draft)');
+check('closed unmerged', describePrRows([own({ number: 12, state: 'CLOSED' })], holdsTip).label, 'PR #12 closed WITHOUT merging');
+check('gh found none', describePrRows([], holdsTip).label, 'gh found no PR for this branch');
 // `gh` flips accounts on this box and an unprivileged account answers []. The empty case must not
 // claim no PR EXISTS, because deleting a tree on the strength of that is the expensive mistake.
-check('and it does not claim none exists', describePrRows([]).label.includes('no PR for'), true);
-check('a row with no number', describePrRows([{ state: 'CLOSED' }]).label, 'PR of unknown number closed WITHOUT merging');
+check('and it does not claim none exists', describePrRows([], holdsTip).label.includes('no PR for'), true);
+check('a row with no number', describePrRows([own({ state: 'CLOSED' })], holdsTip).label, 'PR of unknown number closed WITHOUT merging');
 check('gh returned a non-array', describePrRows(null).label, 'PR state unknown (gh returned unparseable JSON)');
 
 // None of the four may be treated as removable.
 for (const rows of [
-  [{ number: 99, state: 'OPEN', isDraft: false }],
-  [{ number: 99, state: 'OPEN', isDraft: true }],
-  [{ number: 12, state: 'CLOSED' }],
+  [own({ number: 99, state: 'OPEN', isDraft: false })],
+  [own({ number: 99, state: 'OPEN', isDraft: true })],
+  [own({ number: 12, state: 'CLOSED' })],
   [],
 ]) {
-  check(`not removable: ${JSON.stringify(rows)}`, describePrRows(rows).merged, null);
+  check(`not removable: ${JSON.stringify(rows)}`, describePrRows(rows, holdsTip).merged, null);
 }
 
 // A merged row wins even when an older closed PR for the same branch comes back first.
 check(
   'merged wins over a closed sibling',
-  describePrRows([{ number: 12, state: 'CLOSED' }, { number: 13, state: 'MERGED' }]).label,
+  describePrRows([own({ number: 12, state: 'CLOSED' }), own({ number: 13, state: 'MERGED' })], holdsTip).label,
   'PR #13 merged'
 );
+
+// `gh pr list --head` matches the branch NAME only. Both shapes below are a branch with
+// no PR of its own that `wt stale` listed as SAFE TO REMOVE.
+const FORK = { number: 4603, state: 'MERGED', isCrossRepository: true, headRefOid: TIP };
+check('a fork PR sharing the name is not ours', describePrRows([FORK], holdsTip).merged, null);
+check(
+  'and says it was a fork',
+  describePrRows([FORK], holdsTip).label,
+  "gh found no PR for this branch (only a fork's PR #4603 shares its name)"
+);
+check('a row that does not say which repo is treated as a fork', describePrRows([{ ...FORK, isCrossRepository: undefined }], holdsTip).merged, null);
+const REUSED = own({ number: 5079, state: 'MERGED', headRefOid: 'b'.repeat(40) });
+check('a merged PR that does not hold the tip clears nothing', describePrRows([REUSED], holdsTip).merged, null);
+check('and says why', describePrRows([REUSED], holdsTip).label, "PR #5079 merged, but this branch's tip is not in what merged");
+check('with no tip check supplied, nothing merged clears', describePrRows([own({ number: 1, state: 'MERGED' })]).merged, null);
+check(
+  'the new work on a reused name reports its own open PR',
+  describePrRows([REUSED, own({ number: 6000, state: 'OPEN', headRefOid: TIP })], holdsTip).label,
+  'PR #6000 still OPEN'
+);
+check(
+  'a fork merge beside our own covering merge still clears',
+  describePrRows([{ ...FORK, number: 1 }, own({ number: 2, state: 'MERGED' })], holdsTip).merged,
+  2
+);
+const repo = mkdtempSync(join(tmpdir(), 'wt-tip-'));
+try {
+  const g = (...a) =>
+    execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', ...a], {
+      cwd: repo,
+      encoding: 'utf8',
+    }).trim();
+  g('init', '-q', '-b', 'work');
+  g('commit', '-q', '--allow-empty', '-m', 'one');
+  const merged = g('rev-parse', 'HEAD');
+  g('commit', '-q', '--allow-empty', '-m', 'two');
+  const later = g('rev-parse', 'HEAD');
+  check('tip equal to the PR head is held', tipIsIn('work', repo)(later), true);
+  check('commits after the PR head are NOT held', tipIsIn('work', repo)(merged), false);
+  g('branch', 'behind', merged);
+  check('a tip behind the PR head is held', tipIsIn('behind', repo)(later), true);
+  check('an unknown sha is not held', tipIsIn('work', repo)('c'.repeat(40)), false);
+  check('an absent branch holds nothing', tipIsIn('nope', repo)(later), false);
+  check('a missing sha holds nothing', tipIsIn('work', repo)(undefined), false);
+
+  // `wt rm` decides `git branch -D` on prStatus, so the wiring to the tip check is pinned here too.
+  const asked = [];
+  const fakeGh = (rows) => (args) => {
+    asked.push(args);
+    return JSON.stringify(rows);
+  };
+  const ownMerge = (headRefOid) => [{ number: 7, state: 'MERGED', isCrossRepository: false, headRefOid }];
+  check('prStatus clears a merge that holds the tip', prStatus('work', repo, fakeGh(ownMerge(later))).merged, 7);
+  check('prStatus keeps a branch with commits after the merge', prStatus('work', repo, fakeGh(ownMerge(merged))).merged, null);
+  const fields = asked[0][asked[0].indexOf('--json') + 1].split(',');
+  check('gh is asked which repo each PR is from', fields.includes('isCrossRepository'), true);
+  check('and for its head commit', fields.includes('headRefOid'), true);
+} finally {
+  rmSync(repo, { recursive: true, force: true });
+}
 
 // Every prune line below is git's real wording, captured from `git worktree prune -n -v` in a
 // scratch repo on 2026-08-25. `worktree.c` emits `Removing worktrees/<admin>: <reason>` and nothing
