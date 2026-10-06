@@ -157,7 +157,7 @@ describe('mod/text-scan', () => {
     ).toEqual({ csv: '"a","b"' });
   });
 
-  describe('actions that return entity text', () => {
+  describe('actions that need full scope', () => {
     const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
     const asApiKey = (tokenScope: number) => {
       vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
@@ -171,6 +171,8 @@ describe('mod/text-scan', () => {
       { action: 'sampleShadow', entityType: 'Post', label: 'nsfw' },
       { action: 'scanEntity', entityType: 'Post', entityId: 1 },
       { action: 'batchEntities', entityType: 'Post', entityIds: [1], wait: 30 },
+      { action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' },
+      { action: 'putConfig', config: { thinking: true } },
     ];
 
     it.each(textActions)('$action refuses a narrowly-scoped API key', async (body) => {
@@ -203,6 +205,7 @@ describe('mod/text-scan', () => {
     it('fails closed: an action not on the narrow-scope list, such as a new one, needs full scope', () => {
       expect(needsFullScope('someNewAction')).toBe(true);
       expect(needsFullScope('composeEntities')).toBe(true);
+      expect(needsFullScope('putPrompt')).toBe(true);
       expect(needsFullScope('scanTexts')).toBe(false);
     });
   });
