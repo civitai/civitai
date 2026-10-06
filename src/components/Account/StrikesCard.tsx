@@ -6,6 +6,8 @@ import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { CREATOR_SCORE_ANCHOR } from './creator-score-copy';
+import { CreatorScoreExplainer } from './CreatorScoreExplainer';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
 // The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
@@ -22,7 +24,7 @@ function scrollIfHashed(hash: string) {
 }
 
 const scrollToStrikes = scrollIfHashed('#strikes');
-const scrollToCreatorScore = scrollIfHashed('#creator-score');
+const scrollToCreatorScore = scrollIfHashed(`#${CREATOR_SCORE_ANCHOR}`);
 
 export function StrikesCard({ flat }: { flat?: boolean } = {}) {
   const currentUser = useCurrentUser();
@@ -128,8 +130,11 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
     return (
       <div id="strikes" ref={scrollToStrikes}>
         <SettingsSection title="Account standing">
-          <div id="creator-score" ref={scrollToCreatorScore}>
-            <UserScoreDisplay scores={scores} flat abbreviate={false} />
+          <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
+            <Stack gap="lg">
+              <UserScoreDisplay scores={scores} flat abbreviate={false} />
+              <CreatorScoreExplainer />
+            </Stack>
           </div>
           <SettingRow
             label="Strikes"
@@ -157,8 +162,11 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
 
         <Divider />
 
-        <div id="creator-score" ref={scrollToCreatorScore}>
-          <UserScoreDisplay scores={scores} />
+        <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
+          <Stack gap="lg">
+            <UserScoreDisplay scores={scores} />
+            <CreatorScoreExplainer />
+          </Stack>
         </div>
 
         <Divider />
