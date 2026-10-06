@@ -75,4 +75,20 @@ describe('useLegacyAnchorRedirect', () => {
 
     expect(replace).toHaveBeenCalledTimes(1);
   });
+
+  it('follows an in-page hash change once, even though the redirect fires hashchange itself', () => {
+    window.history.replaceState(null, '', '/user/account/billing');
+    mount();
+    expect(replace).not.toHaveBeenCalled();
+
+    act(() => {
+      window.history.replaceState(null, '', '/user/account#creator-score');
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    });
+
+    expect(replace).toHaveBeenCalledTimes(1);
+    expect(`${window.location.pathname}${window.location.hash}`).toBe(
+      '/user/account/profile#creator-score'
+    );
+  });
 });
