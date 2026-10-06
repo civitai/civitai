@@ -6,11 +6,12 @@
  *
  * File shape and validation: `src/lib/server/text-scan-lab/seed-file.ts`. Entity cases snapshot the
  * text the main app composes for them (`/api/mod/text-scan` composeEntities, which bills nothing);
- * ids it cannot compose are skipped and counted. Free-text cases use their own fields. The set and
+ * ids it cannot compose are skipped and counted. An entity case that already carries `fields` (a
+ * snapshot composed earlier) and every free-text case are stored as given. The set and
  * every case are written in one transaction, so a failed import leaves nothing behind.
  *
- * Env: MODERATOR_DATABASE_URL, CIVITAI_APP_URL, and CIVITAI_API_KEY — the running moderator's own API
- * key. `/api/mod/*` takes a moderator's key for scripts; the spoke's forwarded-session path needs a
+ * Env: MODERATOR_DATABASE_URL, CIVITAI_APP_URL, and (only to compose entity cases without fields)
+ * CIVITAI_API_KEY — the running moderator's own API key. `/api/mod/*` takes a moderator's key for scripts; the spoke's forwarded-session path needs a
  * browser request, which a script does not have.
  */
 import { createHash } from 'node:crypto';
@@ -140,12 +141,18 @@ async function buildRows(cases: SeedCase[], appUrl: string, apiKey: string | und
       else skip('no text');
       continue;
     }
+    if (c.fields) {
+      const row = toRow(c, c.fields, c.entityId, c.authorId ?? null);
+      if (row) rows.push(row);
+      else skip('no text');
+      continue;
+    }
     if (!byType.has(c.entityType)) byType.set(c.entityType, new Map());
     byType.get(c.entityType)!.set(c.entityId, c);
   }
 
   if (byType.size && !apiKey)
-    throw new ImportError('CIVITAI_API_KEY not set (needed for entity cases)');
+    throw new ImportError('CIVITAI_API_KEY not set (needed for entity cases without fields)');
   for (const [entityType, byId] of byType) {
     for (const r of await composeEntities(appUrl, apiKey!, entityType, [...byId.keys()])) {
       const c = byId.get(r.entityId)!;

@@ -75,11 +75,44 @@ describe('parseSeedFile', () => {
     );
   });
 
-  it('rejects a case with neither entityId nor fields, and one with both', () => {
+  it('rejects a case with neither entityId nor fields', () => {
     const { entityId: _, ...neither } = entityCase();
-    expect(errorsOf({ cases: [neither, textCase({ entityId: 5 })] })).toEqual([
+    expect(errorsOf({ cases: [neither] })).toEqual([
       expect.stringMatching(/^case 1 .*entityId or fields/),
-      expect.stringMatching(/^case 2 .*not both/),
+    ]);
+  });
+
+  it('keeps a pre-composed snapshot on an entity case', () => {
+    const fields = [{ heading: 'Name', text: 'FAKE MODEL' }];
+    expect(parseSeedFile({ cases: [entityCase({ fields, authorId: 7 })] })[0]).toMatchObject({
+      kind: 'entity',
+      entityId: 101,
+      fields,
+      authorId: 7,
+    });
+    expect(
+      errorsOf({
+        cases: [entityCase({ authorId: 7 }), entityCase({ entityId: 102, fields, authorId: 0 })],
+      })
+    ).toEqual([
+      expect.stringMatching(/^case 1 .*authorId goes with/),
+      expect.stringMatching(/^case 2 .*authorId 0/),
+    ]);
+    expect(errorsOf({ cases: [entityCase({ fields: [{ heading: 'Name', text: ' ' }] })] })).toEqual(
+      [expect.stringMatching(/^case 1 .*no text/)]
+    );
+  });
+
+  it('drops a field whose text is null, as a composed snapshot has for an absent field', () => {
+    const fields = [
+      { heading: 'Name', text: 'FAKE MODEL' },
+      { heading: 'Description', text: null },
+    ];
+    expect(parseSeedFile({ cases: [entityCase({ fields })] })[0]).toMatchObject({
+      fields: [{ heading: 'Name', text: 'FAKE MODEL' }],
+    });
+    expect(errorsOf({ cases: [entityCase({ fields: [{ heading: 'Name', text: 3 }] })] })).toEqual([
+      expect.stringMatching(/^case 1 .*array of \{ heading, text \}/),
     ]);
   });
 

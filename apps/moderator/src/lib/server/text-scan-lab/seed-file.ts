@@ -9,13 +9,17 @@ import {
 } from '../../text-scan-lab/types';
 
 /** The file `text-scan-lab/import.ts` reads:
- *  `{ cases: [{ entityType, entityId | fields, expected, synthetic?, note? }] }`. */
+ *  `{ cases: [{ entityType, entityId?, fields?, expected, synthetic?, note? }] }`. An entity case with
+ *  `fields` (and its `authorId`, which the purge needs) carries a snapshot composed earlier, stored as-is. */
 export type SeedCase = {
   entityType: LabEntityType;
   expected: Expected;
   synthetic: boolean;
   note: string | null;
-} & ({ kind: 'entity'; entityId: number } | { kind: 'text'; fields: LabField[] });
+} & (
+  | { kind: 'entity'; entityId: number; fields?: LabField[]; authorId?: number | null }
+  | { kind: 'text'; fields: LabField[] }
+);
 
 export class SeedFileError extends Error {
   constructor(readonly problems: string[]) {
@@ -34,8 +38,11 @@ function parseFields(raw: unknown): LabField[] | string {
   if (!Array.isArray(raw)) return 'fields must be an array of { heading, text }.';
   const fields: LabField[] = [];
   for (const f of raw) {
-    if (!isObject(f) || typeof f.heading !== 'string' || typeof f.text !== 'string')
+    if (!isObject(f) || typeof f.heading !== 'string')
       return 'fields must be an array of { heading, text }.';
+    // The main app composes an absent optional field (e.g. a model without a description) as null text.
+    if (f.text === null || f.text === undefined) continue;
+    if (typeof f.text !== 'string') return 'fields must be an array of { heading, text }.';
     if (!f.text.trim()) continue;
     if (!f.heading.trim()) return 'every field with text needs a heading.';
     fields.push({ heading: f.heading.trim(), text: f.text });
@@ -52,7 +59,8 @@ function parseCase(raw: unknown): SeedCase | string {
     return 'synthetic must be true or false.';
   if (raw.note !== undefined && raw.note !== null && typeof raw.note !== 'string')
     return 'note must be a string.';
-  if (typeof raw.note === 'string' && raw.note.length > MAX_NOTE) return `note is over ${MAX_NOTE} characters.`;
+  if (typeof raw.note === 'string' && raw.note.length > MAX_NOTE)
+    return `note is over ${MAX_NOTE} characters.`;
 
   let expected: Expected;
   try {
@@ -68,20 +76,28 @@ function parseCase(raw: unknown): SeedCase | string {
     note: (raw.note as string | null | undefined) || null,
   } as const;
 
-  const hasId = raw.entityId !== undefined;
-  const hasFields = raw.fields !== undefined;
-  if (hasId && hasFields) return 'give entityId or fields, not both.';
-  if (hasId) {
-    const id = raw.entityId;
-    if (typeof id !== 'number' || !Number.isInteger(id) || id < 1 || id > MAX_INT4)
-      return `entityId ${String(id)} is not an id.`;
-    return { kind: 'entity', entityId: id, ...common } as SeedCase;
+  let fields: LabField[] | undefined;
+  if (raw.fields !== undefined) {
+    const parsed = parseFields(raw.fields);
+    if (typeof parsed === 'string') return parsed;
+    fields = parsed;
   }
-  if (hasFields) {
-    const fields = parseFields(raw.fields);
-    if (typeof fields === 'string') return fields;
-    return { kind: 'text', fields, ...common } as SeedCase;
+  const isId = (v: unknown): v is number =>
+    typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_INT4;
+  if (raw.entityId !== undefined) {
+    if (!isId(raw.entityId)) return `entityId ${String(raw.entityId)} is not an id.`;
+    const authorId = raw.authorId ?? null;
+    if (authorId !== null && !isId(authorId)) return `authorId ${String(authorId)} is not an id.`;
+    if (authorId !== null && !fields) return 'authorId goes with a pre-composed fields snapshot.';
+    return {
+      kind: 'entity',
+      entityId: raw.entityId,
+      ...(fields ? { fields, authorId } : {}),
+      ...common,
+    } as SeedCase;
   }
+  if (raw.authorId !== undefined) return 'authorId needs an entityId.';
+  if (fields) return { kind: 'text', fields, ...common } as SeedCase;
   return 'needs an entityId or fields.';
 }
 

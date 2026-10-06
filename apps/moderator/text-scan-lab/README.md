@@ -61,11 +61,12 @@ CIVITAI_API_KEY=<your own API key> pnpm --filter @civitai/moderator-app exec \
 ] }
 ```
 
-- An entity case snapshots the text the main app composes for it now; ids it cannot compose (not
-  found, too short) are skipped and counted. A free-text case uses its `fields`.
+- An entity case without `fields` snapshots the text the main app composes for it now; ids it
+  cannot compose (not found, too short) are skipped and counted. An entity case with `fields` (and
+  optionally `authorId`) imports a snapshot composed earlier as-is. A free-text case uses its `fields`.
 - `expected` takes the labels the entity type scores; leave a label out to not score it.
 - The whole file is validated first, and the set and its cases are written in one transaction.
   An existing set name is refused.
 - It reads `MODERATOR_DATABASE_URL` and `CIVITAI_APP_URL` from `.env` and prints both targets before
-  writing. Entity cases call `/api/mod/text-scan` with `CIVITAI_API_KEY`, the running moderator's own
-  key; composing text bills nothing. It prints counts only.
+  writing. Entity cases without `fields` call `/api/mod/text-scan` with `CIVITAI_API_KEY`, the
+  running moderator's own key; composing text bills nothing. It prints counts only.
