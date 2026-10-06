@@ -2409,9 +2409,11 @@ async function fetchEntrySample(
 }
 
 /**
- * Unjudged pairs with at least one entry this judge can still vote on, bounded by the votes left
- * on them: a pair of two such entries spends one of each one's per-judge allowance, a pair against
- * an anchor (an entry already at the cap) spends only the other entry's.
+ * How many more pairs this judge can vote on: the least of three bounds, each of which holds.
+ * - Unjudged pairs with at least one entry the judge can still vote on (two anchors never pair).
+ * - Each such entry's votes left, up to its unjudged opponents: every vote spends at least one.
+ * - All the votes left. A vote against an anchor spends one, but with no anchor yet the first vote
+ *   spends two; after it the entries it used up become anchors, so the count can't just halve.
  */
 export function countRemainingPairs({
   entryIds,
@@ -2434,25 +2436,28 @@ export function countRemainingPairs({
   const n = votesLeft.size;
   const m = anchors.size;
 
-  let votedOpen = 0;
-  const votedAnchorsOf = new Map<number, number>();
+  let votedPairs = 0;
+  const votedOf = new Map<number, number>();
+  const countFor = (id: number) => votedOf.set(id, (votedOf.get(id) ?? 0) + 1);
   for (const key of votedPairKeys) {
     const [a, b] = key.split(':').map(Number);
-    if (votesLeft.has(a) && votesLeft.has(b)) votedOpen++;
-    else if (votesLeft.has(a) && anchors.has(b))
-      votedAnchorsOf.set(a, (votedAnchorsOf.get(a) ?? 0) + 1);
-    else if (anchors.has(a) && votesLeft.has(b))
-      votedAnchorsOf.set(b, (votedAnchorsOf.get(b) ?? 0) + 1);
+    const aOpen = votesLeft.has(a);
+    const bOpen = votesLeft.has(b);
+    if (!(aOpen || bOpen) || !(aOpen || anchors.has(a)) || !(bOpen || anchors.has(b))) continue;
+    votedPairs++;
+    if (aOpen) countFor(a);
+    if (bOpen) countFor(b);
   }
-  const totalVotesLeft = [...votesLeft.values()].reduce((sum, left) => sum + left, 0);
-  let anchorPairs = 0;
-  for (const [id, left] of votesLeft)
-    anchorPairs += Math.min(left, Math.max(0, m - (votedAnchorsOf.get(id) ?? 0)));
-  const openPairs = Math.min(
-    Math.max(0, (n * (n - 1)) / 2 - votedOpen),
-    Math.floor((totalVotesLeft - anchorPairs) / 2)
-  );
-  return anchorPairs + openPairs;
+
+  const unjudgedPairs = (n * (n - 1)) / 2 + n * m - votedPairs;
+  let byEntry = 0;
+  let totalVotesLeft = 0;
+  for (const [id, left] of votesLeft) {
+    byEntry += Math.min(left, n - 1 + m - (votedOf.get(id) ?? 0));
+    totalVotesLeft += left;
+  }
+  const byVotes = m === 0 ? totalVotesLeft - 1 : totalVotesLeft;
+  return Math.max(0, Math.min(unjudgedPairs, byEntry, byVotes));
 }
 
 export const getJudgingProgress = async ({

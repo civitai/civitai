@@ -63,9 +63,53 @@ describe('countRemainingPairs', () => {
     expect(count([1, 2, 3], { votes: { 1: CAP, 2: CAP - 1, 3: CAP } })).toBe(1);
   });
 
+  it('counts the pair a first vote opens up by turning entries into anchors', () => {
+    // Three entries with one vote left each: 1:2 uses both up, and 3 can then face either one.
+    expect(count([1, 2, 3], { votes: { 1: CAP - 1, 2: CAP - 1, 3: CAP - 1 } })).toBe(2);
+  });
+
   it('never counts more pairs than the votes left on the entries allow', () => {
-    // Three entries with one vote left each: at most one more pair, though three are unjudged.
-    expect(count([1, 2, 3], { votes: { 1: CAP - 1, 2: CAP - 1, 3: CAP - 1 } })).toBe(1);
+    // One vote left on each of two entries and no anchor: their pair spends both.
+    expect(count([1, 2], { votes: { 1: CAP - 1, 2: CAP - 1 } })).toBe(1);
+    // With an anchor each can spend its last vote on it instead.
+    expect(count([1, 2, 3], { votes: { 1: CAP - 1, 2: CAP - 1, 3: CAP } })).toBe(2);
+  });
+
+  // Plays the judge out with the matchmaker's own rules, so the count is checked against what can
+  // actually be served rather than against a hand calculation.
+  it.each([
+    { entries: 3, left: [1, 1, 1] },
+    { entries: 4, left: [5, 5, 5, 5] },
+    { entries: 5, left: [1, 2, 1, 3, 0] },
+    { entries: 6, left: [2, 0, 0, 1, 1, 4] },
+  ])('matches what a judge can be served: %o', ({ entries, left }) => {
+    const ids = Array.from({ length: entries }, (_, i) => i + 1);
+    const votes = Object.fromEntries(ids.map((id, i) => [id, CAP - left[i]]));
+    const expected = count(ids, { votes });
+
+    const remaining = new Map(ids.map((id, i) => [id, left[i]]));
+    const voted = new Set<string>();
+    let served = 0;
+    // Greedy over pairs, an anchor first wherever one is free: it spends one vote, not two.
+    for (let progress = true; progress; ) {
+      progress = false;
+      const open = ids.filter((id) => remaining.get(id)! > 0);
+      const anchors = ids.filter((id) => remaining.get(id)! <= 0);
+      for (const a of open) {
+        const b =
+          anchors.find((x) => !voted.has(`${Math.min(a, x)}:${Math.max(a, x)}`)) ??
+          open.find((x) => x !== a && !voted.has(`${Math.min(a, x)}:${Math.max(a, x)}`));
+        if (b === undefined) continue;
+        voted.add(`${Math.min(a, b)}:${Math.max(a, b)}`);
+        for (const id of [a, b])
+          if (remaining.get(id)! > 0) remaining.set(id, remaining.get(id)! - 1);
+        served++;
+        progress = true;
+        break;
+      }
+    }
+
+    expect(expected, 'counted against served').toBe(served);
   });
 
   it('is zero with fewer than two entries to judge', () => {
