@@ -4,6 +4,8 @@ import * as React from 'react';
 import { isValidElement } from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot } from 'react-dom/client';
+import { MantineProvider } from '@mantine/core';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import type * as Notifications from '~/utils/notifications';
 import { showCreatePostError, useShowCreatePostError } from '~/components/Post/showCreatePostError';
@@ -26,7 +28,10 @@ vi.mock('~/utils/notifications', async (importOriginal) => ({
 const dailyRefusal = postRateLimits.find((rule) => rule.period === CacheTTL.day)?.errorMessage;
 const clampRefusal = postRateLimits.find((rule) => rule.period !== CacheTTL.day)?.errorMessage;
 
-beforeEach(() => showErrorNotification.mockClear());
+beforeEach(() => {
+  showErrorNotification.mockClear();
+  features.creatorJourney = true;
+});
 
 describe('showCreatePostError', () => {
   it('links the daily limit to the journey and keeps the notification open', () => {
@@ -37,6 +42,24 @@ describe('showCreatePostError', () => {
     expect(args.title).toBe('Failed to create post');
     expect(args.autoClose).toBe(false);
     expect(isValidElement(args.reason)).toBe(true);
+    const el = document.createElement('div');
+    const root = createRoot(el);
+    const act = (React as unknown as { act: typeof actType }).act;
+    act(() =>
+      root.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement('span', { 'data-reason': '' }, args.reason)
+        )
+      )
+    );
+    const reason = el.querySelector('[data-reason]') as HTMLElement;
+    expect(reason.textContent).toBe(`${dailyRefusal} See your journey`);
+    expect([...reason.querySelectorAll('a')].map((a) => a.getAttribute('href'))).toEqual([
+      CREATOR_JOURNEY_HREF,
+    ]);
+    act(() => root.unmount());
   });
 
   it('leaves every other error as it was', () => {
@@ -76,9 +99,10 @@ describe('showCreatePostError', () => {
     }
     const root = createRoot(document.createElement('div'));
     act(() => root.render(React.createElement(Probe)));
-    show?.(dailyRefusal as string);
+    show?.(dailyRefusal as string, 'Failed to create review post');
     act(() => root.unmount());
 
     expect(showErrorNotification.mock.calls[0][0].autoClose).toBe(autoClose);
+    expect(showErrorNotification.mock.calls[0][0].title).toBe('Failed to create review post');
   });
 });
