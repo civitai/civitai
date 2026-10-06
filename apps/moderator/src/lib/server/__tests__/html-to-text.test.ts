@@ -76,6 +76,13 @@ describe('htmlToText', () => {
     expect(out).toBe('visible');
   });
 
+  it('an unclosed <head> (its end tag is optional) does NOT hide the body', () => {
+    expect(
+      convertHtml('<html><head><meta charset="utf-8"><body><p>REAL</p></body></html>')
+    ).toEqual({ text: 'REAL', complete: true });
+    expect(htmlToText('<noscript><p>shown</p>')).toBe('shown');
+  });
+
   it('an UNCLOSED script swallows the rest, as a browser would', () => {
     expect(htmlToText('<p>kept</p><script>leak("x")<p>after</p>')).toBe('kept');
   });
@@ -160,6 +167,7 @@ describe('htmlToText on hostile input', () => {
     ['ordinary markup', '<p>x<b>y</b></p>'.repeat(n / 16)],
     ['unclosed scripts', '<script>x'.repeat(n / 9)],
     ['closed scripts', '<script>x</script>'.repeat(n / 18)],
+    ['unclosed heads', '<head>x'.repeat(HTML_MAX_CHARS / 7)],
     ['spaces inside <pre>', `<pre>${' '.repeat(n - 20)}x</pre>`],
     ['newlines inside <pre>', `<pre>${'\n'.repeat(n - 20)}x</pre>`],
     ['spaces then a break, repeated', `${' '.repeat(1000)}x<br>`.repeat(n / 1006)],

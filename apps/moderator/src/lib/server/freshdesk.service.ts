@@ -234,7 +234,7 @@ export async function getTicketDescription(ticketId: string): Promise<TicketDesc
   if (!text)
     return complete
       ? { status: 'none' }
-      : unavailable('Too large to show here; open it in Freshdesk.');
+      : unavailable("Couldn't be read in full here; open it in Freshdesk.");
   return text.length > DESCRIPTION_MAX_CHARS
     ? { status: 'found', text: text.slice(0, DESCRIPTION_MAX_CHARS), truncated: true }
     : { status: 'found', text, truncated: !complete };

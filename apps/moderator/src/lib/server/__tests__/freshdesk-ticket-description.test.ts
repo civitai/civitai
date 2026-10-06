@@ -113,7 +113,7 @@ describe('getTicketDescription', () => {
     );
     expect(await getTicketDescription('40017')).toEqual({
       status: 'unavailable',
-      reason: 'Too large to show here; open it in Freshdesk.',
+      reason: "Couldn't be read in full here; open it in Freshdesk.",
     });
   });
 

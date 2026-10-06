@@ -36,6 +36,12 @@ const DROPPED = new Set([
   'select',
 ]);
 
+/**
+ * Of those, the ones a browser treats as raw text: an unclosed one swallows the rest of the document.
+ * The others (`</head>` is optional, for one) only lose their own tag when unclosed.
+ */
+const SWALLOWS_REST = new Set(['script', 'style', 'title', 'textarea']);
+
 /** Elements that start and end a paragraph (a blank line either side). */
 const PARAGRAPH = new Set(['p', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'pre', 'table']);
 /** Elements that start and end a line. */
@@ -159,6 +165,8 @@ export function convertHtml(input: string): HtmlText {
 
   let i = 0;
   let nextGt = -2;
+  /** Dropped elements with no closing tag anywhere after the point they were last looked for. */
+  const unclosed = new Set<string>();
   while (i < html.length && length <= TEXT_MAX_CHARS) {
     if (html.startsWith('<!--', i)) {
       const end = html.indexOf('-->', i + 4);
@@ -196,11 +204,14 @@ export function convertHtml(input: string): HtmlText {
     const name = tag[2].toLowerCase();
 
     if (DROPPED.has(name)) {
-      if (isClose) continue;
-      // Up to the matching close tag; an unclosed one swallows the rest, as it does in a browser.
+      if (isClose || unclosed.has(name)) continue;
+      // Up to the matching close tag. A search that found none is remembered, so a run of the same
+      // unclosed tag does not rescan the rest of the input once per tag.
       const close = new RegExp(`</${name}\\s*>`, 'gi');
       close.lastIndex = i;
-      i = close.exec(html) ? close.lastIndex : html.length;
+      if (close.exec(html)) i = close.lastIndex;
+      else if (SWALLOWS_REST.has(name)) i = html.length;
+      else unclosed.add(name);
       continue;
     }
 
@@ -210,7 +221,7 @@ export function convertHtml(input: string): HtmlText {
       dropTrailingSpace();
       // Past two in a row nothing more is visible (the final pass collapses them), and the output
       // cap must not be spent on invisible newlines.
-      if (pre || trailingNewlines < 2) push('\n');
+      if (trailingNewlines < 2) push('\n');
     } else if (name === 'li') {
       // An item that never got any text is dropped, marker and all.
       if (marker) {
