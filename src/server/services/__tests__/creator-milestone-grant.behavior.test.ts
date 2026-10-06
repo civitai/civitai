@@ -15,6 +15,7 @@ import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-re
 import {
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
+  grantMilestones,
   grantScoreTierMilestones,
   previewMilestoneCosmetics,
   previewScoreTierBackfill,
@@ -163,6 +164,31 @@ describe('nightly grant', () => {
     ]);
   });
 
+  it('returns each crossing with the tier name and threshold the notification names', async () => {
+    const { crossings } = await runNight();
+    expect(crossings.find((c) => c.userId === NO_PRIOR_TOTAL)).toEqual({
+      userId: NO_PRIOR_TOTAL,
+      milestoneKey: 'score:spark',
+      name: 'Spark',
+      threshold: 500,
+    });
+  });
+
+  // An old total sitting exactly on a threshold had already reached it, so that tier is a late grant.
+  it.each([
+    [500, []],
+    [499, ['score:spark']],
+  ])('at an old total of %i, announces %j', async (oldTotal, announced) => {
+    const AT_EDGE = 20;
+    await addUser(AT_EDGE, oldTotal);
+    const transitions = await applyUserScoreUpdates(pg, [[String(AT_EDGE), { models: 600 }]]);
+    const crossings = await grantScoreTierMilestones(pg, transitions);
+    expect(crossings.map((c) => c.milestoneKey)).toEqual(announced);
+    expect(await held(AT_EDGE)).toEqual([
+      { milestoneKey: 'score:spark', seen: announced.length === 0 },
+    ]);
+  });
+
   it('grants nothing twice', async () => {
     const { transitions } = await runNight();
     expect(await grantScoreTierMilestones(pg, transitions)).toEqual([]);
@@ -181,6 +207,83 @@ describe('nightly grant', () => {
       { userId: LATE, claimKey: 'score:spark' },
       { userId: NO_PRIOR_TOTAL, claimKey: 'score:spark' },
     ]);
+  });
+});
+
+describe('shared writer', () => {
+  const ACHIEVED = '2025-03-04 05:06:07';
+  const candidates = (rows: { userId: number; achievedAt: string | null; silent: boolean }[]) => ({
+    sql: `SELECT x."userId", 'create:decoy' AS "milestoneKey", x."achievedAt", x.silent
+      FROM jsonb_to_recordset($1::jsonb) AS x("userId" int, "achievedAt" timestamp, silent boolean)`,
+    params: [JSON.stringify(rows)],
+  });
+
+  beforeEach(async () => {
+    await addUser(ELIGIBLE, null);
+    await addUser(LATE, null);
+    await addUser(DELETED, null, 'deleted');
+    await addUser(BANNED, null, 'banned');
+    await addUser(SYSTEM, null);
+  });
+
+  it('grants any detector key with its own achievedAt, silent rows seen, excluded accounts skipped', async () => {
+    const cosmeticId = await attachCosmetic('create:decoy');
+    const grants = await grantMilestones(
+      pg,
+      candidates([
+        { userId: ELIGIBLE, achievedAt: ACHIEVED, silent: false },
+        { userId: LATE, achievedAt: null, silent: true },
+        { userId: DELETED, achievedAt: null, silent: false },
+        { userId: BANNED, achievedAt: null, silent: false },
+        { userId: SYSTEM, achievedAt: null, silent: false },
+      ])
+    );
+    expect(grants.map((g) => `${g.userId}:${g.silent}`).sort()).toEqual([
+      `${ELIGIBLE}:false`,
+      `${LATE}:true`,
+    ]);
+    expect(
+      await q(
+        `SELECT "userId", to_char("achievedAt", 'YYYY-MM-DD HH24:MI:SS') AS at, "seenAt" IS NOT NULL AS seen
+         FROM "UserCreatorMilestone" WHERE "userId" = $1`,
+        [ELIGIBLE]
+      )
+    ).toEqual([{ userId: ELIGIBLE, at: ACHIEVED, seen: false }]);
+    expect(await held(LATE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
+    expect(
+      await q(`SELECT "userId" FROM "UserCosmetic" WHERE "cosmeticId" = $1 ORDER BY 1`, [
+        cosmeticId,
+      ])
+    ).toEqual([{ userId: ELIGIBLE }, { userId: LATE }]);
+  });
+
+  it('stamps a candidate with no achievedAt at grant time', async () => {
+    await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: false }]));
+    // Compared in SQL: a timestamp without zone round-tripped through a JS Date shifts by the host TZ.
+    const [{ secondsAgo }] = await q<{ secondsAgo: number }>(
+      `SELECT extract(epoch FROM CURRENT_TIMESTAMP::timestamp - "achievedAt")::float AS "secondsAgo"
+       FROM "UserCreatorMilestone" WHERE "userId" = $1`,
+      [ELIGIBLE]
+    );
+    expect(Math.abs(secondsAgo)).toBeLessThan(60);
+  });
+
+  // A detector whose silent expression can be NULL must fail quiet, never announce.
+  it('treats a NULL silent as silent', async () => {
+    const grants = await grantMilestones(
+      pg,
+      candidates([{ userId: ELIGIBLE, achievedAt: null, silent: null as unknown as boolean }])
+    );
+    expect(grants.map((g) => g.silent)).toEqual([true]);
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
+  });
+
+  it('returns nothing for a milestone already held, and leaves the held row as it was', async () => {
+    await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: true }]));
+    expect(
+      await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: false }]))
+    ).toEqual([]);
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
   });
 });
 
