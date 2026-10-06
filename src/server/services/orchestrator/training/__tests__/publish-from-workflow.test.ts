@@ -441,10 +441,13 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   };
   const check = (fields: ModelFields = {}, callerId = 5) =>
     assertTrainingSourcePublishable({
-      model: { userId: 5, meta: STAMPED, status: 'Draft', publishedAt: null, ...fields },
+      model: { id: 42, userId: 5, meta: STAMPED, status: 'Draft', publishedAt: null, ...fields },
       callerId,
     } as Parameters<typeof assertTrainingSourcePublishable>[0]);
   const UNVERIFIABLE = /can no longer be checked for an approved dataset/;
+  /** The server-owned flag writes made, as [key, modelId]. */
+  const flagWrites = () =>
+    dbMock.dbWrite.$executeRaw.mock.calls.map((call) => (call as unknown[]).slice(1));
 
   beforeEach(() => {
     mockGetToken.mockResolvedValue('owner-token');
@@ -511,14 +514,47 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
     ['published privately (no publishedAt)', { status: 'Published', publishedAt: null }],
     ['unpublished after a publish', { status: 'Unpublished', publishedAt: new Date('2026-09-10') }],
     ['a draft that was published before', { status: 'Draft', publishedAt: new Date('2026-09-10') }],
-  ])('lets an unreadable (NOT_FOUND) unstamped model through when it is %s', async (_, fields) => {
-    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(check({ meta: UNSTAMPED, ...fields })).resolves.toBeUndefined();
+  ])(
+    'lets an unreadable (NOT_FOUND) unstamped model through when it is %s, and records the marker',
+    async (_, fields) => {
+      mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+      await expect(check({ meta: UNSTAMPED, ...fields })).resolves.toBeUndefined();
+      expect(flagWrites()).toEqual([['trainingStudioPublishedBeforeStamp', 42]]);
+    }
+  );
+
+  it.each<[string, ModelFields]>([
+    ['a draft', { status: 'Draft', publishedAt: null }],
+    ['unpublished', { status: 'Unpublished', publishedAt: null }],
+  ])(
+    'lets an unreadable (NOT_FOUND) model carrying the published-before-stamp marker through when it is %s',
+    async (_, fields) => {
+      mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+      await expect(
+        check({ meta: { ...UNSTAMPED, trainingStudioPublishedBeforeStamp: true }, ...fields })
+      ).resolves.toBeUndefined();
+      expect(flagWrites()).toEqual([]);
+    }
+  );
+
+  it('stamps an unstamped model whose run is read and approved', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
+    await expect(check({ meta: UNSTAMPED })).resolves.toBeUndefined();
+    expect(flagWrites()).toEqual([['trainingStudioModerationApproved', 42]]);
+  });
+
+  it('writes nothing for a stamped model whose run is read and approved', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
+    await expect(check()).resolves.toBeUndefined();
+    expect(flagWrites()).toEqual([]);
   });
 
   it.each<[string, ModelFields]>([
     ['a draft', { status: 'Draft', publishedAt: null }],
-    ['unpublished without ever being published', { status: 'Unpublished', publishedAt: null }],
+    [
+      'unpublished, with no publishedAt and no marker',
+      { status: 'Unpublished', publishedAt: null },
+    ],
     ['scheduled without a publishedAt', { status: 'Scheduled', publishedAt: null }],
   ])('refuses an unreadable (NOT_FOUND) unstamped model that is %s', async (_, fields) => {
     mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
@@ -585,10 +621,10 @@ describe('approval stamp on re-entry', () => {
       TemplateStringsArray,
       ...unknown[]
     ];
-    expect(sql.join('$1').replace(/\s+/g, ' ').trim()).toBe(
-      `UPDATE "Model" SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb) WHERE id = $1`
+    expect(sql.join('$').replace(/\s+/g, ' ').trim()).toBe(
+      `UPDATE "Model" SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), ARRAY[$]::text[], 'true'::jsonb) WHERE id = $`
     );
-    expect(values).toEqual([77]);
+    expect(values).toEqual(['trainingStudioModerationApproved', 77]);
   });
 
   it('still returns the draft when the stamp write fails', async () => {

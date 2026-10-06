@@ -827,7 +827,14 @@ export const publishModelVersionHandler = async ({
         modelId: true,
         baseModel: true,
         model: {
-          select: { userId: true, nsfw: true, status: true, meta: true, publishedAt: true },
+          select: {
+            id: true,
+            userId: true,
+            nsfw: true,
+            status: true,
+            meta: true,
+            publishedAt: true,
+          },
         },
       },
     });

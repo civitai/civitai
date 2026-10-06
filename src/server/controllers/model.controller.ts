@@ -830,7 +830,7 @@ export const publishModelHandler = async ({
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { status: true, meta: true, nsfw: true, userId: true, publishedAt: true },
+      select: { id: true, status: true, meta: true, nsfw: true, userId: true, publishedAt: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status === ModelStatus.Published)
@@ -2396,7 +2396,7 @@ export const privateModelFromTrainingHandler = async ({
     // Publishes the model (privately), so the training-source check applies like any publish.
     const stored = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { userId: true, meta: true, status: true, publishedAt: true },
+      select: { id: true, userId: true, meta: true, status: true, publishedAt: true },
     });
     if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
       await assertTrainingSourcePublishable({ model: stored, callerId: ctx.user.id });

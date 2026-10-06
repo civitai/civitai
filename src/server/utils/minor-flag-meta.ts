@@ -99,14 +99,16 @@ export function stripModerationOwnedMeta<T extends ModelMeta | null | undefined>
 
 /**
  * Meta keys only server code may write, for everyone including moderators: no moderator flow writes
- * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
- * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
- * paths read both. Client meta that carries them is ignored, so on update the stored values survive
+ * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow,
+ * `trainingStudioModerationApproved` records that the run passed the moderation check, and
+ * `trainingStudioPublishedBeforeStamp` records that an unstamped model was let through on evidence of
+ * an earlier publish; the publish paths read all three. Client meta that carries them is ignored, so on update the stored values survive
  * the `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
   'trainingStudioWorkflowId',
   'trainingStudioModerationApproved',
+  'trainingStudioPublishedBeforeStamp',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 export function stripServerOwnedMeta<T extends ModelMeta | null | undefined>(meta: T): T {

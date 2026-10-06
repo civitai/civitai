@@ -538,6 +538,7 @@ describe('privateModelFromTraining — server-owned meta keys', () => {
       meta: {
         trainingStudioWorkflowId: 'wf-client',
         trainingStudioModerationApproved: true,
+        trainingStudioPublishedBeforeStamp: true,
         commentsLocked: true,
       } as unknown as ModelUpsertInput['meta'],
     });
