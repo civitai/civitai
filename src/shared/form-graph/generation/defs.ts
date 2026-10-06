@@ -578,8 +578,18 @@ export const imagesDef = cachedFactory(function imagesDef(config: {
     // its own error, so the user can see and fix this one — correcting it is about not
     // making them, since the extra images are the source's, not a choice they made. Only
     // MAX corrects; too FEW is a real error the user has to resolve.
-    correct: (value) =>
-      (value?.length ?? 0) > max ? { value: value.slice(0, max), reason: 'over_cap' } : undefined,
+    // A trusted write also skips the string → `{ url }` mapping, and the images input reads
+    // `.url` off every entry, so a bare URL from a remix crashes the page instead of loading.
+    correct: (value) => {
+      const entries = value as (ImageEntry | string)[] | undefined;
+      if (entries?.some((item) => typeof item === 'string')) {
+        const objects = entries.map((item) => (typeof item === 'string' ? { url: item } : item));
+        return { value: objects.slice(0, max) as ImageEntry[], reason: 'url_string' };
+      }
+      return (value?.length ?? 0) > max
+        ? { value: value.slice(0, max), reason: 'over_cap' }
+        : undefined;
+    },
     meta: {
       min,
       max,

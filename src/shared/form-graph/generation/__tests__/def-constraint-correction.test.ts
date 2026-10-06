@@ -261,6 +261,23 @@ describe('def constraint correction', () => {
       );
     });
 
+    // Extract Metadata's "Image To Image" handed over a bare URL, and the images input
+    // crashed on `.url` of it.
+    it('turns a bare URL string into an image entry', () => {
+      const store = editStore('Qwen');
+      const url = img(0).url;
+      store.set({ images: [url] });
+
+      expect(state(store).images).toEqual([{ url }]);
+    });
+
+    it('caps a mix of strings and entries to the field max', () => {
+      const store = editStore('MAI');
+      store.set({ images: [img(0).url, img(1)] });
+
+      expect(state(store).images).toEqual([{ url: img(0).url }]);
+    });
+
     // The MIN side must stay an error — `correct` cannot invent an image, and "you need a
     // source image" is a state the user has to resolve rather than one to paper over.
     it('still REFUSES too few images, and does not correct them', () => {

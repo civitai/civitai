@@ -236,7 +236,7 @@ export function MetadataExtractionFooter() {
     if (ecosystem) params.ecosystem = ecosystem;
     if (!opts?.withSeed) delete params.seed;
     if (opts?.forceImage && fileUrl) {
-      params.images = [fileUrl];
+      params.images = [{ url: fileUrl }];
     }
 
     generationGraphStore.setData({
