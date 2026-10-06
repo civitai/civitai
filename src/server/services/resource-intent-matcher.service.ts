@@ -79,9 +79,8 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  * label that does not agree or sits below the floor for its direction — and the re-rank
  * then leaves it neutral or demotes it as for any other candidate.
  *
- * `applyInsightRanking` is unchanged by the purpose-first seed: it still permutes the
- * pool it is handed and still tiebreaks on the seed index, which is now the merged
- * purpose-then-popularity order.
+ * `applyInsightRanking` permutes the pool it is handed and tiebreaks on the seed index
+ * (the merged purpose-then-popularity order).
  */
 
 export type ResourceIntentCoverage = { next: boolean; member: boolean };
@@ -412,9 +411,9 @@ async function searchShortlistModels(
   // 128-255, and never wider. 🔴 That bounds the POOL, not the FETCH: two pages are
   // requested, so up to 2 x poolCap documents cross the wire and are parsed. When the
   // purpose page comes back full the popularity page contributes nothing to the pool
-  // and is pure cost — and that is the USUAL case, not an edge: the busy type x baseModel
-  // cells, where a role's labeled models outnumber the pool, are the ones most requests
-  // land in. Same shape as the 2x page an earlier revision removed, which
+  // and is pure cost. That happens in a busy cell, where a role's labeled models
+  // outnumber the pool; how often requests land in such cells has not been measured.
+  // Same shape as the 2x page an earlier revision removed, which
   // measured at 1.6-2.6x the payload and its blocking JSON.parse plus roughly double the
   // index's processing time on a Meilisearch shared with the resource picker. That
   // figure was measured for one double-width page, not for two parallel pages, so treat
