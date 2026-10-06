@@ -193,6 +193,7 @@ node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD wa
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
+node .claude/skills/dev-server/scripts/skill-env.selftest.mjs          # `wt new`/`wt env` never overwrite a credential a tree already has
 node .claude/skills/dev-server/scripts/worktree-remove.integration.selftest.mjs  # `wt rm`'s daemon guard, against a throwaway repo
 node .claude/skills/dev-server/scripts/worktree-create.integration.selftest.mjs  # `wt new`: base, no upstream, refusals
 node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs        # the daemon runs from the primary, never the calling worktree
@@ -683,6 +684,33 @@ node .claude/skills/dev-server/cli.mjs start /path/to/worktree
 ```
 
 What's already handled:
+
+- **The skills' own credentials, on `wt new`.** The env layering below is the APP's chain;
+  `.claude/skills/*/.env` is a different thing and nothing copied it until this did. A fresh tree
+  used to start with none — measured 2026-10-05: 7 in the primary, 0 of 47 skill directories in
+  the worktree — and each missing one surfaces as that skill failing to authenticate
+  (`FLIPT_URL and FLIPT_API_TOKEN must be set`, `credentials not configured`, a bare 401), which
+  reads as a bug in the skill rather than a missing file.
+
+  `wt new` copies them, never overwriting one the target already holds, and warns about any skill
+  whose credentials exist in no tree at all. It is non-fatal by construction: a missing credential
+  must not cost you a worktree. For a tree that already exists, `wt env`:
+
+  ```bash
+  node .claude/skills/dev-server/cli.mjs wt env                 # presence per skill, never a value
+  node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
+  node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
+  node .claude/skills/dev-server/cli.mjs wt env --restore       # bring back what this tree lacks
+  ```
+
+  `--backup` exists because these files are one `git clean` from gone and nothing restores them: a
+  skill whose `.gitignore` lists `.env` loses it to `clean -x`, one without a `.gitignore` loses the
+  untracked file to `clean -d`. Both happened; discord's needed an interactive browser login to
+  re-obtain. The store is outside the repo because a backup inside it dies to the same clean.
+
+  It reports presence only. A per-skill credential inventory annotated with what each one unlocks
+  is precisely what must not exist in a public repository.
+
 
 - **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. So a worktree file needs to restate only what it wants to change, and one that restates nothing is a no-op rather than an outage. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
 

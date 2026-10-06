@@ -13,6 +13,7 @@
 import { execFileSync } from 'child_process';
 import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
 import { isInside, samePath } from './paths.mjs';
+import { syncSkillEnv } from './skill-env.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -593,6 +594,25 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
     } catch {
       console.warn(`warning: wrote .envrc but could not run \`direnv allow\` in ${target}`);
     }
+  }
+
+  // Skill credentials are gitignored or untracked, so a fresh tree has none and every skill
+  // then fails as though IT were broken. Non-fatal: a missing credential must never cost you a
+  // worktree.
+  try {
+    const env = syncSkillEnv(primary, target);
+    if (env.copied) console.log(`skill credentials: copied ${env.copied} (${env.names.join(', ')})`);
+    if (env.absent.length)
+    // A COUNT, not the names: 10 of 16 credential-taking skills have none configured in a
+    // typical environment, and a ten-name warning on every creation is one people learn to
+    // skip. `wt env` is where the list belongs, on demand.
+    if (env.absent.length)
+      console.log(
+        `skill credentials: ${env.absent.length} skill(s) have none anywhere; ` +
+          `list them with: node .claude/skills/dev-server/cli.mjs wt env`
+      );
+  } catch (error) {
+    console.warn(`warning: could not copy skill credentials -- ${error.message}`);
   }
 
   if (!opts.noInstall) execFileSync('pnpm', ['install'], { cwd: target, stdio: 'inherit', windowsHide: true });
