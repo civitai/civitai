@@ -122,8 +122,62 @@ describe('getCreatorScoreLadder', () => {
 
     // The key carries the name by convention (`score:spark` is Spark), so it is masked too.
     expect((await getCreatorScoreLadder()).tiers).toEqual([
-      { key: 'hidden:777', name: '???', threshold: 777, hint: 'Someone builds on your work' },
+      {
+        key: 'hidden:777',
+        name: '???',
+        threshold: 777,
+        hint: 'Someone builds on your work',
+        badgeUrl: null,
+      },
     ]);
+  });
+});
+
+describe('tier badge art', () => {
+  const spark = {
+    ...definition({ key: 'score:spark', track: 'score', threshold: 500, hidden: false }),
+    name: 'Spark',
+    cosmetic: { data: { url: 'spark-image-id' } },
+  };
+
+  it('carries the cosmetic image onto the tier and onto the earned badge', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([spark] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: new Date('2026-10-01'), milestone: spark },
+    ] as never);
+
+    const journey = await getCreatorJourney(1);
+
+    expect(journey.tiers[0].badgeUrl).toBe('spark-image-id');
+    expect(journey.earned[0].badgeUrl).toBe('spark-image-id');
+  });
+
+  it('reads the art in the same tier query, not a second lookup', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockClear();
+    await getCreatorJourney(1);
+
+    expect(dbMock.dbRead.creatorMilestone.findMany).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.creatorMilestone.findMany.mock.calls[0][0]).toMatchObject({
+      select: { cosmetic: { select: { data: true } } },
+    });
+  });
+
+  // The art identifies the tier as surely as its name does, so an unearned hidden tier shows neither.
+  it('withholds the art of a hidden tier the viewer has not earned', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([
+      { ...spark, hidden: true },
+    ] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+
+    expect((await getCreatorJourney(1)).tiers[0]).toMatchObject({ name: '???', badgeUrl: null });
+  });
+
+  it('is null when the tier has no cosmetic attached', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockResolvedValue([
+      { ...spark, cosmetic: null },
+    ] as never);
+
+    expect((await getCreatorJourney(1)).tiers[0].badgeUrl).toBeNull();
   });
 });
 
