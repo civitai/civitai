@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { EARLY_ACCESS_CONFIG } from '~/server/common/constants';
 import {
+  chapterEarlyAccessCapMessage,
+  chapterEarlyAccessLockedMessage,
+  getEarlyAccessEntryRung,
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
@@ -99,5 +102,63 @@ describe('getMaxEarlyAccessModels', () => {
     expect(getMaxEarlyAccessModels({ userMeta: { scores: { total: 0 } }, features })).toBe(
       (flagEntry as [unknown, number])[1]
     );
+  });
+});
+
+describe('getEarlyAccessEntryRung', () => {
+  // Read through the same functions the gates use, so the locked copy cannot promise what the
+  // editor would not then allow.
+  it('opens where both gates first grant something, with what they grant there', () => {
+    const rung = getEarlyAccessEntryRung();
+    expect(rung).not.toBeNull();
+    const { minScore, days, versions } = rung as NonNullable<typeof rung>;
+    expect(getMaxEarlyAccessDays({ userMeta: { scores: { total: minScore - 1 } } })).toBe(0);
+    expect(getMaxEarlyAccessDays({ userMeta: { scores: { total: minScore } } })).toBe(days);
+    expect(getMaxEarlyAccessModels({ userMeta: { scores: { total: minScore } } })).toBe(versions);
+    expect(days).toBeGreaterThan(0);
+    expect(versions).toBeGreaterThan(0);
+  });
+
+  // The two entry rungs are equal in today's config, so only a config where they differ can tell
+  // "the later of the two" from "the earlier".
+  it('waits for the later gate when the two entry rungs differ', () => {
+    expect(
+      getEarlyAccessEntryRung({
+        scoreTimeFrameUnlock: [
+          [1_000, 3],
+          [5_000, 5],
+        ],
+        scoreQuantityUnlock: [[4_000, 2]],
+      })
+    ).toEqual({ minScore: 4_000, days: 3, versions: 2 });
+  });
+});
+
+describe('chapter early-access refusals', () => {
+  const rung = getEarlyAccessEntryRung() as NonNullable<ReturnType<typeof getEarlyAccessEntryRung>>;
+
+  it('names the entry score and where the creator stands', () => {
+    expect(chapterEarlyAccessLockedMessage(1234.9)).toBe(
+      `Early access for chapters unlocks at a Creator Score of ${rung.minScore.toLocaleString(
+        'en-US'
+      )}. You're at 1,234.`
+    );
+  });
+
+  it('says nothing about a score it was not given', () => {
+    expect(chapterEarlyAccessLockedMessage(undefined)).not.toMatch(/You're at/);
+  });
+
+  it('tells a creator below the top of the ladder that the cap rises', () => {
+    expect(chapterEarlyAccessCapMessage({ active: 1, score: rung.minScore })).toBe(
+      `You already have 1 chapter in early access, the most your Creator Score of ${rung.minScore.toLocaleString(
+        'en-US'
+      )} allows. Higher scores raise it.`
+    );
+  });
+
+  it('promises no rise above the top quantity rung', () => {
+    const [topScore] = EARLY_ACCESS_CONFIG.scoreQuantityUnlock.at(-2) as [number, number];
+    expect(chapterEarlyAccessCapMessage({ active: 3, score: topScore })).not.toMatch(/raise/);
   });
 });

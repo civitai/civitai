@@ -62,7 +62,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { useServerDomains } from '~/providers/AppProvider';
 import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
@@ -349,9 +349,7 @@ const JoinCreatorProgramCard = () => {
               <p className="my-0">
                 <CreatorScoreGateMessage
                   score={requirements?.score.current}
-                  total={
-                    currentUser?.meta?.scores ? creatorScoreFromMeta(currentUser.meta) : undefined
-                  }
+                  total={creatorScoreFromSession(currentUser)}
                   required={requirements?.score.min ?? MIN_CREATOR_SCORE}
                 />
               </p>

@@ -29,7 +29,8 @@ import * as z from 'zod';
 import { CapUpsell } from '~/components/Buzz/CapUpsell';
 import { PricingSlotHistory } from '~/components/Buzz/PricingSlotHistory';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { EarlyAccessLockedRow } from '~/components/CreatorJourney/EarlyAccessLockedRow';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
@@ -781,6 +782,15 @@ export function ModelVersionUpsertForm({
     !isNonCommercial && // Non-commercial base models can't be monetized.
     paidAccessUsageOk &&
     canConfigurePaidAccess;
+  // Where the score alone keeps the timed window shut, say so instead of leaving no section at all.
+  const showEarlyAccessLocked =
+    !showPaidAccessInput &&
+    !currentUser?.isModerator &&
+    features.earlyAccessModel &&
+    !gateSuppressed &&
+    paidAccessUsageOk &&
+    !isPublished &&
+    (maxEarlyAccessModels === 0 || earlyAccessUnlockedDays.length === 0);
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
@@ -1214,6 +1224,7 @@ export function ModelVersionUpsertForm({
             </Stack>
           </Card>
           {(showPaidAccessInput ||
+            showEarlyAccessLocked ||
             showLicensingFeeBlock ||
             requiresRightsAffirmation ||
             removingStoredCharge ||
@@ -1322,11 +1333,7 @@ export function ModelVersionUpsertForm({
                     <Text size="sm">
                       <CreatorScoreGateMessage
                         score={eligibility.score}
-                        total={
-                          currentUser?.meta?.scores
-                            ? creatorScoreFromMeta(currentUser.meta)
-                            : undefined
-                        }
+                        total={creatorScoreFromSession(currentUser)}
                         required={eligibility.required}
                       />{' '}
                       Prices you have already set are unaffected.
@@ -1395,6 +1402,9 @@ export function ModelVersionUpsertForm({
                     label={MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}
                     mt="sm"
                   />
+                )}
+                {showEarlyAccessLocked && (
+                  <EarlyAccessLockedRow score={creatorScoreFromSession(currentUser)} />
                 )}
                 {showChargeSettings && showPaidAccessInput && (
                   <Stack gap={0} mt="md">

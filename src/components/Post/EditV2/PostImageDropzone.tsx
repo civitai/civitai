@@ -1,8 +1,9 @@
-import { Button, Progress } from '@mantine/core';
+import { Anchor, Button, Progress } from '@mantine/core';
 import { useEffect, useRef } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
@@ -11,7 +12,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
 import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
-import { addPostImageSchema } from '~/server/schema/post.schema';
+import { addPostImageSchema, isDailyPostLimitMessage } from '~/server/schema/post.schema';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import type { PostDetailEditable } from '~/server/services/post.service';
 import {
   orchestratorMediaTransmitter,
@@ -139,9 +141,19 @@ export function PostImageDropzone({
             upload(fileData, { postId: data.id });
           },
           onError(error) {
+            const atDailyLimit = isDailyPostLimitMessage(error.message);
             showErrorNotification({
               title: 'Failed to create post',
               error: new Error(error.message),
+              reason: atDailyLimit ? (
+                <>
+                  {error.message}{' '}
+                  <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} inherit>
+                    See your journey
+                  </Anchor>
+                </>
+              ) : undefined,
+              autoClose: atDailyLimit ? false : undefined,
             });
           },
         }
