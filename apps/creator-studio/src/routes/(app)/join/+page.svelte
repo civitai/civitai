@@ -163,6 +163,11 @@
       </Button>
     </form>
   {/if}
+  {#if data.creatorJourneyUrl}
+    <a href={data.creatorJourneyUrl} class="mt-3 inline-block text-sm text-blue-4 hover:underline">
+      See your full Creator Journey on Civitai →
+    </a>
+  {/if}
 </div>
 
 {#if !qualifiesScore}
@@ -182,14 +187,6 @@
           </li>
         {/each}
       </ul>
-      {#if data.creatorJourneyUrl}
-        <a
-          href={data.creatorJourneyUrl}
-          class="mt-4 inline-block text-sm text-blue-4 hover:underline"
-        >
-          See your full Creator Journey on Civitai →
-        </a>
-      {/if}
     </CardContent>
   </Card>
 {/if}
