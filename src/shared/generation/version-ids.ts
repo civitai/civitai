@@ -30,6 +30,10 @@ export const minimaxVersionIds = {
   'v1.0': 3183239,
   /** Our own weights. The `MiniMaxH3` ecosystem default, and the only one taking LoRAs. */
   comfy: 3216500,
+  /** H3 Max and Max Turbo, through FAL. */
+  max: 3388469,
+  /** HeyGen Video 1 (built on H3). First frame only, no last frame. */
+  heygen: 3388470,
 } as const;
 
 export const qwenVersionIds = {
