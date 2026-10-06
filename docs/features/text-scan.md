@@ -41,7 +41,8 @@ without `allowActive: true` and logs who changed it; pods pick a change up withi
 Above the rollout sits the Flipt boolean `text-scan`, a kill switch. Off, or Flipt unreachable,
 every entity type is off whatever the hash says, so XGuard and the profanity filter run as before, and
 Clavata runs again for any entity cut over by `disableClavataFor` (the cutover is kept in its own
-set, `system:text-scan:clavata-cutover`, and the Clavata job honours it only while the switch is on).
+set, `system:text-scan:clavata-cutover`, and the Clavata job skips a cut-over entity only while the
+switch is on and that entity type is 100% active; anything less hands it back to Clavata).
 Turning it off does not undo verdicts already applied.
 
 - **off** — nothing is submitted.

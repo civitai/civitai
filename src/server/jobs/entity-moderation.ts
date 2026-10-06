@@ -13,8 +13,8 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
-import { isTextScanEnabled } from '~/server/services/text-scan/mode';
-import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
+import { getTextScanOwnedClavataKeys } from '~/server/services/text-scan/clavata-cutover';
+import { clavataVerdict, logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
 import type { EntityType } from '~/shared/utils/prisma/enums';
@@ -254,20 +254,18 @@ async function getPolicies() {
   return policies ? (JSON.parse(policies) as RedisPolicyType) : ({} as RedisPolicyType);
 }
 
-async function getDisabledEntities() {
-  const [policies, cutover, textScanOn] = await Promise.all([
+export async function getDisabledEntities() {
+  const [policies, owned] = await Promise.all([
     sysRedis.hGet(
       REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
       REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
     ),
-    sysRedis.sMembers(REDIS_SYS_KEYS.TEXT_SCAN.CLAVATA_CUTOVER),
-    isTextScanEnabled(),
+    getTextScanOwnedClavataKeys(),
   ]);
   const disabled = policies
     ? (JSON.parse(policies) as RedisDisabledType)
     : ({} as RedisDisabledType);
-  // An entity cut over to text scan goes back to Clavata whenever the text-scan kill switch is off.
-  if (textScanOn) for (const key of cutover) disabled[key as AllModKeys] = false;
+  for (const key of owned) disabled[key as AllModKeys] = false;
   return disabled;
 }
 
@@ -358,15 +356,16 @@ const runClavata = async ({
 
         const skipped = item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type));
         // Clean results too: they are the only record that Clavata passed this text.
-        void logScanVerdict({
-          system: 'clavata',
-          entityType: type,
-          entityId: metadata.id,
-          userId: metadata.userId > 0 ? metadata.userId : undefined,
-          flagged: item.result !== 'FALSE',
-          acted: !skipped,
-          tags: item.matches ?? [],
-        });
+        void logScanVerdict(
+          clavataVerdict({
+            entityType: type,
+            entityId: metadata.id,
+            userId: metadata.userId,
+            result: item.result,
+            matches: item.matches,
+            skipped,
+          })
+        );
 
         if (skipped) {
           if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);

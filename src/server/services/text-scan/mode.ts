@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import type { TextScanEntityType, TextScanMode } from '~/server/services/text-scan/types';
+import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
 export const TEXT_SCAN_ENTITY_TYPES = [
   'Model',
@@ -28,8 +29,7 @@ export const TEXT_SCAN_ENTITY_TYPES = [
 export type TextScanRollout = { shadow: number; active: number };
 export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollout>>;
 
-const ROLLOUT_CACHE_MS = 15_000;
-let rolloutCache: { at: number; value: TextScanRollouts } | null = null;
+export const ROLLOUT_CACHE_MS = 15_000;
 
 function percent(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value)
@@ -59,15 +59,11 @@ export async function readTextScanRollouts(): Promise<TextScanRollouts> {
   return rollouts;
 }
 
-async function getTextScanRollouts() {
-  if (rolloutCache && Date.now() - rolloutCache.at < ROLLOUT_CACHE_MS) return rolloutCache.value;
-  const value = await readTextScanRollouts();
-  rolloutCache = { at: Date.now(), value };
-  return value;
-}
+// Not the default `Date.now` reference, which is captured once and would ignore a faked clock.
+const getTextScanRollouts = createTtlMemo(readTextScanRollouts, ROLLOUT_CACHE_MS, () => Date.now());
 
 export function resetTextScanRolloutCache() {
-  rolloutCache = null;
+  getTextScanRollouts.clear();
 }
 
 export function textScanBucket(entityType: TextScanEntityType, entityId: number) {

@@ -71,6 +71,22 @@ describe('getTextScanMode', () => {
     await getTextScanMode('Post', 2);
     expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledTimes(1);
   });
+
+  it('re-reads the hash once the 15s cache expires', async () => {
+    vi.useFakeTimers();
+    try {
+      hash({ Post: '{"shadow":100}' });
+      expect(await getTextScanMode('Post', 1)).toBe('shadow');
+      hash({});
+      vi.advanceTimersByTime(14_000);
+      expect(await getTextScanMode('Post', 1)).toBe('shadow');
+      vi.advanceTimersByTime(2_000);
+      expect(await getTextScanMode('Post', 1)).toBe('off');
+      expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('rollout percentages', () => {

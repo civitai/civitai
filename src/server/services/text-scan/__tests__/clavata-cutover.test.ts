@@ -11,6 +11,7 @@ vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
   isTextScanEnabled: vi.fn(),
+  readTextScanRollouts: vi.fn(),
 }));
 
 const {
@@ -22,9 +23,12 @@ const {
   drainModerationQueue,
   enableClavataFor,
   getClavataCutoverStatus,
+  getTextScanOwnedClavataKeys,
   UNMODERATED_OVERRIDE,
 } = await import('~/server/services/text-scan/clavata-cutover');
-const { getTextScanMode, isTextScanEnabled } = await import('~/server/services/text-scan/mode');
+const { getTextScanMode, isTextScanEnabled, readTextScanRollouts } = await import(
+  '~/server/services/text-scan/mode'
+);
 
 const CUTOVER = REDIS_SYS_KEYS.TEXT_SCAN.CLAVATA_CUTOVER;
 const MIGRATIONS = join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations');
@@ -34,6 +38,7 @@ beforeEach(() => {
   vi.mocked(dbMock.dbRead.post.findMany).mockResolvedValue([{ id: 3 }, { id: 2 }] as never);
   vi.mocked(dbMock.dbRead.chatMessage.findMany).mockResolvedValue([{ id: 7 }] as never);
   vi.mocked(redisMock.sysRedis.hGet).mockResolvedValue(JSON.stringify({ Comment: false }) as never);
+  vi.mocked(readTextScanRollouts).mockResolvedValue({});
 });
 
 describe('CLAVATA_TARGETS', () => {
@@ -224,10 +229,11 @@ describe('getClavataCutoverStatus', () => {
     });
   });
 
-  it('reports a cut-over entity as skipped only while the kill switch is on', async () => {
+  it('reports a cut-over entity as skipped only while text scan owns it', async () => {
     vi.mocked(redisMock.sysRedis.sMembers).mockResolvedValue(['Post'] as never);
     vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([] as never);
     vi.mocked(isTextScanEnabled).mockResolvedValue(true);
+    vi.mocked(readTextScanRollouts).mockResolvedValue({ Post: { shadow: 0, active: 100 } });
     expect((await getClavataCutoverStatus()).find((r) => r.entityType === 'Post')).toMatchObject({
       cutOver: true,
       clavataSkipped: true,
@@ -237,6 +243,38 @@ describe('getClavataCutoverStatus', () => {
       cutOver: true,
       clavataSkipped: false,
     });
+  });
+});
+
+describe('getTextScanOwnedClavataKeys', () => {
+  beforeEach(() => {
+    vi.mocked(redisMock.sysRedis.sMembers).mockResolvedValue(['Comment', 'Chat'] as never);
+    vi.mocked(isTextScanEnabled).mockResolvedValue(true);
+    vi.mocked(readTextScanRollouts).mockResolvedValue({
+      Comment: { shadow: 0, active: 100 },
+      ChatMessage: { shadow: 100, active: 100 },
+      Post: { shadow: 0, active: 100 },
+    });
+  });
+
+  it('owns a key only when it is cut over, the switch is on and the type is fully active', async () => {
+    // Post is fully active but not cut over; Chat maps to ChatMessage.
+    expect(await getTextScanOwnedClavataKeys()).toEqual(new Set(['Comment', 'Chat']));
+  });
+
+  it('owns nothing while the kill switch is off', async () => {
+    vi.mocked(isTextScanEnabled).mockResolvedValue(false);
+    expect(await getTextScanOwnedClavataKeys()).toEqual(new Set());
+  });
+
+  it('hands a cut-over key back to Clavata when its rollout drops below 100% active or is removed', async () => {
+    vi.mocked(readTextScanRollouts).mockResolvedValue({ Comment: { shadow: 100, active: 99 } });
+    expect(await getTextScanOwnedClavataKeys()).toEqual(new Set());
+  });
+
+  it('hands every key back to Clavata when the rollout cannot be read', async () => {
+    vi.mocked(readTextScanRollouts).mockRejectedValue(new Error('sysRedis down'));
+    expect(await getTextScanOwnedClavataKeys()).toEqual(new Set());
   });
 });
 

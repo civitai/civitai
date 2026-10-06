@@ -235,6 +235,10 @@ describe('handleTextScanCallback', () => {
         tags: 'nsfw',
       })
     );
+    const verdicts = vi
+      .mocked(loggingMock.logToAxiom)
+      .mock.calls.filter(([e]) => (e as { name?: string }).name === 'scan-verdict');
+    expect(verdicts).toHaveLength(1);
   });
 
   it('logs a clean verdict too, and an active flagged one as acted', async () => {

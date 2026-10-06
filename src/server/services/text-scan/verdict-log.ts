@@ -42,3 +42,45 @@ export function logScanVerdict({ tags, ...verdict }: ScanVerdict) {
     tags: tags?.join(','),
   }).catch(() => undefined);
 }
+
+/** `acted` here means the verdict reached the entity's adapter, which may still decline to apply it. */
+export function xguardVerdict(v: {
+  entityType: string;
+  entityId: number;
+  workflowId: string;
+  blocked: boolean;
+  triggeredLabels: string[];
+  hasAdapter: boolean;
+}): ScanVerdict {
+  const flagged = v.blocked || v.triggeredLabels.length > 0;
+  return {
+    system: 'xguard',
+    entityType: v.entityType,
+    entityId: v.entityId,
+    workflowId: v.workflowId,
+    flagged,
+    acted: flagged && v.hasAdapter,
+    blocked: v.blocked,
+    tags: v.triggeredLabels,
+  };
+}
+
+/** A Clavata result the job drops (clean, or an NSFW-only match outside Model and Bounty) is not acted on. */
+export function clavataVerdict(v: {
+  entityType: string;
+  entityId: number;
+  userId: number;
+  result: string | undefined;
+  matches: string[] | undefined;
+  skipped: boolean;
+}): ScanVerdict {
+  return {
+    system: 'clavata',
+    entityType: v.entityType,
+    entityId: v.entityId,
+    userId: v.userId > 0 ? v.userId : undefined,
+    flagged: v.result !== 'FALSE',
+    acted: !v.skipped,
+    tags: v.matches ?? [],
+  };
+}

@@ -3,7 +3,11 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { VISIBLE_COLLECTION_WHERE } from '~/server/services/text-scan/collection-visibility';
-import { getTextScanMode, isTextScanEnabled } from '~/server/services/text-scan/mode';
+import {
+  getTextScanMode,
+  isTextScanEnabled,
+  readTextScanRollouts,
+} from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
@@ -113,6 +117,29 @@ export async function readClavataCutover(): Promise<Set<string>> {
   return new Set(await sysRedis.sMembers(REDIS_SYS_KEYS.TEXT_SCAN.CLAVATA_CUTOVER));
 }
 
+/**
+ * Clavata keys the Clavata job skips because text scan has taken them over: cut over, the kill
+ * switch on, and every id of the entity type active. Anything less (a rollback to shadow, a deleted
+ * rollout, a read failure) hands the key back to Clavata, so no entity is left unmoderated.
+ */
+export async function getTextScanOwnedClavataKeys(): Promise<Set<string>> {
+  const [cutover, textScanOn, rollouts] = await Promise.all([
+    readClavataCutover(),
+    isTextScanEnabled(),
+    readTextScanRollouts().catch(() => ({} as Awaited<ReturnType<typeof readTextScanRollouts>>)),
+  ]);
+  const owned = new Set<string>();
+  if (!textScanOn) return owned;
+  for (const [entityType, target] of Object.entries(CLAVATA_TARGETS) as [
+    CutoverEntityType,
+    ClavataTarget
+  ][]) {
+    if (cutover.has(target.clavataKey) && rollouts[entityType]?.active === 100)
+      owned.add(target.clavataKey);
+  }
+  return owned;
+}
+
 export async function drainModerationQueue(entityType: EntityType): Promise<DrainResult> {
   let deleted = 0;
   for (let i = 0; i < DRAIN_MAX_BATCHES; i++) {
@@ -170,10 +197,10 @@ export async function enableClavataFor(entityType: CutoverEntityType) {
 }
 
 export async function getClavataCutoverStatus() {
-  const [entities, cutover, textScanOn, triggers, queue] = await Promise.all([
+  const [entities, cutover, owned, triggers, queue] = await Promise.all([
     readEntities(),
     readClavataCutover(),
-    isTextScanEnabled(),
+    getTextScanOwnedClavataKeys(),
     dbRead.$queryRaw<{ name: string }[]>`
       SELECT tgname AS name FROM pg_trigger WHERE NOT tgisinternal AND tgname LIKE 'trg_moderation_%'`,
     dbRead.$queryRaw<{ entityType: string; count: number }[]>`
@@ -184,9 +211,8 @@ export async function getClavataCutoverStatus() {
     entityType,
     clavataKey: t.clavataKey,
     clavataDisabled: entities[t.clavataKey] === false,
-    // Cut over, Clavata still runs for this entity while the kill switch is off.
     cutOver: cutover.has(t.clavataKey),
-    clavataSkipped: entities[t.clavataKey] === false || (textScanOn && cutover.has(t.clavataKey)),
+    clavataSkipped: entities[t.clavataKey] === false || owned.has(t.clavataKey),
     trigger: t.trigger?.name ?? null,
     triggerPresent: t.trigger ? triggers.some((r) => r.name === t.trigger?.name) : null,
     jobQueueRows: t.jobQueueEntityType
