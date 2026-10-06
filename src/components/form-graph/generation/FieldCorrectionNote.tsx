@@ -64,7 +64,7 @@ export function FieldCorrectionNote({ note }: { note: ResolutionNote | undefined
   if (!message) return null;
 
   return (
-    <Text size="xs" c="dimmed" role="status">
+    <Text size="xs" c="yellow" role="status">
       {message}
     </Text>
   );
