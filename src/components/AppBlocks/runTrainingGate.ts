@@ -183,15 +183,28 @@ export const TRAINING_SUBMIT_RECOVERY_DELAYS_MS = [
 ];
 
 /**
+ * After a lost response, the only server errors that prove no run started from the
+ * first attempt. A malformed request is refused the same way every time, and a quote
+ * that is gone means the first attempt either never claimed it or failed and released
+ * its claim (a finished run replays instead). Every other code — an expired token, a
+ * transient failure, a rate limit, a permission that changed — can come from checks
+ * that run before the per-quote claim, so it says nothing about the first attempt.
+ */
+export const TRAINING_SUBMIT_CONCLUSIVE_CODES: readonly string[] = ['BAD_REQUEST', 'NOT_FOUND'];
+
+/**
  * Submit a training run, recovering from a lost response.
  *
  * The quote is spent as soon as the server sees the call, so a block cannot retry a
  * lost response itself. After a transport failure this resends the SAME call; the
  * server's per-quote claim replays a finished submit and answers CONFLICT while the
- * first attempt is still running, so CONFLICT (and further transport failures) mean
- * "wait and resend". A different server error is the real outcome and is thrown.
- * If the outcome is still unknown after the delays, returns `unconfirmed` rather than
- * an error a block would read as "nothing happened".
+ * first attempt is still running. Only a code in `TRAINING_SUBMIT_CONCLUSIVE_CODES` is
+ * thrown as the outcome; anything else means "wait and resend". If the outcome is
+ * still unknown after the delays, returns `unconfirmed` rather than an error a block
+ * would read as "nothing happened".
+ *
+ * `submit` is called afresh on each attempt, so a caller can read its credentials
+ * (e.g. a refreshed token) at send time.
  */
 export async function submitTrainingWithRecovery<T>(
   submit: () => Promise<T>,
@@ -208,7 +221,8 @@ export async function submitTrainingWithRecovery<T>(
     try {
       return { result: await submit() };
     } catch (err) {
-      if (!isTrainingSubmitTransportError(err) && trpcErrorCode(err) !== 'CONFLICT') throw err;
+      const code = trpcErrorCode(err);
+      if (typeof code === 'string' && TRAINING_SUBMIT_CONCLUSIVE_CODES.includes(code)) throw err;
     }
   }
   return { unconfirmed: true };

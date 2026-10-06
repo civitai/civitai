@@ -56,6 +56,7 @@ import {
   buildTrainingConsentCopy,
   resolveRunTrainingRequest,
   submitTrainingWithRecovery,
+  TRAINING_SUBMIT_RECOVERY_DELAYS_MS,
   type TrainingQuotePreview,
 } from './runTrainingGate';
 import { TrainingConsentBody } from './TrainingConsentBody';
@@ -921,6 +922,10 @@ export function PageBlockHost({
   // cover that remainder — a drop there fails FAST instead of hanging.
   const statusRef = useRef<Status>('loading');
   statusRef.current = status;
+  // The latest page token, for a training resend that outlives the token it started
+  // with (the host refreshes the token; the in-flight submit must use the new one).
+  const latestTokenRef = useRef(token);
+  latestTokenRef.current = token;
   // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
   // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
@@ -4541,12 +4546,13 @@ export function PageBlockHost({
                 const outcome = await submitTrainingWithRecovery(
                   () =>
                     submitWorkflowMutation.mutateAsync({
-                      blockToken: token,
+                      blockToken: latestTokenRef.current ?? token,
                       // Schema-validated server-side and checked against the quote's
                       // body hash; the host never renders or trusts it.
                       body: body as never,
                     }),
-                  (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+                  (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+                  TRAINING_SUBMIT_RECOVERY_DELAYS_MS
                 );
                 settlement.reply(
                   'result' in outcome

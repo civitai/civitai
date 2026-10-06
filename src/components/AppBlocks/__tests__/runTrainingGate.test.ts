@@ -4,6 +4,8 @@ import {
   isTrainingSubmitTransportError,
   submitTrainingWithRecovery,
   resolveRunTrainingRequest,
+  TRAINING_SUBMIT_CONCLUSIVE_CODES,
+  TRAINING_SUBMIT_RECOVERY_DELAYS_MS,
   type TrainingQuotePreview,
 } from '~/components/AppBlocks/runTrainingGate';
 
@@ -132,13 +134,58 @@ describe('submitTrainingWithRecovery', () => {
     expect(sleep.mock.calls.map((c) => c[0])).toEqual([10, 20, 30]);
   });
 
-  it('after a transport loss, a different server error is the real outcome and is thrown', async () => {
+  it.each(['NOT_FOUND', 'BAD_REQUEST'])(
+    'after a transport loss, %s proves no run started and is thrown',
+    async (code) => {
+      const submit = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(transport())
+        .mockRejectedValueOnce(coded(code));
+      await expect(submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).rejects.toThrow(code);
+      expect(submit).toHaveBeenCalledTimes(2);
+    }
+  );
+
+  it('only BAD_REQUEST and NOT_FOUND are conclusive after a transport loss', () => {
+    expect([...TRAINING_SUBMIT_CONCLUSIVE_CODES].sort()).toEqual(['BAD_REQUEST', 'NOT_FOUND']);
+  });
+
+  it.each([
+    'UNAUTHORIZED',
+    'INTERNAL_SERVER_ERROR',
+    'TOO_MANY_REQUESTS',
+    'SERVICE_UNAVAILABLE',
+    'FORBIDDEN',
+  ])(
+    'after a transport loss, %s (may come from a check before the claim) keeps waiting and ends unconfirmed',
+    async (code) => {
+      const submit = vi
+        .fn<() => Promise<string>>()
+        .mockRejectedValueOnce(transport())
+        .mockRejectedValue(coded(code));
+      expect(await submitTrainingWithRecovery(submit, sleep, [1, 2])).toEqual({
+        unconfirmed: true,
+      });
+      expect(submit).toHaveBeenCalledTimes(3);
+    }
+  );
+
+  it('a pre-claim error that clears (e.g. a refreshed token) still reaches the replay', async () => {
     const submit = vi
       .fn<() => Promise<string>>()
       .mockRejectedValueOnce(transport())
-      .mockRejectedValueOnce(coded('NOT_FOUND'));
-    await expect(submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).rejects.toThrow('NOT_FOUND');
-    expect(submit).toHaveBeenCalledTimes(2);
+      .mockRejectedValueOnce(coded('UNAUTHORIZED'))
+      .mockResolvedValueOnce('replayed');
+    expect(await submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).toEqual({
+      result: 'replayed',
+    });
+  });
+
+  it('the resend schedule is pinned: seven resends over about a minute', () => {
+    expect(TRAINING_SUBMIT_RECOVERY_DELAYS_MS).toEqual([
+      1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000,
+    ]);
+    expect(TRAINING_SUBMIT_RECOVERY_DELAYS_MS.reduce((a, b) => a + b, 0)).toBe(60_000);
   });
 
   it('an outcome still unknown after every delay is UNCONFIRMED, not an error', async () => {
