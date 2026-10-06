@@ -10,7 +10,7 @@ import {
   buildResourceIntentStage1Request,
   compileCriteria,
   parseResourceIntentStage1Answers,
-} from '~/server/services/resource-intent.service';
+} from '~/server/services/resource-intent-stage1';
 import {
   RESOURCE_INTENT_SPEC_HASH,
   ROLE_MODEL_TYPES,
@@ -83,7 +83,9 @@ export const GOLDSET_CALIBRATION_BUCKETS = 10;
  * vendor: the conditions of `imageWhere` in `src/server/search-index/images.search-index.ts`
  * (the publicly searchable image: not in a review queue, not ToS-violating, minor or POI,
  * in a post that is published, not scheduled, and neither Private nor Unsearchable),
- * plus public meta, a non-empty prompt, no `blockedFor`, and the window.
+ * plus public meta, a non-empty prompt, no `blockedFor`, the window, and NO attached model
+ * flagged POI or minor — an image's own `poi`/`minor` flags are derived from its models
+ * only at scan time, so a model flagged since does not reach them.
  * ⚠️ `ingestion = 'Scanned'` is deliberately STRICTER than `imageWhere`'s
  * `imageReviewedSql()`, which also admits locked-rating images whose scan never ran — do
  * not "align" it. Requires the caller to join `"Post" p ON p.id = i."postId"`. One
@@ -103,6 +105,14 @@ const GOLDSET_ELIGIBLE_IMAGE = (days: number) => Prisma.sql`
   AND p."publishedAt" <= now()
   AND p.availability != 'Private'::"Availability"
   AND p.availability != 'Unsearchable'::"Availability"
+  AND NOT EXISTS (
+    SELECT 1
+    FROM "ImageResourceNew" fr
+    JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId"
+    JOIN "Model" fm ON fm.id = fmv."modelId"
+    WHERE fr."imageId" = i.id
+      AND (fm.poi OR fm.minor)
+  )
 `;
 
 /**

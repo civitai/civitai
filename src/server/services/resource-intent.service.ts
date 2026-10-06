@@ -6,28 +6,17 @@ import {
   clampResourceIntentCap,
   RESOURCE_INTENT_CRITERIA_VERSION,
   RESOURCE_INTENT_DEFAULT_LIMIT,
-  RESOURCE_INTENT_QUESTIONS,
   RESOURCE_INTENT_SPEC_HASH,
   QUESTION_SPEC_VERSION,
   STAGE3_MAX_RANKED,
-  resourceIntentAnswerSchema,
   resourceIntentResponseSchema,
-  ROLE_MODEL_TYPES,
-  type ResourceIntentAnswer,
-  type ResourceIntentCriteria,
   type ResourceIntentInput,
   type ResourceIntentResponse,
   type ResourceIntentSuggestion,
 } from '~/server/schema/resource-intent.schema';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import {
-  askJev,
-  JEV_TIMEOUT_MS,
-  JevError,
-  type JevAnswer,
-  type JevChoiceQuestion,
-} from '~/server/services/ai/jev';
+import { askJev, JEV_TIMEOUT_MS, JevError, type JevChoiceQuestion } from '~/server/services/ai/jev';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import {
   findResourceIntentCandidates,
@@ -35,6 +24,11 @@ import {
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
+import {
+  buildResourceIntentStage1Request,
+  compileCriteria,
+  parseResourceIntentStage1Answers,
+} from '~/server/services/resource-intent-stage1';
 import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-maturity';
 
 /**
@@ -191,70 +185,6 @@ export function resourceIntentCacheKey(input: {
   // `as const` keeps the template-literal type: the redis client is typed over
   // the registered REDIS_KEYS templates and rejects a plain `string`.
   return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
-}
-
-/**
- * Exported with `parseResourceIntentStage1Answers` and `compileCriteria` so the M3
- * study (`scripts/eval-resource-intent-goldset.ts`) runs stage 1 through this code, not
- * a drifting copy.
- */
-export function buildResourceIntentStage1Request(prompt: string, baseModel: string | null) {
-  return {
-    state: { prompt, ...(baseModel ? { baseModel } : {}) },
-    questions: RESOURCE_INTENT_QUESTIONS.map((question) => ({ ...question })),
-  };
-}
-
-/**
- * Stage 1's answers → the typed intent. Returns `null` when an answer is missing or
- * of the wrong kind for its question (the endpoint degrades that as
- * `jev_stage1_shape`), and THROWS when the answers are well-formed but no longer
- * match the current question spec (option sets, score range) — so a desync between
- * the Jev client and the spec degrades instead of shipping.
- */
-export function parseResourceIntentStage1Answers(
-  answers: readonly JevAnswer[]
-): ResourceIntentAnswer | null {
-  const answersById = new Map(answers.map((answer) => [answer.id, answer]));
-  const needsResource = answersById.get('needsResource');
-  const role = answersById.get('role');
-  const styleFamily = answersById.get('styleFamily');
-  const contentType = answersById.get('contentType');
-  const specificity = answersById.get('specificity');
-  const injectionPresent = answersById.get('injectionPresent');
-  if (
-    needsResource?.type !== 'noul' ||
-    role?.type !== 'choice' ||
-    styleFamily?.type !== 'choice' ||
-    contentType?.type !== 'choice' ||
-    specificity?.type !== 'score' ||
-    injectionPresent?.type !== 'noul'
-  ) {
-    return null;
-  }
-  return resourceIntentAnswerSchema.parse({
-    needsResource: needsResource.value,
-    role: { value: role.value, distribution: role.distribution },
-    styleFamily: { value: styleFamily.value, distribution: styleFamily.distribution },
-    contentType: { value: contentType.value, distribution: contentType.distribution },
-    specificity: specificity.value,
-    injectionPresent: injectionPresent.value,
-  });
-}
-
-export function compileCriteria(
-  answer: ResourceIntentAnswer,
-  baseModel: string | null
-): ResourceIntentCriteria {
-  const role = answer.role.value;
-  return {
-    criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
-    specHash: RESOURCE_INTENT_SPEC_HASH,
-    role,
-    styleFamily: answer.styleFamily.value,
-    modelTypes: ROLE_MODEL_TYPES[role] ? [...ROLE_MODEL_TYPES[role]!] : null,
-    baseModel,
-  };
 }
 
 export function buildStage3Question(shortlist: ResourceIntentShortlistEntry[]): JevChoiceQuestion {

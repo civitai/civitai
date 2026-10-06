@@ -31,6 +31,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/services/ai/jev.ts`                          | Vendor seam. Pinned model, fail-closed validation, 2s timeout.                                                                      |
 | `src/server/schema/resource-intent.schema.ts`            | Question spec v1, criteria schema, role→ModelType mapping, spec hash.                                                               |
 | `src/server/services/resource-intent.service.ts`         | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
+| `src/server/services/resource-intent-stage1.ts`          | Stage 1 as pure functions (request, answer parse, criteria compile), shared by the service and the M3 study. Imports only the schema and a jev type, so a standalone script can load it. |
 | `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + purpose-then-popularity seeded pool + `ResourceInsight` ordering + hard cap.                                  |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
@@ -442,7 +443,7 @@ since the runnable evaluator was in the tree the whole time.
 
 It has two parts, both drawn under ONE eligibility rule — the publicly searchable image
 (`imageWhere` in `src/server/search-index/images.search-index.ts`) with a public,
-non-empty prompt, since those prompts go to the vendor. The matched draw is shared:
+non-empty prompt and no attached model flagged POI or minor, since those prompts go to the vendor. The matched draw is shared:
 part one takes a prefix, part two the first `sampleSize`; part one's unmatched half is
 a separate draw. **Part one** measures **stage-1 agreement** against that
 corpus (role vs the resource types a prompt actually attached, `needsResource`
@@ -470,8 +471,12 @@ McNemar p < 0.05 on the hit@10 discordant pairs; and every run reports exactly o
 verdict on the closing clause — **MET** (the rule holds), **NOT MET** (it does not: the
 clause is judged not met, the question is closed as not delivered, and any follow-up
 such as better gold or new labels is new work under a new registration, not a re-run of
-this one) or **VOID** (a registered value was overridden, no prompt scored, or both arms
-returned the same top 10 on every scored prompt). The labeled/unlabeled breakdown is
+this one) or **VOID** — the run is too degraded or too different to judge the clause: a
+registered value was overridden, fewer than 667 prompts scored (the n the power
+calculation assumes), infrastructure exclusions (stage-1 failures, arm errors, label-read
+fallbacks) exceed 10% of drawn prompts, or both arms returned the same top 10 on every
+scored prompt. VOID is checked before the decision rule, so a degraded run can never
+produce a binding NOT MET (or MET). The labeled/unlabeled breakdown is
 reported but never decisive.
 
 **Run the pilot first.** Before the registered run, run
@@ -515,4 +520,5 @@ Unit suites (fixture-based, no external calls):
 - `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
+- `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks the dry run prints its queries and the pre-registration. The in-process suites cannot see a load-time import cycle; this can.
 - `scripts/__tests__/eval-resource-intent-retrieval.test.ts` — the M3 retrieval metric math against literal values, the verdict mapping, the pre-registration constants, both arms over an in-memory index, and the CLI gate.

@@ -1,5 +1,3 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import type { SearchParams } from 'meilisearch';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -69,7 +67,7 @@ const { buildResourceIntentFilter } = await import(
   '~/server/services/resource-intent-matcher.service'
 );
 const { buildResourceIntentStage1Request, compileCriteria } = await import(
-  '~/server/services/resource-intent.service'
+  '~/server/services/resource-intent-stage1'
 );
 const { ROLE_MODEL_TYPES } = await import('~/server/schema/resource-intent.schema');
 const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
@@ -153,6 +151,7 @@ describe('the pre-registration', () => {
       cap: 50,
       labeledIndexFloor: 100,
       powerAssumption: { discordantRate: 0.15, scoredFraction: 0.667 },
+      voidIf: { minScored: 667, maxInfraExclusionFraction: 0.1 },
       pilotSampleSize: 100,
     });
     expect(M3_RETRIEVAL_PREREGISTRATION).not.toHaveProperty('bootstrapSeed');
@@ -178,10 +177,12 @@ describe('the pre-registration', () => {
         '  NOT MET — it does not. The closing clause is judged not met and the question is',
         '            closed as not delivered. Any follow-up (better gold, new labels) is new',
         '            work under a new registration, not a re-run of this one.',
-        '  VOID    — no verdict on the clause: any registered value was overridden (including',
-        '            the 100-prompt pilot), no prompt scored, or both arms returned the same',
-        '            first 10 model ids on every scored prompt. (A failed positive control',
-        '            aborts before any run, so it produces no report at all.)',
+        '  VOID    — no verdict on the clause, if ANY of: a registered value was overridden',
+        '            (including the 100-prompt pilot); fewer than 667 prompts scored (the n the',
+        '            power calculation assumes); infrastructure exclusions (stage-1 failure,',
+        '            arm error, label-read fallback) exceed 10% of drawn prompts; or both',
+        '            arms returned the same first 10 model ids on every scored prompt. (A failed',
+        '            positive control aborts before any run, so it produces no report at all.)',
       ],
       [
         'Known confound: people attach popular models, so attached-resource gold is biased',
@@ -239,49 +240,24 @@ describe('part one report — stage-1 skips are counted, not silent', () => {
   });
 });
 
-describe('the gold-set SQL — invariant guards on the query TEXT', () => {
-  // Text checks, not behaviour: the behaviour was measured against a real Postgres when
-  // this was written (the unquoted original failed with 42703). These only stop a
-  // regression of the spelling.
-  const matched = goldsetModule.GOLDSET_MATCHED_SQL(30, 10).sql;
-  const unmatched = goldsetModule.GOLDSET_UNMATCHED_SQL(30, 10).sql;
+describe('the gold-set SQL — the WHOLE query text, pinned', () => {
+  // Pinned as one whitespace-normalised string, not as a list of words: a word list
+  // passed with `AND i.poi = false` turned into `OR i.poi = false`, with a predicate
+  // OR'd to true, and with the sample's `ORDER BY rnd` deleted. Any edit to these
+  // queries now has to edit this text too, which is the point — they decide whose prompt
+  // reaches the vendor. Behaviour was checked against a real Postgres when written.
+  const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
-  it('quotes every camel-case column', () => {
-    for (const sql of [matched, unmatched]) {
-      expect(sql).toContain('i."hideMeta" = false');
-      expect(sql).toContain('i."tosViolation" = false');
-      expect(sql).toContain('i."blockedFor" IS NULL');
-      expect(sql).not.toMatch(/\bi\.hideMeta\b/);
-    }
-    expect(matched).toContain('mv."baseModel"');
-    expect(matched).not.toMatch(/mv\.baseModel\b/);
+  it('🔴 the matched query: eligibility, the sample-first CTE in random order, the gold', () => {
+    expect(norm(goldsetModule.GOLDSET_MATCHED_SQL(30, 10).sql)).toBe(
+      'WITH sampled AS ( SELECT i.id, i.meta->>\'prompt\' AS prompt, random() AS rnd FROM "Image" i JOIN "Post" p ON p.id = i."postId" WHERE i."createdAt" > now() - make_interval(days => ?::int) AND i."hideMeta" = false AND length(i.meta->>\'prompt\') > 0 AND i.ingestion = \'Scanned\' AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false AND p."publishedAt" IS NOT NULL AND p."publishedAt" <= now() AND p.availability != \'Private\'::"Availability" AND p.availability != \'Unsearchable\'::"Availability" AND NOT EXISTS ( SELECT 1 FROM "ImageResourceNew" fr JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId" JOIN "Model" fm ON fm.id = fmv."modelId" WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor) ) AND EXISTS (SELECT 1 FROM "ImageResourceNew" r WHERE r."imageId" = i.id) ORDER BY rnd LIMIT ?::int ) SELECT s.id AS "imageId", s.prompt, array_agg(DISTINCT m.type::text) AS "attachedTypes", array_agg(DISTINCT mv."baseModel") AS "attachedBaseModels", jsonb_agg(DISTINCT jsonb_build_object(\'modelId\', m.id, \'modelType\', m.type::text)) AS "attachedModels", COALESCE( array_agg(DISTINCT mv."baseModel") FILTER (WHERE m.type = \'Checkpoint\'), ARRAY[]::text[] ) AS "checkpointBaseModels" FROM sampled s JOIN "ImageResourceNew" irn ON irn."imageId" = s.id JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId" JOIN "Model" m ON m.id = mv."modelId" GROUP BY s.id, s.prompt, s.rnd ORDER BY s.rnd'
+    );
   });
 
-  it('admits only eligible images to either query', () => {
-    for (const sql of [matched, unmatched]) {
-      for (const predicate of [
-        "i.ingestion = 'Scanned'",
-        'i."needsReview" IS NULL',
-        'i.minor = false',
-        'i.poi = false',
-        "length(i.meta->>'prompt') > 0",
-        'i."createdAt" > now() - make_interval(days =>',
-        'JOIN "Post" p ON p.id = i."postId"',
-        'p."publishedAt" IS NOT NULL',
-        'p."publishedAt" <= now()',
-        `p.availability != 'Private'::"Availability"`,
-        `p.availability != 'Unsearchable'::"Availability"`,
-      ]) {
-        expect(sql).toContain(predicate);
-      }
-    }
-  });
-
-  it('samples images BEFORE joining, and carries the model-level gold', () => {
-    expect(matched).toMatch(/WITH sampled AS \(\s+SELECT i\.id/);
-    expect(matched).toContain("jsonb_build_object('modelId', m.id, 'modelType', m.type::text)");
-    expect(matched).toContain("FILTER (WHERE m.type = 'Checkpoint')");
-    expect(matched).toContain('ORDER BY s.rnd');
+  it('🔴 the unmatched query: the same eligibility, no attachments', () => {
+    expect(norm(goldsetModule.GOLDSET_UNMATCHED_SQL(30, 10).sql)).toBe(
+      'SELECT i.id AS "imageId", i.meta->>\'prompt\' AS prompt, ARRAY[]::text[] AS "attachedTypes", ARRAY[]::text[] AS "attachedBaseModels" FROM "Image" i JOIN "Post" p ON p.id = i."postId" WHERE i."createdAt" > now() - make_interval(days => ?::int) AND i."hideMeta" = false AND length(i.meta->>\'prompt\') > 0 AND i.ingestion = \'Scanned\' AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false AND p."publishedAt" IS NOT NULL AND p."publishedAt" <= now() AND p.availability != \'Private\'::"Availability" AND p.availability != \'Unsearchable\'::"Availability" AND NOT EXISTS ( SELECT 1 FROM "ImageResourceNew" fr JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId" JOIN "Model" fm ON fm.id = fmv."modelId" WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor) ) AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" irn WHERE irn."imageId" = i.id) ORDER BY random() LIMIT ?::int'
+    );
   });
 });
 
@@ -395,7 +371,11 @@ describe('evaluateRetrieval', () => {
     expect(e.primary.mcnemarP).toBe(1);
     expect(e.primary.purposeBeatsPopularity).toBe(false); // b > c, but p = 1
     expect(e.identicalAtPrimaryK).toBe(1);
-    expect(e.verdict.verdict).toBe('NOT MET');
+    // 3 infrastructure exclusions of 9 drawn: the run is too degraded to judge.
+    expect(e.verdict).toEqual({
+      verdict: 'VOID',
+      reason: 'infrastructure exclusions 3 of 9 drawn exceed 10%',
+    });
   });
 
   it('scores the secondary K and MRR on the same rows', () => {
@@ -449,7 +429,8 @@ describe('evaluateRetrieval', () => {
     expect(e.primary).toMatchObject({ b: 12, c: 0 });
     expect(e.primary.mcnemarP).toBeCloseTo(2 / 4096, 12);
     expect(e.primary.purposeBeatsPopularity).toBe(true);
-    expect(e.verdict.verdict).toBe('MET');
+    // The rule holds, but 12 scored is under the registered minimum: VOID, not MET.
+    expect(e.verdict.verdict).toBe('VOID');
   });
 
   it('a SIGNIFICANT PURPOSE loss is not a win', () => {
@@ -464,7 +445,6 @@ describe('evaluateRetrieval', () => {
     expect(e.primary.mcnemarP).toBeLessThan(0.05);
     expect(e.primary.difference).toBe(-1);
     expect(e.primary.purposeBeatsPopularity).toBe(false);
-    expect(e.verdict.verdict).toBe('NOT MET');
   });
 
   it('an empty scored set has no difference and no win, and is VOID', () => {
@@ -496,8 +476,8 @@ describe('evaluateRetrieval', () => {
       '| gold labeled | 2 | 50.0% | 50.0% | 1 | 1 | 1.00 |',
       '| gold unlabeled | 2 | 100.0% | 50.0% | 1 | 0 | 1.00 |',
       'Difference (PURPOSE - POPULARITY): 25.0%. Decision rule (b > c AND p < 0.05): does not hold.',
-      '## Verdict: NOT MET',
-      'NOT MET — the decision rule does not hold (b = 2, c = 1); the question is closed as not delivered.',
+      '## Verdict: VOID',
+      'VOID — infrastructure exclusions 3 of 9 drawn exceed 10%.',
       'Positive control: 7000 index documents carry a non-none `insight.role` (floor 100).',
       // The pilot's two rates: 4 of 9 drawn scored; (2 + 1) / 4 discordant.
       'Power assumption — scored fraction: 44.4% of drawn (assumed >= 66.7%); discordant rate (b + c) / scored at hit@10: 75.0% (assumed >= 15.0%). 🔴 BELOW THE ASSUMPTION — re-plan the sample size in a new commit before the registered run.',
@@ -513,36 +493,61 @@ describe('evaluateRetrieval', () => {
 // ---------------------------------------------------------------------------
 
 describe('retrievalVerdict — MET / NOT MET / VOID', () => {
-  const winning = Array.from({ length: 12 }, (_, i) =>
-    scoredOutcome(i + 1, {
-      purposeModelIds: rankedWith(100, 1),
-      popularityModelIds: rankedWith(null, 1),
-    })
-  );
-  // The same 12 rows with PURPOSE's head identical to POPULARITY's (both miss).
-  const identical = Array.from({ length: 12 }, (_, i) =>
-    scoredOutcome(i + 1, {
-      purposeModelIds: rankedWith(null, 1),
-      popularityModelIds: rankedWith(null, 1),
-    })
-  );
+  /**
+   * A registered-size run: `p` PURPOSE-only hits, `q` POPULARITY-only, `both` and
+   * `neither` shared, plus `infra` infrastructure exclusions spread over all three kinds.
+   */
+  const run = ({
+    p = 0,
+    q = 0,
+    both = 0,
+    neither = 0,
+    infra = [0, 0, 0] as [number, number, number],
+  }) => {
+    let id = 0;
+    const scored = (hitP: boolean, hitQ: boolean) =>
+      scoredOutcome(++id, {
+        purposeModelIds: rankedWith(hitP ? 100 : null, 1),
+        // A POPULARITY list that differs from PURPOSE's even when both miss.
+        popularityModelIds: hitQ ? rankedWith(100, 2) : rankedWith(null, 1).map((x) => x + 5000),
+      });
+    const excluded = (status: 'stage1_failed' | 'arm_error' | 'insight_fallback') =>
+      ({
+        imageId: ++id,
+        status,
+        role: status === 'stage1_failed' ? null : 'style',
+        attachedCount: 1,
+        checkpointCount: 0,
+        inRoleCount: status === 'stage1_failed' ? 0 : 1,
+      } as Outcome);
+    return [
+      ...Array.from({ length: p }, () => scored(true, false)),
+      ...Array.from({ length: q }, () => scored(false, true)),
+      ...Array.from({ length: both }, () => scored(true, true)),
+      ...Array.from({ length: neither }, () => scored(false, false)),
+      ...Array.from({ length: infra[0] }, () => excluded('stage1_failed')),
+      ...Array.from({ length: infra[1] }, () => excluded('arm_error')),
+      ...Array.from({ length: infra[2] }, () => excluded('insight_fallback')),
+    ];
+  };
   const verdictOf = (rows: Outcome[], params = PREREGISTERED_RUN_PARAMS) =>
-    evaluateRetrieval(rows, params).verdict.verdict;
+    evaluateRetrieval(rows, params).verdict;
 
-  it('MET iff the decision rule holds on a registered, scoring, non-identical run', () => {
-    expect(verdictOf(winning)).toBe('MET');
+  // 700 scored: 100 vs 50 discordant (p ≈ 6e-5) — the rule holds.
+  const winning = run({ p: 100, q: 50, both: 200, neither: 350 });
+
+  it('MET iff the decision rule holds on a registered, scoring, non-degraded run', () => {
+    expect(verdictOf(winning).verdict).toBe('MET');
   });
 
   it('NOT MET when the rule fails: a loss, a tie, a non-significant win', () => {
-    const flip = (rows: Outcome[]) =>
-      rows.map((r) =>
-        r.status === 'scored'
-          ? { ...r, purposeModelIds: r.popularityModelIds, popularityModelIds: r.purposeModelIds }
-          : r
-      );
-    expect(verdictOf(flip(winning))).toBe('NOT MET');
-    expect(verdictOf([...winning.slice(0, 3), ...flip(winning).slice(3, 6)])).toBe('NOT MET');
-    expect(verdictOf(winning.slice(0, 3))).toBe('NOT MET'); // b = 3, c = 0, p = 0.25
+    expect(verdictOf(run({ p: 50, q: 100, both: 200, neither: 350 })).verdict).toBe('NOT MET');
+    expect(verdictOf(run({ p: 60, q: 60, both: 200, neither: 380 })).verdict).toBe('NOT MET');
+    const nonSignificant = verdictOf(run({ p: 60, q: 50, both: 200, neither: 390 }));
+    expect(nonSignificant.verdict).toBe('NOT MET');
+    expect(nonSignificant.reason).toBe(
+      'the decision rule does not hold (b = 60, c = 50); the question is closed as not delivered'
+    );
   });
 
   it('VOID — and never MET — on an overridden run, even one the rule would pass', () => {
@@ -554,20 +559,54 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
     });
   });
 
-  it('VOID when no prompt scored, and when the arms are identical at K on every scored prompt', () => {
-    expect(verdictOf([])).toBe('VOID');
-    expect(evaluateRetrieval(identical).verdict).toEqual({
+  it('VOID when no prompt scored', () => {
+    expect(verdictOf([])).toEqual({ verdict: 'VOID', reason: 'no prompt scored' });
+  });
+
+  it('🔴 VOID below the minimum scored n — 667 is judged, 666 is not', () => {
+    // A rule-passing split at both sizes: 100 vs 50 discordant.
+    expect(verdictOf(run({ p: 100, q: 50, both: 200, neither: 317 })).verdict).toBe('MET');
+    expect(verdictOf(run({ p: 100, q: 50, both: 200, neither: 316 }))).toEqual({
+      verdict: 'VOID',
+      reason: '666 prompts scored, under the 667 the power calculation assumes',
+    });
+    // The degraded-run shape that motivated it: ~50 scored, a non-significant split.
+    expect(verdictOf(run({ p: 14, q: 11, neither: 25 })).verdict).toBe('VOID');
+  });
+
+  it('🔴 VOID when infrastructure exclusions exceed 10% of drawn — 100 of 1000 is judged, 101 is not', () => {
+    // 900 scored + 100 infra = 1000 drawn: exactly 10%, judged.
+    expect(
+      verdictOf(run({ p: 100, q: 50, both: 200, neither: 550, infra: [34, 33, 33] })).verdict
+    ).toBe('MET');
+    // 899 scored + 101 infra: over 10%. Every kind counts toward it.
+    expect(verdictOf(run({ p: 100, q: 50, both: 200, neither: 549, infra: [34, 34, 33] }))).toEqual(
+      {
+        verdict: 'VOID',
+        reason: 'infrastructure exclusions 101 of 1000 drawn exceed 10%',
+      }
+    );
+  });
+
+  it('VOID when the arms are identical at K on every scored prompt', () => {
+    const identical = Array.from({ length: 700 }, (_, i) =>
+      scoredOutcome(i + 1, {
+        purposeModelIds: rankedWith(null, 1),
+        popularityModelIds: rankedWith(null, 1),
+      })
+    );
+    expect(verdictOf(identical)).toEqual({
       verdict: 'VOID',
       reason: 'both arms returned the same first 10 model ids on every scored prompt',
     });
     // One prompt that differs is enough to leave VOID.
-    expect(verdictOf([...identical, winning[0]])).toBe('NOT MET');
+    expect(verdictOf([...identical, ...run({ p: 1 })]).verdict).toBe('NOT MET');
   });
 
   it('the report prints exactly one verdict', () => {
     for (const [rows, params, expected] of [
       [winning, PREREGISTERED_RUN_PARAMS, 'MET'],
-      [winning.slice(0, 3), PREREGISTERED_RUN_PARAMS, 'NOT MET'],
+      [run({ p: 60, q: 50, both: 200, neither: 390 }), PREREGISTERED_RUN_PARAMS, 'NOT MET'],
       [winning, { ...PREREGISTERED_RUN_PARAMS, sampleDays: 7 }, 'VOID'],
     ] as const) {
       const report = renderRetrievalReport(evaluateRetrieval(rows, params), {
@@ -579,13 +618,17 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
   });
 
   it('is a pure mapping over the evaluation fields', () => {
+    const base = {
+      overrides: [],
+      drawn: 700,
+      excluded: { stage1_failed: 0, arm_error: 0, insight_fallback: 0 },
+      primary: { n: 700, b: 100, c: 50 },
+      identicalAtPrimaryK: 0,
+    };
+    expect(retrievalVerdict(base).verdict).toBe('MET');
+    expect(retrievalVerdict({ ...base, identicalAtPrimaryK: 700 }).verdict).toBe('VOID');
     expect(
-      retrievalVerdict({ overrides: [], primary: { n: 12, b: 12, c: 0 }, identicalAtPrimaryK: 0 })
-        .verdict
-    ).toBe('MET');
-    expect(
-      retrievalVerdict({ overrides: [], primary: { n: 12, b: 12, c: 0 }, identicalAtPrimaryK: 12 })
-        .verdict
+      retrievalVerdict({ ...base, excluded: { ...base.excluded, insight_fallback: 71 } }).verdict
     ).toBe('VOID');
   });
 });
@@ -1314,13 +1357,13 @@ describe('main — the --execute gate', () => {
     const report = log.mock.calls.map((call) => String(call[0])).join('\n');
     // Part one: the first ceil(2/2) = 1 matched row + no unmatched rows.
     expect(report).toContain('Judged 1 of 1 drawn rows; 0 skipped on a stage-1 failure.');
-    // A registered run: scored at hit@10, the labeled model reaches the strata, and one
-    // discordant pair cannot pass McNemar, so the one verdict is NOT MET.
+    // A registered run, scored at hit@10; the labeled model reaches the strata.
     expect(report).toContain('## Primary: hit@10');
     expect(report).toContain('| all scored | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
     expect(report).toContain('| gold labeled | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
+    // One scored prompt is far under the registered minimum: VOID, and exactly one verdict.
     expect(report.split('\n').filter((l) => l.startsWith('## Verdict: '))).toEqual([
-      '## Verdict: NOT MET',
+      '## Verdict: VOID',
     ]);
     expect(report).not.toContain('NOT THE PRE-REGISTERED RUN');
   });

@@ -62,6 +62,18 @@ import {
  *     run, on top of part one's own ~`--limit` stage-1 calls (about half of them
  *     re-judging prompts in this sample, with no baseModel).
  *   - `cap` 50 = `RESOURCE_INTENT_DEFAULT_LIMIT`, the width a caller gets by default.
+ *   - `voidIf` — a run too degraded to judge the clause is VOID, not a binding NOT MET:
+ *     - `minScored` 667: the scored n the power calculation above assumes (1000 drawn ×
+ *       66.7%). Below it the registered power no longer holds, so a failure to reach
+ *       significance is not a powered negative. A substantive shortfall (many `none` or
+ *       no-in-role prompts) lands here too — which is what the pilot exists to catch
+ *       before the registered run.
+ *     - `maxInfraExclusionFraction` 0.10: stage-1 failures, arm errors and label-read
+ *       fallbacks are infrastructure, not properties of the prompt. They are not random
+ *       missingness — a quota or an outage takes out a contiguous slice of the run — so
+ *       above 10% of drawn prompts the scored set is no longer the registered sample.
+ *       10% leaves the rest of the 33.3% exclusion budget the power assumption allows to
+ *       the substantive exclusions.
  *   - `labeledIndexFloor` 100: the positive control. The PURPOSE arm filters on
  *     `insight.role`; if no index document carries one, its purpose page is empty, it
  *     degenerates to the popularity arm, and the study reads "no difference" — a null
@@ -79,6 +91,7 @@ export const M3_RETRIEVAL_PREREGISTRATION = {
   cap: RESOURCE_INTENT_DEFAULT_LIMIT,
   labeledIndexFloor: 100,
   powerAssumption: { discordantRate: 0.15, scoredFraction: 0.667 },
+  voidIf: { minScored: 667, maxInfraExclusionFraction: 0.1 },
   pilotSampleSize: 100,
 } as const;
 
@@ -117,7 +130,7 @@ export function renderRetrievalPreregistration(): string {
     'non-empty public prompt (hideMeta false) and >=1 attached resource, that are publicly',
     'searchable: scanned, not in a review queue, not ToS-violating, blocked, or flagged',
     'minor or POI, in a published (not scheduled) post that is neither Private nor',
-    'Unsearchable.',
+    'Unsearchable, and with no attached model flagged POI or minor.',
     "Stage 1: run per prompt through the endpoint's own request builder and answer parser,",
     "with baseModel = the base model of the image's attached checkpoint when exactly one",
     'is attached, otherwise none. Stage 3 is not run by either arm.',
@@ -141,10 +154,14 @@ export function renderRetrievalPreregistration(): string {
     '  NOT MET — it does not. The closing clause is judged not met and the question is',
     '            closed as not delivered. Any follow-up (better gold, new labels) is new',
     '            work under a new registration, not a re-run of this one.',
-    `  VOID    — no verdict on the clause: any registered value was overridden (including`,
-    `            the ${p.pilotSampleSize}-prompt pilot), no prompt scored, or both arms returned the same`,
-    `            first ${k} model ids on every scored prompt. (A failed positive control`,
-    '            aborts before any run, so it produces no report at all.)',
+    `  VOID    — no verdict on the clause, if ANY of: a registered value was overridden`,
+    `            (including the ${p.pilotSampleSize}-prompt pilot); fewer than ${p.voidIf.minScored} prompts scored (the n the`,
+    `            power calculation assumes); infrastructure exclusions (stage-1 failure,`,
+    `            arm error, label-read fallback) exceed ${(
+      p.voidIf.maxInfraExclusionFraction * 100
+    ).toFixed(0)}% of drawn prompts; or both`,
+    `            arms returned the same first ${k} model ids on every scored prompt. (A failed`,
+    '            positive control aborts before any run, so it produces no report at all.)',
     '',
     `Secondary (reported, never decisive): hit@${p.secondaryK} and MRR@${p.secondaryK}, and`,
     `hit@${k} stratified by whether any gold model carries a non-stale ResourceInsight`,
@@ -512,6 +529,10 @@ export type ArmComparison = {
 
 export type RetrievalVerdict = 'MET' | 'NOT MET' | 'VOID';
 
+/** Exclusions caused by infrastructure, not by the prompt. */
+const INFRA_EXCLUSIONS = ['stage1_failed', 'arm_error', 'insight_fallback'] as const;
+type INFRA_EXCLUSION = (typeof INFRA_EXCLUSIONS)[number];
+
 export type RetrievalEvaluation = {
   params: RetrievalRunParams;
   overrides: string[];
@@ -544,9 +565,12 @@ export type RetrievalEvaluation = {
  */
 export function retrievalVerdict(e: {
   overrides: readonly string[];
+  drawn: number;
+  excluded: Pick<Record<RetrievalExclusion, number>, INFRA_EXCLUSION>;
   primary: Pick<ArmComparison, 'n' | 'b' | 'c'>;
   identicalAtPrimaryK: number;
 }): { verdict: RetrievalVerdict; reason: string } {
+  const { minScored, maxInfraExclusionFraction } = M3_RETRIEVAL_PREREGISTRATION.voidIf;
   if (e.overrides.length) {
     return {
       verdict: 'VOID',
@@ -554,6 +578,21 @@ export function retrievalVerdict(e: {
     };
   }
   if (e.primary.n === 0) return { verdict: 'VOID', reason: 'no prompt scored' };
+  const infra = INFRA_EXCLUSIONS.reduce((sum, key) => sum + e.excluded[key], 0);
+  if (infra > maxInfraExclusionFraction * e.drawn) {
+    return {
+      verdict: 'VOID',
+      reason: `infrastructure exclusions ${infra} of ${e.drawn} drawn exceed ${
+        maxInfraExclusionFraction * 100
+      }%`,
+    };
+  }
+  if (e.primary.n < minScored) {
+    return {
+      verdict: 'VOID',
+      reason: `${e.primary.n} prompts scored, under the ${minScored} the power calculation assumes`,
+    };
+  }
   if (e.identicalAtPrimaryK === e.primary.n) {
     return {
       verdict: 'VOID',
@@ -669,7 +708,13 @@ export function evaluateRetrieval(
       ),
     },
     identicalAtPrimaryK,
-    verdict: retrievalVerdict({ overrides, primary, identicalAtPrimaryK }),
+    verdict: retrievalVerdict({
+      overrides,
+      drawn: outcomes.length,
+      excluded,
+      primary,
+      identicalAtPrimaryK,
+    }),
   };
 }
 
