@@ -63,6 +63,7 @@ describe('CreatorScoreExplainer', () => {
   it('names every scored category and the activity behind it', () => {
     const text = visibleText(render(React.createElement(CreatorScoreExplainer)));
 
+    expect(text).toContain('It grows when people use, react to, and follow your work.');
     expect(text).toContain('Models: Downloads, generations, and positive reviews of models');
     expect(text).toContain('Images: Reactions and comments on images');
     expect(text).toContain('Articles: Views, reactions, and comments on articles');

@@ -2,7 +2,10 @@ import { capitalize } from '~/utils/string-helpers';
 
 export const CREATOR_SCORE_ANCHOR = 'creator-score';
 
-/** What earns score on each kind of work. Every surface that names these builds from here. */
+/**
+ * What earns score on each kind of work. Main-app surfaces build from here; Creator Studio cannot
+ * import it and keeps its own copy in `CREATOR_SCORE_TIPS`, so change both together.
+ */
 export const creatorScoreActivities = {
   models: 'downloads, generations, and positive reviews',
   images: 'reactions and comments',

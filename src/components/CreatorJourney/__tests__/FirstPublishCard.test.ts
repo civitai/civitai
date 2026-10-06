@@ -171,8 +171,7 @@ describe('FirstPublishCardView', () => {
       );
       const counts = el.querySelectorAll('p')[1]?.textContent ?? '';
       const activities = counts.slice(0, counts.indexOf(' on it now count'));
-      expect(activities).not.toBe('');
-      expect(earnedBy.startsWith(activities)).toBe(true);
+      expect(activities).toBe(earnedBy.replace(/ (of|on) \w+$/, ''));
     }
   );
 
