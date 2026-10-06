@@ -5760,6 +5760,8 @@ export interface Crucible {
   entryLimit: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
+  entryWarningPercent: number;
+  entryCutoffPercent: number;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: JsonValue;

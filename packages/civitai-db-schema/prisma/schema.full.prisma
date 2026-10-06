@@ -9071,6 +9071,10 @@ model Crucible {
   // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
   freeEntriesPerUser Int           @default(0)
   maxTotalEntries   Int?
+  // Shares of the run, counted back from the end: the submit modal warns from the first, and
+  // entries close at the second.
+  entryWarningPercent Int          @default(20)
+  entryCutoffPercent Int           @default(0)
   minViewSeconds    Int?
   maxClipSeconds    Int?
   prizePositions    Json           @default("[]")

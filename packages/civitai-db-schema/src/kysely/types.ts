@@ -2494,6 +2494,8 @@ export type Crucible = {
   entryLimit: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
+  entryWarningPercent: Generated<number>;
+  entryCutoffPercent: Generated<number>;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: Generated<unknown>;

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { crucibleDetailSelect } from '~/server/selectors/crucible.selector';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
   getAverageFinishTopPercent,
@@ -20,6 +21,8 @@ import {
   CRUCIBLE_SFW_LEVELS,
   getCrucibleEntryBuzzType,
   isCrucibleFinalStretch,
+  areCrucibleEntriesClosed,
+  getCrucibleEntriesCloseAt,
   isCrucibleSfw,
   isFreeCrucibleEntry,
   parsePrizePositions,
@@ -305,6 +308,55 @@ describe('isCrucibleFinalStretch', () => {
   it('is false without both dates', () => {
     expect(isCrucibleFinalStretch({ startAt: null, endAt, now: new Date() })).toBe(false);
     expect(isCrucibleFinalStretch({ startAt, endAt: null, now: new Date() })).toBe(false);
+  });
+
+  it("uses the crucible's own share when given one", () => {
+    // 40% of 24h is 9.6h: from 14:24.
+    const at40 = (iso: string) =>
+      isCrucibleFinalStretch({ startAt, endAt, percent: 40, now: new Date(iso) });
+    expect(at40('2026-10-01T14:00:00Z')).toBe(false);
+    expect(at40('2026-10-01T14:30:00Z')).toBe(true);
+  });
+});
+
+describe('crucible entry cutoff', () => {
+  // The page and modal gate on these; without them a crucible reads as open to the end.
+  it('is read by the crucible selector', () => {
+    expect(crucibleDetailSelect).toMatchObject({
+      startAt: true,
+      endAt: true,
+      entryWarningPercent: true,
+      entryCutoffPercent: true,
+    });
+  });
+
+  const startAt = new Date('2026-10-01T00:00:00Z');
+  const endAt = new Date('2026-10-02T00:00:00Z'); // 24h, so 10% is 2.4h: entries close at 21:36
+  const window = (entryCutoffPercent: number) => ({ startAt, endAt, entryCutoffPercent });
+
+  it('closes entries the cutoff share of the run before the end', () => {
+    expect(getCrucibleEntriesCloseAt(window(10))).toEqual(new Date('2026-10-01T21:36:00Z'));
+  });
+
+  it('is open until the close time and closed from it', () => {
+    expect(areCrucibleEntriesClosed(window(10), new Date('2026-10-01T21:35:59Z'))).toBe(false);
+    expect(areCrucibleEntriesClosed(window(10), new Date('2026-10-01T21:36:00Z'))).toBe(true);
+  });
+
+  it('with no cutoff, closes only at the end', () => {
+    expect(getCrucibleEntriesCloseAt(window(0))).toEqual(endAt);
+    expect(areCrucibleEntriesClosed(window(0), new Date('2026-10-01T23:59:59Z'))).toBe(false);
+    expect(areCrucibleEntriesClosed(window(0), endAt)).toBe(true);
+  });
+
+  it('without a start, ignores the cutoff and closes at the end', () => {
+    const noStart = { startAt: null, endAt, entryCutoffPercent: 10 };
+    expect(areCrucibleEntriesClosed(noStart, new Date('2026-10-01T23:00:00Z'))).toBe(false);
+    expect(areCrucibleEntriesClosed(noStart, new Date('2026-10-02T00:00:01Z'))).toBe(true);
+  });
+
+  it('never closes a crucible with no end', () => {
+    expect(areCrucibleEntriesClosed({ startAt, endAt: null, entryCutoffPercent: 10 })).toBe(false);
   });
 });
 

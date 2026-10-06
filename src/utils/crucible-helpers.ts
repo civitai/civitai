@@ -1,7 +1,10 @@
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
-import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
+import {
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+  crucibleRankingsAreFinal,
+} from '~/shared/constants/crucible.constants';
 import {
   allBrowsingLevelsFlag,
   browsingLevelLabels,
@@ -383,22 +386,50 @@ export function getCrucibleMinVotes({
   return Math.ceil((totalVotes * CRUCIBLE_MIN_VOTES_PERCENT) / (entryCount * 100));
 }
 
-const FINAL_STRETCH_FRACTION = 0.2;
-
-/** The last fifth of a crucible's run, when a new entry may not collect enough votes to place. */
+/**
+ * The last `percent` of a crucible's run, when a new entry may not collect enough votes to place.
+ * Defaults to the warning share a crucible gets unless its creator picks another.
+ */
 export function isCrucibleFinalStretch({
   startAt,
   endAt,
+  percent = CRUCIBLE_ENTRY_WARNING_PERCENT.default,
   now = new Date(),
 }: {
   startAt: Date | null;
   endAt: Date | null;
+  percent?: number;
   now?: Date;
 }) {
   if (!startAt || !endAt) return false;
   const end = new Date(endAt).getTime();
   const remaining = end - now.getTime();
-  return remaining > 0 && remaining <= (end - new Date(startAt).getTime()) * FINAL_STRETCH_FRACTION;
+  return remaining > 0 && remaining * 100 <= (end - new Date(startAt).getTime()) * percent;
+}
+
+/** When a crucible stops taking entries: `entryCutoffPercent` of its run before the end. */
+export function getCrucibleEntriesCloseAt({
+  startAt,
+  endAt,
+  entryCutoffPercent,
+}: {
+  startAt: Date | null;
+  endAt: Date | null;
+  entryCutoffPercent: number;
+}): Date | null {
+  if (!endAt) return null;
+  const end = new Date(endAt).getTime();
+  if (!startAt || !entryCutoffPercent) return new Date(end);
+  const run = end - new Date(startAt).getTime();
+  return new Date(end - Math.floor((run * entryCutoffPercent) / 100));
+}
+
+export function areCrucibleEntriesClosed(
+  crucible: { startAt: Date | null; endAt: Date | null; entryCutoffPercent: number },
+  now: Date = new Date()
+) {
+  const closeAt = getCrucibleEntriesCloseAt(crucible);
+  return !!closeAt && now >= closeAt;
 }
 
 /**
