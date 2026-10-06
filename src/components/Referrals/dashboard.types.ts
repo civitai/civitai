@@ -25,6 +25,14 @@ export const RECRUITER_RANKS: RecruiterRank[] = [
   { key: 'ambassador', name: 'Ambassador', min: 200_000 },
 ];
 
+export const RECRUITER_RANK_ACCENT: Record<RecruiterRank['key'], string> = {
+  rookie: 'gray',
+  recruit: 'teal',
+  advocate: 'blue',
+  champion: 'grape',
+  ambassador: 'yellow',
+};
+
 export const MILESTONE_NAMES: Record<number, string> = {
   1_000: 'Rookie',
   10_000: 'Recruit',
