@@ -70,6 +70,7 @@ export type CreatorScoreTier = {
   name: string;
   threshold: number;
   hint: string | null;
+  badgeUrl?: string | null;
 };
 
 export type CreatorScoreRung = {

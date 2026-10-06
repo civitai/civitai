@@ -4,6 +4,7 @@ import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.cons
 import { ArticleStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
+import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
 import {
   creatorAggregateScoreFromMeta,
@@ -52,24 +53,33 @@ const milestoneSelect = {
 async function getScoreTierDefinitions() {
   return dbRead.creatorMilestone.findMany({
     where: { track: 'score', threshold: { not: null } },
-    select: milestoneSelect,
+    select: { ...milestoneSelect, cosmetic: { select: { data: true } } },
     orderBy: [{ threshold: 'asc' }, { sortOrder: 'asc' }],
   });
 }
 
-function toTier(milestone: MilestoneDefinition): CreatorScoreTier {
+type TierDefinition = MilestoneDefinition & { cosmetic?: { data: unknown } | null };
+
+function toTier(milestone: TierDefinition, earned: boolean): CreatorScoreTier {
+  const visible = maskUnearnedMilestone(milestone, earned);
+  // A masked tier's art would give it away as surely as its name.
+  const badgeUrl =
+    visible === milestone
+      ? (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null
+      : null;
   return {
-    key: milestone.key,
-    name: milestone.name,
-    threshold: milestone.threshold as number,
-    hint: milestone.hint,
+    key: visible.key,
+    name: visible.name,
+    threshold: visible.threshold as number,
+    hint: visible.hint,
+    badgeUrl,
   };
 }
 
 /** The live unlocks and the score tiers, for anyone. Hidden tiers are masked: nobody has earned them here. */
 export async function getCreatorScoreLadder() {
   const [unlocks, tiers] = await Promise.all([getCreatorScoreUnlocks(), getScoreTierDefinitions()]);
-  return { unlocks, tiers: tiers.map((tier) => toTier(maskUnearnedMilestone(tier, false))) };
+  return { unlocks, tiers: tiers.map((tier) => toTier(tier, false)) };
 }
 
 export async function getCreatorJourney(userId: number) {
@@ -86,6 +96,8 @@ export async function getCreatorJourney(userId: number) {
 
   const rawScores = (user?.meta as { scores?: Partial<UserScoreMeta> } | null)?.scores ?? null;
   const earnedKeys = new Set(achievements.map((a) => a.milestone.key));
+  const tiers = tierDefinitions.map((tier) => toTier(tier, earnedKeys.has(tier.key)));
+  const badgeUrlByKey = new Map(tiers.map((tier) => [tier.key, tier.badgeUrl ?? null]));
 
   return {
     scores: rawScores
@@ -97,14 +109,14 @@ export async function getCreatorJourney(userId: number) {
         }
       : null,
     unlocks,
-    tiers: tierDefinitions.map((tier) =>
-      toTier(maskUnearnedMilestone(tier, earnedKeys.has(tier.key)))
-    ),
+    tiers,
     earned: achievements.map(({ achievedAt, milestone }) => ({
       key: milestone.key,
       track: milestone.track,
+      threshold: milestone.threshold,
       name: milestone.name,
       description: milestone.description,
+      badgeUrl: badgeUrlByKey.get(milestone.key) ?? null,
       achievedAt,
     })),
   };
