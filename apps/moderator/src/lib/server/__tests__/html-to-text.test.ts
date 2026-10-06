@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { HTML_MAX_CHARS, TEXT_MAX_CHARS, decodeEntities, htmlToText } from '../html-to-text';
+import {
+  HTML_MAX_CHARS,
+  TEXT_MAX_CHARS,
+  convertHtml,
+  decodeEntities,
+  htmlToText,
+} from '../html-to-text';
 
 /**
  * Freshdesk description HTML → the text the ticket page shows. Synthetic inputs only, shaped like the
@@ -121,6 +127,22 @@ describe('htmlToText on hostile input', () => {
 
   it('a tag cut off by the end of the input is dropped, not shown as raw markup', () => {
     expect(htmlToText('<p>question?</p><img src="data:image/png;base64,AAAA')).toBe('question?');
+  });
+
+  it('says whether it read the whole input — false for each of the three early stops', () => {
+    expect(convertHtml('<p>all of it</p>').complete).toBe(true);
+    expect(convertHtml('x'.repeat(HTML_MAX_CHARS + 1)).complete).toBe(false);
+    expect(convertHtml(`<pre>${' '.repeat(TEXT_MAX_CHARS + 10)}</pre><p>after</p>`).complete).toBe(
+      false
+    );
+    expect(convertHtml('<p>q</p><img src="data:,AAAA').complete).toBe(false);
+  });
+
+  it('runs of <br> do not spend the output cap on newlines nobody sees', () => {
+    expect(convertHtml('<br>'.repeat(60_000) + '<p>REAL MESSAGE</p>')).toEqual({
+      text: 'REAL MESSAGE',
+      complete: true,
+    });
   });
 
   it('reads at most HTML_MAX_CHARS of input', () => {

@@ -18,8 +18,8 @@
  * generous: a long `<head>` or an inline image must not push the message itself past the cut.
  */
 export const HTML_MAX_CHARS = 2_000_000;
-/** Characters of TEXT produced before stopping. Above what any caller shows, so a caller that caps
- *  lower still sees that there was more. */
+/** The scan stops once it has produced more text than this (one text run can carry it past). Above
+ *  what any caller shows, so a caller that caps lower still sees that there was more. */
 export const TEXT_MAX_CHARS = 50_000;
 /** Deepest list indent drawn. Nesting past it still bullets, flush with this level. */
 const MAX_INDENT = 8;
@@ -110,7 +110,17 @@ function trailing(s: string, set: string): number {
 }
 const SPACE = ' \t';
 
-export function htmlToText(input: string): string {
+/** The converted text, and whether ALL of the input was read. */
+export type HtmlText = { text: string; complete: boolean };
+
+export const htmlToText = (input: string): string => convertHtml(input).text;
+
+/**
+ * 🔴 `complete` IS THE ONLY HONEST ANSWER TO "IS THIS THE WHOLE MESSAGE?" — the scan stops early for
+ * three reasons (the input cap, the output cap, a tag cut off by the end), and a caller re-deriving
+ * any one of them from the input misses the other two.
+ */
+export function convertHtml(input: string): HtmlText {
   const html = input.length > HTML_MAX_CHARS ? input.slice(0, HTML_MAX_CHARS) : input;
   const parts: string[] = [];
   // The output's tail, tracked as parts are pushed so nothing ever re-reads the output.
@@ -198,7 +208,9 @@ export function htmlToText(input: string): string {
       // A break before an item's first text would separate the bullet from it.
       if (marker) continue;
       dropTrailingSpace();
-      push('\n');
+      // Past two in a row nothing more is visible (the final pass collapses them), and the output
+      // cap must not be spent on invisible newlines.
+      if (pre || trailingNewlines < 2) push('\n');
     } else if (name === 'li') {
       // An item that never got any text is dropped, marker and all.
       if (marker) {
@@ -235,11 +247,13 @@ export function htmlToText(input: string): string {
     }
   }
 
-  return parts
+  const complete = input.length <= HTML_MAX_CHARS && i >= html.length;
+  const text = parts
     .join('')
     .split('\n')
     .map((l) => l.slice(0, l.length - trailing(l, SPACE)))
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  return { text, complete };
 }

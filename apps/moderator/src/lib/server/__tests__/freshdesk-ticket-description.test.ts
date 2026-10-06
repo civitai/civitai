@@ -113,8 +113,23 @@ describe('getTicketDescription', () => {
     );
     expect(await getTicketDescription('40017')).toEqual({
       status: 'unavailable',
-      reason: 'The message is too large to show here — open it in Freshdesk.',
+      reason: 'Too large to show here; open it in Freshdesk.',
     });
+  });
+
+  it('a message emptied by the OUTPUT cap is not "no description" either', async () => {
+    fetchMock.mockResolvedValueOnce(
+      ticket({ description: `<pre>${'\n'.repeat(60_000)}</pre><p>the real message</p>` })
+    );
+    expect((await getTicketDescription('40017')).status).toBe('unavailable');
+  });
+
+  it('text cut by the output cap is marked truncated even under DESCRIPTION_MAX_CHARS', async () => {
+    fetchMock.mockResolvedValueOnce(
+      ticket({ description: `<p>Hi</p><pre>${'\n'.repeat(60_000)}</pre><p>more</p>` })
+    );
+    const out = await getTicketDescription('40017');
+    expect(out).toMatchObject({ status: 'found', truncated: true });
   });
 
   it('text that survives the input cap is marked truncated', async () => {
