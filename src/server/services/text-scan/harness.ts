@@ -56,7 +56,29 @@ const entityType = z
   .refine(isTextScanEntityType, 'unknown text-scan entity type')
   .transform((value) => value as TextScanEntityType);
 const moderatorId = z.number().int().positive();
-export const SCAN_TEXTS_BUDGET_SECONDS = 120;
+export const HARNESS_BUDGET_SECONDS = 120;
+const waitSeconds = z.number().int().min(1).max(HARNESS_BUDGET_SECONDS).default(90);
+
+/**
+ * Each wave of `concurrency` items can take up to `wait` seconds; past the budget the caller (and any
+ * proxy in front of it) times out while every submitted workflow still bills.
+ */
+function refineTimeBudget(noun: string) {
+  return (
+    { items, concurrency, wait }: { items: number; concurrency: number; wait: number },
+    ctx: z.RefinementCtx
+  ) => {
+    const worstCase = Math.ceil(items / concurrency) * wait;
+    if (worstCase > HARNESS_BUDGET_SECONDS)
+      ctx.addIssue({
+        code: 'custom',
+        path: ['wait'],
+        message: `${items} ${noun} at concurrency ${concurrency} and wait ${wait}s could take ${worstCase}s; keep ceil(${noun} / concurrency) * wait within ${HARNESS_BUDGET_SECONDS}s`,
+      });
+  };
+}
+const textsWithinBudget = refineTimeBudget('texts');
+const entitiesWithinBudget = refineTimeBudget('entities');
 /**
  * Sized for real entities, which production composes in full and then truncates to `maxInputChars`:
  * a Model emits up to three fields per version. Mirrored by the moderator lab
@@ -130,18 +152,22 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     promptOverrides,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
-    wait: z.number().int().min(1).max(120).default(90),
+    wait: waitSeconds,
   }),
-  z.object({
-    action: z.literal('batchEntities'),
-    entityType,
-    entityIds: z.array(z.number().int().positive()).min(1).max(50),
-    promptOverrides,
-    model: z.string().min(1).optional(),
-    thinking: z.boolean().optional(),
-    concurrency: z.number().int().min(1).max(8).default(3),
-    wait: z.number().int().min(1).max(120).default(90),
-  }),
+  z
+    .object({
+      action: z.literal('batchEntities'),
+      entityType,
+      entityIds: z.array(z.number().int().positive()).min(1).max(50),
+      promptOverrides,
+      model: z.string().min(1).optional(),
+      thinking: z.boolean().optional(),
+      concurrency: z.number().int().min(1).max(8).default(3),
+      wait: waitSeconds,
+    })
+    .superRefine(({ entityIds, concurrency, wait }, ctx) =>
+      entitiesWithinBudget({ items: entityIds.length, concurrency, wait }, ctx)
+    ),
   z.object({
     action: z.literal('sampleShadow'),
     entityType,
@@ -175,19 +201,11 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
-      wait: z.number().int().min(1).max(120).default(90),
+      wait: waitSeconds,
     })
-    .superRefine(({ texts, concurrency, wait }, ctx) => {
-      // Each wave of `concurrency` texts can take up to `wait` seconds; past the budget the caller
-      // (and any proxy in front of it) times out while every submitted workflow still bills.
-      const worstCase = Math.ceil(texts.length / concurrency) * wait;
-      if (worstCase > SCAN_TEXTS_BUDGET_SECONDS)
-        ctx.addIssue({
-          code: 'custom',
-          path: ['wait'],
-          message: `${texts.length} texts at concurrency ${concurrency} and wait ${wait}s could take ${worstCase}s; keep ceil(texts / concurrency) * wait within ${SCAN_TEXTS_BUDGET_SECONDS}s`,
-        });
-    }),
+    .superRefine(({ texts, concurrency, wait }, ctx) =>
+      textsWithinBudget({ items: texts.length, concurrency, wait }, ctx)
+    ),
   z.object({
     action: z.literal('quoteTexts'),
     entityType,
@@ -425,6 +443,12 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
+/** A ChatMessage window spans several messages; a test case built from it must outlive none of them. */
+function sourceIdsOf(subject: TextScanSubject) {
+  const ids = subject.meta?.messageIds;
+  return Array.isArray(ids) ? { sourceIds: ids as number[] } : {};
+}
+
 async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {
   const profile = requireProfile(entityType);
   const [subjects, config] = await Promise.all([profile.load(entityIds), getTextScanConfig()]);
@@ -441,6 +465,7 @@ async function composeEntities(entityType: TextScanEntityType, entityIds: number
         typeof text === 'string' && text.trim() ? [{ heading, text }] : []
       ),
       userId: subject.userId ?? null,
+      ...sourceIdsOf(subject),
     };
   });
   return { entityType, results };

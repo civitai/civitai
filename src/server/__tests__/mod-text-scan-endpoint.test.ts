@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseModule from '~/server/clickhouse/client';
 import type * as HarnessModule from '~/server/services/text-scan/harness';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const { session, mockAudit } = vi.hoisted(() => ({
   session: { current: null as null | { user: Record<string, unknown> } },
@@ -26,9 +27,14 @@ vi.mock('~/server/services/text-scan/harness', async (importOriginal) => ({
 
 const { default: handler, config } = await import('~/pages/api/mod/text-scan');
 const { runTextScanHarnessAction } = await import('~/server/services/text-scan/harness');
+const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
 
-function call(body: unknown, query: Record<string, string> = {}) {
-  const req = { method: 'POST', headers: {}, query, body } as never;
+function call(
+  body: unknown,
+  query: Record<string, string> = {},
+  headers: Record<string, string> = {}
+) {
+  const req = { method: 'POST', headers, query, body } as never;
   let statusCode = 200;
   let payload: unknown;
   const res = {
@@ -149,5 +155,49 @@ describe('mod/text-scan', () => {
       (await call({ action: 'sampleShadow', entityType: 'Post', label: 'nsfw', format: 'csv' }))
         .body
     ).toEqual({ csv: '"a","b"' });
+  });
+
+  describe('actions that return entity text', () => {
+    const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
+    const asApiKey = (tokenScope: number) => {
+      vi.mocked(getSessionFromBearerToken).mockResolvedValue({
+        user: MOD_USER,
+        tokenScope,
+      } as never);
+      return { authorization: 'Bearer key' };
+    };
+    const textActions = [
+      { action: 'composeEntities', entityType: 'Post', entityIds: [1] },
+      { action: 'sampleShadow', entityType: 'Post', label: 'nsfw' },
+      { action: 'scanEntity', entityType: 'Post', entityId: 1 },
+      { action: 'batchEntities', entityType: 'Post', entityIds: [1], wait: 30 },
+    ];
+
+    it.each(textActions)('$action refuses a narrowly-scoped API key', async (body) => {
+      const res = await call(body, {}, asApiKey(TokenScope.UserRead | TokenScope.ModelsRead));
+      expect(res.status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    });
+
+    it.each(textActions)('$action serves a full-scope API key', async (body) => {
+      expect((await call(body, {}, asApiKey(TokenScope.Full))).status).toBe(200);
+      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(textActions)('$action serves a session', async (body) => {
+      expect((await call(body)).status).toBe(200);
+    });
+
+    it.each([
+      { action: 'getPrompts' },
+      { action: 'quoteEntities', entityType: 'Post', entityIds: [1] },
+      {
+        action: 'scanTexts',
+        entityType: 'Comment',
+        texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
+      },
+    ])('$action serves a narrowly-scoped API key', async (body) => {
+      expect((await call(body, {}, asApiKey(TokenScope.UserRead))).status).toBe(200);
+    });
   });
 });

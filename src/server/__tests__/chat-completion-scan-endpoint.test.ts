@@ -270,6 +270,7 @@ describe('chat-completion-scan text-scan actions', () => {
       entityType: 'Post',
       entityIds: [1, 2, 99],
       concurrency: 1,
+      wait: 40,
     });
     expect(submitWorkflow).toHaveBeenCalledTimes(2);
     expect(res._body()).toMatchObject({
@@ -490,6 +491,22 @@ registerTextScanProfile({
           ],
           declared: {},
           userId: 3,
+        },
+      ])
+    ),
+});
+registerTextScanProfile({
+  entityType: 'ChatMessage',
+  labels: ['scam'],
+  load: async (ids) =>
+    new Map(
+      ids.map((id) => [
+        id,
+        {
+          fields: [{ heading: 'Messages, newest first', text: 'newest message\nolder message' }],
+          declared: {},
+          userId: 5,
+          meta: { chatId: 9, senderId: 5, messageIds: [id, 21] },
         },
       ])
     ),
@@ -723,6 +740,21 @@ describe('free-text actions', () => {
       ],
     });
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('composeEntities returns the id of every message in a ChatMessage window', async () => {
+    const res = await runTextScanHarnessAction(
+      textScanHarnessSchema.parse({
+        action: 'composeEntities',
+        entityType: 'ChatMessage',
+        entityIds: [30],
+      }),
+      { moderatorId: 1 }
+    );
+    expect(res.body).toMatchObject({
+      entityType: 'ChatMessage',
+      results: [{ entityId: 30, ok: true, sourceIds: [30, 21], userId: 5 }],
+    });
   });
 
   it('composeEntities drops fields whose text is null or blank', async () => {
@@ -1012,6 +1044,42 @@ describe('free-text actions', () => {
     expect((res._body() as { issues: Array<{ path: unknown[] }> }).issues[0].path).toEqual([
       'wait',
     ]);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { ids: 9, concurrency: 8, wait: 61 },
+    { ids: 4, concurrency: undefined, wait: undefined },
+  ])('batchEntities refuses a request that could outrun the time budget (%o)', async (shape) => {
+    const res = await call({
+      action: 'batchEntities',
+      entityType: 'Comment',
+      entityIds: Array.from({ length: shape.ids }, (_, i) => i + 1),
+      concurrency: shape.concurrency,
+      wait: shape.wait,
+    });
+    expect(res._status()).toBe(400);
+    expect((res._body() as { issues: Array<{ path: unknown[] }> }).issues[0].path).toEqual([
+      'wait',
+    ]);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('batchEntities accepts one wave of 8 at wait 60', () => {
+    expect(
+      textScanHarnessSchema.safeParse({
+        action: 'batchEntities',
+        entityType: 'Comment',
+        entityIds: [1, 2, 3, 4, 5, 6, 7, 8],
+        concurrency: 8,
+        wait: 60,
+      }).success
+    ).toBe(true);
+  });
+
+  it('scanEntity refuses a wait past the time budget', async () => {
+    const res = await call({ action: 'scanEntity', entityType: 'Comment', entityId: 7, wait: 121 });
+    expect(res._status()).toBe(400);
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 

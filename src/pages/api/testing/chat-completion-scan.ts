@@ -64,7 +64,8 @@
  *   { "action": "batchEntities", "entityType": "...", "entityIds": [1, 2], ... }
  *     `scanEntity` over up to 50 ids, with outcome counts, refusal rate and
  *     per-label firing counts. Text below the profile's minChars is not sent, and an
- *     item whose prompt key is missing counts as `missing_prompt`.
+ *     item whose prompt key is missing counts as `missing_prompt`. Refused when
+ *     ceil(ids / concurrency) * wait exceeds 120 seconds, as is scanTexts over its texts.
  *
  *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
  *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
