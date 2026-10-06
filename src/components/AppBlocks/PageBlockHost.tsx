@@ -55,8 +55,8 @@ import { CreatePostConsentBody } from './CreatePostConsentBody';
 import {
   buildTrainingConsentCopy,
   resolveRunTrainingRequest,
-  submitTrainingWithRecovery,
-  TRAINING_SUBMIT_RECOVERY_DELAYS_MS,
+  trainingSubmitReplyFromError,
+  trainingSubmitReplyFromResult,
   type TrainingQuotePreview,
 } from './runTrainingGate';
 import { TrainingConsentBody } from './TrainingConsentBody';
@@ -922,12 +922,6 @@ export function PageBlockHost({
   // cover that remainder — a drop there fails FAST instead of hanging.
   const statusRef = useRef<Status>('loading');
   statusRef.current = status;
-  // The latest page token and the block it was minted for, for a training resend that
-  // outlives the token it started with. The run page reuses this host across a soft
-  // navigation to another app, so a resend takes the refreshed token only while it is
-  // still for the block the request started on.
-  const latestTokenRef = useRef({ token, blockInstanceId });
-  latestTokenRef.current = { token, blockInstanceId };
   // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
   // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
@@ -4496,7 +4490,6 @@ export function PageBlockHost({
         return;
       }
       const { requestId, quoteId, body } = gate.request;
-      const requestInstanceId = blockInstanceId;
       const settlement = createPostSettlement({
         requestId,
         emit: (payload) => send('TRAINING_RESULT', payload),
@@ -4546,25 +4539,20 @@ export function PageBlockHost({
                   blockToken: token,
                   quoteId,
                 });
-                const outcome = await submitTrainingWithRecovery(
-                  () =>
-                    submitWorkflowMutation.mutateAsync({
-                      blockToken:
-                        (latestTokenRef.current.blockInstanceId === requestInstanceId
-                          ? latestTokenRef.current.token
-                          : null) ?? token,
-                      // Schema-validated server-side and checked against the quote's
-                      // body hash; the host never renders or trusts it.
-                      body: body as never,
-                    }),
-                  (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-                  TRAINING_SUBMIT_RECOVERY_DELAYS_MS
-                );
-                settlement.reply(
-                  'result' in outcome
-                    ? { snapshot: outcome.result.snapshot }
-                    : { error: 'submission-unconfirmed' }
-                );
+                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+                try {
+                  result = await submitWorkflowMutation.mutateAsync({
+                    blockToken: token,
+                    // Schema-validated server-side and checked against the quote's
+                    // body hash; the host never renders or trusts it.
+                    body: body as never,
+                  });
+                } catch (err) {
+                  // Never resent: the quote is spent once. See runTrainingGate.ts.
+                  settlement.reply(trainingSubmitReplyFromError(err));
+                  return;
+                }
+                settlement.reply(trainingSubmitReplyFromResult(result));
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
               }
@@ -4586,7 +4574,6 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
-    blockInstanceId,
   ]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the

@@ -29,7 +29,7 @@ import {
 //   - `classifyGatedImageForViewer` says `visible` under the token's maturity
 //     ceiling — the same predicate the app's gated reads use.
 //
-// The rule is re-run on the primary before a run is quoted or charged
+// The rule is re-run on the primary before a run is charged
 // (`assertBlockTrainingDatasetStillEligible`): a handle lives 24h, and an image
 // moderated after preparation must not be trained on.
 //
@@ -357,8 +357,7 @@ export async function loadBlockTrainingDataset(
 
 /**
  * Re-run admission for every image of a prepared dataset, on the PRIMARY, and refuse
- * the run if any no longer passes. Called before a training run is quoted and again
- * before it is charged.
+ * the run if any no longer passes. Called before a training run is charged.
  */
 export async function assertBlockTrainingDatasetStillEligible(
   dataset: BlockTrainingDataset,

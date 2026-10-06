@@ -1,11 +1,10 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import {
   buildTrainingConsentCopy,
   isTrainingSubmitTransportError,
-  submitTrainingWithRecovery,
   resolveRunTrainingRequest,
-  TRAINING_SUBMIT_CONCLUSIVE_CODES,
-  TRAINING_SUBMIT_RECOVERY_DELAYS_MS,
+  trainingSubmitReplyFromError,
+  trainingSubmitReplyFromResult,
   type TrainingQuotePreview,
 } from '~/components/AppBlocks/runTrainingGate';
 
@@ -101,100 +100,40 @@ describe('isTrainingSubmitTransportError', () => {
   });
 });
 
-describe('submitTrainingWithRecovery', () => {
-  const transport = () => new Error('Failed to fetch');
-  const coded = (code: string) => Object.assign(new Error(code), { data: { code } });
-  const sleep = vi.fn(async () => undefined);
+describe('training submit replies', () => {
+  const coded = (code: string, message = code) =>
+    Object.assign(new Error(message), { data: { code } });
 
-  it('returns the first result with no resend', async () => {
-    const submit = vi.fn(async () => 'ok');
-    expect(await submitTrainingWithRecovery(submit, sleep, [1, 2])).toEqual({ result: 'ok' });
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  it('a first SERVER refusal is thrown, never resent', async () => {
-    const submit = vi.fn(async () => {
-      throw coded('FORBIDDEN');
-    });
-    await expect(submitTrainingWithRecovery(submit, sleep, [1, 2])).rejects.toThrow('FORBIDDEN');
-    expect(submit).toHaveBeenCalledTimes(1);
-  });
-
-  it('after a transport loss, CONFLICT (first attempt still running) means wait and resend', async () => {
-    const submit = vi
-      .fn<() => Promise<string>>()
-      .mockRejectedValueOnce(transport())
-      .mockRejectedValueOnce(coded('CONFLICT'))
-      .mockRejectedValueOnce(coded('CONFLICT'))
-      .mockResolvedValueOnce('replayed');
-    sleep.mockClear();
-    expect(await submitTrainingWithRecovery(submit, sleep, [10, 20, 30, 40])).toEqual({
-      result: 'replayed',
-    });
-    expect(sleep.mock.calls.map((c) => c[0])).toEqual([10, 20, 30]);
-  });
-
-  it('after a transport loss, BAD_REQUEST proves no run started and is thrown', async () => {
-    const submit = vi
-      .fn<() => Promise<string>>()
-      .mockRejectedValueOnce(transport())
-      .mockRejectedValueOnce(coded('BAD_REQUEST'));
-    await expect(submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).rejects.toThrow(
-      'BAD_REQUEST'
-    );
-    expect(submit).toHaveBeenCalledTimes(2);
-  });
-
-  it('only BAD_REQUEST is conclusive after a transport loss', () => {
-    expect([...TRAINING_SUBMIT_CONCLUSIVE_CODES]).toEqual(['BAD_REQUEST']);
-  });
-
-  it.each([
-    'UNAUTHORIZED',
-    'INTERNAL_SERVER_ERROR',
-    'TOO_MANY_REQUESTS',
-    'SERVICE_UNAVAILABLE',
-    'FORBIDDEN',
-    'NOT_FOUND',
-  ])(
-    'after a transport loss, %s (can be true while the first attempt runs) keeps waiting and ends unconfirmed',
-    async (code) => {
-      const submit = vi
-        .fn<() => Promise<string>>()
-        .mockRejectedValueOnce(transport())
-        .mockRejectedValue(coded(code));
-      expect(await submitTrainingWithRecovery(submit, sleep, [1, 2])).toEqual({
-        unconfirmed: true,
-      });
-      expect(submit).toHaveBeenCalledTimes(3);
-    }
-  );
-
-  it('a pre-claim error that clears (e.g. a refreshed token) still reaches the replay', async () => {
-    const submit = vi
-      .fn<() => Promise<string>>()
-      .mockRejectedValueOnce(transport())
-      .mockRejectedValueOnce(coded('UNAUTHORIZED'))
-      .mockResolvedValueOnce('replayed');
-    expect(await submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).toEqual({
-      result: 'replayed',
+  it('a returned run is passed on as its snapshot', () => {
+    expect(trainingSubmitReplyFromResult({ snapshot: { workflowId: '42-1' } })).toEqual({
+      snapshot: { workflowId: '42-1' },
     });
   });
 
-  it('the resend schedule is pinned: seven resends over about a minute', () => {
-    expect(TRAINING_SUBMIT_RECOVERY_DELAYS_MS).toEqual([
-      1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000,
-    ]);
-    expect(TRAINING_SUBMIT_RECOVERY_DELAYS_MS.reduce((a, b) => a + b, 0)).toBe(60_000);
+  it('a server answer marked unconfirmed is `submission-unconfirmed`, never its failed snapshot', () => {
+    expect(
+      trainingSubmitReplyFromResult({
+        snapshot: { workflowId: 'failed', status: 'failed' },
+        submissionUnconfirmed: true,
+      })
+    ).toEqual({ error: 'submission-unconfirmed' });
   });
 
-  it('an outcome still unknown after every delay is UNCONFIRMED, not an error', async () => {
-    const submit = vi.fn(async () => {
-      throw transport();
+  it('only the literal `true` marks it unconfirmed', () => {
+    expect(
+      trainingSubmitReplyFromResult({ snapshot: { workflowId: 'w' }, submissionUnconfirmed: 'yes' })
+    ).toEqual({ snapshot: { workflowId: 'w' } });
+  });
+
+  it('a transport failure is `submission-unconfirmed` (the server may have run it)', () => {
+    expect(trainingSubmitReplyFromError(new Error('Failed to fetch'))).toEqual({
+      error: 'submission-unconfirmed',
     });
-    expect(await submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).toEqual({
-      unconfirmed: true,
+  });
+
+  it('a coded server refusal is passed on as its message', () => {
+    expect(trainingSubmitReplyFromError(coded('FORBIDDEN', 'not confirmed'))).toEqual({
+      error: 'not confirmed',
     });
-    expect(submit).toHaveBeenCalledTimes(4);
   });
 });

@@ -11918,6 +11918,10 @@ async function submitPassThroughStepWorkflow(opts: {
 // Labels are constants (metric cardinality), like the pass-through arm's.
 const TRAINING_ENGINE_LABEL = 'training';
 const TRAINING_RECIPE_LABEL = '__training__';
+// The submit's answer when the orchestrator call was attempted but its outcome is
+// unknown (`submissionUnconfirmed: true` on the result).
+const BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE =
+  'the training run could not be confirmed — it may be running; check your trainings before retrying';
 
 type TrainingRequestAuth = {
   userId: number;
@@ -12054,15 +12058,15 @@ async function authorizeBlockTrainingConsentRequest(
 }
 
 /**
- * The dataset a `kind:'training'` body names — bound to this subject, app and install,
- * with every image re-admitted on the primary — or a refusal.
+ * The dataset a `kind:'training'` body names, bound to this subject, app and install —
+ * or a refusal. Reads only the dataset record; the estimate uses this alone.
  */
-async function loadEligibleBlockTrainingDataset(
+async function loadBoundBlockTrainingDataset(
   claims: BlockClaims,
   userId: number,
   datasetId: string
 ) {
-  const { assertBlockTrainingDatasetStillEligible, loadBlockTrainingDataset } = await import(
+  const { loadBlockTrainingDataset } = await import(
     '~/server/services/blocks/block-training-dataset.service'
   );
   const dataset = await loadBlockTrainingDataset(datasetId, {
@@ -12073,6 +12077,22 @@ async function loadEligibleBlockTrainingDataset(
   if (!dataset) {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'training dataset not found or expired' });
   }
+  return dataset;
+}
+
+/**
+ * The bound dataset with every image re-admitted on the primary — the submit's check,
+ * run before anything is charged.
+ */
+async function loadEligibleBlockTrainingDataset(
+  claims: BlockClaims,
+  userId: number,
+  datasetId: string
+) {
+  const dataset = await loadBoundBlockTrainingDataset(claims, userId, datasetId);
+  const { assertBlockTrainingDatasetStillEligible } = await import(
+    '~/server/services/blocks/block-training-dataset.service'
+  );
   const { resolveViewerBrowsingLevel } = await import(
     '~/server/services/blocks/block-gated-images.service'
   );
@@ -12094,7 +12114,8 @@ async function estimateTrainingWorkflow(opts: {
 }) {
   const { ctx, claims, body } = opts;
   const { userId, user, features } = await assertTrainingRequestAllowed(claims, ctx);
-  const dataset = await loadEligibleBlockTrainingDataset(claims, userId, body.datasetId);
+  // Binding only: images are re-admitted at submit, before anything is charged.
+  const dataset = await loadBoundBlockTrainingDataset(claims, userId, body.datasetId);
 
   const { getTrainingServiceStatus } = await import('~/server/services/training.service');
   const { resolveBlockTrainingRun, hashTrainingBody, storeTrainingQuote } = await import(
@@ -12429,14 +12450,11 @@ async function submitTrainingWorkflow(opts: {
     }
   }
 
-  // ── Submit. On ANY throw after reserving, refund every key.
-  let snapshot: ReturnType<typeof snapshotFromWorkflow>;
-  let realizedTransactions: Awaited<ReturnType<typeof submitWorkflow>>['transactions'];
-  let realizedBaseCost: number | null = null;
-  let realizedPriceIsCap: boolean | null = null;
+  // ── Submit.
   const submittedAt = Date.now();
+  let submitted: Awaited<ReturnType<typeof submitWorkflow>>;
   try {
-    const submitted = await submitWorkflow({
+    submitted = await submitWorkflow({
       token,
       body: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -12447,17 +12465,33 @@ async function submitTrainingWorkflow(opts: {
         externalId: blockExternalId,
       },
     });
+  } catch {
+    // AMBIGUOUS: the orchestrator call was attempted, so the run may exist and be
+    // charged (a lost response on the last internal retry looks exactly like a
+    // refusal here). The reservations are NOT refunded: with no workflow id there is
+    // no settle record, so nothing reconciles them later — each stays counted until
+    // its own window key expires. The run generation is not advanced, so a retry of
+    // this body (after a fresh estimate) reuses the same orchestrator `externalId`.
+    await releaseGenIdempotency(genClaimKey);
+    return {
+      snapshot: {
+        workflowId: 'failed',
+        status: 'failed' as const,
+        cost: { total: runBuzz },
+        error: BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE,
+      },
+      submissionUnconfirmed: true as const,
+    };
+  }
+
+  try {
     // The owner check the training form's own submit runs: a run the orchestrator
-    // attributed to someone else is torn down and refused, and the throw lands in
-    // the refund arm below.
+    // attributed to someone else is torn down and refused — a definite outcome for
+    // this viewer, so their reservations are refunded.
     const { assertWorkflowOwner } = await import(
       '~/server/services/orchestrator/assert-workflow-owner'
     );
     await assertWorkflowOwner(submitted, userId, token);
-    snapshot = snapshotFromWorkflow(submitted);
-    realizedTransactions = submitted.transactions;
-    realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
-    realizedPriceIsCap = submitted.cost?.variable === true;
   } catch (e) {
     await refundBlockBuzzReservation(reservation, runBuzz);
     if (appSpendReserve) {
@@ -12471,6 +12505,10 @@ async function submitTrainingWorkflow(opts: {
     await releaseGenIdempotency(genClaimKey);
     throw e;
   }
+  const snapshot = snapshotFromWorkflow(submitted);
+  const realizedTransactions = submitted.transactions;
+  const realizedBaseCost = typeof submitted.cost?.base === 'number' ? submitted.cost.base : null;
+  const realizedPriceIsCap = submitted.cost?.variable === true;
 
   const genResult = { snapshot };
   await finalizeGenIdempotency(genClaimKey, genResult);

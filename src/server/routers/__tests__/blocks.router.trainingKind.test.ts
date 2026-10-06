@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TRPCError } from '@trpc/server';
 import type * as BridgeAuthModule from '~/server/services/blocks/block-bridge-auth.service';
 import type * as TokenAccessModule from '~/server/services/blocks/block-token-access.service';
 import type * as FlagModule from '~/server/services/app-blocks-flag';
@@ -186,6 +187,20 @@ function installRedis() {
 const keysWith = (prefix: string) => [...store.keys()].filter((k) => k.startsWith(prefix));
 const counter = (prefix: string) =>
   keysWith(prefix).reduce((s, k) => s + Number(store.get(k) ?? 0), 0);
+/** The submit's answer when the orchestrator call was attempted but failed. */
+async function expectUnconfirmed(p: Promise<unknown>) {
+  const r = (await p) as {
+    submissionUnconfirmed?: unknown;
+    snapshot: { workflowId: string; status: string; error?: string };
+  };
+  expect(r.submissionUnconfirmed).toBe(true);
+  expect(r.snapshot.workflowId).toBe('failed');
+  expect(r.snapshot.status).toBe('failed');
+  expect(r.snapshot.error).toBe(
+    'the training run could not be confirmed — it may be running; check your trainings before retrying'
+  );
+  return r;
+}
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const VIEWER = 42;
@@ -719,15 +734,47 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
     expect(counter('system:blocks:buzz-cap')).toBe(0);
   });
 
-  it('refunds every reservation when the orchestrator submit throws', async () => {
+  it.each([
+    [
+      'a lost response on the last retry (503)',
+      () => new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'orchestrator unavailable' }),
+    ],
+    ['any other failure of the call', () => new Error('orchestrator down')],
+  ])(
+    'a failed orchestrator call is AMBIGUOUS — %s: unconfirmed, and NOTHING is refunded',
+    async (_label, makeError) => {
+      const quoteId = await confirmedQuote();
+      h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+        if (args.query?.whatif) return { cost: { total: 1200 } };
+        throw makeError();
+      });
+      const r = await expectUnconfirmed(submit(body({ quoteId })));
+      expect(r.snapshot).toEqual(expect.objectContaining({ cost: { total: 1200 } }));
+      expect(realSubmits()).toHaveLength(1);
+      // The run may exist and be charged: every reservation stays counted.
+      expect(counter('system:blocks:buzz-cap')).toBe(1200);
+      expect(h.refundAppSpend).not.toHaveBeenCalled();
+      // No workflow id, so no settle record, attribution or queue row.
+      expect(h.persistSettle).not.toHaveBeenCalled();
+      expect(h.recordSpendAttribution).not.toHaveBeenCalled();
+      // The run generation did not move (a retry of this body keeps its id)…
+      expect(keysWith(`system:blocks:training-dataset:${DATASET_ID}:runs`)).toEqual([]);
+      // …and the per-quote claim was released: the spent quote is simply gone.
+      await expect(submit(body({ quoteId }))).rejects.toThrow('training quote not found');
+    }
+  );
+
+  it('control: a refusal BEFORE the orchestrator call stays a plain error and refunds', async () => {
     const quoteId = await confirmedQuote();
-    h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
-      if (args.query?.whatif) return { cost: { total: 1200 } };
-      throw new Error('orchestrator down');
-    });
-    await expect(submit(body({ quoteId }))).rejects.toThrow('orchestrator down');
+    h.reserveAppSpend.mockResolvedValueOnce({ allowed: false, reason: 'daily' });
+    const r = (await submit(body({ quoteId }))) as {
+      submissionUnconfirmed?: unknown;
+      snapshot: { error?: string };
+    };
+    expect(r.submissionUnconfirmed).toBeUndefined();
+    expect(r.snapshot.error).toMatch(/app daily spend cap reached/);
+    expect(realSubmits()).toHaveLength(0);
     expect(counter('system:blocks:buzz-cap')).toBe(0);
-    expect(h.refundAppSpend).toHaveBeenCalledWith('app-daily', 1200);
   });
 
   it('tears down and refunds a run the orchestrator attributed to someone else', async () => {
@@ -812,13 +859,28 @@ describe('training — maturity, currency and re-admission', () => {
     expect('allowMatureContent' in b).toBe(false);
   });
 
-  it('an image moderated after preparation blocks the estimate (re-read on the primary)', async () => {
+  it('the estimate does not read the primary: re-admission waits for the submit', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValue([
       imageRow({ id: 1 }),
       imageRow({ id: 2, minor: true }),
     ]);
-    await expect(estimate()).rejects.toThrow('can no longer be used for training');
-    expect(h.submitWorkflow).not.toHaveBeenCalled();
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    expect(snapshot.trainingQuote.quoteId).toMatch(/^tq_/);
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+    // …and the submit's re-admission refuses it before anything is charged.
+    await consent(snapshot.trainingQuote.quoteId);
+    await expect(submit(body({ quoteId: snapshot.trainingQuote.quoteId }))).rejects.toThrow(
+      'can no longer be used for training'
+    );
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+  });
+
+  it('the estimate still refuses a dataset handle bound to another viewer', async () => {
+    seedDataset({ userId: 7 });
+    await expect(estimate()).rejects.toThrow('training dataset not found or expired');
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('…and blocks the charge when it happens between consent and submit', async () => {
@@ -933,10 +995,10 @@ describe('training — idempotency is keyed on the RUN, in a server-only namespa
       throw new Error('socket hang up');
     });
     const q1 = await run();
-    await expect(submit(body({ quoteId: q1 }))).rejects.toThrow('socket hang up');
+    await expectUnconfirmed(submit(body({ quoteId: q1 })));
     const q2 = await run();
     expect(q2).not.toBe(q1);
-    await expect(submit(body({ quoteId: q2 }))).rejects.toThrow('socket hang up');
+    await expectUnconfirmed(submit(body({ quoteId: q2 })));
     const ids = realSubmits().map(
       (c) => (c[0] as { body: { externalId: string } }).body.externalId
     );
@@ -1076,11 +1138,9 @@ describe('training — the run key', () => {
       throw new Error('socket hang up');
     });
     const q1 = await confirmed();
-    await expect(submit(body({ quoteId: q1 }))).rejects.toThrow('socket hang up');
+    await expectUnconfirmed(submit(body({ quoteId: q1 })));
     const q2 = await confirmed(body({ triggerWord: 'otherchar' }));
-    await expect(submit(body({ quoteId: q2, triggerWord: 'otherchar' }))).rejects.toThrow(
-      'socket hang up'
-    );
+    await expectUnconfirmed(submit(body({ quoteId: q2, triggerWord: 'otherchar' })));
     expect(realSubmits()).toHaveLength(2);
     expect(new Set(externalIds()).size).toBe(2);
   });
@@ -1104,11 +1164,16 @@ describe('training — the run key', () => {
 
 describe('training — remaining controls', () => {
   it('re-admission applies the token ceiling: an image re-rated above it blocks the run', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    await consent(snapshot.trainingQuote.quoteId);
     dbMock.dbWrite.$queryRaw.mockResolvedValue([
       imageRow({ id: 1 }),
       imageRow({ id: 2, nsfwLevel: 4 }),
     ]);
-    await expect(estimate()).rejects.toThrow('can no longer be used for training');
+    await expect(submit(body({ quoteId: snapshot.trainingQuote.quoteId }))).rejects.toThrow(
+      'can no longer be used for training'
+    );
+    expect(realSubmits()).toHaveLength(0);
   });
 
   it('the audit strictness follows the token: an all-levels token audits non-green', async () => {
@@ -1156,7 +1221,7 @@ describe('training — the run generation is per BODY', () => {
       }
     );
     const qa = await confirmed();
-    await expect(submit(body({ quoteId: qa }))).rejects.toThrow('socket hang up');
+    await expectUnconfirmed(submit(body({ quoteId: qa })));
     fail = false;
     const qb = await confirmed(body({ triggerWord: 'otherchar' }));
     await submit(body({ quoteId: qb, triggerWord: 'otherchar' }));

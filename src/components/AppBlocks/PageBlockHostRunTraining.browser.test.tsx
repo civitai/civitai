@@ -5,7 +5,6 @@ import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
-import type * as GateMod from '~/components/AppBlocks/runTrainingGate';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
@@ -62,13 +61,6 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       }),
     }
   ),
-}));
-
-// The real resend logic with a zero-wait schedule, so the about-a-minute recovery
-// path (and its `submission-unconfirmed` reply) is reachable in a test.
-vi.mock('~/components/AppBlocks/runTrainingGate', async (importOriginal) => ({
-  ...(await importOriginal<typeof GateMod>()),
-  TRAINING_SUBMIT_RECOVERY_DELAYS_MS: [0, 0],
 }));
 
 // eslint-disable-next-line import/first
@@ -128,7 +120,7 @@ const baseProps = {
 };
 
 async function mount(over: Partial<typeof baseProps> = {}) {
-  const view = renderWithProviders(
+  renderWithProviders(
     <>
       <PageBlockHost {...baseProps} {...over} />
       <DialogProvider />
@@ -138,7 +130,6 @@ async function mount(over: Partial<typeof baseProps> = {}) {
     const el = page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
     if (!el.contentWindow) throw new Error('not mounted yet');
   });
-  return view;
 }
 
 async function driveToReady() {
@@ -332,10 +323,8 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     replies.stop();
   });
 
-  test('a lost submit RESPONSE is resent once (the server replays it), never re-quoted', async () => {
-    submitMutate
-      .mockRejectedValueOnce(new Error('Failed to fetch'))
-      .mockResolvedValueOnce({ snapshot: SNAPSHOT });
+  test('a lost submit RESPONSE replies `submission-unconfirmed` at once and is never resent', async () => {
+    submitMutate.mockRejectedValueOnce(new Error('Failed to fetch'));
     await mount();
     await driveToReady();
     const replies = listenForReply();
@@ -346,11 +335,32 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     await vi.waitFor(() => {
       const r = replies.last('TRAINING_RESULT');
       if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_9', snapshot: SNAPSHOT });
+      expect(r.payload).toEqual({ requestId: 'rq_9', error: 'submission-unconfirmed' });
     });
-    expect(submitMutate).toHaveBeenCalledTimes(2);
-    expect(submitMutate.mock.calls[1]).toEqual(submitMutate.mock.calls[0]);
+    expect(submitMutate).toHaveBeenCalledTimes(1);
     expect(consentMutate).toHaveBeenCalledTimes(1);
+    expect(replies.of('TRAINING_RESULT')).toHaveLength(1);
+    replies.stop();
+  });
+
+  test('a submit the SERVER could not confirm replies `submission-unconfirmed`, not its failed snapshot', async () => {
+    submitMutate.mockResolvedValueOnce({
+      snapshot: { workflowId: 'failed', status: 'failed', error: 'could not be confirmed' },
+      submissionUnconfirmed: true,
+    });
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_11', body: BODY });
+    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
+    await expect.element(confirmBtn).toBeInTheDocument();
+    await confirmBtn.click();
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_11', error: 'submission-unconfirmed' });
+    });
+    expect(submitMutate).toHaveBeenCalledTimes(1);
     replies.stop();
   });
 
@@ -377,100 +387,5 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     });
     expect(submitMutate).toHaveBeenCalledTimes(1);
     replies.stop();
-  });
-
-  test('an outcome still unknown after every resend replies `submission-unconfirmed`, not a bare error', async () => {
-    submitMutate.mockRejectedValue(new Error('Failed to fetch'));
-    await mount();
-    await driveToReady();
-    const replies = listenForReply();
-    postFromBlock('RUN_TRAINING', { requestId: 'rq_11', body: BODY });
-    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
-    await expect.element(confirmBtn).toBeInTheDocument();
-    await confirmBtn.click();
-    await vi.waitFor(() => {
-      const r = replies.last('TRAINING_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_11', error: 'submission-unconfirmed' });
-    });
-    // First attempt + one resend per (mocked) delay.
-    expect(submitMutate).toHaveBeenCalledTimes(3);
-    expect(replies.of('TRAINING_RESULT')).toHaveLength(1);
-    replies.stop();
-  });
-
-  test('a resend uses the REFRESHED page token, not the one the request started with', async () => {
-    let failFirst: (err: Error) => void = () => undefined;
-    submitMutate
-      .mockImplementationOnce(
-        () =>
-          new Promise((_resolve, reject) => {
-            failFirst = reject;
-          })
-      )
-      .mockResolvedValueOnce({ snapshot: SNAPSHOT });
-    const view = await mount();
-    await driveToReady();
-    const replies = listenForReply();
-    postFromBlock('RUN_TRAINING', { requestId: 'rq_12', body: BODY });
-    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
-    await expect.element(confirmBtn).toBeInTheDocument();
-    await confirmBtn.click();
-    await vi.waitFor(() => expect(submitMutate).toHaveBeenCalledTimes(1));
-    // The host refreshes the token while the first submit is in flight…
-    await view.rerender(
-      <>
-        <PageBlockHost {...baseProps} token="tok_refreshed" />
-        <DialogProvider />
-      </>
-    );
-    // …and then its response is lost.
-    failFirst(new Error('Failed to fetch'));
-    await vi.waitFor(() => {
-      const r = replies.last('TRAINING_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_12', snapshot: SNAPSHOT });
-    });
-    expect(submitMutate.mock.calls.map((c) => (c[0] as { blockToken: string }).blockToken)).toEqual(
-      ['tok_abc', 'tok_refreshed']
-    );
-    replies.stop();
-  });
-
-  test('a resend after a soft navigation to ANOTHER app keeps the token the request started with', async () => {
-    let failFirst: (err: Error) => void = () => undefined;
-    submitMutate
-      .mockImplementationOnce(
-        () =>
-          new Promise((_resolve, reject) => {
-            failFirst = reject;
-          })
-      )
-      .mockResolvedValueOnce({ snapshot: SNAPSHOT });
-    const view = await mount();
-    await driveToReady();
-    postFromBlock('RUN_TRAINING', { requestId: 'rq_13', body: BODY });
-    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
-    await expect.element(confirmBtn).toBeInTheDocument();
-    await confirmBtn.click();
-    await vi.waitFor(() => expect(submitMutate).toHaveBeenCalledTimes(1));
-    // The same host is reused for another app (no `key` on the run page)…
-    await view.rerender(
-      <>
-        <PageBlockHost
-          {...baseProps}
-          appBlockId="apb_other"
-          blockInstanceId="page_apb_other"
-          token="tok_other_app"
-        />
-        <DialogProvider />
-      </>
-    );
-    // …and then the first submit's response is lost.
-    failFirst(new Error('Failed to fetch'));
-    await vi.waitFor(() => expect(submitMutate).toHaveBeenCalledTimes(2));
-    expect(submitMutate.mock.calls.map((c) => (c[0] as { blockToken: string }).blockToken)).toEqual(
-      ['tok_abc', 'tok_abc']
-    );
   });
 });

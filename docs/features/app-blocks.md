@@ -470,8 +470,8 @@ owner's own private run is allowed, under the private-run Buzz cap.
    ceiling, moderates the captions, imports the admitted images under the viewer's
    orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
    bound to the viewer, app and install; the image count is always server-derived.
-   Every image is re-checked at estimate and again at submit; a dataset with an image
-   that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator
+   Every image is re-checked at submit, before anything is charged; a dataset with an
+   image that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator
    outage) is a retryable rejection; `import-failed` is not.
 2. **Estimate** — `ESTIMATE_WORKFLOW` with a `kind: 'training'` body (no `maxBuzz`)
    returns `snapshot.trainingQuote: { quoteId, total, imageCount, expiresAt }`. The
@@ -481,15 +481,16 @@ owner's own private run is allowed, under the private-run Buzz cap.
    of the quote, and on the viewer's confirm records it through
    `blocks.consentTrainingQuote` (signed-in session only) and then submits. A submit
    whose quote the viewer did not confirm is refused, so calling `SUBMIT_WORKFLOW`
-   directly cannot start a run. If the connection drops mid-submit the host resends the same call
-   for about a minute; if the outcome is still unknown it replies
-   `error: 'submission-unconfirmed'` — the run may be running, so do not re-estimate.
+   directly cannot start a run. If the outcome of the submit is unknown — the connection
+   dropped, or the server attempted the run but could not confirm it — the host replies
+   `error: 'submission-unconfirmed'`: the run may be running and charged, so check the viewer's
+   trainings before offering a retry. When the server could not confirm the run, a retry of the
+   same body (new estimate, new confirmation) reuses that run's orchestrator id.
 
 A confirmed run may cost more than the token's per-call budget, up to
 `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.
 A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
-re-price is refused. A retry of the same run after an ambiguous failure reuses the run's
-orchestrator id, so it cannot be charged twice. Training charges no author fee.
+re-price is refused. Training charges no author fee.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 

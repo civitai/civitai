@@ -66,9 +66,9 @@ export const RUN_TRAINING_HOST_ERRORS = [
   /** The viewer dismissed the confirm. Guaranteed to mean NO run was submitted. */
   'declined',
   /**
-   * The submit was SENT but its outcome could not be confirmed (connection lost, and
-   * the server still reported it in progress). The run may be running and charged —
-   * a block must not start a new estimate on this error; check the run list.
+   * The submit was SENT but its outcome is unknown: the connection was lost, or the
+   * server attempted the run and could not confirm it. The run may be running and
+   * charged — check the viewer's trainings before offering a retry.
    */
   'submission-unconfirmed',
 ] as const satisfies readonly string[];
@@ -166,65 +166,35 @@ export function buildTrainingConsentCopy({
 
 /**
  * True when a training submit failed in TRANSPORT — no tRPC error code came back,
- * so the host cannot tell whether the server ran it. A server refusal carries a
- * code and is never retried.
+ * so the host cannot tell whether the server ran it. A server refusal carries a code.
  */
 export function isTrainingSubmitTransportError(err: unknown): boolean {
-  return typeof trpcErrorCode(err) !== 'string';
+  return typeof (err as { data?: { code?: unknown } } | null | undefined)?.data?.code !== 'string';
 }
 
-function trpcErrorCode(err: unknown): unknown {
-  return (err as { data?: { code?: unknown } } | null | undefined)?.data?.code;
+export type TrainingSubmitReply = { snapshot: unknown } | { error: string };
+
+/**
+ * The `TRAINING_RESULT` payload for a submit that RETURNED. The server marks a submit
+ * whose orchestrator call was attempted but whose outcome is unknown with
+ * `submissionUnconfirmed: true`; the run may exist, so the block is told exactly that
+ * rather than handed a failed snapshot it would read as "nothing happened".
+ */
+export function trainingSubmitReplyFromResult(result: {
+  snapshot?: unknown;
+  submissionUnconfirmed?: unknown;
+}): TrainingSubmitReply {
+  if (result.submissionUnconfirmed === true) return { error: 'submission-unconfirmed' };
+  return { snapshot: result.snapshot };
 }
 
-/** Waits between resends after a transport failure — about a minute in total. */
-export const TRAINING_SUBMIT_RECOVERY_DELAYS_MS = [
-  1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000,
-];
-
 /**
- * After a lost response, the only server error that proves the first attempt started
- * no run: a BAD_REQUEST is either input the server refuses the same way every time,
- * or a check this resend reached only after claiming the quote itself — so the first
- * attempt never held it. Every other code can be true while the first attempt's run
- * exists: an expired token, a transient failure, a rate limit or a changed permission
- * comes from checks before the per-quote claim, and a quote that is gone may have been
- * spent by a first attempt whose orchestrator call failed ambiguously.
+ * The `TRAINING_RESULT` payload for a submit that THREW. A transport failure means the
+ * server may have run it — `submission-unconfirmed`, never resent (the quote is spent
+ * once; a retry of the same body after a fresh estimate reuses the run's orchestrator
+ * id). A coded error is a server refusal and is passed on.
  */
-export const TRAINING_SUBMIT_CONCLUSIVE_CODES: readonly string[] = ['BAD_REQUEST'];
-
-/**
- * Submit a training run, recovering from a lost response.
- *
- * The quote is spent as soon as the server sees the call, so a block cannot retry a
- * lost response itself. After a transport failure this resends the SAME call; the
- * server's per-quote claim replays a finished submit and answers CONFLICT while the
- * first attempt is still running. Only a code in `TRAINING_SUBMIT_CONCLUSIVE_CODES` is
- * thrown as the outcome; anything else means "wait and resend". If the outcome is
- * still unknown after the delays, returns `unconfirmed` rather than an error a block
- * would read as "nothing happened".
- *
- * `submit` is called afresh on each attempt, so a caller can read its credentials
- * (e.g. a refreshed token) at send time.
- */
-export async function submitTrainingWithRecovery<T>(
-  submit: () => Promise<T>,
-  sleep: (ms: number) => Promise<void>,
-  delays: readonly number[] = TRAINING_SUBMIT_RECOVERY_DELAYS_MS
-): Promise<{ result: T } | { unconfirmed: true }> {
-  try {
-    return { result: await submit() };
-  } catch (err) {
-    if (!isTrainingSubmitTransportError(err)) throw err;
-  }
-  for (const delay of delays) {
-    await sleep(delay);
-    try {
-      return { result: await submit() };
-    } catch (err) {
-      const code = trpcErrorCode(err);
-      if (typeof code === 'string' && TRAINING_SUBMIT_CONCLUSIVE_CODES.includes(code)) throw err;
-    }
-  }
-  return { unconfirmed: true };
+export function trainingSubmitReplyFromError(err: unknown): TrainingSubmitReply {
+  if (isTrainingSubmitTransportError(err)) return { error: 'submission-unconfirmed' };
+  return { error: err instanceof Error ? err.message : 'unknown' };
 }
