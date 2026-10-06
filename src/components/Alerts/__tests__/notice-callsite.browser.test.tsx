@@ -179,7 +179,7 @@ beforeEach(() => {
   // `remixGallery` on by default: `remixGalleryExplainer` declares it as its
   // `audience`, so a user without it is — correctly — not shown the notice at
   // all, and every dismissal case below would have nothing to click.
-  mocks.state.features = { remixGallery: true };
+  mocks.state.features = { remixGallery: true, creatorJourney: true };
   mocks.state.mutateCalls = [];
 });
 

@@ -55,6 +55,14 @@ describe('FEATURE_NOTICES', () => {
     );
   });
 
+  // The first-publish card links to /creators/journey, which 404s without the flag.
+  test.each(['firstModelPublished', 'firstArticlePublished'] as const)(
+    '%s is announced only to the Creator Journey audience',
+    (key) => {
+      expect(FEATURE_NOTICES[key]).toMatchObject({ audience: { feature: 'creatorJourney' } });
+    }
+  );
+
   test('every id is unique — two notices sharing one id would dismiss each other', () => {
     expect(new Set(FEATURE_NOTICE_IDS).size).toBe(FEATURE_NOTICE_IDS.length);
   });
