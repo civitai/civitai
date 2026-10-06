@@ -434,154 +434,101 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
     trainingStudioModerationApproved: true,
   };
   const UNSTAMPED = { trainingStudioWorkflowId: 'wf-studio-1' };
-  type ModelFields = {
-    meta?: unknown;
-    status?: 'Draft' | 'Published' | 'Unpublished' | 'Scheduled';
-    publishedAt?: Date | null;
-  };
-  const check = (fields: ModelFields = {}, callerId = 5) =>
-    assertTrainingSourcePublishable({
-      model: { id: 42, userId: 5, meta: STAMPED, status: 'Draft', publishedAt: null, ...fields },
-      callerId,
-    } as Parameters<typeof assertTrainingSourcePublishable>[0]);
-  const UNVERIFIABLE = /can no longer be checked for an approved dataset/;
-  /** The server-owned flag writes made, as [key, modelId]. */
-  const flagWrites = () =>
+  const args = { modelId: 42, meta: UNSTAMPED, ownerId: 5, callerId: 5 };
+  /** The approval-stamp writes made, as [modelId]. */
+  const stampWrites = () =>
     dbMock.dbWrite.$executeRaw.mock.calls.map((call) => (call as unknown[]).slice(1));
 
   beforeEach(() => {
     mockGetToken.mockResolvedValue('owner-token');
   });
 
-  it('allows an approved run, reading it with the owner token', async () => {
-    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(check()).resolves.toEqual({});
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
-    expect(mockGetWorkflow).toHaveBeenCalledWith({
-      token: 'owner-token',
-      path: { workflowId: 'wf-studio-1' },
-    });
-  });
-
-  it('mints the owner token with the cache bypass when a moderator publishes', async () => {
-    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await check({}, 999);
-    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
-  });
-
-  it.each([...REFUSED_STATUSES, undefined])('refuses a run whose status is %s', async (status) => {
-    mockGetWorkflow.mockResolvedValue(runWithModeration(status));
-    await expect(check()).rejects.toThrow(NOT_APPROVED);
-  });
-
-  it('marks a refusal so callers can tell it from other errors', async () => {
-    mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
-    const error = await check().catch((e: unknown) => e);
-    expect(isTrainingNotApprovedRefusal(error)).toBe(true);
-    expect(isTrainingNotApprovedRefusal(new Error('dataset has not been approved'))).toBe(false);
-  });
-
   it.each([null, undefined, {}])(
     'does not read anything for a model whose meta (%s) names no workflow',
     async (meta) => {
-      await expect(check({ meta })).resolves.toEqual({});
+      await expect(assertTrainingSourcePublishable({ ...args, meta })).resolves.toBeUndefined();
       expect(mockGetWorkflow).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
     }
   );
 
-  it('lets an unreadable (NOT_FOUND) run through when the draft carries the approval stamp', async () => {
-    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(check()).resolves.toEqual({});
-  });
-
-  it.each([UNSTAMPED, { ...UNSTAMPED, trainingStudioModerationApproved: false }])(
-    'refuses an unreadable (NOT_FOUND) run when the draft has no approval stamp (%o)',
-    async (meta) => {
-      mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-      const error = await check({ meta }).catch((e: unknown) => e);
-      expect(error).toBeInstanceOf(TRPCError);
-      expect((error as Error).message).toMatch(UNVERIFIABLE);
-      expect(isTrainingNotApprovedRefusal(error)).toBe(true);
-    }
-  );
-
-  // Models published before the approval stamp existed carry no stamp. Once their workflow is gone,
-  // their publish history is what lets them through; a never-published unstamped draft stays refused.
-  // Unit cases for the branch; the handler tests for the same cases are the regression coverage.
-  it.each<[string, ModelFields]>([
-    ['published (public)', { status: 'Published', publishedAt: new Date('2026-09-10') }],
-    ['published privately (no publishedAt)', { status: 'Published', publishedAt: null }],
-    ['unpublished after a publish', { status: 'Unpublished', publishedAt: new Date('2026-09-10') }],
-    ['a draft that was published before', { status: 'Draft', publishedAt: new Date('2026-09-10') }],
-  ])(
-    'lets an unreadable (NOT_FOUND) unstamped model through when it is %s, and records the marker',
-    async (_, fields) => {
-      mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-      await expect(check({ meta: UNSTAMPED, ...fields })).resolves.toEqual({
-        trainingStudioPublishedBeforeStamp: true,
-      });
-      expect(flagWrites()).toEqual([['trainingStudioPublishedBeforeStamp', 42]]);
-    }
-  );
-
-  it.each<[string, ModelFields]>([
-    ['a draft', { status: 'Draft', publishedAt: null }],
-    ['unpublished', { status: 'Unpublished', publishedAt: null }],
-  ])(
-    'lets an unreadable (NOT_FOUND) model carrying the published-before-stamp marker through when it is %s',
-    async (_, fields) => {
-      mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-      await expect(
-        check({ meta: { ...UNSTAMPED, trainingStudioPublishedBeforeStamp: true }, ...fields })
-      ).resolves.toEqual({});
-      expect(flagWrites()).toEqual([]);
-    }
-  );
-
-  it('stamps an unstamped model whose run is read and approved', async () => {
-    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(check({ meta: UNSTAMPED })).resolves.toEqual({
-      trainingStudioModerationApproved: true,
-    });
-    expect(flagWrites()).toEqual([['trainingStudioModerationApproved', 42]]);
-  });
-
-  it('writes nothing for a stamped model whose run is read and approved', async () => {
-    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(check()).resolves.toEqual({});
-    expect(flagWrites()).toEqual([]);
-  });
-
-  it.each<[string, ModelFields]>([
-    ['a draft', { status: 'Draft', publishedAt: null }],
-    [
-      'unpublished, with no publishedAt and no marker',
-      { status: 'Unpublished', publishedAt: null },
-    ],
-    ['scheduled without a publishedAt', { status: 'Scheduled', publishedAt: null }],
-  ])('refuses an unreadable (NOT_FOUND) unstamped model that is %s', async (_, fields) => {
-    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(check({ meta: UNSTAMPED, ...fields })).rejects.toThrow(/can no longer be checked/);
-  });
-
-  it('publish history does not override a readable run that is not approved', async () => {
+  // Case 1
+  it('passes a stamped model without reading its workflow', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
     await expect(
-      check({ meta: UNSTAMPED, status: 'Published', publishedAt: new Date('2026-09-10') })
+      assertTrainingSourcePublishable({ ...args, meta: STAMPED })
+    ).resolves.toBeUndefined();
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+    expect(stampWrites()).toEqual([]);
+  });
+
+  // Case 2
+  it('allows an approved run, reading it with the owner token, and backfills the stamp', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
+    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
+    expect(mockGetWorkflow).toHaveBeenCalledWith({
+      token: 'owner-token',
+      path: { workflowId: 'wf-studio-1' },
+    });
+    expect(stampWrites()).toEqual([[42]]);
+  });
+
+  it('mints the owner token with the cache bypass when a moderator publishes', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
+    await assertTrainingSourcePublishable({ ...args, callerId: 999 });
+    expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
+  });
+
+  it.each([...REFUSED_STATUSES, undefined])(
+    'refuses a readable run whose status is %s, and does not stamp',
+    async (status) => {
+      mockGetWorkflow.mockResolvedValue(runWithModeration(status));
+      await expect(assertTrainingSourcePublishable(args)).rejects.toThrow(NOT_APPROVED);
+      expect(stampWrites()).toEqual([]);
+    }
+  );
+
+  it('refuses a readable unapproved run when the stamp is explicitly false', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
+    await expect(
+      assertTrainingSourcePublishable({
+        ...args,
+        meta: { ...UNSTAMPED, trainingStudioModerationApproved: false },
+      })
     ).rejects.toThrow(NOT_APPROVED);
   });
 
-  it('the stamp does not override a readable run that is not approved', async () => {
+  it('marks a refusal so callers can tell it from other errors', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
-    await expect(check()).rejects.toThrow(NOT_APPROVED);
+    const error = await assertTrainingSourcePublishable(args).catch((e: unknown) => e);
+    expect(isTrainingNotApprovedRefusal(error)).toBe(true);
+    expect(isTrainingNotApprovedRefusal(new Error('dataset has not been approved'))).toBe(false);
+  });
+
+  it('still passes when the stamp write fails', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
+    dbMock.dbWrite.$executeRaw.mockRejectedValueOnce(new Error('db down'));
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+    } finally {
+      consoleSpy.mockRestore();
+    }
+  });
+
+  // Case 3
+  it('passes an unstamped model whose workflow the orchestrator no longer returns (NOT_FOUND)', async () => {
+    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+    expect(stampWrites()).toEqual([]);
   });
 
   it('rethrows any other read failure instead of publishing unchecked', async () => {
     mockGetWorkflow.mockRejectedValue(
       new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'orchestrator down' })
     );
-    await expect(check()).rejects.toThrow('orchestrator down');
+    await expect(assertTrainingSourcePublishable(args)).rejects.toThrow('orchestrator down');
   });
 });
 
@@ -625,10 +572,10 @@ describe('approval stamp on re-entry', () => {
       TemplateStringsArray,
       ...unknown[]
     ];
-    expect(sql.join('$').replace(/\s+/g, ' ').trim()).toBe(
-      `UPDATE "Model" SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), ARRAY[$]::text[], 'true'::jsonb) WHERE id = $`
+    expect(sql.join('$1').replace(/\s+/g, ' ').trim()).toBe(
+      `UPDATE "Model" SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb) WHERE id = $1`
     );
-    expect(values).toEqual(['trainingStudioModerationApproved', 77]);
+    expect(values).toEqual([77]);
   });
 
   it('still returns the draft when the stamp write fails', async () => {

@@ -826,16 +826,7 @@ export const publishModelVersionHandler = async ({
         status: true,
         modelId: true,
         baseModel: true,
-        model: {
-          select: {
-            id: true,
-            userId: true,
-            nsfw: true,
-            status: true,
-            meta: true,
-            publishedAt: true,
-          },
-        },
+        model: { select: { userId: true, nsfw: true, status: true, meta: true } },
       },
     });
 
@@ -862,7 +853,12 @@ export const publishModelVersionHandler = async ({
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
 
-    await assertTrainingSourcePublishable({ model: version.model, callerId: ctx.user.id });
+    await assertTrainingSourcePublishable({
+      modelId: version.modelId,
+      meta: version.model.meta as ModelMeta | null,
+      ownerId: version.model.userId,
+      callerId: ctx.user.id,
+    });
 
     const republishing =
       version.status !== ModelStatus.Draft && version.status !== ModelStatus.Scheduled;
@@ -1353,7 +1349,12 @@ export async function publishPrivateModelVersionHandler({
     throw throwAuthorizationError('You are not authorized to publish this model version');
   }
 
-  await assertTrainingSourcePublishable({ model: version.model, callerId: ctx.user.id });
+  await assertTrainingSourcePublishable({
+    modelId: version.model.id,
+    meta: version.model.meta as ModelMeta | null,
+    ownerId: version.model.userId,
+    callerId: ctx.user.id,
+  });
 
   // TODO(replica-toast): overlay is a workaround for data-packet logical subscriber dropping TOASTed jsonb. Remove once replication is fixed.
   const fileIds = version.files.map((f) => f.id);

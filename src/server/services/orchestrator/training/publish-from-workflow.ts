@@ -19,10 +19,6 @@ import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
-import {
-  hasUnrecordedPublishEvidence,
-  setServerOwnedMetaFlag,
-} from '~/server/services/orchestrator/training/publish-evidence';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -83,8 +79,6 @@ const APPROVED_TRAINING_MODERATION_STATUS = 'approved' satisfies TrainingModerat
 
 const TRAINING_NOT_APPROVED_MESSAGE =
   "This training run's dataset has not been approved, so a model can't be created or published from it.";
-const TRAINING_UNVERIFIABLE_MESSAGE =
-  "This model's training run can no longer be checked for an approved dataset, so it can't be published.";
 
 /**
  * The `cause` on every refusal from the training moderation gate, so a caller that must handle the
@@ -227,6 +221,23 @@ export function mapWorkflowToTrainingResultsV2(workflow: Workflow): TrainingResu
 }
 
 /**
+ * Set `trainingStudioModerationApproved` on a model whose run was just checked and is approved, as a
+ * single-key write so a concurrent meta write is not overwritten. Best-effort: a failure is logged
+ * and the model stays unstamped.
+ */
+async function stampTrainingModerationApproved(modelId: number): Promise<void> {
+  try {
+    await dbWrite.$executeRaw`
+      UPDATE "Model"
+      SET meta = jsonb_set(COALESCE(meta, '{}'::jsonb), '{trainingStudioModerationApproved}', 'true'::jsonb)
+      WHERE id = ${modelId}
+    `;
+  } catch (error) {
+    console.error(`approval stamp backfill failed (model ${modelId}):`, error);
+  }
+}
+
+/**
  * Turn a completed Training Studio orchestrator workflow into a Draft Trained Model + v1 ModelVersion +
  * Training-Data ModelFile, so the user can drop into the main app's publish wizard or generate
  * off the draft. Training Studio trains orchestrator-only (no `ModelVersion` exists), so this reconstructs
@@ -277,11 +288,10 @@ export async function createDraftModelFromWorkflow({
   });
   if (existing?.modelVersions[0]) {
     // A draft materialized before the approval stamp existed gets it here: the run was just
-    // checked above. Best-effort: a failed write leaves the draft unstamped, which only matters once
-    // its workflow is gone.
-    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true) {
-      await setServerOwnedMetaFlag(existing.id, 'trainingStudioModerationApproved');
-    }
+    // checked above. Set as one key, so a concurrent meta write is not overwritten. Best-effort: a
+    // failed write leaves the draft unstamped, which only matters once its workflow is gone.
+    if ((existing.meta as ModelMeta | null)?.trainingStudioModerationApproved !== true)
+      await stampTrainingModerationApproved(existing.id);
     return {
       modelId: existing.id,
       modelVersionId: existing.modelVersions[0].id,
@@ -427,45 +437,36 @@ export async function stampWorkflowDraftModel({
   }
 }
 
-/** The stored model fields the publish-time check reads. */
-export type TrainingSourceModel = {
-  id: number;
-  userId: number;
-  meta: unknown;
-  status: ModelStatus;
-  publishedAt: Date | null;
-};
-
 /**
  * The publish-time half of `assertTrainingModerationApproved`: every path that makes a model (or one
  * of its versions) published or public calls this with the stored model. A model whose meta names no
- * source workflow is not training-studio-born and is not checked here. Otherwise the workflow is read
- * with the model OWNER's token (a moderator can publish someone else's model), like
- * `stampWorkflowPublished`, and must report an approved status.
+ * source workflow is not training-studio-born and is not checked. Otherwise:
  *
- * The meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`). When the run is read and
- * approved, a model without the approval stamp gets it. When the orchestrator no longer returns the
- * workflow (NOT_FOUND), the model is let through if its meta carries the approval stamp or the
- * published-before-stamp marker, or if `hasUnrecordedPublishEvidence` holds — and then the marker is
- * written. Paths that clear a model's status or `publishedAt` write the marker first
- * (`preserveTrainingPublishEvidence`), so the evidence survives them. Every other model is refused.
+ * 1. Meta carries the approval stamp → passes without reading the workflow.
+ * 2. The workflow can be read (with the model OWNER's token — a moderator can publish someone else's
+ *    model) → it must report an approved status, or this throws; when it does, the stamp is written
+ *    (best-effort).
+ * 3. The orchestrator no longer returns the workflow (NOT_FOUND) and there is no stamp → passes. Every
+ *    model `createDraftModelFromWorkflow` creates carries the stamp, so this case is a model created
+ *    before the stamp existed; it is let through without a check.
+ *
  * Any other read failure is rethrown, so the publish fails and can be retried rather than going
- * ahead unchecked.
- *
- * Returns the flags it wrote. A caller that then rewrites meta from a copy read before this ran must
- * merge them into that write, or it overwrites them.
+ * ahead unchecked. Both meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`).
  */
 export async function assertTrainingSourcePublishable({
-  model,
+  modelId,
+  meta,
+  ownerId,
   callerId,
 }: {
-  model: TrainingSourceModel;
+  modelId: number;
+  meta: ModelMeta | null | undefined;
+  ownerId: number;
   callerId: number;
-}): Promise<Partial<ModelMeta>> {
-  const meta = model.meta as ModelMeta | null | undefined;
+}): Promise<void> {
   const workflowId = meta?.trainingStudioWorkflowId;
-  if (!workflowId) return {};
-  const ownerId = model.userId;
+  if (!workflowId) return;
+  if (meta?.trainingStudioModerationApproved === true) return;
   const token = await getOrchestratorToken(ownerId, undefined, {
     bypassCache: callerId !== ownerId,
   });
@@ -473,30 +474,11 @@ export async function assertTrainingSourcePublishable({
   try {
     workflow = await getWorkflow({ token, path: { workflowId } });
   } catch (error) {
-    if (error instanceof TRPCError && error.code === 'NOT_FOUND') {
-      if (meta?.trainingStudioModerationApproved === true) return {};
-      if (meta?.trainingStudioPublishedBeforeStamp === true) return {};
-      if (hasUnrecordedPublishEvidence(model))
-        return recordFlag(model.id, 'trainingStudioPublishedBeforeStamp');
-      refuse(TRAINING_UNVERIFIABLE_MESSAGE);
-    }
+    if (error instanceof TRPCError && error.code === 'NOT_FOUND') return;
     throw error;
   }
   assertTrainingModerationApproved(workflow);
-  // The run was just read and is approved: a model from before the stamp existed gets it now.
-  if (meta?.trainingStudioModerationApproved !== true)
-    return recordFlag(model.id, 'trainingStudioModerationApproved');
-  return {};
-}
-
-/** Write a flag now (for callers that write no meta afterwards) and return it, so a caller that
- * does rewrite meta from an earlier read merges it in rather than overwriting it. */
-async function recordFlag(
-  modelId: number,
-  key: 'trainingStudioModerationApproved' | 'trainingStudioPublishedBeforeStamp'
-): Promise<Partial<ModelMeta>> {
-  await setServerOwnedMetaFlag(modelId, key);
-  return { [key]: true };
+  await stampTrainingModerationApproved(modelId);
 }
 
 /**

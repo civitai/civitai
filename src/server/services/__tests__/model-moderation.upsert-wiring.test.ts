@@ -357,13 +357,11 @@ describe('upsertModel — server-owned meta keys are not writable through client
         meta: {
           trainingStudioWorkflowId: 'wf-other',
           trainingStudioModerationApproved: false,
-          trainingStudioPublishedBeforeStamp: true,
           commentsLocked: true,
         } as unknown as ModelUpsertInput['meta'],
       });
 
       expect(writtenUpdateMeta()).toMatchObject({ ...stored, commentsLocked: true });
-      expect(writtenUpdateMeta()).not.toHaveProperty('trainingStudioPublishedBeforeStamp');
     }
   );
 
@@ -379,13 +377,13 @@ describe('upsertModel — server-owned meta keys are not writable through client
       name: 'New Name',
       meta: {
         trainingStudioWorkflowId: 'wf-client',
-        trainingStudioPublishedBeforeStamp: true,
+        trainingStudioModerationApproved: true,
       } as unknown as ModelUpsertInput['meta'],
     });
     const clientCreate = (mockDbWrite.model.create.mock.calls[0][0] as { data: { meta?: object } })
       .data.meta;
     expect(clientCreate ?? {}).not.toHaveProperty('trainingStudioWorkflowId');
-    expect(clientCreate ?? {}).not.toHaveProperty('trainingStudioPublishedBeforeStamp');
+    expect(clientCreate ?? {}).not.toHaveProperty('trainingStudioModerationApproved');
 
     mockDbWrite.model.create.mockClear();
     await upsertModel({

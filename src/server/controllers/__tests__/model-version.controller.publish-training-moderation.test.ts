@@ -51,7 +51,6 @@ vi.mock('~/server/events', () => ({
 }));
 
 import type { Workflow } from '@civitai/client';
-import { TRPCError } from '@trpc/server';
 import {
   publishModelVersionHandler,
   publishPrivateModelVersionHandler,
@@ -62,7 +61,8 @@ const VERSION_ID = 43;
 const MODEL_ID = 42;
 const OWNER_ID = 7;
 const MODERATOR_ID = 999;
-const META = { trainingStudioWorkflowId: 'wf-1', trainingStudioModerationApproved: true };
+// Unstamped, so the check reads the workflow.
+const META = { trainingStudioWorkflowId: 'wf-1' };
 const NOT_APPROVED = /dataset has not been approved/;
 const STATUSES_REFUSED = ['evaluating', 'underReview', 'rejected', undefined];
 
@@ -120,44 +120,6 @@ describe('publishModelVersionHandler — training moderation gate', () => {
     expect(mockPublishModelVersionById).not.toHaveBeenCalled();
   });
 
-  it('publishes a new version of an unstamped, already-published model whose run is gone (NOT_FOUND)', async () => {
-    mockGetVersionById.mockResolvedValue({
-      meta: null,
-      status: 'Draft',
-      modelId: MODEL_ID,
-      baseModel: 'SDXL 1.0',
-      model: {
-        userId: OWNER_ID,
-        nsfw: false,
-        status: 'Published',
-        meta: { trainingStudioWorkflowId: 'wf-1' },
-        publishedAt: new Date('2026-09-10'),
-      },
-    });
-    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(run()).resolves.toMatchObject({ id: VERSION_ID });
-    expect(mockPublishModelVersionById).toHaveBeenCalledTimes(1);
-  });
-
-  it('still refuses a version on an unstamped never-published draft whose run is gone', async () => {
-    mockGetVersionById.mockResolvedValue({
-      meta: null,
-      status: 'Draft',
-      modelId: MODEL_ID,
-      baseModel: 'SDXL 1.0',
-      model: {
-        userId: OWNER_ID,
-        nsfw: false,
-        status: 'Draft',
-        meta: { trainingStudioWorkflowId: 'wf-1' },
-        publishedAt: null,
-      },
-    });
-    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(run()).rejects.toThrow(/can no longer be checked/);
-    expect(mockPublishModelVersionById).not.toHaveBeenCalled();
-  });
-
   it('reads with the OWNER token when a moderator publishes', async () => {
     mockGetWorkflow.mockResolvedValue(trainingRun('rejected'));
     await expect(run({ id: MODERATOR_ID, isModerator: true })).rejects.toThrow(NOT_APPROVED);
@@ -192,26 +154,6 @@ describe('publishPrivateModelVersionHandler — training moderation gate', () =>
       { id: 1, metadata: { selectedEpochUrl: 'https://blobs/epoch-1' } },
     ] as never);
     mockUpdateModelVersionById.mockResolvedValue({ id: VERSION_ID });
-  });
-
-  it('publishes a version of an unstamped privately-published model whose run is gone (NOT_FOUND)', async () => {
-    mockGetVersionById.mockResolvedValue({
-      id: VERSION_ID,
-      status: 'Draft',
-      uploadType: 'Trained',
-      model: {
-        id: MODEL_ID,
-        publishedAt: null,
-        availability: 'Private',
-        userId: OWNER_ID,
-        status: 'Published',
-        meta: { trainingStudioWorkflowId: 'wf-1' },
-      },
-      files: [{ id: 1, metadata: {} }],
-      posts: [{ id: 5 }],
-    });
-    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(run()).resolves.toMatchObject({ id: VERSION_ID });
   });
 
   it('publishes the version privately when the run is approved', async () => {

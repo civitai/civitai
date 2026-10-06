@@ -830,7 +830,7 @@ export const publishModelHandler = async ({
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { id: true, status: true, meta: true, nsfw: true, userId: true, publishedAt: true },
+      select: { status: true, meta: true, nsfw: true, userId: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status === ModelStatus.Published)
@@ -843,15 +843,16 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    const trainingFlags = await assertTrainingSourcePublishable({ model, callerId: ctx.user.id });
+    await assertTrainingSourcePublishable({
+      modelId: input.id,
+      meta: modelMeta,
+      ownerId: model.userId,
+      callerId: ctx.user.id,
+    });
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
-    const updatedModel = await publishModelById({
-      ...input,
-      meta: { ...meta, ...trainingFlags },
-      republishing,
-    });
+    const updatedModel = await publishModelById({ ...input, meta, republishing });
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');
@@ -2400,10 +2401,15 @@ export const privateModelFromTrainingHandler = async ({
     // Publishes the model (privately), so the training-source check applies like any publish.
     const stored = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { id: true, userId: true, meta: true, status: true, publishedAt: true },
+      select: { userId: true, meta: true },
     });
     if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
-      await assertTrainingSourcePublishable({ model: stored, callerId: ctx.user.id });
+      await assertTrainingSourcePublishable({
+        modelId: input.id,
+        meta: stored.meta as ModelMeta | null,
+        ownerId: stored.userId,
+        callerId: ctx.user.id,
+      });
 
     const model = await privateModelFromTraining({
       ...input,
@@ -2454,14 +2460,7 @@ export const publishPrivateModelHandler = async ({
     const { id: userId } = ctx.user;
     const model = await getModel({
       id: input.modelId,
-      select: {
-        id: true,
-        userId: true,
-        status: true,
-        availability: true,
-        meta: true,
-        publishedAt: true,
-      },
+      select: { id: true, userId: true, status: true, availability: true, meta: true },
     });
 
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
@@ -2474,7 +2473,12 @@ export const publishPrivateModelHandler = async ({
       throw throwAuthorizationError();
     }
 
-    await assertTrainingSourcePublishable({ model, callerId: userId });
+    await assertTrainingSourcePublishable({
+      modelId: model.id,
+      meta: model.meta as ModelMeta | null,
+      ownerId: model.userId,
+      callerId: userId,
+    });
 
     const { versionIds } = await publishPrivateModel(input);
     await dataForModelsCache.refresh(input.modelId);

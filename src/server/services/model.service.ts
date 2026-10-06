@@ -170,10 +170,6 @@ import {
 } from '~/server/utils/errorHandling';
 import { enforceLockedProperties } from '~/server/utils/locked-properties';
 import {
-  preserveTrainingPublishEvidence,
-  publishEvidenceMarker,
-} from '~/server/services/orchestrator/training/publish-evidence';
-import {
   pickServerOwnedMeta,
   type SERVER_OWNED_META_KEYS,
   stripMinorHashMeta,
@@ -1846,9 +1842,6 @@ export const deleteModelById = async ({
     }
   }
 
-  // A restore derives status from publishedAt, which a private publish leaves null.
-  await preserveTrainingPublishEvidence(id);
-
   const deletedModel = await dbWrite.$transaction(async (tx) => {
     const model = await tx.model.update({
       where: { id },
@@ -3504,7 +3497,7 @@ export const unpublishModelById = async ({
       // explanation rendered when the reason is 'other', which is the largest bucket.
       const existing = await tx.model.findUniqueOrThrow({
         where: { id },
-        select: { status: true, meta: true, publishedAt: true },
+        select: { status: true },
       });
       // Any moderator-only status, not UnpublishedViolation alone: Deleted is the other one, and
       // clearing it lets an owner republish a soft-deleted model.
@@ -3533,9 +3526,7 @@ export const unpublishModelById = async ({
             : preserveModStatus
             ? existing.status
             : ModelStatus.Unpublished,
-          // This takes the model out of Published, so record any earlier-publish evidence the
-          // training moderation check relies on (`publishEvidenceMarker`).
-          meta: { ...updatedMeta, ...publishEvidenceMarker(existing) },
+          meta: updatedMeta,
         },
         select: { userId: true, modelVersions: { select: { id: true } } },
       });
@@ -5063,9 +5054,7 @@ export const privateModelFromTraining = async ({
 }) => {
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
 
-  // Primary, not replica: the server-owned keys carried over below must include any flag the
-  // training moderation check wrote earlier in this request.
-  const model = await dbWrite.model.findUnique({
+  const model = await dbRead.model.findUnique({
     where: { id },
     select: {
       userId: true,
@@ -5215,18 +5204,9 @@ export const publishPrivateModel = async ({
   modelId,
   publishVersions,
 }: PublishPrivateModelInput) => {
-  // Primary, not replica: this rewrites meta from what it reads, which must include any flag the
-  // training moderation check wrote earlier in this request.
-  const model = await dbWrite.model.findUnique({
+  const model = await dbRead.model.findUnique({
     where: { id: modelId },
-    select: {
-      id: true,
-      userId: true,
-      availability: true,
-      status: true,
-      meta: true,
-      publishedAt: true,
-    },
+    select: { id: true, userId: true, availability: true, status: true, meta: true },
   });
 
   if (!model) throw throwNotFoundError('Model not found');
@@ -5326,9 +5306,6 @@ export const publishPrivateModel = async ({
         meta: {
           ...((model.meta ?? {}) as ModelMeta),
           cannotPromote: false,
-          // "Set to Draft" clears status and publishedAt; keep the evidence the training
-          // moderation check relies on (`publishEvidenceMarker`).
-          ...(publishVersions ? {} : publishEvidenceMarker(model)),
         },
       },
       select: { id: true },
