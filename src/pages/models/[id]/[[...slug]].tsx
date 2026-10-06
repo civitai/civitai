@@ -108,6 +108,7 @@ import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
@@ -1503,6 +1504,14 @@ export default function ModelDetailsV2({
                     ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
                     : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
                 </AlertWithIcon>
+              )}
+              {model.status === ModelStatus.Published && (
+                <FirstPublishCard
+                  entityType="model"
+                  entityId={model.id}
+                  ownerId={model.user.id}
+                  publishedAt={model.publishedAt}
+                />
               )}
             </Stack>
             <Group gap={4} wrap="nowrap">

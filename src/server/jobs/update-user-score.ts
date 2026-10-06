@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { chunk } from 'lodash-es';
+import { chunk, partition } from 'lodash-es';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -8,7 +8,7 @@ import { templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import type { CreatorScoreUnlock } from '~/server/services/creator-score-unlocks.service';
+import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
@@ -20,8 +20,14 @@ import type {
 } from '~/server/services/creator-milestone-grant.service';
 import {
   grantScoreTierMilestones,
+  markMilestonesSeen,
   notifyScoreTierCrossings,
 } from '~/server/services/creator-milestone-grant.service';
+import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
+import {
+  CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
+  creatorJourneyAudience,
+} from '~/server/services/creator-journey-flag.service';
 import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
@@ -369,7 +375,8 @@ export async function settleTierGrants(
 
 export async function persistScoreBatch(
   ctx: Pick<Context, 'pg' | 'jobContext' | 'tierUnlocks' | 'tierGrantErrors'>,
-  records: [string, Partial<Record<ScoreCategory, number>>][]
+  records: [string, Partial<Record<ScoreCategory, number>>][],
+  { grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG, now = new Date() } = {}
 ) {
   ctx.jobContext.checkIfCanceled();
   const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
@@ -379,15 +386,33 @@ export async function persistScoreBatch(
   // Scores are already committed, so a failed grant must not fail the batch. The next run that
   // touches these users grants silently, and the backfill endpoint reconciles everyone else.
   let crossings: ScoreTierCrossing[];
+  let audience: Set<number>;
   try {
-    crossings = await grantScoreTierMilestones(ctx.pg, transitions, onCancel);
+    audience = await creatorJourneyAudience(
+      ctx.pg,
+      transitions.map((t) => t.userId)
+    );
+    const grantable = grantsRequireFlag
+      ? transitions.filter((t) => audience.has(t.userId))
+      : transitions;
+    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel);
   } catch (e) {
     log('tier grant failed for batch', e);
     ctx.tierGrantErrors.push(e);
     return;
   }
+  const audienceCrossings = crossings.filter((crossing) => audience.has(crossing.userId));
+  const [announced, silenced] = partition(audienceCrossings, (crossing) =>
+    isMilestoneAnnounced(crossing.milestoneKey, now)
+  );
+  try {
+    await markMilestonesSeen(ctx.pg, silenced, onCancel);
+  } catch (e) {
+    log('marking silent tier grants seen failed for batch', e);
+    ctx.tierGrantErrors.push(e);
+  }
   // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
-  await notifyScoreTierCrossings(crossings, ctx.tierUnlocks);
+  await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
 }
 
 // Persist per-category scores and recompute `total` for a batch of users in one

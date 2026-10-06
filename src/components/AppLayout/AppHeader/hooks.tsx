@@ -210,7 +210,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           href: CREATOR_JOURNEY_HREF,
-          visible: !!currentUser,
+          visible: !!currentUser && features.creatorJourney,
           icon: IconStairsUp,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Creator Journey',

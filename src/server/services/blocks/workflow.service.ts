@@ -4,10 +4,12 @@ import type { CustomComfyStepTemplate, Workflow, WorkflowStatus } from '@civitai
 import type { AnyBlockRecipe, CustomComfyStepInput, ResolvedRecipeResources } from './recipes';
 import {
   getStepByOrchestratorType,
+  isTrainingStepType,
   NATIVELY_EXTRACTED_STEP_TYPES,
   postureProducesMedia,
-  splitPassThroughStepOutput,
+  splitPassThroughStep,
 } from './steps';
+import type { TrainedEpoch } from './steps';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { dbRead } from '~/server/db/client';
 import { nsfwLevelFromContentRating } from '~/shared/constants/browsingLevel.constants';
@@ -23,6 +25,7 @@ import { getImagesLimit } from '~/shared/data-graph/generation/images-limit';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { isSingletonSlotResource } from '~/shared/utils/resource.utils';
 import type {
+  BlockPublishedModel,
   BlockSourceImage,
   BlockWorkflowBody,
   BlockWorkflowSnapshot,
@@ -124,6 +127,7 @@ export function snapshotFromWorkflow(
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const imageUrls: string[] = [];
   const stepOutputs: NonNullable<BlockWorkflowSnapshot['stepOutputs']> = [];
+  const trainedEpochs: TrainedEpoch[] = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step (App Blocks customComfy bridge) surfaces its outputs
     // as `output.blobs` (CustomComfyOutput), NOT `output.images` — so it needs
@@ -195,12 +199,16 @@ export function snapshotFromWorkflow(
       // 🔴 THE BLOBS GO TO `imageUrls`, NOT TO `stepOutputs`. That keeps every
       // image this arm produces on the one channel the publish path and the
       // per-viewer gated read already own; see `stepOutputs` in
-      // `schema/blocks/workflow.schema`.
+      // `schema/blocks/workflow.schema`. A training checkpoint goes to NEITHER —
+      // `splitPassThroughStep` drops it.
       if (step.name !== BLOCK_STEP_NAME) continue;
-      const { media, rest } = splitPassThroughStepOutput(
-        (step as unknown as { output?: unknown }).output
-      );
+      const {
+        media,
+        rest,
+        trainedEpochs: epochs,
+      } = splitPassThroughStep(step.$type, (step as unknown as { output?: unknown }).output);
       for (const m of media) imageUrls.push(m.url);
+      trainedEpochs.push(...epochs);
       // A step with no output yet — the submit reply — would otherwise get an
       // entry saying nothing.
       if (rest !== undefined) stepOutputs.push({ $type: step.$type, output: rest });
@@ -247,6 +255,7 @@ export function snapshotFromWorkflow(
   const modelSubstitutions = extra?.modelSubstitutions?.length
     ? extra.modelSubstitutions
     : readModelSubstitutionsFromMetadata(workflow.metadata);
+  const publishedModel = readBlockPublishedModel(workflow);
   return {
     // The orchestrator stamps a server-minted id on EVERY workflow it returns,
     // whatIf included (`WorkflowGrain.TryInitializeAsync` sets `Id` from the
@@ -275,6 +284,37 @@ export function snapshotFromWorkflow(
     // Omitted entirely when nothing was substituted — the common case — so a
     // normal snapshot is unchanged on the wire.
     ...(modelSubstitutions?.length ? { modelSubstitutions } : {}),
+    ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
+    ...(publishedModel ? { publishedModel } : {}),
+  };
+}
+
+/** True when the workflow carries a training step THIS bridge submitted. */
+function hasBlockTrainingStep(workflow: Workflow): boolean {
+  return (workflow.steps ?? []).some(
+    (step) => step.name === BLOCK_STEP_NAME && isTrainingStepType(step.$type)
+  );
+}
+
+const isPositiveInteger = (value: unknown): value is number =>
+  Number.isInteger(value) && (value as number) > 0;
+
+/**
+ * The model a block-run training workflow became, from the ids the training
+ * publish wizard merges into the workflow's metadata (`stampWorkflowDraftModel`,
+ * `stampWorkflowPublished`). Gated on a block-submitted training step so a stray
+ * `modelId` on any other workflow's metadata is never reported as its model.
+ */
+function readBlockPublishedModel(workflow: Workflow): BlockPublishedModel | undefined {
+  if (!hasBlockTrainingStep(workflow)) return undefined;
+  const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
+  if (!isPositiveInteger(meta.modelId) || !isPositiveInteger(meta.modelVersionId)) {
+    return undefined;
+  }
+  return {
+    modelId: meta.modelId,
+    modelVersionId: meta.modelVersionId,
+    published: meta.published === true,
   };
 }
 
@@ -311,6 +351,11 @@ export function appBlockTag(appId: string): string {
  *   cost:   the workflow's realized/estimated buzz total, or null when absent.
  *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
  *           unassigned/preparing/scheduled all collapse to `pending`.
+ *   trainedEpochs: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.trainedEpochs`. Absent unless an approved
+ *           pass-through training run has a ready checkpoint.
+ *   publishedModel: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.publishedModel`. Absent on every other item.
  */
 export type AppWorkflowImage = {
   url: string;
@@ -324,6 +369,8 @@ export type AppWorkflow = {
   images: AppWorkflowImage[];
   cost: number | null;
   createdAt: string;
+  trainedEpochs?: TrainedEpoch[];
+  publishedModel?: BlockPublishedModel;
 };
 
 /**
@@ -333,6 +380,7 @@ export type AppWorkflow = {
 export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const images: AppWorkflowImage[] = [];
+  const trainedEpochs: TrainedEpoch[] = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step surfaces its outputs as `output.blobs`
     // (CustomComfyOutput) — no width/height, `nsfwLevel` is the same string
@@ -398,13 +446,19 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       //
       // The non-media half is deliberately DROPPED, not forwarded: `AppWorkflow`
       // is the cross-surface queue contract and exists to hand a block nothing
-      // but images, cost and status.
+      // but images, cost and status. The one addition is `trainedEpochs`, taken
+      // from the same split the snapshot uses, so a block listing its runs can
+      // offer an approved one to the publish wizard.
       //
       // Same `BLOCK_STEP_NAME` gate as `snapshotFromWorkflow` — see the note
       // there for why "unrecognised `$type`" is the wrong set.
       if (step.name !== BLOCK_STEP_NAME) continue;
-      for (const m of splitPassThroughStepOutput((step as unknown as { output?: unknown }).output)
-        .media) {
+      const split = splitPassThroughStep(
+        step.$type,
+        (step as unknown as { output?: unknown }).output
+      );
+      trainedEpochs.push(...split.trainedEpochs);
+      for (const m of split.media) {
         images.push({
           url: m.url,
           width: m.width,
@@ -447,6 +501,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     }
   }
   const total = workflow.cost?.total;
+  const publishedModel = readBlockPublishedModel(workflow);
   return {
     // A real LIST/GET item always carries an id; empty-string only if the
     // orchestrator ever omits it (never for a persisted workflow).
@@ -455,6 +510,8 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     images,
     cost: typeof total === 'number' ? total : null,
     createdAt: workflow.createdAt,
+    ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
+    ...(publishedModel ? { publishedModel } : {}),
   };
 }
 

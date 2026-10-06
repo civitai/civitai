@@ -1,5 +1,9 @@
 import { List, Stack, Text } from '@mantine/core';
-import { creatorScorePenalty, creatorScoreSources } from '~/components/Account/creator-score-copy';
+import {
+  creatorScoreGrowsWhen,
+  creatorScorePenalty,
+  creatorScoreSources,
+} from '~/components/Account/creator-score-copy';
 
 export function CreatorScoreExplainer() {
   return (
@@ -9,7 +13,7 @@ export function CreatorScoreExplainer() {
       </Text>
       <Text size="sm" c="dimmed">
         Your Creator Score measures how much the community values what you share. It grows when
-        people use, react to, and follow your work.
+        {creatorScoreGrowsWhen}.
       </Text>
       <List size="sm" spacing={4}>
         {Object.values(creatorScoreSources).map(({ label, earnedBy }) => (

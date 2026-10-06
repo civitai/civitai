@@ -1,6 +1,7 @@
 import { Anchor, Badge, Card, Loader, Progress, Stack, Text, Title } from '@mantine/core';
 import { IconArrowRight, IconCircle, IconCircleCheck, IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { CREATOR_SCORE_EXPLAINER_HREF } from '~/shared/constants/creator-journey.constants';
@@ -73,8 +74,8 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
           <div className="min-w-0 flex-1 basis-72">
             {!journey.scores ? (
               <Text size="sm" c="dimmed">
-                You don&apos;t have a Creator Score yet. It starts when people react to, comment on
-                or download what you share, and it updates once a day.
+                You don&apos;t have a Creator Score yet. It starts when {creatorScoreGrowsWhen}, and
+                it updates once a day.
               </Text>
             ) : next ? (
               <NextRung rungs={rungs} next={next} kinds={kinds} />

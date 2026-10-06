@@ -22,6 +22,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleProcessing } from '~/components/Article/ArticleProcessing';
@@ -513,6 +514,14 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               derivedRatingDroppedBelowOverride={
                 myReview?.derivedRatingDroppedBelowOverride ?? false
               }
+            />
+          )}
+          {article.status === ArticleStatus.Published && (
+            <FirstPublishCard
+              entityType="article"
+              entityId={article.id}
+              ownerId={article.user.id}
+              publishedAt={article.publishedAt}
             />
           )}
         </Stack>

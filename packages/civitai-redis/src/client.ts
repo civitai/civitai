@@ -2013,6 +2013,10 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
+    /** App Blocks `kind:'training'` dataset handle; see block-training-dataset.service. */
+    TRAINING_DATASET: 'system:blocks:training-dataset',
+    /** App Blocks `kind:'training'` quote; claimed exactly once (GETDEL) by the submit. */
+    TRAINING_QUOTE: 'system:blocks:training-quote',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

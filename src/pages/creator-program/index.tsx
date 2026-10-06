@@ -52,7 +52,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import {
   useCreatorProgramRequirements,
   usePrevMonthStats,
@@ -620,11 +620,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                       <p className="my-0">
                         <CreatorScoreGateMessage
                           score={requirements?.score.current}
-                          total={
-                            currentUser?.meta?.scores
-                              ? creatorScoreFromMeta(currentUser.meta)
-                              : undefined
-                          }
+                          total={creatorScoreFromSession(currentUser)}
                           required={requirements?.score.min ?? MIN_CREATOR_SCORE}
                         />
                       </p>

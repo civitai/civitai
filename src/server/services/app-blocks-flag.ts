@@ -1060,6 +1060,27 @@ export async function isAppBlocksPostCreationEnabled(opts?: {
 }
 
 /**
+ * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind —
+ * `blocks.prepareTrainingDataset`, the training estimate/submit arm of
+ * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
+ * `RUN_TRAINING` consent pair (`blocks.previewTrainingQuote` /
+ * `blocks.consentTrainingQuote`).
+ *
+ * Same posture as `app-blocks-post-creation`: independent of the runtime flag so a
+ * GA widening of `app-blocks-enabled` does not arm training on the same day; an
+ * ABSENT flag resolves `false` for everyone. Evaluated with the TOKEN SUBJECT'S
+ * hydrated `SessionUser`, never `ctx.user`.
+ */
+export const APP_BLOCKS_TRAINING_KIND_FLAG = 'app-blocks-training-kind';
+
+export async function isAppBlocksTrainingKindEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_TRAINING_KIND_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated flag for the EXTERNAL-ONLY App-store read scope — the mechanism that
  * lets the store serve `kind='offsite'` (external app) listings to a viewer while
  * `kind='onsite'` App Blocks stay hidden from them. This is a SEPARATE, ORTHOGONAL
