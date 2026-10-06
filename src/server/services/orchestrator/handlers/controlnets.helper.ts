@@ -70,7 +70,10 @@ export function buildControlNetSteps(
 
   for (const entry of controlNets) {
     const base: Omit<ImageJobControlNet, 'image'> = {
-      preprocessor: entry.preprocessor as ImageTransformer,
+      // SDPose extracts the guide image, then uses the existing pose ControlNet.
+      preprocessor: (entry.preprocessor === 'sdpose'
+        ? 'dwpose'
+        : entry.preprocessor) as ImageTransformer,
       weight: entry.weight,
       startStep: entry.startStep,
       endStep: entry.endStep,
@@ -113,7 +116,9 @@ export function mapControlNetsToJobInput(
 ): ImageJobControlNet[] | undefined {
   if (!controlNets?.length) return undefined;
   return controlNets.map((entry) => ({
-    preprocessor: entry.preprocessor as ImageTransformer,
+    preprocessor: (entry.preprocessor === 'sdpose'
+      ? 'dwpose'
+      : entry.preprocessor) as ImageTransformer,
     weight: entry.weight,
     startStep: entry.startStep,
     endStep: entry.endStep,
