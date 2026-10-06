@@ -245,11 +245,12 @@ describe('prepareTrainingDatasetGate runtime import closure', () => {
 });
 
 describe('the shared training prelude codes', () => {
-  // `TrainingBridgePreludeError` is a type, so this pins its values by hand once —
-  // every code the shared prelude can return must be declared by BOTH bridges.
+  // `TrainingBridgePreludeError` is a type, so its values are listed by hand here.
+  // An invariant guard, not regression coverage: it pins the three known codes and
+  // that both bridges declare them. A FOURTH prelude code would not fail it.
   const PRELUDE_CODES = ['review-mode', 'block is not ready', 'sign in to train'];
 
-  it('the prelude returns exactly these codes', () => {
+  it('INVARIANT: the three prelude conditions refuse with these three codes', () => {
     const seen = [
       { ready: true, signedIn: true, reviewNack: true },
       { ready: false, signedIn: true, reviewNack: false },
