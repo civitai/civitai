@@ -124,8 +124,12 @@ describe('processDeposit', () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
     // Default: no existing CryptoDeposit record
     mockDbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
-    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({ payin_hash: '0xdefault' });
-    mockGetTransactionByExternalId.mockResolvedValue(null);
+    // clearAllMocks keeps unconsumed mockResolvedValueOnce queues; reset so none leak across tests.
+    mockNowpaymentsCaller.getPaymentStatus
+      .mockReset()
+      .mockResolvedValue({ payin_hash: '0xdefault' });
+    mockGetTransactionByExternalId.mockReset().mockResolvedValue(null);
+    mockGetMultipliersForUser.mockReset().mockResolvedValue({ purchasesMultiplier: 1 });
   });
 
   it('parses userId from order_id and sends signal', async () => {
@@ -554,6 +558,7 @@ describe('processDeposit', () => {
       mockGetTransactionByExternalId.mockRejectedValueOnce(new Error('Buzz API down'));
       await processDeposit(12345, 'finished', makeWebhookEvent({ outcome_amount: 5 }));
 
+      expect(mockGetTransactionByExternalId).toHaveBeenCalledWith('np-payin-0xother');
       expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
       const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
       expect(upsertCall?.create).toMatchObject({ status: 'buzz_failed' });
@@ -1034,6 +1039,7 @@ describe('status-built events carry payin_hash into the manual-credit guard', ()
     await reprocessDeposit(12345);
 
     expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(1);
+    expect(mockGetTransactionByExternalId).toHaveBeenCalledWith('np-payin-0xpass');
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 
@@ -1048,6 +1054,7 @@ describe('status-built events carry payin_hash into the manual-credit guard', ()
     await retryFailedDeposits();
 
     expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(1);
+    expect(mockGetTransactionByExternalId).toHaveBeenCalledWith('np-payin-0xpass');
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 
@@ -1062,6 +1069,7 @@ describe('status-built events carry payin_hash into the manual-credit guard', ()
     await reconcileUserDeposits(42);
 
     expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(2);
+    expect(mockGetTransactionByExternalId).toHaveBeenCalledWith('np-payin-0xpass');
     expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 });
