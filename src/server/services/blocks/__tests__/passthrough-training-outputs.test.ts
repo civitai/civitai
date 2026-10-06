@@ -12,7 +12,6 @@ import type * as CoverageSource from '~/server/services/generation/coverage-sour
  * `not.toContain` cannot pass by the two coinciding.
  */
 
-vi.mock('~/server/db/client', () => ({ dbRead: {} }));
 vi.mock('~/server/services/generation/coverage-source', async (importOriginal) => ({
   ...(await importOriginal<typeof CoverageSource>()),
   nextCoverageEnabled: async () => false,
