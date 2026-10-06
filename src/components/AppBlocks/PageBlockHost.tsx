@@ -54,8 +54,8 @@ import {
 import { CreatePostConsentBody } from './CreatePostConsentBody';
 import {
   buildTrainingConsentCopy,
-  isTrainingSubmitTransportError,
   resolveRunTrainingRequest,
+  submitTrainingWithRecovery,
   type TrainingQuotePreview,
 } from './runTrainingGate';
 import { TrainingConsentBody } from './TrainingConsentBody';
@@ -4538,22 +4538,21 @@ export function PageBlockHost({
                   blockToken: token,
                   quoteId,
                 });
-                const submit = () =>
-                  submitWorkflowMutation.mutateAsync({
-                    blockToken: token,
-                    // Schema-validated server-side and checked against the quote's
-                    // body hash; the host never renders or trusts it.
-                    body: body as never,
-                  });
-                // The quote is spent once the server sees this call, so a lost
-                // RESPONSE cannot be retried from the block (it would need a fresh
-                // quote = a second run). Resend the SAME call once on a transport
-                // failure: the server's per-quote claim replays a finished submit.
-                const { snapshot } = await submit().catch((err) => {
-                  if (isTrainingSubmitTransportError(err)) return submit();
-                  throw err;
-                });
-                settlement.reply({ snapshot });
+                const outcome = await submitTrainingWithRecovery(
+                  () =>
+                    submitWorkflowMutation.mutateAsync({
+                      blockToken: token,
+                      // Schema-validated server-side and checked against the quote's
+                      // body hash; the host never renders or trusts it.
+                      body: body as never,
+                    }),
+                  (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+                );
+                settlement.reply(
+                  'result' in outcome
+                    ? { snapshot: outcome.result.snapshot }
+                    : { error: 'submission-unconfirmed' }
+                );
               } catch (err) {
                 settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
               }

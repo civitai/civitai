@@ -334,11 +334,15 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
     await expect.element(confirmBtn).toBeInTheDocument();
     await confirmBtn.click();
-    await vi.waitFor(() => {
-      const r = replies.last('TRAINING_RESULT');
-      if (!r) throw new Error('no reply yet');
-      expect(r.payload).toEqual({ requestId: 'rq_9', snapshot: SNAPSHOT });
-    });
+    await vi.waitFor(
+      () => {
+        const r = replies.last('TRAINING_RESULT');
+        if (!r) throw new Error('no reply yet');
+        expect(r.payload).toEqual({ requestId: 'rq_9', snapshot: SNAPSHOT });
+        // The resend waits the first recovery delay (1 s) by design.
+      },
+      { timeout: 5_000 }
+    );
     expect(submitMutate).toHaveBeenCalledTimes(2);
     expect(submitMutate.mock.calls[1]).toEqual(submitMutate.mock.calls[0]);
     expect(consentMutate).toHaveBeenCalledTimes(1);

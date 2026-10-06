@@ -65,6 +65,12 @@ export const RUN_TRAINING_HOST_ERRORS = [
   'no block token',
   /** The viewer dismissed the confirm. Guaranteed to mean NO run was submitted. */
   'declined',
+  /**
+   * The submit was SENT but its outcome could not be confirmed (connection lost, and
+   * the server still reported it in progress). The run may be running and charged —
+   * a block must not start a new estimate on this error; check the run list.
+   */
+  'submission-unconfirmed',
 ] as const satisfies readonly string[];
 
 export type RunTrainingHostError = (typeof RUN_TRAINING_HOST_ERRORS)[number];
@@ -164,6 +170,46 @@ export function buildTrainingConsentCopy({
  * code and is never retried.
  */
 export function isTrainingSubmitTransportError(err: unknown): boolean {
-  const code = (err as { data?: { code?: unknown } } | null | undefined)?.data?.code;
-  return typeof code !== 'string';
+  return typeof trpcErrorCode(err) !== 'string';
+}
+
+function trpcErrorCode(err: unknown): unknown {
+  return (err as { data?: { code?: unknown } } | null | undefined)?.data?.code;
+}
+
+/** Waits between resends after a transport failure — about a minute in total. */
+export const TRAINING_SUBMIT_RECOVERY_DELAYS_MS = [
+  1_000, 2_000, 4_000, 8_000, 15_000, 15_000, 15_000,
+];
+
+/**
+ * Submit a training run, recovering from a lost response.
+ *
+ * The quote is spent as soon as the server sees the call, so a block cannot retry a
+ * lost response itself. After a transport failure this resends the SAME call; the
+ * server's per-quote claim replays a finished submit and answers CONFLICT while the
+ * first attempt is still running, so CONFLICT (and further transport failures) mean
+ * "wait and resend". A different server error is the real outcome and is thrown.
+ * If the outcome is still unknown after the delays, returns `unconfirmed` rather than
+ * an error a block would read as "nothing happened".
+ */
+export async function submitTrainingWithRecovery<T>(
+  submit: () => Promise<T>,
+  sleep: (ms: number) => Promise<void>,
+  delays: readonly number[] = TRAINING_SUBMIT_RECOVERY_DELAYS_MS
+): Promise<{ result: T } | { unconfirmed: true }> {
+  try {
+    return { result: await submit() };
+  } catch (err) {
+    if (!isTrainingSubmitTransportError(err)) throw err;
+  }
+  for (const delay of delays) {
+    await sleep(delay);
+    try {
+      return { result: await submit() };
+    } catch (err) {
+      if (!isTrainingSubmitTransportError(err) && trpcErrorCode(err) !== 'CONFLICT') throw err;
+    }
+  }
+  return { unconfirmed: true };
 }

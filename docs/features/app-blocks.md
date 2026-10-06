@@ -481,7 +481,9 @@ owner's own private run is allowed, under the private-run Buzz cap.
    of the quote, and on the viewer's confirm records it through
    `blocks.consentTrainingQuote` (signed-in session only) and then submits. A submit
    whose quote the viewer did not confirm is refused, so calling `SUBMIT_WORKFLOW`
-   directly cannot start a run.
+   directly cannot start a run. If the connection drops mid-submit the host resends the same call
+   for about a minute; if the outcome is still unknown it replies
+   `error: 'submission-unconfirmed'` — the run may be running, so do not re-estimate.
 
 A confirmed run may cost more than the token's per-call budget, up to
 `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.

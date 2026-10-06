@@ -76,8 +76,8 @@ export function hashTrainingBody(body: BlockTrainingBody): string {
 }
 
 /**
- * The identity of a training RUN — app, dataset, every body field and the dataset's
- * run generation — as a sha256 hex digest. Retries of one run share it; it keys the
+ * The identity of a training RUN — app, dataset, every body field and that body's
+ * run generation (`readTrainingRunGeneration`) — as a sha256 hex digest. Retries of one run share it; it keys the
  * run's idempotency claim and orchestrator `externalId` (which the orchestrator
  * dedupes per `(userId, externalId)`).
  */
@@ -92,7 +92,7 @@ export function trainingRunKey(
 }
 
 // Per (dataset, body): a definite submit of one body must not change the run key of
-// another body's pending retry. `bodyHash` covers the dataset id too.
+// another body's pending retry.
 function runGenerationKey(
   body: BlockTrainingBody
 ): `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${string}` {

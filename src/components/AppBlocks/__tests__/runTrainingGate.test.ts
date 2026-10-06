@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildTrainingConsentCopy,
   isTrainingSubmitTransportError,
+  submitTrainingWithRecovery,
   resolveRunTrainingRequest,
   type TrainingQuotePreview,
 } from '~/components/AppBlocks/runTrainingGate';
@@ -95,5 +96,58 @@ describe('isTrainingSubmitTransportError', () => {
     expect(
       isTrainingSubmitTransportError(Object.assign(new Error('x'), { data: { code: 'CONFLICT' } }))
     ).toBe(false);
+  });
+});
+
+describe('submitTrainingWithRecovery', () => {
+  const transport = () => new Error('Failed to fetch');
+  const coded = (code: string) => Object.assign(new Error(code), { data: { code } });
+  const sleep = vi.fn(async () => undefined);
+
+  it('returns the first result with no resend', async () => {
+    const submit = vi.fn(async () => 'ok');
+    expect(await submitTrainingWithRecovery(submit, sleep, [1, 2])).toEqual({ result: 'ok' });
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('a first SERVER refusal is thrown, never resent', async () => {
+    const submit = vi.fn(async () => {
+      throw coded('FORBIDDEN');
+    });
+    await expect(submitTrainingWithRecovery(submit, sleep, [1, 2])).rejects.toThrow('FORBIDDEN');
+    expect(submit).toHaveBeenCalledTimes(1);
+  });
+
+  it('after a transport loss, CONFLICT (first attempt still running) means wait and resend', async () => {
+    const submit = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(transport())
+      .mockRejectedValueOnce(coded('CONFLICT'))
+      .mockRejectedValueOnce(coded('CONFLICT'))
+      .mockResolvedValueOnce('replayed');
+    sleep.mockClear();
+    expect(await submitTrainingWithRecovery(submit, sleep, [10, 20, 30, 40])).toEqual({
+      result: 'replayed',
+    });
+    expect(sleep.mock.calls.map((c) => c[0])).toEqual([10, 20, 30]);
+  });
+
+  it('after a transport loss, a different server error is the real outcome and is thrown', async () => {
+    const submit = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(transport())
+      .mockRejectedValueOnce(coded('NOT_FOUND'));
+    await expect(submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).rejects.toThrow('NOT_FOUND');
+    expect(submit).toHaveBeenCalledTimes(2);
+  });
+
+  it('an outcome still unknown after every delay is UNCONFIRMED, not an error', async () => {
+    const submit = vi.fn(async () => {
+      throw transport();
+    });
+    expect(await submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).toEqual({
+      unconfirmed: true,
+    });
+    expect(submit).toHaveBeenCalledTimes(4);
   });
 });

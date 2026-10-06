@@ -1156,12 +1156,13 @@ describe('training — the run generation is per BODY', () => {
       }
     );
     const qa = await confirmed();
-    await expect(submit(body({ quoteId: qa }))).rejects.toThrow('socket hang up'); // A, ambiguous
+    await expect(submit(body({ quoteId: qa }))).rejects.toThrow('socket hang up');
     fail = false;
     const qb = await confirmed(body({ triggerWord: 'otherchar' }));
-    await submit(body({ quoteId: qb, triggerWord: 'otherchar' })); // B lands definitely
+    await submit(body({ quoteId: qb, triggerWord: 'otherchar' }));
     const qa2 = await confirmed();
-    await submit(body({ quoteId: qa2 })); // retry of A
+    await submit(body({ quoteId: qa2 }));
+    expect(externalIds()).toHaveLength(3);
     const [a1, b1, a2] = externalIds();
     expect(a2).toBe(a1);
     expect(b1).not.toBe(a1);
