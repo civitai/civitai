@@ -71,46 +71,9 @@ export type TrainingRequest = {
   modelVersionMetadata?: MixedObject | null;
 };
 
-async function getSubmittedAt(modelVersionId: number, userId: number) {
-  const [modelFile] = await dbWrite.$queryRaw<MoveAssetRow[]>`
-    SELECT mf.metadata, mv."updatedAt"
-    FROM "ModelVersion" mv
-           JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
-           JOIN "Model" m ON m.id = mv."modelId"
-    WHERE mv.id = ${modelVersionId}
-      AND m."userId" = ${userId}
-  `;
-
-  if (!modelFile) throw throwBadRequestError('Invalid model version');
-  if (modelFile.metadata?.trainingResults?.submittedAt) {
-    return new Date(modelFile.metadata.trainingResults.submittedAt);
-  } else if (modelFile.metadata?.trainingResults?.history) {
-    for (const { status, time } of modelFile.metadata.trainingResults.history) {
-      if (status === TrainingStatus.Submitted) {
-        return new Date(time);
-      }
-    }
-  }
-
-  return modelFile.updatedAt;
-}
-
-const assetUrlRegex =
-  /\/v\d\/consumer\/jobs\/(?<jobId>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/assets\/(?<assetName>\S+)$/i;
-
-export function parseJobAssetUrl(url: string): { jobId: string; assetName: string } | undefined {
-  const groups = url.match(assetUrlRegex)?.groups;
-  return groups ? { jobId: groups.jobId, assetName: groups.assetName } : undefined;
-}
-
 const blobUrlRegex = /\/v\d\/consumer\/blobs\/(?<blobId>[A-Z0-9]+)\.(?<extension>\w+)/i;
 
 export const isBlobAssetUrl = (url: string) => blobUrlRegex.test(url);
-
-type MoveAssetRow = {
-  metadata: FileMetadata | null;
-  updatedAt: Date;
-};
 
 export async function moveAssetFromBlob({
   url,
@@ -184,65 +147,6 @@ export async function moveAssetFromBlob({
   return {
     newUrl,
     fileSize,
-  };
-}
-
-export async function moveAssetFromJob({
-  url,
-  modelVersionId,
-  ownerId,
-}: {
-  url: string;
-  modelVersionId: number;
-  ownerId: number;
-}) {
-  const parsed = parseJobAssetUrl(url);
-  if (!parsed) throw throwBadRequestError('Invalid URL');
-  const { jobId, assetName } = parsed;
-
-  const { url: destinationUri } = await getPutUrl(`modelVersion/${modelVersionId}/${assetName}`);
-
-  const reqBody: Orchestrator.Training.CopyAssetJobPayload = {
-    jobId,
-    assetName,
-    destinationUri,
-  };
-
-  const submittedAt = await getSubmittedAt(modelVersionId, ownerId);
-  const response = await getOrchestratorCaller(submittedAt).copyAsset({
-    payload: reqBody,
-    queryParams: { wait: true },
-  });
-  if (response.status === 429) {
-    throw throwRateLimitError();
-  }
-
-  if (!response.ok) {
-    throw throwBadRequestError(
-      "We couldn't reach the training service to transfer your file. Please wait a moment and try again."
-    );
-  }
-
-  const thisJob = response.data?.jobs?.[0];
-
-  if (!thisJob || thisJob.lastEvent?.type !== 'Succeeded') {
-    throw throwBadRequestError(
-      "Your training file couldn't be transferred to your model. Please try again or select another file."
-    );
-  }
-
-  const result = thisJob.result;
-  if (!result || !result.found) {
-    throw throwBadRequestError(
-      "We couldn't find the training file you selected. It may have expired — please try again or select another file."
-    );
-  }
-
-  const newUrl = destinationUri.split('?')[0];
-
-  return {
-    newUrl,
-    fileSize: result.fileSize,
   };
 }
 
