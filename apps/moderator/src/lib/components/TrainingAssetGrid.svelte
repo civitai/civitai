@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { TrainingAsset } from '$lib/training-zip';
+  import type { TrainingAsset } from '$lib/training-media';
 
   let { assets, columns = 'grid-cols-2 sm:grid-cols-3 lg:grid-cols-4' }: {
     assets: TrainingAsset[];
@@ -28,8 +28,13 @@
         {:else}
           <audio controls src={asset.url} class="w-full p-2"></audio>
         {/if}
-        <figcaption class="truncate px-2 py-1 text-xs text-dark-2" title={asset.name}>
-          {asset.name}
+        <figcaption class="px-2 py-1 text-xs text-dark-2">
+          <span class="block truncate" title={asset.name}>{asset.name}</span>
+          {#if asset.caption !== undefined}
+            <span class="mt-1 block break-words whitespace-pre-wrap text-dark-0">
+              {asset.caption ?? '(no caption)'}
+            </span>
+          {/if}
         </figcaption>
       </figure>
     {/each}

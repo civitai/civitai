@@ -1,6 +1,6 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { canAccess } from '$lib/server/access';
+import { requireAccess } from '$lib/server/access';
 import { fetchOrchestratorBlob } from '$lib/server/orchestrator';
 import { resolveTrainingWorkflowBlob } from '$lib/server/training-moderation.service';
 import { logToAxiom } from '$lib/server/axiom';
@@ -13,10 +13,10 @@ import { logToAxiom } from '$lib/server/axiom';
  * an arbitrary URL or someone else's unrelated upload.
  */
 export const GET: RequestHandler = async ({ params, locals }) => {
-  // `/api/*` is exempt from the global page gate, so it carries the page's own check.
+  // API routes carry their page's check themselves (see `api-guard.ts`); this one serves the
+  // training-data review pages.
   if (!locals.user) error(403, 'Not signed in.');
-  if (!canAccess(locals.user, '/audit/training-data'))
-    error(403, 'You do not have access to this page.');
+  requireAccess(locals.user, '/audit/training-data');
 
   const index = Number(params.index);
   if (!/^\d{1,4}$/.test(params.index) || !Number.isInteger(index)) error(400, 'Bad item index.');

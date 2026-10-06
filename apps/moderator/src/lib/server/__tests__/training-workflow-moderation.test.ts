@@ -4,29 +4,50 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * Workflow-only training runs (Training Studio, App Blocks) have no ModelVersion, so the run is
  * identified, attributed and ruled on purely from the orchestrator's workflow. These cases pin the
  * decisions that are silent when wrong: whose run it is, whether it may be ruled on HERE, whether a
- * ruling actually took, and what the queue lists when the orchestrator cannot be asked.
+ * ruling actually took, what the queue lists when something cannot be asked, and what the dataset
+ * route will serve.
  *
- * Fixture shape follows the manager API, which writes enums PascalCase (`UnderReview`).
+ * Fixture shape follows the manager API, which writes enums PascalCase (`UnderReview`) — checked
+ * against a live read on 2026-10-05.
  */
 
 process.env.ORCHESTRATOR_ENDPOINT = 'https://orchestrator.example/';
 process.env.ORCHESTRATOR_ACCESS_TOKEN = 'test-token';
 
 const recordModActivity = vi.fn();
-const logToAxiom = vi.fn(async () => {});
-const usersByIds = vi.fn(async () => new Map<number, { username: string | null }>());
+const logToAxiom = vi.fn(async (_: Record<string, unknown>) => {});
+const usersByIds = vi.fn(async (_: number[]) => new Map<number, { username: string | null }>());
 const chQuery = vi.fn();
+/** Rows the `ModelFile` lookup behind a model-version claim returns. */
+const fileRows = vi.fn(async (): Promise<unknown[]> => []);
+let pageGranted = true;
+
+// A query builder whose every call chains, ending in `fileRows`.
+const chain: object = new Proxy(
+  {},
+  {
+    get: (_, prop) => (prop === 'then' ? undefined : prop === 'execute' ? fileRows : () => chain),
+  }
+);
 
 // The SDK's dist does not load under Node's ESM resolver (a directory import), and the workflow-only
 // path does not use it — it reads the manager API with plain fetch, which is what these cases stub.
 vi.mock('@civitai/client', () => ({ getWorkflow: vi.fn(), createCivitaiClient: vi.fn() }));
-vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: chain }));
 vi.mock('$lib/server/clickhouse', () => ({ getClickhouse: () => ({ $query: chQuery }) }));
 vi.mock('$lib/server/mod-activity', () => ({ recordModActivity }));
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
 vi.mock('$lib/server/users.service', () => ({ usersByIds }));
 vi.mock('$lib/server/search-index', () => ({ syncSearchIndex: vi.fn() }));
 vi.mock('$lib/server/user-actions.service', () => ({ callModEndpoint: vi.fn() }));
+vi.mock('$lib/server/access', async () => {
+  const { error } = await import('@sveltejs/kit');
+  return {
+    requireAccess: (_: unknown, path: string) => {
+      if (path !== '/audit/training-data' || !pageGranted) error(403, 'no access');
+    },
+  };
+});
 
 const {
   parseWorkflowId,
@@ -35,11 +56,19 @@ const {
   getTrainingWorkflowDetail,
   resolveTrainingWorkflowBlob,
   clearTrainingWorkflowBlobCache,
+  MAX_PENDING_CANDIDATES,
 } = await import('../training-moderation.service');
 const { releaseModerationGate } = await import('../orchestrator');
+const blobRoute = await import(
+  '../../../routes/api/training-workflow-blob/[workflowId]/[index]/+server'
+);
+const reviewPage = await import(
+  '../../../routes/audit/training-data/workflow/[workflowId]/+page.server'
+);
 
 const OWNER = 42;
-const WF = `${OWNER}-20261005120000123-abcd`;
+// Every timestamp field distinct, so a swapped slice cannot read back the same instant.
+const WF = `${OWNER}-20261005123456789-abcd`;
 const KEY_A = `${'a'.repeat(32)}.png`;
 const KEY_B = `${'b'.repeat(32)}.mp4`;
 
@@ -50,12 +79,14 @@ type Fixture = {
   stepType?: string;
   metadata?: Record<string, unknown>;
   items?: unknown[];
+  timeout?: string | null;
+  startedAt?: string | null;
 };
 
 const workflow = (over: Fixture = {}) => ({
   id: over.id ?? WF,
   status: 'Processing',
-  createdAt: '2026-10-05T12:00:00.123Z',
+  createdAt: '2026-10-05T12:34:56.789Z',
   tags: over.tags ?? ['civitai', 'training', 'app-block:my-app'],
   metadata: over.metadata ?? {},
   steps: [
@@ -63,7 +94,8 @@ const workflow = (over: Fixture = {}) => ({
       $type: over.stepType ?? 'training',
       name: '0',
       status: 'Processing',
-      startedAt: '2026-10-05T12:00:01Z',
+      timeout: over.timeout ?? null,
+      ...(over.startedAt === null ? {} : { startedAt: over.startedAt ?? '2026-10-05T12:35:00Z' }),
       input: {
         engine: 'ai-toolkit',
         trainingData: {
@@ -97,14 +129,16 @@ function orchestrator(
     if (url.pathname.endsWith('/moderation-gate') && init?.method === 'POST') return gate();
     if (url.pathname === `/v1/manager/workflows/${WF}`) {
       const body = reads[Math.min(i++, reads.length - 1)];
-      return body instanceof Response ? body : json(body);
+      return body instanceof Response ? body.clone() : json(body);
     }
     return new Response(null, { status: 599 });
   };
 }
 
-const gateCalls = () =>
-  fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/moderation-gate'));
+const callsTo = (suffix: string) =>
+  fetchMock.mock.calls.filter(([u]) => String(u).endsWith(suffix));
+const gateCalls = () => callsTo('/moderation-gate');
+const managerReads = () => callsTo(`/v1/manager/workflows/${WF}`);
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -116,21 +150,32 @@ beforeEach(() => {
   logToAxiom.mockClear();
   usersByIds.mockClear();
   chQuery.mockReset();
+  fileRows.mockReset();
+  fileRows.mockResolvedValue([]);
+  pageGranted = true;
   clearTrainingWorkflowBlobCache();
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
-const rule = (approve: boolean, extra: { message?: string; workflowId?: string } = {}) =>
+const rule = (
+  approve: boolean,
+  extra: { message?: string; workflowId?: string; delays?: number[] } = {}
+) =>
   moderateTrainingWorkflow(
     { workflowId: extra.workflowId ?? WF, approve, message: extra.message, moderatorId: 7 },
-    { recheckDelaysMs: [0, 0] }
+    { recheckDelaysMs: extra.delays ?? [0, 0] }
   );
+
+const axiomMessages = () => logToAxiom.mock.calls.map(([d]) => d.message);
 
 describe('parseWorkflowId', () => {
   it('reads the owner and submit instant from both id shapes in use', () => {
     expect(parseWorkflowId(WF)).toEqual({
       ownerId: 42,
-      submittedAt: new Date('2026-10-05T12:00:00Z'),
+      submittedAt: new Date('2026-10-05T12:34:56Z'),
     });
     // The older shape, with no suffix.
     expect(parseWorkflowId('5-20260818171734275')?.ownerId).toBe(5);
@@ -138,18 +183,18 @@ describe('parseWorkflowId', () => {
 
   it.each([
     ['empty', ''],
-    ['no owner', '-20261005120000123-abcd'],
+    ['no owner', '-20261005123456789-abcd'],
     ['short timestamp', '42-2026100512-abcd'],
-    ['path traversal', '42-20261005120000123/../../admin'],
-    ['query smuggling', '42-20261005120000123?x=1'],
-    ['owner beyond int4', '9999999999-20261005120000123'],
-    ['owner zero', '0-20261005120000123'],
+    ['path traversal', '42-20261005123456789/../../admin'],
+    ['query smuggling', '42-20261005123456789?x=1'],
+    ['owner beyond int4', '9999999999-20261005123456789'],
+    ['owner zero', '0-20261005123456789'],
   ])('refuses %s', (_, raw) => {
     expect(parseWorkflowId(raw)).toBeNull();
   });
 });
 
-describe('moderateTrainingWorkflow', () => {
+describe('moderateTrainingWorkflow — refusals before the gate', () => {
   it('refuses a malformed id without asking the orchestrator anything', async () => {
     orchestrator([workflow()]);
     const result = await rule(true, { workflowId: '42-not-a-workflow' });
@@ -157,13 +202,48 @@ describe('moderateTrainingWorkflow', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('refuses a model-version run and points at the version route, before touching the gate', async () => {
+  it('refuses a run its version really owns, and points at the version route', async () => {
     orchestrator([workflow({ tags: ['civitai', 'training', 'modelVersion:123'] })]);
+    fileRows.mockResolvedValue([{ modelVersionId: 123, workflowId: WF }]);
     const result = await rule(true);
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toContain('/audit/training-data/123');
     expect(gateCalls()).toHaveLength(0);
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('does not let a model-version tag the version does not back up block the ruling', async () => {
+    // The submitter writes tags; version 123's own training file names a different workflow.
+    orchestrator([
+      workflow({ tags: ['training', 'modelVersion:123'] }),
+      workflow({ moderationStatus: 'Approved' }),
+    ]);
+    fileRows.mockResolvedValue([{ modelVersionId: 123, workflowId: '9-20260101000000000' }]);
+    expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
+    expect(gateCalls()).toHaveLength(1);
+  });
+
+  it('treats an unreadable model-version tag as unconfirmed, not as a version run', async () => {
+    orchestrator([
+      workflow({ tags: ['training', 'modelVersion:abc'] }),
+      workflow({ moderationStatus: 'Approved' }),
+    ]);
+    expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
+    orchestrator([workflow({ tags: ['training', 'modelVersion:abc'] })]);
+    const detail = await getTrainingWorkflowDetail(WF);
+    expect(detail.ok && detail.detail).toMatchObject({
+      modelVersionId: null,
+      versionClaimUnconfirmed: true,
+      claimedModelVersionId: -1,
+    });
+  });
+
+  it('refuses when a model-version claim cannot be checked', async () => {
+    orchestrator([workflow({ tags: ['training', 'modelVersion:123'] })]);
+    fileRows.mockRejectedValue(new Error('db down'));
+    const result = await rule(false);
+    expect(!result.ok && result.error).toContain('could not be checked');
+    expect(gateCalls()).toHaveLength(0);
   });
 
   it('refuses a run that is not under review', async () => {
@@ -183,6 +263,16 @@ describe('moderateTrainingWorkflow', () => {
     expect(gateCalls()).toHaveLength(0);
   });
 
+  it('refuses when the orchestrator answers with a different workflow', async () => {
+    orchestrator([workflow({ id: '42-20261005123456999-zzzz' })]);
+    const result = await rule(true);
+    expect(!result.ok && result.error).toContain('returned a different workflow');
+    expect(gateCalls()).toHaveLength(0);
+    expect(await getTrainingWorkflowDetail(WF)).toMatchObject({ ok: false, status: 422 });
+  });
+});
+
+describe('moderateTrainingWorkflow — after the release', () => {
   it('attributes the ruling to the owner in the id, not to metadata claiming another user', async () => {
     orchestrator([
       workflow({ metadata: { userId: 999, ownerId: 999 }, tags: ['training', 'user:999'] }),
@@ -199,13 +289,44 @@ describe('moderateTrainingWorkflow', () => {
     });
   });
 
+  it('keeps re-reading until the status moves', async () => {
+    orchestrator([workflow(), workflow(), workflow(), workflow({ moderationStatus: 'Approved' })]);
+    expect(await rule(true, { delays: [0, 0, 0] })).toEqual({
+      ok: true,
+      moderationStatus: 'approved',
+    });
+    expect(managerReads()).toHaveLength(4);
+  });
+
   it('reports "not applied" when the release is accepted but the run is still under review', async () => {
     orchestrator([workflow(), workflow(), workflow()]);
     const result = await rule(false);
     expect(result.ok).toBe(false);
-    expect(!result.ok && result.error).toContain('still under review — it was not applied yet');
+    expect(!result.ok && result.error).toContain(
+      'still reads under review — it was not applied yet'
+    );
     expect(gateCalls()).toHaveLength(1);
-    expect(recordModActivity).not.toHaveBeenCalled();
+    // The release was accepted, so the attempt is on record whatever happens next.
+    expect(recordModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ activity: 'trainingWorkflow:deny', entityId: OWNER })
+    );
+    expect(axiomMessages()).toContain('accepted but not applied');
+  });
+
+  it('says "unconfirmed", not "retry", when the re-read itself fails', async () => {
+    orchestrator([workflow(), new Response(null, { status: 503 })]);
+    const result = await rule(true);
+    expect(!result.ok && result.error).toContain('could not be re-read to confirm');
+    expect(recordModActivity).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ important: true, message: 'outcome unconfirmed' })
+    );
+  });
+
+  it('a failed LAST re-read is unconfirmed even if an earlier one read under review', async () => {
+    orchestrator([workflow(), workflow(), new Response(null, { status: 503 })]);
+    const result = await rule(true);
+    expect(!result.ok && result.error).toContain('could not be re-read to confirm');
   });
 
   it('surfaces a 404 from the gate release and records nothing', async () => {
@@ -216,7 +337,7 @@ describe('moderateTrainingWorkflow', () => {
     expect(recordModActivity).not.toHaveBeenCalled();
   });
 
-  it('records a deny as a deny once the run reads rejected', async () => {
+  it('records a deny as a deny and forwards the trimmed reason', async () => {
     orchestrator([workflow(), workflow({ moderationStatus: 'Rejected' })]);
     const result = await rule(false, { message: '  dataset violates policy  ' });
     expect(result).toEqual({ ok: true, moderationStatus: 'rejected' });
@@ -230,12 +351,25 @@ describe('moderateTrainingWorkflow', () => {
     });
   });
 
+  it('sends no message on approve, or for a whitespace-only reason, and caps a long one', async () => {
+    orchestrator([workflow(), workflow({ moderationStatus: 'Approved' })]);
+    await rule(true, { message: 'ignored' });
+    orchestrator([workflow(), workflow({ moderationStatus: 'Rejected' })]);
+    await rule(false, { message: '   ' });
+    orchestrator([workflow(), workflow({ moderationStatus: 'Rejected' })]);
+    await rule(false, { message: 'x'.repeat(1500) });
+    const bodies = gateCalls().map(([, init]) => JSON.parse(String(init.body)));
+    expect(bodies[0]).toEqual({ approved: true });
+    expect(bodies[1]).toEqual({ approved: false });
+    expect(bodies[2].message).toHaveLength(1000);
+  });
+
   it('does not report success when the run ended in a state the ruling did not ask for', async () => {
     orchestrator([workflow(), workflow({ moderationStatus: 'Rejected' })]);
     const result = await rule(true);
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toContain('not approved');
-    expect(recordModActivity).not.toHaveBeenCalled();
+    expect(axiomMessages()).toContain('unexpected end state');
   });
 });
 
@@ -262,42 +396,73 @@ describe('getPendingWorkflowGates', () => {
   const A = id(1, 1); // under review, no tag → listed
   const B = id(2, 2); // refunded in the ledger → never read
   const C = id(3, 3); // training step already ended → never read
-  const D = id(4, 4); // under review but a model-version run → dropped
+  const D = id(4, 4); // under review, a model-version run its version owns → dropped
   const E = id(5, 5); // finished → dropped
   const F = id(6, 6); // orchestrator no longer has it → dropped
+  const G = id(7, 7); // under review, tag the version does not back up → listed, flagged
 
-  function ledger() {
+  function ledger(ids = [A, B, C, D, E, F, G, 'not-a-workflow-id']) {
     chQuery.mockImplementation(async (sql: string) => {
-      if (sql.includes("type = 'training'"))
-        return [A, B, C, D, E, F, 'not-a-workflow-id'].map((workflowId) => ({ workflowId }));
+      if (sql.includes("type = 'training'")) return ids.map((workflowId) => ({ workflowId }));
       if (sql.includes("type = 'refund'")) return [{ workflowId: B }];
       if (sql.includes('orchestration.workflowSteps')) return [{ workflowId: C }];
       throw new Error(`unexpected query ${sql}`);
     });
   }
 
-  it('lists only under-review, workflow-only runs, in ledger order', async () => {
+  const byId = (url: URL) => decodeURIComponent(url.pathname.split('/').pop()!);
+
+  function standardRoute(url: URL) {
+    const wf = byId(url);
+    if (wf === A) return json(workflow({ id: A }));
+    if (wf === D) return json(workflow({ id: D, tags: ['modelVersion:9'] }));
+    if (wf === E) return json(workflow({ id: E, moderationStatus: 'Approved' }));
+    if (wf === F) return new Response(null, { status: 410 });
+    if (wf === G) return json(workflow({ id: G, tags: ['modelVersion:11'] }));
+    return new Response(null, { status: 599 });
+  }
+
+  it('lists only under-review runs that are not a confirmed version run', async () => {
     ledger();
-    route = (url) => {
-      const wf = decodeURIComponent(url.pathname.split('/').pop()!);
-      if (wf === A) return json(workflow({ id: A }));
-      if (wf === D) return json(workflow({ id: D, tags: ['modelVersion:9'] }));
-      if (wf === E) return json(workflow({ id: E, moderationStatus: 'Approved' }));
-      if (wf === F) return new Response(null, { status: 404 });
-      return new Response(null, { status: 599 });
-    };
+    route = standardRoute;
+    fileRows.mockResolvedValue([
+      { modelVersionId: 9, workflowId: D },
+      { modelVersionId: 11, workflowId: '1-20250101000000000' },
+    ]);
+    usersByIds.mockResolvedValueOnce(
+      new Map([
+        [1, { username: 'alice' }],
+        [7, { username: 'gus' }],
+      ])
+    );
     const result = await getPendingWorkflowGates();
-    expect(result.items.map((i) => i.workflowId)).toEqual([A]);
+    expect(result.items.map((i) => i.workflowId)).toEqual([A, G]);
     expect(result.items[0]).toMatchObject({
       ownerId: 1,
+      username: 'alice',
       verified: true,
+      versionClaimUnconfirmed: false,
       origin: { kind: 'app-block', appId: 'my-app' },
     });
+    expect(result.items[1]).toMatchObject({ username: 'gus', versionClaimUnconfirmed: true });
     expect(result.workflowFilterUnavailable).toBe(false);
     expect(result.ledgerUnavailable).toBe(false);
     // Refunded and ended runs are excluded from the ledger, never fetched.
     const read = fetchMock.mock.calls.map(([u]) => decodeURIComponent(String(u)));
     expect(read.some((u) => u.includes(B) || u.includes(C))).toBe(false);
+  });
+
+  it('keeps claimed runs listed, unverified, when the version check fails', async () => {
+    ledger();
+    route = standardRoute;
+    fileRows.mockRejectedValue(new Error('db down'));
+    const result = await getPendingWorkflowGates();
+    expect(result.items.map((i) => [i.workflowId, i.verified])).toEqual([
+      [A, true],
+      [D, false],
+      [G, false],
+    ]);
+    expect(result.workflowFilterUnavailable).toBe(true);
   });
 
   it('lists every candidate unfiltered, and says so, when the orchestrator is unreachable', async () => {
@@ -306,7 +471,7 @@ describe('getPendingWorkflowGates', () => {
       throw new TypeError('fetch failed');
     };
     const result = await getPendingWorkflowGates();
-    expect(result.items.map((i) => i.workflowId)).toEqual([A, D, E, F]);
+    expect(result.items.map((i) => i.workflowId)).toEqual([A, D, E, F, G]);
     expect(result.items.every((i) => !i.verified)).toBe(true);
     expect(result.workflowFilterUnavailable).toBe(true);
   });
@@ -315,8 +480,42 @@ describe('getPendingWorkflowGates', () => {
     ledger();
     route = () => new Response(null, { status: 503 });
     const result = await getPendingWorkflowGates();
-    expect(result.items).toHaveLength(4);
+    expect(result.items).toHaveLength(5);
     expect(result.workflowFilterUnavailable).toBe(true);
+  });
+
+  it('keeps ledger order when the reads finish in reverse', async () => {
+    ledger([A, D, E, F]);
+    const pending: (() => void)[] = [];
+    route = () =>
+      new Promise<Response>((resolve) => {
+        pending.push(() => resolve(new Response(null, { status: 503 })));
+        if (pending.length === 4) pending.reverse().forEach((release) => release());
+      });
+    const result = await getPendingWorkflowGates();
+    expect(result.items.map((i) => i.workflowId)).toEqual([A, D, E, F]);
+  });
+
+  it('reads at most a page of candidates and says the rest were not checked', async () => {
+    const many = Array.from(
+      { length: MAX_PENDING_CANDIDATES + 1 },
+      (_, n) => `${n + 1}-20261005123456789`
+    );
+    ledger(many);
+    route = () => new Response(null, { status: 404 });
+    const result = await getPendingWorkflowGates();
+    expect(result.truncated).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(MAX_PENDING_CANDIDATES);
+  });
+
+  it('bounds the ledger window at 49 hours before now', async () => {
+    ledger([]);
+    route = () => new Response(null, { status: 599 });
+    await getPendingWorkflowGates({ now: Date.parse('2026-10-05T12:00:00Z') });
+    const charges = chQuery.mock.calls
+      .map(([q]) => String(q))
+      .find((q) => q.includes("'training'"));
+    expect(charges).toContain("date >= '2026-10-03 11:00:00'");
   });
 
   it('says the ledger was unreadable rather than returning an empty queue', async () => {
@@ -341,6 +540,8 @@ describe('resolveTrainingWorkflowBlob', () => {
       ownerId: OWNER,
     });
     expect(await resolveTrainingWorkflowBlob(WF, 1)).toMatchObject({ ok: true, blobKey: KEY_B });
+    // Two resolves, one read: the dataset is held briefly.
+    expect(managerReads()).toHaveLength(1);
   });
 
   it('refuses an index past the end of the dataset', async () => {
@@ -370,10 +571,133 @@ describe('resolveTrainingWorkflowBlob', () => {
     });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('keys the held dataset by workflow, and lets it go after a minute', async () => {
+    const OTHER = '43-20261005123456789-wxyz';
+    const KEY_C = `${'c'.repeat(32)}.jpg`;
+    route = (url) =>
+      byIdOf(url) === OTHER
+        ? json(workflow({ id: OTHER, items: [{ air: KEY_C }] }))
+        : json(workflow());
+    expect(await resolveTrainingWorkflowBlob(WF, 0)).toMatchObject({ blobKey: KEY_A, ownerId: 42 });
+    expect(await resolveTrainingWorkflowBlob(OTHER, 0)).toMatchObject({
+      blobKey: KEY_C,
+      ownerId: 43,
+    });
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 61_000);
+    await resolveTrainingWorkflowBlob(WF, 0);
+    expect(managerReads()).toHaveLength(2);
+  });
+});
+
+const byIdOf = (url: URL) => decodeURIComponent(url.pathname.split('/').pop()!);
+
+describe('GET /api/training-workflow-blob/[workflowId]/[index]', () => {
+  const call = (index: string, user: { id: number } | null = { id: 7 }) =>
+    blobRoute.GET({
+      params: { workflowId: WF, index },
+      locals: { user },
+    } as unknown as Parameters<typeof blobRoute.GET>[0]);
+
+  const status = async (p: unknown) => {
+    try {
+      const res = (await p) as Response;
+      return res.status;
+    } catch (e) {
+      return (e as { status: number }).status;
+    }
+  };
+
+  function serve(blob: () => Response) {
+    route = (url) => (url.pathname.startsWith('/v2/consumer/blobs/') ? blob() : json(workflow()));
+  }
+
+  it('refuses without a session or without the page grant', async () => {
+    serve(() => new Response('x', { headers: { 'content-type': 'image/png' } }));
+    expect(await status(call('0', null))).toBe(403);
+    pageGranted = false;
+    expect(await status(call('0'))).toBe(403);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each(['-1', '1e3', '12345', '0x1', ''])('refuses index %j', async (index) => {
+    serve(() => new Response('x'));
+    expect(await status(call(index))).toBe(400);
+  });
+
+  it('serves media with its type, fetched by the key the workflow names', async () => {
+    serve(() => new Response('png', { headers: { 'content-type': 'image/png; charset=binary' } }));
+    const res = (await call('0')) as Response;
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toBe('image/png');
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    expect(callsTo(`/v2/consumer/blobs/${KEY_A}`)).toHaveLength(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'training-workflow-blob', moderatorId: 7, index: 0 })
+    );
+  });
+
+  it.each(['image/svg+xml', 'text/html', 'application/javascript'])(
+    'serves %s as an opaque download, never as a document',
+    async (type) => {
+      serve(() => new Response('<x/>', { headers: { 'content-type': type } }));
+      const res = (await call('0')) as Response;
+      expect(res.headers.get('content-type')).toBe('application/octet-stream');
+      expect(res.headers.get('x-content-type-options')).toBe('nosniff');
+    }
+  );
+
+  it('answers 502 when the upstream refuses or cannot be reached', async () => {
+    serve(() => new Response(null, { status: 500 }));
+    expect(await status(call('0'))).toBe(502);
+    clearTrainingWorkflowBlobCache();
+    route = (url) => {
+      if (url.pathname.startsWith('/v2/consumer/blobs/')) throw new TypeError('fetch failed');
+      return json(workflow());
+    };
+    expect(await status(call('0'))).toBe(502);
+  });
+
+  it('refuses an item the workflow does not hold', async () => {
+    serve(() => new Response('x'));
+    expect(await status(call('3'))).toBe(404);
+  });
+});
+
+describe('review page actions', () => {
+  it('rules on the run in the URL, not on an id posted with the form', async () => {
+    orchestrator([workflow(), workflow({ moderationStatus: 'Rejected' })]);
+    const form = new FormData();
+    form.set('workflowId', '1-20260101000000000');
+    form.set('reason', 'no');
+    const result = await reviewPage.actions.deny({
+      params: { workflowId: WF },
+      locals: { user: { id: 7 } },
+      request: new Request('http://x/', { method: 'POST', body: form }),
+    } as unknown as Parameters<typeof reviewPage.actions.deny>[0]);
+    expect(result).toEqual({ success: true, moderationStatus: 'rejected' });
+    expect(gateCalls()).toHaveLength(1);
+    expect(String(gateCalls()[0][0])).toContain(`/workflows/${WF}/moderation-gate`);
+    expect(recordModActivity).toHaveBeenCalledWith(expect.objectContaining({ userId: 7 }));
+  }, 15_000);
+
+  it('returns a refusal as fail(400), not a thrown error', async () => {
+    orchestrator([workflow({ moderationStatus: 'Approved' })]);
+    const result = await reviewPage.actions.approve({
+      params: { workflowId: WF },
+      locals: { user: { id: 7 } },
+      request: new Request('http://x/', { method: 'POST', body: new FormData() }),
+    } as unknown as Parameters<typeof reviewPage.actions.approve>[0]);
+    expect(result).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('not awaiting review') },
+    });
+  });
 });
 
 describe('getTrainingWorkflowDetail', () => {
-  it('reads origin, captions and the default 48h gate window for a training step', async () => {
+  it('reads origin, captions, media and the default 48h gate window for a training step', async () => {
     orchestrator([workflow()]);
     const loaded = await getTrainingWorkflowDetail(WF);
     expect(loaded.ok).toBe(true);
@@ -382,17 +706,33 @@ describe('getTrainingWorkflowDetail', () => {
       ownerId: OWNER,
       underReview: true,
       modelVersionId: null,
+      versionClaimUnconfirmed: false,
       origin: { kind: 'app-block', appId: 'my-app' },
-      expiresAt: '2026-10-07T12:00:01.000Z',
+      expiresAt: '2026-10-07T12:35:00.000Z',
     });
     expect(loaded.detail.dataset).toMatchObject({
       kind: 'blobs',
       items: [
-        { index: 0, caption: 'a cat', media: 'image' },
-        { index: 1, caption: null, media: 'video' },
-        { index: 2, blobKey: null },
+        { index: 0, caption: 'a cat', media: { kind: 'image', mimeType: 'image/png' } },
+        { index: 1, caption: null, media: { kind: 'video' } },
+        { index: 2, blobKey: null, media: null },
       ],
     });
+  });
+
+  it('uses 24h for imageResourceTraining, the step timeout when set, and createdAt without a start', async () => {
+    orchestrator([workflow({ stepType: 'imageResourceTraining' })]);
+    const irt = await getTrainingWorkflowDetail(WF);
+    expect(irt.ok && irt.detail.expiresAt).toBe('2026-10-06T12:35:00.000Z');
+
+    orchestrator([workflow({ timeout: '1.02:03:04.5000000' })]);
+    const timed = await getTrainingWorkflowDetail(WF);
+    // 12:35:00 + 1d 02:03:04
+    expect(timed.ok && timed.detail.expiresAt).toBe('2026-10-06T14:38:04.000Z');
+
+    orchestrator([workflow({ startedAt: null })]);
+    const unstarted = await getTrainingWorkflowDetail(WF);
+    expect(unstarted.ok && unstarted.detail.expiresAt).toBe('2026-10-07T12:34:56.789Z');
   });
 
   it('names the owner from the id even when the workflow metadata claims another user', async () => {
@@ -404,6 +744,8 @@ describe('getTrainingWorkflowDetail', () => {
 
   it('maps a missing workflow to 404 and an unreachable orchestrator to 502', async () => {
     orchestrator([new Response(null, { status: 404 })]);
+    expect(await getTrainingWorkflowDetail(WF)).toMatchObject({ ok: false, status: 404 });
+    orchestrator([new Response(null, { status: 410 })]);
     expect(await getTrainingWorkflowDetail(WF)).toMatchObject({ ok: false, status: 404 });
     orchestrator([new Response(null, { status: 500 })]);
     expect(await getTrainingWorkflowDetail(WF)).toMatchObject({ ok: false, status: 502 });

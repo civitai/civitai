@@ -1,35 +1,7 @@
 import JSZip from 'jszip';
+import { trainingMediaOf, type TrainingAsset } from './training-media';
 
-// Mirrors the main app's MIME_TYPES / MEDIA_TYPE tables: entries outside them are dropped, so a caption
-// .txt or a stray dotfile never reaches the grid as an unrenderable tile.
-const MIME_BY_EXT: Record<string, string> = {
-  png: 'image/png',
-  jpg: 'image/jpeg',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  mp4: 'video/mp4',
-  webm: 'video/webm',
-  mp3: 'audio/mpeg',
-  wav: 'audio/vnd.wave',
-};
-
-const KIND_BY_MIME: Record<string, TrainingAssetKind> = {
-  'image/png': 'image',
-  'image/jpeg': 'image',
-  'image/webp': 'image',
-  'video/mp4': 'video',
-  'video/webm': 'video',
-  'audio/mpeg': 'audio',
-  'audio/vnd.wave': 'audio',
-};
-
-export type TrainingAssetKind = 'image' | 'video' | 'audio';
-export type TrainingAsset = {
-  url: string;
-  name: string;
-  mimeType: string;
-  kind: TrainingAssetKind;
-};
+export type { TrainingAsset, TrainingAssetKind } from './training-media';
 
 /**
  * The two halves of the wait, reported separately because they fail differently and only one of them
@@ -61,7 +33,7 @@ export async function loadTrainingAssets(
 
     const entries = Object.entries(zip.files).filter(([name, entry]) => {
       if (entry.dir || name.startsWith('__MACOSX/') || name.endsWith('.DS_STORE')) return false;
-      return !!kindOf(name);
+      return !!trainingMediaOf(name);
     });
 
     let done = 0;
@@ -70,7 +42,7 @@ export async function loadTrainingAssets(
       // JSZip cannot be handed an AbortSignal, so cancellation lands between entries rather than
       // during one. Without this a closed sheet keeps decompressing the whole dataset.
       if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-      const media = kindOf(name)!;
+      const media = trainingMediaOf(name)!;
       const blob = await entry.async('blob');
       assets.push({ url: URL.createObjectURL(blob), name, ...media });
       onProgress?.({ phase: 'unpacking', done: ++done, total: entries.length });
@@ -81,13 +53,6 @@ export async function loadTrainingAssets(
     revokeTrainingAssets(assets);
     throw e;
   }
-}
-
-function kindOf(name: string): { mimeType: string; kind: TrainingAssetKind } | null {
-  const ext = name.split('.').pop()?.toLowerCase() ?? '';
-  const mimeType = MIME_BY_EXT[ext];
-  const kind = mimeType ? KIND_BY_MIME[mimeType] : undefined;
-  return mimeType && kind ? { mimeType, kind } : null;
 }
 
 /** Streamed rather than `res.blob()` so the download reports bytes as they land — the zip can run to
