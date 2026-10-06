@@ -1,4 +1,4 @@
-import type { WorkflowOrigin } from '$lib/server/training-moderation.service';
+import type { WorkflowDataset, WorkflowOrigin } from '$lib/server/training-moderation.service';
 
 /** Shared by the queue and the review page so a run is described the same way on both. The tags this
  *  reads are written by the submitter, so it is a label, never a decision. */
@@ -14,3 +14,10 @@ const EXPIRY_WARNING_MS = 6 * 3_600_000;
 
 export const gateExpiresSoon = (expiresAt: string | null, now = Date.now()): boolean =>
   !!expiresAt && Date.parse(expiresAt) - now < EXPIRY_WARNING_MS;
+
+/**
+ * Whether this app can show any of the dataset. Decides whether Approve needs an explicit "reviewed it
+ * another way" — read by the page to ask and by the server to refuse, so the two cannot disagree.
+ */
+export const datasetPreviewable = (dataset: WorkflowDataset): boolean =>
+  dataset.kind === 'blobs' && dataset.items.some((item) => item.blobKey);

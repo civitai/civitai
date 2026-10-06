@@ -31,7 +31,7 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   if (!probe) error(502, 'Could not reach the orchestrator.');
   // Never pass the placeholder off as the item: the moderator would be judging an image the uploader
   // never sent.
-  if (probe.kind === 'blocked') error(451, 'Blocked at upload — not viewable here.');
+  if (probe.kind === 'blocked') error(451, 'Blocked by screening — not viewable here.');
   if (probe.kind === 'unavailable')
     error(502, `The orchestrator would not serve this item (${probe.status}).`);
 

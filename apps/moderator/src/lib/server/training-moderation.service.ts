@@ -19,6 +19,7 @@ import { getClickhouse } from './clickhouse';
 import { TRAINING_STEP_TYPES } from './training-orchestration.service';
 import { usersByIds } from './users.service';
 import { mapBounded } from './bounded';
+import { datasetPreviewable } from '$lib/training-workflow';
 
 export const TRAINING_DATA_FILE_TYPE = 'Training Data';
 const ANNOUNCEMENT_KEY = 'training-announcement';
@@ -562,6 +563,7 @@ export async function moderateTrainingData(input: {
 
   const released = await releaseModerationGate(workflowId, input.approve);
   if (!released.ok) return released;
+  invalidatePendingWorkflowGates();
 
   await recordModActivity({
     userId: input.moderatorId,
@@ -1093,7 +1095,7 @@ export async function moderateTrainingWorkflow(
 
   // Approving what nobody here could look at needs the moderator to say they looked at it elsewhere.
   // Checked on the server: the checkbox is only how the page asks.
-  if (approve && before.dataset.kind !== 'blobs' && !input.reviewedElsewhere)
+  if (approve && !datasetPreviewable(before.dataset) && !input.reviewedElsewhere)
     return {
       ok: false,
       error:
@@ -1173,7 +1175,8 @@ const PENDING_READ_CONCURRENCY = 8;
  *  unchecked rather than holding the page. */
 const PENDING_READ_BUDGET_MS = 20_000;
 /** One queue serves every moderator opening the page within this window, and concurrent loads share
- *  one build. A ruling made here clears it. */
+ *  one build. A ruling clears it — in this process only; another replica can list a ruled run for up
+ *  to this long, and the ruling itself then refuses it as no longer under review. */
 const PENDING_CACHE_MS = 30_000;
 
 export type PendingWorkflowGate = {
@@ -1217,6 +1220,9 @@ const ymdhms = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('
 export function getPendingWorkflowGates(
   options: { now?: number; readBudgetMs?: number } = {}
 ): Promise<PendingWorkflowGates> {
+  // A caller shaping the build (tests) gets its own; the cache holds only the default build.
+  if (options.now !== undefined || options.readBudgetMs !== undefined)
+    return buildPendingWorkflowGates(options);
   const now = Date.now();
   if (pendingCache && now - pendingCache.at < PENDING_CACHE_MS) return pendingCache.result;
   const result = buildPendingWorkflowGates(options);
@@ -1401,9 +1407,10 @@ export async function resolveTrainingWorkflowBlob(
 }
 
 /**
- * What a moderator can actually see of each stored dataset item: `blocked` was withheld when it was
- * uploaded and is not viewable here (it would otherwise render as a placeholder that reads like the
- * upload), `unavailable` is missing or not yet scanned, `unchecked` did not answer within the budget.
+ * What a moderator can actually see of each stored dataset item: `blocked` was blocked by the
+ * orchestrator's screening and is not viewable here (it would otherwise render as a placeholder that
+ * reads like the upload), `unavailable` is missing or not yet scanned, `unchecked` did not answer
+ * within the budget.
  */
 export type DatasetItemState = 'viewable' | 'blocked' | 'unavailable' | 'unchecked';
 

@@ -921,6 +921,13 @@ describe('approving a dataset that cannot be previewed', () => {
     expect(await rule(false)).toEqual({ ok: true, moderationStatus: 'rejected' });
   });
 
+  it('a blob dataset with no stored item counts as unpreviewable too', async () => {
+    orchestrator([workflow({ items: [{ air: 'https://elsewhere.example/x.png' }] })]);
+    const result = await rule(true);
+    expect(!result.ok && result.error).toContain('cannot be previewed here');
+    expect(gateCalls()).toHaveLength(0);
+  });
+
   it('a previewable dataset needs no confirmation', async () => {
     orchestrator([workflow(), workflow({ moderationStatus: 'Approved' })]);
     expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });

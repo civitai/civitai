@@ -118,7 +118,7 @@ export async function getManagerWorkflow(
 export type BlobProbe =
   /** Viewable: `url` is where its bytes are served, on the orchestrator's own origin. */
   | { kind: 'content'; url: string }
-  /** Withheld when it was uploaded: the orchestrator answers with its blocked-content placeholder. */
+  /** Blocked by the orchestrator's screening: it answers with its blocked-content placeholder. */
   | { kind: 'blocked' }
   /** Missing, not yet scanned, or refused — `status` is the orchestrator's answer. */
   | { kind: 'unavailable'; status: number };

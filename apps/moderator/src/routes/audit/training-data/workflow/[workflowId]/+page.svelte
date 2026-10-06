@@ -1,7 +1,7 @@
 <script lang="ts">
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
-  import { gateExpiresSoon, workflowOriginLabel } from '$lib/training-workflow';
+  import { datasetPreviewable, gateExpiresSoon, workflowOriginLabel } from '$lib/training-workflow';
   import WorkflowDataset from './WorkflowDataset.svelte';
   import WorkflowReviewActions from './WorkflowReviewActions.svelte';
   import type { PageData } from './$types';
@@ -13,7 +13,7 @@
   const reviewable = $derived(detail.underReview && detail.modelVersionId === null);
 
   // Approve needs an explicit "reviewed it another way" when nothing here can show the dataset.
-  const previewable = $derived(detail.dataset.kind === 'blobs');
+  const previewable = $derived(datasetPreviewable(detail.dataset));
 </script>
 
 <header class="page-header">
