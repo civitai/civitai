@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { htmlToText } from './html-to-text';
+import { HTML_MAX_CHARS, htmlToText } from './html-to-text';
 
 // Support context for User Lookup (Retool's GetFreshdesk, ticket §1.2 "support context").
 //
@@ -230,8 +230,13 @@ export async function getTicketDescription(ticketId: string): Promise<TicketDesc
     return unavailable('Freshdesk returned an unexpected response.');
   }
   const text = htmlToText(description);
-  if (!text) return { status: 'none' };
+  const cut = description.length > HTML_MAX_CHARS;
+  // 🔴 Empty because the converter stopped reading is NOT "no description" — say why instead.
+  if (!text)
+    return cut
+      ? unavailable('The message is too large to show here — open it in Freshdesk.')
+      : { status: 'none' };
   return text.length > DESCRIPTION_MAX_CHARS
     ? { status: 'found', text: text.slice(0, DESCRIPTION_MAX_CHARS), truncated: true }
-    : { status: 'found', text, truncated: false };
+    : { status: 'found', text, truncated: cut };
 }

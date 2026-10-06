@@ -13,8 +13,16 @@
  * all three, and 160k characters of `<a` took twelve seconds.
  */
 
-/** Characters of HTML read. The page shows far less; the rest of a longer message is in Freshdesk. */
-export const HTML_MAX_CHARS = 200_000;
+/**
+ * Characters of HTML read. Memory is the only reason for a bound — the scan is linear — so it is
+ * generous: a long `<head>` or an inline image must not push the message itself past the cut.
+ */
+export const HTML_MAX_CHARS = 2_000_000;
+/** Characters of TEXT produced before stopping. Above what any caller shows, so a caller that caps
+ *  lower still sees that there was more. */
+export const TEXT_MAX_CHARS = 50_000;
+/** Deepest list indent drawn. Nesting past it still bullets, flush with this level. */
+const MAX_INDENT = 8;
 
 /** Elements whose CONTENT is never shown — dropped whole, up to their closing tag. */
 const DROPPED = new Set([
@@ -110,6 +118,9 @@ export function htmlToText(input: string): string {
   let trailingNewlines = 0;
   /** A list marker was just pushed as its own part, with no text after it yet. */
   let marker = false;
+  /** `trailingNewlines` as it stood before that marker, restored if the marker is taken back. */
+  let newlinesBeforeMarker = 0;
+  let length = 0;
   /** One entry per open list: `null` for a bullet list, the next number for an ordered one. */
   const lists: (number | null)[] = [];
   let pre = 0;
@@ -117,13 +128,16 @@ export function htmlToText(input: string): string {
   const push = (s: string) => {
     if (!s) return;
     parts.push(s);
+    length += s.length;
     last = s;
     const nl = trailing(s, '\n');
     trailingNewlines = nl === s.length ? trailingNewlines + nl : nl;
   };
   const dropTrailingSpace = () => {
     const n = trailing(last, SPACE);
-    if (n) parts[parts.length - 1] = last = last.slice(0, last.length - n);
+    if (!n) return;
+    parts[parts.length - 1] = last = last.slice(0, last.length - n);
+    length -= n;
   };
   /** Ends the current line, and leaves at most `n` newlines in a row. */
   const breakLine = (n: 1 | 2) => {
@@ -134,7 +148,8 @@ export function htmlToText(input: string): string {
   };
 
   let i = 0;
-  while (i < html.length) {
+  let nextGt = -2;
+  while (i < html.length && length <= TEXT_MAX_CHARS) {
     if (html.startsWith('<!--', i)) {
       const end = html.indexOf('-->', i + 4);
       i = end < 0 ? html.length : end + 3;
@@ -142,6 +157,13 @@ export function htmlToText(input: string): string {
     }
     TAG_RE.lastIndex = i;
     const tag = html[i] === '<' ? TAG_RE.exec(html) : null;
+    // A tag cut off by the end of the input (an inline image past the cap, say) is dropped, as a
+    // browser drops a tag at end-of-file, rather than shown as raw markup.
+    if (!tag && /^<\/?[a-zA-Z]/.test(html.slice(i, i + 3))) {
+      // Cached, so a run of failed tags does not each scan ahead for the same `>`.
+      if (nextGt < i) nextGt = html.indexOf('>', i);
+      if (nextGt < 0) break;
+    }
     if (!tag) {
       // Text up to the next `<` — including the `<` itself when it opens no tag.
       let next = html.indexOf('<', i + 1);
@@ -180,20 +202,21 @@ export function htmlToText(input: string): string {
     } else if (name === 'li') {
       // An item that never got any text is dropped, marker and all.
       if (marker) {
-        parts.pop();
+        length -= parts.pop()?.length ?? 0;
         last = parts[parts.length - 1] ?? '';
-        trailingNewlines = parts.length ? trailing(last, '\n') : 0;
+        trailingNewlines = newlinesBeforeMarker;
         marker = false;
       }
       breakLine(1);
       if (!isClose) {
-        const depth = Math.max(lists.length, 1);
+        const depth = Math.min(Math.max(lists.length, 1), MAX_INDENT);
         const top = lists.length ? lists[lists.length - 1] : null;
         let bullet = '• ';
         if (top !== null) {
           bullet = `${top}. `;
           lists[lists.length - 1] = top + 1;
         }
+        newlinesBeforeMarker = trailingNewlines;
         push('  '.repeat(depth - 1) + bullet);
         marker = true;
       }

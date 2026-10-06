@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HTML_MAX_CHARS, decodeEntities, htmlToText } from '../html-to-text';
+import { HTML_MAX_CHARS, TEXT_MAX_CHARS, decodeEntities, htmlToText } from '../html-to-text';
 
 /**
  * Freshdesk description HTML → the text the ticket page shows. Synthetic inputs only, shaped like the
@@ -113,6 +113,16 @@ describe('htmlToText on hostile input', () => {
     expect(htmlToText('<ul><li><br>text</li></ul>')).toBe('• text');
   });
 
+  it('bounds its OUTPUT however deep the lists nest', () => {
+    const out = htmlToText('y' + '<ul>'.repeat(20_000) + '<li>x'.repeat(20_000));
+    expect(out.length).toBeLessThanOrEqual(TEXT_MAX_CHARS + 100);
+    expect(out.split('\n')[2]).toBe(`${'  '.repeat(7)}• x`);
+  });
+
+  it('a tag cut off by the end of the input is dropped, not shown as raw markup', () => {
+    expect(htmlToText('<p>question?</p><img src="data:image/png;base64,AAAA')).toBe('question?');
+  });
+
   it('reads at most HTML_MAX_CHARS of input', () => {
     expect(htmlToText('a'.repeat(HTML_MAX_CHARS) + 'TAIL')).not.toContain('TAIL');
   });
@@ -120,7 +130,7 @@ describe('htmlToText on hostile input', () => {
   // 🔴 A BUDGET, NOT A BENCHMARK. The quadratic version took 0.7–12 s on these at 40k–160k chars; a
   // linear one takes milliseconds. The bound is loose enough for a loaded CI box and still two orders
   // of magnitude under what a quadratic scan costs at this size.
-  const n = HTML_MAX_CHARS;
+  const n = 200_000;
   it.each([
     ['unclosed tag starts', '<a'.repeat(n / 2)],
     ['unclosed tag starts with a space', '<a '.repeat(n / 3)],
@@ -132,6 +142,15 @@ describe('htmlToText on hostile input', () => {
     ['newlines inside <pre>', `<pre>${'\n'.repeat(n - 20)}x</pre>`],
     ['spaces then a break, repeated', `${' '.repeat(1000)}x<br>`.repeat(n / 1006)],
     ['entities', '&lt;a'.repeat(n / 5)],
+    [
+      // Under TEXT_MAX_CHARS, so the output cap cannot be what stops it.
+      'empty items after a long <pre> newline run',
+      `<pre>x${'\n'.repeat(40_000)}</pre>` + '<li>'.repeat(40_000),
+    ],
+    // A budget invariant at the full input cap, not a guard on the look-ahead cache: every failed tag
+    // emits text, so TEXT_MAX_CHARS bounds the iterations and an uncached look-ahead also passes.
+    ['failed tags before one far-off >', '<a "'.repeat(HTML_MAX_CHARS / 4 - 1) + '>'],
+    ['deeply nested lists', 'y' + '<ul>'.repeat(n / 8) + '<li>x'.repeat(n / 8)],
   ])('stays linear: %s', (_name, html) => {
     const t0 = performance.now();
     htmlToText(html);

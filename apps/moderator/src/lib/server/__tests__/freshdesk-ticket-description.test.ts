@@ -4,6 +4,7 @@ import {
   DESCRIPTION_TIMEOUT_MS,
   getTicketDescription,
 } from '../freshdesk.service';
+import { HTML_MAX_CHARS } from '../html-to-text';
 
 /**
  * The formatted ticket body behind `/decisions/support/ticket/[id]`, against a stubbed `fetch` — no
@@ -104,6 +105,27 @@ describe('getTicketDescription', () => {
   it('an unexpected body is "unavailable"', async () => {
     fetchMock.mockResolvedValueOnce(ticket([{ description: '<p>x</p>' }]));
     expect((await getTicketDescription('40017')).status).toBe('unavailable');
+  });
+
+  it('a message cut by the input cap is never reported as "no description"', async () => {
+    fetchMock.mockResolvedValueOnce(
+      ticket({ description: `<head><style>${'x'.repeat(HTML_MAX_CHARS)}</style></head><p>hi</p>` })
+    );
+    expect(await getTicketDescription('40017')).toEqual({
+      status: 'unavailable',
+      reason: 'The message is too large to show here — open it in Freshdesk.',
+    });
+  });
+
+  it('text that survives the input cap is marked truncated', async () => {
+    fetchMock.mockResolvedValueOnce(
+      ticket({ description: `<p>hello</p><img src="data:,${'A'.repeat(HTML_MAX_CHARS)}">` })
+    );
+    expect(await getTicketDescription('40017')).toEqual({
+      status: 'found',
+      text: 'hello',
+      truncated: true,
+    });
   });
 
   it('an empty description is "none"', async () => {
