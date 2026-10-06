@@ -3,10 +3,10 @@ import { fileURLToPath } from 'node:url';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { defineConfig } from 'vitest/config';
 
-// Separate from vite.config.ts: node-env unit tests over plain modules, no SvelteKit
-// pipeline needed. `name` is required — see the `apps/*` note in the root vitest.config.mts.
+// Separate from vite.config.ts: node-env tests with no SvelteKit pipeline. The svelte plugin only
+// compiles .svelte, so a test can server-render a page's static markup (see docs/svelte-app-standard.md).
+// `name` is required — see the `apps/*` note in the root vitest.config.mts.
 export default defineConfig({
-  // Compiles .svelte so a test can server-render a page; it does not bring in the SvelteKit pipeline.
   plugins: [svelte()],
   // SvelteKit resolves `$lib` through its own plugin, which this config deliberately doesn't load, so a
   // suite over a module that imports `$lib/...` fails to collect without this.
