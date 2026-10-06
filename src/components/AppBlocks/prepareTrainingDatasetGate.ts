@@ -1,6 +1,11 @@
 import type * as z from 'zod';
 import { createPostSettlement } from '~/components/AppBlocks/createPostFromAppGate';
-import { blockTrainingDatasetItemsSchema } from '~/server/schema/blocks/workflow.schema';
+import {
+  resolveTrainingBridgePrelude,
+  type TrainingBridgeGateInput,
+} from '~/components/AppBlocks/runTrainingGate';
+import { blockTrainingDatasetItemsSchema } from '~/server/schema/blocks/training-dataset.schema';
+import type { BlockTrainingRejectionReason } from '~/server/services/blocks/block-training-dataset.service';
 
 /**
  * The decision layer for the `PREPARE_TRAINING_DATASET` host bridge (App Blocks
@@ -39,12 +44,14 @@ export type TrainingDatasetItems = z.infer<typeof blockTrainingDatasetItemsSchem
 export type PreparedTrainingDataset = {
   datasetId: string;
   count: number;
-  rejected: Array<{ imageId: number; reason: string }>;
+  rejected: Array<{ imageId: number; reason: BlockTrainingRejectionReason }>;
 };
 
 /**
  * The refusal codes the HOST itself emits. The set a block can RELY on, not the
- * set it may RECEIVE: server messages arrive in the same `error` field.
+ * set it may RECEIVE: server messages arrive in the same `error` field. The first
+ * three come from the shared training prelude (`resolveTrainingBridgePrelude`), so
+ * they read exactly as `RUN_TRAINING`'s do.
  */
 export const PREPARE_TRAINING_DATASET_HOST_ERRORS = [
   /** Mod-review sandbox with run-for-real off. */
@@ -71,22 +78,12 @@ export type PrepareTrainingDatasetDecision =
  * decide drop / refuse / proceed. Dropping is safe only before a `requestId` is
  * known; every later refusal carries a reply.
  */
-export function resolvePrepareTrainingDatasetRequest(input: {
-  raw: unknown;
-  ready: boolean;
-  signedIn: boolean;
-  /** TRUE in the mod-review sandbox with "run for real" OFF. */
-  reviewNack: boolean;
-}): PrepareTrainingDatasetDecision {
-  const { raw, ready, signedIn, reviewNack } = input;
-  if (!raw || typeof raw !== 'object') return { kind: 'drop' };
-  const obj = raw as Record<string, unknown>;
-  if (typeof obj.requestId !== 'string' || obj.requestId.length === 0) return { kind: 'drop' };
-  const requestId = obj.requestId;
-
-  if (reviewNack) return { kind: 'refuse', requestId, error: 'review-mode' };
-  if (!ready) return { kind: 'refuse', requestId, error: 'block is not ready' };
-  if (!signedIn) return { kind: 'refuse', requestId, error: 'sign in to train' };
+export function resolvePrepareTrainingDatasetRequest(
+  input: TrainingBridgeGateInput
+): PrepareTrainingDatasetDecision {
+  const prelude = resolveTrainingBridgePrelude(input);
+  if (prelude.kind !== 'ok') return prelude;
+  const { requestId, obj } = prelude;
 
   const parsed = blockTrainingDatasetItemsSchema.safeParse(obj.items);
   if (!parsed.success) return { kind: 'refuse', requestId, error: 'invalid training dataset' };
@@ -94,14 +91,19 @@ export function resolvePrepareTrainingDatasetRequest(input: {
 }
 
 /**
- * The reply for a prepare that RETURNED: the three documented fields, copied by
- * name so nothing else the procedure may grow reaches the block unreviewed.
+ * The reply for a prepare that RETURNED: the documented fields, copied by name
+ * (down to each rejection entry) so nothing else the procedure may grow reaches
+ * the block unreviewed.
  */
 export function trainingDatasetReplyFromResult(result: PreparedTrainingDataset): {
   result: PreparedTrainingDataset;
 } {
   return {
-    result: { datasetId: result.datasetId, count: result.count, rejected: result.rejected },
+    result: {
+      datasetId: result.datasetId,
+      count: result.count,
+      rejected: result.rejected.map(({ imageId, reason }) => ({ imageId, reason })),
+    },
   };
 }
 

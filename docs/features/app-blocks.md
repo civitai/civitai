@@ -481,9 +481,11 @@ the viewer, and the viewer is signed in. Steps 1–3 check these server-side.
    `BLOCK_TRAINING_CAPTION_MAX_CHARS` (1,000) characters, no other keys) with
    `invalid training dataset`, before any call; its other refusals are `review-mode`,
    `block is not ready`, `sign in to train` and `no block token`. Server refusals arrive
-   in the same `error` field. The server admits only the viewer's own scanned, unflagged images within the token's maturity
-   ceiling, moderates the captions, imports the admitted images under the viewer's
-   orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
+   in the same `error` field.
+
+   The server admits only the viewer's own scanned, unflagged images within the token's
+   maturity ceiling, moderates the captions, imports the admitted images under the
+   viewer's orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
    bound to the viewer, app and install; the image count is always server-derived.
    Every image is re-checked at submit, before anything is charged; a dataset with an
    image that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator

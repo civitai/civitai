@@ -1,10 +1,11 @@
+import type { ComponentProps } from 'react';
 import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
-import { makeTrpcProxy } from '../../../test/trpcProxyStub';
-import { BLOCK_TRAINING_DATASET_MAX_ITEMS } from '~/server/schema/blocks/workflow.schema';
+import { makeInertSubRouter, makeTrpcProxy } from '../../../test/trpcProxyStub';
+import { BLOCK_TRAINING_DATASET_MAX_ITEMS } from '~/server/schema/blocks/training-dataset.schema';
 
 /**
  * PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT on the PAGE host, end to end
@@ -21,24 +22,19 @@ import { BLOCK_TRAINING_DATASET_MAX_ITEMS } from '~/server/schema/blocks/workflo
  * too): it pins that the existing estimate bridge already serves training.
  */
 
-const { prepareMutate, estimateMutate } = vi.hoisted(() => ({
-  prepareMutate: vi.fn(),
-  estimateMutate: vi.fn(),
-}));
+const { prepareMutate, estimateMutate, stableUtils } = vi.hoisted(() => {
+  const prepare = vi.fn();
+  return {
+    prepareMutate: prepare,
+    estimateMutate: vi.fn(),
+    // ONE object for every render, as the real `trpc.useUtils()` is. A fresh object
+    // per render would re-run every effect that lists `trpcUtils` on each render and
+    // hide a missing effect dependency (the token-rotation test below relies on this).
+    stableUtils: { client: { blocks: { prepareTrainingDataset: { mutate: prepare } } } },
+  };
+});
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-
-/** A sub-router whose every procedure answers with an inert mutation hook. */
-function inertSubRouter() {
-  return new Proxy(
-    {},
-    {
-      has: () => true,
-      get: (_t, key) =>
-        key === 'then' ? undefined : { useMutation: () => ({ mutateAsync: vi.fn() }) },
-    }
-  );
-}
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
@@ -46,19 +42,19 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   trpc: makeTrpcProxy(
     {
       'blocks.estimateWorkflow': { useMutation: () => ({ mutateAsync: estimateMutate }) },
-      'apps.shared': inertSubRouter(),
-      'apps.storage': inertSubRouter(),
+      'apps.shared': makeInertSubRouter(),
+      'apps.storage': makeInertSubRouter(),
     },
     {
-      useUtils: () => ({
-        client: { blocks: { prepareTrainingDataset: { mutate: prepareMutate } } },
-      }),
+      useUtils: () => stableUtils,
     }
   ),
 }));
 
 // eslint-disable-next-line import/first
 import { PageBlockHost } from '~/components/AppBlocks/PageBlockHost';
+// eslint-disable-next-line import/first
+import { _internalsForTests as beacon } from '~/components/AppBlocks/bridgeMessageBeacon';
 
 function iframe() {
   return page.getByTestId('app-page-iframe').element() as HTMLIFrameElement;
@@ -114,11 +110,18 @@ const baseProps = {
   theme: 'light' as const,
 };
 
-async function mountReady(over: Partial<typeof baseProps> = {}) {
-  renderWithProviders(<PageBlockHost {...baseProps} {...over} />);
+type HostProps = Partial<ComponentProps<typeof PageBlockHost>>;
+
+async function mount(over: HostProps = {}) {
+  const rendered = renderWithProviders(<PageBlockHost {...baseProps} {...over} />);
   await vi.waitFor(() => {
     if (!iframe().contentWindow) throw new Error('not mounted yet');
   });
+  return rendered;
+}
+
+async function mountReady(over: HostProps = {}) {
+  await mount(over);
   await vi.waitFor(() => {
     postFromBlock('BLOCK_READY', {});
     if (iframe().getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
@@ -203,6 +206,65 @@ describe('PageBlockHost PREPARE_TRAINING_DATASET (training dataset bridge)', () 
       error: 'sign in to train',
     });
     expect(prepareMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('a block that has not finished loading is refused without a call', async () => {
+    await mount();
+    const replies = listenForReply();
+    postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_5', items: ITEMS });
+
+    expect(await replyFor(replies, 'rq_5')).toEqual({
+      requestId: 'rq_5',
+      error: 'block is not ready',
+    });
+    expect(prepareMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('the mod-review sandbox (run-for-real off) is refused without a call', async () => {
+    const replies = await mountReady({ reviewMode: true });
+    postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_6', items: ITEMS });
+
+    expect(await replyFor(replies, 'rq_6')).toEqual({ requestId: 'rq_6', error: 'review-mode' });
+    expect(prepareMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('no block token: replies `no block token`, records the outcome, never calls', async () => {
+    beacon.reset();
+    const replies = await mountReady({ token: null });
+    postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_7', items: ITEMS });
+
+    expect(await replyFor(replies, 'rq_7')).toEqual({
+      requestId: 'rq_7',
+      error: 'no block token',
+    });
+    expect(prepareMutate).not.toHaveBeenCalled();
+    // The operator half: the bridge counter sees a no-token outcome for THIS type.
+    expect(beacon.buffered()).toContainEqual(
+      expect.objectContaining({
+        host: 'PageBlockHost',
+        type: 'PREPARE_TRAINING_DATASET',
+        outcome: 'no_token',
+      })
+    );
+    replies.stop();
+    beacon.reset();
+  });
+
+  test('a rotated token is the one used — the handler does not keep a stale closure', async () => {
+    const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} />);
+    await vi.waitFor(() => {
+      postFromBlock('BLOCK_READY', {});
+      if (iframe().getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
+    });
+    await rerender(<PageBlockHost {...baseProps} token="tok_rotated" />);
+    const replies = listenForReply();
+    postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_8', items: ITEMS });
+
+    expect(await replyFor(replies, 'rq_8')).toEqual({ requestId: 'rq_8', result: RESULT });
+    expect(prepareMutate).toHaveBeenCalledWith({ blockToken: 'tok_rotated', items: ITEMS });
     replies.stop();
   });
 

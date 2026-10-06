@@ -1,20 +1,23 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   handlePrepareTrainingDataset,
   resolvePrepareTrainingDatasetRequest,
   trainingDatasetReplyFromResult,
+  type PreparedTrainingDataset,
 } from '~/components/AppBlocks/prepareTrainingDatasetGate';
 import {
   BLOCK_TRAINING_CAPTION_MAX_CHARS,
   BLOCK_TRAINING_DATASET_MAX_ITEMS,
-} from '~/server/schema/blocks/workflow.schema';
+} from '~/server/schema/blocks/training-dataset.schema';
 
 const OK = { ready: true, signedIn: true, reviewNack: false };
 const ITEMS = [
   { imageId: 11, caption: 'a red fox' },
   { imageId: 23, caption: '' },
 ];
-const RESULT = {
+const RESULT: PreparedTrainingDataset = {
   datasetId: `tds_${'c'.repeat(32)}`,
   count: 1,
   rejected: [{ imageId: 23, reason: 'unavailable' }],
@@ -67,6 +70,20 @@ describe('resolvePrepareTrainingDatasetRequest', () => {
     ).toEqual({ kind: 'refuse', requestId: 'r1', error });
   });
 
+  it('refuses in the shared order: review mode, then ready, then sign-in, then the payload', () => {
+    const bad = { requestId: 'r1', items: [] };
+    const all = { ready: false, signedIn: false, reviewNack: true };
+    expect(resolvePrepareTrainingDatasetRequest({ raw: bad, ...all })).toMatchObject({
+      error: 'review-mode',
+    });
+    expect(
+      resolvePrepareTrainingDatasetRequest({ raw: bad, ...all, reviewNack: false })
+    ).toMatchObject({ error: 'block is not ready' });
+    expect(
+      resolvePrepareTrainingDatasetRequest({ raw: bad, ...all, reviewNack: false, ready: true })
+    ).toMatchObject({ error: 'sign in to train' });
+  });
+
   it('accepts exactly the server ceilings (the boundary, not just the overshoot)', () => {
     const atMax = items(BLOCK_TRAINING_DATASET_MAX_ITEMS);
     atMax[0].caption = 'x'.repeat(BLOCK_TRAINING_CAPTION_MAX_CHARS);
@@ -92,6 +109,14 @@ describe('trainingDatasetReplyFromResult', () => {
     expect(
       trainingDatasetReplyFromResult({ ...RESULT, internal: 'x' } as unknown as typeof RESULT)
     ).toEqual({ result: RESULT });
+  });
+
+  it('copies each rejection entry by name too', () => {
+    const withExtra = {
+      ...RESULT,
+      rejected: [{ imageId: 23, reason: 'unavailable', detail: 'server-only' }],
+    } as unknown as typeof RESULT;
+    expect(trainingDatasetReplyFromResult(withExtra)).toEqual({ result: RESULT });
   });
 });
 
@@ -164,5 +189,52 @@ describe('handlePrepareTrainingDataset', () => {
     await done;
     expect(prepare).not.toHaveBeenCalled();
     expect(send).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * THE CLIENT-BUNDLE RELATIONSHIP. `PageBlockHost` imports this gate statically, so
+ * everything the gate imports at RUNTIME ships in the page host's chunk. The item
+ * schema lives in `training-dataset.schema.ts` (zod only) precisely so that
+ * `workflow.schema.ts` — and the step/recipe registries it imports — stays out.
+ * This pins the whole transitive runtime closure as a set: it fails if it GROWS
+ * (someone imports the schema from `workflow.schema` again) or SHRINKS.
+ */
+describe('prepareTrainingDatasetGate runtime import closure', () => {
+  const SRC = resolve(__dirname, '../../..');
+  const IMPORT_RE = /^(import|export)\s+(?!type\b)[^;]*?from\s+'([^']+)'/gm;
+
+  function closure(entry: string): string[] {
+    const seen = new Set<string>();
+    const walk = (spec: string) => {
+      if (seen.has(spec)) return;
+      seen.add(spec);
+      if (!spec.startsWith('~/')) return; // a package: leaf
+      const base = resolve(SRC, spec.slice(2));
+      if (/\.json$/.test(base)) return; // data: leaf
+      const file = [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`].find(existsSync);
+      if (!file) throw new Error(`unresolved import ${spec}`);
+      const text = readFileSync(file, 'utf8');
+      for (const m of text.matchAll(IMPORT_RE)) walk(m[2]);
+    };
+    walk(entry);
+    return [...seen].sort();
+  }
+
+  it('is exactly the gate, its sibling gates, the slim schema and zod', () => {
+    expect(closure('~/components/AppBlocks/prepareTrainingDatasetGate')).toEqual([
+      'zod',
+      '~/components/AppBlocks/appChromeName',
+      '~/components/AppBlocks/createPostFromAppGate',
+      '~/components/AppBlocks/prepareTrainingDatasetGate',
+      '~/components/AppBlocks/runTrainingGate',
+      '~/server/schema/blocks/training-dataset.schema',
+    ]);
+  });
+
+  it('the walker sees through to workflow.schema when it IS imported (positive control)', () => {
+    expect(closure('~/server/schema/blocks/workflow.schema')).toContain(
+      '~/server/services/blocks/steps'
+    );
   });
 });

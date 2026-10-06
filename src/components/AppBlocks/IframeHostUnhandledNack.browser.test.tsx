@@ -264,7 +264,9 @@ describe('IframeHost NACKs a page-only REQUEST-style message instead of hanging'
   });
 
   test('PREPARE_TRAINING_DATASET is declared page-only, REQUEST-style, replying TRAINING_DATASET_RESULT', () => {
-    expect(INVENTORY.PREPARE_TRAINING_DATASET.IframeHost).not.toBe('required');
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.IframeHost).toBe(
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_DATASET_RESULT error'
+    );
     expect(INVENTORY.PREPARE_TRAINING_DATASET.PageBlockHost).toBe('required');
     expect(INVENTORY.PREPARE_TRAINING_DATASET.request).toBe(true);
     expect(INVENTORY.PREPARE_TRAINING_DATASET.reply).toBe('TRAINING_DATASET_RESULT');
