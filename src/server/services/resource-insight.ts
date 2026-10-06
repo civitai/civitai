@@ -289,9 +289,9 @@ export function modelInsightProjection(
  * 🔴 `?? null` and not `||` — a genuine `qualityScore: 0` from a version that DID clear
  * the floor must survive as 0, not collapse into the unlabeled null. Pinned by a test.
  *
- * ⚠️ The measured Meilisearch sort/merge behaviour that ./resource-intent-matcher.service.ts
- * sends a reader here for moved one function UP, onto `modelInsightProjection`, when that
- * function took over the rule. It was not deleted — read it there.
+ * ⚠️ The measured Meilisearch sort/merge behaviour moved one function UP, onto
+ * `modelInsightProjection`, when that function took over the rule. It was not deleted —
+ * read it there.
  */
 export function modelInsightQualityScore(
   versionIds: number[],

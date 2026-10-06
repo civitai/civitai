@@ -259,15 +259,15 @@ export const modelsFilterableAttributes = [
   // is silent. A purpose query wants an EQUALITY filter (`insight.role = "style"`), which
   // is exactly what this list buys.
   //
-  // 🔴 THE SEED'S SORT ARRAY IS UNCHANGED BY THE CHANGE THAT ADDED THESE, and that is a
-  // decision rather than an omission. What the index WRITES and how
-  // `searchShortlistModels` (~/server/services/resource-intent-matcher.service.ts) ORDERS
-  // are separable: a document only ACQUIRES these two fields when it is rewritten, which at
-  // full coverage means the manual full reset — authorisation-gated and not yet run — whereas
-  // the sort array is a plain code change deployable any time. So landing the widest useful
-  // projection now means ONE reset writes everything a later purpose-first ordering could
-  // need, and that ordering then costs code only. Nothing reads these attributes yet — by
-  // design.
+  // 🔴 ONE READER: `insight.role` is filtered by `searchShortlistModels`
+  // (~/server/services/resource-intent-matcher.service.ts), whose purpose page is the gate
+  // filter AND `insight.role = <requested role>`; `insight.styleFamily` is read by nothing.
+  // A document only ACQUIRES these fields when it is rewritten, so a model whose document
+  // predates its label carries a null role and reaches the shortlist only through the
+  // seed's popularity page. ⚠️ When a base model is requested, that reader ANDs the role
+  // with the ARRAY form `versions.baseModel IN [...]`, so it inherits the cross-version
+  // caveat in ./models.search-index.ts: the role may come from a version on a different
+  // base model than the versions the shortlist then expands to.
   //
   // 🔴 ⚠️ DO NOT RE-DERIVE THAT AS "THE LISTS ONLY REACH A LIVE INDEX THROUGH A RESET" — a
   // draft of this very entry said exactly that, and it is the claim the ⚠️ paragraph beside
