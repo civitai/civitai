@@ -1,22 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { createFliptFake, TESTER_ID } from '$lib/server/__tests__/flipt-fake';
+import { TESTER_ID } from '$lib/server/__tests__/flipt-fake';
 
 const MAIN_APP_URL = 'https://main-app.test';
 const JOURNEY_URL = `${MAIN_APP_URL}/creators/journey`;
 
-const flipt = vi.hoisted(() => ({ fake: undefined as ReturnType<typeof createFliptFake> | undefined }));
+const fake = await vi.hoisted(async () => {
+  const { createFliptFake } = await import('$lib/server/__tests__/flipt-fake');
+  return createFliptFake('creator-journey');
+});
 
 vi.mock('$lib/server/creator-score', () => ({ getCreatorScore: vi.fn(async () => 1200) }));
 vi.mock('$lib/server/creator-program', () => ({ getGetPaidEstimate: vi.fn(async () => null) }));
 vi.mock('$lib/server/main-app', () => ({ MAIN_APP_URL, callMainApp: vi.fn() }));
-vi.mock('$lib/server/flipt', async () => {
-  const { createFliptFake } = await import('$lib/server/__tests__/flipt-fake');
-  flipt.fake = createFliptFake('creator-journey');
-  return flipt.fake.fliptModule;
-});
+vi.mock('$lib/server/flipt', () => fake.fliptModule);
 
 const { load } = await import('./+page.server');
-const fake = flipt.fake!;
 
 async function journeyUrlFor(user: { id: number; isModerator?: boolean }) {
   const result = await load({

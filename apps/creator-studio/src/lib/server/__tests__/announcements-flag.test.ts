@@ -2,20 +2,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionUser } from '@civitai/auth';
 import { TESTER_ID } from './flipt-fake';
 
-const flipt = vi.hoisted(() => ({
-  fake: undefined as ReturnType<typeof import('./flipt-fake').createFliptFake> | undefined,
-}));
+const fake = await vi.hoisted(async () => {
+  const { createFliptFake } = await import('./flipt-fake');
+  return createFliptFake('creator-announcements');
+});
 
 vi.mock('$lib/server/db', () => ({ dbRead: {} }));
 vi.mock('$lib/server/main-app', () => ({ callMainApp: vi.fn() }));
-vi.mock('$lib/server/flipt', async () => {
-  const { createFliptFake } = await import('./flipt-fake');
-  flipt.fake = createFliptFake('creator-announcements');
-  return flipt.fake.fliptModule;
-});
+vi.mock('$lib/server/flipt', () => fake.fliptModule);
 
 const { announcementsEnabled } = await import('../announcements');
-const fake = flipt.fake!;
 
 const enabledFor = (user: { id: number; isModerator?: boolean }) =>
   announcementsEnabled(user as SessionUser);
