@@ -28,26 +28,33 @@ export function getOrchestratorClient(): OrchestratorClient {
  */
 export async function releaseModerationGate(
   workflowId: string,
-  approved: boolean
-): Promise<{ ok: true } | { ok: false; error: string }> {
+  approved: boolean,
+  /** Shown to the submitter with the ruling. Omitted from the body when empty. */
+  message?: string
+): Promise<{ ok: true } | { ok: false; error: string; status?: number }> {
   const endpoint = env.ORCHESTRATOR_ENDPOINT;
   const token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!endpoint || !token) return { ok: false, error: 'Orchestrator is not configured.' };
 
-  const base = endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint;
   try {
-    const res = await fetch(`${base}/v1/manager/workflows/${workflowId}/moderation-gate`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
-      body: JSON.stringify({ approved }),
-      signal: AbortSignal.timeout(30_000),
-    });
+    const res = await fetch(
+      `${baseUrl(endpoint)}/v1/manager/workflows/${encodeURIComponent(workflowId)}/moderation-gate`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+        body: JSON.stringify(message ? { approved, message } : { approved }),
+        signal: AbortSignal.timeout(30_000),
+      }
+    );
     if (!res.ok)
       return {
         ok: false,
+        status: res.status,
         error:
           res.status === 429
             ? 'The orchestrator is rate-limiting; try again shortly.'
+            : res.status === 404
+            ? 'The orchestrator has no pending gate on this workflow (404) — it may already have been ruled on or expired. Reload before trying again.'
             : `The orchestrator refused the gate update (${res.status}).`,
       };
     return { ok: true };
@@ -56,3 +63,64 @@ export async function releaseModerationGate(
     return { ok: false, error: 'Could not reach the orchestrator.' };
   }
 }
+
+/**
+ * One workflow through the MANAGER read — the same API family as the gate release, and it still answers
+ * for a soft-deleted run.
+ *
+ * `status` separates "the orchestrator says this workflow does not exist" (404/410) from "the
+ * orchestrator could not be asked" (anything else, including 0 for a transport failure). A caller that
+ * folds the second into the first turns an outage into an empty review queue.
+ *
+ * ⚠️ This API serialises enums PascalCase (`UnderReview`, `Succeeded`), unlike the consumer API's
+ * camelCase — compare them case-insensitively.
+ */
+export async function getManagerWorkflow(
+  workflowId: string
+): Promise<{ ok: true; workflow: unknown } | { ok: false; status: number; error: string }> {
+  const endpoint = env.ORCHESTRATOR_ENDPOINT;
+  const token = env.ORCHESTRATOR_ACCESS_TOKEN;
+  if (!endpoint || !token)
+    return { ok: false, status: 0, error: 'Orchestrator is not configured.' };
+
+  try {
+    const res = await fetch(
+      `${baseUrl(endpoint)}/v1/manager/workflows/${encodeURIComponent(workflowId)}`,
+      {
+        headers: { authorization: `Bearer ${token}`, accept: 'application/json' },
+        signal: AbortSignal.timeout(30_000),
+      }
+    );
+    if (!res.ok)
+      return {
+        ok: false,
+        status: res.status,
+        error:
+          res.status === 404 || res.status === 410
+            ? `Workflow ${workflowId} was not found.`
+            : `The orchestrator refused the read (${res.status}).`,
+      };
+    return { ok: true, workflow: await res.json() };
+  } catch (e) {
+    console.error('[orchestrator] workflow read failed', e);
+    return { ok: false, status: 0, error: 'Could not reach the orchestrator.' };
+  }
+}
+
+/**
+ * Bytes of one consumer-uploaded blob, read with this app's service credential.
+ *
+ * Takes a bare blob KEY, never a URL: the caller resolves the key from a workflow it has read itself, so
+ * nothing a browser posts can choose what this fetches.
+ */
+export async function fetchOrchestratorBlob(blobKey: string): Promise<Response | null> {
+  const endpoint = env.ORCHESTRATOR_ENDPOINT;
+  const token = env.ORCHESTRATOR_ACCESS_TOKEN;
+  if (!endpoint || !token) return null;
+  return fetch(`${baseUrl(endpoint)}/v2/consumer/blobs/${encodeURIComponent(blobKey)}`, {
+    headers: { authorization: `Bearer ${token}` },
+    signal: AbortSignal.timeout(60_000),
+  });
+}
+
+const baseUrl = (endpoint: string) => (endpoint.endsWith('/') ? endpoint.slice(0, -1) : endpoint);

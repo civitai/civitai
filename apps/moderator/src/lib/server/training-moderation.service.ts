@@ -2,12 +2,15 @@ import { env } from '$env/dynamic/private';
 import { sql } from '@civitai/db/kysely';
 import { getWorkflow } from '@civitai/client';
 import { dbRead, dbWrite } from './db';
-import { getOrchestratorClient, releaseModerationGate } from './orchestrator';
+import { getManagerWorkflow, getOrchestratorClient, releaseModerationGate } from './orchestrator';
 import { syncSearchIndex } from './search-index';
 import { civitaiWebhookUrl } from './civitai-url';
 import { callModEndpoint, type ActionResult } from './user-actions.service';
 import { recordModActivity } from './mod-activity';
 import { logToAxiom } from './axiom';
+import { getClickhouse } from './clickhouse';
+import { TRAINING_STEP_TYPES } from './training-orchestration.service';
+import { usersByIds } from './users.service';
 
 export const TRAINING_DATA_FILE_TYPE = 'Training Data';
 const ANNOUNCEMENT_KEY = 'training-announcement';
@@ -647,4 +650,634 @@ async function notifyTrainingWebhook(
     console.error('[training-moderation] training webhook failed', e);
     return false;
   }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Workflow-only training runs (no ModelVersion)
+// ---------------------------------------------------------------------------------------------
+//
+// Training Studio and App Block trainings are submitted straight to the orchestrator, so no
+// `ModelVersion` row exists and nothing above can reach them: the Paused queue is a Postgres query, and
+// `moderateTrainingData` refuses a workflow without a `modelVersion:<id>` tag. Everything here is keyed
+// by the WORKFLOW id instead, and reads the run from the orchestrator rather than from our database.
+//
+// The workflow id is the only identity there is, and it is minted by the orchestrator as
+// `<submitter user id>-<UTC yyyyMMddHHmmss><fraction>[-<suffix>]`. The owner is read from THAT, never
+// from `metadata` or `tags`, which the submitter writes.
+
+const WORKFLOW_ID_PATTERN = /^(\d{1,10})-(\d{14})\d{0,6}(?:-[a-z0-9]{1,32})?$/;
+const MAX_INT4 = 2_147_483_647;
+
+export type ParsedWorkflowId = { ownerId: number; submittedAt: Date };
+
+/** The submitter and submit instant carried by an orchestrator workflow id, or null when the id is not
+ *  one. Doubles as the input guard: nothing that fails this reaches a URL or a query. */
+export function parseWorkflowId(raw: string | null | undefined): ParsedWorkflowId | null {
+  if (typeof raw !== 'string') return null;
+  const match = WORKFLOW_ID_PATTERN.exec(raw);
+  if (!match) return null;
+  const ownerId = Number(match[1]);
+  if (!Number.isInteger(ownerId) || ownerId <= 0 || ownerId > MAX_INT4) return null;
+  const s = match[2];
+  const submittedAt = new Date(
+    Date.UTC(
+      +s.slice(0, 4),
+      +s.slice(4, 6) - 1,
+      +s.slice(6, 8),
+      +s.slice(8, 10),
+      +s.slice(10, 12),
+      +s.slice(12, 14)
+    )
+  );
+  if (Number.isNaN(submittedAt.getTime())) return null;
+  return { ownerId, submittedAt };
+}
+
+/** Step types that are a training run, as the orchestrator's workflow JSON names them. */
+const WORKFLOW_TRAINING_STEP_TYPES = ['training', 'imageResourceTraining'] as const;
+
+/**
+ * How long the orchestrator holds a gate when the step sets no timeout, per step type. Past it the gate
+ * expires and the run is refunded, so a review that lands later does nothing.
+ */
+const DEFAULT_GATE_WINDOW_MS: Record<(typeof WORKFLOW_TRAINING_STEP_TYPES)[number], number> = {
+  training: 48 * 3_600_000,
+  imageResourceTraining: 24 * 3_600_000,
+};
+
+type RawStep = {
+  $type?: unknown;
+  timeout?: unknown;
+  startedAt?: unknown;
+  input?: unknown;
+  output?: unknown;
+};
+type RawWorkflow = {
+  id?: unknown;
+  status?: unknown;
+  createdAt?: unknown;
+  tags?: unknown;
+  steps?: unknown;
+};
+
+const str = (v: unknown): string | null => (typeof v === 'string' && v ? v : null);
+
+function trainingStepOf(
+  workflow: RawWorkflow
+): (RawStep & { $type: (typeof WORKFLOW_TRAINING_STEP_TYPES)[number] }) | null {
+  const steps = Array.isArray(workflow.steps) ? (workflow.steps as RawStep[]) : [];
+  const step = steps.find(
+    (s) =>
+      !!s &&
+      typeof s === 'object' &&
+      (WORKFLOW_TRAINING_STEP_TYPES as readonly unknown[]).includes(s.$type)
+  );
+  return (
+    (step as (RawStep & { $type: (typeof WORKFLOW_TRAINING_STEP_TYPES)[number] }) | undefined) ??
+    null
+  );
+}
+
+/** Lower-cased: the manager API writes `UnderReview`, the consumer API `underReview`. */
+function moderationStatusOf(step: RawStep | null): string | null {
+  const output = step?.output as { moderationStatus?: unknown } | null | undefined;
+  const status = str(output?.moderationStatus);
+  return status ? status.toLowerCase() : null;
+}
+
+const UNDER_REVIEW = 'underreview';
+
+function tagsOf(workflow: RawWorkflow): string[] {
+  return Array.isArray(workflow.tags)
+    ? workflow.tags.filter((t): t is string => typeof t === 'string')
+    : [];
+}
+
+/** The version a main-app training run belongs to. Such a run is reviewed on the version route, which
+ *  also syncs our database — this path would release the gate and leave the version Paused. */
+function modelVersionIdOf(tags: string[]): number | null {
+  for (const tag of tags) {
+    const match = /^modelVersion:(\d+)$/.exec(tag);
+    if (match) return Number(match[1]);
+  }
+  return tags.some((t) => t.startsWith('modelVersion:')) ? -1 : null;
+}
+
+export type WorkflowOrigin =
+  | { kind: 'app-block'; appId: string }
+  | { kind: 'studio' }
+  | { kind: 'other' };
+
+/** Display only — the submitter writes these tags, so nothing is decided on them. */
+function originOf(tags: string[]): WorkflowOrigin {
+  const app = tags.find((t) => t.startsWith('app-block:'));
+  if (app && app.length > 'app-block:'.length)
+    return { kind: 'app-block', appId: app.slice('app-block:'.length) };
+  if (tags.includes('training')) return { kind: 'studio' };
+  return { kind: 'other' };
+}
+
+/** A .NET `TimeSpan` as the orchestrator serialises it — `[d.]hh:mm:ss[.fffffff]` — in ms. */
+export function parseTimeSpanMs(value: unknown): number | null {
+  if (typeof value !== 'string') return null;
+  const match = /^(?:(\d+)\.)?(\d{1,2}):(\d{2}):(\d{2})(?:\.\d+)?$/.exec(value);
+  if (!match) return null;
+  const [, d, h, m, s] = match;
+  return ((Number(d ?? 0) * 24 + Number(h)) * 60 + Number(m)) * 60_000 + Number(s) * 1000;
+}
+
+/**
+ * When the gate stops accepting a ruling: the step's start plus its timeout, or the per-type default.
+ * Approximate — the orchestrator stamps the deadline when it builds the jobs, a moment after start.
+ */
+function gateExpiresAt(
+  workflow: RawWorkflow,
+  step: RawStep & { $type: (typeof WORKFLOW_TRAINING_STEP_TYPES)[number] },
+  submittedAt: Date
+): string | null {
+  const startMs = [str(step.startedAt), str(workflow.createdAt)]
+    .map((v) => (v ? Date.parse(v) : NaN))
+    .find((ms) => !Number.isNaN(ms));
+  const start = startMs ?? submittedAt.getTime();
+  const window = parseTimeSpanMs(step.timeout) ?? DEFAULT_GATE_WINDOW_MS[step.$type];
+  return new Date(start + window).toISOString();
+}
+
+const BLOB_KEY_PATTERN = /^[0-9a-fA-F]{32}\.[A-Za-z0-9]{2,5}$/;
+const BLOB_AIR_PREFIX = 'urn:air:other:other:orchestrator:blob@';
+
+/** The blob key an item's `air` names. The orchestrator normalises items to the AIR form at submit, so
+ *  the bare key is accepted only as a fallback; anything else is not served. */
+function blobKeyOf(air: unknown): string | null {
+  const value = str(air);
+  if (!value) return null;
+  const key = value.startsWith(BLOB_AIR_PREFIX) ? value.slice(BLOB_AIR_PREFIX.length) : value;
+  return BLOB_KEY_PATTERN.test(key) ? key : null;
+}
+
+const MEDIA_BY_EXTENSION: Record<string, 'image' | 'video' | 'audio'> = {
+  jpg: 'image',
+  jpeg: 'image',
+  png: 'image',
+  webp: 'image',
+  gif: 'image',
+  mp4: 'video',
+  webm: 'video',
+  mp3: 'audio',
+  wav: 'audio',
+};
+
+export type WorkflowDatasetItem = {
+  index: number;
+  /** Null when the item names something other than an orchestrator blob; such an item is not served. */
+  blobKey: string | null;
+  caption: string | null;
+  media: 'image' | 'video' | 'audio' | 'other';
+};
+
+export type WorkflowDataset =
+  | { kind: 'blobs'; items: WorkflowDatasetItem[] }
+  /** A packaged dataset (a zip). Its contents are not previewable here. */
+  | { kind: 'archive'; count: number | null }
+  | { kind: 'unknown' };
+
+function datasetOf(step: RawStep): WorkflowDataset {
+  const input = step.input as { trainingData?: unknown; trainingDataImagesCount?: unknown } | null;
+  const data = input?.trainingData;
+  if (data && typeof data === 'object') {
+    const d = data as { type?: unknown; items?: unknown; count?: unknown };
+    if (d.type === 'blobs' && Array.isArray(d.items))
+      return {
+        kind: 'blobs',
+        items: d.items.map((raw, index) => {
+          const item = (raw ?? {}) as { air?: unknown; caption?: unknown };
+          const blobKey = blobKeyOf(item.air);
+          const ext = blobKey?.split('.').pop()?.toLowerCase() ?? '';
+          return {
+            index,
+            blobKey,
+            caption: str(item.caption),
+            media: MEDIA_BY_EXTENSION[ext] ?? 'other',
+          };
+        }),
+      };
+    if (d.type === 'zip')
+      return { kind: 'archive', count: typeof d.count === 'number' ? d.count : null };
+  }
+  // imageResourceTraining's original shape: a URL to an archive plus a count beside it.
+  if (typeof data === 'string')
+    return {
+      kind: 'archive',
+      count:
+        typeof input?.trainingDataImagesCount === 'number' ? input.trainingDataImagesCount : null,
+    };
+  return { kind: 'unknown' };
+}
+
+export type TrainingWorkflowDetail = {
+  workflowId: string;
+  ownerId: number;
+  username: string | null;
+  submittedAt: string;
+  status: string | null;
+  stepType: string;
+  /** Lower-cased (`underreview`, `approved`, …); null when the step reports none yet. */
+  moderationStatus: string | null;
+  underReview: boolean;
+  origin: WorkflowOrigin;
+  /** Set when the run belongs to a model version — it is then reviewed on the version route instead.
+   *  -1 when the tag is present but unreadable. */
+  modelVersionId: number | null;
+  expiresAt: string | null;
+  dataset: WorkflowDataset;
+};
+
+export type WorkflowLoad =
+  | { ok: true; detail: TrainingWorkflowDetail }
+  | { ok: false; status: number; error: string };
+
+/**
+ * One workflow-only run, read for review. Pure over the workflow JSON so the ruling, the page and the
+ * blob route all decide "which run, whose, what state" from the same reading.
+ */
+export function readTrainingWorkflow(
+  workflowId: string,
+  raw: unknown
+): { ok: true; detail: Omit<TrainingWorkflowDetail, 'username'> } | { ok: false; error: string } {
+  const parsed = parseWorkflowId(workflowId);
+  if (!parsed) return { ok: false, error: 'Not a workflow id.' };
+  if (!raw || typeof raw !== 'object')
+    return { ok: false, error: `Workflow ${workflowId} could not be read.` };
+  const workflow = raw as RawWorkflow;
+  // The manager read is keyed by the id we asked for; a body naming a different one is not this run.
+  if (str(workflow.id) && workflow.id !== workflowId)
+    return {
+      ok: false,
+      error: `The orchestrator returned a different workflow for ${workflowId}.`,
+    };
+
+  const step = trainingStepOf(workflow);
+  if (!step) return { ok: false, error: `Workflow ${workflowId} has no training step.` };
+
+  const tags = tagsOf(workflow);
+  const moderationStatus = moderationStatusOf(step);
+  return {
+    ok: true,
+    detail: {
+      workflowId,
+      ownerId: parsed.ownerId,
+      submittedAt: parsed.submittedAt.toISOString(),
+      status: str(workflow.status),
+      stepType: step.$type,
+      moderationStatus,
+      underReview: moderationStatus === UNDER_REVIEW,
+      origin: originOf(tags),
+      modelVersionId: modelVersionIdOf(tags),
+      expiresAt: gateExpiresAt(workflow, step, parsed.submittedAt),
+      dataset: datasetOf(step),
+    },
+  };
+}
+
+/** Status of a failed load: 400 for a malformed id, 404 for a run the orchestrator does not have, 502
+ *  when it could not be asked. */
+export async function getTrainingWorkflowDetail(workflowId: string): Promise<WorkflowLoad> {
+  if (!parseWorkflowId(workflowId)) return { ok: false, status: 400, error: 'Not a workflow id.' };
+  const loaded = await getManagerWorkflow(workflowId);
+  if (!loaded.ok)
+    return {
+      ok: false,
+      status: loaded.status === 404 || loaded.status === 410 ? 404 : 502,
+      error: loaded.error,
+    };
+  const read = readTrainingWorkflow(workflowId, loaded.workflow);
+  if (!read.ok) return { ok: false, status: 422, error: read.error };
+
+  const users = await usersByIds([read.detail.ownerId]).catch(() => new Map());
+  return {
+    ok: true,
+    detail: { ...read.detail, username: users.get(read.detail.ownerId)?.username ?? null },
+  };
+}
+
+const MAX_RULING_MESSAGE = 1000;
+
+/** Delays between re-reads after a release. The release returns before the gate job completes, so the
+ *  first read can still say under review for a ruling that is about to land. */
+const RECHECK_DELAYS_MS = [750, 1500, 3000];
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Approve or deny the moderation gate of a workflow-only training run.
+ *
+ * Every refusal below happens BEFORE the gate is touched, from a workflow read this call made itself.
+ * Releasing is the one irreversible step, and the orchestrator answers 204 even when the ruling did not
+ * take (a gate it is not tracking), so the run is re-read afterwards and only a status that actually
+ * moved counts as done. Refunds on deny/expiry are the orchestrator's; nothing here moves Buzz.
+ */
+export async function moderateTrainingWorkflow(
+  input: { workflowId: string; approve: boolean; message?: string | null; moderatorId: number },
+  options: { recheckDelaysMs?: number[] } = {}
+): Promise<{ ok: true; moderationStatus: string } | { ok: false; error: string }> {
+  const { workflowId, approve, moderatorId } = input;
+  const parsed = parseWorkflowId(workflowId);
+  if (!parsed) return { ok: false, error: 'Not a workflow id. Nothing was changed.' };
+
+  const loaded = await getManagerWorkflow(workflowId);
+  if (!loaded.ok) return { ok: false, error: `${loaded.error} Nothing was changed.` };
+  const read = readTrainingWorkflow(workflowId, loaded.workflow);
+  if (!read.ok) return { ok: false, error: `${read.error} Nothing was changed.` };
+  const before = read.detail;
+
+  if (before.modelVersionId !== null)
+    return {
+      ok: false,
+      error:
+        before.modelVersionId > 0
+          ? `This run belongs to model version ${before.modelVersionId} — review it at /audit/training-data/${before.modelVersionId}, which also updates the version. Nothing was changed.`
+          : 'This run carries a model-version tag that could not be read, so it was not touched. Escalate this.',
+    };
+
+  if (!before.underReview)
+    return {
+      ok: false,
+      error: `This run is not awaiting review (moderation status: ${
+        before.moderationStatus ?? 'none'
+      }). Nothing was changed.`,
+    };
+
+  const message = approve
+    ? undefined
+    : input.message?.trim().slice(0, MAX_RULING_MESSAGE) || undefined;
+  const released = await releaseModerationGate(workflowId, approve, message);
+  if (!released.ok) return { ok: false, error: released.error };
+
+  // Re-read until the status moves. A read that fails is not a verdict either way.
+  let after: string | null | undefined;
+  for (const delay of options.recheckDelaysMs ?? RECHECK_DELAYS_MS) {
+    await sleep(delay);
+    const again = await getManagerWorkflow(workflowId);
+    if (!again.ok) {
+      after = undefined;
+      continue;
+    }
+    const reread = readTrainingWorkflow(workflowId, again.workflow);
+    after = reread.ok ? reread.detail.moderationStatus : undefined;
+    if (after !== undefined && after !== UNDER_REVIEW) break;
+  }
+
+  const log = {
+    name: 'training-workflow-moderation',
+    workflowId,
+    ownerId: parsed.ownerId,
+    approved: approve,
+    moderatorId,
+    after: after ?? null,
+  };
+
+  if (after === undefined) {
+    logToAxiom({
+      ...log,
+      type: 'error',
+      important: true,
+      message: 'gate released, outcome unconfirmed',
+    });
+    return {
+      ok: false,
+      error:
+        'The orchestrator accepted the ruling but the run could not be re-read to confirm it. Reload this page before doing anything else.',
+    };
+  }
+  if (after === UNDER_REVIEW) {
+    logToAxiom({
+      ...log,
+      type: 'error',
+      important: true,
+      message: 'gate release accepted but not applied',
+    });
+    return {
+      ok: false,
+      error:
+        'The orchestrator accepted the ruling, but the run is still under review — it was not applied yet. Retry in a moment.',
+    };
+  }
+  const expected = approve ? 'approved' : 'rejected';
+  if (after !== expected) {
+    logToAxiom({
+      ...log,
+      type: 'error',
+      important: true,
+      message: 'gate ended in an unexpected state',
+    });
+    return {
+      ok: false,
+      error: `The run is now "${after}", not ${expected}. It may have expired or been ruled on elsewhere at the same moment.`,
+    };
+  }
+
+  await recordModActivity({
+    userId: moderatorId,
+    entityType: 'user',
+    entityId: parsed.ownerId,
+    activity: approve ? 'trainingWorkflow:approve' : 'trainingWorkflow:deny',
+  });
+  logToAxiom({ ...log, type: 'info', message: message ?? null });
+  return { ok: true, moderationStatus: after };
+}
+
+/** How far back a pending gate can have been submitted: the longest default gate window plus slack for
+ *  ledger ingestion. A run older than this has expired and been refunded. */
+const PENDING_WINDOW_MS = 49 * 3_600_000;
+/** Workflows read from the orchestrator per page load, newest first. */
+const MAX_PENDING_CANDIDATES = 300;
+const PENDING_READ_CONCURRENCY = 8;
+
+export type PendingWorkflowGate = {
+  workflowId: string;
+  ownerId: number;
+  username: string | null;
+  submittedAt: string;
+  origin: WorkflowOrigin | null;
+  expiresAt: string | null;
+  /** False when the orchestrator could not be asked about this run, so it is listed unfiltered. */
+  verified: boolean;
+};
+
+export type PendingWorkflowGates = {
+  items: PendingWorkflowGate[];
+  /** The charge ledger could not be read, so there is no list at all — NOT "nothing to review". */
+  ledgerUnavailable: boolean;
+  /** At least one run could not be checked with the orchestrator; those are listed unverified. */
+  workflowFilterUnavailable: boolean;
+  /** More candidates than one page reads; the oldest were not checked. */
+  truncated: boolean;
+};
+
+const ymdhms = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+
+/**
+ * Workflow-only training runs waiting on a moderator.
+ *
+ * The orchestrator cannot be asked "which gates are open" — its list read needs a user and does not
+ * filter by status — so candidates come from the Buzz ledger: every training charge in the window, less
+ * the ones already refunded and the ones whose training step has already ended (a step row is written
+ * only at the end). On 2026-10-05 that took 2,711 charged workflows down to 133. Each survivor is then
+ * read from the orchestrator and kept only if it has a training step that is under review and no
+ * model-version tag (those are on the version queue above).
+ *
+ * A run submitted at no charge has no ledger row and does not appear here.
+ */
+export async function getPendingWorkflowGates(
+  options: { now?: number } = {}
+): Promise<PendingWorkflowGates> {
+  const since = ymdhms((options.now ?? Date.now()) - PENDING_WINDOW_MS);
+  // Three queries, not one: the same anti-join written as `NOT IN (subquery)` measured 22s against
+  // under 1s for the three run separately.
+  let candidates: string[];
+  try {
+    const ch = getClickhouse();
+    const [charges, refunds, ended] = await Promise.all([
+      ch.$query<{ workflowId: string }>(`
+        SELECT JSONExtractString(details, 'workflowId') AS workflowId
+        FROM buzzTransactions
+        WHERE type = 'training' AND date >= '${since}' AND workflowId != ''
+        GROUP BY workflowId
+        ORDER BY max(date) DESC
+      `),
+      ch.$query<{ workflowId: string }>(`
+        SELECT DISTINCT JSONExtractString(details, 'workflowId') AS workflowId
+        FROM buzzTransactions
+        WHERE type = 'refund' AND date >= '${since}'
+      `),
+      // The type filter is load-bearing: without it this reads every workflow's steps (tens of millions).
+      ch.$query<{ workflowId: string }>(`
+        SELECT DISTINCT workflowId
+        FROM orchestration.workflowSteps
+        WHERE createdAt >= '${since}' AND ${TRAINING_STEP_TYPES}
+      `),
+    ]);
+    const done = new Set([...refunds, ...ended].map((r) => r.workflowId));
+    candidates = charges
+      .map((c) => c.workflowId)
+      .filter((id) => !done.has(id) && parseWorkflowId(id));
+  } catch (e) {
+    console.error('[training-moderation] pending gate ledger read failed', e);
+    return {
+      items: [],
+      ledgerUnavailable: true,
+      workflowFilterUnavailable: false,
+      truncated: false,
+    };
+  }
+
+  const truncated = candidates.length > MAX_PENDING_CANDIDATES;
+  const page = candidates.slice(0, MAX_PENDING_CANDIDATES);
+
+  const checked: {
+    workflowId: string;
+    verdict: 'keep' | 'drop' | 'unknown';
+    detail?: Omit<TrainingWorkflowDetail, 'username'>;
+  }[] = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < page.length) {
+      const workflowId = page[next++];
+      const loaded = await getManagerWorkflow(workflowId);
+      if (!loaded.ok) {
+        // 404/410 is the orchestrator saying the run is gone; anything else is not an answer.
+        const gone = loaded.status === 404 || loaded.status === 410;
+        checked.push({ workflowId, verdict: gone ? 'drop' : 'unknown' });
+        continue;
+      }
+      const read = readTrainingWorkflow(workflowId, loaded.workflow);
+      const keep = read.ok && read.detail.underReview && read.detail.modelVersionId === null;
+      checked.push({
+        workflowId,
+        verdict: keep ? 'keep' : 'drop',
+        detail: read.ok ? read.detail : undefined,
+      });
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(PENDING_READ_CONCURRENCY, page.length) }, worker)
+  );
+
+  const kept = checked.filter((c) => c.verdict !== 'drop');
+  const users = await usersByIds(kept.map((c) => parseWorkflowId(c.workflowId)!.ownerId)).catch(
+    () => new Map()
+  );
+
+  // Back into ledger order (newest first) — the workers finish out of order.
+  const order = new Map(page.map((id, i) => [id, i]));
+  const items = kept
+    .sort((a, b) => order.get(a.workflowId)! - order.get(b.workflowId)!)
+    .map(({ workflowId, verdict, detail }): PendingWorkflowGate => {
+      const parsed = parseWorkflowId(workflowId)!;
+      return {
+        workflowId,
+        ownerId: parsed.ownerId,
+        username: users.get(parsed.ownerId)?.username ?? null,
+        submittedAt: parsed.submittedAt.toISOString(),
+        origin: detail?.origin ?? null,
+        expiresAt: detail?.expiresAt ?? null,
+        verified: verdict === 'keep',
+      };
+    });
+
+  return {
+    items,
+    ledgerUnavailable: false,
+    workflowFilterUnavailable: kept.some((c) => c.verdict === 'unknown'),
+    truncated,
+  };
+}
+
+const DATASET_CACHE_MS = 60_000;
+const DATASET_CACHE_MAX = 50;
+const datasetCache = new Map<string, { at: number; dataset: WorkflowDataset; ownerId: number }>();
+
+/** Tests only — the cache is module state. */
+export const clearTrainingWorkflowBlobCache = () => datasetCache.clear();
+
+/**
+ * The blob key behind item `index` of a workflow-only run's dataset, resolved from a workflow read made
+ * here — the browser names a position, never a URL or a key.
+ */
+export async function resolveTrainingWorkflowBlob(
+  workflowId: string,
+  index: number
+): Promise<
+  { ok: true; blobKey: string; ownerId: number } | { ok: false; status: number; error: string }
+> {
+  if (!parseWorkflowId(workflowId)) return { ok: false, status: 400, error: 'Not a workflow id.' };
+
+  // The review page asks once per thumbnail, so the read is held briefly rather than repeated for
+  // every item of a large dataset. Still this app's own read of the workflow, keyed by its id.
+  const cached = datasetCache.get(workflowId);
+  let entry = cached && Date.now() - cached.at < DATASET_CACHE_MS ? cached : undefined;
+  if (!entry) {
+    const loaded = await getManagerWorkflow(workflowId);
+    if (!loaded.ok)
+      return {
+        ok: false,
+        status: loaded.status === 404 || loaded.status === 410 ? 404 : 502,
+        error: loaded.error,
+      };
+    const read = readTrainingWorkflow(workflowId, loaded.workflow);
+    if (!read.ok) return { ok: false, status: 422, error: read.error };
+    entry = { at: Date.now(), dataset: read.detail.dataset, ownerId: read.detail.ownerId };
+    if (datasetCache.size >= DATASET_CACHE_MAX)
+      datasetCache.delete(datasetCache.keys().next().value!);
+    datasetCache.set(workflowId, entry);
+  }
+
+  const { dataset, ownerId } = entry;
+  if (dataset.kind !== 'blobs')
+    return { ok: false, status: 404, error: 'This run has no individually stored dataset items.' };
+  const item = Number.isInteger(index) && index >= 0 ? dataset.items[index] : undefined;
+  if (!item) return { ok: false, status: 404, error: 'No such dataset item.' };
+  if (!item.blobKey)
+    return { ok: false, status: 404, error: 'This dataset item is not a stored blob.' };
+  return { ok: true, blobKey: item.blobKey, ownerId };
 }
