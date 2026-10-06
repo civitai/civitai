@@ -46,7 +46,8 @@ export default MixedAuthEndpoint(async function handler(
   if (isRegionRestricted(region)) browsingLevel = sfwBrowsingLevelsFlag;
 
   try {
-    // @ai: Shared-cache visibility must stay anonymous; getCollectionById does not check permissions.
+    // @ai: getCollectionById does not check access. Check as an anonymous visitor so
+    // cached responses cannot expose private collections.
     const permissions = await getUserCollectionPermissionsById({ id });
     if (!permissions.read) return res.status(404).json({ error: `No collection with id ${id}` });
 
