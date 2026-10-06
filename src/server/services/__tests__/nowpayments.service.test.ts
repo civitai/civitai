@@ -121,6 +121,8 @@ describe('processDeposit', () => {
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
     // Default: no existing CryptoDeposit record
     mockDbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
+    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValue({ payin_hash: '0xdefault' });
+    mockGetTransactionByExternalId.mockResolvedValue(null);
   });
 
   it('parses userId from order_id and sends signal', async () => {
@@ -452,6 +454,89 @@ describe('processDeposit', () => {
     const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
     expect(upsertCall?.update).toHaveProperty('status', 'finished');
   });
+
+  describe('deposit already credited by hand under its payin hash', () => {
+    const HASH = '0xAbC123';
+    const manualTx = { transactionId: 'manual_tx' };
+
+    beforeEach(() => {
+      mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
+        id === 'np-payin-0xabc123' ? manualTx : null
+      );
+    });
+
+    it('looks up the payin hash for an IPN event and skips the grant', async () => {
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce({ payin_hash: HASH });
+      const result = await processDeposit(
+        12345,
+        'finished',
+        makeWebhookEvent({ outcome_amount: 5 })
+      );
+
+      expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(12345);
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(result.transactionId).toBe('already_granted');
+      const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+      expect(upsertCall?.create).toMatchObject({ status: 'finished' });
+    });
+
+    it('uses the payin hash carried on a status-built event without a lookup', async () => {
+      const event = makeWebhookEvent({ outcome_amount: 5, payin_hash: HASH });
+      const result = await processDeposit(12345, 'finished', event);
+
+      expect(mockNowpaymentsCaller.getPaymentStatus).not.toHaveBeenCalled();
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(result.transactionId).toBe('already_granted');
+    });
+
+    it('grants normally when a different deposit was credited by hand', async () => {
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce({ payin_hash: '0xother' });
+      const result = await processDeposit(
+        12345,
+        'finished',
+        makeWebhookEvent({ outcome_amount: 5 })
+      );
+
+      expect(mockGetTransactionByExternalId).toHaveBeenCalledWith('np-payin-0xother');
+      expect(mockGrantBuzzPurchase).toHaveBeenCalledWith(
+        expect.objectContaining({ externalTransactionId: 'np-deposit-12345', amount: 5000 })
+      );
+      expect(result.transactionId).toBe('tx_123');
+    });
+
+    it('grants without a ledger lookup when NowPayments reports no payin hash', async () => {
+      const event = makeWebhookEvent({ outcome_amount: 5, payin_hash: null });
+      const result = await processDeposit(12345, 'finished', event);
+
+      expect(mockNowpaymentsCaller.getPaymentStatus).not.toHaveBeenCalled();
+      expect(mockGetTransactionByExternalId).not.toHaveBeenCalled();
+      expect(result.transactionId).toBe('tx_123');
+    });
+
+    it('does not grant when the payin hash cannot be resolved, leaving it for the retry sweep', async () => {
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce(null);
+      const result = await processDeposit(
+        12345,
+        'finished',
+        makeWebhookEvent({ outcome_amount: 5 })
+      );
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(result.transactionId).toBeUndefined();
+      const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+      expect(upsertCall?.create).toMatchObject({ status: 'buzz_failed', buzzCredited: null });
+    });
+
+    it('does not grant when the ledger lookup fails', async () => {
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce({ payin_hash: '0xother' });
+      mockGetTransactionByExternalId.mockRejectedValueOnce(new Error('Buzz API down'));
+      await processDeposit(12345, 'finished', makeWebhookEvent({ outcome_amount: 5 }));
+
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
+      expect(upsertCall?.create).toMatchObject({ status: 'buzz_failed' });
+    });
+  });
 });
 
 // ─── getDepositAddress ───────────────────────────────────────────────────────
@@ -643,6 +728,7 @@ function makePayment(
     outcome_amount: 5.0,
     actually_paid: 10,
     parent_payment_id: null,
+    payin_hash: '0xpayin',
     ...overrides,
   } as NOWPayments.CreatePaymentResponse;
 }
