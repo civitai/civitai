@@ -27,7 +27,10 @@ const issuedSql = () => {
 
 /** The issued SET expression, evaluated against a stored value. */
 const applyIssuedUpdate = (stored: number) => {
-  const [mask, bits] = issuedSql().values as number[];
+  const { sql, values } = issuedSql();
+  // The JS below mirrors this expression, so it means nothing unless the SQL matches it.
+  expect(sql).toMatch(/SET flags = \(flags & ~\?::int\) \| \?/);
+  const [mask, bits] = values as number[];
   return (stored & ~mask) | bits;
 };
 

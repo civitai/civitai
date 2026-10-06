@@ -131,8 +131,6 @@ function statusMeta(status: CosmeticShopItemStatus): { label: string; color: str
   }
 }
 
-// Quick-insert reasons a moderator can append to their note. A concern with a
-// stock wording inserts that; the rest insert their bare label.
 const placementRatingDescriptions: Record<StickerPlacementRating, string> = {
   any: 'Can be placed on any image.',
   sfwOnly:
@@ -141,6 +139,8 @@ const placementRatingDescriptions: Record<StickerPlacementRating, string> = {
     'Blocks placing it on PG or PG-13 images, and hides it where it is already placed on one.',
 };
 
+// Quick-insert reasons a moderator can append to their note. A concern with a
+// stock wording inserts that; the rest insert their bare label.
 const flagConcerns: { label: string; icon: TablerIcon; note?: string }[] = [
   {
     label: 'Copyright / IP',

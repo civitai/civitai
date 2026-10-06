@@ -2390,6 +2390,18 @@ describe('a sticker flagged NSFW placements only', () => {
       await expect(getStickerPlacementCounts([IMAGE])).resolves.toEqual({ [IMAGE]: 2 });
     });
 
+    it('show on the hover card on an R image', async () => {
+      imageFindMany.mockResolvedValue([{ id: IMAGE, nsfwLevel: NsfwLevel.R }]);
+      placementFindFirst.mockResolvedValue({
+        ...row(FLAGGED_ROW, COSMETIC),
+        placer: { id: PLACER, username: 'placer' },
+      });
+
+      await expect(
+        getStickerPlacementDetail({ placementId: FLAGGED_ROW, viewerId: STRANGER })
+      ).resolves.toMatchObject({ id: FLAGGED_ROW });
+    });
+
     it('are not available on the hover card on a PG image, except to a moderator', async () => {
       placementFindFirst.mockResolvedValue({
         ...row(FLAGGED_ROW, COSMETIC),
