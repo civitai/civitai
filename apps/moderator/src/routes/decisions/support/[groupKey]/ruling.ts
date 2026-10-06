@@ -1,12 +1,15 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
+  ANSWER_MAX_LENGTH,
   isGroupRuling,
   isMemberRuling,
   type GroupRuling,
   type MemberRuling,
 } from '$lib/decision-rulings';
+import type { ResolutionAnswer } from '$lib/server/decision-resolution.service';
 import {
+  groupMember,
   isAreaSlug,
   isTicketId,
   type SupportGroupDetail,
@@ -47,7 +50,7 @@ export function memberSnapshot(
   d: SupportGroupDetail,
   ticketId: string
 ): Record<string, unknown> | null {
-  const m = d.decision?.members.find((x) => x.ticketId === ticketId);
+  const m = groupMember(d, ticketId);
   if (!m) return null;
   return {
     ticket_id: m.ticketId,
@@ -75,6 +78,11 @@ const groupRulingSchema = z.object({
   targetKey: optionalText(64),
   escalateTo: optionalText(64),
   note: optionalText(2000),
+  // Unbounded here and bounded below, for `resolved` only: a stray value on another ruling is dropped,
+  // never a reason to refuse it.
+  answerText: z.string().optional(),
+  answerTicketId: z.string().optional(),
+  answerConversationId: z.string().optional(),
 });
 
 export type ParsedGroupRuling = {
@@ -82,7 +90,53 @@ export type ParsedGroupRuling = {
   targetKey: string | null;
   escalateTo: string | null;
   note: string | null;
+  /** `resolved` only, and always present there. */
+  answer: ResolutionAnswer | null;
 };
+
+/** Addresses on these domains are ours, so an answer may tell customers to write to them. */
+const OWN_EMAIL_DOMAINS = ['civitai.com'];
+const EMAIL = /[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})/g;
+
+/**
+ * An email address in an answer that is not one of ours — most likely the customer's, carried over
+ * from the reply the answer was pre-filled from.
+ *
+ * 🔴 A REFUSAL, NOT A REMINDER. The answer is text meant to reach every future customer with the same
+ * issue; a "remove personal details" hint does not stop a pasted address from going out with it.
+ */
+export const foreignEmailIn = (text: string): string | null => {
+  for (const m of text.matchAll(EMAIL))
+    if (!OWN_EMAIL_DOMAINS.includes(m[1].toLowerCase())) return m[0];
+  return null;
+};
+
+const NUMERIC_ID = /^\d{1,20}$/;
+
+function parseAnswer(p: {
+  answerText?: string;
+  answerTicketId?: string;
+  answerConversationId?: string;
+}): ResolutionAnswer | string {
+  const text = (p.answerText ?? '').trim();
+  if (!text) return 'Write the answer — a resolved ruling records one.';
+  if (text.length > ANSWER_MAX_LENGTH)
+    return `The answer is ${text.length} characters; the limit is ${ANSWER_MAX_LENGTH}.`;
+  const email = foreignEmailIn(text);
+  if (email)
+    return `Remove the email address (${email}) from the answer — it is shown to every customer it is sent to.`;
+  const ticketId = p.answerTicketId?.trim() || null;
+  const conversationId = p.answerConversationId?.trim() || null;
+  if (ticketId === null && conversationId === null) return { text, source: null };
+  if (
+    ticketId === null ||
+    conversationId === null ||
+    !NUMERIC_ID.test(ticketId) ||
+    !NUMERIC_ID.test(conversationId)
+  )
+    return 'The reply this answer came from is malformed — remove it and pick it again.';
+  return { text, source: { ticketId, conversationId } };
+}
 
 /**
  * A group ruling from the form, or the message to refuse it with.
@@ -102,7 +156,13 @@ export function parseGroupRuling(form: FormData, selfKey: string): ParsedGroupRu
   // Areas are the source's topic slugs until an area taxonomy exists. Membership in the version's
   // topic set is checked by the action, which has the source to ask.
   if (escalateTo !== null && !isAreaSlug(escalateTo)) return 'Unknown escalation area.';
-  return { ruling: r, targetKey, escalateTo, note: parsed.note };
+  let answer: ResolutionAnswer | null = null;
+  if (r === 'resolved') {
+    const a = parseAnswer(parsed);
+    if (typeof a === 'string') return a;
+    answer = a;
+  }
+  return { ruling: r, targetKey, escalateTo, note: parsed.note, answer };
 }
 
 const memberLabelSchema = z.object({

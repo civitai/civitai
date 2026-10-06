@@ -619,6 +619,13 @@ export async function getSupportGroup(
   };
 }
 
+/**
+ * The ticket's member row in this group, or `null` when it is not a CURRENT member — the router may
+ * have re-routed it since a page loaded. The one membership test for anything acting on a member.
+ */
+export const groupMember = (d: SupportGroupDetail, ticketId: string): SupportMember | null =>
+  d.decision?.members.find((m) => m.ticketId === ticketId) ?? null;
+
 export async function listDuplicateTargets(
   input: { version: string; groupKey: string; topic: string },
   client = reader()

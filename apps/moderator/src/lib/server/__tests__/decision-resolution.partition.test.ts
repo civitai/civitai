@@ -28,6 +28,12 @@ describe('partitionResolutions', () => {
     expect(members.get('g1')).toEqual({ '18': { ruling: 'unsure', ruledBy: 1, ruledAt: at } });
   });
 
+  it('files resolved as a GROUP ruling, carrying its row id', () => {
+    const { groups, members } = partitionResolutions([r('g2', '', 'resolved')]);
+    expect(groups.get('g2')).toMatchObject({ id: 'g2:', ruling: 'resolved' });
+    expect(members.size).toBe(0);
+  });
+
   it('drops a row whose ruling kind does not fit its scope rather than mis-filing it', () => {
     const { groups, members } = partitionResolutions([
       r('g0', '', 'belongs'),

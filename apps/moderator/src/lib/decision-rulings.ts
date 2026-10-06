@@ -20,6 +20,10 @@ export type DecisionSource = (typeof DECISION_SOURCES)[number];
  *
  * `skip` is a decision ("I looked and I am not calling it"), not an absence — an item with no row at
  * all is what "unruled" means.
+ *
+ * `resolved` records the group's canonical answer, and implies the grouping is correct. It replaces
+ * any earlier group ruling like every other, so withdrawing an answer is a newer ruling (normally
+ * `correct`) — the table stays append-only.
  */
 export const GROUP_RULINGS = [
   'correct',
@@ -28,6 +32,7 @@ export const GROUP_RULINGS = [
   'park',
   'escalate',
   'skip',
+  'resolved',
 ] as const;
 export type GroupRuling = (typeof GROUP_RULINGS)[number];
 
@@ -67,6 +72,7 @@ export const GROUP_RULING_LABEL: Record<GroupRuling, string> = {
   park: 'Park (no longer active)',
   escalate: 'Escalate to a human',
   skip: 'Skip — looked, not calling it',
+  resolved: 'Resolved — record the answer',
 };
 
 export const MEMBER_RULING_LABEL: Record<MemberRuling, string> = {
@@ -76,8 +82,17 @@ export const MEMBER_RULING_LABEL: Record<MemberRuling, string> = {
 };
 
 /** The inbox's per-item state, derived from the latest group ruling. */
-export const ITEM_STATES = ['unruled', 'ruled', 'escalated'] as const;
+export const ITEM_STATES = ['unruled', 'ruled', 'escalated', 'resolved'] as const;
 export type ItemState = (typeof ITEM_STATES)[number];
 
 export const itemState = (latest: GroupRuling | null): ItemState =>
-  latest === null ? 'unruled' : latest === 'escalate' ? 'escalated' : 'ruled';
+  latest === null
+    ? 'unruled'
+    : latest === 'escalate'
+    ? 'escalated'
+    : latest === 'resolved'
+    ? 'resolved'
+    : 'ruled';
+
+/** The longest answer accepted. The DDL's `decision_resolution_answer_valid` enforces the same bound. */
+export const ANSWER_MAX_LENGTH = 8000;

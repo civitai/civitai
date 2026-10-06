@@ -7,14 +7,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * it and what it refuses first.
  */
 
-const { getSupportGroup, recordResolution, currentResolutions, listSupportTopics } = vi.hoisted(
-  () => ({
-    getSupportGroup: vi.fn(),
-    recordResolution: vi.fn(),
-    currentResolutions: vi.fn(),
-    listSupportTopics: vi.fn(),
-  })
-);
+const {
+  getSupportGroup,
+  recordResolution,
+  currentResolutions,
+  listSupportTopics,
+  resolutionAnswer,
+  getPublicAgentReplies,
+} = vi.hoisted(() => ({
+  getSupportGroup: vi.fn(),
+  recordResolution: vi.fn(),
+  currentResolutions: vi.fn(),
+  listSupportTopics: vi.fn(),
+  resolutionAnswer: vi.fn(),
+  getPublicAgentReplies: vi.fn(),
+}));
 
 vi.mock('$lib/server/decision-sources/support', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/decision-sources/support')>()),
@@ -27,6 +34,11 @@ vi.mock('$lib/server/decision-resolution.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/decision-resolution.service')>()),
   recordResolution,
   currentResolutions,
+  resolutionAnswer,
+}));
+vi.mock('$lib/server/freshdesk.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/server/freshdesk.service')>()),
+  getPublicAgentReplies,
 }));
 // The route's import graph reaches `$lib/server/db`, which demands a connection string at import.
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
@@ -82,8 +94,20 @@ const post = (
   });
 
 beforeEach(() => {
-  for (const m of [getSupportGroup, recordResolution, currentResolutions, listSupportTopics])
+  for (const m of [
+    getSupportGroup,
+    recordResolution,
+    currentResolutions,
+    listSupportTopics,
+    resolutionAnswer,
+    getPublicAgentReplies,
+  ])
     m.mockReset();
+  resolutionAnswer.mockResolvedValue(null);
+  getPublicAgentReplies.mockResolvedValue({
+    status: 'found',
+    replies: [{ conversationId: '150003911207', createdAt: null, text: 'Agent reply text.' }],
+  });
   getSupportGroup.mockResolvedValue(detail());
   listSupportTopics.mockResolvedValue([
     { topic: 'billing-buzz', groups: 3 },
@@ -388,7 +412,13 @@ describe('load', () => {
       },
     ]);
     const page = await run({});
-    expect(page.groupRuling).toEqual({ ruling: 'park', ruledBy: 5, ruledAt: at, targetKey: null });
+    expect(page.groupRuling).toEqual({
+      id: '1',
+      ruling: 'park',
+      ruledBy: 5,
+      ruledAt: at,
+      targetKey: null,
+    });
     expect(page.memberLabels).toEqual({ '2': { ruling: 'unsure', ruledBy: 6, ruledAt: at } });
   });
 });
@@ -406,5 +436,148 @@ describe('load degrades when the ruling table is absent', () => {
     expect(page.storeStatus).toBe('no-schema');
     expect(page.canRule).toBe(false);
     expect(page.detail).toBeTruthy();
+  });
+});
+
+describe('the resolved ruling', () => {
+  const ANSWER = 'Update the app, then sign out and back in.';
+  const BOTH = { 'decisions.rule': true, 'decisions.answer': true } as const;
+  const SOURCE = { answerTicketId: '2', answerConversationId: '150003911207' };
+
+  it('is refused 403 without decisions.answer, even holding decisions.rule — before any read', async () => {
+    const out = await post(
+      'rule',
+      { ruling: 'resolved', answerText: ANSWER },
+      { grants: { 'decisions.rule': true } }
+    );
+    expect(out.status).toBe(403);
+    expect(out.data).toMatchObject({ scope: 'denied' });
+    expect(out.data?.error).toMatch(/Record the canonical answer for a decision group/);
+    expect(getSupportGroup).not.toHaveBeenCalled();
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('is refused 403 with decisions.answer alone — the ruling grant is still required', async () => {
+    const out = await post(
+      'rule',
+      { ruling: 'resolved', answerText: ANSWER },
+      { grants: { 'decisions.answer': true } }
+    );
+    expect(out.status).toBe(403);
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('decisions.answer is not needed for any other ruling', async () => {
+    const out = await post('rule', { ruling: 'correct' }, { grants: { 'decisions.rule': true } });
+    expect(out.success).toBe(true);
+  });
+
+  it('records the answer with both grants, without a source', async () => {
+    const out = await post('rule', { ruling: 'resolved', answerText: ANSWER }, { grants: BOTH });
+    expect(out).toMatchObject({ success: true, ruling: 'resolved' });
+    const arg = recordResolution.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      subKey: '',
+      ruling: 'resolved',
+      answer: { text: ANSWER, source: null },
+    });
+    expect(arg.shown).not.toHaveProperty('answer_source');
+    expect(getPublicAgentReplies).not.toHaveBeenCalled();
+  });
+
+  it('confirms the cited reply with Freshdesk, and stores ids — never text — in the snapshot', async () => {
+    const out = await post(
+      'rule',
+      { ruling: 'resolved', answerText: ANSWER, ...SOURCE },
+      { grants: BOTH }
+    );
+    expect(out.success).toBe(true);
+    expect(getPublicAgentReplies).toHaveBeenCalledWith('2');
+    const arg = recordResolution.mock.calls[0][0];
+    expect(arg.answer).toEqual({
+      text: ANSWER,
+      source: { ticketId: '2', conversationId: '150003911207' },
+    });
+    expect(arg.shown.answer_source).toEqual({ ticket_id: '2', conversation_id: '150003911207' });
+    expect(JSON.stringify(arg.shown)).not.toContain('Agent reply text.');
+  });
+
+  it('refuses a source that is not a current member of the group', async () => {
+    const out = await post(
+      'rule',
+      { ruling: 'resolved', answerText: ANSWER, ...SOURCE, answerTicketId: '99' },
+      { grants: BOTH }
+    );
+    expect(out.status).toBe(400);
+    expect(getPublicAgentReplies).not.toHaveBeenCalled();
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('refuses a reply that is not among the ticket’s public agent replies', async () => {
+    getPublicAgentReplies.mockResolvedValue({
+      status: 'found',
+      replies: [{ conversationId: '150003999999', createdAt: null, text: 'other' }],
+    });
+    const out = await post(
+      'rule',
+      { ruling: 'resolved', answerText: ANSWER, ...SOURCE },
+      { grants: BOTH }
+    );
+    expect(out.status).toBe(400);
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('503s, without writing, when Freshdesk cannot confirm the source', async () => {
+    getPublicAgentReplies.mockResolvedValue({ status: 'unavailable', reason: 'rate limited' });
+    const out = await post(
+      'rule',
+      { ruling: 'resolved', answerText: ANSWER, ...SOURCE },
+      { grants: BOTH }
+    );
+    expect(out.status).toBe(503);
+    expect(out.data?.error).toMatch(/rate limited.*NOT recorded/);
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a group that moved (409) before asking Freshdesk', async () => {
+    const out = await post(
+      'rule',
+      { ruling: 'resolved', answerText: ANSWER, ...SOURCE, fingerprint: 'stale' },
+      { grants: BOTH }
+    );
+    expect(out.status).toBe(409);
+    expect(getPublicAgentReplies).not.toHaveBeenCalled();
+  });
+
+  it('load: canAnswer needs both grants, and the answer is read only for a resolved ruling', async () => {
+    const run = (grants: Record<string, true>) =>
+      (load as unknown as Handler)({
+        params: { groupKey: GK },
+        url: new URL(`https://moderator.example/decisions/support/${GK}`),
+        locals: { grants },
+      }) as unknown as Promise<{ canAnswer: boolean; canRule: boolean; answer: unknown }>;
+    expect((await run({ 'decisions.rule': true })).canAnswer).toBe(false);
+    expect((await run({ 'decisions.answer': true })).canAnswer).toBe(false);
+    expect((await run(BOTH)).canAnswer).toBe(true);
+    expect(resolutionAnswer).not.toHaveBeenCalled();
+
+    currentResolutions.mockResolvedValue([
+      {
+        id: '41',
+        itemKey: GK,
+        subKey: '',
+        ruling: 'resolved',
+        targetKey: null,
+        escalateTo: null,
+        note: null,
+        ruledBy: 5,
+        ruledAt: new Date(0),
+        applyState: 'n/a',
+      },
+    ]);
+    resolutionAnswer.mockResolvedValue({ text: ANSWER, source: null });
+    const page = await run({});
+    expect(resolutionAnswer).toHaveBeenCalledWith('41');
+    expect(page.answer).toEqual({ text: ANSWER, source: null });
   });
 });

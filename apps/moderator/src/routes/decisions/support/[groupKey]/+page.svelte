@@ -4,7 +4,9 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural } from '$lib/format';
   import { denied } from '$lib/permissions';
+  import { AnswerDraft } from './answer-draft.svelte';
   import MemberTable from './MemberTable.svelte';
+  import ReplyPicker from './ReplyPicker.svelte';
   import RulingPanel from './RulingPanel.svelte';
   import type { PageData } from './$types';
 
@@ -18,6 +20,14 @@
   const rep = $derived(data.detail.representative);
   const repLabel = $derived(rep ? requesterTierLabel(rep.memberTier, rep.payingPriority) : null);
 
+  // 🔴 KEYED ON THE KEY STRING, NOT ON `group`. Every reload hands `group` a new object, and a draft
+  // derived from it would be wiped by the 409 refresh it has to survive; a string that did not change
+  // does not re-run this.
+  const groupKey = $derived(group.groupKey);
+  const draft = $derived(new AnswerDraft(groupKey));
+  const notBelongs = $derived(
+    Object.values(data.memberLabels).filter((l) => l.ruling === 'not_belongs').length
+  );
 </script>
 
 <header class="page-header">
@@ -92,8 +102,11 @@
       version={data.version}
       {ticketHref}
       canRule={data.canRule}
+      canAnswer={data.canAnswer}
+      {draft}
     />
   {/key}
+  <ReplyPicker {draft} version={data.version} />
 {:else}
   <p class="text-dark-2">No ticket is assigned to this group in this version.</p>
 {/if}
@@ -110,6 +123,10 @@
     targets={data.targets}
     fingerprint={data.fingerprint}
     current={data.groupRuling}
+    answer={data.answer}
+    {notBelongs}
+    {draft}
     canRule={data.canRule}
+    canAnswer={data.canAnswer}
   />
 {/key}
