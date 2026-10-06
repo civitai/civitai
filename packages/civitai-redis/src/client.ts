@@ -2198,6 +2198,7 @@ export const REDIS_SYS_KEYS = {
   },
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
+    BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',

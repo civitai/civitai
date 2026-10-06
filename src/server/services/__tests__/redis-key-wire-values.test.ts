@@ -21,5 +21,8 @@ describe('redis key wire values', () => {
       POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
     });
     expect(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES).toBe('creator-program:flip-phases');
+    expect(REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT).toBe(
+      'creator-program:bankable-snapshot'
+    );
   });
 });

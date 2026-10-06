@@ -47,6 +47,13 @@ export type CapDefinition = {
   hidden?: boolean;
 };
 export const PEAK_EARNING_WINDOW = 12;
+
+/**
+ * From this instant, generation compensation stops counting toward what a creator may bank. Must
+ * be the start of a UTC month: the current month's deposits are read from the bank account, which
+ * would also count pre-cutover deposits that the cutover snapshot already reflects.
+ */
+export const BANKABLE_CUTOVER = new Date('2026-11-01T00:00:00Z');
 export const MIN_CAP = 100000;
 export const CAP_DEFINITIONS: CapDefinition[] = [
   { tier: 'founder', limit: MIN_CAP, hidden: true },

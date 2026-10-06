@@ -31,6 +31,7 @@ import {
   getUserBuzzAccount,
   refundTransaction,
 } from '~/server/services/buzz.service';
+import { getBankableAmount } from '~/server/services/creator-program-bankable';
 import { createNotification } from '~/server/services/notification.service';
 import { getHighestPaidTierSubscription } from '~/server/services/subscriptions.service';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
@@ -112,14 +113,13 @@ const createUserCapCache = () => {
           END DESC;
       `);
 
-      // The daily deliver-creator-compensation job mints two bankable earning types: `compensation`
-      // (which also carries generation tips) and a separate `licenseFee` transaction — both are real
-      // creator earnings and both must raise the cap. A system-minted `tip` row, by contrast, is a
-      // manual support credit (remediation, goodwill refund, delivery fix), not an earning, so it must
-      // not raise a cap. Only this cap query counts licenseFee; the pool/earnings estimates that share
-      // this predicate shape (getPoolForecast below; earnedCache and getPoolForecast in buzz.service.ts)
-      // still exclude it, and nothing pins the three together — count it there too if forecasts should
-      // reflect license-fee income.
+      // Generation `compensation` (which also carries generation tips) stays paid but no longer
+      // raises a cap, matching the bankable-amount rule in creator-program-bankable.ts. A
+      // system-minted `tip` row is a manual support credit (remediation, goodwill refund, delivery
+      // fix), not an earning, so it must not raise a cap either. Only this cap query counts
+      // licenseFee; the pool/earnings estimates that share this predicate shape (getPoolForecast
+      // below; earnedCache and getPoolForecast in buzz.service.ts) still exclude it, and nothing pins
+      // the three together.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
@@ -127,7 +127,7 @@ const createUserCapCache = () => {
           SUM(amount) as earned
         FROM buzzTransactions
         WHERE (
-          (type IN ('compensation', 'licenseFee')) -- Generation Comp + License Fees
+          (type = 'licenseFee')
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
         AND toAccountType IN (${buzzBankTypesSql})
@@ -206,12 +206,16 @@ export async function getBanked(userId: number) {
   );
 
   const total = Object.values(perType).reduce((sum, v) => sum + v, 0);
-  const capData = (await getBankCap(userId))[userId];
+  const [capData, bankable] = await Promise.all([
+    getBankCap(userId).then((caps) => caps[userId]),
+    getBankableAmount(userId, total),
+  ]);
 
   return {
     perType,
     total,
     cap: capData,
+    bankable,
   };
 }
 export async function flushBankedCache() {
@@ -492,9 +496,16 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (isBankingClosed(phases)) throw new Error('Banking phase is closed');
 
-  // Adjust to not exceed cap (unified cap across all buzz types)
+  // Adjust to not exceed cap (unified cap across all buzz types) or the bankable amount
   const banked = await getBanked(userId);
   if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
+  if (banked.bankable) {
+    if (banked.bankable.remaining <= 0)
+      throw throwBadRequestError(
+        'You have no bankable Buzz left. Generation compensation no longer counts toward banking.'
+      );
+    amount = Math.min(amount, banked.bankable.remaining);
+  }
   if (amount <= 0) throw new Error('Amount exceeds cap');
 
   // Create buzz transaction to bank

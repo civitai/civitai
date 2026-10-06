@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterAll, beforeAll } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
@@ -197,15 +197,17 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).not.toMatch(/'tip'/);
   });
 
-  it('still counts generation compensation and early-access purchases', async () => {
+  it('counts license fees and early-access purchases', async () => {
     const { sql } = await runLookup([userId]);
 
-    // License fees are minted as their own transaction type by deliver-creator-compensation; a
-    // creator who shifts to license-fee income would otherwise have that surge invisible to the Peak
-    // Earning Month, freezing the cap on an older pre-license-fee month. Asserting the full list
-    // (not just that `'licenseFee'` appears somewhere) also pins that it sits in this clause.
-    expect(sql).toMatch(/type IN \('compensation', 'licenseFee'\)/);
+    expect(sql).toMatch(/\(type = 'licenseFee'\)/);
     expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
+  });
+
+  it('no longer counts generation compensation', async () => {
+    const { sql } = await runLookup([userId]);
+
+    expect(sql).not.toContain('compensation');
   });
 
   // This clause decides which Buzz counts toward Peak Earning Month, and so toward a creator's Cap,
@@ -430,6 +432,53 @@ describe('bankBuzz', () => {
 
   it('rejects blue buzz', async () => {
     await expect(bankBuzz(userId, 10000, 'blue')).rejects.toThrow();
+  });
+
+  describe('after the bankable-amount cutover', () => {
+    beforeEach(() => {
+      vi.setSystemTime(new Date('2026-12-15T12:00:00Z'));
+    });
+    afterEach(() => {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    });
+
+    function mockBankableLedger({ snapshot, earned }: { snapshot: number; earned: number }) {
+      mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
+        const sql = parts.join('');
+        if (sql.includes('AS balance')) return [{ balance: String(snapshot) }];
+        if (sql.includes('AS consumed')) return [{ earned: String(earned), consumed: '0' }];
+        return [{ balance: 35000 }];
+      });
+    }
+
+    it('banks no more than the bankable amount', async () => {
+      mockBankableLedger({ snapshot: 30000, earned: 10000 });
+
+      await bankBuzz(userId, 100000, 'yellow');
+
+      expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 40000, type: TransactionType.Bank })
+      );
+    });
+
+    it('still applies the tier cap when it is the lower limit', async () => {
+      mockBankableLedger({ snapshot: 5_000_000, earned: 0 });
+      mockGetCounterPartyBuzzTransactions.mockReset();
+      mockBankedAmounts(0, 600000);
+
+      await bankBuzz(userId, 100000, 'yellow');
+
+      expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: defaultCap.cap - 600000, type: TransactionType.Bank })
+      );
+    });
+
+    it('rejects with a clear message when nothing bankable is left', async () => {
+      mockBankableLedger({ snapshot: 0, earned: 0 });
+
+      await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow(/no bankable Buzz left/);
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+    });
   });
 
   it('rejects banned users', async () => {

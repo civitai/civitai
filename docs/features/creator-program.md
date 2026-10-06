@@ -90,7 +90,7 @@ bankBuzz(userId, amount, buzzType: 'yellow' | 'green')
 ```
 
 1. Validates: not banned, has active membership, in banking phase
-2. Checks unified cap (sum of all banked types vs cap)
+2. Clamps the deposit to the lower of the unified cap (sum of all banked types vs cap) and, from the cutover, the remaining bankable amount
 3. Creates `TransactionType.Bank` from user's buzz account to `creatorProgramBank`
 4. Busts caches, signals pool update
 
@@ -111,7 +111,7 @@ All-or-nothing across all buzz types:
 #### Getting Banked Amounts
 
 ```
-getBanked(userId) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem }
+getBanked(userId) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem, bankable: BankableAmount | null }
 ```
 
 - Queries `getCounterPartyBuzzTransactions` for each buzz type against `creatorProgramBank`
@@ -130,10 +130,27 @@ getBanked(userId) → { perType: { yellow: number, green: number }, total: numbe
 | Gold | No fixed limit | 1.5x |
 
 - Minimum cap: 100,000 for all tiers
-- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window
+- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees and paid/early access; generation compensation stopped counting at the bankable-amount cutover
 - The highest tier across all active subscriptions is used
 
 **Relevant code:** `createUserCapCache()` in the service queries `CustomerSubscription` joined with `Product.metadata.tier`.
+
+### Bankable Amount
+
+**`src/server/services/creator-program-bankable.ts`**
+
+From `BANKABLE_CUTOVER` (2026-11-01 UTC, start of a month) a creator banks up to the lower of the tier cap and their bankable amount:
+
+```
+bankable = yellow+green balance at the cutover
+         + bankable earnings since the cutover
+         - banked since the cutover
+         + extracted since the cutover, net of the extraction fee
+```
+
+- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
+- The cutover balance is computed from ClickHouse the first time it is needed and stored in the `REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT` hash, keyed by user id. It is not stored during the first hour after the cutover, while late ledger rows can still land.
+- Closed months come from ClickHouse; the current month's deposits come from the bank account via `getBanked`, so a deposit made seconds earlier already counts.
 
 ### Extraction Fees
 
@@ -212,7 +229,8 @@ The `bustCompensationPoolCache()` function also clears old per-type cache keys (
 ### ClickHouse (`buzzTransactions` table)
 
 Used for:
-- Peak earnings calculation (compensation, tips, early access)
+- Peak earnings calculation (license fees, early access)
+- Bankable amount (cutover balance, bankable earnings, banked and extracted since the cutover)
 - Pool value calculation (purchases, redeemable codes)
 - Pool forecast (projected earnings)
 - Pool participants (bank/extract transactions)
@@ -290,7 +308,7 @@ Bitwise flags on `User.onboarding`:
 | Hook | Returns |
 |------|---------|
 | `useCompensationPool()` | Unified pool data |
-| `useBankedBuzz()` | `{ perType, total, cap }` |
+| `useBankedBuzz()` | `{ perType, total, cap, bankable }` |
 | `useCreatorProgramPhase()` | Current phase ('bank' or 'extraction') |
 | `useCreatorProgramMutate()` | Bank, extract, withdraw mutations |
 | `useCreatorPoolListener()` | Subscribes to realtime pool/cash signals |

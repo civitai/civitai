@@ -1,0 +1,122 @@
+import { clickhouse } from '~/server/clickhouse/client';
+import { decodeRedisString } from '~/server/redis/buffer-decode';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
+import {
+  BANKABLE_CUTOVER,
+  EXTRACTION_FEE_DESCRIPTION,
+} from '~/shared/constants/creator-program.constants';
+import { PLACEMENT_LEDGER_TEXT } from '~/shared/utils/placement';
+import dayjs from '~/shared/utils/dayjs';
+
+// Ledger rows can land in ClickHouse a little after their timestamp, so a snapshot taken right at
+// the cutover could miss the last pre-cutover rows and then be stored forever.
+const SNAPSHOT_SETTLE_MS = 60 * 60 * 1000;
+
+const sqlString = (value: string) => `'${value.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+
+const placementEarningDescriptionsSql = Object.values(PLACEMENT_LEDGER_TEXT)
+  .flatMap((text) => [text.toOwner, text.feeToOwner, text.toSeller])
+  .map(sqlString)
+  .join(', ');
+
+/**
+ * The transactions that raise a creator's bankable amount. Generation compensation (which also
+ * carries generation tips), purchased Buzz and system credits are deliberately absent.
+ */
+export const BANKABLE_EARNING_PREDICATE_SQL = `(
+  type IN ('licenseFee', 'donation', 'sell', 'bounty')
+  OR (type IN ('purchase', 'tip') AND fromAccountId != 0)
+  OR (type = 'fee' AND description IN (${placementEarningDescriptionsSql}))
+)`;
+
+export type BankableAmount = {
+  /** Yellow + green balance at the cutover. */
+  snapshot: number;
+  /** Bankable earnings since the cutover. */
+  earned: number;
+  /** Banked and kept in closed months since the cutover, plus their extraction fees. */
+  consumed: number;
+  /** What may still be banked this month, before the tier cap. Never negative. */
+  remaining: number;
+};
+
+async function getCutoverSnapshot(userId: number, now: Date) {
+  if (!clickhouse) return 0;
+
+  const stored = decodeRedisString(
+    await sysRedis.hGet(REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT, String(userId))
+  );
+  if (stored != null) return Number(stored);
+
+  // Separate scans per column: one OR across fromAccountId and toAccountId measured ~10x slower.
+  const [row] = await clickhouse.$query<{ balance: number }>`
+    SELECT
+      (
+        SELECT sum(amount) FROM buzzTransactions
+        WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
+          AND date < ${BANKABLE_CUTOVER}
+      ) - (
+        SELECT sum(amount) FROM buzzTransactions
+        WHERE fromAccountId = ${userId} AND fromAccountType IN (${buzzBankTypesSql})
+          AND date < ${BANKABLE_CUTOVER}
+      ) AS balance
+  `;
+  const snapshot = Math.max(0, Number(row?.balance ?? 0));
+
+  if (now.getTime() >= BANKABLE_CUTOVER.getTime() + SNAPSHOT_SETTLE_MS)
+    await sysRedis.hSet(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT,
+      String(userId),
+      String(snapshot)
+    );
+
+  return snapshot;
+}
+
+/**
+ * The most a creator may have banked this month under the bankable-amount rule, or `null` before
+ * the cutover, when only the tier cap applies.
+ *
+ * `bankedThisMonth` comes from the Buzz service rather than ClickHouse so a deposit made seconds
+ * ago is already counted; closed months are read from ClickHouse, which has caught up by then.
+ */
+export async function getBankableAmount(
+  userId: number,
+  bankedThisMonth: number,
+  now = new Date()
+): Promise<BankableAmount | null> {
+  if (now < BANKABLE_CUTOVER || !clickhouse) return null;
+
+  const monthStart = dayjs.utc(now).startOf('month').toDate();
+  const [snapshot, [sums]] = await Promise.all([
+    getCutoverSnapshot(userId, now),
+    clickhouse.$query<{ earned: number; consumed: number }>`
+      SELECT
+        (
+          SELECT sum(amount) FROM buzzTransactions
+          WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
+            AND date >= ${BANKABLE_CUTOVER}
+            AND ${BANKABLE_EARNING_PREDICATE_SQL}
+        ) AS earned,
+        (
+          SELECT sumIf(amount, type = 'bank')
+            + sumIf(amount, type = 'fee' AND description = ${sqlString(EXTRACTION_FEE_DESCRIPTION)})
+          FROM buzzTransactions
+          WHERE fromAccountId = ${userId} AND fromAccountType IN (${buzzBankTypesSql})
+            AND date >= ${BANKABLE_CUTOVER} AND date < ${monthStart}
+        ) - (
+          SELECT sum(amount) FROM buzzTransactions
+          WHERE toAccountId = ${userId} AND toAccountType IN (${buzzBankTypesSql})
+            AND type = 'extract'
+            AND date >= ${BANKABLE_CUTOVER} AND date < ${monthStart}
+        ) AS consumed
+    `,
+  ]);
+
+  const earned = Number(sums?.earned ?? 0);
+  const consumed = Number(sums?.consumed ?? 0);
+  const remaining = Math.max(0, snapshot + earned - consumed - bankedThisMonth);
+
+  return { snapshot, earned, consumed, remaining };
+}
