@@ -357,9 +357,14 @@ export async function applyWorkflowWithCheck({
       images = [{ url: image.url, ...dimensions }];
     }
 
+    // Everything the image carries EXCEPT denoise. Applying Face Fix or Hires Fix is a new
+    // operation on the image, so its strength is the user's current setting, not a value copied
+    // from however the source was made — and a txt2img or non-SD source has no denoise at all, so
+    // copying its params would silently hand the slider the def default instead.
+    const { denoise: _sourceDenoise, ...sourceParams } = image.params ?? {};
     generationGraphStore.setData({
       params: {
-        ...image.params,
+        ...sourceParams,
         workflow: workflowId,
         seed: undefined,
         ...(images ? { images } : {}),

@@ -37,6 +37,7 @@ import {
 import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import type { GenerationStore } from './store';
+import { REMIX_RESET } from './remix-reset';
 
 /**
  * The new lane's ingestion: everything that pushes data INTO the generator
@@ -258,10 +259,15 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
     //    `defs.ts` exist to close. `correct` is immune: it runs inside resolution, after the
     //    patch. `coerce` is the one hook in the set with this asymmetry.
     const applyRemix = (ecosystemOverride?: string) => {
-      store.reset({ exclude: ['quantity', 'priority', 'outputFormat'] });
       const ecosystem =
         ecosystemOverride ?? (remixValues as { ecosystem?: string }).ecosystem ?? undefined;
+
+      // 3. The reset runs BETWEEN the two sets, not before both: `scope: 'active'` reads the
+      //    resolution as it stands, so the discriminators go first to make the TARGET family
+      //    active. Reset first and it clears the family being LEFT while sparing the one being
+      //    entered, which is the inverse of the point. REMIX_RESET says what it keeps and why.
       store.set({ ...(ecosystem ? { ecosystem } : {}), workflow: resolvedWorkflow });
+      store.reset(REMIX_RESET);
       store.set(ecosystemOverride ? { ...remixValues, ecosystem: ecosystemOverride } : remixValues);
     };
 
