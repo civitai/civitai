@@ -54,15 +54,18 @@ A verdict that arrives after the mode has left `active` is not written to the li
   scans it synchronously without recording it (`scanEntity`, `batchEntities`), does the same for free
   text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
   returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
-  (`sampleShadow`). Locally, the scan and quote actions are reached through
-  `/api/testing/chat-completion-scan`. `composeEntities` and `sampleShadow` read any entity's text
-  and author, so they are refused there (403) and only the attributed, audited moderator endpoint
-  `/api/mod/text-scan` serves them. There, the actions that return entity text (`composeEntities`,
-  `sampleShadow`, `scanEntity`, `batchEntities`) also refuse an API key that is not full-scope. That
-  endpoint also attributes prompt and config writes to the
-  signed-in moderator.
-- The moderator app's `/text-scan` lab (Check, Versions with drafts and publish, test sets, scored
-  runs) drives those actions. Its tables live in the moderator database and are applied by hand; see
+  (`sampleShadow`). `scanEntity`, `batchEntities` and `scanTexts` refuse a request whose worst case,
+  `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
+  scan and quote actions are reached through `/api/testing/chat-completion-scan`. `composeEntities`
+  and `sampleShadow` read any entity's text and author, so they are refused there (403) and only the
+  attributed, audited moderator endpoint `/api/mod/text-scan` serves them. There, an API key that is
+  not full-scope reaches only the actions that return no entity text (`getPrompts`, `putPrompt`,
+  `putConfig`, `quoteEntities`, `scanTexts`, `quoteTexts`); every other action, including any added
+  later, refuses it. That endpoint also attributes prompt and config writes to the signed-in
+  moderator.
+- The moderator app's text-scan lab (`/text-scan/check`, `/text-scan/test-sets`, `/text-scan/prompts`
+  labelled Versions with drafts and publish; `/text-scan/playground` redirects to Check) drives those
+  actions. Its tables live in the moderator database and are applied by hand; see
   `apps/moderator/text-scan-lab/README.md`. Publishing a prompt needs the `textScan.prompt.publish`
   permission and editing test sets needs `textScan.testSet.edit`. Neither is held by anyone until
   granted on `/admin`, and the pages themselves are unreachable until granted there too.
