@@ -4,6 +4,10 @@ import {
 } from '~/server/services/text-scan/harness';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 
+// The harness's own caps bound a request at ~1M characters, which multibyte text can take past the
+// 1mb default.
+export const config = { api: { bodyParser: { sizeLimit: '4mb' } } };
+
 export default defineModeratorEndpoint('textScan.harness', {
   summary: 'Text-scan operator actions: prompts, config, dry-run scans, shadow samples, quotes.',
   returns: "the action's JSON; a CSV sample as { csv }",

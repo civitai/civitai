@@ -608,6 +608,41 @@ describe('free-text actions', () => {
     ).toBe(400);
   });
 
+  it('quoteTexts accepts an entity-sized text: many fields and a long description', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'q', cost: { total: 1 } } } as never);
+    const fields = Array.from({ length: 33 }, (_, i) => ({ heading: `F${i}`, text: 'x' }));
+    fields.push({ heading: 'Description', text: 'y'.repeat(60_000) });
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect(res._status()).toBe(200);
+  });
+
+  it.each([
+    {
+      name: 'too many fields',
+      texts: [{ key: 'a', fields: Array(501).fill({ heading: 'H', text: 'x' }) }],
+    },
+    {
+      name: 'a text over its character cap',
+      texts: [{ key: 'a', fields: Array(3).fill({ heading: 'H', text: 'x'.repeat(70_000) }) }],
+    },
+    {
+      name: 'a request over its character cap',
+      texts: Array.from({ length: 6 }, (_, i) => ({
+        key: `k${i}`,
+        fields: [{ heading: 'H', text: 'x'.repeat(190_000) }],
+      })),
+    },
+  ])('quoteTexts refuses $name', async ({ texts }) => {
+    const res = await call({ action: 'quoteTexts', entityType: 'Comment', texts });
+    expect(res._status()).toBe(400);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('composeEntities is refused on the unattributed testing route', async () => {
     const res = await call({ action: 'composeEntities', entityType: 'Comment', entityIds: [7] });
     expect(res._status()).toBe(403);

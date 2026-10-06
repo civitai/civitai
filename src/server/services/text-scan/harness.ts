@@ -56,18 +56,46 @@ const entityType = z
   .transform((value) => value as TextScanEntityType);
 const moderatorId = z.number().int().positive();
 export const SCAN_TEXTS_BUDGET_SECONDS = 120;
+/**
+ * Sized for real entities, which production composes in full and then truncates to `maxInputChars`:
+ * a Model emits up to three fields per version. Mirrored by the moderator lab
+ * (apps/moderator/src/lib/text-scan-lab/limits.ts), which checks each text before sending.
+ */
+export const TEXT_SCAN_HARNESS_LIMITS = {
+  textsPerRequest: 50,
+  fieldsPerText: 500,
+  charsPerText: 200_000,
+  charsPerRequest: 1_000_000,
+} as const;
+const fieldChars = (fields: { text: string }[]) =>
+  fields.reduce((sum, field) => sum + field.text.length, 0);
 const texts = z
   .array(
     z.object({
       key: z.string().min(1).max(100),
       fields: z
-        .array(z.object({ heading: z.string().min(1).max(100), text: z.string().max(20000) }))
+        .array(
+          z.object({
+            heading: z.string().min(1).max(100),
+            text: z.string().max(TEXT_SCAN_HARNESS_LIMITS.charsPerText),
+          })
+        )
         .min(1)
-        .max(20),
+        .max(TEXT_SCAN_HARNESS_LIMITS.fieldsPerText)
+        .refine(
+          (fields) => fieldChars(fields) <= TEXT_SCAN_HARNESS_LIMITS.charsPerText,
+          `a text's fields total more than ${TEXT_SCAN_HARNESS_LIMITS.charsPerText} characters`
+        ),
     })
   )
   .min(1)
-  .max(50);
+  .max(TEXT_SCAN_HARNESS_LIMITS.textsPerRequest)
+  .refine(
+    (texts) =>
+      texts.reduce((sum, t) => sum + fieldChars(t.fields), 0) <=
+      TEXT_SCAN_HARNESS_LIMITS.charsPerRequest,
+    `texts total more than ${TEXT_SCAN_HARNESS_LIMITS.charsPerRequest} characters`
+  );
 
 export const textScanHarnessSchema = z.discriminatedUnion('action', [
   z.object({
