@@ -37,14 +37,21 @@ vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
 const askJev = vi.fn();
 // Feature-flag evaluation for the coverage guard. `null` = could not be evaluated (what
 // `isFliptSync` returns when Flipt is unreachable); a boolean = a real evaluation.
-const fliptSync = vi.fn<(flag: string, entityId?: string) => boolean | null>(() => false);
+// `flagTable` is the live flag state both readers see; `fliptSync` is the `isFliptSync`
+// reader alone (so a test can see which entity ids the GUARD asked for, separately from
+// the ones `coverageAudience` asks `isFlipt` for).
+const flagTable = vi.fn<(flag: string, entityId?: string) => boolean | null>(() => false);
+const fliptSync = vi.fn<(flag: string, entityId?: string) => boolean | null>((flag, entityId) =>
+  flagTable(flag, entityId)
+);
 const fliptClient = { close: vi.fn() };
+const fliptClientHolder: { current: typeof fliptClient | null } = { current: fliptClient };
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptModule>()),
   ensureFliptInitialized: async () => undefined,
-  getFliptClientSync: () => fliptClient,
+  getFliptClientSync: () => fliptClientHolder.current,
   isFliptSync: (flag: string, entityId?: string) => fliptSync(flag, entityId),
-  isFlipt: async (flag: string, entityId?: string) => fliptSync(flag, entityId) === true,
+  isFlipt: async (flag: string, entityId?: string) => flagTable(flag, entityId) === true,
 }));
 
 vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
@@ -202,9 +209,10 @@ describe('the pre-registration', () => {
         '            arm error, label-read fallback) exceed 10% of drawn prompts; or both',
         '            arms returned the same first 10 model ids on every scored prompt. Two',
         '            checks abort before any index read or vendor call, so they produce no',
-        '            report at all: coverage flags that cannot be evaluated (Flipt unreachable',
-        '            or a flag missing — a run on flag defaults is not the endpoint), and a',
-        '            failed positive control.',
+        '            report at all: coverage flags not evaluated by a live Flipt client (Flipt',
+        '            unreachable, a flag missing, or a coverage flag set in',
+        '            FLIPT_LOCAL_OVERRIDES — any of which is not the endpoint), and a failed',
+        '            positive control.',
       ],
       [
         'Known confound: people attach popular models, so attached-resource gold is biased',
@@ -1201,8 +1209,12 @@ describe('main — the --execute gate', () => {
   };
 
   beforeEach(() => {
+    flagTable.mockReset();
+    flagTable.mockReturnValue(false);
     fliptSync.mockReset();
-    fliptSync.mockReturnValue(false);
+    fliptSync.mockImplementation((flag, entityId) => flagTable(flag, entityId));
+    fliptClientHolder.current = fliptClient;
+    vi.unstubAllEnvs();
     fliptClient.close.mockReset();
     dbMock.dbRead.$disconnect.mockReset();
     dbMock.dbRead.$disconnect.mockResolvedValue(undefined as never);
@@ -1322,6 +1334,82 @@ describe('main — the --execute gate', () => {
     expect(search).not.toHaveBeenCalled();
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     expect(askJev).not.toHaveBeenCalled();
+  });
+
+  it('🔴 with --execute and a coverage flag overridden locally (the default env reader), aborts before the index', async () => {
+    const search = controlReturns(7000);
+    vi.stubEnv('FLIPT_LOCAL_OVERRIDES', 'generation-loading-open-to-all=on');
+    const { result } = await runMain(['--execute', '--limit', '2']);
+    expect(String(result)).toContain('FLIPT_LOCAL_OVERRIDES sets generation-loading-open-to-all');
+    expect(search).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('🔴 with --execute and no initialised Flipt client (the default reader), aborts before the index', async () => {
+    const search = controlReturns(7000);
+    fliptClientHolder.current = null;
+    const { result } = await runMain(['--execute', '--limit', '2']);
+    expect(String(result)).toContain('the Flipt client did not initialise');
+    expect(search).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the arms receive the RESOLVED coverage — next on, open-to-all off → {next:true, member:false}, not the defaults', async () => {
+    controlReturns(7000);
+    // The live state the first pilot missed: coverage-next ON, open-to-all OFF.
+    flagTable.mockImplementation((flag) => flag === 'generation-coverage-next');
+    dbMock.dbRead.$queryRaw.mockImplementation((async (query: { sql: string }) =>
+      query.sql.includes('WITH sampled AS')
+        ? [
+            {
+              imageId: 11,
+              prompt: 'a knight in anime style',
+              attachedTypes: ['LORA'],
+              attachedBaseModels: [BASE_MODEL],
+              attachedModels: [{ modelId: 4, modelType: 'LORA' }],
+              checkpointBaseModels: [BASE_MODEL],
+            },
+          ]
+        : []) as never);
+    askJev.mockImplementation(async () => ({
+      answers: STAGE1_ANSWERS('style'),
+      model: 'typesafe/jev-1.13-20260917',
+      usage: { promptTokens: 1, completionTokens: 1 },
+    }));
+
+    const { result, log } = await runMain(['--execute', '--limit', '2']);
+    expect(result).toBe('ok');
+
+    // The guard asked isFliptSync for each flag with coverageAudience's entity ids.
+    expect(fliptSync.mock.calls).toEqual([
+      ['generation-coverage-next', 'global'],
+      ['generation-loading-open-to-all', '0'],
+    ]);
+    // Printed …
+    const report = log.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(report).toContain(
+      'Coverage (resolved as the endpoint does, for an anonymous caller): next=true, member=false.'
+    );
+    // … and what BOTH arms actually filtered on.
+    const resolvedGate = buildResourceIntentFilter({
+      modelTypes: ROLE_MODEL_TYPES.style,
+      baseModels: [BASE_MODEL],
+      browsingLevel: allBrowsingLevelsFlag,
+      coverage: { next: true, member: false },
+    });
+    const defaultGate = buildResourceIntentFilter({
+      modelTypes: ROLE_MODEL_TYPES.style,
+      baseModels: [BASE_MODEL],
+      browsingLevel: allBrowsingLevelsFlag,
+      coverage: { next: false, member: true },
+    });
+    // Control: the two coverages really produce different filters, so this can tell them apart.
+    expect(resolvedGate).not.toBe(defaultGate);
+    expect(searchCalls().map((c) => c.filter)).toEqual([
+      `(${resolvedGate} AND insight.role = "style")`,
+      resolvedGate,
+      resolvedGate,
+    ]);
   });
 
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
@@ -1494,6 +1582,33 @@ describe('resolveEndpointCoverage — fails closed when the coverage flags canno
     await expect(executeModule.resolveEndpointCoverage(d)).rejects.toThrow(
       'feature flags could not be evaluated (generation-loading-open-to-all)'
     );
+    expect(audience).not.toHaveBeenCalled();
+  });
+
+  it('🔴 refuses when FLIPT_LOCAL_OVERRIDES names a coverage flag — before evaluating anything', async () => {
+    const { deps: d, audience, calls } = deps(() => true);
+    await expect(
+      executeModule.resolveEndpointCoverage({
+        ...d,
+        overriddenFlags: () => ['some-other-flag', 'generation-coverage-next'],
+      })
+    ).rejects.toThrow('FLIPT_LOCAL_OVERRIDES sets generation-coverage-next');
+    expect(audience).not.toHaveBeenCalled();
+    expect(calls).toEqual(['init']);
+  });
+
+  it('an override of an UNRELATED flag does not block the run', async () => {
+    const { deps: d } = deps(() => false);
+    await expect(
+      executeModule.resolveEndpointCoverage({ ...d, overriddenFlags: () => ['some-other-flag'] })
+    ).resolves.toEqual({ next: true, member: false });
+  });
+
+  it('🔴 refuses when the Flipt client did not initialise, even if every flag answers', async () => {
+    const { deps: d, audience } = deps(() => true);
+    await expect(
+      executeModule.resolveEndpointCoverage({ ...d, clientInitialised: () => false })
+    ).rejects.toThrow('the Flipt client did not initialise (Flipt unreachable)');
     expect(audience).not.toHaveBeenCalled();
   });
 

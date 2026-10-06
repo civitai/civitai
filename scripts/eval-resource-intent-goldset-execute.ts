@@ -1,6 +1,7 @@
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbRead } from '~/server/db/client';
 import { askJev, JEV_TIMEOUT_MS } from '~/server/services/ai/jev';
+import { parseLocalOverrides } from '@civitai/flipt';
 import {
   ensureFliptInitialized,
   FLIPT_FEATURE_FLAGS,
@@ -198,31 +199,53 @@ const COVERAGE_FLAGS = [
  * initialised (unreachable, bad credentials) or the flag failed to evaluate. The two are
  * indistinguishable through `isFlipt`, so an unreachable Flipt silently yields the flag
  * defaults — which is how the first pilot (2026-10-06) graded `{next:false, member:true}`
- * while the endpoint resolves `{next:true, member:false}`. `isFliptSync` does tell them
- * apart: it returns `null` when the client is not initialised or the evaluation threw. So
- * this initialises Flipt, requires a real boolean for every coverage flag, and only then
- * lets the endpoint's own `coverageAudience` resolve the value (one rule, not a copy).
+ * while the endpoint resolves `{next:true, member:false}`.
+ *
+ * So, after initialising Flipt, this refuses three ways before letting the endpoint's own
+ * `coverageAudience` resolve the value (one rule, not a copy):
+ *   1. `FLIPT_LOCAL_OVERRIDES` names a coverage flag. A local override is answered BEFORE
+ *      the client is consulted (by `isFlipt` and `isFliptSync` alike) whenever NODE_ENV is
+ *      not production, and `pnpm run tsscript` runs development — so an override passes
+ *      every check below with Flipt unreachable. Refused regardless of NODE_ENV.
+ *   2. No initialised client (`getFliptClientSync()` is null): Flipt is unreachable.
+ *   3. Any coverage flag whose evaluation is `null` through `isFliptSync` (missing flag or
+ *      an evaluation error).
  */
-export async function resolveEndpointCoverage(deps?: {
-  ensureInitialized: () => Promise<void>;
-  evaluateSync: (flag: string, entityId: string) => boolean | null;
-  audience: () => Promise<ResourceIntentCoverage>;
-}): Promise<ResourceIntentCoverage> {
-  const { ensureInitialized, evaluateSync, audience } = deps ?? {
-    ensureInitialized: ensureFliptInitialized,
-    evaluateSync: (flag: string, entityId: string) => isFliptSync(flag, entityId),
-    audience: () => coverageAudience(undefined),
-  };
+export async function resolveEndpointCoverage(
+  deps: Partial<{
+    ensureInitialized: () => Promise<void>;
+    overriddenFlags: () => string[];
+    clientInitialised: () => boolean;
+    evaluateSync: (flag: string, entityId: string) => boolean | null;
+    audience: () => Promise<ResourceIntentCoverage>;
+  }> = {}
+): Promise<ResourceIntentCoverage> {
+  const {
+    ensureInitialized = ensureFliptInitialized,
+    overriddenFlags = () => Object.keys(parseLocalOverrides(process.env.FLIPT_LOCAL_OVERRIDES)),
+    clientInitialised = () => getFliptClientSync() !== null,
+    evaluateSync = (flag: string, entityId: string) => isFliptSync(flag, entityId),
+    audience = () => coverageAudience(undefined),
+  } = deps;
   await ensureInitialized();
+  const abort = (why: string) =>
+    new Error(
+      `[goldset] ${why} — coverage would not be what the endpoint resolves; aborting before any index read or vendor call.`
+    );
+  const overridden = COVERAGE_FLAGS.map(({ flag }) => flag).filter((flag) =>
+    overriddenFlags().includes(flag)
+  );
+  if (overridden.length) {
+    throw abort(`FLIPT_LOCAL_OVERRIDES sets ${overridden.join(', ')}`);
+  }
+  if (!clientInitialised()) {
+    throw abort('the Flipt client did not initialise (Flipt unreachable)');
+  }
   const unevaluated = COVERAGE_FLAGS.filter(
     ({ flag, entityId }) => evaluateSync(flag, entityId) === null
   ).map(({ flag }) => flag);
   if (unevaluated.length) {
-    throw new Error(
-      `[goldset] feature flags could not be evaluated (${unevaluated.join(
-        ', '
-      )}) — Flipt unreachable or the flag is missing. Coverage would fall back to flag defaults, which the endpoint does not use; aborting before any index read or vendor call.`
-    );
+    throw abort(`feature flags could not be evaluated (${unevaluated.join(', ')})`);
   }
   return audience();
 }
