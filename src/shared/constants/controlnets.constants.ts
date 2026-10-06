@@ -32,6 +32,7 @@ export type ControlNetPreprocessorKey =
   | 'metric3dNormal'
   | 'openpose'
   | 'dwpose'
+  | 'sdpose'
   | 'scribble'
   | 'scribbleXdog'
   | 'scribblePidinet'
@@ -232,12 +233,16 @@ export const controlNetPreprocessors: Record<
   },
 
   // --- Pose ---
-  dwpose: {
-    label: 'DWPose',
-    description:
-      'Detects body, hand, and face keypoints. Best choice for matching a person’s pose.',
+  sdpose: {
+    label: 'SDPose-OOD',
+    description: 'Detects body, hand, and face keypoints, including stylized and anime characters.',
     category: 'pose',
     recommended: true,
+  },
+  dwpose: {
+    label: 'DWPose',
+    description: 'Detects body, hand, and face keypoints.',
+    category: 'pose',
   },
   openpose: {
     label: 'OpenPose',
@@ -380,6 +385,7 @@ export const controlNetToPreprocessKind: Record<ControlNetPreprocessorKey, strin
   metric3dNormal: 'metric3d-normal',
   openpose: 'openpose',
   dwpose: 'dwpose',
+  sdpose: 'sdpose',
   scribble: 'scribble',
   scribbleXdog: 'scribble-xdog',
   scribblePidinet: 'scribble-pidinet',
@@ -507,6 +513,8 @@ export function getPreprocessKindsMissingExamples(): Array<{ kind: string; label
  */
 export function getPreprocessKindExamples(kind: string | null | undefined): ControlNetExample[] {
   if (!kind || preprocessKindsWithoutExamples.has(kind)) return [];
+  // SDPose is supported, but has no generated example asset yet.
+  if (kind === 'sdpose') return [];
   const preferred = preprocessKindPreferredInput[kind];
   const inputs = preferred
     ? controlNetExampleInputs.filter((input) => input.base === preferred)
@@ -687,6 +695,7 @@ export const sd1ControlNetPreprocessors: ControlNetPreprocessorKey[] = [
   'metric3dNormal',
   'openpose',
   'dwpose',
+  'sdpose',
   'scribble',
   'scribbleXdog',
   'scribblePidinet',
@@ -724,6 +733,7 @@ export const sdxlControlNetPreprocessors: ControlNetPreprocessorKey[] = [
   'metric3dNormal',
   'openpose',
   'dwpose',
+  'sdpose',
   'scribble',
   'scribbleXdog',
   'scribblePidinet',
@@ -746,6 +756,7 @@ export const fluxControlNetPreprocessors: ControlNetPreprocessorKey[] = [
   'metric3dDepth',
   'openpose',
   'dwpose',
+  'sdpose',
   'softedgePidinet',
   'hed',
   'teed',
@@ -765,6 +776,7 @@ export const zImageControlNetPreprocessors: ControlNetPreprocessorKey[] = [
   'metric3dDepth',
   'openpose',
   'dwpose',
+  'sdpose',
 ];
 
 /**
@@ -772,7 +784,7 @@ export const zImageControlNetPreprocessors: ControlNetPreprocessorKey[] = [
  * orchestrator (`engine: comfy`, `ecosystem: anima`); each preprocessor below
  * maps to one of them upstream: an "any-test-like" model (canny, gray), a
  * lineart model (lineart variants + anyline), a depth model (depth/zoe/midas/
- * leres/metric3d depth), a pose model (openpose, dwpose), and a scribble model
+ * leres/metric3d depth), a pose model (openpose, dwpose, sdpose), and a scribble model
  * (scribble variants + fakeScribble + hed + softedgePidinet).
  * Kinds with no Anima model (mlsd, tile, shuffle, teed, depthZoe, normals,
  * segmentation) are intentionally omitted.
@@ -794,6 +806,7 @@ export const animaControlNetPreprocessors: ControlNetPreprocessorKey[] = [
   'metric3dDepth',
   'openpose',
   'dwpose',
+  'sdpose',
   'scribble',
   'scribbleXdog',
   'scribblePidinet',
