@@ -3,6 +3,7 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import { nextCreatorScoreUnlocks } from '~/shared/utils/creator-score-unlocks';
 import {
+  joinMilestoneGrantableUserSql,
   milestoneGrantableUserSql,
   owedScoreTierSql,
 } from '~/server/services/creator-milestone-exclusions';
@@ -43,10 +44,9 @@ export async function grantScoreTierMilestones(
       SELECT t."userId", m.key,
         CASE WHEN COALESCE(t."oldTotal", 0) < m.threshold THEN NULL ELSE now() END
       FROM t
-      JOIN "User" u ON u.id = t."userId"
+      ${joinMilestoneGrantableUserSql('u', 't."userId"')}
       JOIN "CreatorMilestone" m
         ON m.track = 'score' AND m.threshold IS NOT NULL AND t."newTotal" >= m.threshold
-      WHERE ${milestoneGrantableUserSql('u')}
       ON CONFLICT DO NOTHING
       RETURNING "userId", "milestoneKey", "seenAt"
     ), cosmetics AS (
@@ -66,6 +66,30 @@ export async function grantScoreTierMilestones(
   );
   onCancel?.(query.cancel);
   return query.result();
+}
+
+/**
+ * Stamps crossings seen without announcing them. Only unseen rows are touched, so a re-run changes
+ * nothing.
+ */
+export async function markMilestonesSeen(
+  pg: AugmentedPool,
+  crossings: Pick<ScoreTierCrossing, 'userId' | 'milestoneKey'>[],
+  onCancel?: CancelHook
+) {
+  if (!crossings.length) return;
+  const query = await pg.cancellableQuery(
+    `
+    UPDATE "UserCreatorMilestone" ucm
+    SET "seenAt" = now()
+    FROM jsonb_to_recordset($1::jsonb) AS x("userId" int, "milestoneKey" text)
+    WHERE ucm."userId" = x."userId" AND ucm."milestoneKey" = x."milestoneKey"
+      AND ucm."seenAt" IS NULL
+    `,
+    [JSON.stringify(crossings.map(({ userId, milestoneKey }) => ({ userId, milestoneKey })))]
+  );
+  onCancel?.(query.cancel);
+  await query.result();
 }
 
 export type MilestoneBatchResult = { users: number; inserted: number; lastUserId: number | null };
@@ -142,11 +166,10 @@ export async function grantMilestoneCosmeticsBatch(
     ), batch AS (
       SELECT DISTINCT ucm."userId" AS id
       FROM "UserCreatorMilestone" ucm
-      JOIN "User" u ON u.id = ucm."userId"
+      ${joinMilestoneGrantableUserSql('u', 'ucm."userId"')}
       WHERE ucm."userId" > $1
         AND ($2::int IS NULL OR ucm."userId" <= $2)
         AND ucm."milestoneKey" IN (SELECT key FROM m)
-        AND ${milestoneGrantableUserSql('u')}
       ORDER BY 1
       LIMIT $3
     ), granted AS (
@@ -201,11 +224,10 @@ export async function previewMilestoneCosmetics(
     SELECT count(DISTINCT ucm."userId")::int AS users, count(*)::int AS rows
     FROM "UserCreatorMilestone" ucm
     JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
-    JOIN "User" u ON u.id = ucm."userId"
+    ${joinMilestoneGrantableUserSql('u', 'ucm."userId"')}
     WHERE m."cosmeticId" IS NOT NULL
       AND ($3::text IS NULL OR m.key = $3)
       AND ucm."userId" > $1 AND ($2::int IS NULL OR ucm."userId" <= $2)
-      AND ${milestoneGrantableUserSql('u')}
       AND NOT EXISTS (
         SELECT 1 FROM "UserCosmetic" uc
         WHERE uc."userId" = ucm."userId" AND uc."cosmeticId" = m."cosmeticId" AND uc."claimKey" = m.key
