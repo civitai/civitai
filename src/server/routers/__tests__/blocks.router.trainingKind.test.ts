@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
 import {
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -783,42 +784,51 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
     }
   );
 
+  /** Arm every reservation leg, confirm a quote, and make the real submit throw `make()`
+   *  annotated as `submitWorkflow` would for a response on `attempt` with `status`. */
+  async function submitThatFails(
+    make: () => never,
+    record: { attempt: number; status: number } | null
+  ) {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 5000,
+      revokedAt: null,
+    });
+    h.getActiveDevTunnel.mockImplementation(async () => ({ sessionId: 's1', spendCapBuzz: 5000 }));
+    h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: true, total: 1200 }));
+    const quoteId = await confirmedQuote();
+    let thrown: unknown;
+    h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+      if (args.query?.whatif) return { cost: { total: 1200 } };
+      try {
+        make();
+      } catch (e) {
+        thrown = e;
+      }
+      if (record) annotateOrchestratorSubmitFailure(thrown, record);
+      throw thrown;
+    });
+    const outcome = await submit(body({ quoteId })).then(
+      (r) => ({ result: r as unknown, err: null as unknown }),
+      (e: unknown) => ({ result: null as unknown, err: e })
+    );
+    return { quoteId, thrown: thrown as TRPCError, ...outcome };
+  }
+
   it.each([
     [
-      'insufficient funds (orchestrator 403)',
+      'insufficient funds (orchestrator 400)',
       () => throwInsufficientFundsError('Insufficient funds'),
+      400,
     ],
-    ['a rate limit (orchestrator 429)', () => throwRateLimitError('Too many requests')],
-    ['any other orchestrator 4xx', () => throwBadRequestError('model is not enabled')],
-  ])(
-    'an orchestrator REFUSAL — %s — is definite: refunded, claim released, rethrown',
-    async (_label, makeError) => {
-      dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
-        buzzBudgetPerDay: 5000,
-        revokedAt: null,
-      });
-      h.getActiveDevTunnel.mockImplementation(async () => ({
-        sessionId: 's1',
-        spendCapBuzz: 5000,
-      }));
-      h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: true, total: 1200 }));
-      const quoteId = await confirmedQuote();
-      let thrown: unknown;
-      h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
-        if (args.query?.whatif) return { cost: { total: 1200 } };
-        try {
-          makeError();
-        } catch (e) {
-          thrown = e;
-        }
-        throw thrown;
-      });
-      const err = await submit(body({ quoteId })).then(
-        () => null,
-        (e: unknown) => e
-      );
+    ['a rate limit (orchestrator 429)', () => throwRateLimitError('Too many requests'), 429],
+    ['any other orchestrator 4xx', () => throwBadRequestError('model is not enabled'), 422],
+  ] as const)(
+    'a FIRST-attempt orchestrator refusal — %s — is definite: refunded, claim released, rethrown',
+    async (_label, make, status) => {
+      const { quoteId, thrown, err } = await submitThatFails(make, { attempt: 1, status });
       expect(err).toBeInstanceOf(TRPCError);
-      expect((err as TRPCError).message).toBe((thrown as TRPCError).message);
+      expect((err as TRPCError).message).toBe(thrown.message);
       expect(realSubmits()).toHaveLength(1);
       // Every reservation refunded…
       expect(counter('system:blocks:buzz-cap')).toBe(0);
@@ -833,7 +843,53 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
           name: 'block-training-submit-failed',
           outcome: 'refused',
           quoteId,
-          code: (thrown as TRPCError).code,
+          code: thrown.code,
+          attempt: 1,
+          status,
+        })
+      );
+    }
+  );
+
+  it.each([
+    [
+      'a funds refusal on a RETRY',
+      () => throwInsufficientFundsError('Insufficient funds'),
+      { attempt: 2, status: 400 },
+    ],
+    [
+      'an existing-workflow 409 on a retry',
+      () => throwBadRequestError('already exists'),
+      { attempt: 2, status: 409 },
+    ],
+    [
+      'a rate limit on the last retry',
+      () => throwRateLimitError('Too many requests'),
+      { attempt: 3, status: 429 },
+    ],
+    [
+      'an existing-workflow 409 on the first attempt',
+      () => throwBadRequestError('already exists'),
+      { attempt: 1, status: 409 },
+    ],
+    ['a 4xx with no recorded response', () => throwBadRequestError('model is not enabled'), null],
+  ] as const)(
+    '%s is NOT a refusal: unconfirmed, every reservation kept',
+    async (_label, make, record) => {
+      const { quoteId, result, err } = await submitThatFails(make, record);
+      expect(err).toBeNull();
+      await expectUnconfirmed(Promise.resolve(result));
+      expect(counter('system:blocks:buzz-cap')).toBe(1200);
+      expect(counter('system:blocks:consent-budget')).toBe(1200);
+      expect(h.refundAppSpend).not.toHaveBeenCalled();
+      expect(h.refundDevSessionBuzz).not.toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'block-training-submit-failed',
+          outcome: 'unconfirmed',
+          quoteId,
+          attempt: record?.attempt ?? null,
+          status: record?.status ?? null,
         })
       );
     }

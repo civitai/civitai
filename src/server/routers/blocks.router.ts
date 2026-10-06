@@ -1,6 +1,5 @@
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import * as z from 'zod';
 import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
@@ -303,6 +302,10 @@ import {
   queryWorkflows,
   submitWorkflow,
 } from '~/server/services/orchestrator/workflows';
+import {
+  getOrchestratorSubmitFailure,
+  isDefiniteOrchestratorSubmitRefusal,
+} from '~/server/services/orchestrator/submit-failure';
 import {
   buildGenerationContext,
   createWorkflowStepsFromGraphInput,
@@ -12102,18 +12105,6 @@ async function loadEligibleBlockTrainingDataset(
 }
 
 /**
- * True for an orchestrator refusal: a tRPC error whose HTTP status is 4xx — which is
- * what `submitWorkflow` turns every orchestrator 4xx into (BAD_REQUEST,
- * UNAUTHORIZED, TOO_MANY_REQUESTS; insufficient funds is a BAD_REQUEST). A 5xx or an
- * uncoded error is not a refusal.
- */
-function isDefiniteOrchestratorRefusal(e: unknown): boolean {
-  if (!(e instanceof TRPCError)) return false;
-  const status = getHTTPStatusCodeFromError(e);
-  return status >= 400 && status < 500;
-}
-
-/**
  * The viewer's Buzz across the accounts a training run charges: the block's allowed
  * set for its maturity (`getBlockAllowedAccountTypes`), the same set
  * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
@@ -12360,9 +12351,10 @@ async function submitTrainingWorkflow(opts: {
         message: `insufficient buzz budget: training run ${requote} exceeds the per-run limit ${ceiling}`,
       });
     }
-    // A definite refusal BEFORE anything is reserved or sent: a viewer who cannot pay
-    // would otherwise reach the orchestrator, whose refusal this arm must treat as
-    // ambiguous. Fail-open on a balance-read error — the orchestrator still checks.
+    // A definite refusal before anything is reserved and before the run is submitted.
+    // The orchestrator's own funds refusal is definite only on its first attempt, so
+    // checking here keeps the common case definite. Fail-open on a balance-read error —
+    // the orchestrator still checks.
     let spendable: number | null = null;
     try {
       spendable = await readBlockTrainingSpendableBuzz(claims, userId);
@@ -12506,11 +12498,11 @@ async function submitTrainingWorkflow(opts: {
         },
       });
     } catch (e) {
-      // `submitWorkflow` returns an orchestrator 4xx at once (no retry) and surfaces a
-      // network failure or 5xx after its last retry as a 5xx/plain error; its retries
-      // reuse this `externalId`. So a 4xx is a DEFINITE refusal (refunded below) and
-      // anything else is AMBIGUOUS — the run may exist and be charged.
-      const definite = isDefiniteOrchestratorRefusal(e);
+      // DEFINITE only for a 4xx on the first attempt (see
+      // `isDefiniteOrchestratorSubmitRefusal`): refunded below. Anything else is
+      // AMBIGUOUS — an earlier attempt may have created and charged the run.
+      const definite = isDefiniteOrchestratorSubmitRefusal(e);
+      const failure = getOrchestratorSubmitFailure(e);
       logToAxiom({
         name: 'block-training-submit-failed',
         type: definite ? 'warning' : 'error',
@@ -12520,6 +12512,8 @@ async function submitTrainingWorkflow(opts: {
         quoteId,
         externalId: blockExternalId,
         code: e instanceof TRPCError ? e.code : null,
+        attempt: failure?.attempt ?? null,
+        status: failure?.status ?? null,
         error: e instanceof Error ? e.message : String(e),
       }).catch(() => undefined);
       if (definite) throw e;
