@@ -4,12 +4,14 @@ export type UploadPartError = {
   networkError?: boolean;
   aborted?: boolean;
   /**
-   * A progress watchdog gave up on this part: the connection went silent mid-body with no
-   * error and no response. Set WITH `networkError` and WITHOUT `aborted`, because the
-   * transfer did fail at the network layer and nobody cancelled it — the two flags are what
-   * every predicate below reads, and `stalled` only refines the reason.
+   * A silence watchdog gave up on this part: it went quiet with no error and no response. Set
+   * WITH `networkError` and WITHOUT `aborted`, because the transfer did fail at the network
+   * layer and nobody cancelled it — the two flags are what every predicate below reads, and
+   * `stalled` only refines the reason.
    */
   stalled?: boolean;
+  /** Whether a `stalled` part had already sent its whole body, i.e. the ETag reply never came. */
+  responsePhase?: boolean;
   partNumber?: number;
 };
 
@@ -29,6 +31,10 @@ const PART_STALL_TIMEOUT_MS = 30_000;
 /**
  * The silence window for one in-flight part: `arm` restarts it, `clear` ends it.
  *
+ * `arm` takes the window so a caller can widen it for a phase whose silence means something
+ * else, and the widened value survives the internal re-arms below — a hidden tab must not
+ * quietly drop back to the default.
+ *
  * 🔴 NOT a bare `setTimeout`, because of BACKGROUNDED TABS. Chromium throttles background
  * timers to roughly one per minute and freezes a backgrounded mobile tab outright, so a
  * window armed before the tab went away expires on a transfer that was merely suspended —
@@ -43,15 +49,17 @@ const PART_STALL_TIMEOUT_MS = 30_000;
  */
 export function createPartStallWatchdog(onStall: () => void) {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const arm = () => {
+  let windowMs = PART_STALL_TIMEOUT_MS;
+  const arm = (ms: number = PART_STALL_TIMEOUT_MS) => {
+    windowMs = ms;
     clearTimeout(timer);
     timer = setTimeout(() => {
-      if (document.visibilityState !== 'visible') return arm();
+      if (document.visibilityState !== 'visible') return arm(windowMs);
       onStall();
-    }, PART_STALL_TIMEOUT_MS);
+    }, windowMs);
   };
   const onVisibilityChange = () => {
-    if (document.visibilityState === 'visible') arm();
+    if (document.visibilityState === 'visible') arm(windowMs);
   };
   document.addEventListener('visibilitychange', onVisibilityChange);
   return {
@@ -70,7 +78,7 @@ export function createPartStallWatchdog(onStall: () => void) {
  * client stopped — the field whose absence forced the 2026-09 image-upload investigation
  * to ask users for devtools screenshots. Caller-shaped input is sanitized again
  * server-side (see `sanitizeClientFailure` in `src/pages/api/upload/abort.ts`); this
- * side only ever produces the four shapes below.
+ * side only ever produces the five shapes below.
  *
  * A user cancel maps to `client-aborted` ahead of every other reading: the cancel trips
  * the workers, which can race a status-0 `loadend` onto the same fatal slot, and user
@@ -79,6 +87,7 @@ export function createPartStallWatchdog(onStall: () => void) {
 export type PartFailureReason =
   | { kind: 'client-aborted' }
   | { kind: 'stalled'; partNumber?: number }
+  | { kind: 'response-stalled'; partNumber?: number }
   | { kind: 'network-error'; partNumber?: number }
   | { kind: 'part-status'; partNumber?: number; status: number };
 
@@ -90,6 +99,13 @@ export function describePartFailure(
   // Ahead of `networkError`, which a stall sets too so it can reach the relay. Read the
   // other way round, a dead radio is indistinguishable from a connection reset in the logs.
   if (err.stalled) {
+    // Split for the same reason `stalled` was split out of `network-error`: a dead transfer and
+    // a host that took every byte and never answered are different populations, and one kind for
+    // both leaves whichever is rarer invisible in the abort stream.
+    if (err.responsePhase)
+      return err.partNumber === undefined
+        ? { kind: 'response-stalled' }
+        : { kind: 'response-stalled', partNumber: err.partNumber };
     return err.partNumber === undefined
       ? { kind: 'stalled' }
       : { kind: 'stalled', partNumber: err.partNumber };

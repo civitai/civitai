@@ -36,6 +36,8 @@ const CHUNK = 1024;
 const SLOW_BODY_STEP_MS = 20_000;
 /** 20s x 30 = ten minutes of body, which is what 25 MB on a weak mobile link looks like. */
 const SLOW_BODY_STEPS = 30;
+/** Mirrors `PART_RESPONSE_TIMEOUT_MS` in the hook, which is not exported. */
+const RESPONSE_WINDOW_MS = 5 * 60_000;
 const RELAY_ENDPOINT = '/api/v1/image-upload/relay';
 /** The key the relay mints server-side. Deliberately unlike the presigned key. */
 const RELAY_KEY = 'relayed/9f1c2d-4a.png';
@@ -71,6 +73,15 @@ let hangAttemptLimit: number | null;
  * a byte (`null`) is the easier case; this one is the reported symptom.
  */
 let hangAfterProgressBytes: number | null;
+/**
+ * A hanging part sends its WHOLE body first, so the silence falls in the response phase.
+ *
+ * 🔴 The other half of the half-open connection, and the one the two phases treat differently:
+ * every byte left, `upload.loadend` fired, and the ETag reply never comes. The knobs above all
+ * go silent mid-body, so without this the response phase can only be driven by a timer the test
+ * also has to advance — which cannot model a tab that is hidden across the wait.
+ */
+let hangAfterBodySent: boolean;
 /**
  * How long the server takes to answer AFTER the body is fully sent. The healthy-but-slow case
  * that a progress watchdog must not kill: `upload.progress` has stopped because there is
@@ -173,18 +184,27 @@ class FakeXHR {
   finishOk(loaded: number) {
     if (this.settled) return;
     this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded }));
+    this.respondOk();
+  }
+  /** Answer a part whose body this fake has already finished sending. */
+  respondOk() {
+    if (this.settled) return;
     this.settled = true;
     this.readyState = 4;
     this.status = 200;
     this.headers['ETag'] = 'etag';
+    partLoadTimes.push(Date.now());
     this.emit('load');
     this.emit('loadend');
   }
   /**
-   * XHR's own total-duration timer. The spec measures `timeout` from `send()` rather than from
-   * whenever it was assigned, so a flat window set at `upload.loadend` has ALREADY expired on a
-   * part whose body took longer than it — modelled here because that is the trap, and because a
-   * fake that started the clock at assignment time would make the bug untestable.
+   * XHR's own total-duration timer, measured from `send()` rather than from whenever `timeout`
+   * was assigned.
+   *
+   * 🔴 Production sets no `timeout`, so this is inert against the current hook — and it is kept
+   * for exactly that reason. It is the only thing that makes re-introducing `xhr.timeout` for the
+   * response phase REPORTABLE: the hidden-tab case below counts hidden wall clock against the
+   * part and goes red. Delete this and that regression ships green.
    */
   private armTimeout(sentAt: number) {
     if (!this.timeout) return;
@@ -211,6 +231,14 @@ class FakeXHR {
       ) {
         // Deliberately NOT `settled`: the request is still open, so an abort from the hook's
         // watchdog still reaches `abort()` and emits its events, the way a real one does.
+        if (hangAfterBodySent) {
+          this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
+          this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
+          // Read AFTER the handler, like the `bodySent` helper below: a response-phase
+          // `xhr.timeout` is assigned there, so arming first would make that bound untestable.
+          this.armTimeout(sentAt);
+          return; // in flight until the test answers it, or the hook gives up
+        }
         if (hangAfterProgressBytes !== null)
           this.upload.listeners['progress']?.forEach((cb) =>
             cb({ loaded: hangAfterProgressBytes as number })
@@ -507,6 +535,7 @@ beforeEach(() => {
   hangPartNumbers = [];
   hangAttemptLimit = null;
   hangAfterProgressBytes = null;
+  hangAfterBodySent = false;
   responseDelayMs = 0;
   bodyProgressStepMs = null;
   bodyProgressSteps = 1;
@@ -897,10 +926,11 @@ describe('useS3Upload part stall watchdog', () => {
   });
 
   it('does not abort a part whose body is sent and whose response is slow', async () => {
-    // 🔴 WHY `upload.loadend` CLEARS THE TIMER. Once the body is fully sent, `upload.progress`
-    // stops because there is nothing left to send — not because the connection died. Treating
-    // that wait as a stall kills a healthy upload against a slow backend, and the harm is
-    // invisible in production: the part is retried, so it looks like a flaky network.
+    // 🔴 WHY `upload.loadend` WIDENS THE WINDOW RATHER THAN KEEPING THE BODY'S. Once the body is
+    // fully sent, `upload.progress` stops because there is nothing left to send — not because the
+    // connection died — and nothing re-arms the window again. Holding it at 30s kills a healthy
+    // upload against a slow backend, and the harm is invisible in production: the part is
+    // retried, so it looks like a flaky network.
     vi.stubGlobal('fetch', makeFetch(1));
     responseDelayMs = SLOW_RESPONSE_MS;
     const h = await mountHook();
@@ -943,18 +973,16 @@ describe('useS3Upload part stall watchdog', () => {
 });
 
 /**
- * THE RESPONSE PHASE, which the progress watchdog deliberately does not police.
+ * THE RESPONSE PHASE, which the watchdog polices on a window of its own.
  *
- * `upload.progress` stops when the body is fully sent, so treating the wait that follows as
- * silence would kill a healthy upload against a slow backend — and that left the response wait
+ * `upload.progress` stops when the body is fully sent, so the body's window cannot be left
+ * running across the wait that follows — and until it was WIDENED instead, the response wait was
  * bounded by nothing at all, because `xhr.timeout` defaults to 0. A connection going half-open
  * AFTER the body is sent therefore never ended: `useMediaUpload` runs two workers and decrements
  * its counter in a `finally`, so one such part holds a slot for the life of the page, and the
  * dropzone then accepts files that never upload — the symptom this PR exists to remove.
  */
 describe('useS3Upload part response timeout', () => {
-  /** Mirrors `PART_RESPONSE_TIMEOUT_MS` in the hook, which is not exported. */
-  const RESPONSE_WINDOW_MS = 5 * 60_000;
   /** Past the window by enough that no clock-turn granularity can confuse the two. */
   const NEVER_RESPONDS_MS = 60 * 60_000;
 
@@ -968,21 +996,24 @@ describe('useS3Upload part response timeout', () => {
     // 🔴 THE POSITIVE CONTROL: no part ever answered, so what ended the request was the bound
     // and not the backend. Without it the case holds against a harness that responded promptly.
     expect(partLoadTimes).toEqual([]);
-    // The ladder was walked, and the same relay-eligible shape the progress watchdog produces
-    // carried it to the rescue — a `timeout` rejecting as a user cancel reaches no relay.
+    // The ladder was walked, and the same relay-eligible shape the body phase produces carried it
+    // to the rescue — an abort recording the user-cancel shape reaches no relay.
     expect(partSendCounts.get(1)).toBe(MAX_PART_ATTEMPTS);
     expect(relayCalls).toBe(1);
     expect(result).toMatchObject({ url: RELAY_KEY, key: RELAY_KEY });
     expect(h.statuses()).toEqual(['success']);
-    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
+    // 🔴 `response-stalled`, and this is the only producer of it: the host took every byte and
+    // never answered. The mid-body producer's `stalled` is pinned by the watchdog cases above,
+    // and one kind for both is how whichever population is rarer stays invisible.
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'response-stalled', partNumber: 1 }]);
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
   });
 
   it('🔴 does not time out a slow body whose response then arrives promptly', async () => {
-    // 🔴 WHY THE BOUND ADDS THE BODY'S OWN DURATION BACK. `xhr.timeout` is measured from
-    // `send()`, not from when it is assigned, so a flat window written at `upload.loadend` has
-    // already expired on any part whose body outlasted it — the part dies the instant its last
-    // byte lands, which is precisely the slow-link harm a total-duration bound on the body would
+    // 🔴 WHY THE RESPONSE WINDOW IS MEASURED FROM THE BODY'S END, NOT FROM `send()`. Any
+    // total-duration bound — `xhr.timeout` being the obvious one, since the spec measures it from
+    // `send()` — has already expired on a part whose body outlasted it, so the part dies the
+    // instant its last byte lands: precisely the slow-link harm a duration cap on the body would
     // have caused, reintroduced one phase later.
     vi.stubGlobal('fetch', makeFetch(1));
     bodyProgressStepMs = SLOW_BODY_STEP_MS;
@@ -1137,6 +1168,50 @@ describe('useS3Upload part stall watchdog across a backgrounded tab', () => {
     // Five aborted attempts' worth of listeners, all gone. The abort path's half of the leak
     // assertion below, which rides the success path.
     expect(liveListeners.size).toBe(0);
+  });
+
+  it('🔴 does not give up on a response the tab was hidden across', async () => {
+    // 🔴 THE PHASE BOUNDARY'S OWN REGRESSION. The response wait was once bounded by
+    // `xhr.timeout`, which is a browser timer: it counts wall clock while the tab is hidden,
+    // and the watchdog that knows about `visibilityState` had been cleared one line earlier. So
+    // backgrounding the tab between the last body byte and the ETag reply cost a re-sent part —
+    // up to 25 MB of somebody's cellular data, five attempts deep, for an upload that was
+    // merely suspended. That is the exact harm the body phase is protected from, one phase later.
+    vi.stubGlobal('fetch', makeFetch(1));
+    hangPartNumbers = [1];
+    hangAfterBodySent = true;
+    const h = await mountHook();
+
+    const t0 = Date.now();
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image, async () => {
+      await advanceUntil(() => inFlight.has(1), 'the first PUT');
+      await setVisibility('hidden');
+      // THROTTLED, which is the accurate model here: a browser timer keeps counting while
+      // hidden, so this is the advance a wall-clock bound cannot survive. Well past the
+      // response window, and past it again.
+      await advance(RESPONSE_WINDOW_MS + HIDDEN_WALL_CLOCK_MS);
+      // Asserted here as well as below so the regression reports at the moment it happens,
+      // rather than as a relay count after the ladder has been walked.
+      expect(partSendCounts.get(1)).toBe(1);
+      await setVisibility('visible');
+      // 🔴 PAST THE BODY'S WINDOW, INSIDE THE RESPONSE ONE. Deliberately not a few seconds: the
+      // widened window has to SURVIVE the hidden stretch, and a watchdog that re-armed its way
+      // back down to the body's 30s while hidden would look identical for any shorter wait.
+      await advance(STALL_WINDOW_MS * 4);
+      inFlight.get(1)!.respondOk();
+    });
+
+    // ONE PUT: never aborted, never re-sent.
+    expect(partSendCounts.get(1)).toBe(1);
+    expect(relayCalls).toBe(0);
+    expect(abortCalls).toEqual([]);
+    expect(result).toMatchObject({ key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['success']);
+    // 🔴 THE POSITIVE CONTROL, and the case is vacuous without it: if the harness ignored
+    // `hangAfterBodySent` the part would answer inside the same tick, there would be no
+    // response-phase silence to survive, and every assertion above would hold against a bound
+    // that counts hidden time.
+    expect(partLoadTimes[0] - t0).toBeGreaterThan(RESPONSE_WINDOW_MS);
   });
 
   it('leaves no visibilitychange listener behind once the parts have settled', async () => {

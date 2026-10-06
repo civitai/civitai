@@ -172,6 +172,31 @@ describe('describePartFailure', () => {
     });
   });
 
+  it.each([
+    ['stalled', 'the transfer went quiet mid-body', false],
+    ['response-stalled', 'the host took every byte and never answered', true],
+  ])('maps a stall to %s when %s', (kind, _why, responsePhase) => {
+    // 🔴 ONE PRODUCER EACH, ASSERTED AS A PAIR. The two go quiet in different places and call for
+    // different fixes, and the only thing separating them is this flag — so a single-arm case
+    // would pass against a mapping hardwired to either kind.
+    expect(
+      describePartFailure({
+        status: null,
+        networkError: true,
+        aborted: false,
+        stalled: true,
+        responsePhase,
+        partNumber: 7,
+      })
+    ).toEqual({ kind, partNumber: 7 });
+  });
+
+  it('maps an unattributed response-phase stall to response-stalled without a part number', () => {
+    expect(
+      describePartFailure({ status: null, networkError: true, stalled: true, responsePhase: true })
+    ).toEqual({ kind: 'response-stalled' });
+  });
+
   it('maps an HTTP status to part-status with its part number', () => {
     expect(describePartFailure({ status: 400, partNumber: 2 })).toEqual({
       kind: 'part-status',
@@ -230,6 +255,25 @@ describe('shouldRelayOnPartFailure', () => {
     expect(
       shouldRelayOnPartFailure(
         { status: null, networkError: true, aborted: false, stalled: true, partNumber: 1 },
+        base
+      )
+    ).toBe(true);
+  });
+
+  it('relays a response-phase stall too, for all that it is a distinct kind', () => {
+    // 🔴 THE KIND IS A DIAGNOSTIC, NOT A GATE. Splitting the abort stream must not narrow who
+    // gets rescued: a host that swallowed the bytes and never answered is as unreachable as one
+    // that went quiet mid-body, and both are exactly what the relay exists for.
+    expect(
+      shouldRelayOnPartFailure(
+        {
+          status: null,
+          networkError: true,
+          aborted: false,
+          stalled: true,
+          responsePhase: true,
+          partNumber: 1,
+        },
         base
       )
     ).toBe(true);

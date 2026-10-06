@@ -21,8 +21,9 @@ import type { ClientDeclarableRelayFallbackOutcome } from '~/utils/relay-fallbac
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
-// A fully-sent part is only waiting on a small ETag reply, so a total-duration bound fits here
-// where it never could on the body; 5 min is far past any real reply and survives a suspended tab.
+// The silence window once the body is fully sent. Far wider than the body's, because a server
+// legitimately takes its time producing an ETag and nothing re-arms this phase — there are no
+// more progress events — so the whole wait has to fit inside one window.
 const PART_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 
 // Abort-aware sleep so cancelling during a long Retry-After window
@@ -330,7 +331,6 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       const uploadPart = (url: string, i: number) =>
         new Promise<void>((resolve, reject) => {
           let eTag: string;
-          const sentAt = Date.now();
           const start = (i - 1) * chunkSize;
           const end = i * chunkSize;
           const part = i === partsCount ? file.slice(start) : file.slice(start, end);
@@ -341,12 +341,16 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           // the two shapes makes the watchdog fire into a gate it cannot pass: the upload still
           // fails and the relay still never runs.
           const stalledRef = { value: false };
+          let bodySent = false;
           const rejectStalled = () =>
             reject({
               status: null,
               networkError: true,
               aborted: false,
               stalled: true,
+              // One failure class, two populations: a transfer that died mid-body, and a host
+              // that took every byte and never answered. They call for different fixes.
+              responsePhase: bodySent,
               partNumber: i,
             } as UploadPartError);
           const watchdog = createPartStallWatchdog(() => {
@@ -359,14 +363,15 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             updateProgress();
           });
           xhr.upload.addEventListener('loadend', ({ loaded }) => {
-            // The body is fully sent, so what follows is the response wait — a different phase.
-            // Policing it with a progress watchdog would kill a slow-but-healthy server, while
-            // leaving it unpoliced lets a connection that goes half-open AFTER the body hold a
+            // The window WIDENS here rather than ending: what remains is a wait for a tiny ETag
+            // reply, not a transfer, so the body's window would kill a slow-but-healthy server
+            // while no window at all lets a connection that goes half-open AFTER the body hold a
             // `useMediaUpload` worker slot for the life of the page.
-            watchdog.clear();
-            // 🔴 XHR measures `timeout` from `send()`, not from now, so the body's own duration
-            // has to be added back or a slow 25 MB part times out the instant it finishes.
-            xhr.timeout = Date.now() - sentAt + PART_RESPONSE_TIMEOUT_MS;
+            //
+            // 🔴 RE-ARM, NEVER `xhr.timeout` — a browser timer counts wall clock while the tab
+            // is hidden, so bounding this phase with one costs a needlessly re-sent part.
+            bodySent = true;
+            watchdog.arm(PART_RESPONSE_TIMEOUT_MS);
             partProgress.set(i, loaded);
           });
           xhr.addEventListener('load', () => {
@@ -374,7 +379,8 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           });
           xhr.addEventListener('loadend', () => {
             // Fires after load, error AND abort, so this is the one clear that covers every
-            // terminal outcome; the `upload.loadend` clear above is a phase boundary, not cleanup.
+            // terminal outcome. The `upload.loadend` handler above re-arms rather than clears,
+            // so this is the ONLY place the listener is unregistered.
             watchdog.clear();
             activeXhrs.delete(xhr);
             if (xhr.readyState !== 4) return;
@@ -393,10 +399,6 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           xhr.addEventListener('error', () => {
             activeXhrs.delete(xhr);
             reject({ status: null, networkError: true, partNumber: i } as UploadPartError);
-          });
-          xhr.addEventListener('timeout', () => {
-            activeXhrs.delete(xhr);
-            rejectStalled();
           });
           xhr.addEventListener('abort', () => {
             activeXhrs.delete(xhr);
