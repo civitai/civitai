@@ -4431,9 +4431,7 @@ export function PageBlockHost({
                   // SERVER'S OWN preview — never from the block. Preview and
                   // write resolve `sources` independently, so a workflow that
                   // gains an output between them would publish more images than
-                  // the dialog displayed. The server refuses on a mismatch. This
-                  // value comes from the server's preview via host chrome, never
-                  // from block input.
+                  // the dialog displayed. The server refuses on a mismatch.
                   confirmedImageCount: preview.images.length,
                 });
                 settlement.reply({ result });

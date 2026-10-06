@@ -360,7 +360,7 @@ describe('the shared preamble — createPostFromApp', () => {
       expect(mockWriteBlockPost).not.toHaveBeenCalled();
     });
 
-    it('is evaluated with the TOKEN SUBJECT, never a session user', async () => {
+    it('is evaluated with the TOKEN SUBJECT, never a session user (observed via the preview)', async () => {
       // On the write the session must equal the subject, so the difference is only
       // observable on the preview, which carries no session binding: sign in as
       // someone else and check the flag still sees the token subject.

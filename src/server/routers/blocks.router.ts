@@ -473,9 +473,8 @@ const blockPostPayloadShape = {
  * REQUIRED, changed from optional: an integrity check a caller may decline is not
  * an invariant, it is a suggestion. Every caller now states the count it showed.
  *
- * Sent by host chrome, echoed from the server's own preview. It is an integrity
- * check against the set the dialog showed, not evidence that a confirm happened —
- * the server cannot observe the dialog.
+ * Sent by host chrome, echoed from the server's own preview: an integrity check
+ * against the set the dialog showed, not evidence of a confirm.
  */
 const confirmedImageCountInput = z.number().int().positive().max(100);
 
@@ -489,14 +488,14 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  * READING IT THAT WAY WOULD BE WRONG. The write deliberately carries gates the
  * preview does not — `assertSharedWriteTrust` (#6 in the `createPostFromApp`
  * enumeration) and the two post rate buckets are WRITE-ONLY, as is the session
- * binding inside (3), which this helper applies to the `create` arm only. They
- * are write-only because a read that
- * renders a dialog is not the act those gates exist to bound, and charging a rate
- * bucket for a preview would let a dialog the viewer never confirmed consume the
- * budget. The resulting asymmetry — a resolvable preview for a subject who would
- * be refused the post — is the accepted position and is asserted by a test, not
- * an oversight. What this helper guarantees is narrower and exact: NEITHER
- * procedure can be reached without all five of the gates below.
+ * binding inside (3), which this helper applies to the `create` arm only. They are
+ * write-only because a read that renders a dialog is not the act those gates exist
+ * to bound, and charging a rate bucket for a preview would let a dialog the viewer
+ * never confirmed consume the budget. The resulting asymmetry — a resolvable
+ * preview for a subject who would be refused the post — is the accepted position
+ * and is asserted by a test, not an oversight. What this helper guarantees is
+ * narrower and exact: NEITHER procedure can be reached without all five of the
+ * gates below.
  *
  * 🔴 THE GUARD CALL LIVES HERE, AND THAT IS WHY THIS IS A MODULE-SCOPE HELPER
  * RATHER THAN AN IMPORT. `no-unguarded-block-bridge-token.test.ts` computes
@@ -5376,8 +5375,7 @@ export const blocksRouter = router({
    *
    * GUARDS, in order — those marked ✚ are additions over the publish path:
    *   0. ✚ a signed-in browser session (`protectedProcedure`, with API-key and
-   *      OAuth-token requests refused); the host calls this with the viewer's
-   *      own session.
+   *      OAuth-token requests refused).
    *   1. `authorizeBlockBridgeToken` — token validity, instance revocation, and
    *      the backing app still `approved`. All three, in one call, because that
    *      helper is the single gate for every bridge proc.
