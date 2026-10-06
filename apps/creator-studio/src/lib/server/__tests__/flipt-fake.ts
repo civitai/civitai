@@ -16,6 +16,8 @@ export function createFliptFake(flag: string) {
   const state = { initialized: false, segment: modsAndTesters };
   return {
     state,
+    // Un-initializes, which the real client never does, so every test starts cold and an unawaited
+    // or reordered warm-up fails in each test rather than only the first.
     reset() {
       state.initialized = false;
       state.segment = modsAndTesters;
@@ -23,7 +25,9 @@ export function createFliptFake(flag: string) {
     fliptModule: {
       fliptContext: buildFliptContext,
       getFlipt: () => ({
+        // A real hop, so a caller that forgets to await the warm-up evaluates before it lands.
         ensureInitialized: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
           state.initialized = true;
         },
         isEnabledSync: (key: string, entityId?: string, context: Record<string, string> = {}) => {
