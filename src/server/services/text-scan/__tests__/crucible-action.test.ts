@@ -87,6 +87,40 @@ describe('settleSkippedCrucibleScan', () => {
     });
   });
 
+  it.each([
+    ['a PG13 verdict', NsfwLevel.PG13],
+    ['a verdict without a level, as PG', null],
+  ])('unchanged re-applies %s as not NSFW', async (_, nsfwLevel) => {
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+      status: 'Succeeded',
+      nsfwLevel,
+      result: { version: 1 },
+    });
+    await settleSkippedCrucibleScan(5, 'unchanged');
+    expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 5,
+      isNsfw: false,
+      greenCancels: false,
+    });
+  });
+
+  it('unchanged with a verdict still Pending is logged, not settled', async () => {
+    dbMock.dbWrite.entityModeration.findUnique.mockResolvedValue({
+      status: 'Pending',
+      nsfwLevel: null,
+      result: { version: 1 },
+    });
+    await settleSkippedCrucibleScan(5, 'unchanged');
+    expect(applyCrucibleNsfwEscalation).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        crucibleId: 5,
+        reason: 'unchanged',
+        message: 'crucible scan skipped; ingestion left Pending',
+      })
+    );
+  });
+
   it.each(['missing', 'in-flight'] as const)('%s does nothing', async (reason) => {
     await settleSkippedCrucibleScan(5, reason);
     expect(applyCrucibleNsfwEscalation).not.toHaveBeenCalled();

@@ -54,17 +54,22 @@ export async function applyCrucibleNsfwEscalation({
   // textNsfw is left alone: a raise is sticky across a later clean rescan, as a challenge's is.
   // Once a moderator has rated it, a later verdict never raises it, whatever the text; a rescan
   // only settles visibility.
-  if (!isNsfw || crucible.moderatorNsfwLevel != null) {
-    await dbWrite.crucible.update({
+  const settle = () =>
+    dbWrite.crucible.update({
       where: { id: entityId },
       data: { ingestion: CrucibleIngestionStatus.Scanned, scannedAt: new Date() },
     });
+
+  if (!isNsfw || crucible.moderatorNsfwLevel != null) {
+    await settle();
     return;
   }
 
   if (crucible.buzzType !== 'green' || !greenCancels) {
-    await dbWrite.crucible.update({
-      where: { id: entityId },
+    // The read above is unlocked, so a moderator rating can commit before this write; the
+    // condition keeps the raise from landing over it.
+    const { count } = await dbWrite.crucible.updateMany({
+      where: { id: entityId, moderatorNsfwLevel: null },
       data: {
         ingestion: CrucibleIngestionStatus.Scanned,
         scannedAt: new Date(),
@@ -72,6 +77,10 @@ export async function applyCrucibleNsfwEscalation({
         nsfwLevel: Flags.addFlag(crucible.nsfwLevel, NsfwLevel.R),
       },
     });
+    if (count === 0) {
+      await settle();
+      return;
+    }
     if (!crucible.textNsfw) {
       await notifyCrucibleCreator({
         userId: crucible.userId,

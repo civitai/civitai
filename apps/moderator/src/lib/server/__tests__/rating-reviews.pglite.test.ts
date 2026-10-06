@@ -431,6 +431,92 @@ describe('resolveRatingReview', () => {
     expect((await review(stale)).status).toBe('Pending');
   });
 
+  it('refuses to change the mask of a crucible that has started, and writes nothing', async () => {
+    const active = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      status: 'Active',
+    });
+    // Still Pending, but its start time has passed: the activation job can lag.
+    const lagging = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      startAt: '2020-01-01T00:00:00.000Z',
+    });
+    for (const crucibleId of [active, lagging]) {
+      const id = await fileReview('Crucible', crucibleId, 4, 1);
+      await expect(
+        service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+      ).rejects.toThrow("This crucible has started; its allowed levels can't change.");
+      expect((await review(id)).status).toBe('Pending');
+      expect(await crucible(crucibleId)).toEqual({
+        nsfwLevel: 1 | 4,
+        textNsfw: true,
+        moderatorNsfwLevel: null,
+        moderatorNsfwLevelBasis: null,
+      });
+    }
+  });
+
+  it('still lets a started crucible dispute be declined at its current level', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      status: 'Active',
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4);
+  });
+
+  it('lowers the mask of a crucible scheduled to start later', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      startAt: '2099-01-01T00:00:00.000Z',
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Actioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(1);
+  });
+
+  it('closes a Collection review whose collection is gone without writing an override', async () => {
+    const id = await fileReview('Collection', 999, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+    ).resolves.toMatchObject({ entityMissing: true, status: 'Unactioned' });
+    expect((await review(id)).appliedLevel).toBeNull();
+    expect(await countRows(db, 'JobQueue')).toBe(0);
+  });
+
+  it('refuses a Collection level that is not SFW or NSFW', async () => {
+    const collectionId = await seedEntity(db, 'Collection', { userId: owner, nsfwLevel: 28 });
+    const id = await fileReview('Collection', collectionId, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 2, moderatorId: mod })
+    ).rejects.toThrow(/cannot be applied/);
+    expect((await review(id)).status).toBe('Pending');
+    const [c] = await rows<{ moderatorNsfwLevel: number | null }>(
+      db,
+      `SELECT "moderatorNsfwLevel" FROM "Collection" WHERE "id" = $1`,
+      [collectionId]
+    );
+    expect(c.moderatorNsfwLevel).toBeNull();
+    expect(await countRows(db, 'JobQueue')).toBe(0);
+  });
+
   it('resolving a Collection dispute sets the override and queues a recompute', async () => {
     const collectionId = await seedEntity(db, 'Collection', { userId: owner, nsfwLevel: 28 });
     const id = await fileReview('Collection', collectionId, 4, 1);

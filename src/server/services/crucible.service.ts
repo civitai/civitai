@@ -750,7 +750,9 @@ export const updateCrucible = async ({
   } as typeof current & { name?: string; description?: string };
 
   const buzzType = crucible.buzzType as CrucibleBuzzType;
-  if (isNonSfwForGreen(buzzType, next.nsfwLevel))
+  // Only a requested level is checked: a text-scan escalation can put R on the stored mask, and that
+  // must not lock the rest of the crucible out of edits.
+  if (provided.includes('nsfwLevel') && isNonSfwForGreen(buzzType, next.nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
   assertCrucibleSettings(next);
 

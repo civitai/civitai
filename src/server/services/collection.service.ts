@@ -1293,20 +1293,25 @@ export const upsertCollection = async ({
   // metadata blob — so rejecting on PRESENCE would 403 a co-manager who opened Edit and
   // hit Save without touching (or knowing about) the field. Pin it to the stored value
   // instead: their save becomes a no-op on this field rather than a wall.
+  // `forcedBrowsingLevel` is pinned the same way: it decides the collection's rating ahead of its
+  // items and any moderator rating, so only moderators (or system writers) set it.
   if (!isModerator && metadata) {
-    const storedAutoTagId = id
-      ? (
-          (
-            await dbRead.collection.findUnique({
-              where: { id },
-              select: { metadata: true },
-            })
-          )?.metadata as CollectionMetadataSchema | null
-        )?.autoTagId
+    const storedMetadata = id
+      ? ((
+          await dbRead.collection.findUnique({
+            where: { id },
+            select: { metadata: true },
+          })
+        )?.metadata as CollectionMetadataSchema | null)
       : undefined;
 
+    const storedAutoTagId = storedMetadata?.autoTagId;
     if (storedAutoTagId === undefined) delete metadata.autoTagId;
     else metadata.autoTagId = storedAutoTagId;
+
+    const storedForcedBrowsingLevel = storedMetadata?.forcedBrowsingLevel;
+    if (storedForcedBrowsingLevel === undefined) delete metadata.forcedBrowsingLevel;
+    else metadata.forcedBrowsingLevel = storedForcedBrowsingLevel;
   }
 
   if (id) {

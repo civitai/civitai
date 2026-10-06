@@ -300,16 +300,21 @@ describe('upsertCollection authorization', () => {
       committed = true;
       return result;
     });
+    let committedAtScan: boolean | undefined;
+    let committedAtEnqueue: boolean | undefined;
     vi.mocked(scanEntityInBackground).mockImplementation(() => {
-      expect(committed).toBe(true);
+      committedAtScan = committed;
     });
     vi.mocked(enqueueJobs).mockImplementation(async () => {
-      expect(committed).toBe(true);
+      committedAtEnqueue = committed;
     });
 
     await upsertCollection({
       input: { id: COLLECTION_ID, name: 'Mine', read: 'Public', userId: OWNER_ID, isMember: true },
     } as never);
+
+    expect(committedAtScan).toBe(true);
+    expect(committedAtEnqueue).toBe(true);
 
     expect(scanEntityInBackground).toHaveBeenCalledWith({
       entityType: 'Collection',
@@ -418,5 +423,160 @@ describe('upsertCollection authorization', () => {
     } as never);
 
     expect(scanEntityInBackground).not.toHaveBeenCalled();
+  });
+
+  it('pins forcedBrowsingLevel to the stored value for a non-moderator', async () => {
+    arrange({ actorId: OWNER_ID });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      metadata: { forcedBrowsingLevel: 1 },
+    } as never);
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: OWNER_ID,
+        isMember: true,
+      },
+    } as never);
+
+    const updateArgs = mockDbWrite.collection.update.mock.calls[0][0];
+    expect(updateArgs.data.metadata.forcedBrowsingLevel).toBe(1);
+  });
+
+  it('drops forcedBrowsingLevel from a non-moderator when none is stored', async () => {
+    arrange({ actorId: OWNER_ID });
+    mockDbRead.collection.findUnique.mockResolvedValue({ metadata: {} } as never);
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: OWNER_ID,
+        isMember: true,
+      },
+    } as never);
+
+    const updateArgs = mockDbWrite.collection.update.mock.calls[0][0];
+    expect(updateArgs.data.metadata).not.toHaveProperty('forcedBrowsingLevel');
+  });
+
+  it('drops forcedBrowsingLevel from a non-moderator creating a collection', async () => {
+    mockDbWrite.collection.create.mockResolvedValue({
+      id: COLLECTION_ID,
+      name: 'New',
+      description: null,
+      read: 'Private',
+      availability: 'Public',
+      userId: OWNER_ID,
+    } as never);
+
+    await upsertCollection({
+      input: {
+        name: 'New',
+        read: 'Private',
+        type: 'Image',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: OWNER_ID,
+        isMember: true,
+      },
+    } as never);
+
+    const createArgs = mockDbWrite.collection.create.mock.calls[0][0];
+    expect(createArgs.data.metadata).not.toHaveProperty('forcedBrowsingLevel');
+  });
+
+  it('lets a moderator change forcedBrowsingLevel', async () => {
+    arrange({ actorId: MANAGER_ID });
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      metadata: { forcedBrowsingLevel: 1 },
+    } as never);
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: { forcedBrowsingLevel: 31 },
+        userId: MANAGER_ID,
+        isModerator: true,
+        isMember: true,
+      },
+    } as never);
+
+    const updateArgs = mockDbWrite.collection.update.mock.calls[0][0];
+    expect(updateArgs.data.metadata.forcedBrowsingLevel).toBe(31);
+  });
+});
+
+describe('upsertCollection create-path scan', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const created = (read: 'Public' | 'Private') => ({
+    id: COLLECTION_ID,
+    name: 'New',
+    description: null,
+    read,
+    write: 'Private',
+    availability: 'Public',
+    userId: OWNER_ID,
+    mode: null,
+    image: null,
+  });
+
+  it('scans a new public collection', async () => {
+    mockDbWrite.collection.create.mockResolvedValue(created('Public') as never);
+
+    await upsertCollection({
+      input: { name: 'New', read: 'Public', type: 'Image', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Collection',
+      entityId: COLLECTION_ID,
+    });
+  });
+
+  it('does not scan a new private collection', async () => {
+    mockDbWrite.collection.create.mockResolvedValue(created('Private') as never);
+
+    await upsertCollection({
+      input: { name: 'New', read: 'Private', type: 'Image', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(mockDbWrite.collection.create).toHaveBeenCalled();
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+  });
+
+  it('does not scan a Public → Private edit', async () => {
+    arrange({ actorId: OWNER_ID });
+    const row = { name: 'Mine', description: null, availability: 'Public' };
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Public',
+      write: 'Private',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      ...row,
+    });
+    mockDbWrite.collection.update.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Private',
+      write: 'Private',
+      userId: OWNER_ID,
+      mode: null,
+      image: null,
+      ...row,
+    });
+
+    await upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Mine', read: 'Private', userId: OWNER_ID, isMember: true },
+    } as never);
+
+    expect(mockDbWrite.collection.update).toHaveBeenCalled();
+    expect(scanEntityInBackground).not.toHaveBeenCalled();
+    expect(enqueueJobs).not.toHaveBeenCalled();
   });
 });

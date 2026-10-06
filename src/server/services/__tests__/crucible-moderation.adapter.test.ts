@@ -201,8 +201,8 @@ describe('applyResult — yellow crucible with NSFW text', () => {
 
     await scanNsfw();
 
-    expect(update).toHaveBeenCalledWith({
-      where: { id: ID },
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: ID, moderatorNsfwLevel: null },
       data: {
         ingestion: 'Scanned',
         scannedAt: expect.any(Date),
@@ -234,7 +234,7 @@ describe('applyResult — yellow crucible with NSFW text', () => {
 
     await scanNsfw();
 
-    expect(update).toHaveBeenCalledWith(
+    expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ textNsfw: true, nsfwLevel: SFW | NsfwLevel.R }),
       })
@@ -368,7 +368,7 @@ describe('applyResult — SFW crucible created on the mature site, with NSFW tex
     await scanNsfw();
 
     expect(cancelCrucible).not.toHaveBeenCalled();
-    expect(update).toHaveBeenCalledWith(
+    expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ textNsfw: true, nsfwLevel: SFW | NsfwLevel.R }),
       })
@@ -403,6 +403,25 @@ describe('applyCrucibleNsfwEscalation — moderator override', () => {
     expect(cancelCrucible).not.toHaveBeenCalled();
     expect(createNotification).not.toHaveBeenCalled();
   });
+
+  it('does not raise over a moderator rating that committed after the read, and still settles', async () => {
+    findForEscalation.mockResolvedValue(
+      crucible({ buzzType: 'yellow', status: CrucibleStatus.Active, moderatorNsfwLevel: null })
+    );
+    updateMany.mockResolvedValue({ count: 0 });
+
+    await applyCrucibleNsfwEscalation({ entityId: ID, isNsfw: true, greenCancels: false });
+
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: ID, moderatorNsfwLevel: null } })
+    );
+    expect(update).toHaveBeenCalledTimes(1);
+    expect(update).toHaveBeenCalledWith({
+      where: { id: ID },
+      data: { ingestion: 'Scanned', scannedAt: expect.any(Date) },
+    });
+    expect(createNotification).not.toHaveBeenCalled();
+  });
 });
 
 describe('applyCrucibleNsfwEscalation — greenCancels:false', () => {
@@ -413,12 +432,15 @@ describe('applyCrucibleNsfwEscalation — greenCancels:false', () => {
 
     await applyCrucibleNsfwEscalation({ entityId: ID, isNsfw: true, greenCancels: false });
 
-    expect(update).toHaveBeenCalledWith(
+    expect(updateMany).toHaveBeenCalledTimes(1);
+    expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ textNsfw: true, nsfwLevel: SFW | NsfwLevel.R }),
       })
     );
-    expect(updateMany).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: CrucibleStatus.Cancelled } })
+    );
     expect(cancelCrucible).not.toHaveBeenCalled();
     expect(update).not.toHaveBeenCalledWith(blockedWrite);
   });

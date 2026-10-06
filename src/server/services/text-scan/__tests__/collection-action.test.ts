@@ -37,6 +37,7 @@ describe('applyCollectionTextScan', () => {
       .mockResolvedValueOnce({ nsfwLevel: 29, moderatorNsfwLevel: null, userId: 9, name: 'Faves' });
     await applyCollectionTextScan(args(NsfwLevel.R, true) as never);
     expect(updateCollectionsNsfwLevels).toHaveBeenCalledWith([7]);
+    expect(notifyTextScanRatingRaised).toHaveBeenCalledTimes(1);
     expect(notifyTextScanRatingRaised).toHaveBeenCalledWith(
       expect.objectContaining({
         entityType: 'Collection',
@@ -47,7 +48,16 @@ describe('applyCollectionTextScan', () => {
     );
   });
 
-  it('recomputes but stays silent when a moderator rated it or nothing rose', async () => {
+  it('recomputes but stays silent when a moderator rated it, even if the bucket rose', async () => {
+    dbMock.dbWrite.collection.findUnique
+      .mockResolvedValueOnce({ nsfwLevel: 1, moderatorNsfwLevel: 1, userId: 9, name: 'x' })
+      .mockResolvedValueOnce({ nsfwLevel: 29, moderatorNsfwLevel: 1, userId: 9, name: 'x' });
+    await applyCollectionTextScan(args(NsfwLevel.R, true) as never);
+    expect(updateCollectionsNsfwLevels).toHaveBeenCalledWith([7]);
+    expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
+  });
+
+  it('recomputes but stays silent when the bucket was already nsfw', async () => {
     dbMock.dbWrite.collection.findUnique.mockResolvedValue({
       nsfwLevel: 28,
       moderatorNsfwLevel: null,
@@ -55,14 +65,7 @@ describe('applyCollectionTextScan', () => {
       name: 'x',
     });
     await applyCollectionTextScan(args(NsfwLevel.R, true) as never);
-    dbMock.dbWrite.collection.findUnique.mockResolvedValue({
-      nsfwLevel: 1,
-      moderatorNsfwLevel: 1,
-      userId: 9,
-      name: 'x',
-    });
-    await applyCollectionTextScan(args(NsfwLevel.R, true) as never);
-    expect(updateCollectionsNsfwLevels).toHaveBeenCalledTimes(2);
+    expect(updateCollectionsNsfwLevels).toHaveBeenCalledWith([7]);
     expect(notifyTextScanRatingRaised).not.toHaveBeenCalled();
   });
 

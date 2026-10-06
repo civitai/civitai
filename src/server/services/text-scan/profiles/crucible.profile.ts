@@ -1,5 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import { registerTextScanProfile } from '~/server/services/text-scan/profiles';
+import { removeTags } from '~/utils/string-helpers';
 
 registerTextScanProfile({
   entityType: 'Crucible',
@@ -17,7 +18,7 @@ registerTextScanProfile({
           declared: { nsfwLevel: c.nsfwLevel },
           fields: [
             { heading: 'Name', text: c.name },
-            { heading: 'Description', text: c.description },
+            { heading: 'Description', text: c.description ? removeTags(c.description) : null },
           ],
         },
       ])

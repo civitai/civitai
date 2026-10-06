@@ -32,6 +32,9 @@ const { computeArticleDerivedNsfwLevel } = await import(
 const { computeRatedEntityDerivedNsfwLevel } = await import(
   '~/server/services/text-scan/derived-level'
 );
+const { VISIBLE_COLLECTION_WHERE, isVisibleCollection } = await import(
+  '~/server/services/text-scan/collection-visibility'
+);
 
 const squash = (sql: string) => sql.replace(/\s+/g, ' ');
 const sentText = (client: 'dbRead' | 'dbWrite' = 'dbWrite') =>
@@ -116,6 +119,19 @@ describe('Collection text floor', () => {
       text,
     };
   };
+
+  it('rates exactly the collections VISIBLE_COLLECTION_WHERE and isVisibleCollection call visible', async () => {
+    const { text } = await sent();
+    expect(text).toContain(`c."availability" = 'Public'`);
+    expect(text).toContain(`c."read" IN ('Public', 'Unlisted')`);
+    expect(VISIBLE_COLLECTION_WHERE).toEqual({
+      availability: 'Public',
+      read: { in: ['Public', 'Unlisted'] },
+    });
+    expect(isVisibleCollection({ availability: 'Public', read: 'Unlisted' })).toBe(true);
+    expect(isVisibleCollection({ availability: 'Public', read: 'Private' })).toBe(false);
+    expect(isVisibleCollection({ availability: 'Private', read: 'Public' })).toBe(false);
+  });
 
   it('collection: text floor joins the item probes, never the forced branch', async () => {
     const { forcedBranch, unforcedBranch, text } = await sent();

@@ -30,9 +30,9 @@ describe('rated-entity profiles', () => {
     expect(getTextScanProfile('Collection')?.minChars).toBeUndefined();
   });
 
-  it('Crucible: name and description, declared at its stored level', async () => {
+  it('Crucible: name and description, tags stripped, declared at its stored level', async () => {
     dbMock.dbWrite.crucible.findMany.mockResolvedValue([
-      { id: 1, userId: 9, name: 'Neon', description: 'City at night', nsfwLevel: 3 },
+      { id: 1, userId: 9, name: 'Neon', description: '<p>City at night</p>', nsfwLevel: 3 },
     ]);
     const s = await load('Crucible');
     expect(s.userId).toBe(9);

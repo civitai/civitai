@@ -251,6 +251,11 @@
                   </Button>
                 {/each}
               </div>
+              {#if review.entityType === 'Collection'}
+                <p class="text-xs text-dark-2">
+                  SFW removes the text rating; NSFW items still rate this collection.
+                </p>
+              {/if}
             </form>
           {:else}
             <div class="flex flex-col gap-1 text-sm">

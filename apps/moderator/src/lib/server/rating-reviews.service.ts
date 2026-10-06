@@ -362,7 +362,12 @@ function assertOne(result: { numUpdatedRows: bigint }, entityType: RatingReviewE
 }
 
 type LiveChallenge = { nsfwLevel: number; allowedNsfwLevel: number; collectionId: number | null };
-type LiveCrucible = { nsfwLevel: number };
+type LiveCrucible = { nsfwLevel: number; status: string; startAt: Date | null };
+
+// Same rule as the main app's `hasCrucibleStarted`: a scheduled crucible stays Pending until the
+// activation job runs, which can lag its start.
+const crucibleHasStarted = ({ status, startAt }: LiveCrucible, now = new Date()) =>
+  status !== 'Pending' || (!!startAt && new Date(startAt) <= now);
 
 // Their level is an allowed-entry mask read live under a row lock, not the review's snapshot.
 type MaskEntityType = 'Challenge' | 'Crucible';
@@ -559,7 +564,7 @@ const readLiveChallenge = (trx: Transaction<DB>, entityId: number) =>
 const readLiveCrucible = (trx: Transaction<DB>, entityId: number) =>
   trx
     .selectFrom('Crucible')
-    .select('nsfwLevel')
+    .select(['nsfwLevel', 'status', 'startAt'])
     .where('id', '=', entityId)
     .forUpdate()
     .executeTakeFirst();
@@ -603,6 +608,16 @@ export async function resolveRatingReview(input: {
     const level = liveLevel != null ? getHighestBrowsingLevelBit(liveLevel) : review.currentLevel;
     if (!ratingReviewModeratorLevels(entityType, level).includes(appliedLevel))
       throw notApplicable();
+    // The main app lets even a moderator change a crucible's levels only before it starts. Resolving
+    // at the current level (a decline) leaves the mask as it is, so it stays available.
+    if (
+      crucible &&
+      crucibleHasStarted(crucible) &&
+      challengeAllowedMaskAt(crucible.nsfwLevel, appliedLevel) !== crucible.nsfwLevel
+    )
+      throw new RatingReviewResolveError(
+        "This crucible has started; its allowed levels can't change."
+      );
 
     const basis =
       exists &&
