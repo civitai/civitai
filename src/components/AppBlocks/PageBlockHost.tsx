@@ -52,6 +52,12 @@ import {
   type CreatePostPreview,
 } from './createPostFromAppGate';
 import { CreatePostConsentBody } from './CreatePostConsentBody';
+import {
+  buildTrainingConsentCopy,
+  resolveRunTrainingRequest,
+  type TrainingQuotePreview,
+} from './runTrainingGate';
+import { TrainingConsentBody } from './TrainingConsentBody';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -4460,6 +4466,113 @@ export function PageBlockHost({
     appName,
     previewPostFromAppMutation,
     createPostFromAppMutation,
+    reportNoToken,
+  ]);
+
+  // ── RUN_TRAINING → TRAINING_RESULT ─────────────────────────────────────────
+  //
+  // Starts a `kind:'training'` run the block already estimated. THREE server calls:
+  // a read-only preview of the stored quote (what the dialog shows), the viewer's
+  // CONFIRMATION (session-only — the block cannot make this call itself, which is
+  // what lets the server refuse an unconfirmed run), and the submit. See
+  // `runTrainingGate.ts`.
+  //
+  // The preview/confirm calls go through `trpcUtils.client` rather than two more
+  // `useMutation` hooks: they are only ever reached from this handler, and a hook
+  // read at render would make every PageBlockHost test harness enumerate them.
+  //
+  // REQUEST-style ⇒ every terminal path replies exactly once; `createPostSettlement`
+  // owns that latch and keeps `declined` meaning "no run was submitted".
+  useEffect(() => {
+    const off = onMessage<unknown>('RUN_TRAINING', (raw) => {
+      const gate = resolveRunTrainingRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('TRAINING_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, quoteId, body } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('TRAINING_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('RUN_TRAINING');
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        let preview: TrainingQuotePreview;
+        try {
+          preview = (await trpcUtils.client.blocks.previewTrainingQuote.mutate({
+            blockToken: token,
+            quoteId,
+          })) as TrainingQuotePreview;
+        } catch (err) {
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        const copy = buildTrainingConsentCopy({ appName, preview });
+        const openBuyBuzz =
+          preview.shortfall != null && preview.shortfall > 0
+            ? () =>
+                dialogStore.trigger<BuyBuzzModalProps>({
+                  id: `block-training-buy-buzz-${requestId}`,
+                  component: BuyBuzzModal,
+                  props: { minBuzzAmount: preview.shortfall ?? undefined },
+                })
+            : undefined;
+        dialogStore.trigger({
+          // Per-request id — a deduped dialog would be a request that never replies.
+          id: `block-run-training-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: <TrainingConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not be
+              // able to claim `declined` for a run that is being submitted.
+              settlement.markConsented();
+              try {
+                await trpcUtils.client.blocks.consentTrainingQuote.mutate({
+                  blockToken: token,
+                  quoteId,
+                });
+                const { snapshot } = await submitWorkflowMutation.mutateAsync({
+                  blockToken: token,
+                  // Schema-validated server-side and checked against the quote's
+                  // body hash; the host never renders or trusts it.
+                  body: body as never,
+                });
+                settlement.reply({ snapshot });
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    submitWorkflowMutation,
     reportNoToken,
   ]);
 

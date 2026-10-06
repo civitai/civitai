@@ -135,6 +135,10 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     buckets: ['catalog'],
     why: '#569 criterion 3 — the asymmetry with cancelAppWorkflow, resolved toward limiting. GET + PATCH + GET plus an inline moderation scan: the heavier of the two. Like pollWorkflow it RETURNS a non-terminal refusal rather than throwing — both cancel hosts convert a throw into failureSnapshot status:failed, which would tell the block a still-running paid workflow had finished AND that a cancel it never issued had succeeded.',
   },
+  consentTrainingQuote: {
+    buckets: ['catalog'],
+    why: 'The session-bound confirmation of a training quote: one Redis read + write, reached only from a viewer click in host chrome. The read bucket, like its preview sibling.',
+  },
   createPostFromApp: {
     buckets: ['post', 'post-app', 'publish'],
     why: 'Public-feed write with reward exposure. Per-instance AND per-app post buckets, plus the image-weighted publish bucket for the images it adopts. Not catalog — unlike its previewPostFromApp sibling, this one materialises rows.',
@@ -174,6 +178,14 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
   pollWorkflow: {
     buckets: ['poll'],
     why: '#569 criterion 2 — its OWN bucket (1200/60 s), keyed on the install AND the viewer because blockInstanceId is page_<appBlockId> for a page app. Previously bounded only by the SDK’s sequential loop, a client-side pacing assumption and not a bound. A refusal RETURNS a non-terminal snapshot rather than throwing: both hosts convert a throw into status:failed, which the SDK treats as terminal, so a thrown 429 would end the watch loop on a paid generation.',
+  },
+  prepareTrainingDataset: {
+    buckets: ['publish'],
+    why: 'Image-WEIGHTED like publishGenerationOutputs: each requested image is a DB read plus a server-side fetch and orchestrator import, so it charges one publish token per image, before any image is read.',
+  },
+  previewTrainingQuote: {
+    buckets: ['catalog'],
+    why: 'The read-only half of the training consent pair — a quote + dataset read and a Buzz balance read; materialises nothing.',
   },
   previewPostFromApp: {
     buckets: ['catalog'],

@@ -678,6 +678,29 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // ── Start a confirmed TRAINING run (`kind:'training'`) ─────────────────────
+  // The block holds a `quoteId` from a training estimate; the host previews that
+  // quote from the server, asks the viewer in host chrome, records the viewer's
+  // confirmation through a SESSION-only procedure, then submits. The server
+  // refuses an unconfirmed quote, so the dialog is consent, not the control — see
+  // `runTrainingGate.ts`.
+  //
+  // REQUEST-style ⇒ an unhandled one hangs the block to its human-scale timeout.
+  // Ahead of the published SDK dist union (the SDK message pair is a co-requisite
+  // in the SDK repo) — forward-looking coverage, allowed by the one-directional
+  // compile-time gate.
+  RUN_TRAINING: {
+    request: true,
+    reply: 'TRAINING_RESULT',
+    // N/A: training is PAGE-ONLY on the server (`assertTrainingRequestAllowed`
+    // refuses a model-slot token). No handler is registered, so the shared
+    // dispatcher answers an incoming RUN_TRAINING with a TRAINING_RESULT error
+    // rather than letting it hang.
+    IframeHost:
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**

@@ -124,10 +124,10 @@ const LEDGER = [
   },
   {
     file: 'src/server/routers/blocks.router.ts',
-    count: 5,
+    count: 6,
     why:
-      'The tRPC bridge paths: the block-post writer plus the four workflow-submit arms ' +
-      '(txt2img, registry step, custom comfy, pass-through). These do NOT pass through the ' +
+      'The tRPC bridge paths: the block-post writer plus the five workflow-submit arms ' +
+      '(txt2img, registry step, custom comfy, pass-through, training). These do NOT pass through the ' +
       'REST middleware, so the middleware site above does not cover them.',
   },
   {
@@ -160,7 +160,7 @@ const PREDICATE_MODULE = 'src/server/services/blocks/scope-activity-predicate.ts
 /**
  * 🔴 THE CARRIER, AND IT CLOSES A MUTANT THAT SURVIVED THE WHOLE SUITE.
  *
- * Two of the nine writers — the storage set and delete audit rows — never see the claims
+ * Two of the eleven writers — the storage set and delete audit rows — never see the claims
  * object, so they thread a LOCAL destructured off the resolver that verified the token. The
  * accepted-spellings list admits that local by name, which means the per-site check above
  * accepts `privateRun: privateRun === true` without tracing where `privateRun` came from —

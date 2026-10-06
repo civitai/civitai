@@ -267,7 +267,15 @@ export const BLOCK_AUTHOR_FEE_DEFAULT_PARAMS: BlockAuthorFeeParams = {
  */
 export const BLOCK_AUTHOR_FEE_PLATFORM_CONFIG: BlockAuthorFeeConfig = {
   default: BLOCK_AUTHOR_FEE_DEFAULT_PARAMS,
-  byType: [['chat-completion', { flatBuzz: 0, pctOfBase: 0 }]],
+  byType: [
+    ['chat-completion', { flatBuzz: 0, pctOfBase: 0 }],
+    // `kind:'training'` → NO FEE, by decision. The viewer confirms ONE exact price
+    // for a training run before it is charged; a fee priced on top of that number
+    // would charge more than they confirmed. The training submit path also calls
+    // no fee at all (ledgered in `no-divergent-author-fee-base.test.ts`), so this
+    // entry is what keeps any future fee-pricing caller at zero on training too.
+    ['training', { flatBuzz: 0, pctOfBase: 0 }],
+  ],
 };
 
 /** Params after the platform ceiling has been applied, in computable units. */

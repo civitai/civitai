@@ -2013,6 +2013,20 @@ export const REDIS_SYS_KEYS = {
      * re-arm) shape as BUZZ_CAP, on `sysRedis`, fail-CLOSED on a redis error.
      */
     CONSENT_BUDGET: 'system:blocks:consent-budget',
+    /**
+     * App Blocks `kind:'training'` DATASET handle: `${TRAINING_DATASET}:${datasetId}`
+     * → JSON `{ userId, appBlockId, blockInstanceId, items, count }`, written by
+     * `blocks.prepareTrainingDataset` with a ~24h TTL. Bound to the subject/app/
+     * install it was prepared for; the image count is always server-derived.
+     */
+    TRAINING_DATASET: 'system:blocks:training-dataset',
+    /**
+     * App Blocks `kind:'training'` QUOTE: `${TRAINING_QUOTE}:${quoteId}` → JSON
+     * `{ userId, appBlockId, blockInstanceId, bodyHash, total, consentedBy, … }`,
+     * written by the training estimate with a ~15 min TTL, confirmed by the viewer's
+     * session, and claimed EXACTLY ONCE (GETDEL) by the submit.
+     */
+    TRAINING_QUOTE: 'system:blocks:training-quote',
   },
   DOWNLOAD: {
     LIMITS: 'download:limits',

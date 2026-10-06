@@ -1060,6 +1060,31 @@ export async function isAppBlocksPostCreationEnabled(opts?: {
 }
 
 /**
+ * Dedicated fail-closed flag for the App Blocks `kind:'training'` workflow kind —
+ * `blocks.prepareTrainingDataset`, the training estimate/submit arm of
+ * `blocks.estimateWorkflow` / `blocks.submitWorkflow`, and the host's
+ * `RUN_TRAINING` consent pair (`blocks.previewTrainingQuote` /
+ * `blocks.consentTrainingQuote`).
+ *
+ * Same posture as `app-blocks-post-creation`, for the same reason: a new surface
+ * with no existing access to preserve, independent of the runtime flag so a GA
+ * widening of `app-blocks-enabled` does not arm training on the same day. NO
+ * moderator static floor — an ABSENT flag resolves `false` for everyone. Evaluated
+ * with the TOKEN SUBJECT'S hydrated `SessionUser`, never `ctx.user`.
+ *
+ * 🔴 SHIPS OFF. The flag value lives outside this repo; `isFlipt` returns `false`
+ * for an absent flag, so the capability is dark until it is created there.
+ */
+export const APP_BLOCKS_TRAINING_KIND_FLAG = 'app-blocks-training-kind';
+
+export async function isAppBlocksTrainingKindEnabled(opts: {
+  user: SessionUser;
+}): Promise<boolean> {
+  const user = opts.user;
+  return isFlipt(APP_BLOCKS_TRAINING_KIND_FLAG, String(user.id), buildFliptContext(user));
+}
+
+/**
  * Dedicated flag for the EXTERNAL-ONLY App-store read scope — the mechanism that
  * lets the store serve `kind='offsite'` (external app) listings to a viewer while
  * `kind='onsite'` App Blocks stay hidden from them. This is a SEPARATE, ORTHOGONAL

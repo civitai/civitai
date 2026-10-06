@@ -270,6 +270,13 @@ export interface BlockTokenClaims {
  * never by widening what `buzzBudget` means, which would hand the money-unsafe
  * value to every gate written the obvious way.
  *
+ * ⚠️ ONE SUCH CEILING EXISTS: `blockTrainingRunCeiling`, for `kind:'training'`. It
+ * is fee-free (the training author fee is zero by decision), so the fee half of the
+ * sentence above does not apply; what replaces it is that the grant is a PER-RUN
+ * confirmation of one exact price, recorded only by the viewer's own signed-in
+ * session — see that function for why that, and not a wider `buzzBudget`, is what
+ * lets it exceed the declared number. It still routes through this helper first.
+ *
  * Returns 0 when no budget was minted, so a caller that skipped the
  * `typeof claims.buzzBudget !== 'number'` pre-check still fails CLOSED.
  */
@@ -314,6 +321,73 @@ export function blockPerCallBudget(
   if (claims.privateRunAudience === 'editor') return 0;
   if (typeof claims.buzzBudget !== 'number') return 0;
   return claims.buzzBudget;
+}
+
+/**
+ * Hard per-run Buzz ceiling for an App Blocks `kind:'training'` run, whatever the
+ * viewer consented to. Every other cap (per-user daily, review / private-run, the
+ * viewer's per-app consent budget, the per-app aggregate and velocity caps, the
+ * dev-session backstop) still applies on top of it.
+ */
+export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
+
+/**
+ * The quote a `kind:'training'` submit is gated against — the server-stored record
+ * written by the estimate and confirmed by the viewer's own signed-in session.
+ */
+export type BlockTrainingQuoteGrant = {
+  userId: number;
+  appBlockId: string;
+  blockInstanceId: string;
+  /** The quoted whole-Buzz price of the run. */
+  total: number;
+  /** The session user who confirmed this exact quote, or null until one does. */
+  consentedBy: number | null;
+};
+
+/**
+ * THE per-run ceiling a `kind:'training'` submit compares against, in place of the
+ * token's per-call budget.
+ *
+ * 🔴 THIS IS THE "SEPARATE, GRANTED CEILING" `blockPerCallBudget` SAYS A RAISED
+ * CEILING MUST BE — and the reason it is allowed to exceed the app's declared
+ * per-call budget is the one thing that budget exists to stand in for. The manifest
+ * number is a ceiling against a compromised app spending the viewer's Buzz without
+ * them; here the viewer confirmed THIS price in host chrome, and that confirmation is
+ * recorded only by a procedure that requires the viewer's own signed-in session —
+ * which the block, holding nothing but its own token, cannot call. The grant is
+ * that record, not a token claim, so `buzzBudget` keeps meaning exactly what it did.
+ *
+ * Returns 0 — the shared "no budget" refusal — unless ALL of:
+ *   - the token has a non-zero per-call budget at all (`blockPerCallBudget`), so
+ *     an editor's read-only private run and an unbudgeted token stay refused;
+ *   - the quote is bound to this token's subject, app and install;
+ *   - the subject themself confirmed it;
+ *   - the quoted total is a positive whole number.
+ * Otherwise it returns the quoted total, capped at `BLOCK_TRAINING_MAX_BUZZ_PER_RUN`.
+ *
+ * Fee-free by classification (`pricesAuthorFee: false`): the training author fee
+ * is zero, so the number that clears this gate is the number reserved and charged.
+ */
+export function blockTrainingRunCeiling(
+  claims: Pick<
+    BlockTokenClaims,
+    'buzzBudget' | 'privateRunAudience' | 'appBlockId' | 'blockInstanceId'
+  >,
+  quote: BlockTrainingQuoteGrant,
+  subjectUserId: number
+): number {
+  if (blockPerCallBudget(claims, { pricesAuthorFee: false }) <= 0) return 0;
+  if (
+    quote.userId !== subjectUserId ||
+    quote.appBlockId !== claims.appBlockId ||
+    quote.blockInstanceId !== claims.blockInstanceId
+  ) {
+    return 0;
+  }
+  if (quote.consentedBy !== subjectUserId) return 0;
+  if (!Number.isInteger(quote.total) || quote.total <= 0) return 0;
+  return Math.min(quote.total, BLOCK_TRAINING_MAX_BUZZ_PER_RUN);
 }
 
 export type BlockScopedNextApiRequest = NextApiRequest & {
