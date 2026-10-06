@@ -113,7 +113,7 @@ function prStatus(branch, cwd) {
       '--head',
       branch,
       '--json',
-      'number,state,isDraft',
+      'number,state,isDraft,isCrossRepository,headRefOid',
       '--limit',
       '5',
     ],
@@ -121,31 +121,59 @@ function prStatus(branch, cwd) {
   );
   if (!raw) return { merged: null, label: 'PR state unknown (gh failed)' };
   try {
-    return describePrRows(JSON.parse(raw));
+    return describePrRows(JSON.parse(raw), tipIsIn(branch, cwd));
   } catch {
     return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
   }
+}
+
+/** A sha that is not in the local object store answers false, so an unknown PR head keeps the tree. */
+export function tipIsIn(branch, cwd) {
+  const tip = gitQuiet(['rev-parse', '--verify', `refs/heads/${branch}`], cwd);
+  return (sha) =>
+    Boolean(tip) &&
+    typeof sha === 'string' &&
+    (sha === tip || gitQuiet(['merge-base', '--is-ancestor', tip, sha], cwd) !== null);
 }
 
 /**
  * Everything below the merged/not-merged split was already in hand and thrown away, so an open PR, a
  * draft, a closed-unmerged PR and a branch with no PR at all all printed `no merged PR` — the four
  * cases a person deciding whether to delete a tree most needs told apart.
+ *
+ * `gh pr list --head` matches on the branch NAME alone: a fork's PR with the same name, or an old
+ * merged PR whose name was reused for new work, comes back too. A merged row only clears the branch
+ * when it is from this repo and `holdsTip(headRefOid)` says the local tip is inside what merged.
  */
-export function describePrRows(rows) {
+export function describePrRows(rows, holdsTip = () => false) {
   if (!Array.isArray(rows))
     return { merged: null, label: 'PR state unknown (gh returned unparseable JSON)' };
   const num = (r) => (typeof r.number === 'number' ? `#${r.number}` : 'of unknown number');
-  const merged = rows.find((r) => r.state === 'MERGED');
-  if (merged) return { merged: merged.number ?? null, label: `PR ${num(merged)} merged` };
-  // Deliberately not "no PR exists": `gh` here has been seen switching itself to an account with no
-  // visibility of this repo, which returns an empty list and exit 0. Saying none was FOUND keeps the
-  // four states apart without inviting anyone to delete a tree on the strength of an empty answer.
-  if (!rows.length) return { merged: null, label: 'gh found no PR for this branch' };
+  const forks = rows.filter((r) => r.isCrossRepository !== false);
+  rows = rows.filter((r) => r.isCrossRepository === false);
+  const merged = rows.filter((r) => r.state === 'MERGED');
+  const covering = merged.find((r) => holdsTip(r.headRefOid));
+  if (covering) return { merged: covering.number ?? null, label: `PR ${num(covering)} merged` };
   const open = rows.find((r) => r.state === 'OPEN');
   if (open) {
     return { merged: null, label: `PR ${num(open)} still OPEN${open.isDraft ? ' (draft)' : ''}` };
   }
+  if (merged.length) {
+    return {
+      merged: null,
+      label: `PR ${num(merged[0])} merged, but this branch's tip is not in what merged`,
+    };
+  }
+  if (!rows.length && forks.length) {
+    return {
+      merged: null,
+      label: `gh found no PR for this branch (only a fork's PR ${num(forks[0])} shares its name)`,
+    };
+  }
+  // Deliberately not "no PR exists": `gh` here has been seen switching itself to an account with no
+  // visibility of this repo, which returns an empty list and exit 0. Saying none was FOUND keeps the
+  // four states apart without inviting anyone to delete a tree on the strength of an empty answer.
+  if (!rows.length) return { merged: null, label: 'gh found no PR for this branch' };
   return { merged: null, label: `PR ${num(rows[0])} closed WITHOUT merging` };
 }
 
