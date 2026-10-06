@@ -2800,10 +2800,26 @@ export async function findUserIdByUsername(username: string) {
     (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
   return user?.id;
 }
-async function getUserIdByUsername(username: string) {
-  const userId = await findUserIdByUsername(username);
-  if (userId === undefined) throw throwNotFoundError('User not found');
-  return userId;
+
+/**
+ * The request preparation both feed callers share, applied to `input` in place: browsing-tag
+ * enforcement, the hide-challenges exclusion, then the creator a `username` names. `userId` is
+ * undefined for an unknown username; each caller decides what that means.
+ */
+async function prepareImageFeedRequest(
+  input: Parameters<typeof enforceBlockedBrowsingTags>[0] & {
+    hideChallenges?: boolean;
+    userId?: number;
+    username?: string;
+  },
+  viewer: Parameters<typeof enforceBlockedBrowsingTags>[1]
+): Promise<{ blocked: true } | { blocked: false; userId: number | undefined }> {
+  const { emptyResult } = await enforceBlockedBrowsingTags(input, viewer);
+  if (emptyResult) return { blocked: true };
+  applyHideChallengesExclusion(input);
+  const userId =
+    input.userId ?? (input.username ? await findUserIdByUsername(input.username) : undefined);
+  return { blocked: false, userId };
 }
 
 /**
@@ -2849,8 +2865,7 @@ async function serveImagesFromFeedService(
 }
 
 const isTransientFeedReason = (reason: string) =>
-  ['timeout', 'error', 'hydrate:error', 'hydrate:empty'].includes(reason) ||
-  reason.startsWith('status:');
+  ['timeout', 'error', 'hydrate:error'].includes(reason) || /^status:5\d\d$/.test(reason);
 
 /**
  * The public REST images endpoint's feed-service branch. `undefined` means the feed service did
@@ -2890,13 +2905,12 @@ export async function getImagesFromFeedServiceForRest(
   }
 
   const input = { ...searchInput };
-  const blocked = await enforceBlockedBrowsingTags(input, {
+  const prepared = await prepareImageFeedRequest(input, {
     id: input.currentUserId,
     isModerator: input.isModerator,
   });
-  if (blocked.emptyResult) return { items: [], nextCursor: undefined };
-  const userId =
-    input.userId ?? (input.username ? await findUserIdByUsername(input.username) : undefined);
+  if (prepared.blocked) return { items: [], nextCursor: undefined };
+  const { userId } = prepared;
   // The search path answers an unknown username with an empty page, not a 404.
   if (input.username && userId === undefined) return { items: [], nextCursor: undefined };
 
@@ -2904,10 +2918,10 @@ export async function getImagesFromFeedServiceForRest(
     { ...input, userId },
     {
       ...hydrateInput,
+      // Resolved already; without it getAllImages would look the username up again.
+      userId,
       tags: input.tags,
       excludedTagIds: input.excludedTagIds,
-      disableMinor: input.disableMinor,
-      disablePoi: input.disablePoi,
     },
     'rest'
   );
@@ -2919,6 +2933,12 @@ export async function getImagesFromFeedServiceForRest(
       nextCursor: served.page.nextCursor,
     };
   if (feedCursor) {
+    // Either a hydrate statement timeout or a page whose every row the hydrate filtered out; the
+    // two look the same here. Stepping past loses the first; a 503 would repeat the second forever.
+    if (served.reason === 'hydrate:empty') {
+      if (served.nextCursor) return { items: [], nextCursor: served.nextCursor };
+      throw throwBadRequestError('This feed has no further pages for these filters');
+    }
     if (isTransientFeedReason(served.reason))
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',
@@ -2979,13 +2999,14 @@ export const getAllImagesIndex = async (
 
   const { include, user } = input;
 
-  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+  const prepared = await prepareImageFeedRequest(input, {
     id: user?.id,
     username: user?.username,
     isModerator: user?.isModerator,
   });
-  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
-  applyHideChallengesExclusion(input);
+  if (prepared.blocked) return { nextCursor: undefined, items: [] };
+  const { userId } = prepared;
+  if (input.username && userId === undefined) throw throwNotFoundError('User not found');
 
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
   const cursorParsed = input.cursor?.toString().split('|');
@@ -2993,8 +3014,6 @@ export const getAllImagesIndex = async (
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
 
   const currentUserId = user?.id;
-  const userId =
-    input.userId ?? (input.username ? await getUserIdByUsername(input.username) : undefined);
 
   const searchInput = {
     ...input,

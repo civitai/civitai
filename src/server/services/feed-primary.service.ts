@@ -73,7 +73,8 @@ export type FeedPrimaryPage<T> = {
 };
 export type FeedPrimaryResult<T> =
   | { ok: true; page: FeedPrimaryPage<T> }
-  | { ok: false; reason: string };
+  /** `nextCursor` is set on `hydrate:empty`: the feed's continuation past the emptied page. */
+  | { ok: false; reason: string; nextCursor?: string };
 
 export type FeedPrimaryDeps<T extends { id: number }> = {
   fetchFeed: (query: string, timeoutMs: number) => Promise<FeedAnswer>;
@@ -186,7 +187,7 @@ export async function serveFromFeed<T extends { id: number }>(
   // nothing are that, not the end of the feed.
   if (!rows.length) {
     count('error', 'hydrate:empty');
-    return { ok: false, reason: 'hydrate:empty' };
+    return { ok: false, reason: 'hydrate:empty', nextCursor };
   }
   const byId = new Map(rows.map((r) => [r.id, r]));
   const data = answer.ids.flatMap((id) => {

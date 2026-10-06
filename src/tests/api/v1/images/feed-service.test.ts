@@ -25,6 +25,9 @@ const h = vi.hoisted(() => ({
   meiliSearch: vi.fn(),
   record: vi.fn(),
   counted: [] as Array<Record<string, string>>,
+  enforce: vi.fn(),
+  hydrateQuery: vi.fn(),
+  hydrateObserved: new Error('hydrate query observed'),
 }));
 
 vi.mock('~/env/server', () => ({
@@ -84,11 +87,22 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
     ...actual,
     feedPrimaryAvailable: () => h.available(),
     fetchFeedPrimary: (...args: unknown[]) => h.fetchFeedPrimary(...args),
-    // The real paging, mapping and counting; only the Postgres row load is faked.
+    // Records the exact query getAllImagesUncaptured would receive, then stops before Postgres.
+    feedHydrateQuery: ((input, ids) => {
+      h.hydrateQuery(actual.feedHydrateQuery(input, ids));
+      throw h.hydrateObserved;
+    }) as typeof actual.feedHydrateQuery,
+    // The real paging, mapping and counting. The production hydrate closure runs up to the
+    // query it would load (above); the rows themselves come from h.hydrate.
     serveFromFeed: ((input, deps) =>
       actual.serveFromFeed(input, {
         ...deps,
-        hydrate: async (ids: number[]) => h.hydrate(ids),
+        hydrate: async (ids: number[]) => {
+          await deps.hydrate(ids).catch((e: unknown) => {
+            if (e !== h.hydrateObserved) throw e;
+          });
+          return h.hydrate(ids);
+        },
       })) as typeof actual.serveFromFeed,
   };
 });
@@ -114,7 +128,7 @@ vi.mock('~/server/services/feed-request-capture.service', async (importOriginal)
 }));
 vi.mock('~/server/services/blocked-browsing-tags.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Blocked>()),
-  enforceBlockedBrowsingTags: async () => ({ emptyResult: false }),
+  enforceBlockedBrowsingTags: (...args: unknown[]) => h.enforce(...args),
 }));
 vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
   ...(await importOriginal<typeof Auth>()),
@@ -228,6 +242,7 @@ describe('/api/v1/images served by the feed service', () => {
     h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
     h.hydrate.mockImplementation(async (ids: number[]) => ids.map(row));
     h.meiliSearch.mockResolvedValue(MEILI_PAGE);
+    h.enforce.mockImplementation(async () => ({ emptyResult: false }));
     dbMock.dbRead.user.findUnique.mockResolvedValue(null);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
     h.counted.length = 0;
@@ -421,23 +436,64 @@ describe('/api/v1/images served by the feed service', () => {
       h.available.mockReturnValue(false);
       const res = await get({ cursor: 'feed:17:5' });
       expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe(
+        'This cursor can no longer be continued; start again without it'
+      );
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
       expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
-    it('is a retryable 503 when the feed service times out', async () => {
-      h.fetchFeedPrimary.mockRejectedValue(
-        Object.assign(new Error('slow'), { name: 'TimeoutError' })
-      );
+    const outage: Array<[string, () => void]> = [
+      [
+        'timeout',
+        () =>
+          h.fetchFeedPrimary.mockRejectedValue(
+            Object.assign(new Error('slow'), { name: 'TimeoutError' })
+          ),
+      ],
+      ['fetch error', () => h.fetchFeedPrimary.mockRejectedValue(new Error('refused'))],
+      ['hydrate:error', () => h.hydrate.mockRejectedValue(new Error('db down'))],
+      ['status:502', () => h.fetchFeedPrimary.mockResolvedValue({ status: 502, ms: 3, ids: [] })],
+    ];
+    it.each(outage)('is a retryable 503 on %s', async (_reason, arrange) => {
+      arrange();
       const res = await get({ cursor: 'feed:17:5' });
       expect(res.statusCode).toBe(503);
       expect(res.headers['retry-after']).toBe('2');
       expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
+    it('is a 400 when the feed service refuses the query (status:4xx)', async () => {
+      h.fetchFeedPrimary.mockResolvedValue({ status: 404, ms: 3, ids: [] });
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe('This cursor cannot be continued with these filters');
+      expect(h.meiliSearch).not.toHaveBeenCalled();
+    });
+
+    it('steps past a page whose every row was filtered out at hydrate (hydrate:empty)', async () => {
+      h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '18|3' });
+      h.hydrate.mockResolvedValue([]);
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBe('feed:18:3');
+      expect(h.meiliSearch).not.toHaveBeenCalled();
+    });
+
+    it('is a 400 when that filtered-out page was the last one', async () => {
+      h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5] });
+      h.hydrate.mockResolvedValue([]);
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe('This feed has no further pages for these filters');
+      expect(h.meiliSearch).not.toHaveBeenCalled();
+    });
+
     it('is a 400 when the request changed to a shape the feed cannot serve [pre-change code 400d every feed: cursor]', async () => {
       const res = await get({ cursor: 'feed:17:5', requiringMeta: 'true' });
       expect(res.statusCode).toBe(400);
+      expect(res.body.message).toBe('This cursor cannot be continued with these filters');
       expect(h.meiliSearch).not.toHaveBeenCalled();
     });
   });
@@ -457,6 +513,62 @@ describe('/api/v1/images served by the feed service', () => {
       dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
       await get({ username: 'someone' });
       expect(feedQuery().get('userIds')).toBe('7');
+    });
+  });
+
+  describe('what a served page is filtered and hydrated with', () => {
+    it('runs browsing-tag enforcement on the request before asking the feed', async () => {
+      await get({ tags: '5,6', limit: '10' });
+      expect(h.enforce).toHaveBeenCalledTimes(1);
+      expect(h.enforce).toHaveBeenCalledWith(
+        expect.objectContaining({ tags: [5, 6], limit: 10, browsingLevel: 1 }),
+        { id: undefined, isModerator: undefined }
+      );
+    });
+
+    it('answers an enforcement-emptied request with an empty 200 and no feed call', async () => {
+      h.enforce.mockResolvedValue({ emptyResult: true });
+      const res = await get({ tags: '5' });
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBeUndefined();
+      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+      expect(h.meiliSearch).not.toHaveBeenCalled();
+    });
+
+    it('hydrates with the enforced tags, the maturity filters and the resolved creator', async () => {
+      dbMock.dbRead.user.findUnique.mockResolvedValue({ id: 7 });
+      h.enforce.mockImplementation(
+        async (input: { tags?: number[]; excludedTagIds?: number[] }) => {
+          input.tags = [5];
+          input.excludedTagIds = [99];
+          return { emptyResult: false };
+        }
+      );
+      await get({ tags: '5,6', username: 'someone', browsingLevel: '3' });
+      expect(h.hydrateQuery).toHaveBeenCalledTimes(1);
+      const query = h.hydrateQuery.mock.calls[0][0];
+      expect(query).toMatchObject({
+        ids: [9, 5],
+        limit: 2,
+        period: 'AllTime',
+        tags: [5],
+        excludedTagIds: [99],
+        disableMinor: true,
+        disablePoi: true,
+        browsingLevel: 3,
+        userId: 7,
+      });
+      expect(query).not.toHaveProperty('cursor');
+    });
+
+    it('falls back for limit=0, which the feed would serve as a full page', async () => {
+      const res = await get({ limit: '0' });
+      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
+      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+      expect(await counted()).toEqual([
+        { outcome: 'unmapped', reason: 'limit:0', route: 'rest', value: 1 },
+      ]);
     });
   });
 
@@ -513,6 +625,7 @@ describe('/api/v1/images served by the feed service', () => {
 
   it('captures a feed-served REST request with its call site', async () => {
     await get({});
+    expect(h.record).toHaveBeenCalledTimes(1);
     expect(h.record).toHaveBeenCalledWith(
       expect.objectContaining({ headers: { src: '/api/v1/images' } }),
       expect.objectContaining({
