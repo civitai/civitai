@@ -1,7 +1,7 @@
 import { NotificationCategory } from '~/server/common/enums';
 import type { AugmentedPool } from '~/server/db/db-helpers';
-import type { CreatorScoreUnlock } from '~/server/services/creator-score-unlocks.service';
-import { nextCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
+import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
+import { nextCreatorScoreUnlocks } from '~/shared/utils/creator-score-unlocks';
 import { milestoneGrantableUserSql } from '~/server/services/creator-milestone-exclusions';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
