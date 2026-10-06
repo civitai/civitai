@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { chunk } from 'lodash-es';
+import { chunk, partition } from 'lodash-es';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -20,8 +20,10 @@ import type {
 } from '~/server/services/creator-milestone-grant.service';
 import {
   grantScoreTierMilestones,
+  markMilestonesSeen,
   notifyScoreTierCrossings,
 } from '~/server/services/creator-milestone-grant.service';
+import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
 import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
   creatorJourneyAudience,
@@ -374,7 +376,7 @@ export async function settleTierGrants(
 export async function persistScoreBatch(
   ctx: Pick<Context, 'pg' | 'jobContext' | 'tierUnlocks' | 'tierGrantErrors'>,
   records: [string, Partial<Record<ScoreCategory, number>>][],
-  { grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG } = {}
+  { grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG, now = new Date() } = {}
 ) {
   ctx.jobContext.checkIfCanceled();
   const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
@@ -399,11 +401,18 @@ export async function persistScoreBatch(
     ctx.tierGrantErrors.push(e);
     return;
   }
-  // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
-  await notifyScoreTierCrossings(
-    crossings.filter((crossing) => audience.has(crossing.userId)),
-    ctx.tierUnlocks
+  const audienceCrossings = crossings.filter((crossing) => audience.has(crossing.userId));
+  const [announced, silenced] = partition(audienceCrossings, (crossing) =>
+    isMilestoneAnnounced(crossing.milestoneKey, now)
   );
+  try {
+    await markMilestonesSeen(ctx.pg, silenced, onCancel);
+  } catch (e) {
+    log('marking silent tier grants seen failed for batch', e);
+    ctx.tierGrantErrors.push(e);
+  }
+  // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
+  await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
 }
 
 // Persist per-category scores and recompute `total` for a batch of users in one

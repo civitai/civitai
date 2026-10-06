@@ -10,6 +10,12 @@ export function milestoneGrantableUserSql(alias: string) {
   return `${alias}.id <> ${SYSTEM_USER_ID} AND ${alias}."deletedAt" IS NULL AND ${alias}."bannedAt" IS NULL`;
 }
 
+/** Joins "User" as `alias` on `userIdSql`, keeping only accounts that can receive a new milestone. */
+export function joinMilestoneGrantableUserSql(alias: string, userIdSql: string) {
+  const grantable = milestoneGrantableUserSql(alias);
+  return `JOIN "User" ${alias} ON ${alias}.id = ${userIdSql} AND ${grantable}`;
+}
+
 /**
  * Score tier `milestone` (a "CreatorMilestone" alias) is owed to "User" `user`: the stored total
  * reaches it and the user does not hold it yet.

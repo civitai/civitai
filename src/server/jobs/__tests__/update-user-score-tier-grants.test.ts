@@ -24,7 +24,12 @@ const crossing = { userId: 7, milestoneKey: 'score:spark', name: 'Spark', thresh
 function batchCtx({
   grant = async () => [],
   owed = [{ id: 7, isModerator: false }],
-}: { grant?: () => Promise<unknown[]>; owed?: { id: number; isModerator: boolean }[] } = {}) {
+  markSeen = async () => [],
+}: {
+  grant?: () => Promise<unknown[]>;
+  owed?: { id: number; isModerator: boolean }[];
+  markSeen?: () => Promise<unknown[]>;
+} = {}) {
   const calls: { sql: string; params?: unknown[] }[] = [];
   const pg = {
     cancellableQuery: vi.fn(async (sql: string, params?: unknown[]) => {
@@ -33,6 +38,8 @@ function batchCtx({
         ? async () => [updatedRow]
         : sql.includes('INSERT INTO "UserCreatorMilestone"')
         ? grant
+        : sql.includes('UPDATE "UserCreatorMilestone"')
+        ? markSeen
         : async () => owed;
       return { result, cancel: async () => undefined };
     }),
@@ -45,7 +52,8 @@ function batchCtx({
   };
   const grantCalls = () =>
     calls.filter((c) => c.sql.includes('INSERT INTO "UserCreatorMilestone"'));
-  return { ctx, grantCalls };
+  const markSeenCalls = () => calls.filter((c) => c.sql.includes('UPDATE "UserCreatorMilestone"'));
+  return { ctx, grantCalls, markSeenCalls };
 }
 
 beforeEach(() => {
@@ -124,6 +132,37 @@ describe('persistScoreBatch while Creator Journey is flagged', () => {
     await persistScoreBatch(ctx, [['7', { models: 600 }]]);
     expect(mocks.isFlipt).not.toHaveBeenCalled();
     expect(grantCalls()).toEqual([]);
+  });
+});
+
+describe('persistScoreBatch before a definition launches', () => {
+  const afterLaunch = new Date('2026-10-07T00:00:00Z');
+  const unregistered = { ...crossing, milestoneKey: 'score:unregistered' };
+
+  it('marks silenced crossings seen and announces only launched ones', async () => {
+    const { ctx, markSeenCalls } = batchCtx({ grant: async () => [crossing, unregistered] });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(markSeenCalls()).toHaveLength(1);
+    expect(JSON.parse(markSeenCalls()[0].params?.[0] as string)).toEqual([
+      { userId: 7, milestoneKey: 'score:unregistered' },
+    ]);
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
+    expect(mocks.createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'creator-score-tier-reached:7:score:spark' })
+    );
+  });
+
+  it('still announces launched crossings when marking the rest seen fails', async () => {
+    const failure = new Error('deadlock detected');
+    const { ctx } = batchCtx({
+      grant: async () => [crossing, unregistered],
+      markSeen: async () => {
+        throw failure;
+      },
+    });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
+    expect(ctx.tierGrantErrors).toEqual([failure]);
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 });
 

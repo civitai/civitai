@@ -2,7 +2,15 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applyUserScoreUpdates } from '~/server/jobs/update-user-score';
+
+const mocks = vi.hoisted(() => ({ createNotification: vi.fn(async () => undefined) }));
+vi.mock('~/server/services/notification.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationService>()),
+  createNotification: mocks.createNotification,
+}));
+
+import type * as NotificationService from '~/server/services/notification.service';
+import { applyUserScoreUpdates, persistScoreBatch } from '~/server/jobs/update-user-score';
 import {
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
@@ -246,5 +254,49 @@ describe('cosmetics for existing holders', () => {
 
     const again = await grantMilestoneCosmeticsBatch(pg, { afterUserId: 0, limit: 10 });
     expect(again.inserted).toBe(0);
+  });
+});
+
+describe('nightly grant before a definition launches', () => {
+  const BEFORE_LAUNCH = new Date('2026-10-01T00:00:00Z');
+  const AFTER_LAUNCH = new Date('2026-10-07T00:00:00Z');
+
+  beforeAll(async () => {
+    await q(
+      `ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "isModerator" boolean NOT NULL DEFAULT false`
+    );
+  });
+
+  beforeEach(async () => {
+    mocks.createNotification.mockClear();
+    // Moderators are always in the Creator Journey audience, so Flipt is never asked.
+    await addUser(ELIGIBLE, 400);
+    await q(`UPDATE "User" SET "isModerator" = true WHERE id = $1`, [ELIGIBLE]);
+  });
+
+  async function runBatch(now: Date) {
+    const ctx = {
+      pg,
+      jobContext: { on: vi.fn(), checkIfCanceled: vi.fn() } as never,
+      tierUnlocks: [],
+      tierGrantErrors: [] as unknown[],
+    };
+    await persistScoreBatch(ctx, [[String(ELIGIBLE), { models: 600 }]], { now });
+    expect(ctx.tierGrantErrors).toEqual([]);
+  }
+
+  const notifiedKeys = () =>
+    mocks.createNotification.mock.calls.map(([n]) => (n as { key: string }).key);
+
+  it('grants a crossing seen and announces nothing', async () => {
+    await runBatch(BEFORE_LAUNCH);
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'score:spark', seen: true }]);
+    expect(notifiedKeys()).toEqual([]);
+  });
+
+  it('announces the same crossing unseen once the definition has launched', async () => {
+    await runBatch(AFTER_LAUNCH);
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'score:spark', seen: false }]);
+    expect(notifiedKeys()).toEqual([`creator-score-tier-reached:${ELIGIBLE}:score:spark`]);
   });
 });
