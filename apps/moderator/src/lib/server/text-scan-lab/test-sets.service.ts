@@ -1,6 +1,7 @@
 import { sql, type Selectable } from 'kysely';
 import { getModeratorDb } from '../moderator-db';
 import type { text_scan_test_case } from '../moderator-db/types';
+import { LabError } from './errors';
 import { composeEntities } from './harness-client';
 import { hashLabText } from './text-hash';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
@@ -16,12 +17,7 @@ import {
 /** Ids composed per "Add entities" request — sequential harness calls of 50 each. */
 export const MAX_ADD_ENTITIES = 200;
 
-export class TestSetError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-    this.name = 'TestSetError';
-  }
-}
+export class TestSetError extends LabError {}
 
 export type TestSetRun = {
   version: string;

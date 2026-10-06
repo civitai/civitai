@@ -7,7 +7,7 @@ import { getModeratorDb } from '$lib/server/moderator-db';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { listDrafts } from '$lib/server/text-scan-lab/drafts.service';
 import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
-import { LabHarnessError } from '$lib/server/text-scan-lab/harness-client';
+import { refused } from '$lib/server/text-scan-lab/errors';
 import { purgeDeletedSources } from '$lib/server/text-scan-lab/purge.service';
 import { confirmedOrQuote, type Billable } from '$lib/server/text-scan-lab/quote';
 import {
@@ -85,13 +85,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
     maxRunCases: MAX_RUN_CASES,
     wide: true,
   };
-};
-
-const refused = (e: unknown) => {
-  if (e instanceof TestSetError || e instanceof RunError)
-    return fail(e.status, { error: e.message });
-  if (e instanceof LabHarnessError) return fail(502, { error: e.message });
-  throw e;
 };
 
 const jsonField = z.string().transform((raw, ctx): unknown => {

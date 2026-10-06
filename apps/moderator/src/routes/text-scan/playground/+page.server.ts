@@ -11,6 +11,7 @@ import {
   type DraftPrompts,
 } from '$lib/server/text-scan-lab/drafts.service';
 import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
+import { refused } from '$lib/server/text-scan-lab/errors';
 import {
   LabHarnessError,
   composeEntities,
@@ -182,8 +183,7 @@ export const actions: Actions = {
     try {
       built = await buildItems(entityType, input);
     } catch (e) {
-      if (e instanceof LabHarnessError) return fail(502, { error: e.message });
-      throw e;
+      return refused(e);
     }
     if (typeof built === 'string') return fail(400, { error: built });
     const { items, skipped } = built;
@@ -251,8 +251,7 @@ export const actions: Actions = {
         errors: { a: errorA, b: errorB },
       };
     } catch (e) {
-      if (e instanceof LabHarnessError) return fail(502, { error: e.message });
-      throw e;
+      return refused(e);
     }
   },
 };

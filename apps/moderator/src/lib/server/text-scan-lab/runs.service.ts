@@ -2,6 +2,7 @@ import { sql, type Selectable } from 'kysely';
 import { dbRead } from '../db';
 import { getModeratorDb } from '../moderator-db';
 import type { text_scan_test_run } from '../moderator-db/types';
+import { LabError } from './errors';
 import { DraftError, getDraft, validateDraftPrompts, type DraftPrompts } from './drafts.service';
 import { LabHarnessError, getPrompts, quoteTexts, scanTexts } from './harness-client';
 import { purgeDeletedSources } from './purge.service';
@@ -16,12 +17,7 @@ export const MAX_RUN_CASES = 500;
 /** Results are written after each chunk, so a run cut short keeps what it was billed for. */
 const RUN_CHUNK = 50;
 
-export class RunError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-    this.name = 'RunError';
-  }
-}
+export class RunError extends LabError {}
 
 export type RunVersion = 'active' | number;
 export type RunTotals = Record<string, LabelTotals>;
@@ -457,7 +453,7 @@ async function changedSinceRun(run: Selectable<text_scan_test_run>): Promise<str
   try {
     current = await getPrompts();
   } catch (e) {
-    if (e instanceof LabHarnessError) throw new RunError(e.message, 502);
+    if (e instanceof LabHarnessError) throw new RunError(e.message, e.status);
     throw e;
   }
   const promptIds = (run.prompt_ids as Record<string, number> | null) ?? {};

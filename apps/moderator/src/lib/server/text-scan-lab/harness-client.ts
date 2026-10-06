@@ -1,4 +1,5 @@
 import { callModEndpoint } from '../user-actions.service';
+import { LabError } from './errors';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { chunk } from '$lib/text-scan-lab/chunk';
 import { HARNESS_LIMITS, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
@@ -14,10 +15,10 @@ const SCAN_CHUNK_SIZE = SCAN_CONCURRENCY;
 const SCAN_WAIT_SECONDS = 60;
 const HARNESS_TIMEOUT_MS = 150_000;
 
-export class LabHarnessError extends Error {
+/** The main app's harness refused or failed: a bad gateway from the page's point of view. */
+export class LabHarnessError extends LabError {
   constructor(message: string) {
-    super(message);
-    this.name = 'LabHarnessError';
+    super(message, 502);
   }
 }
 

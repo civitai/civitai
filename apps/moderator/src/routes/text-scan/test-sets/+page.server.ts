@@ -3,23 +3,14 @@ import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
 import { checkboxField, parseForm, parseQuery } from '$lib/server/query';
-import {
-  TestSetError,
-  archiveSet,
-  createSet,
-  listSets,
-} from '$lib/server/text-scan-lab/test-sets.service';
+import { refused } from '$lib/server/text-scan-lab/errors';
+import { archiveSet, createSet, listSets } from '$lib/server/text-scan-lab/test-sets.service';
 
 const querySchema = z.object({ archived: checkboxField.catch(false) });
 
 export const load: PageServerLoad = async ({ url }) => {
   const { archived } = parseQuery(url, querySchema);
   return { sets: await listSets({ includeArchived: archived }), archived };
-};
-
-const refused = (e: unknown) => {
-  if (e instanceof TestSetError) return fail(e.status, { error: e.message });
-  throw e;
 };
 
 export const actions: Actions = {

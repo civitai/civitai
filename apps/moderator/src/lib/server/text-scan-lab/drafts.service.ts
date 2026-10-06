@@ -1,6 +1,7 @@
 import { sql, type Selectable } from 'kysely';
 import { getModeratorDb } from '../moderator-db';
 import type { text_scan_prompt_draft } from '../moderator-db/types';
+import { LabError } from './errors';
 import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 
 export type DraftPrompts = Partial<Record<PromptKey, string>>;
@@ -18,12 +19,7 @@ export type PromptDraft = {
   publishedPromptIds: Record<string, number> | null;
 };
 
-export class DraftError extends Error {
-  constructor(message: string, readonly status: number) {
-    super(message);
-    this.name = new.target.name;
-  }
-}
+export class DraftError extends LabError {}
 export class DraftValidationError extends DraftError {
   constructor(message: string) {
     super(message, 400);

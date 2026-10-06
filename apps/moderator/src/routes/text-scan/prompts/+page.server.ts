@@ -14,6 +14,7 @@ import {
   validateDraftPrompts,
   type PromptDraft,
 } from '$lib/server/text-scan-lab/drafts.service';
+import { refused } from '$lib/server/text-scan-lab/errors';
 import {
   LabHarnessError,
   getPrompts,
@@ -72,11 +73,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 };
 
 const fail400 = (error: string) => fail(400, { error });
-/** A refusal the service explains goes back to the form; anything else is a real error. */
-const refused = (e: unknown) => {
-  if (e instanceof DraftError) return fail(e.status, { error: e.message });
-  throw e;
-};
 
 const promptsField = z.string().transform((raw, ctx) => {
   try {
