@@ -33,14 +33,14 @@ node .claude/skills/dev-server/cli.mjs wt rm <path>    # stops the server, unlin
 ```
 
 - `wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), a tree with a running dev server (`--stop-server`), and a tree the dev-server daemon itself runs from.
-- It deletes the branch only when `gh` reports a merged PR, keeps it when commits exist on no remote, and prints the SHA when it deletes.
+- It deletes the branch only when `gh` reports a merged PR from this repo whose head contains the branch's local tip, keeps it when commits exist on no remote, and prints the SHA when it deletes.
 - `wt stale` applies the same daemon check. A running daemon that won't say where it runs from (one predating PR #4641) blocks both: `wt stale` clears no tree and `wt rm` refuses (`--force` overrides that, but never a named holder). A daemon that is not running blocks nothing; a live daemon that errors on `/` still blocks.
 
 ## Checking merge state
 
 Two obvious checks return success-shaped output while telling you nothing:
 
-- **Don't use `git merge-base --is-ancestor <branch> origin/main`.** Squash-merging means a merged branch's tip is never an ancestor. Use `gh pr list --state all --head <branch>`.
+- **Don't use `git merge-base --is-ancestor <branch> origin/main`.** Squash-merging means a merged branch's tip is never an ancestor. Use `gh pr list --state all --head <branch> --json number,state,isCrossRepository,headRefOid`, and trust a MERGED row only when `isCrossRepository` is false and its `headRefOid` is your branch tip or contains it (`git merge-base --is-ancestor <branch> <headRefOid>`). `--head` matches the name alone, so a fork's PR or an old PR on a reused name comes back too. `wt stale` does this check for you.
 - **Don't use `git log --not --remotes` with no positive rev.** It prints nothing, reading as "no unpushed commits". Use `git rev-list --count <branch> --not --remotes`.
 
 ## Traps in a fresh worktree

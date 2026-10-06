@@ -21,6 +21,7 @@ import {
   describePrune,
   keepReasons,
   partitionStale,
+  prStatus,
   tipIsIn,
 } from './worktree.mjs';
 import { execFileSync } from 'child_process';
@@ -70,7 +71,7 @@ check(
   'PR #13 merged'
 );
 
-// `gh pr list --head` matches the branch NAME only (868m7qw41). Both shapes below are a branch with
+// `gh pr list --head` matches the branch NAME only. Both shapes below are a branch with
 // no PR of its own that `wt stale` listed as SAFE TO REMOVE.
 const FORK = { number: 4603, state: 'MERGED', isCrossRepository: true, headRefOid: TIP };
 check('a fork PR sharing the name is not ours', describePrRows([FORK], holdsTip).merged, null);
@@ -94,16 +95,6 @@ check(
   describePrRows([{ ...FORK, number: 1 }, own({ number: 2, state: 'MERGED' })], holdsTip).merged,
   2
 );
-check(
-  'a removable row never comes out of a fork merge',
-  partitionStale(
-    [{ path: 'x', isPrimary: false, mergedPr: describePrRows([FORK], holdsTip).merged, dirty: 0, sessions: [], daemon: null }],
-    null
-  ).removable.length,
-  0
-);
-
-// tipIsIn against a real repo: the predicate the merged rows are judged by.
 const repo = mkdtempSync(join(tmpdir(), 'wt-tip-'));
 try {
   const g = (...a) =>
@@ -123,6 +114,19 @@ try {
   check('an unknown sha is not held', tipIsIn('work', repo)('c'.repeat(40)), false);
   check('an absent branch holds nothing', tipIsIn('nope', repo)(later), false);
   check('a missing sha holds nothing', tipIsIn('work', repo)(undefined), false);
+
+  // `wt rm` decides `git branch -D` on prStatus, so the wiring to the tip check is pinned here too.
+  const asked = [];
+  const fakeGh = (rows) => (args) => {
+    asked.push(args);
+    return JSON.stringify(rows);
+  };
+  const ownMerge = (headRefOid) => [{ number: 7, state: 'MERGED', isCrossRepository: false, headRefOid }];
+  check('prStatus clears a merge that holds the tip', prStatus('work', repo, fakeGh(ownMerge(later))).merged, 7);
+  check('prStatus keeps a branch with commits after the merge', prStatus('work', repo, fakeGh(ownMerge(merged))).merged, null);
+  const fields = asked[0][asked[0].indexOf('--json') + 1].split(',');
+  check('gh is asked which repo each PR is from', fields.includes('isCrossRepository'), true);
+  check('and for its head commit', fields.includes('headRefOid'), true);
 } finally {
   rmSync(repo, { recursive: true, force: true });
 }

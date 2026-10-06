@@ -100,11 +100,11 @@ function unlinkReparsePoint(link) {
 }
 
 /**
- * `--is-ancestor` is useless here: the repo squash-merges, so a merged branch's tip is never an
+ * `--is-ancestor` against origin/main is useless here: the repo squash-merges, so a merged branch's tip is never an
  * ancestor of origin/main. It reported "not merged" for 24 of 26 branches on one run.
  */
-function prStatus(branch, cwd) {
-  const raw = spawnGh(
+export function prStatus(branch, cwd, gh = spawnGh) {
+  const raw = gh(
     [
       'pr',
       'list',
@@ -115,7 +115,7 @@ function prStatus(branch, cwd) {
       '--json',
       'number,state,isDraft,isCrossRepository,headRefOid',
       '--limit',
-      '5',
+      '20',
     ],
     cwd
   );
@@ -137,13 +137,8 @@ export function tipIsIn(branch, cwd) {
 }
 
 /**
- * Everything below the merged/not-merged split was already in hand and thrown away, so an open PR, a
- * draft, a closed-unmerged PR and a branch with no PR at all all printed `no merged PR` — the four
- * cases a person deciding whether to delete a tree most needs told apart.
- *
- * `gh pr list --head` matches on the branch NAME alone: a fork's PR with the same name, or an old
- * merged PR whose name was reused for new work, comes back too. A merged row only clears the branch
- * when it is from this repo and `holdsTip(headRefOid)` says the local tip is inside what merged.
+ * `gh pr list --head` matches the branch NAME only, so a fork's PR or an old merged PR whose name was
+ * reused comes back too. Only a same-repo merge whose head holds the local tip clears the branch.
  */
 export function describePrRows(rows, holdsTip = () => false) {
   if (!Array.isArray(rows))
@@ -170,9 +165,8 @@ export function describePrRows(rows, holdsTip = () => false) {
       label: `gh found no PR for this branch (only a fork's PR ${num(forks[0])} shares its name)`,
     };
   }
-  // Deliberately not "no PR exists": `gh` here has been seen switching itself to an account with no
-  // visibility of this repo, which returns an empty list and exit 0. Saying none was FOUND keeps the
-  // four states apart without inviting anyone to delete a tree on the strength of an empty answer.
+  // Not "no PR exists": `gh` has been seen switching to an account that can't see this repo, which
+  // returns [] and exit 0. A tree must not be deleted on the strength of that.
   if (!rows.length) return { merged: null, label: 'gh found no PR for this branch' };
   return { merged: null, label: `PR ${num(rows[0])} closed WITHOUT merging` };
 }
