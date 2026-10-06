@@ -1,5 +1,7 @@
 <script lang="ts">
   import { cn } from '@civitai/ui/utils.js';
+  import { LINK_CLASS } from '$lib/format';
+  import { scoreChips } from '$lib/text-scan-lab/score';
   import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
   import ActivePromptPanel from './ActivePromptPanel.svelte';
   import DraftEditor from './DraftEditor.svelte';
@@ -13,9 +15,35 @@
   const keyHref = (key: string) => (data.draft ? `?draft=${data.draft.id}&key=${key}` : `?key=${key}`);
 </script>
 
+{#snippet runTotals()}
+  <p class="mb-1">Latest finished test-set runs — for reference; they never block publishing.</p>
+  {#each data.runTotals as row (row.setId)}
+    {@const draftChips = row.draft ? scoreChips(row.draft.totals).join(' · ') || 'nothing scored' : 'not run'}
+    {@const activeChips = row.active ? scoreChips(row.active.totals).join(' · ') || 'nothing scored' : 'not run'}
+    {@const stale =
+      row.draft?.draftUpdatedAt &&
+      data.draft &&
+      row.draft.draftUpdatedAt.getTime() !== data.draft.updatedAt.getTime()}
+    <p>
+      <a
+        href="/text-scan/test-sets/{row.setId}{row.draft && row.active
+          ? `?a=${row.active.runId}&b=${row.draft.runId}`
+          : ''}"
+        class={LINK_CLASS}>{row.setName}</a
+      >
+      — draft: <span class="text-dark-0">{draftChips}</span>{stale ? ' (draft edited since)' : ''}
+      · active: <span class="text-dark-0">{activeChips}</span>
+    </p>
+  {/each}
+{/snippet}
+
 {#snippet publishPanel({ dirty }: { dirty: boolean })}
   {#if data.draft}
-    <PublishPanel draft={data.draft} {dirty} />
+    <PublishPanel
+      draft={data.draft}
+      {dirty}
+      totals={data.runTotals.length ? runTotals : undefined}
+    />
   {/if}
 {/snippet}
 

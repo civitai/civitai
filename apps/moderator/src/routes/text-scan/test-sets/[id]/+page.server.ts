@@ -1,10 +1,23 @@
 import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
-import type { Actions, PageServerLoad } from './$types';
+import type { Action, Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
-import { parseForm } from '$lib/server/query';
+import { parseForm, parseQuery } from '$lib/server/query';
+import { listDrafts } from '$lib/server/text-scan-lab/drafts.service';
 import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
 import { LabHarnessError } from '$lib/server/text-scan-lab/harness-client';
+import {
+  MAX_RUN_CASES,
+  QUOTE_ABOVE,
+  RunError,
+  compareRuns,
+  listRuns,
+  quoteRerun,
+  quoteRun,
+  rerunErrors,
+  startRun,
+  type RunComparison,
+} from '$lib/server/text-scan-lab/runs.service';
 import {
   MAX_ADD_ENTITIES,
   TestSetError,
@@ -23,15 +36,57 @@ const setIdOf = (raw: string) => {
   return Number.isInteger(id) && id > 0 && id <= Number.MAX_SAFE_INTEGER ? id : null;
 };
 
-export const load: PageServerLoad = async ({ params }) => {
+const runIdParam = z.coerce
+  .number()
+  .int()
+  .positive()
+  .max(Number.MAX_SAFE_INTEGER)
+  .optional()
+  .catch(undefined);
+const compareSchema = z.object({ a: runIdParam, b: runIdParam });
+
+export const load: PageServerLoad = async ({ params, url }) => {
   const id = setIdOf(params.id);
   const set = id ? await getSet(id) : null;
   if (!set) error(404, 'No such test set.');
-  return { set, cases: await listCases(set.id), maxAddEntities: MAX_ADD_ENTITIES, wide: true };
+  const q = parseQuery(url, compareSchema);
+  const [cases, runs, drafts] = await Promise.all([
+    listCases(set.id),
+    listRuns(set.id),
+    listDrafts(),
+  ]);
+  let comparison: RunComparison | null = null;
+  let compareError: string | null = null;
+  if (q.a && q.b) {
+    try {
+      comparison = await compareRuns(set.id, q.a, q.b);
+    } catch (e) {
+      if (!(e instanceof RunError)) throw e;
+      compareError = e.message;
+    }
+  }
+  return {
+    set,
+    cases,
+    runs,
+    drafts: drafts.map((d) => ({
+      id: d.id,
+      name: d.name,
+      updatedAt: d.updatedAt,
+      published: d.publishedAt !== null,
+    })),
+    comparison,
+    compareError,
+    maxAddEntities: MAX_ADD_ENTITIES,
+    maxRunCases: MAX_RUN_CASES,
+    quoteAbove: QUOTE_ABOVE,
+    wide: true,
+  };
 };
 
 const refused = (e: unknown) => {
-  if (e instanceof TestSetError) return fail(e.status, { error: e.message });
+  if (e instanceof TestSetError || e instanceof RunError)
+    return fail(e.status, { error: e.message });
   if (e instanceof LabHarnessError) return fail(502, { error: e.message });
   throw e;
 };
@@ -80,7 +135,59 @@ const setAction = <S extends z.ZodType>(
     }
   });
 
+const versionField = z.union([
+  z.literal('active'),
+  z
+    .string()
+    .regex(/^\d+$/, 'Choose a version to run.')
+    .transform(Number)
+    .refine((v) => v > 0 && v <= Number.MAX_SAFE_INTEGER, 'Choose a version to run.'),
+]);
+
+/** A billed batch: quoted and returned for confirmation first when it is over the quote threshold. */
+const billedAction =
+  <S extends z.ZodType>(
+    schema: S,
+    quote: (setId: number, input: z.infer<S>) => Promise<Record<string, unknown> | null>,
+    run: (
+      setId: number,
+      input: z.infer<S>,
+      userId: number
+    ) => Promise<{ id: number; status: string }>
+  ): Action =>
+  async ({ request, params, locals }) => {
+    const setId = setIdOf(params.id ?? '');
+    if (!setId) return fail(404, { error: 'No such test set.' });
+    const form = await request.formData();
+    const input = parseForm(schema, form);
+    if (typeof input === 'string') return fail(400, { error: input });
+    try {
+      if (form.get('confirmed') !== '1') {
+        const q = await quote(setId, input);
+        if (q) return { needsConfirm: true as const, ...q };
+      }
+      const result = await run(setId, input, locals.user.id);
+      return { ran: true as const, runId: result.id, status: result.status };
+    } catch (e) {
+      return refused(e);
+    }
+  };
+
 export const actions: Actions = {
+  // Runs inside the request: a set is at most MAX_RUN_CASES scans, written chunk by chunk, so a
+  // request cut short leaves the run 'running' with whatever was scanned.
+  run: billedAction(
+    z.object({ version: versionField }),
+    (setId, input) => quoteRun({ setId, version: input.version }),
+    (setId, input, userId) => startRun({ setId, version: input.version }, userId)
+  ),
+
+  rerunErrors: billedAction(
+    z.object({ runId: z.coerce.number().int().positive() }),
+    (setId, input) => quoteRerun(setId, input.runId),
+    (setId, input) => rerunErrors(setId, input.runId)
+  ),
+
   // Also the playground's "Save as test case". An entity case is keyed by its id, so saving one that
   // is already in the set replaces it; free text (no entityId) is always new, and counts as synthetic.
   addCase: setAction(

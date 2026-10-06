@@ -4,9 +4,21 @@
   import { LINK_CLASS, plural } from '$lib/format';
   import AddEntitiesForm from './AddEntitiesForm.svelte';
   import CaseRow from './CaseRow.svelte';
+  import RunComparison from './RunComparison.svelte';
+  import RunsPanel from './RunsPanel.svelte';
+  import type { TestRun } from '$lib/server/text-scan-lab/runs.service';
 
   let { data } = $props();
   const canEdit = $derived(!!data.grants['textScan.testSet.edit'] && !data.set.archivedAt);
+
+  function versionLabel(run: TestRun) {
+    if (run.version === 'active') return 'Active';
+    const draft = data.drafts.find((d) => d.id === Number(run.version));
+    if (!draft) return `Draft #${run.version} (deleted)`;
+    const edited =
+      run.draftUpdatedAt && draft.updatedAt.getTime() !== run.draftUpdatedAt.getTime();
+    return `Draft · ${draft.name}${edited ? ' (edited since)' : ''}`;
+  }
 </script>
 
 <svelte:head><title>{data.set.name} · Text-scan test sets</title></svelte:head>
@@ -23,6 +35,22 @@
     <p class="mt-1 text-sm text-dark-2">{data.set.description}</p>
   {/if}
 </div>
+
+<RunsPanel
+  runs={data.runs}
+  drafts={data.drafts}
+  canRun={!data.set.archivedAt && data.cases.length > 0}
+  maxRunCases={data.maxRunCases}
+  quoteAbove={data.quoteAbove}
+  compared={data.comparison ? { a: data.comparison.a.id, b: data.comparison.b.id } : null}
+  {versionLabel}
+/>
+{#if data.compareError}
+  <p class="mb-4 text-sm text-red-300">{data.compareError}</p>
+{/if}
+{#if data.comparison}
+  <RunComparison comparison={data.comparison} cases={data.cases} {versionLabel} />
+{/if}
 
 {#if canEdit}
   <AddEntitiesForm maxIds={data.maxAddEntities} />

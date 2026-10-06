@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
-import { requiresGrant } from '$lib/server/access';
+import { canAccess, requiresGrant } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import {
   DraftConflictError,
@@ -20,6 +20,8 @@ import {
   putPrompt,
   type LabPrompts,
 } from '$lib/server/text-scan-lab/harness-client';
+import { latestRunTotals, type LatestRun } from '$lib/server/text-scan-lab/runs.service';
+import { listSets } from '$lib/server/text-scan-lab/test-sets.service';
 import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
 
 const querySchema = z.object({
@@ -27,7 +29,31 @@ const querySchema = z.object({
   draft: z.coerce.number().int().positive().optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export type SetRunTotals = {
+  setId: number;
+  setName: string;
+  active: LatestRun | null;
+  draft: LatestRun | null;
+};
+
+/** Per open test set, the draft's and active's latest finished run — shown beside publish, never gating it. */
+async function draftRunTotals(draftId: number): Promise<SetRunTotals[]> {
+  const sets = await listSets();
+  const rows = await Promise.all(
+    sets.map(async (s) => {
+      const latest = await latestRunTotals(s.id);
+      return {
+        setId: s.id,
+        setName: s.name,
+        active: latest.active,
+        draft: latest.drafts[String(draftId)] ?? null,
+      };
+    })
+  );
+  return rows.filter((r) => r.active || r.draft);
+}
+
+export const load: PageServerLoad = async ({ url, locals }) => {
   const q = parseQuery(url, querySchema);
   const [drafts, prompts] = await Promise.all([
     listDrafts(),
@@ -42,7 +68,9 @@ export const load: PageServerLoad = async ({ url }) => {
   const draft: PromptDraft | null = q.draft
     ? drafts.find((d) => d.id === q.draft) ?? (await getDraft(q.draft))
     : null;
-  return { key: q.key, drafts, draft, prompts, wide: true };
+  const runTotals =
+    draft && canAccess(locals.user, '/text-scan/test-sets') ? await draftRunTotals(draft.id) : [];
+  return { key: q.key, drafts, draft, prompts, runTotals, wide: true };
 };
 
 const fail400 = (error: string) => fail(400, { error });

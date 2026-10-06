@@ -633,6 +633,7 @@ export type text_scan_test_run = {
   version: string;
   draft_id: string | null;
   draft_updated_at: Timestamp | null;
+  prompts: unknown | null;
   prompt_ids: unknown | null;
   model: string | null;
   status: string;

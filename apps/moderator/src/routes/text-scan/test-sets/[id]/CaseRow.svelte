@@ -38,7 +38,7 @@
   const remove = new FormState({ reload: true, onSuccess: null });
 </script>
 
-<Table.Row>
+<Table.Row id="case-{testCase.id}" class="target:bg-dark-5">
   <Table.Cell class="align-top">
     <p class="text-xs text-dark-2">{testCase.entityType}</p>
     {#if testCase.entityId === null}
