@@ -4,10 +4,10 @@ import {
   getInputTypeForWorkflow,
   getOutputTypeForWorkflow,
   workflowConfigByKey,
-} from '~/shared/data-graph/generation/config/workflows';
-import { mergeGateStates, rulesToStates } from '~/shared/data-graph/generation/gates';
+} from '~/shared/generation/config/workflows';
+import { mergeGateStates, rulesToStates } from '~/shared/generation/gates';
 import { selectorCoherence } from './selector-coherence';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 import { imageHub } from './image/hub.graph';
 import { videoHub } from './video/hub.graph';
@@ -23,14 +23,12 @@ import {
 import { videoInterpolation, videoPreprocess, videoUpscale } from './workflows/video-enhance.graph';
 
 /**
- * The composed root, mirroring `generation-graph.ts`'s head: workflow (key
- * migration + gate refusal) and the output/input computeds, then a dispatch to
- * ONE hub per output type — each hub owns only its own ecosystems, defaults,
- * and head fields (v1 serves all four output types from one shared ecosystem
- * field; the port deliberately does not).
+ * The composed root: workflow (key migration + gate refusal) and the output/input
+ * computeds, then a dispatch to ONE hub per output type — each hub owns its own
+ * ecosystems, defaults and head fields. Deliberately NOT one shared `ecosystem`
+ * field serving all four outputs.
  */
 
-// ---- copied from generation-graph.ts, which dies with the data-graph engine
 const priorityOptions = ['low', 'normal', 'high'] as const;
 const outputFormatOptions = ['jpeg', 'png'] as const;
 
@@ -76,7 +74,7 @@ const outputHubs = branch('output', [
 ] as const);
 
 /**
- * The standalone (no-ecosystem) workflows, each its own branch in v1's root
+ * The standalone (no-ecosystem) workflows, each its own branch off the root
  * discriminator. Everything else routes to the per-output ecosystem hubs.
  */
 const STANDALONE_WORKFLOWS = new Set([
@@ -138,8 +136,8 @@ export const generationHub = defineGraph<GenerationCtx>()
   })
   .computed('output', ({ workflow }) => getOutputTypeForWorkflow(workflow))
   .computed('input', ({ workflow }) => getInputTypeForWorkflow(workflow))
-  // v1 declares priority/outputFormat at the ROOT gated on image output, so
-  // they apply to the standalone image workflows too, not just the image hub
+  // priority/outputFormat are declared at the ROOT gated on image output, so they
+  // apply to the standalone image workflows too, not just the image hub
   .field('priority', ({ output, _ext }) => {
     if (output !== 'image') return null;
     const isMember = _ext.user?.isMember ?? false;
@@ -182,8 +180,8 @@ export const generationHub = defineGraph<GenerationCtx>()
           },
         }
   )
-  // state-only (the oracle's wire has no such key): standalone workflows get
-  // their own arm; everything else rides the per-output ecosystem hubs
+  // state-only — `emit: false`, so this key is absent from `parse().data`: standalone
+  // workflows get their own arm; everything else rides the per-output ecosystem hubs
   .computed(
     'workflowKind',
     ({ workflow }) => (STANDALONE_WORKFLOWS.has(workflow) ? workflow : 'ecosystem'),

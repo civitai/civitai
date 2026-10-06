@@ -106,7 +106,7 @@ export function candidateVerdictIsDeterminate(
  * Decide the comparison outcome from the two verdicts.
  *
  * 🔴 THE TWO DISAGREEMENT DIRECTIONS ARE NOT INTERCHANGEABLE AND MUST NOT SHARE A LABEL. A bare
- * `match`/`diverged` split — which is what the sibling `form_graph_shadow_parse_total` uses, and
+ * `match`/`diverged` split, and
  * which is right for THAT cutover because a parse is either correct or it is not — would be
  * actively misleading here, because the two directions have opposite consequences:
  *

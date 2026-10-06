@@ -575,14 +575,15 @@ import { TransactionType } from '~/shared/constants/buzz.constants';
 // #3520 — real collector (not a stub): the router reads `.list()` off the
 // context's collector, so using the genuine implementation keeps the test
 // honest about the shape it consumes.
-import { createModelSubstitutionCollector } from '~/shared/data-graph/generation/model-substitution';
-import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import { createModelSubstitutionCollector } from '~/shared/generation/model-substitution';
+import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
 // #4159 — the REAL validator. `createWorkflowStepsFromGraphInput` is mocked for
 // this whole file, which is exactly why the LoRA defect was invisible here; the
-// regression suite re-arms `generationGraph.safeParse` inside that mock so the
-// input the router builds is graded by the thing that actually rejected it in
-// production. NOT mocked anywhere, so this is the shipped graph.
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
+// regression suite re-arms the hub parse inside that mock so the input the router
+// builds is graded by the thing that actually rejected it in production. NOT mocked
+// anywhere, so this is the shipped graph.
+import { generationHub } from '~/shared/form-graph/generation/hub.graph';
+import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 // The PASS-THROUGH arm's one control, imported REAL (the `steps` module is
 // mocked above, but `orchestrator-denylist` is a sibling module and is not).
@@ -4080,7 +4081,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     //
     // WHAT THIS DOES NOT PROVE: that getResourceData's REAL hasAccess/Private
     // logic actually rejects those models — that logic is mocked away here (it
-    // lives in orchestrator/common.ts and is exercised by its own suite). This
+    // lives in the orchestrator service and is exercised by its own suite). This
     // test pins the ORDERING + fail-shape contract (belt before spend, throw →
     // no reservation), not the belt's internal entitlement maths. A DEPLOYED
     // browser run against a real early-access / Private model is still required
@@ -4709,7 +4710,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
     // graph — the thing that rejected the built input — never ran. Every test
     // above that submits a compatible LoRA is green on `main` while production
     // returns HTTP 400. So these tests re-arm the ONE step that was stubbed out:
-    // the mock runs the REAL `generationGraph.safeParse` on the input the router
+    // the mock runs the REAL `generationHub.parse` on the input the router
     // actually built, and reproduces `validateInput`'s throw on failure (same
     // `Validation failed: <key>: <message>` shape). Nothing else is unmocked.
     //
@@ -4742,7 +4743,10 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
           [];
         mockCreateStepsFromGraph.mockImplementation(
           async ({ input }: { input: Record<string, unknown> }) => {
-            const result = generationGraph.safeParse(input as never, graphCtx as never) as {
+            const result = generationHub.parse(
+              reconcileSelectors(input).raw,
+              graphCtx as never
+            ) as {
               success: boolean;
               errors?: Record<string, { message: string }>;
               data?: Record<string, unknown>;
@@ -4905,9 +4909,9 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
 
       // NEGATIVE CONTROL for the harness above: the same re-armed validator must
       // be able to go RED. Without this, a green first arm is indistinguishable
-      // from a `safeParse` that cannot fail.
+      // from a parse that cannot fail.
       it('CONTROL: the re-armed validator DOES reject a genuinely invalid graph input', async () => {
-        const bad = generationGraph.safeParse(
+        const bad = generationHub.parse(
           {
             workflow: 'txt2img',
             ecosystem: 'SDXL',
@@ -4919,7 +4923,7 @@ describe('blocks workflow — W10 page token (entityType:none)', () => {
             steps: 25,
             quantity: 1,
             priority: 'low',
-          } as never,
+          },
           graphCtx as never
         ) as { success: boolean; errors?: Record<string, { message: string }> };
         expect(bad.success).toBe(false);

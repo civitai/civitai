@@ -563,10 +563,7 @@ const featureFlags = createFeatureFlags({
   generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
-  // /generate?air= form entry. That entry exists ONLY in the form-graph lane
-  // (form-graph/generation/ingestion.ts); the v2 lane ignores the params. So
-  // don't widen this flag beyond formGraphGenerator's audience — move the two
-  // in lockstep.
+  // /generate?air= form entry (form-graph/generation/ingestion.ts).
   generationAirResources: { availability: ['mod'], fliptKey: 'generation-air-resources' },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
@@ -576,13 +573,8 @@ const featureFlags = createFeatureFlags({
   // Gates PolyGen's v7 build, which is a `polygenVersion` option rather than a
   // model version, so generation gate rules cannot target it: off ⇒ v7 is
   // dropped from the version options, which both hides it and makes a submitted
-  // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
+  // `polygenVersion: 'v7'` fail the node's schema (see `model3d/polygen.graph.ts`).
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
-  // THE form-graph cutover flag: swaps GenerationTabs' form for the form-graph
-  // lane AND serves the hub parse for the user's submits/whatIfs (validateInput
-  // reads it from the generation ctx). Every parse shadow-compares regardless.
-  // Widen via the fliptKey; flag and comparison both go away with data-graph.
-  formGraphGenerator: { availability: ['mod'], fliptKey: 'form-graph-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay

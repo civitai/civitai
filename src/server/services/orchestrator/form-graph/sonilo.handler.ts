@@ -3,7 +3,7 @@ import type {
   SoniloMusicInput,
   SoniloSoundEffectInput,
 } from '@civitai/orchestration-client';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 export const createSoniloInput = defineHandler<

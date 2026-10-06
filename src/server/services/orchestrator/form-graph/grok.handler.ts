@@ -24,7 +24,7 @@ import {
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 import { isGrokV15, isGrokV2 } from '~/shared/form-graph/generation/grok-shared';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 const grokVideoAspectRatioList: GenerationAspectRatio[] = [

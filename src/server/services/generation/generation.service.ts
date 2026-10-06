@@ -13,7 +13,7 @@ import { uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, getDbWithoutLagBatch } from '~/server/db/db-lag-helpers';
-import { wanBaseModelGroupIdMap } from '~/server/services/orchestrator/ecosystems/wan.handler';
+import { wanBaseModelGroupIdMap } from '~/shared/generation/version-ids';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -60,7 +60,7 @@ import {
   gateRuleSchema,
   type CanGenerateBlockedTargets,
   type GateRule,
-} from '~/shared/data-graph/generation/gates';
+} from '~/shared/generation/gates';
 import {
   applicableMessagesFor,
   generatorMessageSchema,

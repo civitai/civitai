@@ -8,7 +8,7 @@ import {
   civitaiHostedImageUrlSchema,
   SOURCE_IMAGE_URL_MAX,
 } from '~/server/schema/blocks/civitai-image-url';
-import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import type { ModelSubstitutionReason } from '~/shared/generation/model-substitution';
 import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
@@ -123,10 +123,9 @@ export type BlockSourceImage = z.infer<typeof blockSourceImageSchema>;
 
 // ── Multi-image conditioning (App Blocks IMAGE bridge) ───────────────────────
 // ABSOLUTE wire bound on `sourceImages`, NOT the real cap. The real cap is
-// PER-ECOSYSTEM and derived from the graph's own `imagesNode` config at build
-// time (`getImagesLimit` — Boogu/Kontext/MAI/SD-family 1, Qwen/Qwen2/MageFlow
-// 3, Reve/HiDream-O1 4, WanImage 5, Flux.2/Klein/OpenAI/NanoBanana/Seedream/
-// Grok 7). This constant only stops an untrusted iframe from posting an
+// PER-ECOSYSTEM and derived from the graph's own `imagesDef` config at build
+// time (`getImagesLimit`, ranging 1–10). This constant only stops an untrusted
+// iframe from posting an
 // unbounded array before the body is even parsed — it is set ABOVE the largest
 // per-ecosystem cap on purpose so a future ecosystem raising its own limit is
 // not silently clamped here. Every element is validated individually against
@@ -168,7 +167,7 @@ const blockTextToImageBodySchema = z.object({
   // (`normalizeBlockSourceImages`) and everything downstream sees only arrays.
   sourceImage: blockSourceImageSchema.optional(),
   // Multi-image conditioning. The graph layer has always supported N images
-  // (`imagesNode({ min, max, slots })`); the block bridge could only ever
+  // (`imagesDef({ min, max, slots })`); the block bridge could only ever
   // express one. Each element is validated INDIVIDUALLY (Civitai-hosted https
   // host check + DIM_MIN/DIM_MAX bounds) — the array form has exactly the same
   // per-image posture as the singular one, with no "first element only" gap.

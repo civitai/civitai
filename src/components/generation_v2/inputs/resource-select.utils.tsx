@@ -24,7 +24,7 @@ export type ResourceSelectValue = GenerationResource;
 
 /**
  * Partial resource value that can be passed to the input.
- * This matches what DataGraph validation schema outputs.
+ * This matches what the resource field's output schema produces.
  */
 /**
  * Pre-hydration values (localStorage, graph defaults, remix payloads) carry as
@@ -45,9 +45,9 @@ export type PartialResourceValue = Partial<Omit<GenerationResource, 'model' | 'e
 /**
  * Helper to check if a value needs hydration.
  * A value needs hydration if it's missing essential fields like model or name.
- * This can happen when the value came from URL params, minimal input, or DataGraph defaults.
+ * This can happen when the value came from URL params, minimal input, or a field default.
  *
- * DataGraph defaults only include { id, baseModel, model: { type } } - no name fields.
+ * A field default only includes { id, baseModel, model: { type } } - no name fields.
  */
 export function needsHydration(value: PartialResourceValue | undefined): boolean {
   if (!value) return false;

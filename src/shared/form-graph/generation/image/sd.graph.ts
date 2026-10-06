@@ -30,8 +30,7 @@ import {
 import { familyScope, textBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
- * Stable Diffusion family (SD1 / SDXL / Pony / Illustrious / NoobAI),
- * ported from `stable-diffusion-graph.ts`.
+ * Stable Diffusion family (SD1 / SDXL / Pony / Illustrious / NoobAI).
  */
 
 const MAX_UPSCALE_RESOLUTION = 4096;
@@ -97,8 +96,8 @@ export const sd = defineGraph<FamilyExt>({ scope: familyScope })
       modelWins: true,
     })
   )
-  // v1's checkpoint effect: an unlocked model from another ecosystem drags the
-  // ecosystem with it (when the workflow allows). The selection stays in the
+  // An unlocked model from another ecosystem drags the ecosystem with it (when the
+  // workflow allows). The selection stays in the
   // hub field (shadowed off the wire); this derived value carries the wire
   // name, and everything ecosystem-dependent below reads IT.
   .computed(

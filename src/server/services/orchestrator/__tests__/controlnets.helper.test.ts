@@ -8,8 +8,8 @@ import {
   sdxlControlNetPreprocessors,
   zImageControlNetPreprocessors,
 } from '~/shared/constants/controlnets.constants';
-import type { ControlNetEntryValue } from '~/shared/data-graph/generation/common';
-import { buildControlNetSteps, mapControlNetsToJobInput } from '../ecosystems/controlnets.helper';
+import type { ControlNetEntryValue } from '~/shared/generation/values';
+import { buildControlNetSteps, mapControlNetsToJobInput } from '../handlers/controlnets.helper';
 
 const entry: ControlNetEntryValue = {
   preprocessor: 'sdpose',

@@ -6,7 +6,7 @@
 node .claude/skills/dev-server/cli.mjs wt new <name> <branch> [--no-install] [--base origin/<b>]
 ```
 
-`wt new` fetches, runs `git worktree add -b <branch> --no-track <base>`, initialises the `event-engine-common` submodule, writes `.envrc` (`use flake`) when the primary checkout has one, runs `pnpm install` (unless `--no-install`), and checks that `git status -sb` prints `## <branch>` alone. Don't hand-roll it, and don't create worktrees with the `EnterWorktree` tool: it puts the tree in `.claude/worktrees/` (outside the Defender-excluded repos root, so it runs slow) and branches the shorthand way, so the branch tracks `origin/main`. Entering an existing worktree with `EnterWorktree` `path:` is fine.
+`wt new` fetches, runs `git worktree add -b <branch> --no-track <base>`, initialises the `event-engine-common` submodule, writes `.envrc` (`use flake`) when the primary checkout has one, copies the skills' credentials from the primary, runs `pnpm install` (unless `--no-install`), and checks that `git status -sb` prints `## <branch>` alone. Don't hand-roll it, and don't create worktrees with the `EnterWorktree` tool: it puts the tree in `.claude/worktrees/` (outside the Defender-excluded repos root, so it runs slow) and branches the shorthand way, so the branch tracks `origin/main`. Entering an existing worktree with `EnterWorktree` `path:` is fine.
 
 Worktrees live in `<repos-root>/worktrees/<name>`, with no prefix on the directory name. Keep them under the repos root: `.claude/skills/dev-server/scripts/defender-exclusions.ps1` excludes that path from Defender scanning, and a tree outside it runs slow. Run the script once with `-ReposRoot <repos-root>` to cover the parent (its default covers only the checkout it lives in).
 
@@ -47,6 +47,30 @@ Two obvious checks return success-shaped output while telling you nothing:
 
 - **Always initialise the `event-engine-common` submodule** (`wt new` does): `git submodule sync --recursive && git submodule update --init event-engine-common`. Without it, `pnpm typecheck`/`build` fail with a wall of `Cannot find module '.../event-engine-common/...'` errors plus cascading `implicitly has an 'any' type`, which look like your change broke something.
 - **Without the submodule a suite vanishes instead of failing.** `src/server/routers/__tests__/blocks.router.workflow.test.ts` fails to collect and contributes 0 tests; the run still reads as a pass. Validate any worktree test run by confirming that file collected a nonzero count (308 on one base). With the result cache on, the file may be legitimately absent because it was skipped as unchanged (the `[test-cache]` line says how many); then confirm it is outside your diff's reach, or run it by full filename, which bypasses the cache.
+- **A fresh worktree gets none of the skills' credentials, and each one fails as though the skill
+  were broken.** The dev server layers the APP's env chain (root `.env`, per-app `.env`);
+  `.claude/skills/*/.env` is a different thing. Nothing copied it until `wt new` did — measured
+  2026-10-05, the primary had 7 and a worktree 0 of 47 skill directories. The symptoms name no
+  cause: `FLIPT_URL and FLIPT_API_TOKEN must be set`, `credentials not configured`, a bare 401.
+  `wt new` now copies them and warns about any skill whose credentials exist in no tree. To see the
+  state of a tree you already have, `wt env` lists presence per skill — never a value, because a
+  per-skill inventory annotated with what each unlocks is what must not exist in a public repo:
+
+  ```bash
+  node .claude/skills/dev-server/cli.mjs wt env                 # what this tree has
+  node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
+  node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
+  node .claude/skills/dev-server/cli.mjs wt env --restore        # bring back what this tree lacks
+  ```
+
+  Neither direction overwrites a credential a tree already holds — a worktree may carry a
+  different one deliberately. `--backup` exists because these files are one `git clean` from gone
+  with nothing to restore from: a skill whose `.gitignore` lists `.env` loses it to `clean -x`, one
+  without a `.gitignore` loses the untracked file to `clean -d`. Both happened — `discord` and `flipt`
+  went missing from the primary while their siblings sat untouched since May, and discord's had to
+  be re-obtained through an interactive browser login. The store sits outside the repo on purpose;
+  a backup inside it dies to the same clean.
+
 - **A fresh worktree has no `.envrc`** (gitignored; `wt new` writes `use flake` only when the primary checkout has one). Without it you silently get system Node instead of the flake's, and no `PRISMA_*_ENGINE_*` paths, so Prisma looks for a `linux-nixos` engine that was never published. Mismatched node produced spurious `window.localStorage is undefined` failures under happy-dom plus Prisma engine errors, all misattributed to the code under test. Fix: `cp .envrc.example <worktree>/.envrc && direnv allow`, or run commands through `nix develop`.
 - **Confirm your cwd is actually the worktree.** A run whose cwd was a different repo lost two suites to collection failures and 77 tests silently never ran, with otherwise normal output.
 

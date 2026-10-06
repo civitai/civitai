@@ -181,7 +181,7 @@ import {
   snapshotFromWorkflow,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
 } from '~/server/services/blocks/workflow.service';
-import { projectModelSubstitutions } from '~/shared/data-graph/generation/model-substitution';
+import { projectModelSubstitutions } from '~/shared/generation/model-substitution';
 import {
   assertInlineGraphAirsDeclared,
   assertViewerEntitledToInlineResources,
@@ -943,7 +943,7 @@ function buildGateVersion(gate: {
 //   3. enforces the platform's REAL generation-compatibility check against the
 //      checkpoint.
 // The compatibility check is the correctness boundary: the orchestrator belt
-// filters by resource TYPE (common.ts keeps a LoRA-typed resource), NOT by
+// filters by resource TYPE (the belt keeps a LoRA-typed resource), NOT by
 // generation compatibility — so an incompatible LoRA of type LORA is PASSED
 // downstream and billed for, producing a gen the viewer paid for that quietly
 // ignored (or degraded) their LoRA. This explicit check is what prevents such a

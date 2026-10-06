@@ -9,7 +9,7 @@ import {
   FLUX_MODE_IDS,
   reconcileSelectors,
 } from '../reconcile';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
  * The selector-reconciliation policy: one pure function, two adapters. The

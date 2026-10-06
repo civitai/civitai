@@ -233,9 +233,9 @@ import {
 import {
   createModelSubstitutionCollector,
   WORKFLOW_METADATA_MODEL_SUBSTITUTIONS_KEY,
-} from '~/shared/data-graph/generation/model-substitution';
-import { classifyModelSubstitutionReason } from '~/shared/data-graph/generation/workflow-capability';
-import { getWorkflowCapability } from '~/shared/data-graph/generation/workflow-capability';
+} from '~/shared/generation/model-substitution';
+import { classifyModelSubstitutionReason } from '~/shared/generation/workflow-capability';
+import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 

@@ -1,4 +1,4 @@
-import type { GenerationSurface } from '~/shared/data-graph/generation/model-substitution';
+import type { GenerationSurface } from '~/shared/generation/model-substitution';
 
 /**
  * HOW A REQUEST WAS AUTHENTICATED — the only two fields that distinguish a

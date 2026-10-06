@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { generationHub } from '../hub.graph';
 import { outputResetPredicate } from '../reset';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 
 /**
  * The per-output reset must be scoped: resetting the image form clears image
  * buckets and the globals, and leaves other outputs' stored settings intact —
- * v1's `clearStorageForOutput` semantics, on `store.prune`. Exercised through
+ * Per-output storage clearing, on `store.prune`. Exercised through
  * the REAL hub store so the addresses are the ones production writes.
  */
 

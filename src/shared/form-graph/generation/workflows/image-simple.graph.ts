@@ -1,20 +1,19 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import {
   preprocessKindParamSpecs,
   preprocessKinds,
   type PreprocessKind,
-} from '~/shared/data-graph/generation/image-preprocess-graph';
-import { imagesDef, sliderDef } from '../defs';
+} from '~/shared/generation/preprocess-specs';
+import { optionFallback, imagesDef, sliderDef } from '../defs';
 
 /**
- * The remaining standalone image workflows, ported from
- * `image-remove-background-graph.ts` and `image-preprocess-graph.ts`, plus
+ * The remaining standalone image workflows — remove-background and preprocess, plus
  * the two EMPTY graphs (`img2meta`, `prompt:enhance`) whose UIs are fully
  * self-contained panels — they exist so every workflow value has an arm.
  *
- * The preprocess kind list and per-kind param specs are imported from the v1
+ * The preprocess kind list and per-kind param specs are imported from the shared
  * module: they mirror the @civitai/client `PreprocessImageInput` union, not
  * the graph engine, and duplicating 36 kinds' specs would only drift.
  */
@@ -29,6 +28,7 @@ export const imagePreprocess = defineGraph<GenerationCtx>()
     input: z.enum(preprocessKinds).optional(),
     output: z.enum(preprocessKinds),
     default: 'canny' as PreprocessKind,
+    correct: optionFallback(preprocessKinds, 'canny' as PreprocessKind),
     meta: { options: preprocessKinds.map((value) => ({ label: value, value })) },
   })
   .field('preprocessResolution', sliderDef({ min: 64, max: 2048, step: 8, default: 512 }))

@@ -18,7 +18,7 @@ import type {
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { qwen21DiffusionModel } from '~/shared/constants/qwen21.constants';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 

@@ -1,5 +1,5 @@
 import { branch, defineGraph } from 'form-graph';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import {
   getAspectRatioOptions,
   type GenerationAspectRatio,
@@ -25,13 +25,11 @@ import {
 } from '../shared';
 
 /**
- * MiniMax H3, ported from `minimax-graph.ts`. Two builds behind one version
+ * MiniMax H3. Two builds behind one version
  * picker: the API build (no extra knobs) and the comfy build (LoRAs, seed, a
  * turbo toggle that reshapes the steps range). Prompt is required even with
  * images (H3 rejects text-less requests). No negative prompt.
  */
-
-// ---- copied from minimax-graph.ts, which dies with the data-graph engine ----
 
 export const minimaxVersionIds = {
   'v1.0': 3183239,
@@ -58,8 +56,6 @@ export const minimaxComfyAspectRatios = getAspectRatioOptions('720p', minimaxAsp
 export const MINIMAX_DEFAULT_ASPECT_RATIO = '16:9';
 
 const MAX_REFERENCE_IMAGES = 9;
-
-// ---- end of minimax-graph.ts copies -----------------------------------------
 
 /** One lookup for the graph AND the handler — the lanes cannot drift. */
 export const minimaxVariantOf = versionModeOf(
@@ -89,7 +85,7 @@ const comfy = defineGraph<FamilyExt>()
 
 type MinimaxExt = FamilyExt & { model?: unknown };
 
-/** Tagged: v1's `minimaxVariant` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `minimaxVariant`. */
 const variants = branch('minimaxVariant', (ext: MinimaxExt) => minimaxVariantOf(ext.model), {
   api,
   comfy,
