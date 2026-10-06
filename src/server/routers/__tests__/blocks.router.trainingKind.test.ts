@@ -410,6 +410,7 @@ beforeEach(() => {
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockResolvedValue([imageRow({ id: 1 }), imageRow({ id: 2 })]);
   h.getActiveDevTunnel.mockImplementation(async () => null);
+  h.reserveDevSessionBuzz.mockReset();
   seedDataset();
 });
 afterEach(() => envMock.reset());
