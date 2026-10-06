@@ -2476,6 +2476,17 @@ export type CreatorGalleryHiddenUser = {
   note: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type CreatorMilestone = {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: Generated<boolean>;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  sortOrder: Generated<number>;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -2494,6 +2505,8 @@ export type Crucible = {
   entryLimit: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
+  entryWarningPercent: Generated<number>;
+  entryCutoffPercent: Generated<number>;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: Generated<unknown>;
@@ -3043,16 +3056,23 @@ export type MembershipGift = {
   id: string;
   gifterId: number;
   recipientId: number;
+  holderId: number;
   tier: string;
   months: number;
   amountCents: number;
   status: Generated<MembershipGiftStatus>;
   message: string | null;
   anonymous: Generated<boolean>;
+  monthsRemaining: Generated<number>;
+  monthsConsumed: Generated<number>;
+  acceptedAt: Timestamp | null;
+  expiresAt: Timestamp | null;
   stripeCheckoutSessionId: string | null;
   stripePaymentIntentId: string | null;
   stripeCouponId: string | null;
   stripeSubscriptionId: string | null;
+  armedCouponId: string | null;
+  armedAt: Timestamp | null;
   fulfilledAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
@@ -4573,6 +4593,12 @@ export type UserCosmeticShopPurchases = {
   refunded: boolean;
   meta: unknown | null;
 };
+export type UserCreatorMilestone = {
+  userId: number;
+  milestoneKey: string;
+  achievedAt: Generated<Timestamp>;
+  seenAt: Timestamp | null;
+};
 export type UserEngagement = {
   userId: number;
   targetUserId: number;
@@ -5006,6 +5032,7 @@ export type DB = {
   CosmeticShopSectionItem: CosmeticShopSectionItem;
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
+  CreatorMilestone: CreatorMilestone;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5184,6 +5211,7 @@ export type DB = {
   UserCosmeticShopItemWishlist: UserCosmeticShopItemWishlist;
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
+  UserCreatorMilestone: UserCreatorMilestone;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;

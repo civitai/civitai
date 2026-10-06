@@ -4,6 +4,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -36,6 +37,7 @@ export default function Model3DReviewModal({
   const dialog = useDialogContext();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
+  const showCreatePostError = useShowCreatePostError();
 
   // Thumbs up / thumbs down — `undefined` means "user hasn't picked yet" so
   // we can require a choice on submit. Existing reviews always have a value.
@@ -55,12 +57,7 @@ export default function Model3DReviewModal({
   // via the review upsert. We pass `postId` back through `reviews.upsert` so the
   // server can link them atomically (Post.model3dReviewId @unique).
   const createPost = trpc.post.create.useMutation({
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to create review post',
-        error: new Error(error.message),
-      });
-    },
+    onError: (error) => showCreatePostError(error.message, 'Failed to create review post'),
   });
 
   const isLoading = upsertReview.isPending || createPost.isPending;

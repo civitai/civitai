@@ -226,7 +226,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
 - [ ] **`/moderator/generation-config`** — `generation-config.tsx` + `components/Moderation/GenerationConfig/` (`GateRulesSection`, `GeneratorMessagesSection`, `target-inputs`) — flag: none
   - Procedures: `getGateRules`, `getGeneratorMessages` (queries); `saveGateRule`, `deleteGateRule`, `saveGeneratorMessage`, `deleteGeneratorMessage` (mutations)
   - Services: `generation/generation.service.ts` (the same names)
-  - Schemas: `shared/data-graph/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
+  - Schemas: `shared/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
   - Infra: **Redis** — sysRedis hashes `GENERATION.GATE_RULES` / `GENERATION.MESSAGES` (one field per entry, migrated on first use from `SYSTEM.FEATURES`; the status cards still read `SYSTEM.FEATURES`) **+ Flipt** (`GENERATION_TESTING`)
 - [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
   **`/audit/generator-restrictions`** (label "Generator Restrictions").

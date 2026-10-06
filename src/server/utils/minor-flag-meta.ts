@@ -112,6 +112,34 @@ export function stripModerationOwnedMeta<T extends ModelMeta | null | undefined>
   return rest as T;
 }
 
+/**
+ * Meta keys only server code may write, for everyone including moderators: no moderator flow writes
+ * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
+ * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
+ * paths read both. Client meta that carries them is ignored, so on update the stored values survive
+ * the `{ ...prevMeta, ...meta }` merge.
+ */
+export const SERVER_OWNED_META_KEYS = [
+  'trainingStudioWorkflowId',
+  'trainingStudioModerationApproved',
+] as const satisfies readonly (keyof ModelMeta)[];
+
+export function stripServerOwnedMeta<T extends ModelMeta | null | undefined>(meta: T): T {
+  if (!meta) return meta;
+  const rest = { ...meta } as ModelMeta;
+  for (const key of SERVER_OWNED_META_KEYS) delete rest[key];
+  return rest as T;
+}
+
+/** The server-owned keys of a stored meta, to carry across a write that replaces meta wholesale. */
+export function pickServerOwnedMeta(meta: ModelMeta | null | undefined): ModelMeta {
+  const picked: ModelMeta = {};
+  if (!meta) return picked;
+  for (const key of SERVER_OWNED_META_KEYS)
+    if (meta[key] !== undefined) (picked as Record<string, unknown>)[key] = meta[key];
+  return picked;
+}
+
 export function filterModelMetaForClient(meta: ModelMeta, isModerator?: boolean): ModelMeta {
   return stripMinorHashMeta(filterSensitiveProfanityData(meta, isModerator));
 }

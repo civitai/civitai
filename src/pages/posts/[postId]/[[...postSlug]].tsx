@@ -3,6 +3,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import { PostDetail } from '~/components/Post/Detail/PostDetail';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getPostDetail } from '~/server/services/post.service';
+import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { isNumber } from '~/utils/type-guards';
@@ -21,7 +22,7 @@ export default function PostDetailPage({
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx, ssg, session }) => {
+  resolver: async ({ ctx, ssg, session, features }) => {
     const params = (ctx.params ?? {}) as { postId: string };
     const postId = Number(params.postId);
     if (!isNumber(postId)) return { notFound: true };
@@ -45,12 +46,21 @@ export const getServerSideProps = createServerSideProps({
       }
 
       await ssg?.post.get.prefetch({ id: postId });
-      await ssg?.image.getInfinite.prefetchInfinite({
-        postId,
-        pending: !!session?.user,
-        withMeta: false,
-        include: [],
-      });
+      const imageFilters = await getServerImageQueryFilters(
+        getServerBrowsingLevel({
+          canViewNsfw: features?.canViewNsfw ?? false,
+          user: session?.user,
+        }),
+        { isModerator: session?.user?.isModerator }
+      );
+      if (imageFilters)
+        await ssg?.image.getInfinite.prefetchInfinite({
+          postId,
+          pending: !!session?.user,
+          withMeta: false,
+          include: [],
+          ...imageFilters,
+        });
       await ssg?.post.getContestCollectionDetails.prefetch({ id: postId });
       await ssg?.hiddenPreferences.getHidden.prefetch();
 

@@ -1,6 +1,6 @@
 ---
 name: dev-server
-description: Manage Next.js dev servers across worktrees. Start, stop, and read logs from dev servers. Agents can access logs from any running session, regardless of who started it.
+description: Manage Next.js dev servers across worktrees, and the worktrees themselves — create one (`wt new`), find finished ones (`wt stale`), remove them (`wt rm`). Start, stop, and read logs from dev servers. Agents can access logs from any running session, regardless of who started it. Use whenever creating, adding or removing a git worktree in this repo.
 ---
 
 # Dev Server Skill
@@ -193,7 +193,9 @@ node .claude/skills/dev-server/scripts/branch-watch.selftest.mjs       # HEAD wa
 node .claude/skills/dev-server/scripts/probe.selftest.mjs              # the classifier, pure
 node .claude/skills/dev-server/scripts/probe.integration.selftest.mjs  # the real probe() end to end
 node .claude/skills/dev-server/scripts/worktree.selftest.mjs           # what `wt stale` / `wt rm` say about a PR, a prune, and the daemon's home
+node .claude/skills/dev-server/scripts/skill-env.selftest.mjs          # `wt new`/`wt env` never overwrite a credential a tree already has
 node .claude/skills/dev-server/scripts/worktree-remove.integration.selftest.mjs  # `wt rm`'s daemon guard, against a throwaway repo
+node .claude/skills/dev-server/scripts/worktree-create.integration.selftest.mjs  # `wt new`: base, no upstream, refusals
 node .claude/skills/dev-server/scripts/daemon-home.selftest.mjs        # the daemon runs from the primary, never the calling worktree
 node .claude/hooks/check-writable.selftest.mjs                         # the hook, both directions
 ```
@@ -222,6 +224,8 @@ fails.** Anything that adds a new signal belongs in the integration file, not ju
 | `app <name> [subcmd] [worktree]` | App control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `auth [subcmd]` | Auth hub control (`status`\|`start`\|`stop`\|`restart`\|`logs`) |
 | `test run [worktree]` | Queue a unit-test run; returns position + the command to wait on it |
+| `wt new <name> <branch> [--base origin/<b>] [--no-install]` | Create a worktree the safe way (see Worktrees) |
+| `wt stale` / `wt rm <path>` | Find finished worktrees / remove one |
 | `test wait <run-id>` | Block until that run finishes; exits with the run's exit code |
 | `test list` / `test show <id>` / `test logs <id>` | Queue state, one run, one run's output |
 | `test cancel <id>` | Cancel a queued or running run |
@@ -656,6 +660,23 @@ Knobs live in `.claude/skills/dev-server/.env`, which is gitignored — copy `.e
 
 ## Worktrees
 
+### Create one — always `wt new`
+
+```bash
+node .claude/skills/dev-server/cli.mjs wt new <name> <branch>                    # based on origin/main
+node .claude/skills/dev-server/cli.mjs wt new <name> <branch> --base origin/feat/x  # a feature integration branch
+```
+
+It fetches the base, runs `git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track <base>`,
+initialises `event-engine-common`, writes `.envrc` when the primary has one, runs `pnpm install`
+(`--no-install` skips it), and fails unless `git status -sb` prints `## <branch>` alone. It refuses an
+existing branch or path. Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
+the repos root, tracking `origin/main`). Why each flag matters: `docs/dev/worktrees.md`.
+
+Remove one when its PR merges with `wt stale` / `wt rm` (below).
+
+### Dev servers in worktrees
+
 One session per worktree, each on its own port (3000, 3001, …). Start one with:
 
 ```bash
@@ -663,6 +684,39 @@ node .claude/skills/dev-server/cli.mjs start /path/to/worktree
 ```
 
 What's already handled:
+
+- **The skills' own credentials, on `wt new`.** The env layering below is the APP's chain;
+  `.claude/skills/*/.env` is a different thing and nothing copied it until this did. A fresh tree
+  used to start with none — measured 2026-10-05: 7 in the primary, 0 of 47 skill directories in
+  the worktree — and each missing one surfaces as that skill failing to authenticate
+  (`FLIPT_URL and FLIPT_API_TOKEN must be set`, `credentials not configured`, a bare 401), which
+  reads as a bug in the skill rather than a missing file.
+
+  `wt new` copies them, never overwriting one the target already holds, and warns about any skill
+  whose credentials exist in no tree at all. It is non-fatal by construction: a missing credential
+  must not cost you a worktree. For a tree that already exists, `wt env`:
+
+  ```bash
+  node .claude/skills/dev-server/cli.mjs wt env                 # state per skill, never a value
+  node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
+  node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
+  node .claude/skills/dev-server/cli.mjs wt env --restore       # bring back what this tree lacks
+  ```
+
+  It reports three states, because two were misleading. `set` is a skill with its own file.
+  `root` is one with no file whose every declared key the root `.env` supplies — most skills fall
+  back to it, so those are configured and were previously reported as missing. `ABSENT` names the
+  key that is actually blocking. An example carrying `# skill-env: settings-only` is local wiring
+  rather than credentials (ports, timeouts, toggles) and is left out entirely.
+
+  `--backup` exists because these files are one `git clean` from gone and nothing restores them: a
+  skill whose `.gitignore` lists `.env` loses it to `clean -x`, one without a `.gitignore` loses the
+  untracked file to `clean -d`. Both happened; discord's needed an interactive browser login to
+  re-obtain. The store is outside the repo because a backup inside it dies to the same clean.
+
+  It reports presence only. A per-skill credential inventory annotated with what each one unlocks
+  is precisely what must not exist in a public repository.
+
 
 - **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. So a worktree file needs to restate only what it wants to change, and one that restates nothing is a no-op rather than an outage. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
 

@@ -330,7 +330,7 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
     allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
     renderForm();
 
-    await expect.element(page.getByText(/creator score of 10,000/)).toBeInTheDocument();
+    await expect.element(page.getByText(/Creator Score of 10,000/)).toBeInTheDocument();
     await expect.element(chargeSwitch()).toBeDisabled();
   });
 
@@ -359,7 +359,7 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
     renderChargingForm();
 
     await expect.element(chargeSwitch()).toBeEnabled();
-    expect(page.getByText(/creator score of 10,000/).elements()).toHaveLength(0);
+    expect(page.getByText(/Creator Score of 10,000/).elements()).toHaveLength(0);
   });
 });
 

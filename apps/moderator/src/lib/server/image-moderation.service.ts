@@ -11,8 +11,7 @@ import {
   notifyAppealResolved,
   emailAppealResolution,
 } from './image-moderation-effects';
-import { bustCachedObject } from './cache';
-import { REDIS_KEYS } from '@civitai/redis';
+import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
 
 const BLOCKED_REASON_MODERATED = 'moderated';
@@ -33,7 +32,7 @@ const ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY = 'accountDeletionPriorBlockedFor';
 
 const recompute = async (imageId: number) => {
   await sql`SELECT update_nsfw_levels_new(ARRAY[${imageId}::int])`.execute(dbWrite);
-  await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
+  await invalidateThumbnails(imageId);
 };
 
 export async function acceptImage({
@@ -109,9 +108,6 @@ export async function acceptImage({
       }))
     );
     await dbWrite.deleteFrom('ImageTagForReview').where('imageId', '=', imageId).execute();
-    // upsertTagsOnImageNew does NOT bust the thumbnail cache (recompute() does), so bust it here or an
-    // unblocked thumbnail-child image serves a stale Blocked level until TTL.
-    await bustCachedObject(REDIS_KEYS.CACHES.THUMBNAILS, imageId);
   } else {
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
@@ -149,7 +145,15 @@ export async function blockImage({
 }): Promise<void> {
   const img = await dbRead
     .selectFrom('Image')
-    .select(['needsReview', 'pHash', 'blockedFor', 'postId', 'nsfwLevel', 'userId'])
+    .select([
+      'needsReview',
+      'pHash',
+      'blockedFor',
+      'postId',
+      'nsfwLevel',
+      'userId',
+      thumbnailParentId.as('parentId'),
+    ])
     .where('id', '=', imageId)
     .executeTakeFirst();
   if (!img) return;
@@ -174,6 +178,7 @@ export async function blockImage({
     })
     .where('id', '=', imageId)
     .execute();
+  await invalidateThumbnails(imageId, [img.parentId]);
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
   syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });

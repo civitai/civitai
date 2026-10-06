@@ -4,6 +4,7 @@ import { modelFlagsFindMany } from '~/server/services/__tests__/fixtures/model-f
 import { CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import {
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
@@ -77,6 +78,8 @@ const crucible = (overrides: Record<string, unknown> = {}) => ({
   entryLimit: 1,
   freeEntriesPerUser: 0,
   maxTotalEntries: null,
+  entryWarningPercent: 20,
+  entryCutoffPercent: 0,
   minViewSeconds: null,
   maxClipSeconds: null,
   prizePositions: { '1': 50, '2': 30, '3': 20 },
@@ -548,6 +551,55 @@ describe('updateCrucible — free entries', () => {
     findUnique.mockResolvedValue(crucible({ entryLimit: 3 }));
 
     await expect(edit({ freeEntriesPerUser: 1 })).rejects.toThrow(
+      /only its name, description and images can change/
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCrucible — late entries', () => {
+  it('lets the owner set when entrants are warned and entries close', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ entryWarningPercent: 30, entryCutoffPercent: 15 });
+
+    expect(written()).toMatchObject({ entryWarningPercent: 30, entryCutoffPercent: 15 });
+  });
+
+  it('refuses entries closing before the warning starts, against the stored warning', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryWarningPercent: 20 }));
+
+    await expect(edit({ entryCutoffPercent: 25 })).rejects.toThrow(
+      CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a warning lowered to or below the stored cutoff', async () => {
+    findUnique.mockResolvedValue(upcoming({ entryWarningPercent: 30, entryCutoffPercent: 15 }));
+
+    await expect(edit({ entryWarningPercent: 15 })).rejects.toThrow(
+      CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+    );
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('reads the stored shares it checks an edit against', async () => {
+    findUnique.mockResolvedValue(upcoming());
+
+    await edit({ entryCutoffPercent: 15 });
+
+    expect(findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ entryWarningPercent: true, entryCutoffPercent: true }),
+      })
+    );
+  });
+
+  it('locks them once the crucible has started', async () => {
+    findUnique.mockResolvedValue(crucible());
+
+    await expect(edit({ entryCutoffPercent: 15 })).rejects.toThrow(
       /only its name, description and images can change/
     );
     expect(update).not.toHaveBeenCalled();

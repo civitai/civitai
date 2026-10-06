@@ -20,7 +20,7 @@ export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
 export type PaymentProvider = "Stripe" | "Paddle" | "Civitai";
 
-export type MembershipGiftStatus = "Pending" | "Fulfilled" | "Failed" | "Refunded" | "Revoked";
+export type MembershipGiftStatus = "Pending" | "Fulfilled" | "Active" | "Completed" | "Failed" | "Refunded" | "Revoked";
 
 export type UserEngagementType = "Follow" | "Hide" | "Block";
 
@@ -504,6 +504,7 @@ export interface User {
   subscriptions?: CustomerSubscription[];
   membershipGiftsGiven?: MembershipGift[];
   membershipGiftsReceived?: MembershipGift[];
+  membershipGiftsHeld?: MembershipGift[];
   mutedAt: Date | null;
   muted: boolean;
   muteExpiresAt: Date | null;
@@ -603,6 +604,7 @@ export interface User {
   referralRewards?: ReferralReward[];
   referralRewardsAsReferee?: ReferralReward[];
   referralMilestones?: ReferralMilestone[];
+  creatorMilestones?: UserCreatorMilestone[];
   referralRedemptions?: ReferralRedemption[];
   referralAttributions?: ReferralAttribution[];
   clubs?: Club[];
@@ -745,16 +747,24 @@ export interface MembershipGift {
   gifter?: User;
   recipientId: number;
   recipient?: User;
+  holderId: number;
+  holder?: User;
   tier: string;
   months: number;
   amountCents: number;
   status: MembershipGiftStatus;
   message: string | null;
   anonymous: boolean;
+  monthsRemaining: number;
+  monthsConsumed: number;
+  acceptedAt: Date | null;
+  expiresAt: Date | null;
   stripeCheckoutSessionId: string | null;
   stripePaymentIntentId: string | null;
   stripeCouponId: string | null;
   stripeSubscriptionId: string | null;
+  armedCouponId: string | null;
+  armedAt: Date | null;
   fulfilledAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
@@ -2992,6 +3002,7 @@ export interface Cosmetic {
   purchaseComponents?: UserCosmeticShopPurchaseCosmetic[];
   cosmeticShopItems?: CosmeticShopItem[];
   packMemberships?: CosmeticShopItemCosmetic[];
+  creatorMilestones?: CreatorMilestone[];
 }
 
 export interface UserCosmetic {
@@ -3008,6 +3019,29 @@ export interface UserCosmetic {
   forId: number | null;
   forType: CosmeticEntity | null;
   remaining: number | null;
+}
+
+export interface CreatorMilestone {
+  key: string;
+  track: string;
+  threshold: number | null;
+  hidden: boolean;
+  hint: string | null;
+  name: string;
+  description: string | null;
+  cosmeticId: number | null;
+  cosmetic?: Cosmetic | null;
+  sortOrder: number;
+  achievements?: UserCreatorMilestone[];
+}
+
+export interface UserCreatorMilestone {
+  userId: number;
+  user?: User;
+  milestoneKey: string;
+  milestone?: CreatorMilestone;
+  achievedAt: Date;
+  seenAt: Date | null;
 }
 
 export interface CosmeticShopSection {
@@ -5770,6 +5804,8 @@ export interface Crucible {
   entryLimit: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
+  entryWarningPercent: number;
+  entryCutoffPercent: number;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: JsonValue;

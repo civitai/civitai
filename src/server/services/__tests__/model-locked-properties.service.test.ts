@@ -536,3 +536,46 @@ describe('upsertModel — moderator', () => {
     expect(data.lockedProperties).toEqual([]);
   });
 });
+
+// privateModelFromTraining replaces meta wholesale, so it must carry the stored server-owned keys over
+// and ignore any the client sends — the publish paths read them.
+describe('privateModelFromTraining — server-owned meta keys', () => {
+  it.each([false, true])(
+    'keeps the stored training keys when client meta (isModerator=%s) omits or rewrites them',
+    async (isModerator) => {
+      mockStored({
+        meta: { trainingStudioWorkflowId: 'wf-real', trainingStudioModerationApproved: true },
+      });
+
+      await privateFromTraining({
+        user: { id: isModerator ? MODERATOR_ID : OWNER_ID, isModerator },
+        meta: {
+          trainingStudioWorkflowId: 'wf-other',
+          commentsLocked: true,
+        } as unknown as ModelUpsertInput['meta'],
+      });
+
+      expect(updateData().meta).toEqual({
+        commentsLocked: true,
+        trainingStudioWorkflowId: 'wf-real',
+        trainingStudioModerationApproved: true,
+        cannotPromote: true,
+      });
+    }
+  );
+
+  it('does not let client meta add training keys a model never had', async () => {
+    mockStored({ meta: null });
+
+    await privateFromTraining({
+      user: { id: OWNER_ID, isModerator: false },
+      meta: {
+        trainingStudioWorkflowId: 'wf-client',
+        trainingStudioModerationApproved: true,
+        commentsLocked: true,
+      } as unknown as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ commentsLocked: true, cannotPromote: true });
+  });
+});

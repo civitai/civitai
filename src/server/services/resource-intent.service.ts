@@ -6,15 +6,10 @@ import {
   clampResourceIntentCap,
   RESOURCE_INTENT_CRITERIA_VERSION,
   RESOURCE_INTENT_DEFAULT_LIMIT,
-  RESOURCE_INTENT_QUESTIONS,
   RESOURCE_INTENT_SPEC_HASH,
   QUESTION_SPEC_VERSION,
   STAGE3_MAX_RANKED,
-  resourceIntentAnswerSchema,
   resourceIntentResponseSchema,
-  ROLE_MODEL_TYPES,
-  type ResourceIntentAnswer,
-  type ResourceIntentCriteria,
   type ResourceIntentInput,
   type ResourceIntentResponse,
   type ResourceIntentSuggestion,
@@ -29,6 +24,11 @@ import {
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
+import {
+  buildResourceIntentStage1Request,
+  compileCriteria,
+  parseResourceIntentStage1Answers,
+} from '~/server/services/resource-intent-stage1';
 import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-maturity';
 
 /**
@@ -59,8 +59,8 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * stage 3 picks `none`), the response carries empty suggestions without being
  * degraded — the model judged the prompt needs no resource.
  *
- * A label-read failure is NOT a degrade: the matcher falls back to the popularity
- * seed order and reports it, and the response carries `insightFallback: true`
+ * A label-read failure is NOT a degrade: the matcher falls back to the seed order
+ * (purpose page, then popularity fill) and reports it, and the response carries `insightFallback: true`
  * alongside its normal suggestions. The only thing that changes here is the cache
  * TTL — see `INSIGHT_FALLBACK_CACHE_TTL_SECONDS`, and
  * `resourceIntentResponseSchema` for why the flag is not `degraded`.
@@ -185,21 +185,6 @@ export function resourceIntentCacheKey(input: {
   // `as const` keeps the template-literal type: the redis client is typed over
   // the registered REDIS_KEYS templates and rejects a plain `string`.
   return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
-}
-
-function compileCriteria(
-  answer: ResourceIntentAnswer,
-  baseModel: string | null
-): ResourceIntentCriteria {
-  const role = answer.role.value;
-  return {
-    criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
-    specHash: RESOURCE_INTENT_SPEC_HASH,
-    role,
-    styleFamily: answer.styleFamily.value,
-    modelTypes: ROLE_MODEL_TYPES[role] ? [...ROLE_MODEL_TYPES[role]!] : null,
-    baseModel,
-  };
 }
 
 export function buildStage3Question(shortlist: ResourceIntentShortlistEntry[]): JevChoiceQuestion {
@@ -382,46 +367,16 @@ export async function getResourceIntent(
     // Resolved only on a cache miss — the matcher is the sole consumer.
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     try {
-      const stage1 = await askJev(
-        {
-          state: { prompt: input.prompt, ...(baseModel ? { baseModel } : {}) },
-          questions: RESOURCE_INTENT_QUESTIONS.map((question) => ({ ...question })),
-        },
-        { timeoutMs: JEV_TIMEOUT_MS }
-      );
+      const stage1 = await askJev(buildResourceIntentStage1Request(input.prompt, baseModel), {
+        timeoutMs: JEV_TIMEOUT_MS,
+      });
       stage1Model = stage1.model;
 
-      const answersById = new Map(stage1.answers.map((answer) => [answer.id, answer]));
-      const needsResource = answersById.get('needsResource');
-      const role = answersById.get('role');
-      const styleFamily = answersById.get('styleFamily');
-      const contentType = answersById.get('contentType');
-      const specificity = answersById.get('specificity');
-      const injectionPresent = answersById.get('injectionPresent');
-      if (
-        needsResource?.type !== 'noul' ||
-        role?.type !== 'choice' ||
-        styleFamily?.type !== 'choice' ||
-        contentType?.type !== 'choice' ||
-        specificity?.type !== 'score' ||
-        injectionPresent?.type !== 'noul'
-      ) {
+      const intent = parseResourceIntentStage1Answers(stage1.answers);
+      if (!intent) {
         degradedReason = 'jev_stage1_shape';
         throw new Error('stage-1 answers did not match the question spec');
       }
-
-      // Fail-closed against the v1 spec itself: the Jev client proved each
-      // answer well-formed for the question it was asked; THIS parse proves
-      // the answers still match the current question spec (option sets, score
-      // range), so a desync between the two degrades instead of shipping.
-      const intent = resourceIntentAnswerSchema.parse({
-        needsResource: needsResource.value,
-        role: { value: role.value, distribution: role.distribution },
-        styleFamily: { value: styleFamily.value, distribution: styleFamily.distribution },
-        contentType: { value: contentType.value, distribution: contentType.distribution },
-        specificity: specificity.value,
-        injectionPresent: injectionPresent.value,
-      });
       const criteria = compileCriteria(intent, baseModel);
 
       let suggestions: ResourceIntentSuggestion[] = [];

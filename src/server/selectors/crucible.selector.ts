@@ -51,6 +51,8 @@ export const crucibleDetailSelect = Prisma.validator<Prisma.CrucibleSelect>()({
   entryFee: true,
   entryLimit: true,
   freeEntriesPerUser: true,
+  entryWarningPercent: true,
+  entryCutoffPercent: true,
   maxTotalEntries: true,
   minViewSeconds: true,
   maxClipSeconds: true,

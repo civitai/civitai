@@ -51,13 +51,19 @@ import {
 import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import {
   useCreatorProgramRequirements,
   usePrevMonthStats,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import { CreatorProgramCapsInfo } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
-import { MIN_CAP, PEAK_EARNING_WINDOW } from '~/shared/constants/creator-program.constants';
+import {
+  MIN_CAP,
+  MIN_CREATOR_SCORE,
+  PEAK_EARNING_WINDOW,
+} from '~/shared/constants/creator-program.constants';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils/flags';
 import { OnboardingSteps } from '~/server/common/enums';
@@ -607,20 +613,16 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 <>
                   <CreatorProgramRequirement
                     isMet={hasEnoughCreatorScore}
-                    title={`Have a Creator Score higher than ${abbreviateNumber(
-                      requirements?.score.min ?? 10000
+                    title={`Have a Creator Score of at least ${numberWithCommas(
+                      requirements?.score.min ?? MIN_CREATOR_SCORE
                     )}`}
                     content={
                       <p className="my-0">
-                        Your current{' '}
-                        <Anchor component={NextLink} href="/user/account#creator-score">
-                          Creator Score
-                        </Anchor>{' '}
-                        is{' '}
-                        <Anchor component={NextLink} href="/user/account#creator-score">
-                          {abbreviateNumber(requirements?.score.current ?? 0)}
-                        </Anchor>
-                        .
+                        <CreatorScoreGateMessage
+                          score={requirements?.score.current}
+                          total={creatorScoreFromSession(currentUser)}
+                          required={requirements?.score.min ?? MIN_CREATOR_SCORE}
+                        />
                       </p>
                     }
                   />

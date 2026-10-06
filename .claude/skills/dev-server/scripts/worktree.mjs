@@ -11,8 +11,9 @@
  */
 
 import { execFileSync } from 'child_process';
-import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync } from 'fs';
+import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
 import { isInside, samePath } from './paths.mjs';
+import { syncSkillEnv } from './skill-env.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -543,4 +544,80 @@ export function describePrune(raw, adminName) {
 function fail(msg) {
   console.error(`\n${msg}\n`);
   process.exit(1);
+}
+
+const SUBMODULE = 'event-engine-common';
+
+export function worktreesRootOf(primary) {
+  return resolve(primary, '..', 'worktrees');
+}
+
+// The recipe CLAUDE.md used to spell out by hand. Each git flag is load-bearing:
+//   -b          refuses an existing branch name instead of checking out someone else's work
+//   <base>      forks from the fetched remote ref, not this checkout's possibly stale local HEAD
+//   --no-track  stops the base becoming the upstream; without it `git pull` merges main in
+export function parseNewArgs(tail) {
+  const baseAt = tail.indexOf('--base');
+  const base = baseAt === -1 ? undefined : tail[baseAt + 1];
+  const [name, branch] = tail.filter((a, i) => !a.startsWith('--') && (baseAt === -1 || i !== baseAt + 1));
+  return { name, branch, base, noInstall: tail.includes('--no-install') };
+}
+
+export async function cmdCreate(primaryArg, name, branch, opts = {}) {
+  const base = opts.base ?? 'origin/main';
+  if (!name || !branch) fail('Usage: wt new <name> <branch> [--base origin/<branch>] [--no-install]');
+  if (!/^[\w.-]+$/.test(name)) fail(`worktree name must be a plain directory name: ${name}`);
+  if (!base.startsWith('origin/')) fail(`--base must be a remote ref (origin/<branch>), got: ${base}`);
+
+  const primary = primaryOf(listWorktrees(primaryArg), primaryArg);
+  const target = opts.path ? resolve(opts.path) : resolve(worktreesRootOf(primary), name);
+  if (existsSync(target)) fail(`already exists: ${target}`);
+  if (gitQuiet(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`], primary) !== null) {
+    fail(`branch already exists: ${branch}\nPick a new name; to work on an existing branch, check it out deliberately.`);
+  }
+
+  git(['fetch', 'origin', base.slice('origin/'.length)], primary);
+  git(['worktree', 'add', target, '-b', branch, '--no-track', base], primary);
+  console.log(`created ${target} on ${branch} from ${base}`);
+
+  if (existsSync(resolve(primary, '.gitmodules')) && gitQuiet(['config', '-f', '.gitmodules', `submodule.${SUBMODULE}.path`], primary)) {
+    gitQuiet(['submodule', 'sync', '--recursive'], primary);
+    if (gitQuiet(['submodule', 'update', '--init', SUBMODULE], target) === null) {
+      console.warn(`warning: ${SUBMODULE} did not initialise — typecheck and some suites fail without it:\n  git -C "${target}" submodule update --init ${SUBMODULE}`);
+    }
+  }
+
+  if (existsSync(resolve(primary, '.envrc'))) {
+    writeFileSync(resolve(target, '.envrc'), 'use flake\n');
+    try {
+      execFileSync('direnv', ['allow'], { cwd: target, stdio: 'ignore', windowsHide: true });
+    } catch {
+      console.warn(`warning: wrote .envrc but could not run \`direnv allow\` in ${target}`);
+    }
+  }
+
+  // Skill credentials are gitignored or untracked, so a fresh tree has none and every skill
+  // then fails as though IT were broken. Non-fatal: a missing credential must never cost you a
+  // worktree.
+  try {
+    const env = syncSkillEnv(primary, target);
+    if (env.copied) console.log(`skill credentials: copied ${env.copied} (${env.names.join(', ')})`);
+    if (env.absent.length)
+    // A COUNT, not the names: 10 of 16 credential-taking skills have none configured in a
+    // typical environment, and a ten-name warning on every creation is one people learn to
+    // skip. `wt env` is where the list belongs, on demand.
+    if (env.absent.length)
+      console.log(
+        `skill credentials: ${env.absent.length} skill(s) have none anywhere; ` +
+          `list them with: node .claude/skills/dev-server/cli.mjs wt env`
+      );
+  } catch (error) {
+    console.warn(`warning: could not copy skill credentials -- ${error.message}`);
+  }
+
+  if (!opts.noInstall) execFileSync('pnpm', ['install'], { cwd: target, stdio: 'inherit', windowsHide: true });
+
+  const head = git(['status', '-sb'], target).split(/\r?\n/)[0];
+  if (head !== `## ${branch}`) fail(`expected "## ${branch}" with no upstream, got "${head}" — fix with: git -C "${target}" branch --unset-upstream`);
+  console.log(`ok: ${head}`);
 }

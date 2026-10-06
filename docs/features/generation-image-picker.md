@@ -150,7 +150,7 @@ During picker mode, switching to 'generate' tab is blocked (must use Cancel/Conf
 | 5 | `src/components/ImageGeneration/GenerationResults.tsx` | Add `ImagePickerFooter` inside the ScrollArea |
 | 5b | `src/components/ImageGeneration/GenerationTabs.tsx` | Tab guard in `GenerationHeader`'s `onChange` |
 | 6 | `src/components/generation_v2/inputs/ImageUploadMultipleInput.tsx` | Add `enableGeneratedImagePicker` prop + button |
-| 7 | `src/components/generation_v2/GenerationForm.tsx` | Wire `enableGeneratedImagePicker` through `ImagesInput` |
+| 7 | `src/components/form-graph/generation/ImageGenerationForm.tsx` | Wire `enableGeneratedImagePicker` through the images field |
 
 ## Implementation order
 

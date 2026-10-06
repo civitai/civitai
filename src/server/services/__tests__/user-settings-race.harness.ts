@@ -192,7 +192,9 @@ export async function createUserSchema(db: PGlite) {
   `);
 }
 
-export async function seedUser(db: PGlite, id: number, settings: Record<string, unknown>) {
+// `settings` is `unknown`, not an object type: a test may need to seed a malformed column
+// (JSON `null`, an array, a scalar) to pin what the writers do with one.
+export async function seedUser(db: PGlite, id: number, settings: unknown) {
   await db.query(
     `INSERT INTO "User" (id, settings) VALUES ($1, $2::jsonb)
      ON CONFLICT (id) DO UPDATE SET settings = EXCLUDED.settings`,

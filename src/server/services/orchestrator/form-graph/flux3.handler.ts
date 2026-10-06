@@ -6,7 +6,7 @@ import type {
   Flux3EditFalImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type Flux3AspectRatio = NonNullable<Flux3CreateFalImageGenInput['aspectRatio']>;

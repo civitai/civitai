@@ -17,8 +17,8 @@ import {
   MINIMAX_DEFAULT_ASPECT_RATIO,
   minimaxComfyAspectRatios,
 } from '~/shared/form-graph/generation/video/minimax.graph';
-import { buildControlVideoStep } from '../ecosystems/control-video.helper';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { buildControlVideoStep } from '../handlers/control-video.helper';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 

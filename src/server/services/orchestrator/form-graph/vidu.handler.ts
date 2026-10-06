@@ -3,7 +3,7 @@
 import type { ViduVideoGenInput, ViduQ3VideoGenInput, VideoGenStepTemplate } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { viduVersionIds } from '~/shared/form-graph/generation/video/vidu.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type ViduData = EcosystemData<'Vidu'>;

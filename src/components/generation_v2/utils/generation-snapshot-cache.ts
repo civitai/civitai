@@ -3,7 +3,7 @@
  *
  * Populated by GenerationFormProvider via a graph subscription. Readers (e.g.
  * QueueItem's civitai.red CTAs) can consume it to build cross-domain handoff
- * URLs without needing to live inside the DataGraphProvider subtree.
+ * URLs without needing to live inside the form provider's subtree.
  *
  * Why: on mobile the form and the queue live on separate tabs, and switching
  * to the queue unmounts the provider. The cache survives unmount so the last

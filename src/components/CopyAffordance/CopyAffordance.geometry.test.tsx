@@ -24,6 +24,21 @@ import { SecretDisplay } from '~/components/Account/OAuthAppsCard';
 // against. Every assertion over it below reads the RENDERED `padding-right` instead, which is
 // the stronger claim anyway — it holds at whatever root font size the test runs at.
 import { COPY_CONTROL_SIZE, COPY_ICON_INSET } from './CopyAffordance';
+import {
+  CollectionInviteLink,
+  INVITE_LINK_COPY_LABEL,
+  INVITE_LINK_TESTID,
+} from '~/components/Collections/CollectionInviteLink';
+// 🔴 `INVITE_LINK_ICON_INSET` IS DELIBERATELY NOT IMPORTED — and as of this PR it is not even
+// EXPORTED, so the convention is now structural. It is BOTH the control's `right=` prop and a
+// term in the padding derived from it, so an assertion naming it would be the implementation
+// checking itself on both sides. The invite-link block below relates the RENDERED padding to
+// the RENDERED inset and the RENDERED control width instead.
+//
+// ⚠️ THAT BLOCK DOES NAME `COPY_ICON_INSET`, AND AN EARLIER WORDING HERE SAID IT NAMED NO
+// REPO-OWNED CONSTANT AT ALL. It names it as a value to EXCLUDE (`.not.toBeCloseTo`), never as
+// an expectation — a different thing, but not "none". `COPY_CONTROL_SIZE` is named as an
+// expectation, and that one the cascade produces rather than this repo.
 
 /**
  * 🔒 THE COPY CONTROL DOES NOT SIT ON TOP OF THE TEXT IT COPIES.
@@ -689,5 +704,259 @@ describe('🔒 the clearance survives a non-default root font size', () => {
         `at 16px, ${gap}px at ${ROOT_FONT_SIZE}. The panel reserves half a rem more than the ` +
         'control needs, so a correctly rem-expressed clearance widens here.'
     ).toBeGreaterThan(gapAtDefaultR);
+  });
+});
+
+/**
+ * 🔒 THE COLLECTION INVITE-LINK BODY — THE COUNTEREXAMPLE `CopyAffordance`'s DOC NAMED AND
+ * NOTHING MOUNTED.
+ *
+ * That doc recorded this control as reserving no right padding at all against a `right={10}`
+ * control, and labelled its own figure "DERIVED from that file's props and the rules above,
+ * NOT measured — no fixture mounts it". This block is the fixture, so the number is now a
+ * measurement; `~/components/Collections/CollectionInviteLink.tsx` carries the fix.
+ *
+ * 🔴 ITS OWN CASE, NOT A REUSE OF THE BLOCKS ABOVE — the inset is 10, not `COPY_ICON_INSET`'s
+ * 8, so `COPY_BODY_PADDING_RIGHT` is the wrong clearance for it by 2px and a test that
+ * asserted that constant here would be asserting the wrong number. What the two share is the
+ * RULE (`copyBodyPaddingRight`), which is why that is what the component imports.
+ *
+ * ⚠️ WHAT THIS CANNOT SEE, same caveat as every block above: `<Code block>` computes
+ * `white-space: pre` / `overflow-x: auto`, so a join URL wider than the content box scrolls
+ * and paints across its own right padding. A green run here means "the body reserves the
+ * control's width", never "no URL can sit under the icon".
+ */
+describe('🔒 the collection invite-link body reserves the control`s width', () => {
+  /**
+   * A realistic join URL, and deliberately one that FITS at both viewports below.
+   *
+   * The clearance is a difference of three BOX terms and contains no text term at all, so the
+   * string's length cannot move it — but a fixture that overflowed would make the
+   * `overflow-x: auto` caveat above the thing a reader blamed for a failure, which is a
+   * diagnosis cost for no extra coverage.
+   */
+  const JOIN_URL = 'https://example.test/collections/42/join';
+
+  /** The invite block's own `Code` body, scoped by its testid rather than to any `pre`. */
+  function inviteBody(): Element {
+    const scope = document.querySelector(`[data-testid="${INVITE_LINK_TESTID}"]`);
+    if (!scope) throw new Error('the invite-link block did not mount');
+    const pre = scope.querySelector('pre[data-block="true"]');
+    if (!pre) throw new Error('the invite-link block rendered no `Code block` body');
+    return pre;
+  }
+
+  for (const viewport of [PHONE_VIEWPORT, NARROW_PHONE_VIEWPORT] as Viewport[]) {
+    // Two widths for the same reason the first block gives, and with the same honest limit:
+    // this geometry has no viewport term, so an identical pair of numbers is what
+    // width-invariance looks like rather than a discriminating matrix.
+    test(`at ${viewport.width}x${viewport.height} the control clears the invite URL`, async () => {
+      const { observed } = await renderAtViewport(
+        <CollectionInviteLink joinUrl={JOIN_URL} />,
+        viewport
+      );
+      expect(observed).toEqual({ width: viewport.width, height: viewport.height });
+      assertCascadeIsReal();
+
+      const control = page.getByRole('button', { name: INVITE_LINK_COPY_LABEL });
+      await expect.element(control).toBeInTheDocument();
+      const body = inviteBody();
+
+      const gap = clearance(body, control.element());
+      expect(
+        gap,
+        `the copy control overlaps the invite URL by ${-gap}px — the body reserved ` +
+          `${getComputedStyle(body).paddingRight} on the right while the control sits ` +
+          `${getComputedStyle(control.element()).right} from the edge at ` +
+          `${box(control.element()).width}px wide`
+      ).toBeGreaterThanOrEqual(0);
+    });
+  }
+
+  /**
+   * POSITIVE CONTROL, and the derivation — for the same reason the first block needs one. A
+   * non-negative gap is also what an unpositioned control reports (it would follow the body in
+   * flow, far to its right), so prove the control is INSIDE the body's border box and only
+   * clear of its text.
+   *
+   * 🔴 THE DERIVATION IS MEASUREMENT-AGAINST-MEASUREMENT HERE. `padding === inset + width`
+   * with the inset read off the RENDERED control, not off `INVITE_LINK_ICON_INSET` — see the
+   * import note. That makes it a claim about the rendered result at whatever root font size
+   * the test runs at, and it cannot be satisfied by the module agreeing with itself.
+   */
+  test('POSITIVE CONTROL: the control sits INSIDE the body`s border box', async () => {
+    const { observed } = await renderAtViewport(<CollectionInviteLink joinUrl={JOIN_URL} />);
+    expect(observed).toEqual({ width: 390, height: 844 });
+    assertCascadeIsReal();
+
+    const control = page.getByRole('button', { name: INVITE_LINK_COPY_LABEL });
+    await expect.element(control).toBeInTheDocument();
+    const body = inviteBody();
+
+    const controlBox = box(control.element());
+    const bodyBox = box(body);
+    expect(getComputedStyle(control.element()).position).toBe('absolute');
+    expect(controlBox.right).toBeLessThanOrEqual(bodyBox.right);
+    expect(controlBox.left).toBeGreaterThan(bodyBox.left);
+    expect(
+      controlBox.width,
+      `the control's border box measured ${controlBox.width}px, not COPY_CONTROL_SIZE ` +
+        `(${COPY_CONTROL_SIZE}). Mantine's default ActionIcon size moved; this body's padding ` +
+        'is derived from it, so update the constant rather than the padding.'
+    ).toBe(COPY_CONTROL_SIZE);
+
+    // 🔴 THE VERTICAL AXIS, WHICH EVERY OTHER ASSERTION IN THIS BLOCK IS BLIND TO. The three
+    // lines above and the clearance tests are all horizontal, so they passed while the control
+    // hung 8.7px below the body: `transform: 'translateY(-50%) !important'` was dropped entirely
+    // (React assigns non-custom style properties through the CSSOM property setter, which
+    // rejects `!important`), leaving `top: 50%` uncorrected. Containment is the user-visible
+    // claim — an icon outside the box it belongs to — and centring is the mechanism.
+    // ⚠️ ORDERED STATE-FIRST, MECHANISM-LAST, AND THAT ORDER IS THE POINT. An earlier draft put
+    // the `transform !== 'none'` check first; it reds on the same mutant, but it is a claim
+    // about a CSS property SPELLING, and running first it shadowed the assertions that say what
+    // is actually wrong on screen. So containment reports first, centring second, and the
+    // spelling last.
+    //
+    // ⚠️ THE SPELLING CHECK IS A DIAGNOSIS HINT, NOT A GUARD, AND CANNOT BE THE FIRST REPORTER
+    // UNDER ANY MUTANT CONSTRUCTED SO FAR — a dropped transform reds containment-bottom, a
+    // wrong-but-present one reds centring, so this line is reached only when the others pass.
+    // It is kept for the message, which names the mechanism (`!important` is dropped by the
+    // CSSOM property setter) that the geometric failures do not.
+    //
+    // ⚠️ AND WHAT WAS ACTUALLY WATCHED: the `!important` mutant reds containment-bottom
+    // ("ends at 47.3, below the body's 38.59") in the SHIPPED order. The claim that all of them
+    // were watched to fail "independently" was removed rather than reworded — that is a
+    // different run from the shipped ordering, and only the first reporter is observable in it.
+    expect(
+      controlBox.bottom,
+      `the control's box ends at ${controlBox.bottom}, below the body's ${bodyBox.bottom} — it ` +
+        'is rendered outside the element it is positioned within'
+    ).toBeLessThanOrEqual(bodyBox.bottom);
+    expect(controlBox.top, 'the control starts above the body it sits in').toBeGreaterThanOrEqual(
+      bodyBox.top
+    );
+    expect(
+      (controlBox.top + controlBox.bottom) / 2,
+      `the control's vertical centre (${(controlBox.top + controlBox.bottom) / 2}) is not the ` +
+        `body's (${(bodyBox.top + bodyBox.bottom) / 2})`
+    ).toBeCloseTo((bodyBox.top + bodyBox.bottom) / 2, 1);
+    expect(
+      getComputedStyle(control.element()).transform,
+      'the control has no transform, so `top: 50%` is uncorrected and it hangs below the body. ' +
+        '`!important` in a React `style` value is dropped by the CSSOM property setter.'
+    ).not.toBe('none');
+
+    const renderedInset = parseFloat(getComputedStyle(control.element()).right);
+    expect(
+      parseFloat(getComputedStyle(body).paddingRight),
+      `the reserved padding (${getComputedStyle(body).paddingRight}) is not the rendered inset ` +
+        `(${renderedInset}px) plus the rendered control width (${controlBox.width}px). Either ` +
+        'the inset moved without the padding following, or `copyBodyPaddingRight` stopped ' +
+        'expressing the relation.'
+    ).toBeCloseTo(renderedInset + controlBox.width, 1);
+    // And that the inset is NOT the shared one. ⚠️ THIS EXCLUDES ~8; IT DOES NOT PIN 10, AND
+    // THE COMMENT HERE USED TO SAY "10, not 8". Every assertion in this block is
+    // self-consistent in the inset, so `INVITE_LINK_ICON_INSET = 0` or `= 24` passes all of
+    // them (padding tracks, clearance stays 0.00). That is a cosmetic drift, not an overlap,
+    // so it is deliberately not guarded — but the distinction belongs in the comment, because
+    // "pins 10" reads as coverage this does not have. What it does catch is the one change
+    // with a real consequence: a silent convergence onto `COPY_ICON_INSET`, after which this
+    // body should drop its local constant and use `COPY_BODY_PADDING_RIGHT`.
+    expect(
+      renderedInset,
+      `the invite control's inset rendered at ${renderedInset}px. This block is the repo's one ` +
+        `caller at an inset other than COPY_ICON_INSET (${COPY_ICON_INSET}); if it has ` +
+        'converged onto the shared value, drop the local constant and use ' +
+        '`COPY_BODY_PADDING_RIGHT` instead of its own.'
+    ).not.toBeCloseTo(COPY_ICON_INSET, 1);
+  });
+
+  /**
+   * 🔴 THE ROOT-FONT-SIZE AXIS — the one this geometry is actually sensitive to, and the one a
+   * raw px padding would fail on while every viewport above stayed green. The block above this
+   * describe records the whole arc: `COPY_BODY_PADDING_RIGHT` as a plain `36` measured 0.00px
+   * at R=16 and −9px at R=20, invisible to two viewports that agreed with each other at both.
+   *
+   * ONE RENDER, R VARIED ON THE MOUNTED TREE, so this differs from the two viewport cases above
+   * it in the root font size and in nothing else — same fixture, same 390x844, no second mount.
+   */
+  test('the clearance survives a 20px root font size', async () => {
+    const ROOT_FONT_SIZE = '20px';
+    const { observed } = await renderAtViewport(<CollectionInviteLink joinUrl={JOIN_URL} />);
+    expect(observed).toEqual({ width: 390, height: 844 });
+    assertCascadeIsReal();
+
+    const control = page.getByRole('button', { name: INVITE_LINK_COPY_LABEL });
+    await expect.element(control).toBeInTheDocument();
+    const body = inviteBody();
+
+    try {
+      document.documentElement.style.fontSize = ROOT_FONT_SIZE;
+      await nextLayout();
+      // Doubles as the positive control for the override: without it this reports 16px and
+      // everything below is a second measurement at the root font size already taken.
+      assertCascadeIsReal(ROOT_FONT_SIZE);
+
+      const gap = clearance(body, control.element());
+      expect(
+        gap,
+        `at a ${ROOT_FONT_SIZE} root font size the control overlaps the invite URL by ${-gap}px ` +
+          `— the body reserved ${getComputedStyle(body).paddingRight} while the control sits ` +
+          `${getComputedStyle(control.element()).right} from the edge at ` +
+          `${box(control.element()).width}px wide`
+      ).toBeGreaterThanOrEqual(0);
+
+      // 🔴 THE DERIVATION AGAIN, AT THIS ROOT FONT SIZE — RENDERED AGAINST RENDERED. This
+      // replaces a deleted "padding tracked R" check that compared the R=20 padding against the
+      // R=16 reading × 1.25. That form was both weaker and partly self-referential, and the
+      // comment justifying its deletion claimed "no mutant could be constructed in which it
+      // reports" — which is false, and is corrected here rather than reworded: a padding that
+      // OVER-tracks R (e.g. `calc(4.75rem - 38px)`, which is 38px at R=16 and 57px at R=20)
+      // passes the R=16 derivation AND leaves this clearance at +9.5px, so the clearance above
+      // genuinely cannot see it. The true statement is narrower: no PURE px spelling survives,
+      // because with 38px pinned at R=16 any fixed value drives this clearance negative.
+      //
+      // This line closes that gap in both directions at once, and it is strictly stronger than
+      // what it replaces: it also pins the control's border box as REM-SCALED at this R. If
+      // Mantine's cascade ever switched to the literal `--ai-size-md: 28px` of the
+      // per-component stylesheet, the control would measure 28 here instead of 35 and
+      // `47.5 ≈ 12.5 + 28` is false. Until now that fact lived only in a transient mutant run.
+      expect(
+        parseFloat(getComputedStyle(body).paddingRight),
+        `at a ${ROOT_FONT_SIZE} root font size the reserved padding ` +
+          `(${getComputedStyle(body).paddingRight}) is not the rendered inset ` +
+          `(${getComputedStyle(control.element()).right}) plus the rendered control width ` +
+          `(${box(control.element()).width}px). Too LARGE means the padding over-scales, which ` +
+          'the clearance above cannot see; a flat 28 for the control means the cascade moved to ' +
+          'the px spelling of `--ai-size-md`. (Too SMALL is reported by the clearance above, ' +
+          'which is strictly tighter in that direction — this message cannot print for it.)'
+      ).toBeCloseTo(
+        parseFloat(getComputedStyle(control.element()).right) + box(control.element()).width,
+        1
+      );
+
+      // 🔴 THE VERTICAL AXIS AT THIS ROOT FONT SIZE TOO — the R=16 positive control is not
+      // enough, and the survivor is the same px-spelling class this whole block exists for.
+      // `transform: 'translateY(-14px)'` is exactly −50% of the 28px control at R=16, so it is
+      // byte-equivalent to correct code there and passes all four vertical assertions in the
+      // positive control. At R=20 the control is 35px and needs −17.5px: the box lands 10.12→
+      // 45.12 inside a body of 0→48.24, so CONTAINMENT still passes with room and only the
+      // centre moves — 3.5px low. Centring is therefore the only assertion that can see it,
+      // and it has to run at an R where the two spellings disagree.
+      const vControl = box(control.element());
+      const vBody = box(body);
+      expect(
+        (vControl.top + vControl.bottom) / 2,
+        `at a ${ROOT_FONT_SIZE} root font size the control's vertical centre ` +
+          `(${(vControl.top + vControl.bottom) / 2}) is not the body's ` +
+          `(${(vBody.top + vBody.bottom) / 2}). A px \`translateY\` holds at a 16px root font ` +
+          'size and then stops tracking the control, which grows with R.'
+      ).toBeCloseTo((vBody.top + vBody.bottom) / 2, 1);
+      // `AgentOnboardingCard`'s prose panel needs a TRACKING check rather than this derivation:
+      // it reserves half a rem more than the minimum, so a derivation would red on the correct
+      // stylesheet, and its `.panel` 1px border lands its gap on exactly 0.00px at R=20.
+    } finally {
+      document.documentElement.style.removeProperty('font-size');
+    }
   });
 });

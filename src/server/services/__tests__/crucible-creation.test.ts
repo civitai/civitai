@@ -857,6 +857,20 @@ describe('createCrucible — free entries', () => {
   });
 });
 
+describe('createCrucible — late entries', () => {
+  it('warns in the last 20% and closes entries in the last 10% unless told otherwise', async () => {
+    await createCrucible(input());
+
+    expect(storedData()).toMatchObject({ entryWarningPercent: 20, entryCutoffPercent: 10 });
+  });
+
+  it('stores the shares the creator picked', async () => {
+    await createCrucible(input({ entryWarningPercent: 30, entryCutoffPercent: 0 }));
+
+    expect(storedData()).toMatchObject({ entryWarningPercent: 30, entryCutoffPercent: 0 });
+  });
+});
+
 describe('createCrucible — who may create one', () => {
   it('checks the creation limits before any money moves', async () => {
     assertCanCreateCrucible.mockRejectedValue(new Error('limit reached'));

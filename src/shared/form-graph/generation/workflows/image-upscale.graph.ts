@@ -1,17 +1,15 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { imagesDef, resourceSchema, resourceInputSchema, type ResourceData } from '../defs';
 
 /**
- * Image upscale (img2img:upscale), ported from `image-upscale-graph.ts`.
+ * Image upscale (img2img:upscale).
  * Standalone — no ecosystem. Batch of up to 10 images; each image is
  * adaptively assigned the best usable multiplier, and the selection resets
  * to the default when the current one stops being useful for every image in
- * the batch (v1's transform, here a `correct` policy).
+ * the batch (a `correct` policy).
  */
-
-// ---- copied from image-upscale-graph.ts, which dies with the data-graph engine
 
 const MAX_OUTPUT_RESOLUTION = 4096;
 const MAX_UPSCALE_IMAGES = 10;
@@ -108,9 +106,7 @@ const upscaleSelectionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('resolution'), resolution: z.number() }),
 ]);
 
-// ---- end of image-upscale-graph.ts copies -----------------------------------
-
-/** v1's `upscalerNode`: an Upscaler-type resource with a pinned default. */
+/** An Upscaler-type resource with a pinned default. */
 const UPSCALER = {
   input: resourceInputSchema.optional(),
   output: resourceSchema,
@@ -199,7 +195,7 @@ export const imageUpscale = defineGraph<GenerationCtx>()
       input: upscaleSelectionSchema.optional(),
       output: upscaleSelectionSchema,
       default: defaultValue,
-      // v1's transform: a selection that stopped being useful for every image
+      // A selection that stopped being useful for every image
       // in the batch resets to the first available option
       correct: (value: UpscaleSelection) =>
         defaultValue && !isUseful(value)

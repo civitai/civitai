@@ -223,7 +223,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
     const { items, nextCursor } = await runImageSearch(
-      { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
+      { limit, skip, cursor, type, withMeta, flatMeta, withTags, feedService: true, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
 

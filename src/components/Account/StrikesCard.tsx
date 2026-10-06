@@ -1,18 +1,21 @@
 import { Badge, Card, Divider, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { accountStandingFromPoints, strikeStatusColorScheme } from '~/server/schema/strike.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
+import { CreatorJourneyCardLink } from '~/components/CreatorJourney/CreatorJourneyCardLink';
+import { CREATOR_SCORE_ANCHOR } from './creator-score-copy';
+import { CreatorScoreExplainer } from './CreatorScoreExplainer';
 import { UserScoreDisplay } from './UserScoreDisplay';
 
-// The strike email links to `/user/account#strikes`, and the challenge/creator-program eligibility
-// rows link to `#creator-score`. Both targets only render their `id` once data loads, so the
+// The strike email links to `/user/account#strikes`, and CREATOR_SCORE_EXPLAINER_HREF links to
+// `#creator-score`. Both targets only render their `id` once data loads, so the
 // browser's native hash scroll fires too early. Module-level so the ref identity stays stable.
-// Legacy page only — the v2 shell maps these anchors to a section and drops the fragment
-// (`legacyAnchorSections` in account-sections.ts), so these refs are dead on the pane.
+// On the v2 shell the fragment survives the redirect to the profile pane, so these fire there too.
 function scrollIfHashed(hash: string) {
   return (node: HTMLElement | null) => {
     if (node && typeof window !== 'undefined' && window.location.hash === hash) {
@@ -22,10 +25,11 @@ function scrollIfHashed(hash: string) {
 }
 
 const scrollToStrikes = scrollIfHashed('#strikes');
-const scrollToCreatorScore = scrollIfHashed('#creator-score');
+const scrollToCreatorScore = scrollIfHashed(`#${CREATOR_SCORE_ANCHOR}`);
 
 export function StrikesCard({ flat }: { flat?: boolean } = {}) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const scores = currentUser?.meta?.scores;
   const { data: summary, isLoading: summaryLoading } = trpc.strike.getMyStrikeSummary.useQuery();
   const { data: strikesData, isLoading: strikesLoading } = trpc.strike.getMyStrikes.useQuery({
@@ -128,8 +132,12 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
     return (
       <div id="strikes" ref={scrollToStrikes}>
         <SettingsSection title="Account standing">
-          <div id="creator-score" ref={scrollToCreatorScore}>
-            <UserScoreDisplay scores={scores} flat abbreviate={false} />
+          <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
+            <Stack gap="lg">
+              <UserScoreDisplay scores={scores} flat abbreviate={false} />
+              {features.creatorJourney && <CreatorJourneyCardLink meta={currentUser?.meta} />}
+              <CreatorScoreExplainer />
+            </Stack>
           </div>
           <SettingRow
             label="Strikes"
@@ -157,8 +165,12 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
 
         <Divider />
 
-        <div id="creator-score" ref={scrollToCreatorScore}>
-          <UserScoreDisplay scores={scores} />
+        <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
+          <Stack gap="lg">
+            <UserScoreDisplay scores={scores} />
+            {features.creatorJourney && <CreatorJourneyCardLink meta={currentUser?.meta} />}
+            <CreatorScoreExplainer />
+          </Stack>
         </div>
 
         <Divider />

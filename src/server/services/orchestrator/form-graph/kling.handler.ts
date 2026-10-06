@@ -1,7 +1,7 @@
 /**
  * Kling handler for the form-graph lane — legacy engine (`kling`) for
- * V1.6/V2/V2.5 Turbo, `kling-v3` for V3. V3's multiShot/klingElements subtree
- * is dead in v1 and not ported, so the elements/multiPrompt build is omitted.
+ * V1.6/V2/V2.5 Turbo, `kling-v3` for V3. V3's multiShot/klingElements subtree is
+ * not built (see `video/kling.graph.ts`), so the elements/multiPrompt build is omitted.
  */
 
 import type {
@@ -11,8 +11,8 @@ import type {
   VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { klingVersionIds } from '~/shared/data-graph/generation/version-ids';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { klingVersionIds } from '~/shared/generation/version-ids';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type KlingData = EcosystemData<'Kling'>;

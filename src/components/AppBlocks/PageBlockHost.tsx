@@ -52,6 +52,15 @@ import {
   type CreatePostPreview,
 } from './createPostFromAppGate';
 import { CreatePostConsentBody } from './CreatePostConsentBody';
+import { handlePrepareTrainingDataset } from './prepareTrainingDatasetGate';
+import {
+  buildTrainingConsentCopy,
+  resolveRunTrainingRequest,
+  trainingSubmitReplyFromError,
+  trainingSubmitReplyFromResult,
+  type TrainingQuotePreview,
+} from './runTrainingGate';
+import { TrainingConsentBody } from './TrainingConsentBody';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import type { BlockUploadedImageInfo } from './BlockImageUploadModal';
 import type { BlockSourceImageInfo } from './BlockGenerationSourceUploadModal';
@@ -2154,7 +2163,8 @@ export function PageBlockHost({
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
   // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
-  // consent payload server-side, then the write. Both are block-token-authed.
+  // consent payload server-side, then the write. Both take the block token and
+  // both require the viewer's signed-in session.
   const previewPostFromAppMutation = trpc.blocks.previewPostFromApp.useMutation();
   const createPostFromAppMutation = trpc.blocks.createPostFromApp.useMutation();
 
@@ -2442,7 +2452,8 @@ export function PageBlockHost({
   // the host opens its OWN confirm dialog and only calls the mutation on an
   // explicit click — that click IS the consent boundary (the iframe can't fake
   // it, like the resource picker). The block sends INDEXES not urls; the SERVER
-  // resolves urls + is FAIL-CLOSED behind the ownership+app-tag guard. REQUEST-
+  // resolves urls + is FAIL-CLOSED behind the ownership+app-tag guard, and also
+  // requires the viewer's signed-in session, matching the token's subject. REQUEST-
   // style ⇒ every terminal path (no token / cancel / success / error) MUST reply
   // exactly once or the block hangs; a `settled` latch guards a double-reply.
   useEffect(() => {
@@ -2579,10 +2590,10 @@ export function PageBlockHost({
   }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack, reportNoToken]);
 
   // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
-  // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
-  // scope-gated token's power directly); the server self-binds off the token
-  // `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path MUST reply or
-  // the block hangs; on a null token we reply with the ERROR variant (mirrors
+  // The Buzz-dashboard ledger read. Host-MEDIATED: the block posts a request and
+  // the host makes the call with the page's block token. The server self-binds
+  // off the token `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path
+  // MUST reply or the block hangs; on a null token we reply with the ERROR variant (mirrors
   // GET_BUZZ_BALANCE) rather than dropping. A missing requestId is dropped.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(
@@ -4430,9 +4441,7 @@ export function PageBlockHost({
                   // SERVER'S OWN preview — never from the block. Preview and
                   // write resolve `sources` independently, so a workflow that
                   // gains an output between them would publish more images than
-                  // the dialog displayed. The server refuses on a mismatch. This
-                  // value is host chrome, not block input: the block never holds
-                  // the block token and cannot reach the procedure.
+                  // the dialog displayed. The server refuses on a mismatch.
                   confirmedImageCount: preview.images.length,
                 });
                 settlement.reply({ result });
@@ -4462,6 +4471,131 @@ export function PageBlockHost({
     createPostFromAppMutation,
     reportNoToken,
   ]);
+
+  // ── RUN_TRAINING → TRAINING_RESULT ─────────────────────────────────────────
+  // Preview the stored quote, confirm in host chrome, record consent (session-only),
+  // then submit — see `runTrainingGate.ts`. Preview/consent use `trpcUtils.client`
+  // so no render-time hook is added. REQUEST-style: `createPostSettlement` owns the
+  // exactly-once reply and keeps `declined` meaning "no run was submitted".
+  useEffect(() => {
+    const off = onMessage<unknown>('RUN_TRAINING', (raw) => {
+      const gate = resolveRunTrainingRequest({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+      });
+      if (gate.kind === 'drop') return;
+      if (gate.kind === 'refuse') {
+        send('TRAINING_RESULT', { requestId: gate.requestId, error: gate.error });
+        return;
+      }
+      const { requestId, quoteId, body } = gate.request;
+      const settlement = createPostSettlement({
+        requestId,
+        emit: (payload) => send('TRAINING_RESULT', payload),
+      });
+      if (!token) {
+        reportNoToken('RUN_TRAINING');
+        settlement.reply({ error: 'no block token' });
+        return;
+      }
+      void (async () => {
+        let preview: TrainingQuotePreview;
+        try {
+          preview = (await trpcUtils.client.blocks.previewTrainingQuote.mutate({
+            blockToken: token,
+            quoteId,
+          })) as TrainingQuotePreview;
+        } catch (err) {
+          settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+          return;
+        }
+        const copy = buildTrainingConsentCopy({ appName, preview });
+        const openBuyBuzz =
+          preview.shortfall != null && preview.shortfall > 0
+            ? () =>
+                dialogStore.trigger<BuyBuzzModalProps>({
+                  id: `block-training-buy-buzz-${requestId}`,
+                  component: BuyBuzzModal,
+                  props: { minBuzzAmount: preview.shortfall ?? undefined },
+                })
+            : undefined;
+        dialogStore.trigger({
+          // Per-request id — a deduped dialog would be a request that never replies.
+          id: `block-run-training-${requestId}`,
+          component: ConfirmDialog,
+          props: {
+            title: copy.title,
+            message: <TrainingConsentBody copy={copy} preview={preview} onBuyBuzz={openBuyBuzz} />,
+            labels: { confirm: copy.confirmLabel, cancel: 'Cancel' },
+            confirmProps: { color: 'blue' },
+            size: 'lg',
+            onConfirm: async () => {
+              // SYNCHRONOUS, before any await: from here on a dismissal must not be
+              // able to claim `declined` for a run that is being submitted.
+              settlement.markConsented();
+              try {
+                await trpcUtils.client.blocks.consentTrainingQuote.mutate({
+                  blockToken: token,
+                  quoteId,
+                });
+                let result: { snapshot?: unknown; submissionUnconfirmed?: unknown };
+                try {
+                  result = await submitWorkflowMutation.mutateAsync({
+                    blockToken: token,
+                    // Schema-validated server-side and checked against the quote's
+                    // body hash; the host never renders or trusts it.
+                    body: body as never,
+                  });
+                } catch (err) {
+                  // Never resent: the quote is spent once. See runTrainingGate.ts.
+                  settlement.reply(trainingSubmitReplyFromError(err));
+                  return;
+                }
+                settlement.reply(trainingSubmitReplyFromResult(result));
+              } catch (err) {
+                settlement.reply({ error: err instanceof Error ? err.message : 'unknown' });
+              }
+            },
+            onCancel: settlement.decline,
+          },
+        });
+      })();
+    });
+    return off;
+  }, [
+    onMessage,
+    send,
+    token,
+    readGateStatus,
+    viewer,
+    reviewNack,
+    appName,
+    trpcUtils,
+    submitWorkflowMutation,
+    reportNoToken,
+  ]);
+
+  // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
+  // Step 1 of the training flow: the host calls `blocks.prepareTrainingDataset`
+  // with the page's block token, which the block's own origin cannot reach. No
+  // dialog — nothing is charged. Decision + reply live in `prepareTrainingDatasetGate.ts`.
+  useEffect(() => {
+    const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
+      void handlePrepareTrainingDataset({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+        token,
+        prepare: (input) => trpcUtils.client.blocks.prepareTrainingDataset.mutate(input),
+        send,
+        onNoToken: () => reportNoToken('PREPARE_TRAINING_DATASET'),
+      });
+    });
+    return off;
+  }, [onMessage, send, token, readGateStatus, viewer, reviewNack, trpcUtils, reportNoToken]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from

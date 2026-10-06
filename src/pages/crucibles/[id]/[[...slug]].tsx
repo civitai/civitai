@@ -41,6 +41,8 @@ import {
   isFreeCrucibleEntry,
   parsePrizePositions,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
+  areCrucibleEntriesClosed,
+  getCrucibleEntriesCloseAt,
 } from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { CrucibleBuzzType } from '~/components/Crucible/crucible-create-form';
@@ -59,7 +61,10 @@ import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
 import { CrucibleStartJudgingButton } from '~/components/Crucible/CrucibleStartJudgingButton';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
-import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
+import {
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  crucibleRankingsAreFinal,
+} from '~/shared/constants/crucible.constants';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -144,7 +149,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       crucible.status === CrucibleStatus.Active &&
       !!currentUser &&
       currentUser.id !== crucible.userId &&
-      crucible.viewerEntries.length < getMaxUserEntries(crucible);
+      !areCrucibleEntriesClosed(crucible) &&
+      crucible.viewerEntryCount < getMaxUserEntries(crucible);
     if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType));
   }, [crucible, router, currentUser, entryBuzzType]);
 
@@ -223,6 +229,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isCreator = !!currentUser && currentUser.id === crucible.userId;
   const isOpen = isActive && (!crucible.endAt || new Date(crucible.endAt) > new Date());
   const canSubmitEntries = isOpen;
+  const entriesClosed = areCrucibleEntriesClosed(crucible);
+  const entriesCloseAt = crucible.entryCutoffPercent ? getCrucibleEntriesCloseAt(crucible) : null;
   const canJudge = isOpen;
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
@@ -253,7 +261,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       state: { imageId, images: images?.some((x) => x.id === imageId) ? images : undefined },
     });
   };
-  const userEntryCount = userEntries.length;
+  const userEntryCount = crucible.viewerEntryCount;
   const maxUserEntries = getMaxUserEntries(crucible);
   const userEntryProgress = (userEntryCount / maxUserEntries) * 100;
   const allEntriesUsed = !!currentUser && userEntryCount >= maxUserEntries;
@@ -436,6 +444,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     <Text size="sm" c="dimmed" className="mb-4">
                       You created this crucible, so you can&apos;t enter it. You can still judge it.
                     </Text>
+                  ) : entriesClosed ? (
+                    <Alert color="gray" radius="md" className="mb-4">
+                      {CRUCIBLE_ENTRIES_CLOSED_MESSAGE}
+                    </Alert>
                   ) : allEntriesUsed ? (
                     <Alert color="green" radius="md" className="mb-4">
                       You&apos;ve submitted all your entries. Good luck!
@@ -521,7 +533,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   crucibleId={crucible.id}
                   versionIds={allowedResources}
                   onGenerate={
-                    canSubmitEntries && !isCreator && !allEntriesUsed && !currentUser?.muted
+                    canSubmitEntries &&
+                    !entriesClosed &&
+                    !isCreator &&
+                    !allEntriesUsed &&
+                    !currentUser?.muted
                       ? (versionId) => openCrucibleGenerator(crucible.contentType, [versionId])
                       : undefined
                   }
@@ -574,6 +590,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     label: 'Total Entry Cap',
                     value: `${numberWithCommas(crucible.maxTotalEntries ?? 0)} entries`,
                     visible: !!crucible.maxTotalEntries,
+                  },
+                  {
+                    label: 'Entries Close',
+                    value: entriesCloseAt
+                      ? `${formatDate(entriesCloseAt, 'MMM D [at] h:mm A')}, in the last ${
+                          crucible.entryCutoffPercent
+                        }% of the run`
+                      : '',
+                    visible: !!entriesCloseAt,
                   },
                   {
                     label: 'Max Clip Length',
@@ -660,13 +685,15 @@ const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBu
   freeEntriesPerUser: crucible.freeEntriesPerUser,
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
-  currentEntryCount: crucible.viewerEntries.length,
+  currentEntryCount: crucible.viewerEntryCount,
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,
   allowedBaseModels: crucible.allowedBaseModels,
   startAt: crucible.startAt,
   endAt: crucible.endAt,
+  entryWarningPercent: crucible.entryWarningPercent,
+  entryCutoffPercent: crucible.entryCutoffPercent,
 });
 
 // Required resources are alternatives ("at least one of"), so only the first is preselected.

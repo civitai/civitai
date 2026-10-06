@@ -8,6 +8,7 @@ import { env as serverEnv } from '~/env/server';
 import { Page } from '~/components/AppLayout/Page';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
 import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-seed';
+import { SwitchToClassicTrainerAlert } from '~/components/Training/TrainingStudioSwitch';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
@@ -96,7 +97,7 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
   // the v2 lane ignores it — so both need BOTH flags or they would target a lane that silently
   // does nothing with the handoff.
   const features = useFeatureFlags();
-  const canGenerate = features.generationAirResources && features.formGraphGenerator;
+  const canGenerate = features.generationAirResources;
   // The host knows its domain color; the element locks its Buzz mode to it (no user toggle).
   const buzzMode: 'yellow' | 'green' = features.isGreen ? 'green' : 'yellow';
   // Epoch generation runs off UNPUBLISHED weights, which this app gates on membership — the same
@@ -294,8 +295,14 @@ function TrainingStudioEmbed({ orchestratorMode }: { orchestratorMode: 'dev' | '
     ref.current?.classList.toggle('light', colorScheme === 'light');
   }, [elReady, colorScheme]);
 
+  const classicTrainerUrl =
+    isNew || !currentUser?.username
+      ? '/models/train'
+      : `/user/${currentUser.username}/models?section=training`;
+
   return (
     <div style={{ maxWidth: 1100, margin: '0 auto', padding: 24 }}>
+      <SwitchToClassicTrainerAlert destination={classicTrainerUrl} />
       {error ? <p>{error}</p> : <StudioTag ref={ref} />}
     </div>
   );

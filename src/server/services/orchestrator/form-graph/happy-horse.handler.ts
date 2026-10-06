@@ -11,8 +11,8 @@ import type {
   VideoGenStepTemplate,
 } from '@civitai/client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { happyHorseVersionIds } from '~/shared/data-graph/generation/version-ids';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { happyHorseVersionIds } from '~/shared/generation/version-ids';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 const ENGINE = 'happyHorse' as const;

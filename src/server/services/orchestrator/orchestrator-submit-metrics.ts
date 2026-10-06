@@ -31,7 +31,7 @@
 // A separate family costs one more metric name and removes all three. Nothing about the read family
 // changes, so no existing query, dashboard or alert can change meaning.
 import { registerCounterWithLabels, registerHistogram } from '~/server/prom/client';
-import type { GenerationSurface } from '~/shared/data-graph/generation/model-substitution';
+import type { GenerationSurface } from '~/shared/generation/model-substitution';
 
 /**
  * WHICH submit population an observation belongs to. Bounded and closed — never derived from anything the

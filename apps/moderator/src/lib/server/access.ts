@@ -189,6 +189,10 @@ export const NAVIGATION: NavLink[] = [
   // than being listed: a run and its findings are one thing, and granting the list without the rows
   // would show a moderator a count they cannot open.
   { path: '/abuse', label: 'Abuse Detection' },
+  // One grant covers the inbox and every source's detail pages (`/decisions/support/<groupKey>`,
+  // `/decisions/support/ticket/<id>`), resolved here by prefix like `/abuse`. Recording a ruling is a
+  // separate permission (`decisions.rule`), checked in the action.
+  { path: '/decisions', label: 'Decisions' },
   { path: '/blocklists', label: 'Blocklists' },
   // One grant covers the whole lab. Its sub-pages (labels, runs, docs) resolve here by prefix rather than
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history

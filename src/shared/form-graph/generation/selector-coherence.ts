@@ -4,11 +4,11 @@ import {
   getEcosystemsForWorkflow,
   getOutputTypeForWorkflow,
   workflowOptions,
-} from '~/shared/data-graph/generation/config/workflows';
+} from '~/shared/generation/config/workflows';
 import { resolveCompatibleEcosystem } from './ecosystem-gates';
 
 /**
- * v1 `getTargetWorkflowForEcosystem`, the pure half: the workflow an
+ * The pure half of target-workflow selection: the workflow an
  * ecosystem lands on when the current one doesn't support it. Prefers a
  * workflow of the current output type, then the first compatible one in
  * picker order, then a media-type default.

@@ -109,6 +109,7 @@ import { ModelMinorFlagAlert } from '~/components/Model/ModelMinorFlagAlert';
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
@@ -132,9 +133,8 @@ import type { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
-import { getServerBrowsingLevel } from '~/server/utils/browsing-level';
+import { getServerBrowsingLevel, getServerImageQueryFilters } from '~/server/utils/browsing-level';
 import { PAID_ACCESS_REFUND_WINDOW_DAYS } from '~/server/utils/early-access-helpers';
-import { resolveBrowsingSettingsAddons } from '~/shared/constants/browsing-settings-addons';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   getIsSafeBrowsingLevel,
@@ -357,7 +357,6 @@ export const getServerSideProps = createServerSideProps({
           // Query key won't line up and the client refetches. Fail-soft on any miss.
           model && modelVersionIdParsed
             ? (async () => {
-                const { getBrowsingSettingAddons } = await import('~/server/services/system-cache');
                 // Mirror ModelCarousel: a minor model forces its carousel to SFW for
                 // non-moderators, so SSR must resolve at that same forced level. Using
                 // the viewer's own level here would key on a different disableMinor
@@ -372,11 +371,10 @@ export const getServerSideProps = createServerSideProps({
                       canViewNsfw: features?.canViewNsfw ?? false,
                       user: session?.user,
                     });
-                const addons = await getBrowsingSettingAddons().catch(() => null);
-                if (!addons) return null;
-                const addonSettings = resolveBrowsingSettingsAddons(addons, browsingLevel, {
+                const filters = await getServerImageQueryFilters(browsingLevel, {
                   isModerator: session?.user?.isModerator,
                 });
+                if (!filters) return null;
                 return ssg.image.getInfinite
                   .prefetchInfinite({
                     modelVersionId: modelVersionIdParsed as number,
@@ -387,10 +385,7 @@ export const getServerSideProps = createServerSideProps({
                     pending: true,
                     include: [],
                     withMeta: false,
-                    browsingLevel,
-                    excludedTagIds: addonSettings.excludedTagIds,
-                    disablePoi: addonSettings.disablePoi,
-                    disableMinor: addonSettings.disableMinor,
+                    ...filters,
                   })
                   .catch(() => null);
               })()
@@ -1507,6 +1502,14 @@ export default function ModelDetailsV2({
                     ? 'This model has been archived and is not available for download. You can still share your creations with the community.'
                     : 'The visual assets associated with this model have been taken down. You can still download the resource, but you will not be able to share your creations.'}
                 </AlertWithIcon>
+              )}
+              {model.status === ModelStatus.Published && (
+                <FirstPublishCard
+                  entityType="model"
+                  entityId={model.id}
+                  ownerId={model.user.id}
+                  publishedAt={model.publishedAt}
+                />
               )}
             </Stack>
             <Group gap={4} wrap="nowrap">

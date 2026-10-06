@@ -1,0 +1,20 @@
+/**
+ * Renders the Tiptap placeholder.
+ *
+ * The `Placeholder` extension only puts `data-placeholder` on the empty paragraph and marks it
+ * `is-editor-empty`; drawing it is the stylesheet's job. Without this rule the prop every
+ * caller passes is accepted and invisible, which is how it behaved before.
+ *
+ * `:global` because the class is applied by ProseMirror at runtime, not by this module, so CSS
+ * Modules must not hash it. `:first-of-type` keeps it to the first line — a multi-paragraph
+ * value would otherwise show the hint on every empty line in between.
+ */
+.editor {
+  :global(p.is-editor-empty:first-of-type)::before {
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+    color: var(--mantine-color-dimmed);
+  }
+}

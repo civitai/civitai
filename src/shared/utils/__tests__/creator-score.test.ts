@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { creatorScoreFromMeta, creatorScoreFromSession } from '~/shared/utils/creator-score';
 
 describe('creatorScoreFromMeta', () => {
   it('reads the total score — the figure /user/account labels "Creator Score"', () => {
@@ -34,5 +34,19 @@ describe('creatorScoreFromMeta', () => {
     expect(creatorScoreFromMeta({ scores: {} })).toBe(0);
     expect(creatorScoreFromMeta({ scores: { total: 'lots' } })).toBe(0);
     expect(creatorScoreFromMeta({ scores: { total: Infinity } })).toBe(0);
+  });
+});
+
+describe('creatorScoreFromSession', () => {
+  // A session with no scores is an unknown score, and the gate copy says something different for
+  // "unknown" than for "zero".
+  it('is undefined when the session carries no scores, not 0', () => {
+    expect(creatorScoreFromSession(undefined)).toBeUndefined();
+    expect(creatorScoreFromSession({ meta: {} })).toBeUndefined();
+  });
+
+  it('reads the total when scores are present', () => {
+    expect(creatorScoreFromSession({ meta: { scores: { total: 0 } } })).toBe(0);
+    expect(creatorScoreFromSession({ meta: { scores: { total: 4_200, models: 9 } } })).toBe(4_200);
   });
 });

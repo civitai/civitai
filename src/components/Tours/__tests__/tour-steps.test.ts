@@ -113,21 +113,25 @@ describe('the gen: namespace', () => {
   /**
    * The orphan check above only asks whether SOME file in `src/` declares the key. That
    * is why `gen:buzz` read as live for five months while on `BuzzTransactionButton`,
-   * which the v2 generator does not render — the tour skipped the step in silence and the
-   * step counter jumped. These two live in the generator's own footer or nowhere.
+   * which the generator does not render — the tour skipped the step in silence and the
+   * step counter jumped. These two live on the generator's own footer or nowhere, so the
+   * binding is read from the footer and the forwarding from the parts it renders.
    */
+  const FOOTER = path.join(SRC, 'components', 'form-graph', 'generation', 'FormFooter.tsx');
+  const FOOTER_PARTS = path.join(SRC, 'components', 'Generation', 'footer-parts.tsx');
+
   it.each([
     ['GEN_BUZZ_KEY', 'gen:buzz', 'tourTarget={GEN_BUZZ_KEY}'],
     ['GEN_SUBMIT_KEY', 'gen:submit', 'data-tour={GEN_SUBMIT_KEY}'],
   ])('wires %s from the generator footer', (constant, key, binding) => {
-    const source = readFileSync(
-      path.join(SRC, 'components', 'generation_v2', 'FormFooter.tsx'),
-      'utf-8'
-    );
-
-    expect(source).toContain(binding);
-    expect(source).toContain('data-tour={tourTarget}');
+    expect(readFileSync(FOOTER, 'utf-8')).toContain(binding);
     expect(tourTargetKeys.some((t) => t.key === key)).toBe(true);
+  });
+
+  // `tourTarget` is a prop, so the footer passing it proves nothing on its own — the part
+  // that receives it has to put it on the DOM, or the key is declared and never rendered.
+  it('the footer parts forward tourTarget onto the element', () => {
+    expect(readFileSync(FOOTER_PARTS, 'utf-8')).toContain('data-tour={tourTarget}');
   });
 });
 

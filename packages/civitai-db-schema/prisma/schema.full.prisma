@@ -419,6 +419,7 @@ model User {
   subscriptions           CustomerSubscription[]
   membershipGiftsGiven    MembershipGift[]       @relation("membershipGiftsGiven")
   membershipGiftsReceived MembershipGift[]       @relation("membershipGiftsReceived")
+  membershipGiftsHeld     MembershipGift[]       @relation("membershipGiftsHeld")
   mutedAt                 DateTime? /// Set on moderator mute-confirmation; cleared via trigger on unmute
   muted                   Boolean                @default(false)
   muteExpiresAt           DateTime? /// For timed mutes from strike escalation
@@ -522,6 +523,7 @@ model User {
   referralRewards            ReferralReward[]                @relation("ReferralRewardUser")
   referralRewardsAsReferee   ReferralReward[]                @relation("ReferralRewardReferee")
   referralMilestones         ReferralMilestone[]
+  creatorMilestones          UserCreatorMilestone[]
   referralRedemptions        ReferralRedemption[]
   referralAttributions       ReferralAttribution[]
   clubs                      Club[]
@@ -679,6 +681,8 @@ enum PaymentProvider {
 enum MembershipGiftStatus {
   Pending
   Fulfilled
+  Active
+  Completed
   Failed
   Refunded
   Revoked
@@ -690,6 +694,10 @@ model MembershipGift {
   gifter      User                 @relation("membershipGiftsGiven", fields: [gifterId], references: [id], onDelete: Cascade)
   recipientId Int
   recipient   User                 @relation("membershipGiftsReceived", fields: [recipientId], references: [id], onDelete: Cascade)
+  // Reads ask "whose gift is this" through holderId, never recipientId, so making gifts
+  // transferable later is a mutation rather than a rewrite of every read path.
+  holderId    Int
+  holder      User                 @relation("membershipGiftsHeld", fields: [holderId], references: [id], onDelete: Cascade)
   tier        String
   months      Int
   amountCents Int
@@ -697,10 +705,20 @@ model MembershipGift {
   message     String?
   anonymous   Boolean              @default(false)
 
+  monthsRemaining Int       @default(0)
+  monthsConsumed  Int       @default(0)
+  acceptedAt      DateTime?
+  expiresAt       DateTime?
+
   stripeCheckoutSessionId String? @unique
   stripePaymentIntentId   String? @unique
   stripeCouponId          String?
   stripeSubscriptionId    String?
+
+  // The single month currently sitting on the holder's subscription. Cleared when an
+  // invoice consumes it. Never more than one month of a gift is live in Stripe.
+  armedCouponId String?
+  armedAt       DateTime?
 
   fulfilledAt DateTime?
   createdAt   DateTime  @default(now())
@@ -708,6 +726,8 @@ model MembershipGift {
 
   @@index([recipientId])
   @@index([gifterId])
+  @@index([holderId, status])
+  @@index([armedCouponId])
 }
 
 model Product {
@@ -4940,6 +4960,7 @@ model Cosmetic {
   purchaseComponents  UserCosmeticShopPurchaseCosmetic[]
   cosmeticShopItems   CosmeticShopItem[]
   packMemberships     CosmeticShopItemCosmetic[]
+  creatorMilestones   CreatorMilestone[]
 
   @@index([createdById])
 }
@@ -4968,6 +4989,34 @@ model UserCosmetic {
   remaining      Int? // Consumable balance; NULL = unlimited (every pre-existing row)
 
   @@id([userId, cosmeticId, claimKey])
+}
+
+/// `track` is TEXT behind a CHECK constraint, not an enum, so adding a track needs no deploy-first enum migration.
+model CreatorMilestone {
+  key          String                 @id
+  track        String
+  threshold    Int?
+  hidden       Boolean                @default(false)
+  hint         String?
+  name         String
+  description  String?
+  cosmeticId   Int?
+  cosmetic     Cosmetic?              @relation(fields: [cosmeticId], references: [id], onDelete: SetNull)
+  sortOrder    Int                    @default(0)
+  achievements UserCreatorMilestone[]
+}
+
+/// Badges are permanent by product decision: no revocation columns.
+model UserCreatorMilestone {
+  userId       Int
+  user         User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  milestoneKey String
+  milestone    CreatorMilestone @relation(fields: [milestoneKey], references: [key], onDelete: Restrict, onUpdate: Restrict)
+  achievedAt   DateTime         @default(now())
+  seenAt       DateTime?
+
+  @@id([userId, milestoneKey])
+  @@index([milestoneKey])
 }
 
 model CosmeticShopSection {
@@ -9074,6 +9123,10 @@ model Crucible {
   // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
   freeEntriesPerUser Int           @default(0)
   maxTotalEntries   Int?
+  // Shares of the run, counted back from the end: the submit modal warns from the first, and
+  // entries close at the second.
+  entryWarningPercent Int          @default(20)
+  entryCutoffPercent Int           @default(0)
   minViewSeconds    Int?
   maxClipSeconds    Int?
   prizePositions    Json           @default("[]")

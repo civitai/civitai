@@ -22,6 +22,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo } from 'react';
 import { useRouter } from 'next/router';
 import * as z from 'zod';
+import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticleProcessing } from '~/components/Article/ArticleProcessing';
@@ -498,6 +499,14 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             />
           )}
           <OwnerRatingControls entityType="Article" entityId={article.id} isOwner={!!isActualOwner} />
+          {article.status === ArticleStatus.Published && (
+            <FirstPublishCard
+              entityType="article"
+              entityId={article.id}
+              ownerId={article.user.id}
+              publishedAt={article.publishedAt}
+            />
+          )}
         </Stack>
         <ContainerGrid2 gutter="xl">
           <ContainerGrid2.Col span={{ base: 12, sm: 8 }}>

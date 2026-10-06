@@ -638,7 +638,7 @@ describe('stage flow', () => {
       trainedWords: ['trigger1'],
       clipSkip: 2,
     });
-    // Hydration is called with the DISTRIBUTION order, not the popularity order.
+    // Hydration is called with the DISTRIBUTION order, not the shortlist's seed order.
     expect(mockGetResourceData.mock.calls[0][0]).toEqual([22, 11]);
   });
 
