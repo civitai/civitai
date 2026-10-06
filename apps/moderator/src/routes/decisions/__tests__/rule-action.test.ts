@@ -161,6 +161,21 @@ describe('the rule action', () => {
     });
   });
 
+  it('the fingerprint LOAD hands the page is the one the action accepts — the real round trip', async () => {
+    const page = (await (load as unknown as Handler)({
+      params: { groupKey: GK },
+      url: new URL(`https://moderator.example/decisions/support/${GK}`),
+      locals: { grants: { 'decisions.rule': true } },
+    })) as unknown as { fingerprint: string; version: string };
+    expect(page.fingerprint).toMatch(/^[0-9a-f]{32}$/);
+    const out = await post('rule', {
+      ruling: 'correct',
+      version: page.version,
+      fingerprint: page.fingerprint,
+    });
+    expect(out.success).toBe(true);
+  });
+
   it('refuses a ruling when the group changed since the page loaded (409), without writing', async () => {
     // A member left…
     expect(

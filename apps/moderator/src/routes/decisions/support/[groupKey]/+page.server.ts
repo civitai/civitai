@@ -163,8 +163,8 @@ export const actions: Actions = {
       return fail(409, {
         scope: 'rule' as const,
         error:
-          'The group changed since this page loaded. It has been refreshed above — review it and ' +
-          'submit again.',
+          'The group changed since this page loaded, so this was NOT recorded. The page is being ' +
+          'refreshed — review the group again before you resubmit.',
       });
 
     try {

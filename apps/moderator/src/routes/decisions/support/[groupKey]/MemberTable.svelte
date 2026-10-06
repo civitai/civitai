@@ -44,6 +44,9 @@
    * and comes off when THIS write settles — after the reload on success, so the stored label takes
    * over; at once on a refusal, which is then shown on the row.
    *
+   * One write per row at a time: the row's buttons are disabled while its mark is pending, so a
+   * second click cannot have its mark or refusal overwritten by the first one settling.
+   *
    * 🔴 Reads only `ticketId` (the `{#each}` key) and `ruling` (the inner key) — `use:enhance` captures
    * this closure once at mount.
    */
@@ -118,6 +121,7 @@
                   <input type="hidden" name="ruling" value={r} />
                   <button
                     type="submit"
+                    disabled={pending.has(m.ticketId)}
                     aria-pressed={shown === r}
                     class="rounded border px-2 py-0.5 text-xs {shown === r
                       ? 'border-blue-4 bg-blue-4/20 text-white'
