@@ -7,7 +7,7 @@ import { MantineProvider } from '@mantine/core';
 import type * as Trpc from '~/utils/trpc';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
-const strikesQuery = { data: undefined, isLoading: false };
+const strikesQuery: { data: undefined; isLoading: boolean } = { data: undefined, isLoading: false };
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
   trpc: makeTrpcProxy({
@@ -132,6 +132,36 @@ describe('StrikesCard', () => {
 
       expect(scroll.mock.contexts.map((node) => (node as HTMLElement).id)).toEqual(scrolledTo);
     } finally {
+      scroll.mockRestore();
+      window.history.replaceState(null, '', '/');
+    }
+  });
+
+  // The anchor only renders once the strikes query settles, which is why the scroll lives in a ref
+  // rather than a mount effect: a mount-time scroll would find nothing.
+  it('scrolls once the card finishes loading, and only once', () => {
+    window.history.replaceState(null, '', '/user/account/profile#creator-score');
+    const scroll = vi.spyOn(window.HTMLElement.prototype, 'scrollIntoView');
+    strikesQuery.isLoading = true;
+    try {
+      const renderCard = () =>
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(StrikesCard, { flat: true })
+        );
+      render(React.createElement(StrikesCard, { flat: true }));
+      expect(scroll).not.toHaveBeenCalled();
+
+      strikesQuery.isLoading = false;
+      act(() => root?.render(renderCard()));
+      act(() => root?.render(renderCard()));
+
+      expect(scroll.mock.contexts.map((node) => (node as HTMLElement).id)).toEqual([
+        'creator-score',
+      ]);
+    } finally {
+      strikesQuery.isLoading = false;
       scroll.mockRestore();
       window.history.replaceState(null, '', '/');
     }
