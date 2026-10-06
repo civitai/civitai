@@ -34,7 +34,11 @@ export type LabelTotals = {
 
 const ratio = (n: number, d: number) => (d ? n / d : null);
 
-/** Only `ok` rows count; errors and skipped cases are reported separately, never as misses. */
+const crossesPositive = (range: NonNullable<Expected['nsfw']>) =>
+  ORDER.indexOf(range.min) < NSFW_POSITIVE && ORDER.indexOf(range.max) >= NSFW_POSITIVE;
+
+/** Only `ok` rows count; errors and skipped cases are reported separately, never as misses. An nsfw
+ *  range crossing R counts in `scored`/`correct` but not in tp/fp/fn/tn. */
 export function totals(
   rows: Array<{ expected: Expected; output: Record<string, any> | null; status: string }>
 ): Record<string, LabelTotals> {
@@ -42,16 +46,6 @@ export function totals(
   for (const { expected, output, status } of rows) {
     if (status !== 'ok' || !output) continue;
     for (const [label, correct] of Object.entries(caseCorrect(expected, output))) {
-      const [actual, predicted] =
-        label === 'nsfw'
-          ? [
-              ORDER.indexOf(expected.nsfw!.min) >= NSFW_POSITIVE,
-              ORDER.indexOf(output.nsfw.level) >= NSFW_POSITIVE,
-            ]
-          : [
-              expected[label as (typeof FLAG_LABELS)[number]] === true,
-              output[label].detected === true,
-            ];
       const t = (out[label] ??= {
         scored: 0,
         correct: 0,
@@ -64,6 +58,17 @@ export function totals(
       });
       t.scored++;
       if (correct) t.correct++;
+      if (label === 'nsfw' && crossesPositive(expected.nsfw!)) continue;
+      const [actual, predicted] =
+        label === 'nsfw'
+          ? [
+              ORDER.indexOf(expected.nsfw!.min) >= NSFW_POSITIVE,
+              ORDER.indexOf(output.nsfw.level) >= NSFW_POSITIVE,
+            ]
+          : [
+              expected[label as (typeof FLAG_LABELS)[number]] === true,
+              output[label].detected === true,
+            ];
       if (actual && predicted) t.tp++;
       else if (predicted) t.fp++;
       else if (actual) t.fn++;

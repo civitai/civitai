@@ -59,6 +59,25 @@ describe('totals', () => {
     });
   });
 
+  it('keeps a range crossing R out of tp/fp/fn/tn but scores it', () => {
+    const t = totals([
+      ok({ nsfw: { min: 'pg13', max: 'r' } }, nsfw('r')), // correct, no class
+      ok({ nsfw: { min: 'none', max: 'x' } }, nsfw('pg13')), // correct, no class
+      ok({ nsfw: { min: 'pg13', max: 'r' } }, nsfw('xxx')), // wrong, no class
+      ok({ nsfw: { min: 'r', max: 'x' } }, nsfw('x')), // tp
+    ]);
+    expect(t.nsfw).toEqual({
+      scored: 4,
+      correct: 3,
+      tp: 1,
+      fp: 0,
+      fn: 0,
+      tn: 0,
+      precision: 1,
+      recall: 1,
+    });
+  });
+
   it('counts flag labels against detected', () => {
     const t = totals([
       ok({ scam: true }, flag('scam', true)),
