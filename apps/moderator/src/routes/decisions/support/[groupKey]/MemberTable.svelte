@@ -11,7 +11,12 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
-  import { MEMBER_RULINGS, MEMBER_RULING_LABEL, type MemberRuling } from '$lib/decision-rulings';
+  import {
+    MEMBER_RULINGS,
+    MEMBER_RULING_LABEL,
+    MEMBER_RULING_SHORT_LABEL,
+    type MemberRuling,
+  } from '$lib/decision-rulings';
   import { probabilityLabel } from '$lib/decisions';
   import { LINK_CLASS, MUTED_LINK_CLASS, dateTime } from '$lib/format';
   import type { PageData } from './$types';
@@ -38,11 +43,22 @@
     draft: AnswerDraft;
   } = $props();
 
-  /** A row toggle's look, on or off — the label buttons and "Use a reply" share it. */
+  /** The accessible name starts with the visible word, so a voice command naming it still works. */
+  const memberRulingName = (r: MemberRuling) =>
+    MEMBER_RULING_SHORT_LABEL[r] === MEMBER_RULING_LABEL[r]
+      ? MEMBER_RULING_LABEL[r]
+      : `${MEMBER_RULING_SHORT_LABEL[r]} — ${MEMBER_RULING_LABEL[r].toLowerCase()}`;
+
+  const toneClass = (on: boolean) =>
+    on ? 'bg-blue-4/20 text-white' : 'text-dark-2 hover:text-dark-0';
+  /** "Use a reply" — a standalone toggle. */
   const toggleClass = (on: boolean) =>
     `rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
-      on ? 'border-blue-4 bg-blue-4/20 text-white' : 'border-dark-4 text-dark-2 hover:text-dark-0'
-    }`;
+      on ? 'border-blue-4' : 'border-dark-4'
+    } ${toneClass(on)}`;
+  /** One segment of the label control; the group draws the border and the dividers. */
+  const segmentClass = (on: boolean) =>
+    `px-2 py-0.5 text-xs disabled:opacity-50 ${toneClass(on)}`;
 
   // ticketId → the label this session just submitted, shown until its own write settles.
   const pending = new SvelteMap<string, MemberRuling>();
@@ -97,7 +113,7 @@
       <TableHead class="text-right">p group</TableHead>
       <TableHead class="text-right">p novel</TableHead>
       <TableHead>Status</TableHead>
-      <TableHead>Belongs?</TableHead>
+      <TableHead>Fits the definition?</TableHead>
       {#if canAnswer}<TableHead>Answer</TableHead>{/if}
     </TableRow>
   </TableHeader>
@@ -119,9 +135,9 @@
             aria-label="Open #{m.ticketId} in Freshdesk">↗</a
           >
           {#if m.isFounder}<Badge variant="secondary" class="ml-1">founder</Badge>{/if}
-          {#if m.subject}<div class="text-dark-2 max-w-md truncate text-xs">{m.subject}</div>{/if}
+          {#if m.subject}<div class="text-dark-2 max-w-md text-xs break-words">{m.subject}</div>{/if}
         </TableCell>
-        <TableCell>{dateTime(m.ticketCreatedAt)}</TableCell>
+        <TableCell class="min-w-32 whitespace-normal">{dateTime(m.ticketCreatedAt)}</TableCell>
         <TableCell>{m.chosenTopic || '—'} {probabilityLabel(m.probabilities.topic)}</TableCell>
         <TableCell class="text-right">{probabilityLabel(m.probabilities.group)}</TableCell>
         <TableCell class="text-right">{probabilityLabel(m.probabilities.novel)}</TableCell>
@@ -130,9 +146,18 @@
           {#if m.isFounder}
             <span class="text-dark-2 text-xs">founder</span>
           {:else if canRule}
-            <div class="flex gap-1">
+            <div
+              class="inline-flex divide-x divide-dark-4 overflow-hidden rounded border border-dark-4"
+              role="group"
+              aria-label="Does #{m.ticketId} fit the group definition?"
+            >
               {#each MEMBER_RULINGS as r (r)}
-                <form method="POST" action="?/label" use:enhance={submit(m.ticketId, r)}>
+                <form
+                  method="POST"
+                  action="?/label"
+                  class="flex"
+                  use:enhance={submit(m.ticketId, r)}
+                >
                   <input type="hidden" name="version" value={version} />
                   <input type="hidden" name="ticketId" value={m.ticketId} />
                   <input type="hidden" name="ruling" value={r} />
@@ -140,7 +165,9 @@
                     type="submit"
                     disabled={pending.has(m.ticketId)}
                     aria-pressed={shown === r}
-                    class={toggleClass(shown === r)}>{MEMBER_RULING_LABEL[r]}</button
+                    aria-label={memberRulingName(r)}
+                    title={MEMBER_RULING_LABEL[r]}
+                    class={segmentClass(shown === r)}>{MEMBER_RULING_SHORT_LABEL[r]}</button
                   >
                 </form>
               {/each}

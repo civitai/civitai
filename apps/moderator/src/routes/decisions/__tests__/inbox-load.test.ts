@@ -33,9 +33,11 @@ type Out = {
   total: number;
   rows: { groupKey: string; state: string | null }[];
 };
-const run = (qs = '') =>
+const MOD = { id: 7, roles: ['moderator:cm-high'] };
+const run = (qs = '', user: { id: number; roles: string[] } = MOD) =>
   (load as unknown as (e: unknown) => Promise<Out>)({
     url: new URL(`https://moderator.example/decisions${qs}`),
+    locals: { user },
   });
 
 const row = (groupKey: string) => ({ groupKey });
@@ -49,6 +51,13 @@ beforeEach(() => {
 });
 
 describe('inbox load', () => {
+  it('asks for the admin-only header notes for an admin, and only for an admin', async () => {
+    await run('', { id: 1, roles: ['moderator:admin'] });
+    expect(getSupportHeader).toHaveBeenLastCalledWith('v', { pinned: false, admin: true });
+    await run('');
+    expect(getSupportHeader).toHaveBeenLastCalledWith('v', { pinned: false, admin: false });
+  });
+
   it('a missing ruling table is unknown state, not a backlog of "unruled"', async () => {
     currentResolutions.mockRejectedValue(Object.assign(new Error('no table'), { code: '42P01' }));
     const out = await run('?state=unruled');

@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { convertHtml } from './html-to-text';
 
 // Support context for User Lookup (Retool's GetFreshdesk, ticket §1.2 "support context").
 //
@@ -59,7 +60,8 @@ async function freshdeskGet(
   path: string,
   label: string,
   /** The reason to report for a 404, where a 404 means something specific to the caller. */
-  notFound: string | null = null
+  notFound: string | null = null,
+  timeoutMs = 8000
 ): Promise<{ status: 'ok'; body: unknown } | Unavailable> {
   const key = env.FRESHDESK_API_KEY;
   if (!key) return NOT_CONFIGURED;
@@ -68,7 +70,7 @@ async function freshdeskGet(
   try {
     const res = await fetch(`https://${freshdeskHost()}/api/v2${path}`, {
       headers: { authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 404 && notFound !== null) return unavailable(notFound);
     if (res.status === 429) {
@@ -192,4 +194,48 @@ export async function getFreshdeskContact(email: string | null): Promise<Freshde
       url: `https://${freshdeskHost()}/a/contacts/${hit.id}`,
     },
   };
+}
+
+export type TicketDescriptionResult =
+  | { status: 'found'; text: string; truncated: boolean }
+  | { status: 'none' }
+  | Unavailable;
+
+/** Characters of description shown. The rest is one click away in Freshdesk. */
+export const DESCRIPTION_MAX_CHARS = 20_000;
+/** Shorter than the default: a page is waiting on it, and the stored excerpt is a fine fallback. */
+export const DESCRIPTION_TIMEOUT_MS = 4000;
+
+/**
+ * A ticket's first message as Freshdesk formats it — its HTML `description`, converted to text here
+ * because the router's stored excerpt comes from `description_text`, which Freshdesk flattens to one
+ * line for many HTML emails. READ-ONLY, and never throws.
+ *
+ * 🔴 `text` IS PLAIN TEXT (see `htmlToText`), and it is customer-written: render it as text only.
+ */
+export async function getTicketDescription(ticketId: string): Promise<TicketDescriptionResult> {
+  if (!env.FRESHDESK_API_KEY) return NOT_CONFIGURED;
+  if (!isFreshdeskId(ticketId)) return unavailable('Not a Freshdesk ticket id.');
+
+  const res = await freshdeskGet(
+    `/tickets/${ticketId}`,
+    'ticket',
+    `Freshdesk has no ticket ${ticketId} — it may have been deleted or merged.`,
+    DESCRIPTION_TIMEOUT_MS
+  );
+  if (res.status !== 'ok') return res;
+  const description = (res.body as { description?: unknown } | null)?.description;
+  if (typeof description !== 'string') {
+    console.error('[freshdesk] ticket: unexpected body');
+    return unavailable('Freshdesk returned an unexpected response.');
+  }
+  const { text, complete } = convertHtml(description);
+  // 🔴 Empty because the converter stopped reading is NOT "no description" — say why instead.
+  if (!text)
+    return complete
+      ? { status: 'none' }
+      : unavailable("Freshdesk's formatted copy could not be read in full; open it in Freshdesk.");
+  return text.length > DESCRIPTION_MAX_CHARS
+    ? { status: 'found', text: text.slice(0, DESCRIPTION_MAX_CHARS), truncated: true }
+    : { status: 'found', text, truncated: !complete };
 }

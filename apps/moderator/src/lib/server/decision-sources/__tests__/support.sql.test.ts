@@ -276,6 +276,15 @@ describe('composition over real-shaped rows', () => {
     expect(h.warnings).toEqual(['No ticket has been routed under this version yet.']);
   });
 
+  it('header: the question-spec note reaches the warnings for an admin only', async () => {
+    const { client } = recordingClient(() => [
+      { active_groups: 3, n_routed: 0, last_routed: '1970-01-01 00:00:00.000', n_specs: 2 },
+    ]);
+    const spec = /2 different question specs/;
+    expect((await getSupportHeader('v', { admin: true }, client)).warnings[0]).toMatch(spec);
+    expect((await getSupportHeader('v', {}, client)).warnings.join('\n')).not.toMatch(spec);
+  });
+
   it("header: reports the router's catalog cap", async () => {
     const { client } = recordingClient(() => [
       { active_groups: 3, n_routed: 0, last_routed: '1970-01-01 00:00:00.000', n_specs: 0 },

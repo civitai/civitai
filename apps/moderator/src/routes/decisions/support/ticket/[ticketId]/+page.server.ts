@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { PageServerLoad } from './$types';
 import { getSupportTicket, isTicketId, supportVersion } from '$lib/server/decision-sources/support';
+import { getTicketDescription } from '$lib/server/freshdesk.service';
 
 export const load: PageServerLoad = async ({ params, url, locals }) => {
   if (!isTicketId(params.ticketId)) throw error(404, 'No such ticket.');
@@ -13,7 +14,14 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     const ticket = await getSupportTicket({ version, ticketId: params.ticketId, includeEmail });
     if (!ticket)
       throw error(404, `Ticket ${params.ticketId} was not routed under router version ${version}.`);
-    return { ticket, version, overridden, canSeeEmail: includeEmail };
+    return {
+      ticket,
+      version,
+      overridden,
+      canSeeEmail: includeEmail,
+      // Not awaited: SvelteKit streams it, so a slow Freshdesk delays the body panel, not the page.
+      description: getTicketDescription(params.ticketId),
+    };
   } catch (e) {
     if (typeof (e as { status?: unknown }).status === 'number') throw e;
     console.error('[decisions] support ticket load failed', e);
