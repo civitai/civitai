@@ -505,6 +505,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
 
   // Models published before the approval stamp existed carry no stamp. Once their workflow is gone,
   // their publish history is what lets them through; a never-published unstamped draft stays refused.
+  // Unit cases for the branch; the handler tests for the same cases are the regression coverage.
   it.each<[string, ModelFields]>([
     ['published (public)', { status: 'Published', publishedAt: new Date('2026-09-10') }],
     ['published privately (no publishedAt)', { status: 'Published', publishedAt: null }],
@@ -513,6 +514,15 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   ])('lets an unreadable (NOT_FOUND) unstamped model through when it is %s', async (_, fields) => {
     mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
     await expect(check({ meta: UNSTAMPED, ...fields })).resolves.toBeUndefined();
+  });
+
+  it.each<[string, ModelFields]>([
+    ['a draft', { status: 'Draft', publishedAt: null }],
+    ['unpublished without ever being published', { status: 'Unpublished', publishedAt: null }],
+    ['scheduled without a publishedAt', { status: 'Scheduled', publishedAt: null }],
+  ])('refuses an unreadable (NOT_FOUND) unstamped model that is %s', async (_, fields) => {
+    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+    await expect(check({ meta: UNSTAMPED, ...fields })).rejects.toThrow(/can no longer be checked/);
   });
 
   it('publish history does not override a readable run that is not approved', async () => {

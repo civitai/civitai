@@ -187,6 +187,19 @@ describe('publishModelHandler — training moderation gate', () => {
     expect(mockPublishModelById).toHaveBeenCalledTimes(1);
   });
 
+  it('refuses an unstamped never-published model moved to Unpublished, when its run is gone', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Unpublished',
+      meta: { trainingStudioWorkflowId: 'wf-1' },
+      nsfw: false,
+      userId: OWNER_ID,
+      publishedAt: null,
+    } as never);
+    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+    await expect(publish()).rejects.toThrow(/can no longer be checked/);
+    expect(mockPublishModelById).not.toHaveBeenCalled();
+  });
+
   it('does not read any workflow for a model with no source workflow', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({
       status: 'Draft',

@@ -448,10 +448,11 @@ export type TrainingSourceModel = {
  *
  * Both meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`), written only by
  * `createDraftModelFromWorkflow`. When the orchestrator no longer returns the workflow (NOT_FOUND),
- * the model is let through if it carries the approval stamp, or if it has left Draft status or has a
- * `publishedAt` — evidence it was already published, privately or publicly, by an earlier publish
- * (every model created since the stamp existed carries the stamp). A never-published draft without
- * the stamp is refused. Any other read failure is rethrown, so the publish fails and can be retried
+ * the model is let through if it carries the approval stamp, or if it has a `publishedAt` or is
+ * currently `Published` (a private publish sets the status but not the model's `publishedAt`). Both
+ * are written only by publish paths, so they show the model was published before the stamp existed
+ * (every model created since carries the stamp). Any other unstamped model is refused — including
+ * one moved out of Draft by an unpublish, which never publishes. Any other read failure is rethrown, so the publish fails and can be retried
  * rather than going ahead unchecked.
  */
 export async function assertTrainingSourcePublishable({
@@ -474,7 +475,7 @@ export async function assertTrainingSourcePublishable({
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'NOT_FOUND') {
       if (meta?.trainingStudioModerationApproved === true) return;
-      if (model.status !== ModelStatus.Draft || model.publishedAt != null) return;
+      if (model.publishedAt != null || model.status === ModelStatus.Published) return;
       refuse(TRAINING_UNVERIFIABLE_MESSAGE);
     }
     throw error;
