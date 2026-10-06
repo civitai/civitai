@@ -15,9 +15,6 @@ export const HARNESS_LIMITS = {
 
 export const HEADING_TOO_LONG = `A field heading is at most ${HARNESS_LIMITS.headingChars} characters.`;
 
-/** A set run over this many cases asks to be confirmed first: it takes a while, and holds the page. */
-export const CONFIRM_ABOVE = 10;
-
 export const textChars = (fields: readonly LabField[]) =>
   fields.reduce((sum, field) => sum + field.text.length, 0);
 

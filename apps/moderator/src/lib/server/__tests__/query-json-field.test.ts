@@ -1,6 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { jsonField, parseForm } from '../query';
+
+vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
+
+const { jsonField, parseForm } = await import('../query');
 
 const form = (value: string) => {
   const data = new FormData();

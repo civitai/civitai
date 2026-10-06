@@ -3,12 +3,10 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Sheet from '@civitai/ui/components/ui/sheet/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import { cn } from '@civitai/ui/utils.js';
   import DiffView from '$lib/components/text-scan-lab/DiffView.svelte';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import type { ChangesState } from './changes';
-  import SaveStatus from './SaveStatus.svelte';
 
   let {
     promptKey,
@@ -50,9 +48,7 @@
       <Sheet.Header class="p-0">
         <Sheet.Title class="text-white">{promptKeyName(key)}</Sheet.Title>
         <Sheet.Description class="text-dark-2">
-          {changes.editable
-            ? 'Your version saves as you type. Nobody else sees it until you propose or publish it.'
-            : 'Read only.'}
+          Your version is kept in this browser. Nobody else sees it until you publish it.
         </Sheet.Description>
       </Sheet.Header>
 
@@ -69,7 +65,7 @@
       <div>
         <div class="flex flex-wrap items-center justify-between gap-2">
           <Label for="prompt-editor" class="text-xs text-dark-2">
-            {changes.editable ? 'Your version' : 'This version'}
+            Your version
           </Label>
           <div class="flex gap-2">
             {#if changed && currentText !== undefined}
@@ -77,7 +73,7 @@
                 {showDiff ? 'Hide differences' : 'Show differences'}
               </Button>
             {/if}
-            {#if changed && changes.editable}
+            {#if changed}
               <Button size="xs" variant="ghost" onclick={() => key && changes.resetKey(key)}>
                 Reset to current
               </Button>
@@ -97,19 +93,11 @@
         {:else}
           <Textarea
             id="prompt-editor"
-            class={cn(
-              'mt-2 min-h-96 font-mono text-xs',
-              !changes.editable && 'cursor-default bg-dark-7 text-dark-1'
-            )}
-            readonly={!changes.editable}
+            class="mt-2 min-h-96 font-mono text-xs"
             bind:value={() => mine ?? '', (v) => key && changes.set(key, v, currentText)}
           />
         {/if}
       </div>
-
-      {#if changes.editable}
-        <SaveStatus {changes} />
-      {/if}
     {/if}
   </Sheet.Content>
 </Sheet.Root>

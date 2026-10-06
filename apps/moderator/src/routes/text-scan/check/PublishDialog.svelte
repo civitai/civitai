@@ -1,45 +1,40 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
-  import RunTotals from '$lib/components/text-scan-lab/RunTotals.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import type { SetRunTotals } from '$lib/server/text-scan-lab/publish';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import { submitSaved, type ChangesState } from './changes';
+  import type { ChangesState } from './changes';
 
   let {
     changes,
-    runTotals,
-    note,
-    draftLabel,
+    activeIds,
   }: {
     changes: ChangesState;
-    runTotals: SetRunTotals[];
-    note: string;
-    draftLabel: string;
+    activeIds: Partial<Record<PromptKey, number>>;
   } = $props();
 
   let open = $state(false);
 
-  const names = (keys: readonly string[]) => keys.map((k) => promptKeyName(k as PromptKey)).join(', ');
+  const names = (keys: readonly string[]) =>
+    keys.map((k) => promptKeyName(k as PromptKey)).join(', ');
+
+  // Sent with the changes, so the server can refuse when someone published since this page loaded.
+  const loadedIds = $derived(
+    JSON.stringify(Object.fromEntries(changes.keys.map((k) => [k, activeIds[k] ?? null])))
+  );
 
   const publish = new FormState({
     reload: true,
     reset: false,
     onSuccess: (data) => {
       open = false;
-      const published = (data?.published as string[] | undefined) ?? [];
-      toast.success(published.length ? `Published ${names(published)}` : 'Marked published');
-    },
-    onSettled: (result) => {
-      if (result.type === 'failure' && (result.data?.published as string[] | undefined)?.length)
-        void invalidateAll();
+      changes.discard();
+      toast.success(`Published ${names((data?.published as string[] | undefined) ?? [])}`);
     },
   });
 </script>
@@ -55,21 +50,14 @@
         {names(changes.keys)} immediately.
       </Dialog.Description>
     </Dialog.Header>
-    <RunTotals rows={runTotals} draftUpdatedAt={changes.token ? new Date(changes.token) : null} {draftLabel} />
-    <form method="POST" action="?/publish" use:enhance={submitSaved(changes, publish)} class="space-y-3">
+    <form method="POST" action="?/publish" use:enhance={publish.enhance} class="space-y-3">
+      <input type="hidden" name="prompts" value={changes.json} />
+      <input type="hidden" name="activeIds" value={loadedIds} />
       <div>
         <Label for="publish-note" class="text-xs text-dark-2">
           Publish note (recorded on each version)
         </Label>
-        <Textarea
-          id="publish-note"
-          name="note"
-          rows={3}
-          maxlength={2000}
-          required
-          class="mt-1"
-          value={note}
-        />
+        <Textarea id="publish-note" name="note" rows={3} maxlength={2000} required class="mt-1" />
       </div>
       {#if publish.error}
         <p class="whitespace-pre-wrap text-sm text-red-300">{publish.error}</p>

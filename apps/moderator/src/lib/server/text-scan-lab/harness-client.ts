@@ -32,9 +32,9 @@ async function callHarness<T>(
 }
 
 /** The harness reports a refused text by its position (`texts.7.fields`); name it by its key instead. */
-const nameTexts = (error: string, batch: LabText[], keyLabel: string) =>
+const nameTexts = (error: string, batch: LabText[]) =>
   error.replace(/\btexts\.(\d+)/g, (match, i: string) =>
-    batch[Number(i)] ? `${keyLabel} ${batch[Number(i)].key}` : match
+    batch[Number(i)] ? `text ${batch[Number(i)].key}` : match
   );
 
 /** Texts the harness would refuse become their own errors, so they never sink a shared request. */
@@ -113,14 +113,7 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
 export async function scanTexts(
   entityType: LabEntityType,
   texts: LabText[],
-  promptOverrides?: Record<string, string>,
-  {
-    keyLabel = 'text',
-    onRequest,
-  }: {
-    keyLabel?: string;
-    /** After each harness request, answered or not. */ onRequest?: () => Promise<void>;
-  } = {}
+  promptOverrides?: Record<string, string>
 ): Promise<LabScanResult[]> {
   const { fitting, oversize } = splitOversize(texts);
   const byKey = new Map(oversize.map((r) => [r.key, r]));
@@ -138,13 +131,12 @@ export async function scanTexts(
       'Text-scan scan'
     );
     sent++;
-    await onRequest?.();
     if (result.ok) {
       for (const r of (result.body.results as HarnessScanResult[]).map(toLabScanResult))
         byKey.set(r.key, r);
       continue;
     }
-    const error = nameTexts(result.error, batch, keyLabel);
+    const error = nameTexts(result.error, batch);
     const refused =
       result.requestNeverSent ||
       result.status === 400 ||
@@ -166,8 +158,6 @@ export type LabComposedEntity =
       fields: LabField[];
       text: string;
       userId: number | null;
-      /** ChatMessage only: every message in the window, which the purge checks. */
-      sourceIds?: number[];
     }
   | { entityId: number; ok: false; error: string };
 
@@ -178,7 +168,6 @@ type HarnessComposedEntity =
       fields: { heading: string; text: string | null }[];
       text: string;
       userId: number | null;
-      sourceIds?: number[];
     }
   | { entityId: number; ok: false; error: string };
 

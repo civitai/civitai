@@ -250,12 +250,12 @@ describe('harness limits', () => {
         error: 'Invalid request: texts.1.fields: Too big',
       });
 
-    const results = await scanTexts('Model', texts(16), undefined, { keyLabel: 'case' });
+    const results = await scanTexts('Model', texts(16));
 
     expect(results[9]).toEqual({
       key: 't9',
       ok: false,
-      error: 'Invalid request: case t9.fields: Too big',
+      error: 'Invalid request: text t9.fields: Too big',
     });
   });
 });

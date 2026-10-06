@@ -3,22 +3,19 @@
   import { cn } from '@civitai/ui/utils.js';
   import {
     LABEL_NAMES,
-    checkExpected,
     describeVerdict,
     verdictsDiffer,
     type VerdictTone,
   } from '$lib/text-scan-lab/labels';
-  import type { Expected, LabLabel, LabScanResult } from '$lib/text-scan-lab/types';
+  import type { LabLabel, LabScanResult } from '$lib/text-scan-lab/types';
 
   let {
     label,
     columns,
-    expected = null,
     actions,
   }: {
     label: LabLabel;
     columns: { title: string; result: LabScanResult }[];
-    expected?: Expected | null;
     actions?: Snippet;
   } = $props();
 
@@ -49,7 +46,6 @@
   <div class={cn('mt-2 grid gap-4', columns.length === 2 && 'sm:grid-cols-2')}>
     {#each columns as column (column.title)}
       {@const verdict = describeVerdict(label, column.result)}
-      {@const check = expected ? checkExpected(expected, label, column.result) : null}
       <div class="min-w-0">
         {#if columns.length > 1}
           <p class="text-xs text-dark-2">{column.title}</p>
@@ -59,11 +55,6 @@
         </p>
         {#if verdict.reason}
           <p class="mt-1 whitespace-pre-wrap break-words text-sm text-dark-0">{verdict.reason}</p>
-        {/if}
-        {#if check}
-          <p class={cn('mt-2 text-xs', check.asExpected ? 'text-green-300' : 'text-red-300')}>
-            {check.asExpected ? '✓ as expected' : `✗ expected ${check.expected}`}
-          </p>
         {/if}
       </div>
     {/each}

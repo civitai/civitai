@@ -1,6 +1,4 @@
-import { levelRank } from './expected';
-import { caseCorrect, type LabelTotals } from './score';
-import type { Expected, LabEntityType, LabLabel, NsfwLevelName, PromptKey } from './types';
+import type { LabEntityType, LabLabel, NsfwLevelName, PromptKey } from './types';
 
 export const LABEL_NAMES: Record<LabLabel, string> = {
   nsfw: 'Rating',
@@ -8,11 +6,6 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
   minor: 'Minor',
   scam: 'Scam / phishing',
 };
-
-export const labelName = (label: string): string => LABEL_NAMES[label as LabLabel] ?? label;
-
-export const scoreChips = (t: Record<string, LabelTotals> | null): string[] =>
-  Object.entries(t ?? {}).map(([label, v]) => `${labelName(label)} ${v.correct}/${v.scored}`);
 
 export const promptKeyName = (key: PromptKey): string =>
   key === 'base'
@@ -61,7 +54,7 @@ const FLAG_PHRASES: Record<Exclude<LabLabel, 'nsfw'>, { yes: string; no: string 
   scam: { yes: 'Scam', no: 'Not a scam' },
 };
 
-/** `neutral`: a rating is information, not a finding, unless it is above what the content declares. */
+/** `neutral`: a rating is information, not a finding. */
 export type VerdictTone = 'clear' | 'neutral' | 'flagged' | 'unknown';
 export type Verdict = { headline: string; tone: VerdictTone; reason?: string };
 
@@ -74,11 +67,7 @@ const couldNotJudge = (why: string): Verdict => ({
   tone: 'unknown',
 });
 
-export function describeVerdict(
-  label: LabLabel,
-  source: VerdictSource,
-  declaredLevel?: NsfwLevelName | null
-): Verdict {
+export function describeVerdict(label: LabLabel, source: VerdictSource): Verdict {
   if (!source.ok) return couldNotJudge(source.error);
   if (!source.output) return couldNotJudge(source.parseError ?? 'no answer');
   const v = source.output[label] as
@@ -91,9 +80,7 @@ export function describeVerdict(
     const level = v.level as NsfwLevelName;
     if (!Object.hasOwn(RATING_NAMES, level))
       return couldNotJudge(`unknown rating ${String(v.level)}`);
-    const tone: VerdictTone =
-      declaredLevel && levelRank(level) > levelRank(declaredLevel) ? 'flagged' : 'neutral';
-    return { headline: `Rated ${RATING_NAMES[level]}`, tone, reason };
+    return { headline: `Rated ${RATING_NAMES[level]}`, tone: 'neutral', reason };
   }
 
   if (typeof v.detected !== 'boolean') return couldNotJudge(`no ${LABEL_NAMES[label]} answer`);
@@ -113,52 +100,4 @@ export function verdictsDiffer(label: LabLabel, a: VerdictSource, b: VerdictSour
     return label === 'nsfw' ? v.headline : v.tone;
   };
   return verdictOf(a) !== verdictOf(b);
-}
-
-function describeRange({ min, max }: NonNullable<Expected['nsfw']>): string {
-  if (min === max) return RATING_NAMES[min];
-  if (min === 'none' && max === 'xxx') return 'Any rating';
-  if (min === 'none') return `${RATING_NAMES[max]} or lower`;
-  if (max === 'xxx') return `${RATING_NAMES[min]} or higher`;
-  return `${RATING_NAMES[min]} to ${RATING_NAMES[max]}`;
-}
-
-/** Each scored label's expectation in plain words ("PG-13 or lower", "Not a scam"); unscored labels
- *  are absent. */
-export function describeExpected(expected: Expected): Partial<Record<LabLabel, string>> {
-  const out: Partial<Record<LabLabel, string>> = {};
-  if (expected.nsfw) out.nsfw = describeRange(expected.nsfw);
-  for (const label of ['poi', 'minor', 'scam'] as const) {
-    const want = expected[label];
-    if (want !== undefined) out[label] = want ? FLAG_PHRASES[label].yes : FLAG_PHRASES[label].no;
-  }
-  return out;
-}
-
-export const NOTHING_SCORED = 'nothing scored';
-
-/** The expectation on one line, over `labels` (default every label) in their order. */
-export function expectedSummary(expected: Expected, labels?: readonly LabLabel[]): string {
-  const described = describeExpected(expected);
-  const texts = labels ? labels.map((l) => described[l]) : Object.values(described);
-  return texts.filter(Boolean).join(' · ') || NOTHING_SCORED;
-}
-
-export const expectedChips = (expected: Expected): string[] =>
-  Object.entries(describeExpected(expected)).map(([label, text]) =>
-    label === 'nsfw' && !text.startsWith('Any') ? `Rating ${text}` : text
-  );
-
-/** Whether a verdict met a test case's expectation, or null when the label is unscored or there is no
- *  verdict to check. */
-export function checkExpected(
-  expected: Expected,
-  label: LabLabel,
-  source: VerdictSource
-): { asExpected: boolean; expected: string } | null {
-  const want = describeExpected(expected)[label];
-  if (!want || !source.ok || !source.output) return null;
-  if (describeVerdict(label, source).tone === 'unknown') return null;
-  const correct = caseCorrect(expected, source.output)[label];
-  return correct === undefined ? null : { asExpected: correct, expected: want };
 }

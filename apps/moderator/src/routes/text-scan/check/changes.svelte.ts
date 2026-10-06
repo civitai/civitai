@@ -1,7 +1,14 @@
-import { ChangesState, emptyChangesFields, type ChangesInit } from './changes';
-import { postAction } from './post-action';
+import { ChangesState, changesStorageKey, type ChangesFields } from './changes';
 
-export function createChanges(init: ChangesInit): ChangesState {
-  const fields = $state(emptyChangesFields());
-  return new ChangesState(fields, postAction, init);
+function browserStorage(): Storage | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function createChanges(moderatorId: number): ChangesState {
+  const fields = $state<ChangesFields>({ prompts: {} });
+  return new ChangesState(fields, browserStorage(), changesStorageKey(moderatorId));
 }

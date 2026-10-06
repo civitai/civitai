@@ -591,71 +591,6 @@ export type text_relabel_item = {
   purge_after: Timestamp;
   created_at: Generated<Timestamp>;
 };
-export type text_scan_prompt_draft = {
-  id: Generated<string>;
-  name: string;
-  prompts: Generated<unknown>;
-  note: string | null;
-  created_by: number;
-  created_at: Generated<Timestamp>;
-  updated_by: number;
-  updated_at: Generated<Timestamp>;
-  published_at: Timestamp | null;
-  published_prompt_ids: unknown | null;
-  kind: Generated<string>;
-};
-export type text_scan_test_case = {
-  id: Generated<string>;
-  set_id: string;
-  entity_type: string;
-  entity_id: number | null;
-  author_id: number | null;
-  fields: unknown | null;
-  text_hash: string;
-  expected: Generated<unknown>;
-  synthetic: Generated<boolean>;
-  note: string | null;
-  source_deleted_at: Timestamp | null;
-  source_ids: unknown | null;
-  added_by: number;
-  added_at: Generated<Timestamp>;
-  updated_at: Generated<Timestamp>;
-};
-export type text_scan_test_result = {
-  run_id: string;
-  case_id: string;
-  status: string;
-  output: unknown | null;
-  workflow_id: string | null;
-};
-export type text_scan_test_run = {
-  id: Generated<string>;
-  set_id: string;
-  version: string;
-  draft_id: string | null;
-  draft_updated_at: Timestamp | null;
-  prompts: unknown | null;
-  prompt_ids: unknown | null;
-  model: string | null;
-  thinking: boolean | null;
-  status: string;
-  totals: unknown | null;
-  run_by: number;
-  started_at: Generated<Timestamp>;
-  finished_at: Timestamp | null;
-  scan_total: number | null;
-  scan_done: Generated<number>;
-  progress_at: Timestamp | null;
-  scan_seconds: number | null;
-};
-export type text_scan_test_set = {
-  id: Generated<string>;
-  name: string;
-  description: string | null;
-  created_by: number;
-  created_at: Generated<Timestamp>;
-  archived_at: Timestamp | null;
-};
 export type TimedMutes = {
   id: Generated<number>;
   userId: string | null;
@@ -760,11 +695,6 @@ export type DB = {
   testForm: testForm;
   text_relabel_answer: text_relabel_answer;
   text_relabel_item: text_relabel_item;
-  text_scan_prompt_draft: text_scan_prompt_draft;
-  text_scan_test_case: text_scan_test_case;
-  text_scan_test_result: text_scan_test_result;
-  text_scan_test_run: text_scan_test_run;
-  text_scan_test_set: text_scan_test_set;
   TimedMutes: TimedMutes;
   TrainingDataReview: TrainingDataReview;
   User: User;

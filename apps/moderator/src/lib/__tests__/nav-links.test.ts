@@ -69,13 +69,11 @@ describe('a view link in NAVIGATION', () => {
 describe('the text-scan lab', () => {
   it('declares the text-scan lab permissions and pages', () => {
     const ids = PERMISSIONS.map((p) => p.id);
-    expect(ids).toEqual(
-      expect.arrayContaining(['textScan.prompt.publish', 'textScan.testSet.edit'])
-    );
+    expect(ids).toContain('textScan.prompt.publish');
+    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual(['textScan.prompt.publish']);
     const group = NAVIGATION.find((n) => n.path === '/text-scan');
     expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
       ['/text-scan/check', 'Check'],
-      ['/text-scan/test-sets', 'Test sets'],
       ['/text-scan/prompts', 'Versions'],
     ]);
   });

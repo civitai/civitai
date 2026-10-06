@@ -1,107 +1,75 @@
-import type { ActionResult, SubmitFunction } from '@sveltejs/kit';
-import type { DraftPrompts } from '$lib/server/text-scan-lab/drafts.service';
 import { blankPromptKeys, describeBlankPrompts } from '$lib/text-scan-lab/labels';
-import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
-import type { PostAction } from './post-action';
-
-export const AUTOSAVE_MS = 800;
-// Browsers cap in-flight keepalive bodies at 64KiB combined; stay under it.
-export const KEEPALIVE_MAX_BYTES = 60 * 1024;
-
-export const actionError = (result: ActionResult) =>
-  result.type === 'failure'
-    ? (result.data?.error as string | undefined) ?? 'Something went wrong.'
-    : result.type === 'error'
-    ? (result.error as { message?: string } | undefined)?.message || 'Something went wrong.'
-    : null;
-
-export type ChangesInit = {
-  prompts: DraftPrompts;
-  draftId: number | null;
-  /** The saved row's `updatedAt`, the conflict token; null while no row exists. */
-  token: string | null;
-  /** A proposed draft its author is editing; null for the moderator's own working copy. */
-  target: number | null;
-  editable: boolean;
-};
-
-export type ChangesFields = {
-  prompts: DraftPrompts;
-  draftId: number | null;
-  token: string | null;
-  editable: boolean;
-  saving: boolean;
-  error: string | null;
-  conflict: boolean;
-  savedJson: string;
-};
-
-export const emptyChangesFields = (): ChangesFields => ({
-  prompts: {},
-  draftId: null,
-  token: null,
-  editable: false,
-  saving: false,
-  error: null,
-  conflict: false,
-  savedJson: '{}',
-});
+import { PROMPT_KEYS, type PromptChanges, type PromptKey } from '$lib/text-scan-lab/types';
 
 /**
- * Saves run one at a time, each sending the token the previous one returned. A conflict stops autosave
- * until the page reloads: saving over another tab's version would silently drop it.
+ * A moderator's prompt changes live only in this browser, one entry per moderator so a shared browser
+ * never mixes two people's changes. Storage can be missing or throw (private windows, blocked site
+ * data): every access is guarded, and the changes then last as long as the page.
  */
+export const changesStorageKey = (moderatorId: number) => `text-scan-lab:changes:${moderatorId}`;
+
+type Store = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+export function readChanges(store: Store | null, key: string): PromptChanges {
+  let raw: string | null = null;
+  try {
+    raw = store?.getItem(key) ?? null;
+  } catch {
+    return {};
+  }
+  if (!raw) return {};
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+  const out: PromptChanges = {};
+  for (const k of PROMPT_KEYS) {
+    const v = (parsed as Record<string, unknown>)[k];
+    if (typeof v === 'string') out[k] = v;
+  }
+  return out;
+}
+
+export function writeChanges(store: Store | null, key: string, prompts: PromptChanges) {
+  try {
+    if (Object.keys(prompts).length) store?.setItem(key, JSON.stringify(prompts));
+    else store?.removeItem(key);
+  } catch {
+    // Kept in memory for this page only.
+  }
+}
+
+export type ChangesFields = { prompts: PromptChanges };
+
 export class ChangesState {
   #f: ChangesFields;
-  #post: PostAction;
-  #target: number | null = null;
-  #timer: ReturnType<typeof setTimeout> | undefined;
-  #chain: Promise<boolean> = Promise.resolve(true);
-  // Bumped on reset, so a save answered after it cannot write into the new state.
-  #generation = 0;
+  #store: Store | null;
+  #key: string;
 
-  constructor(fields: ChangesFields, post: PostAction, init: ChangesInit) {
+  constructor(fields: ChangesFields, store: Store | null, key: string) {
     this.#f = fields;
-    this.#post = post;
-    this.reset(init);
+    this.#store = store;
+    this.#key = key;
   }
 
-  get prompts() {
+  /**
+   * Loads the stored changes; called once the page is in the browser, so server and client render the
+   * same first frame. Changes equal to the current text are dropped: they were published, or reset.
+   */
+  restore(current: Partial<Record<PromptKey, string>>) {
+    const stored = readChanges(this.#store, this.#key);
+    const kept = Object.fromEntries(
+      Object.entries(stored).filter(([k, v]) => current[k as PromptKey] !== v)
+    ) as PromptChanges;
+    this.#f.prompts = kept;
+    if (Object.keys(kept).length !== Object.keys(stored).length) this.#save();
+  }
+
+  get prompts(): PromptChanges {
     return this.#f.prompts;
-  }
-  get draftId() {
-    return this.#f.draftId;
-  }
-  get token() {
-    return this.#f.token;
-  }
-  get editable() {
-    return this.#f.editable;
-  }
-  get saving() {
-    return this.#f.saving;
-  }
-  get error() {
-    return this.#f.error;
-  }
-  get conflict() {
-    return this.#f.conflict;
-  }
-
-  reset(init: ChangesInit) {
-    clearTimeout(this.#timer);
-    this.#generation++;
-    this.#target = init.target;
-    Object.assign(this.#f, {
-      prompts: init.prompts,
-      draftId: init.draftId,
-      token: init.token,
-      editable: init.editable,
-      saving: false,
-      error: null,
-      conflict: false,
-      savedJson: JSON.stringify(init.prompts),
-    } satisfies ChangesFields);
   }
 
   get keys(): PromptKey[] {
@@ -112,123 +80,30 @@ export class ChangesState {
     return JSON.stringify(this.#f.prompts);
   }
 
-  get dirty(): boolean {
-    return this.json !== this.#f.savedJson;
-  }
-
   get blankError(): string | null {
     const blank = blankPromptKeys(this.#f.prompts);
     return blank.length ? describeBlankPrompts(blank) : null;
   }
 
   set(key: PromptKey, text: string, current: string | undefined) {
-    if (!this.editable) return;
     const { [key]: _old, ...rest } = this.#f.prompts;
     this.#f.prompts = text === current ? rest : { ...rest, [key]: text };
-    this.#schedule();
+    this.#save();
   }
 
   resetKey(key: PromptKey) {
-    if (!this.editable || !(key in this.#f.prompts)) return;
+    if (!(key in this.#f.prompts)) return;
     const { [key]: _old, ...rest } = this.#f.prompts;
     this.#f.prompts = rest;
-    this.#schedule();
+    this.#save();
   }
 
-  flush(): Promise<boolean> {
-    clearTimeout(this.#timer);
-    this.#chain = this.#chain.then(() => this.#save());
-    return this.#chain;
+  discard() {
+    this.#f.prompts = {};
+    this.#save();
   }
 
-  /**
-   * As the page unloads: sends the save at once as a keepalive request, which outlives the page, and
-   * says whether that covers the changes. False means the browser should ask before leaving: a save in
-   * flight would turn this one into a conflict, and an oversize body would never be sent.
-   */
-  saveOnLeave(): boolean {
-    const f = this.#f;
-    if (!this.dirty) return true;
-    if (!f.editable || f.conflict || f.saving || this.blankError) return false;
-    const fields = this.#saveFields();
-    const bytes = new Blob(Object.entries(fields).flat()).size;
-    if (bytes > KEEPALIVE_MAX_BYTES) return false;
-    clearTimeout(this.#timer);
-    void this.#post('saveChanges', fields, { keepalive: true });
-    return true;
+  #save() {
+    writeChanges(this.#store, this.#key, this.#f.prompts);
   }
-
-  async settle() {
-    clearTimeout(this.#timer);
-    this.#generation++;
-    await this.#chain;
-  }
-
-  #schedule() {
-    clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => void this.flush(), AUTOSAVE_MS);
-  }
-
-  // Loops until what is on screen is saved, so a flush during an edit made mid-save still covers it.
-  #saveFields(): Record<string, string> {
-    return {
-      prompts: this.json,
-      expectedUpdatedAt: this.#f.token ?? '',
-      ...(this.#target !== null ? { draftId: String(this.#target) } : {}),
-    };
-  }
-
-  async #save(): Promise<boolean> {
-    const f = this.#f;
-    for (;;) {
-      if (!f.editable || f.conflict) return !this.dirty;
-      const json = this.json;
-      if (json === f.savedJson) return true;
-      const blank = this.blankError;
-      if (blank) {
-        f.error = blank;
-        return false;
-      }
-
-      const generation = this.#generation;
-      f.saving = true;
-      const result = await this.#post('saveChanges', this.#saveFields());
-      if (generation !== this.#generation) return false;
-      f.saving = false;
-      if (result.type !== 'success') {
-        f.error = actionError(result);
-        if (result.type === 'failure' && result.status === 409) f.conflict = true;
-        return false;
-      }
-      f.token = (result.data?.updatedAt as string | null) ?? null;
-      f.draftId = (result.data?.draftId as number | null) ?? null;
-      f.savedJson = json;
-      f.error = null;
-    }
-  }
-}
-
-type SubmittingForm = { submitting: boolean; error: string | null; enhance: SubmitFunction };
-
-/**
- * For Propose and Publish: saves the changes first, then submits with the id and token of exactly what
- * was saved, so the server acts on what the moderator is looking at.
- */
-export function submitSaved(changes: ChangesState, form: SubmittingForm): SubmitFunction {
-  return async (input) => {
-    // Held through the save; the form's own enhance keeps it set for the request.
-    form.submitting = true;
-    const saved = await changes.flush();
-    if (!saved || changes.draftId === null || changes.token === null) {
-      form.submitting = false;
-      input.cancel();
-      form.error = saved
-        ? 'There are no changes to send.'
-        : changes.error ?? 'Your changes could not be saved.';
-      return;
-    }
-    input.formData.set('draftId', String(changes.draftId));
-    input.formData.set('expectedUpdatedAt', changes.token);
-    return form.enhance(input);
-  };
 }

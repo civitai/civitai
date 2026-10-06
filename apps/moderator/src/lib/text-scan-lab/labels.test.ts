@@ -1,13 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import {
   ENTITY_TYPE_NAMES,
-  checkExpected,
-  describeExpected,
-  expectedSummary,
+  blankPromptKeys,
+  describeBlankPrompts,
   describeVerdict,
-  expectedChips,
   promptKeyName,
-  scoreChips,
   verdictsDiffer,
 } from './labels';
 import { LAB_ENTITY_TYPES, PROMPT_KEYS } from './types';
@@ -36,20 +33,12 @@ describe('describeVerdict', () => {
     ['pg13', 'Rated PG-13', 'neutral'],
     ['r', 'Rated R', 'neutral'],
     ['xxx', 'Rated XXX', 'neutral'],
-  ])('rates nsfw %s, neutrally without a declared level', (level, headline, tone) => {
+  ])('rates nsfw %s, neutrally', (level, headline, tone) => {
     expect(describeVerdict('nsfw', ok({ nsfw: { level, reason: ' because ' } }))).toEqual({
       headline,
       tone,
       reason: 'because',
     });
-  });
-
-  it('flags a rating only when it is above the declared level', () => {
-    const rated = (level: string) => ok({ nsfw: { level } });
-    expect(describeVerdict('nsfw', rated('x'), 'r').tone).toBe('flagged');
-    expect(describeVerdict('nsfw', rated('r'), 'r').tone).toBe('neutral');
-    expect(describeVerdict('nsfw', rated('pg13'), 'r').tone).toBe('neutral');
-    expect(describeVerdict('nsfw', rated('r'), null).tone).toBe('neutral');
   });
 
   it('phrases flags both ways', () => {
@@ -88,72 +77,6 @@ describe('describeVerdict', () => {
   });
 });
 
-describe('chips', () => {
-  it('names each expected label in plain words, the rating prefixed', () => {
-    expect(expectedChips({ nsfw: { min: 'none', max: 'pg13' }, poi: false, scam: true })).toEqual([
-      'Rating PG-13 or lower',
-      'No real person',
-      'Scam',
-    ]);
-    expect(expectedChips({ nsfw: { min: 'none', max: 'xxx' } })).toEqual(['Any rating']);
-    expect(expectedChips({})).toEqual([]);
-  });
-
-  it("names each label a run scored, keeping an unknown label's key", () => {
-    const t = (correct: number, scored: number) => ({ correct, scored } as never);
-    expect(scoreChips({ nsfw: t(3, 4), scam: t(1, 2), retired: t(0, 1) })).toEqual([
-      'Rating 3/4',
-      'Scam / phishing 1/2',
-      'retired 0/1',
-    ]);
-    expect(scoreChips(null)).toEqual([]);
-  });
-});
-
-describe('describeExpected', () => {
-  it.each([
-    [{ min: 'pg13', max: 'pg13' }, 'PG-13'],
-    [{ min: 'none', max: 'pg13' }, 'PG-13 or lower'],
-    [{ min: 'r', max: 'xxx' }, 'R or higher'],
-    [{ min: 'pg13', max: 'x' }, 'PG-13 to X'],
-    [{ min: 'none', max: 'xxx' }, 'Any rating'],
-  ] as const)('phrases nsfw %o as %s', (nsfw, text) => {
-    expect(describeExpected({ nsfw })).toEqual({ nsfw: text });
-  });
-
-  it('phrases flags and leaves unscored labels out', () => {
-    expect(describeExpected({ poi: true, scam: false })).toEqual({
-      poi: 'Names a real person',
-      scam: 'Not a scam',
-    });
-  });
-});
-
-describe('checkExpected', () => {
-  const expected = { nsfw: { min: 'none', max: 'pg13' }, scam: false } as const;
-
-  it('says whether the verdict met the expectation', () => {
-    expect(checkExpected(expected, 'nsfw', ok({ nsfw: { level: 'pg13' } }))).toEqual({
-      asExpected: true,
-      expected: 'PG-13 or lower',
-    });
-    expect(checkExpected(expected, 'nsfw', ok({ nsfw: { level: 'r' } }))).toEqual({
-      asExpected: false,
-      expected: 'PG-13 or lower',
-    });
-    expect(checkExpected(expected, 'scam', ok({ scam: { detected: true } }))).toEqual({
-      asExpected: false,
-      expected: 'Not a scam',
-    });
-  });
-
-  it('is null for an unscored label or no usable verdict', () => {
-    expect(checkExpected(expected, 'poi', ok({ poi: { detected: true } }))).toBeNull();
-    expect(checkExpected(expected, 'nsfw', { ok: false, error: 'x' })).toBeNull();
-    expect(checkExpected(expected, 'nsfw', ok({ nsfw: { level: 'weird' } }))).toBeNull();
-  });
-});
-
 describe('verdictsDiffer', () => {
   it('compares the rating, never the reason', () => {
     const a = ok({ nsfw: { level: 'r', reason: 'one' } });
@@ -177,16 +100,12 @@ describe('verdictsDiffer', () => {
   });
 });
 
-describe('expectedSummary', () => {
-  it('joins the scored labels, in the order asked for', () => {
-    expect(expectedSummary({ poi: true, scam: false })).toBe('Names a real person · Not a scam');
-    expect(expectedSummary({ poi: true, scam: false }, ['scam', 'poi'])).toBe(
-      'Not a scam · Names a real person'
+describe('blank prompts', () => {
+  it('finds blank or non-string overrides and names them', () => {
+    const blank = blankPromptKeys({ base: ' \n ', 'label:scam': 'SCAM DEF', 'label:nsfw': 3 });
+    expect(blank).toEqual(['base', 'label:nsfw']);
+    expect(describeBlankPrompts(blank)).toBe(
+      'General instructions, Rating definition are empty — write it, or reset it to current.'
     );
-  });
-
-  it('says nothing is scored otherwise', () => {
-    expect(expectedSummary({})).toBe('nothing scored');
-    expect(expectedSummary({ poi: true }, ['scam'])).toBe('nothing scored');
   });
 });

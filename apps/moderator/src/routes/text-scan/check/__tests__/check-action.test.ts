@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('$app/server', () => ({ getRequestEvent: vi.fn() }));
-vi.mock('$lib/server/moderator-db', () => ({ getModeratorDb: vi.fn() }));
 
 const users = vi.hoisted(() => ({ userIdByUsername: vi.fn() }));
 vi.mock('$lib/server/users.service', async (importOriginal) => ({

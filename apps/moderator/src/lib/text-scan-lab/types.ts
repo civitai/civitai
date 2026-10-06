@@ -60,13 +60,6 @@ export type LabText = { key: string; fields: LabField[] };
 export const NSFW_LEVEL_NAMES = ['none', 'pg13', 'r', 'x', 'xxx'] as const;
 export type NsfwLevelName = (typeof NSFW_LEVEL_NAMES)[number];
 
-export type Expected = {
-  nsfw?: { min: NsfwLevelName; max: NsfwLevelName };
-  poi?: boolean;
-  minor?: boolean;
-  scam?: boolean;
-};
-
 export type LabScanResult =
   | {
       key: string;
@@ -88,3 +81,6 @@ export const PROMPT_KEYS = [
   'label:scam',
 ] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];
+
+/** A moderator's unpublished changes: the prompt keys they edited and their text. */
+export type PromptChanges = Partial<Record<PromptKey, string>>;

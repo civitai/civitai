@@ -1,40 +1,27 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { expectedSummary } from '$lib/text-scan-lab/labels';
-  import type { LabEntityType, LabLabel, PromptKey } from '$lib/text-scan-lab/types';
+  import type { LabLabel, PromptKey } from '$lib/text-scan-lab/types';
   import type { CheckItemResult } from './+page.server';
-  import SaveCaseForm from './SaveCaseForm.svelte';
   import ScanDetails from './ScanDetails.svelte';
   import VerdictCard from './VerdictCard.svelte';
 
   let {
     item,
-    entityType,
     labels,
-    testSets,
-    changedTitle,
     onedit,
-    oncasesaved,
   }: {
     item: CheckItemResult;
-    entityType: LabEntityType;
     labels: readonly LabLabel[];
-    testSets: { id: number; name: string }[];
-    changedTitle: string;
     onedit: (key: PromptKey) => void;
-    oncasesaved: () => void;
   } = $props();
 
   const labelKey = (label: LabLabel): PromptKey => `label:${label}`;
-
-  const expected = $derived(item.fromCase?.expected ?? null);
-  const expectedText = $derived(expected ? expectedSummary(expected, labels) : null);
 
   const columns = $derived(
     item.changed
       ? [
           { title: 'Current', result: item.current },
-          { title: changedTitle, result: item.changed },
+          { title: 'With my changes', result: item.changed },
         ]
       : [{ title: 'Current', result: item.current }]
   );
@@ -42,13 +29,10 @@
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h3 class="text-sm font-semibold text-white">{item.title}</h3>
-  {#if expectedText}
-    <p class="mt-1 text-xs text-dark-2">Expected: <span class="text-dark-0">{expectedText}</span></p>
-  {/if}
 
   <div class="mt-3 grid gap-3 lg:grid-cols-2">
     {#each labels as label (label)}
-      <VerdictCard {label} {columns} {expected}>
+      <VerdictCard {label} {columns}>
         {#snippet actions()}
           <Button size="xs" variant="ghost" onclick={() => onedit(labelKey(label))}>
             Edit definition
@@ -76,8 +60,4 @@
       </div>
     </div>
   </details>
-
-  {#if testSets.length && !item.fromCase}
-    <SaveCaseForm {item} {entityType} {labels} {testSets} onsaved={oncasesaved} />
-  {/if}
 </section>
