@@ -21,15 +21,22 @@ vi.mock('~/server/services/orchestrator/workflows', async (importOriginal) => ({
   updateWorkflow: vi.fn(),
 }));
 vi.mock('~/server/events', () => ({ eventEngine: { processEngagement: vi.fn() } }));
+vi.mock('~/server/services/subscriptions.service', () => ({
+  getHighestTierSubscription: vi
+    .fn()
+    .mockResolvedValue({ tier: 'gold', productMeta: { maxPrivateModels: 5 } }),
+}));
 
 import { TRPCError } from '@trpc/server';
 import {
+  privateModelFromTrainingHandler,
   publishModelHandler,
   publishPrivateModelHandler,
 } from '~/server/controllers/model.controller';
 import {
   deleteModelById,
   publishPrivateModel,
+  restoreModelById,
   unpublishModelById,
 } from '~/server/services/model.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -49,10 +56,21 @@ type Row = {
 };
 let row: Row;
 
-/** Back every Model read/write in the mock with `row`. */
+let replica: Row;
+/** The replica catches up between requests, never within one. */
+function syncReplica() {
+  replica = { ...row, meta: row.meta && { ...row.meta } };
+}
+
+/** Back Model reads/writes with `row`: primary reads see it live, replica reads see `replica`. */
 function bindRow() {
-  const read = async () => ({ ...row, modelVersions: [], meta: row.meta && { ...row.meta } });
-  for (const client of [dbMock.dbRead, dbMock.dbWrite]) {
+  const copy = (r: Row) => ({ ...r, modelVersions: [], meta: r.meta && { ...r.meta } });
+  const primary = async () => copy(row);
+  const stale = async () => copy(replica);
+  for (const [client, read] of [
+    [dbMock.dbRead, stale],
+    [dbMock.dbWrite, primary],
+  ] as const) {
     client.model.findUnique.mockImplementation(read as never);
     client.model.findFirst.mockImplementation(read as never);
     client.model.findUniqueOrThrow.mockImplementation(read as never);
@@ -75,14 +93,16 @@ function bindRow() {
   }) as never);
 }
 
-const publish = () =>
-  publishModelHandler({
+const publish = () => {
+  syncReplica();
+  return publishModelHandler({
     input: { id: MODEL_ID, versionIds: [] },
     ctx: {
       user: { id: OWNER_ID, isModerator: false },
       track: { modelEvent: vi.fn().mockResolvedValue(undefined) },
     },
   } as never);
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -96,6 +116,7 @@ beforeEach(() => {
     nsfw: false,
     meta: { trainingStudioWorkflowId: 'wf-1' },
   };
+  syncReplica();
   bindRow();
   dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: 43 }] as never);
   mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
@@ -103,6 +124,7 @@ beforeEach(() => {
 
 describe('earlier-publish evidence survives the paths that clear it', () => {
   it('"Set to Draft" (publishPrivateModel without versions), then publish', async () => {
+    syncReplica();
     await publishPrivateModelHandler({
       input: { modelId: MODEL_ID, publishVersions: false },
       ctx: { user: { id: OWNER_ID, isModerator: false } },
@@ -112,9 +134,8 @@ describe('earlier-publish evidence survives the paths that clear it', () => {
     await expect(publish()).resolves.toBeDefined();
   });
 
-  // publishPrivateModel rewrites meta from its own (replica) read, so it must carry the evidence
-  // itself: a marker the gate just wrote may not be in what it read. Called directly here, so no gate
-  // has written anything first.
+  // publishPrivateModel rewrites meta from its own read, so it must carry the evidence itself. Called
+  // directly here, so no gate has written anything first.
   it('"Set to Draft" records the evidence itself, then publish', async () => {
     await publishPrivateModel({ modelId: MODEL_ID, publishVersions: false });
     expect(row).toMatchObject({ status: 'Unpublished', publishedAt: null });
@@ -138,8 +159,29 @@ describe('earlier-publish evidence survives the paths that clear it', () => {
   it('delete then restore, then publish', async () => {
     await deleteModelById({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true });
     expect(row.status).toBe('Deleted');
-    // restoreModelById's SQL: publishedAt IS NULL -> Draft.
-    row.status = row.publishedAt == null ? 'Draft' : 'Unpublished';
+    // Run the real restore. Its status write is raw SQL, which the in-memory row cannot execute, so
+    // this applies it only when the statement still has the shape it has today; if the SQL changes,
+    // the row stays Deleted and the publish below fails rather than passing on a stale copy.
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (sql: TemplateStringsArray) => {
+      const text = (Array.isArray(sql) ? sql.join('?') : '').replace(/\s+/g, ' ');
+      if (
+        text.includes('UPDATE "Model"') &&
+        text.includes(`WHEN "publishedAt" IS NULL THEN 'Draft'::"ModelStatus"`) &&
+        text.includes(`"status" = 'Deleted'::"ModelStatus"`) &&
+        row.status === 'Deleted'
+      ) {
+        row.status =
+          row.publishedAt == null
+            ? 'Draft'
+            : row.publishedAt > new Date()
+            ? 'Scheduled'
+            : 'Unpublished';
+        return [{ userId: row.userId }];
+      }
+      return [];
+    }) as never);
+    await restoreModelById({ id: MODEL_ID });
+    expect(row.status).toBe('Draft');
 
     await expect(publish()).resolves.toBeDefined();
   });
@@ -147,5 +189,60 @@ describe('earlier-publish evidence survives the paths that clear it', () => {
   it('control: an unstamped draft that was never published is still refused', async () => {
     row.status = 'Draft';
     await expect(publish()).rejects.toThrow(/can no longer be checked/);
+  });
+});
+
+const approvedRun = {
+  id: 'wf-1',
+  steps: [
+    {
+      $type: 'training',
+      output: {
+        moderationStatus: 'approved',
+        epochs: [{ epochNumber: 1, model: { url: 'https://blobs/e1', available: true } }],
+      },
+    },
+  ],
+};
+
+// The flags the check writes must survive the meta write that the same request makes afterwards
+// from a copy of meta it read earlier.
+describe('flags written by the check survive the publish write that follows', () => {
+  it('publish keeps the marker it earned on evidence', async () => {
+    row.status = 'Unpublished';
+    row.publishedAt = new Date('2026-09-10');
+    await expect(publish()).resolves.toBeDefined();
+    expect(row.meta).toMatchObject({ trainingStudioPublishedBeforeStamp: true });
+  });
+
+  it('publish keeps the approval stamp for a readable approved run', async () => {
+    row.status = 'Draft';
+    mockGetWorkflow.mockResolvedValue(approvedRun);
+    await expect(publish()).resolves.toBeDefined();
+    expect(row.meta).toMatchObject({ trainingStudioModerationApproved: true });
+  });
+
+  it('private publish from training keeps the approval stamp', async () => {
+    row.status = 'Draft';
+    row.availability = 'Public';
+    mockGetWorkflow.mockResolvedValue(approvedRun);
+    syncReplica();
+    await privateModelFromTrainingHandler({
+      input: { id: MODEL_ID, name: 'm', type: 'LORA', sfwOnly: true, meta: {} },
+      ctx: { user: { id: OWNER_ID, isModerator: false }, track: { post: vi.fn() } },
+    } as never);
+    expect(row.meta).toMatchObject({ trainingStudioModerationApproved: true });
+  });
+
+  it('making a private model public keeps the approval stamp', async () => {
+    mockGetWorkflow.mockResolvedValue(approvedRun);
+    dbMock.dbWrite.post.findMany.mockResolvedValue([{ modelVersionId: 43 }] as never);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: 43 }] as never);
+    syncReplica();
+    await publishPrivateModelHandler({
+      input: { modelId: MODEL_ID, publishVersions: true },
+      ctx: { user: { id: OWNER_ID, isModerator: false } },
+    } as never);
+    expect(row.meta).toMatchObject({ trainingStudioModerationApproved: true });
   });
 });

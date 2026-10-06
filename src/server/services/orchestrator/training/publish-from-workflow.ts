@@ -451,6 +451,9 @@ export type TrainingSourceModel = {
  * (`preserveTrainingPublishEvidence`), so the evidence survives them. Every other model is refused.
  * Any other read failure is rethrown, so the publish fails and can be retried rather than going
  * ahead unchecked.
+ *
+ * Returns the flags it wrote. A caller that then rewrites meta from a copy read before this ran must
+ * merge them into that write, or it overwrites them.
  */
 export async function assertTrainingSourcePublishable({
   model,
@@ -458,10 +461,10 @@ export async function assertTrainingSourcePublishable({
 }: {
   model: TrainingSourceModel;
   callerId: number;
-}): Promise<void> {
+}): Promise<Partial<ModelMeta>> {
   const meta = model.meta as ModelMeta | null | undefined;
   const workflowId = meta?.trainingStudioWorkflowId;
-  if (!workflowId) return;
+  if (!workflowId) return {};
   const ownerId = model.userId;
   const token = await getOrchestratorToken(ownerId, undefined, {
     bypassCache: callerId !== ownerId,
@@ -471,12 +474,10 @@ export async function assertTrainingSourcePublishable({
     workflow = await getWorkflow({ token, path: { workflowId } });
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'NOT_FOUND') {
-      if (meta?.trainingStudioModerationApproved === true) return;
-      if (meta?.trainingStudioPublishedBeforeStamp === true) return;
-      if (hasUnrecordedPublishEvidence(model)) {
-        await setServerOwnedMetaFlag(model.id, 'trainingStudioPublishedBeforeStamp');
-        return;
-      }
+      if (meta?.trainingStudioModerationApproved === true) return {};
+      if (meta?.trainingStudioPublishedBeforeStamp === true) return {};
+      if (hasUnrecordedPublishEvidence(model))
+        return recordFlag(model.id, 'trainingStudioPublishedBeforeStamp');
       refuse(TRAINING_UNVERIFIABLE_MESSAGE);
     }
     throw error;
@@ -484,7 +485,18 @@ export async function assertTrainingSourcePublishable({
   assertTrainingModerationApproved(workflow);
   // The run was just read and is approved: a model from before the stamp existed gets it now.
   if (meta?.trainingStudioModerationApproved !== true)
-    await setServerOwnedMetaFlag(model.id, 'trainingStudioModerationApproved');
+    return recordFlag(model.id, 'trainingStudioModerationApproved');
+  return {};
+}
+
+/** Write a flag now (for callers that write no meta afterwards) and return it, so a caller that
+ * does rewrite meta from an earlier read merges it in rather than overwriting it. */
+async function recordFlag(
+  modelId: number,
+  key: 'trainingStudioModerationApproved' | 'trainingStudioPublishedBeforeStamp'
+): Promise<Partial<ModelMeta>> {
+  await setServerOwnedMetaFlag(modelId, key);
+  return { [key]: true };
 }
 
 /**

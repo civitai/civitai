@@ -5063,7 +5063,9 @@ export const privateModelFromTraining = async ({
 }) => {
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
 
-  const model = await dbRead.model.findUnique({
+  // Primary, not replica: the server-owned keys carried over below must include any flag the
+  // training moderation check wrote earlier in this request.
+  const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
       userId: true,
@@ -5213,7 +5215,9 @@ export const publishPrivateModel = async ({
   modelId,
   publishVersions,
 }: PublishPrivateModelInput) => {
-  const model = await dbRead.model.findUnique({
+  // Primary, not replica: this rewrites meta from what it reads, which must include any flag the
+  // training moderation check wrote earlier in this request.
+  const model = await dbWrite.model.findUnique({
     where: { id: modelId },
     select: {
       id: true,

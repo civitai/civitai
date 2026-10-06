@@ -843,11 +843,15 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
-    await assertTrainingSourcePublishable({ model, callerId: ctx.user.id });
+    const trainingFlags = await assertTrainingSourcePublishable({ model, callerId: ctx.user.id });
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
-    const updatedModel = await publishModelById({ ...input, meta, republishing });
+    const updatedModel = await publishModelById({
+      ...input,
+      meta: { ...meta, ...trainingFlags },
+      republishing,
+    });
 
     await queueModelEarlyAccessReindex({ id: updatedModel.id }).catch((e) => {
       console.error('Unable to update model early access deadline');

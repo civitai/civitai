@@ -455,7 +455,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
 
   it('allows an approved run, reading it with the owner token', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(check()).resolves.toBeUndefined();
+    await expect(check()).resolves.toEqual({});
     expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
@@ -484,7 +484,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it.each([null, undefined, {}])(
     'does not read anything for a model whose meta (%s) names no workflow',
     async (meta) => {
-      await expect(check({ meta })).resolves.toBeUndefined();
+      await expect(check({ meta })).resolves.toEqual({});
       expect(mockGetWorkflow).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
     }
@@ -492,7 +492,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
 
   it('lets an unreadable (NOT_FOUND) run through when the draft carries the approval stamp', async () => {
     mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(check()).resolves.toBeUndefined();
+    await expect(check()).resolves.toEqual({});
   });
 
   it.each([UNSTAMPED, { ...UNSTAMPED, trainingStudioModerationApproved: false }])(
@@ -518,7 +518,9 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
     'lets an unreadable (NOT_FOUND) unstamped model through when it is %s, and records the marker',
     async (_, fields) => {
       mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-      await expect(check({ meta: UNSTAMPED, ...fields })).resolves.toBeUndefined();
+      await expect(check({ meta: UNSTAMPED, ...fields })).resolves.toEqual({
+        trainingStudioPublishedBeforeStamp: true,
+      });
       expect(flagWrites()).toEqual([['trainingStudioPublishedBeforeStamp', 42]]);
     }
   );
@@ -532,20 +534,22 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
       mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
       await expect(
         check({ meta: { ...UNSTAMPED, trainingStudioPublishedBeforeStamp: true }, ...fields })
-      ).resolves.toBeUndefined();
+      ).resolves.toEqual({});
       expect(flagWrites()).toEqual([]);
     }
   );
 
   it('stamps an unstamped model whose run is read and approved', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(check({ meta: UNSTAMPED })).resolves.toBeUndefined();
+    await expect(check({ meta: UNSTAMPED })).resolves.toEqual({
+      trainingStudioModerationApproved: true,
+    });
     expect(flagWrites()).toEqual([['trainingStudioModerationApproved', 42]]);
   });
 
   it('writes nothing for a stamped model whose run is read and approved', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(check()).resolves.toBeUndefined();
+    await expect(check()).resolves.toEqual({});
     expect(flagWrites()).toEqual([]);
   });
 

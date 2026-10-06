@@ -143,6 +143,8 @@ const storedModel = {
 
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
   mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  // privateModelFromTraining reads the stored row from the primary.
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
 }
 
 const baseInput = {
@@ -428,7 +430,7 @@ describe('privateModelFromTraining — lock enforcement', () => {
   it('reads the stored locks from the DB row', async () => {
     await privateFromTraining({ user: owner, lockedProperties: [] });
 
-    expect(mockDbRead.model.findUnique).toHaveBeenCalledWith(
+    expect(mockDbWrite.model.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ lockedProperties: true }) })
     );
   });
