@@ -12540,7 +12540,7 @@ async function submitTrainingWorkflow(opts: {
     );
     await assertWorkflowOwner(submitted, userId, token);
   } catch (e) {
-    // A DEFINITE refusal (an orchestrator 4xx, or an owner mismatch): no run is
+    // A DEFINITE refusal (a first-attempt orchestrator 4xx, or an owner mismatch): no run is
     // charged to this viewer, so every reservation is refunded.
     await refundBlockBuzzReservation(reservation, runBuzz);
     if (appSpendReserve) {
