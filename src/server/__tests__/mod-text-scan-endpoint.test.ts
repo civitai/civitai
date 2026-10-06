@@ -25,7 +25,7 @@ vi.mock('~/server/services/text-scan/harness', async (importOriginal) => ({
   runTextScanHarnessAction: vi.fn(async () => ({ kind: 'json', body: { ok: true } })),
 }));
 
-const { default: handler, config } = await import('~/pages/api/mod/text-scan');
+const { default: handler, config, needsFullScope } = await import('~/pages/api/mod/text-scan');
 const { runTextScanHarnessAction } = await import('~/server/services/text-scan/harness');
 const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
 
@@ -198,6 +198,12 @@ describe('mod/text-scan', () => {
       },
     ])('$action serves a narrowly-scoped API key', async (body) => {
       expect((await call(body, {}, asApiKey(TokenScope.UserRead))).status).toBe(200);
+    });
+
+    it('fails closed: an action not on the narrow-scope list, such as a new one, needs full scope', () => {
+      expect(needsFullScope('someNewAction')).toBe(true);
+      expect(needsFullScope('composeEntities')).toBe(true);
+      expect(needsFullScope('scanTexts')).toBe(false);
     });
   });
 });

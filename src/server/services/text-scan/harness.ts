@@ -60,8 +60,8 @@ export const HARNESS_BUDGET_SECONDS = 120;
 const waitSeconds = z.number().int().min(1).max(HARNESS_BUDGET_SECONDS).default(90);
 
 /**
- * Each wave of `concurrency` items can take up to `wait` seconds; past the budget the caller (and any
- * proxy in front of it) times out while every submitted workflow still bills.
+ * Each wave of `concurrency` items can take up to `wait` seconds. Past the budget the caller (and any
+ * proxy) times out while the submitted workflows keep running.
  */
 function refineTimeBudget(noun: string) {
   return (
