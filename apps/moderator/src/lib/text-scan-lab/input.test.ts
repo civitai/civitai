@@ -36,9 +36,10 @@ describe('parseCheckInput', () => {
   });
 
   it('refuses links to different kinds of content together', () => {
-    expect(
-      parseCheckInput('https://civitai.com/models/1 https://civitai.com/posts/2')
-    ).toEqual({ kind: 'refused', notice: expect.any(String) });
+    expect(parseCheckInput('https://civitai.com/models/1 https://civitai.com/posts/2')).toEqual({
+      kind: 'refused',
+      notice: expect.any(String),
+    });
   });
 
   it('returns a profile link as a username to resolve', () => {
@@ -49,7 +50,10 @@ describe('parseCheckInput', () => {
   });
 
   it('refuses two different profiles', () => {
-    expect(parseCheckInput('civitai.com/user/a civitai.com/user/b')).toEqual({ kind: 'refused', notice: expect.any(String) });
+    expect(parseCheckInput('civitai.com/user/a civitai.com/user/b')).toEqual({
+      kind: 'refused',
+      notice: expect.any(String),
+    });
   });
 
   it.each([
