@@ -66,6 +66,7 @@ import {
   computeRecruiterScore,
   getRankForScore,
   MILESTONE_NAMES,
+  type RecruiterRank,
   type ReferralDashboardProps,
 } from './dashboard.types';
 
@@ -81,12 +82,12 @@ const tierColors: Record<string, string> = {
   gold: '#fab005',
 };
 
-const rankAccent: Record<string, string> = {
+const rankAccent: Record<RecruiterRank['key'], string> = {
   rookie: 'gray',
   recruit: 'teal',
   advocate: 'blue',
   champion: 'grape',
-  legend: 'yellow',
+  ambassador: 'yellow',
 };
 
 const INITIAL_ACTIVITY_COUNT = 5;
