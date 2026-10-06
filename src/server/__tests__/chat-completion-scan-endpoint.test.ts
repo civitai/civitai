@@ -449,3 +449,164 @@ describe('quoteEntities', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 });
+
+const commentSubjects = new Map([
+  [7, { fields: [{ heading: 'Comment', text: '  hello there ' }], declared: {}, userId: 42 }],
+  [8, { fields: [{ heading: 'Comment', text: '   ' }], declared: {} }],
+]);
+registerTextScanProfile({
+  entityType: 'Comment',
+  labels: ['scam'],
+  load: async (ids) =>
+    new Map(
+      ids.filter((id) => commentSubjects.has(id)).map((id) => [id, commentSubjects.get(id)!])
+    ),
+});
+const SCAM_OVERRIDES = { base: 'BASE PROMPT', 'label:scam': 'SCAM DEF' };
+const scamWorkflow = (id: string) => ({
+  data: {
+    id,
+    steps: [
+      {
+        $type: 'chatCompletion',
+        output: {
+          parsed: { scam: { detected: true, reason: 'r' } },
+          choices: [{ finishReason: 'stop', message: { content: '' } }],
+        },
+      },
+    ],
+  },
+});
+
+describe('free-text actions', () => {
+  beforeEach(() => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue({});
+  });
+
+  it('scanTexts composes like production and keeps each key', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue(scamWorkflow('wf1') as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect(res._status()).toBe(200);
+    const body = res._body() as { results: unknown[] };
+    expect(body).toMatchObject({ entityType: 'Comment', count: 1, firing: { scam: 1 } });
+    expect(body.results[0]).toMatchObject({
+      key: 'a',
+      ok: true,
+      workflowId: 'wf1',
+      promptIds: { base: 0, scam: 0 },
+      outcome: { triggeredLabels: ['scam'] },
+    });
+    const sent = vi.mocked(submitWorkflow).mock.calls[0][0];
+    expect(sent.query).toMatchObject({ wait: 90 });
+    const step = sent.body!.steps[0];
+    expect(JSON.stringify(step)).toContain('## Comment\\nhello');
+    expect(JSON.stringify(step)).toContain('SCAM DEF');
+  });
+
+  it('scanTexts refuses a text with no non-empty field', async () => {
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: '   ' }] }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    const body = res._body() as { results: unknown[]; byOutcome: unknown };
+    expect(body.results[0]).toEqual({ key: 'a', ok: false, error: 'too-short' });
+    expect(body.byOutcome).toEqual({ too_short: 1 });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('scanTexts reports a missing prompt key instead of submitting', async () => {
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
+      promptOverrides: { base: 'B' },
+    });
+    expect(res._status()).toBe(200);
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({
+      key: 'a',
+      ok: false,
+      error: expect.stringContaining('label:scam'),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('scanTexts rejects more than 50 texts and an empty field list', async () => {
+    const text = { key: 'k', fields: [{ heading: 'Comment', text: 'x' }] };
+    expect(
+      (
+        await call({ action: 'scanTexts', entityType: 'Comment', texts: Array(51).fill(text) })
+      )._status()
+    ).toBe(400);
+    expect(
+      (
+        await call({
+          action: 'scanTexts',
+          entityType: 'Comment',
+          texts: [{ key: 'k', fields: [] }],
+        })
+      )._status()
+    ).toBe(400);
+  });
+
+  it('composeEntities returns the composed text without submitting', async () => {
+    const res = await call({
+      action: 'composeEntities',
+      entityType: 'Comment',
+      entityIds: [7, 8, 9],
+    });
+    expect(res._status()).toBe(200);
+    expect(res._body()).toEqual({
+      entityType: 'Comment',
+      results: [
+        {
+          entityId: 7,
+          ok: true,
+          text: '## Comment\nhello there',
+          fields: [{ heading: 'Comment', text: '  hello there ' }],
+          userId: 42,
+        },
+        { entityId: 8, ok: false, error: 'too-short' },
+        { entityId: 9, ok: false, error: 'entity not found' },
+      ],
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('quoteTexts prices the composition with whatif', async () => {
+    vi.mocked(submitWorkflow)
+      .mockResolvedValueOnce({ data: { id: 'q1', cost: { total: 2 } } } as never)
+      .mockResolvedValueOnce({ data: { id: 'q2', cost: { total: 4 } } } as never);
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: [
+        { key: 'a', fields: [{ heading: 'Comment', text: 'one' }] },
+        { key: 'b', fields: [{ heading: 'Comment', text: 'two' }] },
+        { key: 'c', fields: [{ heading: 'Comment', text: '' }] },
+      ],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect(res._status()).toBe(200);
+    const sent = vi.mocked(submitWorkflow).mock.calls[0][0];
+    expect(sent.query).toEqual({ whatif: true });
+    expect(JSON.stringify(sent.body!.steps[0])).toContain('SCAM DEF');
+    expect(res._body()).toMatchObject({
+      count: 3,
+      quoted: 2,
+      meanCostTotal: 3,
+      maxCostTotal: 4,
+      results: [
+        { key: 'a', ok: true, costTotal: 2 },
+        { key: 'b', ok: true, costTotal: 4 },
+        { key: 'c', ok: false, error: 'too-short' },
+      ],
+    });
+  });
+});

@@ -118,6 +118,19 @@ describe('mod/text-scan', () => {
     expect(JSON.stringify(second)).not.toContain('CANDIDATE PROMPT');
   });
 
+  it('keeps free text out of the audit row', async () => {
+    await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'USER TEXT' }] }],
+      promptOverrides: { base: 'CANDIDATE PROMPT' },
+    });
+    const payload = mockAudit.mock.calls[0][0].payload as Record<string, unknown>;
+    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'Comment' });
+    expect(JSON.stringify(payload)).not.toContain('USER TEXT');
+    expect(JSON.stringify(payload)).not.toContain('CANDIDATE PROMPT');
+  });
+
   it.each(['scan', 'batch', 'whatif', 'fetch', 'constructor', undefined])(
     'refuses %s with a 400',
     async (action) => {

@@ -14,6 +14,7 @@ import {
   getActiveTextScanPrompts,
   getTextScanConfig,
   insertTextScanPrompt,
+  MissingTextScanPromptError,
   setTextScanConfig,
   subjectTextLength,
   TEXT_SCAN_PROMPT_KEY,
@@ -26,6 +27,8 @@ import type {
   TextScanEntityType,
   TextScanLabel,
   TextScanOutput,
+  TextScanProfile,
+  TextScanSubject,
 } from '~/server/services/text-scan/types';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -37,6 +40,9 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'batchEntities',
   'sampleShadow',
   'quoteEntities',
+  'composeEntities',
+  'scanTexts',
+  'quoteTexts',
 ] as const;
 
 export const isTextScanHarnessAction = (action: unknown) =>
@@ -50,6 +56,18 @@ const entityType = z
   .refine(isTextScanEntityType, 'unknown text-scan entity type')
   .transform((value) => value as TextScanEntityType);
 const moderatorId = z.number().int().positive();
+const texts = z
+  .array(
+    z.object({
+      key: z.string().min(1).max(100),
+      fields: z
+        .array(z.object({ heading: z.string().min(1).max(100), text: z.string().max(20000) }))
+        .min(1)
+        .max(20),
+    })
+  )
+  .min(1)
+  .max(50);
 
 export const textScanHarnessSchema = z.discriminatedUnion('action', [
   z.object({
@@ -113,6 +131,30 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     thinking: z.boolean().optional(),
     concurrency: z.number().int().min(1).max(8).default(3),
   }),
+  z.object({
+    action: z.literal('composeEntities'),
+    entityType,
+    entityIds: z.array(z.number().int().positive()).min(1).max(50),
+  }),
+  z.object({
+    action: z.literal('scanTexts'),
+    entityType,
+    texts,
+    promptOverrides,
+    model: z.string().min(1).optional(),
+    thinking: z.boolean().optional(),
+    concurrency: z.number().int().min(1).max(8).default(3),
+    wait: z.number().int().min(1).max(120).default(90),
+  }),
+  z.object({
+    action: z.literal('quoteTexts'),
+    entityType,
+    texts,
+    promptOverrides,
+    model: z.string().min(1).optional(),
+    thinking: z.boolean().optional(),
+    concurrency: z.number().int().min(1).max(8).default(3),
+  }),
 ]);
 
 export type TextScanHarnessInput = z.infer<typeof textScanHarnessSchema>;
@@ -120,78 +162,174 @@ export type TextScanHarnessResult = { kind: 'json'; body: unknown } | { kind: 'c
 
 type ScanEntitySyncInput = Omit<Extract<TextScanHarnessInput, { action: 'scanEntity' }>, 'action'>;
 
-async function composeForEntity(input: {
-  entityType: TextScanEntityType;
-  entityId: number;
+function isTooShort(subject: TextScanSubject, profile: TextScanProfile) {
+  return subjectTextLength(subject) < (profile.minChars ?? 1);
+}
+
+async function loadSubject(entityType: TextScanEntityType, entityId: number) {
+  const profile = requireProfile(entityType);
+  const subject = (await profile.load([entityId])).get(entityId);
+  if (!subject) return { ok: false as const, error: 'entity not found' };
+  if (isTooShort(subject, profile)) return { ok: false as const, error: 'too-short' };
+  return { ok: true as const, profile, subject };
+}
+
+type ComposeInput = {
+  subject: TextScanSubject;
+  profile: TextScanProfile;
   promptOverrides?: Record<string, string>;
   model?: string;
-}) {
-  const profile = getTextScanProfile(input.entityType);
-  if (!profile) throw new Error(`no profile for ${input.entityType}`);
-  const subject = (await profile.load([input.entityId])).get(input.entityId);
-  if (!subject) return { ok: false as const, error: 'entity not found' };
-  if (subjectTextLength(subject) < (profile.minChars ?? 1))
-    return { ok: false as const, error: 'too-short' };
+  thinking?: boolean;
+};
 
+async function composeStep({ subject, profile, promptOverrides, model, thinking }: ComposeInput) {
   const [config, active] = await Promise.all([getTextScanConfig(), getActiveTextScanPrompts()]);
   const prompts = { ...active };
-  for (const [key, content] of Object.entries(input.promptOverrides ?? {}))
+  for (const [key, content] of Object.entries(promptOverrides ?? {}))
     prompts[key] = { id: 0, key, content };
 
-  const composed = composeTextScanMessages({
-    prompts,
-    labels: profile.labels,
-    subject,
-    maxInputChars: config.maxInputChars,
-  });
+  let composed: ReturnType<typeof composeTextScanMessages>;
+  try {
+    composed = composeTextScanMessages({
+      prompts,
+      labels: profile.labels,
+      subject,
+      maxInputChars: config.maxInputChars,
+    });
+  } catch (e) {
+    if (e instanceof MissingTextScanPromptError) return { ok: false as const, error: e.message };
+    throw e;
+  }
+  const useThinking = thinking ?? config.thinking;
   return {
     ok: true as const,
-    profile,
-    subject,
     composed,
-    config,
-    model: input.model ?? config.model,
+    thinking: useThinking,
+    step: buildTextScanStep({
+      system: composed.system,
+      user: composed.user,
+      model: model ?? config.model,
+      labels: profile.labels,
+      thinking: useThinking,
+    }),
   };
 }
 
-async function scanEntitySync(input: ScanEntitySyncInput) {
-  const ctx = await composeForEntity(input);
-  if (!ctx.ok) return { entityId: input.entityId, ok: false as const, error: ctx.error };
-  const { profile, subject, composed, config, model } = ctx;
-  const thinking = input.thinking ?? config.thinking;
+async function scanComposed(input: ComposeInput & { wait: number }) {
+  const ctx = await composeStep(input);
+  if (!ctx.ok) return ctx;
   const startedAt = Date.now();
   const { data, error } = await submitWorkflow({
     client: internalOrchestratorClient,
     query: { wait: input.wait },
-    body: {
-      currencies: [],
-      steps: [
-        buildTextScanStep({
-          system: composed.system,
-          user: composed.user,
-          model,
-          labels: profile.labels,
-          thinking,
-        }),
-      ],
-    },
+    body: { currencies: [], steps: [ctx.step] },
   });
-  if (!data?.id)
-    return { entityId: input.entityId, ok: false as const, error: error ?? 'no workflow id' };
+  if (!data?.id) return { ok: false as const, error: error ?? 'no workflow id' };
 
   const step = findChatCompletionStep((data as { steps?: unknown }).steps);
-  const parse = parseTextScanStep(step, profile.labels);
+  const parse = parseTextScanStep(step, input.profile.labels);
   return {
-    entityId: input.entityId,
     ok: true as const,
     workflowId: data.id,
-    promptIds: composed.promptIds,
-    thinking,
+    promptIds: ctx.composed.promptIds,
+    thinking: ctx.thinking,
     parse,
-    outcome: parse.ok ? evaluateTextScan(parse.output, subject.declared, profile.labels) : null,
+    outcome: parse.ok
+      ? evaluateTextScan(parse.output, input.subject.declared, input.profile.labels)
+      : null,
     rawContent: parse.ok ? undefined : step?.output?.choices?.[0]?.message?.content,
     elapsedMs: Date.now() - startedAt,
   };
+}
+
+async function quoteComposed(input: ComposeInput) {
+  const ctx = await composeStep(input);
+  if (!ctx.ok) return ctx;
+  const { data, error } = await submitWorkflow({
+    client: internalOrchestratorClient,
+    query: { whatif: true },
+    body: { currencies: [], steps: [ctx.step] },
+  });
+  const costTotal = data?.cost?.total;
+  if (typeof costTotal !== 'number')
+    return { ok: false as const, error: error ?? 'no cost in whatif response' };
+  return {
+    ok: true as const,
+    chars: ctx.composed.system.length + ctx.composed.user.length,
+    costTotal,
+  };
+}
+
+async function scanEntitySync(input: ScanEntitySyncInput) {
+  const loaded = await loadSubject(input.entityType, input.entityId);
+  if (!loaded.ok) return { entityId: input.entityId, ...loaded };
+  return { entityId: input.entityId, ...(await scanComposed({ ...input, ...loaded })) };
+}
+
+/** Free text declares nothing, so `raised`/`newlyDetected` mean "would act on an entity declaring nothing". */
+function freeTextSubject(fields: TextScanSubject['fields']): TextScanSubject {
+  return { fields, declared: {} };
+}
+
+type ScanResult = Awaited<ReturnType<typeof scanComposed>>;
+
+function summarizeScans<T extends ScanResult>(entityType: TextScanEntityType, results: T[]) {
+  const byOutcome: Record<string, number> = {};
+  const firing: Record<string, number> = {};
+  for (const r of results) {
+    const key = r.ok
+      ? r.parse.ok
+        ? 'ok'
+        : r.parse.reason
+      : r.error === 'too-short'
+      ? 'too_short'
+      : 'submit_failed';
+    byOutcome[key] = (byOutcome[key] ?? 0) + 1;
+    for (const label of (r.ok && r.outcome?.triggeredLabels) || [])
+      firing[label] = (firing[label] ?? 0) + 1;
+  }
+  return {
+    entityType,
+    count: results.length,
+    byOutcome,
+    refusalRate: (byOutcome.refused ?? 0) / results.length,
+    firing,
+    results,
+  };
+}
+
+type QuoteResult = Awaited<ReturnType<typeof quoteComposed>>;
+
+function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, results: T[]) {
+  const quoted = results.flatMap((r: QuoteResult) => (r.ok ? [r] : []));
+  const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
+  return {
+    entityType,
+    count: results.length,
+    quoted: quoted.length,
+    meanCostTotal: mean(quoted.map((q) => q.costTotal)),
+    maxCostTotal: quoted.length ? Math.max(...quoted.map((q) => q.costTotal)) : null,
+    meanChars: mean(quoted.map((q) => q.chars)),
+    results,
+  };
+}
+
+async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {
+  const profile = requireProfile(entityType);
+  const [subjects, config] = await Promise.all([profile.load(entityIds), getTextScanConfig()]);
+  const results = entityIds.map((entityId) => {
+    const subject = subjects.get(entityId);
+    if (!subject) return { entityId, ok: false as const, error: 'entity not found' };
+    if (isTooShort(subject, profile)) return { entityId, ok: false as const, error: 'too-short' };
+    return {
+      entityId,
+      ok: true as const,
+      text: composeUserMessage(subject, config.maxInputChars),
+      fields: subject.fields,
+      userId: subject.userId ?? null,
+    };
+  });
+  return { entityType, results };
 }
 
 type ShadowSampleInput = Omit<Extract<TextScanHarnessInput, { action: 'sampleShadow' }>, 'action'>;
@@ -324,46 +462,6 @@ function toShadowCsv(sample: Awaited<ReturnType<typeof sampleShadow>>) {
   return lines.join('\r\n');
 }
 
-async function quoteEntity(input: {
-  entityType: TextScanEntityType;
-  entityId: number;
-  model?: string;
-  thinking?: boolean;
-}) {
-  const ctx = await composeForEntity(input);
-  if (!ctx.ok) return { entityId: input.entityId, ok: false as const, error: ctx.error };
-  const { profile, composed, config, model } = ctx;
-  const { data, error } = await submitWorkflow({
-    client: internalOrchestratorClient,
-    query: { whatif: true },
-    body: {
-      currencies: [],
-      steps: [
-        buildTextScanStep({
-          system: composed.system,
-          user: composed.user,
-          model,
-          labels: profile.labels,
-          thinking: input.thinking ?? config.thinking,
-        }),
-      ],
-    },
-  });
-  const costTotal = data?.cost?.total;
-  if (typeof costTotal !== 'number')
-    return {
-      entityId: input.entityId,
-      ok: false as const,
-      error: error ?? 'no cost in whatif response',
-    };
-  return {
-    entityId: input.entityId,
-    ok: true as const,
-    chars: composed.system.length + composed.user.length,
-    costTotal,
-  };
-}
-
 function requireProfile(entityType: TextScanEntityType) {
   const profile = getTextScanProfile(entityType);
   if (!profile) throw throwBadRequestError(`no profile registered for ${entityType}`);
@@ -418,31 +516,7 @@ export async function runTextScanHarnessAction(
       const results = await Promise.all(
         input.entityIds.map((entityId) => limit(() => scanEntitySync({ ...input, entityId })))
       );
-      const byOutcome: Record<string, number> = {};
-      const firing: Record<string, number> = {};
-      for (const r of results) {
-        const key = r.ok
-          ? r.parse.ok
-            ? 'ok'
-            : r.parse.reason
-          : r.error === 'too-short'
-          ? 'too_short'
-          : 'submit_failed';
-        byOutcome[key] = (byOutcome[key] ?? 0) + 1;
-        for (const label of (r.ok && r.outcome?.triggeredLabels) || [])
-          firing[label] = (firing[label] ?? 0) + 1;
-      }
-      return {
-        kind: 'json',
-        body: {
-          entityType: input.entityType,
-          count: results.length,
-          byOutcome,
-          refusalRate: (byOutcome.refused ?? 0) / results.length,
-          firing,
-          results,
-        },
-      };
+      return { kind: 'json', body: summarizeScans(input.entityType, results) };
     }
 
     case 'sampleShadow': {
@@ -457,30 +531,56 @@ export async function runTextScanHarnessAction(
       const limit = pLimit(input.concurrency);
       const results = await Promise.all(
         input.entityIds.map((entityId) =>
-          limit(() =>
-            quoteEntity({
-              entityType: input.entityType,
+          limit(async () => {
+            const loaded = await loadSubject(input.entityType, entityId);
+            if (!loaded.ok) return { entityId, ...loaded };
+            return {
               entityId,
-              model: input.model,
-              thinking: input.thinking,
-            })
-          )
+              ...(await quoteComposed({
+                ...loaded,
+                model: input.model,
+                thinking: input.thinking,
+              })),
+            };
+          })
         )
       );
-      const quoted = results.flatMap((r) => (r.ok ? [r] : []));
-      const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null);
-      return {
-        kind: 'json',
-        body: {
-          entityType: input.entityType,
-          count: results.length,
-          quoted: quoted.length,
-          meanCostTotal: mean(quoted.map((q) => q.costTotal)),
-          maxCostTotal: quoted.length ? Math.max(...quoted.map((q) => q.costTotal)) : null,
-          meanChars: mean(quoted.map((q) => q.chars)),
-          results,
-        },
-      };
+      return { kind: 'json', body: summarizeQuotes(input.entityType, results) };
+    }
+
+    case 'composeEntities':
+      return { kind: 'json', body: await composeEntities(input.entityType, input.entityIds) };
+
+    case 'scanTexts': {
+      const profile = requireProfile(input.entityType);
+      const limit = pLimit(input.concurrency);
+      const results = await Promise.all(
+        input.texts.map(({ key, fields }) =>
+          limit(async () => {
+            const subject = freeTextSubject(fields);
+            if (isTooShort(subject, profile))
+              return { key, ok: false as const, error: 'too-short' };
+            return { key, ...(await scanComposed({ ...input, subject, profile })) };
+          })
+        )
+      );
+      return { kind: 'json', body: summarizeScans(input.entityType, results) };
+    }
+
+    case 'quoteTexts': {
+      const profile = requireProfile(input.entityType);
+      const limit = pLimit(input.concurrency);
+      const results = await Promise.all(
+        input.texts.map(({ key, fields }) =>
+          limit(async () => {
+            const subject = freeTextSubject(fields);
+            if (isTooShort(subject, profile))
+              return { key, ok: false as const, error: 'too-short' };
+            return { key, ...(await quoteComposed({ ...input, subject, profile })) };
+          })
+        )
+      );
+      return { kind: 'json', body: summarizeQuotes(input.entityType, results) };
     }
   }
 }

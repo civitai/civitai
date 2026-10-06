@@ -74,6 +74,21 @@
  *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
  *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
  *
+ *   { "action": "composeEntities", "entityType": "Post", "entityIds": [...] }
+ *     The exact user message production would send for up to 50 entities, with the raw
+ *     fields and author id. Submits nothing.
+ *
+ *   { "action": "scanTexts", "entityType": "Comment",
+ *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
+ *     "promptOverrides"?, "model"?, "thinking"?, "concurrency"?, "wait"? }
+ *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
+ *     Free text declares nothing, so the outcome is what would fire on an entity that
+ *     declares nothing. A missing prompt key comes back as that item's error.
+ *
+ *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
+ *     "model"?, "thinking"? }
+ *     `whatif`-prices the `scanTexts` composition. Submits nothing.
+ *
  * Label definitions and policy text are INPUTS, never defaults in this file.
  * `labels` are bare names; pass any definitions via `labelDefinitions` or
  * `systemPrompt` at call time.
