@@ -193,8 +193,7 @@ export type AiToolkitTrainingStepInput = {
  * work. Shared by the training form (zip dataset, via `createTrainingStep_AiToolkit`)
  * and the App Blocks `kind:'training'` bridge (blob dataset).
  *
- * Stamps no `timeout` and no `name` — a caller that needs either adds it to the
- * returned object. Never derive a timeout from an app-supplied number here.
+ * Stamps no `timeout` and no `name`; callers add them.
  */
 export const buildAiToolkitTrainingStep = (
   input: AiToolkitTrainingStepInput

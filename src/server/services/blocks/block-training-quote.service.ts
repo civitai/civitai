@@ -75,6 +75,17 @@ export function hashTrainingBody(body: BlockTrainingBody): string {
   return createHash('sha256').update(canonicalJson(rest)).digest('hex');
 }
 
+/**
+ * The identity of a training RUN — app, dataset and every body field — as a sha256
+ * hex digest. Two submits of the same run share it; it keys the run's idempotency
+ * claim and orchestrator `externalId`. (The orchestrator dedupes per user.)
+ */
+export function trainingRunKey(appBlockId: string, body: BlockTrainingBody): string {
+  return createHash('sha256')
+    .update(`${appBlockId}\n${hashTrainingBody(body)}`)
+    .digest('hex');
+}
+
 /** Training-service status, as `getTrainingServiceStatus` returns it. */
 export type TrainingServiceStatus = {
   available: boolean;

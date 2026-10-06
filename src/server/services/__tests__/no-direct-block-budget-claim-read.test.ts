@@ -17,10 +17,11 @@ import {
  * `pricesAuthorFee` classifications, so routing the gates through it alters
  * nothing today. What it buys is a single place where a future ceiling decision
  * can be made KNOWING WHICH GATE IS ASKING — and that distinction is a money
- * question, because the four gates are not interchangeable:
+ * question, because the submit gates are not interchangeable:
  *
- *   - two of them add the per-generation author fee into the value they compare;
- *   - two do not, and on the pass-through path the value that clears the gate is
+ *   - the txt2img and registry-step gates add the per-generation author fee into the
+ *     value they compare;
+ *   - the others do not, and on the post-paid paths the value that clears the gate is
  *     the value reserved and the value the terminal settle BILLS.
  *
  * A ceiling raised above what the app's manifest declared is therefore spendable
@@ -335,7 +336,7 @@ describe('no production code reads the per-call budget claim outside the allowed
   });
 });
 
-describe('the four submit gates are routed through one helper', () => {
+describe('every submit gate is routed through one helper', () => {
   const sites = callSitesByFile.flatMap((f) => f.sites);
 
   it('every call site declares which kind of gate it is', () => {

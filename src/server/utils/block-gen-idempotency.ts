@@ -109,6 +109,7 @@ const APP_BLOCK_ID_MAX_FOR_ENCODING = 99;
  */
 const BLOCK_EXTERNAL_ID_PREFIX_CLIENT = 'blk';
 const BLOCK_EXTERNAL_ID_PREFIX_SERVER = 'bls';
+const BLOCK_EXTERNAL_ID_PREFIX_TRAINING = 'blt';
 
 /**
  * The SINGLE gate every emitted externalId passes. Shared by the client-key
@@ -212,6 +213,21 @@ export function composeBlockExternalId(appBlockId: string, idempotencyKey: strin
  */
 export function mintServerBlockExternalId(): string {
   return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_SERVER}${randomUUID()}`);
+}
+
+/**
+ * The orchestrator `externalId` for an App Blocks `kind:'training'` run, derived from
+ * the RUN's identity (`runKey`, a sha256 hex digest of app + dataset + body) rather
+ * than from any one request. A retry after an ambiguous submit failure — which needs
+ * a fresh quote, and so a fresh request — therefore dedupes onto the run the
+ * orchestrator may already have created, instead of charging a second one. The
+ * `blt` tag keeps it disjoint from the client (`blk`) and minted (`bls`) namespaces.
+ */
+export function composeTrainingBlockExternalId(runKey: string): string {
+  if (!/^[a-f0-9]{64}$/.test(runKey)) {
+    throw new Error('training externalId: runKey must be a sha256 hex digest');
+  }
+  return assertOrchestratorExternalId(`${BLOCK_EXTERNAL_ID_PREFIX_TRAINING}${runKey}`);
 }
 
 export type BlockGenIdempotencyClaim<T> =

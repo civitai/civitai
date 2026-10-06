@@ -222,7 +222,7 @@ export interface BlockTokenClaims {
  *
  * ⚠️ WHY THE STALE WORDING WAS WORSE THAN A MISSING COMMENT, AND HOW IT SURVIVED:
  * it is the FIRST thing a reader meets, and it told them the helper was a pure
- * consolidation. A fifth submit gate written on that understanding open-codes
+ * consolidation. A further submit gate written on that understanding open-codes
  * `claims.buzzBudget`, inherits no editor clamp, and silently gives an editor
  * spend on a taken-down app — the exact failure the "IT IS ONE PLACE BECAUSE
  * FOUR WOULD BE FOUR BUGS" argument below exists to prevent. It survived because
@@ -231,13 +231,14 @@ export interface BlockTokenClaims {
  * see the contradiction. Semantic conflict, zero textual conflict.
  *
  * Still true, and still the reason the helper exists: `pricesAuthorFee` does not
- * change the number for a non-editor, and the four gates were four copies of one
+ * change the number for a non-editor, and the submit gates were copies of one
  * comparison.
  *
  * ── WHY IT EXISTS AT ALL ────────────────────────────────────────────────────
- * The four gates spell the same comparison and are NOT interchangeable. Two of
- * them add the per-generation author fee into the value they compare; two do not,
- * because neither has a pre-submit `cost.base` to price a fee from (that split is
+ * The submit gates spell the same comparison and are NOT interchangeable. The
+ * txt2img and registry-step gates add the per-generation author fee into the value
+ * they compare; the custom-comfy and pass-through gates do not, because neither has
+ * a pre-submit `cost.base` to price a fee from, and training charges no fee (that split is
  * documented at `src/server/services/blocks/author-fee-charge.service.ts` and
  * ledgered in `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`).
  * Any future change to the ceiling is correct for at most one of those two
@@ -291,7 +292,7 @@ export function blockPerCallBudget(
   opts: { pricesAuthorFee: boolean }
 ): number {
   // 🔴 THE EDITOR READ-ONLY BELT — the SECOND layer behind the mint-time scope strip,
-  // and the reason it is HERE rather than at the four submit gates.
+  // and the reason it is HERE rather than at the submit gates.
   //
   // An accepted listing collaborator on a private run of a delisted app is READ-ONLY by
   // operator decision. That is delivered primarily by `clampPrivateRunScopes`, which
@@ -301,12 +302,12 @@ export function blockPerCallBudget(
   // time, while this is re-taken on every submit, so it also covers a token minted
   // before a clamp regression and still inside its lifetime.
   //
-  // 🔴 IT IS ONE PLACE BECAUSE FOUR WOULD BE FOUR BUGS. Four submit gates compare a cost
-  // against this ceiling, and `no-direct-block-budget-claim-read` already forces every
-  // one of them through this function rather than reading `claims.buzzBudget` directly
-  // — which is exactly the property that lets a ceiling decision be made once here and
-  // apply to all four. Open-coding an audience check at each gate would regenerate the
-  // same omission at every site, and the fifth gate would inherit nothing.
+  // 🔴 IT IS ONE PLACE BECAUSE N COPIES WOULD BE N BUGS. Every submit gate compares a
+  // cost against this ceiling (the training gate via `blockTrainingRunCeiling`), and
+  // `no-direct-block-budget-claim-read` forces each through this function rather than
+  // reading `claims.buzzBudget` directly — which is what lets a ceiling decision be made
+  // once here and apply to all of them. Open-coding an audience check at each gate would
+  // regenerate the same omission at every site, and the next gate would inherit nothing.
   //
   // Returning 0 rather than throwing: every caller already treats 0 as "no budget was
   // minted" and fails CLOSED on it, so this reuses a refusal path that is proven rather
@@ -325,9 +326,7 @@ export function blockPerCallBudget(
 
 /**
  * Hard per-run Buzz ceiling for an App Blocks `kind:'training'` run, whatever the
- * viewer consented to. Every other cap (per-user daily, review / private-run, the
- * viewer's per-app consent budget, the per-app aggregate and velocity caps, the
- * dev-session backstop) still applies on top of it.
+ * viewer consented to. Every other cap still applies on top.
  */
 export const BLOCK_TRAINING_MAX_BUZZ_PER_RUN = 5000;
 
@@ -358,13 +357,7 @@ export type BlockTrainingQuoteGrant = {
  * which the block, holding nothing but its own token, cannot call. The grant is
  * that record, not a token claim, so `buzzBudget` keeps meaning exactly what it did.
  *
- * Returns 0 — the shared "no budget" refusal — unless ALL of:
- *   - the token has a non-zero per-call budget at all (`blockPerCallBudget`), so
- *     an editor's read-only private run and an unbudgeted token stay refused;
- *   - the quote is bound to this token's subject, app and install;
- *   - the subject themself confirmed it;
- *   - the quoted total is a positive whole number.
- * Otherwise it returns the quoted total, capped at `BLOCK_TRAINING_MAX_BUZZ_PER_RUN`.
+ * 0 is the shared "no budget" refusal.
  *
  * Fee-free by classification (`pricesAuthorFee: false`): the training author fee
  * is zero, so the number that clears this gate is the number reserved and charged.

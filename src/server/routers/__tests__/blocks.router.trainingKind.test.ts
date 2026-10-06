@@ -38,9 +38,12 @@ const h = vi.hoisted(() => ({
   chargeAuthorFee: vi.fn(),
   recordScopeInvocation: vi.fn(async () => undefined),
   publishRate: vi.fn(async () => ({ allowed: true })),
+  datasetRate: vi.fn(async () => ({ allowed: true })),
   catalogRate: vi.fn(async () => ({ allowed: true })),
   imageUpload: vi.fn(),
   buzzAccounts: vi.fn(async () => ({ blue: 100, green: 200, yellow: 0 })),
+  getActiveDevTunnel: vi.fn(async (): Promise<unknown> => null),
+  reserveDevSessionBuzz: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
@@ -87,8 +90,8 @@ vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
   chargeAppSpendOverage: vi.fn(),
 }));
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
-  getActiveDevTunnel: vi.fn(async () => null),
-  reserveDevSessionBuzz: vi.fn(),
+  getActiveDevTunnel: (...a: unknown[]) => h.getActiveDevTunnel(...(a as [])),
+  reserveDevSessionBuzz: (...a: unknown[]) => h.reserveDevSessionBuzz(...(a as [])),
   refundDevSessionBuzz: vi.fn(),
   chargeDevSessionOverage: vi.fn(),
 }));
@@ -115,6 +118,7 @@ vi.mock('~/server/services/blocks/user-app-surface.service', () => ({
 vi.mock('~/server/utils/block-catalog-rate-limit', async (importOriginal) => ({
   ...(await importOriginal<typeof RateLimitModule>()),
   checkBlockPublishRateLimit: (...a: unknown[]) => h.publishRate(...(a as [])),
+  checkBlockTrainingDatasetRateLimit: (...a: unknown[]) => h.datasetRate(...(a as [])),
   checkBlockCatalogRateLimit: (...a: unknown[]) => h.catalogRate(...(a as [])),
 }));
 vi.mock('~/server/services/orchestrator/imageUpload', async (importOriginal) => ({
@@ -141,8 +145,11 @@ import { envMock } from '~/__tests__/mocks/env.mock';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
-import { composeBlockExternalId } from '~/server/utils/block-gen-idempotency';
-import { hashTrainingBody } from '~/server/services/blocks/block-training-quote.service';
+import { composeTrainingBlockExternalId } from '~/server/utils/block-gen-idempotency';
+import {
+  hashTrainingBody,
+  trainingRunKey,
+} from '~/server/services/blocks/block-training-quote.service';
 import { blockTrainingBodySchema } from '~/server/schema/blocks/workflow.schema';
 
 // ── An in-memory sysRedis: get/set (NX/XX/KEEPTTL/EX)/getDel/del/incrBy/decrBy. ──
@@ -293,6 +300,23 @@ function seedQuote(quoteId: string, over: Record<string, unknown> = {}) {
   );
 }
 
+function imageRow(over: Record<string, unknown> = {}) {
+  return {
+    id: 1,
+    url: 'k',
+    type: 'image',
+    nsfwLevel: 1,
+    ingestion: 'Scanned',
+    needsReview: null,
+    poi: false,
+    minor: false,
+    tosViolation: false,
+    acceptableMinor: false,
+    blockedFor: null,
+    ...over,
+  };
+}
+
 let whatifPrice: { total?: number; variable?: boolean } = { total: 1200 };
 let chargedPrice = 1200;
 let workflowId = `${VIEWER}-20261005`;
@@ -322,7 +346,11 @@ const whatifs = () =>
 function ctx(sessionUserId?: number) {
   return {
     acceptableOrigin: true,
-    user: sessionUserId == null ? undefined : { id: sessionUserId, isModerator: false },
+    // guardedProcedure: an onboarded, unmuted, email-verified session.
+    user:
+      sessionUserId == null
+        ? undefined
+        : { id: sessionUserId, isModerator: false, onboarding: 0xffff, muted: false },
     apiKeyId: null,
     tokenScope: TokenScope.Full,
     req: { headers: {} } as never,
@@ -359,6 +387,10 @@ beforeEach(() => {
   h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: 'app-daily' }));
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
   dbMock.dbRead.$queryRaw.mockClear();
+  // The dataset images, re-read on the PRIMARY before every quote and charge.
+  dbMock.dbWrite.$queryRaw.mockReset();
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([imageRow({ id: 1 }), imageRow({ id: 2 })]);
+  h.getActiveDevTunnel.mockImplementation(async () => null);
   seedDataset();
 });
 afterEach(() => envMock.reset());
@@ -560,7 +592,11 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
       'app-block:block:blk_test',
       'app-block:instance:page_apb_test',
     ]);
-    expect(req.body.externalId).toBe(composeBlockExternalId('apb_test', quoteId));
+    expect(req.body.externalId).toBe(
+      composeTrainingBlockExternalId(
+        trainingRunKey('apb_test', blockTrainingBodySchema.parse(body({ quoteId })))
+      )
+    );
 
     // Per-user daily cap and per-app aggregate both reserved at the re-quoted price.
     expect(counter('system:blocks:buzz-cap')).toBe(1200);
@@ -729,7 +765,7 @@ describe('prepareTrainingDataset', () => {
         { imageId: 6, caption: 'y' },
       ],
     });
-    expect(h.publishRate).toHaveBeenCalledWith('page_apb_test', 2);
+    expect(h.datasetRate).toHaveBeenCalledWith('page_apb_test', VIEWER, 2);
     expect(out.count).toBe(1);
     expect(out.rejected).toEqual([{ imageId: 6, reason: 'unavailable' }]);
     expect(
@@ -744,5 +780,251 @@ describe('prepareTrainingDataset', () => {
     ).rejects.toThrow('development or review session');
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     expect(h.imageUpload).not.toHaveBeenCalled();
+  });
+});
+
+describe('training — maturity, currency and re-admission', () => {
+  async function confirmedQuote() {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    await consent(snapshot.trainingQuote.quoteId);
+    return snapshot.trainingQuote.quoteId;
+  }
+
+  // Currencies are not asserted: the global `@civitai/client` mock leaves the
+  // orchestrator account enum unmapped, so every currency reads `undefined` here.
+  it('a SFW token prices and submits with mature output off', async () => {
+    const quoteId = await confirmedQuote();
+    await submit(body({ quoteId }));
+    const calls = h.submitWorkflow.mock.calls.map(
+      (c) => (c[0] as { body: { allowMatureContent?: boolean } }).body
+    );
+    expect(calls.length).toBe(3); // estimate whatif, submit re-quote, real submit
+    for (const b of calls) expect(b.allowMatureContent).toBe(false);
+  });
+
+  it('control: an all-levels token does not send the SFW clamp', async () => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    await estimate();
+    const b = (whatifs()[0][0] as { body: { allowMatureContent?: boolean } }).body;
+    expect('allowMatureContent' in b).toBe(false);
+  });
+
+  it('an image moderated after preparation blocks the estimate (re-read on the primary)', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      imageRow({ id: 1 }),
+      imageRow({ id: 2, minor: true }),
+    ]);
+    await expect(estimate()).rejects.toThrow('can no longer be used for training');
+    expect(h.submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('…and blocks the charge when it happens between consent and submit', async () => {
+    const quoteId = await confirmedQuote();
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([imageRow({ id: 1 })]); // image 2 gone
+    await expect(submit(body({ quoteId }))).rejects.toThrow('can no longer be used for training');
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+  });
+
+  it('a dataset that expired between estimate and submit is refused before any charge', async () => {
+    const quoteId = await confirmedQuote();
+    store.delete(`system:blocks:training-dataset:${DATASET_ID}`);
+    await expect(submit(body({ quoteId }))).rejects.toThrow(
+      'training dataset not found or expired'
+    );
+    expect(realSubmits()).toHaveLength(0);
+  });
+
+  it('the submit re-audits the body text, and a refusal charges nothing', async () => {
+    const quoteId = await confirmedQuote();
+    h.audit.mockRejectedValueOnce(new Error('prompt refused'));
+    await expect(submit(body({ quoteId }))).rejects.toThrow('prompt refused');
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+  });
+
+  it('a fractional whatif price is rounded UP, never down', async () => {
+    whatifPrice = { total: 1199.2 };
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { total: number } } };
+    expect(snapshot.trainingQuote.total).toBe(1200);
+  });
+});
+
+describe('training — the reservation belt refunds and releases on every refusal', () => {
+  async function confirmedQuote() {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    await consent(snapshot.trainingQuote.quoteId);
+    return snapshot.trainingQuote.quoteId;
+  }
+  const genIdemKeys = () => keysWith('system:blocks:gen-idem');
+
+  it('per-user daily cap reached → failed snapshot, refunded, claim released', async () => {
+    const quoteId = await confirmedQuote();
+    const realIncr = redisMock.sysRedis.incrBy.getMockImplementation()!;
+    redisMock.sysRedis.incrBy.mockImplementation(async (k: string, n: number) =>
+      k.startsWith('system:blocks:buzz-cap') ? realIncr(k, n + 49_500) : realIncr(k, n)
+    );
+    const { snapshot } = (await submit(body({ quoteId }))) as {
+      snapshot: { status: string; error: string };
+    };
+    expect(snapshot.status).toBe('failed');
+    expect(snapshot.error).toContain('daily Buzz cap reached');
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(49_500); // the 1200 was refunded
+    expect(genIdemKeys()).toEqual([]);
+  });
+
+  it('the viewer’s own per-app budget → failed snapshot, both legs refunded', async () => {
+    const quoteId = await confirmedQuote();
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 500,
+      revokedAt: null,
+    });
+    const { snapshot } = (await submit(body({ quoteId }))) as {
+      snapshot: { status: string; error: string };
+    };
+    expect(snapshot.status).toBe('failed');
+    expect(snapshot.error).toContain('your limit for this app is 500');
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(counter('system:blocks:consent-budget')).toBe(0);
+    expect(genIdemKeys()).toEqual([]);
+  });
+
+  it('per-app aggregate refused → failed snapshot, user cap refunded', async () => {
+    const quoteId = await confirmedQuote();
+    h.reserveAppSpend.mockImplementation(async () => ({ allowed: false, reason: 'velocity' }));
+    const { snapshot } = (await submit(body({ quoteId }))) as {
+      snapshot: { status: string; error: string };
+    };
+    expect(snapshot.error).toContain('app generation rate limit reached');
+    expect(realSubmits()).toHaveLength(0);
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(genIdemKeys()).toEqual([]);
+  });
+
+  it('dev-session backstop refused → failed snapshot, user AND app reservations refunded', async () => {
+    const quoteId = await confirmedQuote();
+    h.getActiveDevTunnel.mockImplementation(async () => ({ sessionId: 's1', spendCapBuzz: 100 }));
+    h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: false, total: 90 }));
+    const { snapshot } = (await submit(body({ quoteId }))) as {
+      snapshot: { status: string; error: string };
+    };
+    expect(snapshot.error).toContain('dev tunnel session Buzz cap reached');
+    expect(counter('system:blocks:buzz-cap')).toBe(0);
+    expect(h.refundAppSpend).toHaveBeenCalledWith('app-daily', 1200);
+    expect(genIdemKeys()).toEqual([]);
+  });
+});
+
+describe('training — idempotency is keyed on the RUN, in a server-only namespace', () => {
+  it('a retry after an ambiguous failure presents the SAME orchestrator externalId', async () => {
+    const run = async () => {
+      const { snapshot } = (await estimate()) as {
+        snapshot: { trainingQuote: { quoteId: string } };
+      };
+      await consent(snapshot.trainingQuote.quoteId);
+      return snapshot.trainingQuote.quoteId;
+    };
+    h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+      if (args.query?.whatif) return { cost: { total: 1200 } };
+      throw new Error('socket hang up');
+    });
+    const q1 = await run();
+    await expect(submit(body({ quoteId: q1 }))).rejects.toThrow('socket hang up');
+    const q2 = await run();
+    expect(q2).not.toBe(q1);
+    await expect(submit(body({ quoteId: q2 }))).rejects.toThrow('socket hang up');
+    const ids = realSubmits().map(
+      (c) => (c[0] as { body: { externalId: string } }).body.externalId
+    );
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[0]).toMatch(/^blt[a-f0-9]{64}$/);
+  });
+
+  it('a client idempotency key equal to the quote id cannot occupy the run’s claim', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    const quoteId = snapshot.trainingQuote.quoteId;
+    // What a block could plant: a gen-idem entry under the quote id as its own key.
+    store.set(
+      `system:blocks:gen-idem:${VIEWER}:apb_test:${quoteId}`,
+      JSON.stringify({ result: 'x' })
+    );
+    await consent(quoteId);
+    const out = (await submit(body({ quoteId }))) as { snapshot: { workflowId: string } };
+    expect(out.snapshot.workflowId).toBe(workflowId);
+    expect(realSubmits()).toHaveLength(1);
+  });
+});
+
+describe('training — consent and preview edges', () => {
+  it('a quote already claimed by a submit cannot be confirmed again, and nothing is written', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    const quoteId = snapshot.trainingQuote.quoteId;
+    await consent(quoteId);
+    await submit(body({ quoteId }));
+    await expect(consent(quoteId)).rejects.toThrow('training quote not found or expired');
+    expect(keysWith('system:blocks:training-quote')).toEqual([]);
+  });
+
+  it('preview refuses a session that is not the token subject', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    await expect(
+      caller(7).previewTrainingQuote({ blockToken: 't', quoteId: snapshot.trainingQuote.quoteId })
+    ).rejects.toThrow('belongs to a different account');
+  });
+
+  it('consent refuses a muted viewer (guarded procedure)', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    const muted = blocksRouter.createCaller({
+      ...ctx(VIEWER),
+      user: { id: VIEWER, isModerator: false, onboarding: 0xffff, muted: true },
+    } as never);
+    await expect(
+      muted.consentTrainingQuote({ blockToken: 't', quoteId: snapshot.trainingQuote.quoteId })
+    ).rejects.toThrow('restricted');
+  });
+});
+
+describe('prepareTrainingDataset — router wiring', () => {
+  it('audits the captions as the token subject, clamps the import, and applies the token ceiling', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      imageRow({ id: 5, url: 'k5' }),
+      imageRow({ id: 6, url: 'k6', nsfwLevel: 4 }), // R, above this PG token
+    ]);
+    h.imageUpload.mockResolvedValue({
+      blob: { available: true, url: 'https://o.example/v2/consumer/blobs/k5.jpeg' },
+    });
+    const out = await caller().prepareTrainingDataset({
+      blockToken: 't',
+      items: [
+        { imageId: 5, caption: 'a cat' },
+        { imageId: 6, caption: 'a dog' },
+      ],
+    });
+    expect(out.rejected).toEqual([{ imageId: 6, reason: 'not-eligible' }]);
+    expect(h.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt: 'a cat', userId: VIEWER, isGreen: true })
+    );
+    expect(h.imageUpload).toHaveBeenCalledWith(
+      expect.objectContaining({ token: 'orch-token', allowMatureContent: false })
+    );
+  });
+
+  it('charges its own per-(install, viewer) bucket by image count', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([imageRow({ id: 5 })]);
+    h.imageUpload.mockResolvedValue({
+      blob: { available: true, url: 'https://o.example/v2/consumer/blobs/k5.jpeg' },
+    });
+    await caller().prepareTrainingDataset({
+      blockToken: 't',
+      items: [
+        { imageId: 5, caption: '' },
+        { imageId: 7, caption: '' },
+        { imageId: 8, caption: '' },
+      ],
+    });
+    expect(h.datasetRate).toHaveBeenCalledWith('page_apb_test', VIEWER, 3);
+    expect(h.publishRate).not.toHaveBeenCalled();
   });
 });

@@ -564,6 +564,33 @@ export async function checkBlockPostAppRateLimit(
 // one page app is the same trade the catalog bucket already makes. Same stated
 // limits as every bucket in this file: FIXED window and FAILS OPEN on a Redis
 // error — it is a spend ceiling, not a security control.
+/**
+ * `kind:'training'` dataset preparation: images imported per (install, viewer) per
+ * hour. Room for a few full datasets (`BLOCK_TRAINING_DATASET_MAX_ITEMS` = 50) an
+ * hour per viewer; each image is a server-side fetch plus an orchestrator import.
+ */
+export const BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX = 150;
+export const BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS = 3600;
+
+/**
+ * Records a training-dataset preparation of `imageCount` images against this
+ * (install, viewer)'s window. Keyed on the viewer too, for the reason the poll
+ * bucket is: a page app's `blockInstanceId` is shared by every viewer of it. Own
+ * `:training-dataset:` sub-namespace; fail-open like every sibling limiter.
+ */
+export async function checkBlockTrainingDatasetRateLimit(
+  blockInstanceId: string,
+  userId: number,
+  imageCount: number
+): Promise<BlockCatalogRateLimitResult> {
+  return checkFixedWindow(
+    `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:training-dataset:${blockInstanceId}:${userId}`,
+    BLOCK_TRAINING_DATASET_RATE_LIMIT_MAX,
+    BLOCK_TRAINING_DATASET_RATE_LIMIT_WINDOW_SECONDS,
+    Math.max(1, Math.floor(imageCount))
+  );
+}
+
 export const BLOCK_LLM_RATE_LIMIT_MAX = 30;
 export const BLOCK_LLM_RATE_LIMIT_WINDOW_SECONDS = 60;
 

@@ -379,7 +379,8 @@ read that file. As of this writing the families are:
   surface and both stay (see "Direction" under Routes). Page host only today.
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
-  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`.
+  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, and `RUN_TRAINING` (→ `TRAINING_RESULT`, page
+  host only — see "Training runs").
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
 - **Resource pickers** (host chrome so the iframe only learns the one resource the
@@ -460,8 +461,9 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 ### Training runs (`kind: 'training'`)
 
 A page app can train a LoRA (ai-toolkit engine) on the viewer's own images. Behind its
-own fail-closed flag, `app-blocks-training-kind`. Page tokens of an ordinary viewer
-only — no dev, dev-tunnel, review or editor private-run token.
+own fail-closed flag, `app-blocks-training-kind`. Page tokens only: dev, dev-tunnel and
+review-sandbox tokens are refused, and so is an editor's read-only private run. The app
+owner's own private run is allowed, under the private-run Buzz cap.
 
 1. **Dataset** — `blocks.prepareTrainingDataset({ items: [{ imageId, caption }] })`
    admits only the viewer's own scanned, unflagged images within the token's maturity

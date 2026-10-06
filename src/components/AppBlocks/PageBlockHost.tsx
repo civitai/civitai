@@ -4470,19 +4470,10 @@ export function PageBlockHost({
   ]);
 
   // ── RUN_TRAINING → TRAINING_RESULT ─────────────────────────────────────────
-  //
-  // Starts a `kind:'training'` run the block already estimated. THREE server calls:
-  // a read-only preview of the stored quote (what the dialog shows), the viewer's
-  // CONFIRMATION (session-only — the block cannot make this call itself, which is
-  // what lets the server refuse an unconfirmed run), and the submit. See
-  // `runTrainingGate.ts`.
-  //
-  // The preview/confirm calls go through `trpcUtils.client` rather than two more
-  // `useMutation` hooks: they are only ever reached from this handler, and a hook
-  // read at render would make every PageBlockHost test harness enumerate them.
-  //
-  // REQUEST-style ⇒ every terminal path replies exactly once; `createPostSettlement`
-  // owns that latch and keeps `declined` meaning "no run was submitted".
+  // Preview the stored quote, confirm in host chrome, record consent (session-only),
+  // then submit — see `runTrainingGate.ts`. Preview/consent use `trpcUtils.client`
+  // so no render-time hook is added. REQUEST-style: `createPostSettlement` owns the
+  // exactly-once reply and keeps `declined` meaning "no run was submitted".
   useEffect(() => {
     const off = onMessage<unknown>('RUN_TRAINING', (raw) => {
       const gate = resolveRunTrainingRequest({

@@ -640,11 +640,11 @@ describe('author fee — the viewer-charge seam', () => {
     }
   });
 
-  it('🔴 the two NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
+  it('🔴 the NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
     // 🔴 WHY A SECOND, PATH-SPECIFIC TEST WHEN THE LOOP ABOVE ALREADY COVERS ALL
     // FOUR MARKERS. On the two priced paths the exclusion is a FEE argument: one
     // shared sentinel id means one shared idempotency key and one UNIQUE accrual
-    // row across every viewer. On these two paths no fee is charged, so that
+    // row across every viewer. On these paths no fee is charged, so that
     // argument does not apply and the clause's only effect would be that
     // `recordSpendAttribution` — a payout-relevant table — stops being written for
     // a submit whose orchestrator response carried no workflow id. That effect is

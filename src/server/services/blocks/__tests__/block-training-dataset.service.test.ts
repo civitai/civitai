@@ -9,8 +9,11 @@ vi.mock('~/server/services/orchestrator/imageUpload', async (importOriginal) => 
   imageUpload: (...a: unknown[]) => mockImageUpload(...a),
 }));
 
+import { TRPCError } from '@trpc/server';
 import {
+  BLOCK_TRAINING_IMPORT_TIMEOUT_MS,
   admitTrainingImage,
+  assertBlockTrainingDatasetStillEligible,
   loadBlockTrainingDataset,
   prepareBlockTrainingDataset,
   trainingBlobAirFromImport,
@@ -294,5 +297,102 @@ describe('loadBlockTrainingDataset — the handle is bound to subject, app and i
     redisMock.sysRedis.get.mockClear();
     expect(await loadBlockTrainingDataset('tds_../../x', binding)).toBeNull();
     expect(redisMock.sysRedis.get).not.toHaveBeenCalled();
+  });
+});
+
+describe('import failures are classified, and the timeout is per image', () => {
+  const audit = vi.fn(async () => undefined);
+
+  it('an unavailable orchestrator is a RETRYABLE reason, a refusal is not', async () => {
+    dbMock.dbRead.$queryRaw.mockResolvedValue([
+      row({ id: 1, url: 'k1' }),
+      row({ id: 2, url: 'k2' }),
+      row({ id: 3, url: 'k3' }),
+    ]);
+    mockImageUpload
+      .mockImplementationOnce(async () => {
+        throw new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'down' });
+      })
+      .mockImplementationOnce(async () => {
+        throw new TRPCError({ code: 'BAD_REQUEST', message: 'mature content not allowed' });
+      });
+    const out = await prepareBlockTrainingDataset({
+      actor: ACTOR,
+      items: [
+        { imageId: 1, caption: '' },
+        { imageId: 2, caption: '' },
+        { imageId: 3, caption: '' },
+      ],
+      token: 'tok',
+      auditCaptions: audit,
+    });
+    expect(out.count).toBe(1);
+    expect(out.rejected).toEqual([
+      { imageId: 1, reason: 'import-unavailable' },
+      { imageId: 2, reason: 'import-failed' },
+    ]);
+  });
+
+  it('a stuck import times out as import-unavailable without holding the others', async () => {
+    vi.useFakeTimers();
+    try {
+      dbMock.dbRead.$queryRaw.mockResolvedValue([
+        row({ id: 1, url: 'k1' }),
+        row({ id: 2, url: 'k2' }),
+      ]);
+      mockImageUpload.mockImplementationOnce(() => new Promise(() => undefined));
+      const pending = prepareBlockTrainingDataset({
+        actor: ACTOR,
+        items: [
+          { imageId: 1, caption: '' },
+          { imageId: 2, caption: '' },
+        ],
+        token: 'tok',
+        auditCaptions: audit,
+      });
+      await vi.advanceTimersByTimeAsync(BLOCK_TRAINING_IMPORT_TIMEOUT_MS + 1);
+      const out = await pending;
+      expect(out.count).toBe(1);
+      expect(out.rejected).toEqual([{ imageId: 1, reason: 'import-unavailable' }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('assertBlockTrainingDatasetStillEligible — re-admission on the primary', () => {
+  const dataset = {
+    v: 1 as const,
+    datasetId: `tds_${'a'.repeat(32)}`,
+    userId: 42,
+    appBlockId: 'apb_1',
+    blockInstanceId: 'page_apb_1',
+    items: [
+      { imageId: 1, air: 'a', caption: '', thumbnailUrl: 't' },
+      { imageId: 2, air: 'b', caption: '', thumbnailUrl: 't' },
+    ],
+    count: 2,
+    createdAt: 'x',
+  };
+  beforeEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  it('passes while every image still passes, reading the PRIMARY scoped to the owner', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([row({ id: 1 }), row({ id: 2 })]);
+    await expect(
+      assertBlockTrainingDatasetStillEligible(dataset, SFW_CEILING)
+    ).resolves.toBeUndefined();
+    const [, , owner] = dbMock.dbWrite.$queryRaw.mock.calls[0] as unknown[];
+    expect(owner).toBe(42);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['an image flagged since preparation', [row({ id: 1 }), row({ id: 2, tosViolation: true })]],
+    ['an image deleted since preparation', [row({ id: 1 })]],
+  ])('refuses %s', async (_l, rows) => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue(rows);
+    await expect(assertBlockTrainingDatasetStillEligible(dataset, SFW_CEILING)).rejects.toThrow(
+      'can no longer be used for training'
+    );
   });
 });

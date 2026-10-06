@@ -54,11 +54,13 @@ import {
   checkBlockPostAppRateLimit,
   checkBlockPostRateLimit,
   checkBlockPublishRateLimit,
+  checkBlockTrainingDatasetRateLimit,
 } from '~/server/utils/block-catalog-rate-limit';
 import {
   BLOCK_IDEMPOTENCY_KEY_REGEX,
   claimGenIdempotency,
   composeBlockExternalId,
+  composeTrainingBlockExternalId,
   finalizeGenIdempotency,
   mintServerBlockExternalId,
   releaseGenIdempotency,
@@ -309,6 +311,7 @@ import { getHighestTierSubscription } from '~/server/services/subscriptions.serv
 import { sessionClient } from '~/server/auth/session-client';
 import {
   appDeveloperProcedure,
+  guardedProcedure,
   moderatorProcedure,
   protectedProcedure,
   middleware,
@@ -5848,9 +5851,10 @@ export const blocksRouter = router({
    * scope, runtime + training flags on the token subject), so an app cannot prepare
    * a dataset for a run it could not submit.
    *
-   * RATE LIMIT — the image-weighted PUBLISH bucket, one token per requested image
-   * (a server-side fetch + an orchestrator import each), charged before any image
-   * is read. MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
+   * RATE LIMIT — its own image-weighted bucket keyed per (install, viewer): a page
+   * app's install id is shared by every viewer, and the publish bucket would let one
+   * viewer's dataset starve another's (and the app's publishing). Charged before any
+   * image is read. MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
   prepareTrainingDataset: publicProcedure
     .input(
@@ -5865,7 +5869,11 @@ export const blocksRouter = router({
         throw new TRPCError({ code: 'FORBIDDEN', message: 'block lacks ai:write:budgeted scope' });
       }
       const { userId, user } = await assertTrainingRequestAllowed(claims, ctx);
-      const rate = await checkBlockPublishRateLimit(claims.blockInstanceId, input.items.length);
+      const rate = await checkBlockTrainingDatasetRateLimit(
+        claims.blockInstanceId,
+        userId,
+        input.items.length
+      );
       if (!rate.allowed) {
         throw new TRPCError({
           code: 'TOO_MANY_REQUESTS',
@@ -5878,7 +5886,7 @@ export const blocksRouter = router({
       const { prepareBlockTrainingDataset } = await import(
         '~/server/services/blocks/block-training-dataset.service'
       );
-      const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
+      const { allowMatureContent } = resolveBlockMaturity(claims);
       const token = await getOrchestratorToken(userId, ctx);
       return prepareBlockTrainingDataset({
         actor: {
@@ -5890,8 +5898,7 @@ export const blocksRouter = router({
         },
         items: input.items,
         token,
-        auditCaptions: (text) =>
-          auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator }),
+        auditCaptions: (text) => auditBlockTrainingText({ claims, userId, user, text }),
       });
     }),
 
@@ -5907,7 +5914,7 @@ export const blocksRouter = router({
    * It CONFERS NOTHING. Bound like the write below: a signed-in browser session
    * whose user is the token subject (API-key and OAuth-token requests refused).
    */
-  previewTrainingQuote: protectedProcedure
+  previewTrainingQuote: guardedProcedure
     .meta({ blockApiKeys: true })
     .input(
       z.object({
@@ -5984,7 +5991,7 @@ export const blocksRouter = router({
    * The confirmation does not extend the quote's life, and a confirmed quote is
    * still single-use and still re-quoted at submit.
    */
-  consentTrainingQuote: protectedProcedure
+  consentTrainingQuote: guardedProcedure
     .meta({ blockApiKeys: true })
     .input(
       z.object({
@@ -11903,18 +11910,10 @@ async function submitPassThroughStepWorkflow(opts: {
 // ── App Blocks TRAINING kind (`kind:'training'`) ──────────────────────────────
 //
 // An ai-toolkit LoRA run on a server-prepared dataset of the viewer's own images.
-// Three halves, and only the first two can be reached with the block token alone:
-//   1. ESTIMATE — resolve the body into one step, price it with a `whatif`, and
-//      store the price as a QUOTE (`block-training-quote.service`). Fails closed on
-//      an absent, non-positive or variable (cap) price.
-//   2. SUBMIT — claim that quote EXACTLY ONCE, require it to be confirmed by the
-//      token's own subject, re-quote the identical step, and charge only if the
-//      re-quote is at most the confirmed price and at most the per-run ceiling.
-//   3. CONSENT — `blocks.consentTrainingQuote`, a session-required procedure the
-//      host calls after the viewer confirms in host chrome. The block holds only
-//      its own token, so it cannot record a confirmation; that is what lets a
-//      confirmed training run exceed the token's per-call budget
-//      (`blockTrainingRunCeiling`).
+// The confirmation the submit requires is recorded only by the session-only
+// `blocks.consentTrainingQuote`, which the block (holding only its token) cannot
+// call — that is why a confirmed run may exceed `buzzBudget`; see
+// `blockTrainingRunCeiling`.
 //
 // Labels are constants (metric cardinality), like the pass-through arm's.
 const TRAINING_ENGINE_LABEL = 'training';
@@ -12055,6 +12054,36 @@ async function authorizeBlockTrainingConsentRequest(
 }
 
 /**
+ * The dataset a `kind:'training'` body names — bound to this subject, app and install,
+ * with every image re-admitted on the primary — or a refusal.
+ */
+async function loadEligibleBlockTrainingDataset(
+  claims: BlockClaims,
+  userId: number,
+  datasetId: string
+) {
+  const { assertBlockTrainingDatasetStillEligible, loadBlockTrainingDataset } = await import(
+    '~/server/services/blocks/block-training-dataset.service'
+  );
+  const dataset = await loadBlockTrainingDataset(datasetId, {
+    userId,
+    appBlockId: claims.appBlockId,
+    blockInstanceId: claims.blockInstanceId,
+  });
+  if (!dataset) {
+    throw new TRPCError({ code: 'NOT_FOUND', message: 'training dataset not found or expired' });
+  }
+  const { resolveViewerBrowsingLevel } = await import(
+    '~/server/services/blocks/block-gated-images.service'
+  );
+  await assertBlockTrainingDatasetStillEligible(
+    dataset,
+    resolveViewerBrowsingLevel(claims.maxBrowsingLevel)
+  );
+  return dataset;
+}
+
+/**
  * TRAINING ESTIMATE — prices the run and stores the quote the viewer will confirm.
  * Creates nothing and reserves nothing.
  */
@@ -12065,19 +12094,7 @@ async function estimateTrainingWorkflow(opts: {
 }) {
   const { ctx, claims, body } = opts;
   const { userId, user, features } = await assertTrainingRequestAllowed(claims, ctx);
-  const binding = {
-    userId,
-    appBlockId: claims.appBlockId,
-    blockInstanceId: claims.blockInstanceId,
-  };
-
-  const { loadBlockTrainingDataset } = await import(
-    '~/server/services/blocks/block-training-dataset.service'
-  );
-  const dataset = await loadBlockTrainingDataset(body.datasetId, binding);
-  if (!dataset) {
-    throw new TRPCError({ code: 'NOT_FOUND', message: 'training dataset not found or expired' });
-  }
+  const dataset = await loadEligibleBlockTrainingDataset(claims, userId, body.datasetId);
 
   const { getTrainingServiceStatus } = await import('~/server/services/training.service');
   const { resolveBlockTrainingRun, hashTrainingBody, storeTrainingQuote } = await import(
@@ -12092,7 +12109,7 @@ async function estimateTrainingWorkflow(opts: {
   });
 
   // App-supplied text that drives sample generation — moderated like a prompt.
-  await auditBlockTrainingText({ claims, userId, user, body });
+  await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
 
   const step = { ...run.step, name: BLOCK_STEP_NAME };
   const token = await getOrchestratorToken(userId, ctx);
@@ -12143,44 +12160,38 @@ async function estimateTrainingWorkflow(opts: {
 }
 
 /**
- * The prompt-moderation pass over a training body's own text — the trigger word
- * and the sample prompts, which generate the run's sample images. One audit over
- * the joined text, with the token's domain strictness, before any orchestrator call.
+ * The one prompt-moderation pass for `kind:'training'` text: dataset captions, and a
+ * body's trigger word + sample prompts. Not a generation submit, so it joins the
+ * `other` moderation-source population.
  */
 async function auditBlockTrainingText(opts: {
   claims: BlockClaims;
   userId: number;
   user: SessionUser;
-  body: BlockTrainingBody;
+  text: string;
 }): Promise<void> {
-  const { claims, userId, user, body } = opts;
-  const text = [body.triggerWord, ...body.samplePrompts]
-    .map((t) => t.trim())
-    .filter((t) => t.length > 0)
-    .join('\n');
+  const { claims, userId, user, text } = opts;
   if (text.length === 0) return;
   const { isGreen } = resolveBlockMaturity(claims);
   await auditPromptServer({ prompt: text, userId, isGreen, isModerator: !!user.isModerator });
 }
 
+/** A training body's own free text, joined for one audit. */
+function trainingBodyAuditText(body: BlockTrainingBody): string {
+  return [body.triggerWord, ...body.samplePrompts]
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .join('\n');
+}
+
 /**
- * TRAINING SUBMIT. Post-paid on the same reservation belt as the pass-through arm
- * (per-user / review / private-run cap, the viewer's per-app consent budget, the
- * per-app aggregate + velocity cap, the dev-session backstop), but its CEILING is
- * the viewer-confirmed quote, not the token's per-call budget.
+ * TRAINING SUBMIT. Post-paid on the pass-through arm's reservation belt, but its
+ * ceiling is the viewer-confirmed quote, not the token's per-call budget.
  *
- * ORDER, and why:
- *   1. the shared gates, then the idempotency claim keyed on `quoteId` — a lost-
- *      response retry of THIS submit replays the original result instead of
- *      finding its quote already consumed;
- *   2. claim the quote (single use) and check it: bound to this subject/app/
- *      install, the body unchanged since it was priced, and confirmed by the
- *      subject themself;
- *   3. re-resolve and RE-QUOTE the identical step — refused if the price is now
- *      unknown, variable, above what was confirmed, or above the per-run ceiling;
- *   4. reserve the re-quoted price on every cap, submit, and settle like the other
- *      post-paid arms.
- * Nothing that costs Buzz happens before 3 has passed.
+ * Idempotency is keyed on the RUN (`trainingRunKey`), not the quote: a lost-response
+ * retry replays the result, and a retry after an ambiguous failure — which needs a
+ * fresh quote — dedupes at the orchestrator instead of charging twice. Nothing that
+ * costs Buzz happens before the re-quote check.
  */
 async function submitTrainingWorkflow(opts: {
   ctx: Context;
@@ -12197,13 +12208,18 @@ async function submitTrainingWorkflow(opts: {
     });
   }
 
-  // ── (1) Idempotency on the quote: one quote, one run.
+  const { claimTrainingQuote, hashTrainingBody, resolveBlockTrainingRun, trainingRunKey } =
+    await import('~/server/services/blocks/block-training-quote.service');
+  const runKey = trainingRunKey(claims.appBlockId, body);
+
+  // `training:` contains a colon, which no client idempotency key can, so this claim
+  // can never collide with one a block chose.
   let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
   try {
     claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
       userId,
       claims.appBlockId,
-      quoteId
+      `training:${runKey}`
     );
   } catch {
     throw new TRPCError({
@@ -12220,15 +12236,12 @@ async function submitTrainingWorkflow(opts: {
   }
   const genClaimKey = claim.key;
 
-  // ── (2)+(3) Everything before a reservation. Any refusal releases the claim.
+  // Everything before a reservation. Any refusal releases the claim.
   let runBuzz: number;
   let step: Record<string, unknown>;
   let token: string;
   let ecosystem: string;
   try {
-    const { claimTrainingQuote, hashTrainingBody, resolveBlockTrainingRun } = await import(
-      '~/server/services/blocks/block-training-quote.service'
-    );
     const quote = await claimTrainingQuote(quoteId);
     if (!quote) {
       throw new TRPCError({
@@ -12253,17 +12266,7 @@ async function submitTrainingWorkflow(opts: {
       });
     }
 
-    const { loadBlockTrainingDataset } = await import(
-      '~/server/services/blocks/block-training-dataset.service'
-    );
-    const dataset = await loadBlockTrainingDataset(body.datasetId, {
-      userId,
-      appBlockId: claims.appBlockId,
-      blockInstanceId: claims.blockInstanceId,
-    });
-    if (!dataset) {
-      throw new TRPCError({ code: 'NOT_FOUND', message: 'training dataset not found or expired' });
-    }
+    const dataset = await loadEligibleBlockTrainingDataset(claims, userId, body.datasetId);
     const { getTrainingServiceStatus } = await import('~/server/services/training.service');
     const run = resolveBlockTrainingRun({
       body,
@@ -12272,7 +12275,7 @@ async function submitTrainingWorkflow(opts: {
       features,
       isModerator: !!user.isModerator,
     });
-    await auditBlockTrainingText({ claims, userId, user, body });
+    await auditBlockTrainingText({ claims, userId, user, text: trainingBodyAuditText(body) });
     ecosystem = run.ecosystem;
     // `name` is what the snapshot/publish extractors key on; NO `timeout` — the
     // run is bounded by its confirmed price, never by an app-supplied number.
@@ -12310,7 +12313,7 @@ async function submitTrainingWorkflow(opts: {
   const { allowMatureContent, isGreen } = resolveBlockMaturity(claims);
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
   const tags = buildBlockTrainingTags(claims);
-  const blockExternalId = composeBlockExternalId(claims.appBlockId, quoteId);
+  const blockExternalId = composeTrainingBlockExternalId(runKey);
 
   // ── (4) Reserve the re-quoted price against the per-user cumulative cap.
   let reservation: Awaited<ReturnType<typeof reserveBlockBuzzSpendForClaims>>;
@@ -12357,8 +12360,7 @@ async function submitTrainingWorkflow(opts: {
     };
   }
 
-  // Per-app aggregate (daily Buzz + velocity). `claims.dev` is refused above, so
-  // this always runs; the condition is kept so the shape matches every other arm.
+  // Per-app aggregate (daily Buzz + velocity). `claims.dev` is refused above.
   let appSpendReserve: { key: AppSpendDailyKey; cost: number } | null = null;
   if (claims.dev !== true) {
     const { reserveAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
@@ -12527,14 +12529,8 @@ async function submitTrainingWorkflow(opts: {
 
   // 🔴 SPEND ATTRIBUTION IS DELIBERATELY SKIPPED FOR THE 'whatif' SENTINEL ID ON
   // THIS PATH, AND THAT EXCLUSION IS A DEFENSIVE GUARD RATHER THAN AN ACTIVE
-  // BEHAVIOUR CHANGE. Same reasoning as the pass-through arm: the orchestrator
-  // stamps an id on every workflow it returns, so the sentinel is never observed
-  // and no row is dropped today; the guard keeps an id-less response from
-  // collapsing every viewer's submit into one `recordSpendAttribution` row. This
-  // path charges NO author fee (training is zero-fee by decision, and the viewer
-  // confirmed one exact price), so there is no fee idempotency key at stake.
-  // Ledgered in `NO_FEE_PATHS` in
-  // `src/server/services/__tests__/no-divergent-author-fee-base.test.ts`.
+  // BEHAVIOUR CHANGE. Same reasoning as the pass-through arm. No author fee here
+  // (ledgered in `NO_FEE_PATHS`).
   const spendWorkflowId = snapshot.workflowId;
   if (
     spendWorkflowId &&

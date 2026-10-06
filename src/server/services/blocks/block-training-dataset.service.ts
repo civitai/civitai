@@ -1,7 +1,8 @@
 import { randomBytes } from 'crypto';
+import pLimit from 'p-limit';
 import { TRPCError } from '@trpc/server';
 import { getEdgeUrl } from '~/client-utils/edge-url';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
@@ -25,10 +26,11 @@ import {
 //     is never admitted, whoever published it — v1 has no cross-user datasets;
 //   - it is an image (`type = 'image'`), not a video or audio row;
 //   - `classifyGatedImageForViewer` says `visible` under the token's maturity
-//     ceiling — the one predicate the app's gated reads already use. That refuses a
-//     row that is unscanned or still scanning, scan-blocked, flagged for review,
-//     marked as a minor or as a real person, a ToS violation, hard-blocked, or
-//     rated above the ceiling the token was minted with.
+//     ceiling — the same predicate the app's gated reads use.
+//
+// The rule is re-run on the primary before a run is quoted or charged
+// (`assertBlockTrainingDatasetStillEligible`): a handle lives 24h, and an image
+// moderated after preparation must not be trained on.
 //
 // A refused image is REPORTED, not thrown: the block gets the rest of its dataset
 // and a per-image reason. The reasons are deliberately coarse — they say what the
@@ -39,6 +41,8 @@ import {
 export const BLOCK_TRAINING_DATASET_TTL_SECONDS = 24 * 60 * 60;
 /** Concurrent orchestrator imports per request. */
 export const BLOCK_TRAINING_IMPORT_CONCURRENCY = 4;
+/** Per-image import deadline, so one stuck import cannot hold the request. */
+export const BLOCK_TRAINING_IMPORT_TIMEOUT_MS = 20_000;
 /** Width of the consent-dialog thumbnail stored per item. */
 const THUMBNAIL_WIDTH = 450;
 
@@ -52,7 +56,9 @@ export type BlockTrainingRejectionReason =
   /** Not scanned yet — retry once the scan finishes. */
   | 'pending-scan'
   /** The orchestrator did not accept the image. */
-  | 'import-failed';
+  | 'import-failed'
+  /** The import timed out or the orchestrator was unavailable — retryable. */
+  | 'import-unavailable';
 
 export type BlockTrainingDatasetItem = {
   imageId: number;
@@ -133,15 +139,9 @@ export function admitTrainingImage(
 }
 
 /**
- * The blob reference a training step can name, from an orchestrator image import.
- *
- * The orchestrator's blob dataset accepts an AIR, a `/v2/consumer/blobs/{key}` url
- * or a bare blob key. The url form is the one the Training Studio already sends for
- * workflow-produced blobs, so that is the form used here; the presigned query is
- * dropped (the extension must survive, the signature is not needed server-side).
- * Anything else — an unavailable or blocked blob, or a url of another shape — is
- * `null`, i.e. the image is refused rather than sent in a form nothing has shown
- * the orchestrator accepts.
+ * The blob reference a training step names: the `/v2/consumer/blobs/{key}` url form
+ * (the one the Training Studio sends for workflow-produced blobs), presigned query
+ * dropped. An unavailable or blocked blob, or any other url shape → `null`.
  */
 export function trainingBlobAirFromImport(blob: {
   url?: string | null;
@@ -160,22 +160,52 @@ function datasetKey(
   return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${datasetId}`;
 }
 
-/** Run `fn` over `items` with at most `limit` in flight; results keep input order. */
-async function mapBounded<T, R>(
-  items: T[],
-  limit: number,
-  fn: (item: T) => Promise<R>
-): Promise<R[]> {
-  const out = new Array<R>(items.length);
-  let next = 0;
-  const worker = async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
-  return out;
+/** The viewer's own rows for `ids`; any other user's id simply does not resolve. */
+async function readOwnImageRows(
+  client: typeof dbRead,
+  ids: number[],
+  userId: number
+): Promise<Map<number, ImageRow>> {
+  const rows = await client.$queryRaw<ImageRow[]>`
+    SELECT
+      i."id", i."url", i."type"::text AS "type", i."nsfwLevel", i."ingestion"::text AS "ingestion",
+      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor"
+    FROM "Image" i
+    WHERE i."id" = ANY(${ids}::int[])
+      AND i."userId" = ${userId}
+  `;
+  return new Map(rows.map((r) => [r.id, r]));
+}
+
+class ImportTimeout extends Error {}
+
+/** One image import under its own deadline; never throws. */
+async function importTrainingImage(
+  row: ImageRow,
+  token: string,
+  allowMatureContent: boolean | undefined
+): Promise<{ air: string } | { reason: BlockTrainingRejectionReason }> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const data = await Promise.race([
+      imageUpload({
+        sourceImage: getEdgeUrl(row.url, { original: true }),
+        token,
+        allowMatureContent,
+      }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new ImportTimeout()), BLOCK_TRAINING_IMPORT_TIMEOUT_MS);
+      }),
+    ]);
+    const air = trainingBlobAirFromImport(data.blob);
+    return air ? { air } : { reason: 'import-failed' };
+  } catch (e) {
+    const unavailable =
+      e instanceof ImportTimeout || (e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE');
+    return { reason: unavailable ? 'import-unavailable' : 'import-failed' };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -221,16 +251,11 @@ export async function prepareBlockTrainingDataset(input: {
     });
   }
 
-  const ids = requested.map((r) => r.imageId);
-  const rows = await dbRead.$queryRaw<ImageRow[]>`
-    SELECT
-      i."id", i."url", i."type"::text AS "type", i."nsfwLevel", i."ingestion"::text AS "ingestion",
-      i."needsReview", i."poi", i."minor", i."tosViolation", i."acceptableMinor", i."blockedFor"
-    FROM "Image" i
-    WHERE i."id" = ANY(${ids}::int[])
-      AND i."userId" = ${actor.userId}
-  `;
-  const byId = new Map(rows.map((r) => [r.id, r]));
+  const byId = await readOwnImageRows(
+    dbRead,
+    requested.map((r) => r.imageId),
+    actor.userId
+  );
 
   const rejected: Array<{ imageId: number; reason: BlockTrainingRejectionReason }> = [];
   const admitted: Array<{ row: ImageRow; caption: string }> = [];
@@ -255,29 +280,21 @@ export async function prepareBlockTrainingDataset(input: {
     .join('\n');
   if (captionText.length > 0) await input.auditCaptions(captionText);
 
-  const imported = await mapBounded(admitted, BLOCK_TRAINING_IMPORT_CONCURRENCY, async (a) => {
-    try {
-      const data = await imageUpload({
-        sourceImage: getEdgeUrl(a.row.url, { original: true }),
-        token,
-        allowMatureContent: actor.allowMatureContent,
-      });
-      return trainingBlobAirFromImport(data.blob);
-    } catch {
-      return null;
-    }
-  });
+  const limit = pLimit(BLOCK_TRAINING_IMPORT_CONCURRENCY);
+  const imported = await Promise.all(
+    admitted.map((a) => limit(() => importTrainingImage(a.row, token, actor.allowMatureContent)))
+  );
 
   const items: BlockTrainingDatasetItem[] = [];
   admitted.forEach((a, i) => {
-    const air = imported[i];
-    if (!air) {
-      rejected.push({ imageId: a.row.id, reason: 'import-failed' });
+    const result = imported[i];
+    if ('reason' in result) {
+      rejected.push({ imageId: a.row.id, reason: result.reason });
       return;
     }
     items.push({
       imageId: a.row.id,
-      air,
+      air: result.air,
       caption: a.caption,
       thumbnailUrl: getEdgeUrl(a.row.url, { width: THUMBNAIL_WIDTH }),
     });
@@ -340,4 +357,29 @@ export async function loadBlockTrainingDataset(
     return null;
   }
   return { ...parsed, count: parsed.items.length };
+}
+
+/**
+ * Re-run admission for every image of a prepared dataset, on the PRIMARY, and refuse
+ * the run if any no longer passes. Called before a training run is quoted and again
+ * before it is charged.
+ */
+export async function assertBlockTrainingDatasetStillEligible(
+  dataset: BlockTrainingDataset,
+  browsingLevel: number
+): Promise<void> {
+  const byId = await readOwnImageRows(
+    dbWrite,
+    dataset.items.map((item) => item.imageId),
+    dataset.userId
+  );
+  for (const item of dataset.items) {
+    if (admitTrainingImage(byId.get(item.imageId) ?? null, browsingLevel) !== null) {
+      throw new TRPCError({
+        code: 'BAD_REQUEST',
+        message:
+          'an image in this training dataset can no longer be used for training — prepare the dataset again',
+      });
+    }
+  }
 }

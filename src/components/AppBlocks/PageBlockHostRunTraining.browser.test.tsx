@@ -119,10 +119,10 @@ const baseProps = {
   theme: 'light' as const,
 };
 
-async function mount() {
+async function mount(over: Partial<typeof baseProps> = {}) {
   renderWithProviders(
     <>
-      <PageBlockHost {...baseProps} />
+      <PageBlockHost {...baseProps} {...over} />
       <DialogProvider />
     </>
   );
@@ -285,6 +285,41 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     });
     expect(useDialogStore.getState().dialogs).toHaveLength(0);
     expect(submitMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('a refused confirmation replies with the error and NEVER submits', async () => {
+    consentMutate.mockRejectedValue(new Error('training quote not found or expired'));
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_7', body: BODY });
+    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
+    await expect.element(confirmBtn).toBeInTheDocument();
+    await confirmBtn.click();
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_7',
+        error: 'training quote not found or expired',
+      });
+    });
+    expect(submitMutate).not.toHaveBeenCalled();
+    replies.stop();
+  });
+
+  test('an anonymous viewer is refused — no preview, no dialog', async () => {
+    await mount({ viewer: null });
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_8', body: BODY });
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_8', error: 'sign in to train' });
+    });
+    expect(previewMutate).not.toHaveBeenCalled();
     replies.stop();
   });
 });

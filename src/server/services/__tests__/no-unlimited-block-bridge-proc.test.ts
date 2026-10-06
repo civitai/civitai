@@ -99,6 +99,7 @@ const BUCKET_BY_FN: Readonly<Record<string, string>> = Object.freeze({
   checkBlockPostRateLimit: 'post',
   checkBlockPostAppRateLimit: 'post-app',
   checkBlockPollRateLimit: 'poll',
+  checkBlockTrainingDatasetRateLimit: 'training-dataset',
 });
 
 type Decision = {
@@ -180,8 +181,8 @@ const RATE_LIMIT_DECISION_LEDGER: Readonly<Record<string, Decision>> = Object.fr
     why: '#569 criterion 2 — its OWN bucket (1200/60 s), keyed on the install AND the viewer because blockInstanceId is page_<appBlockId> for a page app. Previously bounded only by the SDK’s sequential loop, a client-side pacing assumption and not a bound. A refusal RETURNS a non-terminal snapshot rather than throwing: both hosts convert a throw into status:failed, which the SDK treats as terminal, so a thrown 429 would end the watch loop on a paid generation.',
   },
   prepareTrainingDataset: {
-    buckets: ['publish'],
-    why: 'Image-WEIGHTED like publishGenerationOutputs: each requested image is a DB read plus a server-side fetch and orchestrator import, so it charges one publish token per image, before any image is read.',
+    buckets: ['training-dataset'],
+    why: 'Image-WEIGHTED (each image is a server-side fetch + orchestrator import) on its OWN bucket keyed per (install, viewer): a page app install id is shared by every viewer, so the publish bucket would let one viewer’s dataset starve the others and the app’s publishing.',
   },
   previewTrainingQuote: {
     buckets: ['catalog'],

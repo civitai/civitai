@@ -1066,14 +1066,10 @@ export async function isAppBlocksPostCreationEnabled(opts?: {
  * `RUN_TRAINING` consent pair (`blocks.previewTrainingQuote` /
  * `blocks.consentTrainingQuote`).
  *
- * Same posture as `app-blocks-post-creation`, for the same reason: a new surface
- * with no existing access to preserve, independent of the runtime flag so a GA
- * widening of `app-blocks-enabled` does not arm training on the same day. NO
- * moderator static floor — an ABSENT flag resolves `false` for everyone. Evaluated
- * with the TOKEN SUBJECT'S hydrated `SessionUser`, never `ctx.user`.
- *
- * 🔴 SHIPS OFF. The flag value lives outside this repo; `isFlipt` returns `false`
- * for an absent flag, so the capability is dark until it is created there.
+ * Same posture as `app-blocks-post-creation`: independent of the runtime flag so a
+ * GA widening of `app-blocks-enabled` does not arm training on the same day; an
+ * ABSENT flag resolves `false` for everyone. Evaluated with the TOKEN SUBJECT'S
+ * hydrated `SessionUser`, never `ctx.user`.
  */
 export const APP_BLOCKS_TRAINING_KIND_FLAG = 'app-blocks-training-kind';
 
