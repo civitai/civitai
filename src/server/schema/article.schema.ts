@@ -18,6 +18,7 @@ import { isBetweenToday } from '~/utils/date-helpers';
 import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
 import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
   ArticleUnpublishReason,
@@ -46,7 +47,7 @@ export const articleRateLimits: RateLimit[] = [
     ({ minScore, limit }): RateLimit => ({
       limit,
       period: CacheTTL.day,
-      userReq: (user) => (user.meta?.scores?.total ?? 0) >= minScore,
+      userReq: (user) => creatorScoreFromMeta(user.meta) >= minScore,
     })
   ),
 ];

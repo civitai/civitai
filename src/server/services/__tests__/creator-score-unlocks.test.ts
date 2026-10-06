@@ -205,8 +205,8 @@ describe('creator score unlock registry', () => {
     }
   });
 
-  // Justin, 2026-10-06: article limits follow the Creator Score total like every other gate. They were
-  // keyed on the articles category score until then; do not switch them back without his say.
+  // A product decision, not an oversight: article limits were keyed on the articles category score and
+  // were moved onto the total so every Creator Score gate compares the number the user can see.
   it('each daily article tier takes effect at its registry threshold, on the total, not the articles score', () => {
     for (const { key, minScore, label } of withPrefix('daily-articles:')) {
       const limit = labelNumber(label, /up to (\d+) articles/);
@@ -215,6 +215,10 @@ describe('creator score unlock registry', () => {
         limit
       );
       expect(day(sessionUser({ total: minScore })), key).toBe(limit);
+      expect(
+        day(sessionUser({ total: String(minScore * 10) as unknown as number })),
+        `${key} string total`
+      ).toBeLessThan(limit);
     }
   });
 

@@ -4,6 +4,7 @@ import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
 } from '~/server/services/creator-score-unlocks.service';
+import { dailyArticleTiers } from '~/server/schema/article.schema';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
 import { placementSurfaceLabel, placementSurfaces } from '~/shared/utils/placement';
@@ -78,7 +79,9 @@ describe('buildCreatorScoreLadder', () => {
     );
 
     expect([...placed].sort()).toEqual(unlocks.map((u) => u.key).sort());
-    expect(placed.filter((key) => key.startsWith('daily-articles:'))).toHaveLength(3);
+    expect(placed.filter((key) => key.startsWith('daily-articles:'))).toHaveLength(
+      dailyArticleTiers.length
+    );
   });
 
   it('falls back to one unnamed rung per threshold when no tiers exist', () => {
