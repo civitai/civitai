@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
+import { RUN_TRAINING_HOST_ERRORS } from '~/components/AppBlocks/runTrainingGate';
 import {
+  PREPARE_TRAINING_DATASET_HOST_ERRORS,
   handlePrepareTrainingDataset,
   resolvePrepareTrainingDatasetRequest,
   trainingDatasetReplyFromResult,
@@ -202,6 +204,9 @@ describe('handlePrepareTrainingDataset', () => {
  */
 describe('prepareTrainingDatasetGate runtime import closure', () => {
   const SRC = resolve(__dirname, '../../..');
+  // Walker blind spots, acceptable for this module set: side-effect imports
+  // (`import 'x'`), dynamic `import()`, double-quoted specifiers (the repo is
+  // prettier single-quote), and relative specifiers (recorded, not followed).
   const IMPORT_RE = /^(import|export)\s+(?!type\b)[^;]*?from\s+'([^']+)'/gm;
 
   function closure(entry: string): string[] {
@@ -236,5 +241,27 @@ describe('prepareTrainingDatasetGate runtime import closure', () => {
     expect(closure('~/server/schema/blocks/workflow.schema')).toContain(
       '~/server/services/blocks/steps'
     );
+  });
+});
+
+describe('the shared training prelude codes', () => {
+  // `TrainingBridgePreludeError` is a type, so this pins its values by hand once —
+  // every code the shared prelude can return must be declared by BOTH bridges.
+  const PRELUDE_CODES = ['review-mode', 'block is not ready', 'sign in to train'];
+
+  it('the prelude returns exactly these codes', () => {
+    const seen = [
+      { ready: true, signedIn: true, reviewNack: true },
+      { ready: false, signedIn: true, reviewNack: false },
+      { ready: true, signedIn: false, reviewNack: false },
+    ].map((f) => resolvePrepareTrainingDatasetRequest({ raw: { requestId: 'r' }, ...f }));
+    expect(seen.map((d) => (d.kind === 'refuse' ? d.error : d.kind))).toEqual(PRELUDE_CODES);
+  });
+
+  it.each([
+    ['RUN_TRAINING', RUN_TRAINING_HOST_ERRORS as readonly string[]],
+    ['PREPARE_TRAINING_DATASET', PREPARE_TRAINING_DATASET_HOST_ERRORS as readonly string[]],
+  ])('%s declares every prelude code', (_l, declared) => {
+    for (const code of PRELUDE_CODES) expect(declared).toContain(code);
   });
 });

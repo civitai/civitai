@@ -268,6 +268,24 @@ describe('PageBlockHost PREPARE_TRAINING_DATASET (training dataset bridge)', () 
     replies.stop();
   });
 
+  test.each([
+    ['a viewer who signs in after mount', { viewer: null }, {}],
+    ['review mode switched off after mount', { reviewMode: true }, { reviewMode: false }],
+  ])('%s is honoured — the handler reads the current props', async (_l, first, then) => {
+    const { rerender } = await renderWithProviders(<PageBlockHost {...baseProps} {...first} />);
+    await vi.waitFor(() => {
+      postFromBlock('BLOCK_READY', {});
+      if (iframe().getAttribute('data-block-ready') !== 'true') throw new Error('not ready yet');
+    });
+    await rerender(<PageBlockHost {...baseProps} {...then} />);
+    const replies = listenForReply();
+    postFromBlock('PREPARE_TRAINING_DATASET', { requestId: 'rq_9', items: ITEMS });
+
+    expect(await replyFor(replies, 'rq_9')).toEqual({ requestId: 'rq_9', result: RESULT });
+    expect(prepareMutate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
   test('INVARIANT: a training ESTIMATE_WORKFLOW body is forwarded untouched and trainingQuote returns', async () => {
     const trainingQuote = {
       quoteId: `tq_${'e'.repeat(32)}`,
