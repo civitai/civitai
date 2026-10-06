@@ -194,10 +194,9 @@ export function resourceIntentCacheKey(input: {
 }
 
 /**
- * Stage 1's Jev request, exactly as the endpoint sends it. Exported, together with
- * `parseResourceIntentStage1Answers` and `compileCriteria`, so the offline M3 study
- * (`scripts/eval-resource-intent-goldset.ts`) runs stage 1 through this code instead
- * of keeping a copy that can drift from it.
+ * Exported with `parseResourceIntentStage1Answers` and `compileCriteria` so the M3
+ * study (`scripts/eval-resource-intent-goldset.ts`) runs stage 1 through this code, not
+ * a drifting copy.
  */
 export function buildResourceIntentStage1Request(prompt: string, baseModel: string | null) {
   return {
@@ -443,9 +442,6 @@ export async function getResourceIntent(
       });
       stage1Model = stage1.model;
 
-      // Fail-closed twice: a missing or wrong-kind answer returns null here, and an
-      // answer that no longer matches the current question spec throws from the
-      // parse inside — both degrade instead of shipping.
       const intent = parseResourceIntentStage1Answers(stage1.answers);
       if (!intent) {
         degradedReason = 'jev_stage1_shape';

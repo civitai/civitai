@@ -384,13 +384,9 @@ export function mergeSeedHits(
 }
 
 /**
- * One seed page against the models index: the request as built by
- * `buildResourceIntentSeedQueries`, through the same timeout wrapper and the same
- * transient-error rewrap the endpoint uses. No search client (dev/build) ⇒ no hits.
- *
- * Exported for the M3 study's POPULARITY arm (`scripts/eval-resource-intent-retrieval.ts`),
- * which issues the popularity page ALONE — so it reaches the index through exactly this
- * code rather than a copy of it.
+ * Exported so the M3 POPULARITY arm (`scripts/eval-resource-intent-retrieval.ts`), which
+ * issues the popularity page alone, reaches the index through this code and not a copy.
+ * No search client ⇒ no hits.
  */
 export async function searchResourceIntentSeedPage(
   request: SearchParams

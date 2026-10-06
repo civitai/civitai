@@ -1,5 +1,8 @@
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { dbRead } from '~/server/db/client';
 import { searchClient } from '~/server/meilisearch/client';
+import { loadResourceInsights, modelInsightProjection } from '~/server/services/resource-insight';
+import { mulberry32 } from './decision-eval/controls';
 import { inArray } from '~/shared/utils/meili-filter';
 import {
   buildResourceIntentSeedQueries,
@@ -21,10 +24,8 @@ import {
 } from '~/server/schema/resource-intent.schema';
 
 /**
- * M3, part two — the two-arm RETRIEVAL comparison. Part one (stage-1 agreement) lives
- * in `./eval-resource-intent-goldset.ts`, which also owns the gold-set sampling and
- * `main()`; this module is the pure core plus the two arms, so the metric math and the
- * runner are testable without a database, a vendor or an index.
+ * M3, part two — the two-arm RETRIEVAL comparison, run from
+ * `./eval-resource-intent-goldset.ts`.
  *
  * The question: on prompts people actually generated with, does the shipped
  * purpose-first matcher (PURPOSE arm) put a resource they really attached near the top
@@ -33,7 +34,7 @@ import {
  * Everything that decides the answer is fixed BEFORE any run, in
  * `M3_RETRIEVAL_PREREGISTRATION` below and the text `renderRetrievalPreregistration`
  * builds from it. That text is copied verbatim into
- * `docs/resource-intent-primitive.md`, and a test fails if the two diverge.
+ * `docs/resource-intent-primitive.md`.
  *
  * Committed, NOT executed: a live run needs a prod replica read, the models index and
  * an OpenRouter key, and is meant to run only once the purpose-first seed is serving
@@ -52,14 +53,14 @@ import {
  *     arms see more nearly the same set and the comparison dilutes toward zero.
  *   - `secondaryK` 50: the endpoint's default response width
  *     (`RESOURCE_INTENT_DEFAULT_LIMIT`), i.e. "anywhere in what stage 3 is shown".
- *   - `sampleSize` 1000 drawn images: McNemar's power depends only on the DISCORDANT
- *     count. Exact two-sided α = 0.05 needs a 61/39 split at 100 discordant pairs and
- *     83/57 at 140; power against a true 65/35 split is 0.83 at 100 and 0.93 at 140.
- *     After `none`, stage-1 failures and no-in-role-attachment exclusions, ~1000 drawn
- *     should leave enough scored prompts for ≥100 discordant pairs if the arms
- *     disagree on ≥15% of them — an ASSUMPTION, which is why the report prints the
- *     discordant count. The cost is one stage-1 vendor call and one to three index
- *     pages per drawn image.
+ *   - `sampleSize` 1000 drawn images: given the discordant split, McNemar's power
+ *     depends only on the DISCORDANT count. Exact two-sided α = 0.05 needs a 61/39 split
+ *     at 100 discordant pairs and 83/57 at 140; power against a true 65/35 split is 0.83
+ *     at 100 and 0.93 at 140. Reaching 100 discordant pairs needs ≥667 of the 1000 to
+ *     survive the exclusions if the arms disagree on 15% of scored prompts — both
+ *     ASSUMPTIONS, which is why the report prints the scored and discordant counts. The
+ *     cost is one stage-1 vendor call per drawn image, plus two or three index pages when
+ *     the arms run.
  *   - `bootstrapResamples` 10000 / `bootstrapSeed` 20261006: enough resamples that the
  *     2.5/97.5 percentiles are stable to well under a point; the seed is the date this
  *     was registered, chosen before any data existed.
@@ -67,8 +68,8 @@ import {
  *   - `labeledIndexFloor` 100: the positive control. The PURPOSE arm filters on
  *     `insight.role`; if no index document carries one, its purpose page is empty, it
  *     degenerates to the popularity arm, and the study reads "no difference" — a null
- *     result rather than an error. ~7,000 labeled models were measured in the
- *     production index, so this floor only catches a TOTAL projection fault, by design.
+ *     result rather than an error. The floor is far below the real labeled count, so it
+ *     only catches a TOTAL projection fault, by design.
  */
 export const M3_RETRIEVAL_PREREGISTRATION = {
   version: 1,
@@ -118,14 +119,16 @@ export function renderRetrievalPreregistration(): string {
     'Question: does the shipped purpose-first matcher (PURPOSE arm) retrieve a resource',
     'people actually attached more often than the popularity seed alone (POPULARITY arm)?',
     '',
-    `Sample: ${p.sampleSize} images drawn at random from the matched gold-set corpus (prompt`,
-    `present, >=1 attached resource, last ${p.sampleDays} days).`,
+    `Sample: ${p.sampleSize} images drawn at random from the last ${p.sampleDays} days with a`,
+    'non-empty public prompt (hideMeta false), >=1 attached resource, scanned, and not',
+    'ToS-violating, blocked, or flagged minor or POI.',
     "Stage 1: run per prompt through the endpoint's own request builder and answer parser,",
     "with baseModel = the base model of the image's attached checkpoint when exactly one",
     'is attached, otherwise none. Stage 3 is not run by either arm.',
     'Gold: the attached models (ImageResourceNew -> ModelVersion -> Model) whose type is in',
     'ROLE_MODEL_TYPES[stage-1 role]. Attached models of other types are excluded from the',
-    'gold, and their share is reported.',
+    'gold; their share is reported, with checkpoints (which no role admits) also reported',
+    'apart from it.',
     `Arms: identical criteria, browsingLevel (all levels), coverage (the anonymous audience,`,
     `resolved as the endpoint does) and cap (${p.cap}). PURPOSE = findResourceIntentCandidates`,
     '(purpose-first seed + label re-rank). POPULARITY = the same gate filter, sorted by',
@@ -144,7 +147,7 @@ export function renderRetrievalPreregistration(): string {
     'Excluded and counted, never scored: a stage-1 failure, role = none, no in-role',
     'attachment, either arm erroring, and a PURPOSE label read that fell back.',
     `Positive control: abort before any vendor call unless >= ${p.labeledIndexFloor} index`,
-    'documents carry an insight.role.',
+    'documents carry a non-none insight.role.',
     '',
     'Known confound: people attach popular models, so attached-resource gold is biased',
     'TOWARD the POPULARITY arm. A PURPOSE win is therefore conservative; a PURPOSE loss is',
@@ -204,18 +207,6 @@ export function exactMcNemarP(b: number, c: number): number {
   return Math.min(1, 2 * tail);
 }
 
-/** mulberry32 — a tiny seedable PRNG, so the bootstrap is reproducible from the seed. */
-export function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
 /**
  * Paired percentile bootstrap of mean(a) - mean(b), resampling PROMPTS (so each
  * resample keeps a prompt's two outcomes together). Nearest-rank percentiles: the
@@ -230,7 +221,7 @@ export function pairedBootstrapCI(
   if (a.length !== b.length) throw new Error('pairedBootstrapCI: arms differ in length');
   const n = a.length;
   if (n === 0) return null;
-  const random = seededRandom(opts.seed);
+  const random = mulberry32(opts.seed);
   const diffs: number[] = [];
   for (let r = 0; r < opts.resamples; r++) {
     let sum = 0;
@@ -245,7 +236,6 @@ export function pairedBootstrapCI(
   return { lower: at(0.025), upper: at(0.975) };
 }
 
-/** The pre-registered decision rule, and nothing else. */
 export function purposeBeatsPopularity(difference: number, mcnemarP: number): boolean {
   return difference > 0 && mcnemarP < M3_RETRIEVAL_PREREGISTRATION.alpha;
 }
@@ -276,11 +266,13 @@ export const purposeArm: RetrievalArm = (criteria, opts) =>
   findResourceIntentCandidates(criteria, opts);
 
 /**
- * POPULARITY: the endpoint's own popularity seed page, ALONE — the same gate filter,
- * pool width and expansion as the purpose arm (all derived by
- * `resolveResourceIntentSeedPlan`), sorted `metrics.thumbsUpCount:desc` only, sliced
- * to the same cap, and never handed to the label re-rank. So the only differences
- * from PURPOSE are the seed (no purpose page) and the ordering (no labels).
+ * POPULARITY: the endpoint's own popularity seed page, ALONE. The filter, pool width,
+ * baseModels and cap come from `resolveResourceIntentSeedPlan` (shared with the
+ * matcher); the page from `buildResourceIntentSeedQueries` (sorted
+ * `metrics.thumbsUpCount:desc` only); the fetch from `searchResourceIntentSeedPage`. The
+ * `expandShortlist` call repeats the matcher's arguments — a test pins both arms to the
+ * same pool and cap. Never handed to the label re-rank, so the only differences from
+ * PURPOSE are the seed (no purpose page) and the ordering (no labels).
  */
 export const popularityArm: RetrievalArm = async (criteria, opts) => {
   if (criteria.role === 'none') return { entries: [], insightFallback: false };
@@ -310,6 +302,31 @@ export async function countLabeledIndexDocuments(): Promise<number> {
   return result.estimatedTotalHits ?? 0;
 }
 
+/**
+ * Which of `modelIds` carry a label the index projection would write: the same
+ * `loadResourceInsights` read and `modelInsightProjection` rule the models index uses,
+ * applied over each model's versions. ⚠️ Over ALL its versions, where the index passes
+ * only the versions it indexes — so a label on an unindexed version counts here. Only
+ * STRATIFIES the report; it never decides it.
+ */
+export async function loadLabeledModelIds(modelIds: readonly number[]): Promise<Set<number>> {
+  if (!modelIds.length) return new Set();
+  const versions = await dbRead.modelVersion.findMany({
+    where: { modelId: { in: [...modelIds] } },
+    select: { id: true, modelId: true },
+  });
+  const insights = await loadResourceInsights(versions.map((v) => v.id));
+  const versionsByModel = new Map<number, number[]>();
+  for (const v of versions) {
+    versionsByModel.set(v.modelId, [...(versionsByModel.get(v.modelId) ?? []), v.id]);
+  }
+  return new Set(
+    [...versionsByModel]
+      .filter(([, versionIds]) => modelInsightProjection(versionIds, insights) !== null)
+      .map(([modelId]) => modelId)
+  );
+}
+
 // ---------------------------------------------------------------------------
 // The runner.
 // ---------------------------------------------------------------------------
@@ -335,6 +352,7 @@ export type RetrievalRowOutcome =
       status: RetrievalExclusion;
       role: ResourceIntentRole | null;
       attachedCount: number;
+      checkpointCount: number;
       inRoleCount: number;
       detail?: string;
     }
@@ -344,6 +362,7 @@ export type RetrievalRowOutcome =
       role: ResourceIntentRole;
       baseModel: string | null;
       attachedCount: number;
+      checkpointCount: number;
       inRoleCount: number;
       goldModelIds: number[];
       goldLabeled: boolean;
@@ -387,6 +406,9 @@ export async function runRetrievalArms(
   const outcomes: RetrievalRowOutcome[] = [];
   for (const row of rows) {
     const attachedCount = new Set(row.attachedModels.map((m) => m.modelId)).size;
+    const checkpointCount = new Set(
+      row.attachedModels.filter((m) => m.modelType === 'Checkpoint').map((m) => m.modelId)
+    ).size;
     const baseModel = requestBaseModel(row);
     let stage1: Awaited<ReturnType<typeof deps.stage1>>;
     try {
@@ -397,6 +419,7 @@ export async function runRetrievalArms(
         status: 'stage1_failed',
         role: null,
         attachedCount,
+        checkpointCount,
         inRoleCount: 0,
         detail: error instanceof Error ? error.message : String(error),
       });
@@ -408,6 +431,7 @@ export async function runRetrievalArms(
         status: 'stage1_failed',
         role: null,
         attachedCount,
+        checkpointCount,
         inRoleCount: 0,
       });
       continue;
@@ -420,6 +444,7 @@ export async function runRetrievalArms(
         status: 'role_none',
         role,
         attachedCount,
+        checkpointCount,
         inRoleCount: 0,
       });
       continue;
@@ -431,6 +456,7 @@ export async function runRetrievalArms(
         status: 'no_in_role_attachment',
         role,
         attachedCount,
+        checkpointCount,
         inRoleCount: 0,
       });
       continue;
@@ -447,6 +473,7 @@ export async function runRetrievalArms(
         status: 'arm_error',
         role,
         attachedCount,
+        checkpointCount,
         inRoleCount: gold.length,
         detail: error instanceof Error ? error.message : String(error),
       });
@@ -458,6 +485,7 @@ export async function runRetrievalArms(
         status: 'insight_fallback',
         role,
         attachedCount,
+        checkpointCount,
         inRoleCount: gold.length,
       });
       continue;
@@ -468,6 +496,7 @@ export async function runRetrievalArms(
       role,
       baseModel,
       attachedCount,
+      checkpointCount,
       inRoleCount: gold.length,
       goldModelIds: gold.map((m) => m.modelId),
       goldLabeled: gold.some((m) => deps.labeledModelIds.has(m.modelId)),
@@ -499,8 +528,12 @@ export type RetrievalEvaluation = {
   overrides: string[];
   drawn: number;
   excluded: Record<RetrievalExclusion, number>;
-  /** Over rows whose stage 1 produced a non-none role: attached models outside it. */
-  outOfRole: { attached: number; excluded: number };
+  /**
+   * Over rows whose stage 1 produced a non-none role: attached models outside it, and
+   * how many of those are checkpoints (no role admits one, so they say nothing about
+   * stage 1's role choice).
+   */
+  outOfRole: { attached: number; excluded: number; checkpoints: number };
   primary: ArmComparison & {
     ci: { lower: number; upper: number } | null;
     purposeBeatsPopularity: boolean;
@@ -558,12 +591,14 @@ export function evaluateRetrieval(
   const scored: Scored[] = [];
   let outOfRoleAttached = 0;
   let outOfRoleExcluded = 0;
+  let outOfRoleCheckpoints = 0;
   for (const outcome of outcomes) {
     if (outcome.status === 'scored') scored.push(outcome);
     else excluded[outcome.status]++;
     if (outcome.role !== null && outcome.role !== 'none') {
       outOfRoleAttached += outcome.attachedCount;
       outOfRoleExcluded += outcome.attachedCount - outcome.inRoleCount;
+      outOfRoleCheckpoints += outcome.checkpointCount;
     }
   }
 
@@ -589,7 +624,11 @@ export function evaluateRetrieval(
     overrides: preregistrationOverrides(params),
     drawn: outcomes.length,
     excluded,
-    outOfRole: { attached: outOfRoleAttached, excluded: outOfRoleExcluded },
+    outOfRole: {
+      attached: outOfRoleAttached,
+      excluded: outOfRoleExcluded,
+      checkpoints: outOfRoleCheckpoints,
+    },
     primary: {
       ...primary,
       ci,
@@ -646,7 +685,7 @@ export function renderRetrievalReport(
       : []),
     `Spec hash: \`${RESOURCE_INTENT_SPEC_HASH.slice(0, 16)}…\`. Positive control: ${
       context.labeledIndexDocuments
-    } index documents carry an \`insight.role\` (floor ${
+    } index documents carry a non-none \`insight.role\` (floor ${
       M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor
     }).`,
     '',
@@ -673,7 +712,14 @@ export function renderRetrievalReport(
     } of ${outOfRole.attached} (${rate(
       outOfRole.excluded,
       outOfRole.attached
-    )}), over rows whose stage 1 produced a non-none role.`,
+    )}), over rows whose stage 1 produced a non-none role. Of those, ${
+      outOfRole.checkpoints
+    } are checkpoints; without them: ${outOfRole.excluded - outOfRole.checkpoints} of ${
+      outOfRole.attached - outOfRole.checkpoints
+    } (${rate(
+      outOfRole.excluded - outOfRole.checkpoints,
+      outOfRole.attached - outOfRole.checkpoints
+    )}).`,
     '',
     `## Primary: hit@${k}`,
     '',
@@ -710,7 +756,7 @@ export function renderRetrievalReport(
     '',
     '## Diagnostics',
     '',
-    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. 🔴 If this is ALL of them, the purpose page returned nothing anywhere and the arms are one arm — treat the run as void, not as a null result.`,
+    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. 🔴 If this is ALL of them, the arms are indistinguishable at K — the purpose page returned nothing or the label re-rank never moved the head — so treat the run as void, not as a null result.`,
     '',
     'Known confound: people attach popular models, so this gold favours POPULARITY. A PURPOSE win is conservative; a PURPOSE loss is not by itself evidence against the labels.',
     '',

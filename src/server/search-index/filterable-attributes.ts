@@ -74,8 +74,9 @@ export const modelsFilterableAttributes = [
   'minor',
   'hasActivePaidAccess',
   // Carried so a filter can split the models with a PROMOTABLE label — ≈7,023 of them — from
-  // everything else, which is what a retrieval comparison needs to put a purpose-query arm
-  // against a popularity arm over the slice the feature actually acts on. 🔴 That "everything
+  // everything else (the labeled-vs-unlabeled arms described below; the M3 retrieval
+  // comparison does not split on it — it reaches labels through the matcher's
+  // `insight.role` page and re-rank). 🔴 That "everything
   // else" side is NOT the unlabeled set: it holds 863 labeled models too, for the reasons
   // enumerated below. Do not describe it as the unlabeled tier.
   // Verified on Meilisearch v1.15.0 that filtering works on this field even though
@@ -158,13 +159,12 @@ export const modelsFilterableAttributes = [
   //
   // 🔴 NO COMMITTED RUNNER IMPLEMENTS THESE ARMS — the labeled-vs-unlabeled split by
   // `IS NOT NULL` / `IS NULL` above. The M3 study DOES now carry a retrieval comparison
-  // (`scripts/eval-resource-intent-retrieval.ts`), but its arms are different ones: the
-  // shipped purpose-first matcher against the popularity seed alone, both over the same gate
-  // filter, neither filtering on this attribute's nullness. It performs its own version of
-  // the control above — a count of documents whose `insight.role` is a real role, with a
-  // floor that, like this one, catches only a TOTAL fault. So the `IS NOT NULL` control still
-  // belongs to whatever labeled-vs-unlabeled comparison gets built; do not go looking for
-  // these arms in the gold-set evaluator, because they are not there.
+  // (`scripts/eval-resource-intent-retrieval.ts`, run from the gold-set runner), but its
+  // arms are different ones: the shipped purpose-first matcher against the popularity seed
+  // alone, both over the same gate filter, neither filtering on this attribute's nullness.
+  // It runs its own, much looser control (>= 100 documents with a non-`none`
+  // `insight.role`), which likewise catches only a total fault. So the `IS NOT NULL`
+  // control above still belongs to whatever labeled-vs-unlabeled comparison gets built.
   //
   // Measured on v1.15.0 over a mixed fixture (labeled / written-null / key-absent): EXISTS
   // returned 5 of 7 including every written null, NOT EXISTS returned only the 2 whose key

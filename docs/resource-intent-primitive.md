@@ -61,7 +61,7 @@ All six in one request; state is ONLY the prompt (+ optional baseModel string):
 | `specificity`      | score  | 1–5, scored against the 5-point `criteria` rubric in the schema file (quoted nowhere here, so a reword cannot leave a stale copy), `integer: true` |
 | `injectionPresent` | noul   | P(prompt contains instructions aimed at an AI system)                                                                                              |
 
-The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and the study (M3) decides whether any mapping earns its false-exclusions.
+The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and whether any mapping earns its false-exclusions is for a future study — neither part of M3 tests a filter mapping.
 
 ## Caching, rate limits, flag
 
@@ -440,22 +440,25 @@ version of this section said the study had been "removed before merge" and was
 "parked on a branch" — that was wrong in the direction that wastes someone's day,
 since the runnable evaluator was in the tree the whole time.
 
-It has two parts. **Part one** is unchanged in what it measures: **stage-1
-agreement** against the provenance corpus (role vs the resource types a prompt
-actually attached, `needsResource` calibration, review-rate curves). It now runs stage
-1 through the endpoint's own `buildResourceIntentStage1Request` /
-`parseResourceIntentStage1Answers` instead of a copy of them.
+It has two parts, drawn from ONE sample of past generations (eligible images only:
+public prompt, scanned, not ToS-violating, blocked, or flagged minor or POI — their
+prompts go to the vendor). **Part one** measures **stage-1 agreement** against that
+corpus (role vs the resource types a prompt actually attached, `needsResource`
+calibration, review-rate curves). It runs stage 1 through the endpoint's own
+`buildResourceIntentStage1Request` / `parseResourceIntentStage1Answers`, and its report
+says how many drawn rows a stage-1 failure skipped.
 
-**Part two** (`scripts/eval-resource-intent-retrieval.ts`) is the retrieval comparison
-the parent arc's closing condition names — "a purpose-query arm beating the popularity
-arm". Per sampled prompt it runs stage 1, then both arms with the same criteria,
-`browsingLevel`, coverage and cap. PURPOSE is `findResourceIntentCandidates` itself.
-POPULARITY is the endpoint's own popularity seed page, alone: the same filter, pool
-width and expansion (all from `resolveResourceIntentSeedPlan`), fetched through the same
-`searchResourceIntentSeedPage`, never handed to the label re-rank. Neither arm calls
-stage 3. The decision is fixed in advance, in `M3_RETRIEVAL_PREREGISTRATION`, and the
-block below is the text `renderRetrievalPreregistration()` builds from it — a test
-fails if this copy drifts from the code:
+**Part two** (`scripts/eval-resource-intent-retrieval.ts`) grades the resource-meaning
+layer's last closing clause: *"the M3 gold-set study shows the purpose-query arm
+beating the popularity arm on its pre-registered metric"*. Per sampled prompt it runs
+stage 1, then both arms with the same criteria, `browsingLevel`, coverage and cap.
+PURPOSE is `findResourceIntentCandidates` itself. POPULARITY is the endpoint's own
+popularity seed page, alone: its filter, pool width, baseModels and cap come from
+`resolveResourceIntentSeedPlan`, its page from `buildResourceIntentSeedQueries`, its
+fetch from `searchResourceIntentSeedPage`, and it is never handed to the label
+re-rank. Neither arm calls stage 3. The decision is fixed in advance, in
+`M3_RETRIEVAL_PREREGISTRATION`; the block below is the text
+`renderRetrievalPreregistration()` builds from it, and a test fails if this copy drifts:
 
 ```text
 M3 RETRIEVAL PRE-REGISTRATION v1 (registered 2026-10-06, before any run)
@@ -463,14 +466,16 @@ M3 RETRIEVAL PRE-REGISTRATION v1 (registered 2026-10-06, before any run)
 Question: does the shipped purpose-first matcher (PURPOSE arm) retrieve a resource
 people actually attached more often than the popularity seed alone (POPULARITY arm)?
 
-Sample: 1000 images drawn at random from the matched gold-set corpus (prompt
-present, >=1 attached resource, last 30 days).
+Sample: 1000 images drawn at random from the last 30 days with a
+non-empty public prompt (hideMeta false), >=1 attached resource, scanned, and not
+ToS-violating, blocked, or flagged minor or POI.
 Stage 1: run per prompt through the endpoint's own request builder and answer parser,
 with baseModel = the base model of the image's attached checkpoint when exactly one
 is attached, otherwise none. Stage 3 is not run by either arm.
 Gold: the attached models (ImageResourceNew -> ModelVersion -> Model) whose type is in
 ROLE_MODEL_TYPES[stage-1 role]. Attached models of other types are excluded from the
-gold, and their share is reported.
+gold; their share is reported, with checkpoints (which no role admits) also reported
+apart from it.
 Arms: identical criteria, browsingLevel (all levels), coverage (the anonymous audience,
 resolved as the endpoint does) and cap (50). PURPOSE = findResourceIntentCandidates
 (purpose-first seed + label re-rank). POPULARITY = the same gate filter, sorted by
@@ -489,19 +494,19 @@ label at or above the promote-confidence floor the index projection applies.
 Excluded and counted, never scored: a stage-1 failure, role = none, no in-role
 attachment, either arm erroring, and a PURPOSE label read that fell back.
 Positive control: abort before any vendor call unless >= 100 index
-documents carry an insight.role.
+documents carry a non-none insight.role.
 
 Known confound: people attach popular models, so attached-resource gold is biased
 TOWARD the POPULARITY arm. A PURPOSE win is therefore conservative; a PURPOSE loss is
 not by itself evidence against the labels.
 ```
 
-Before any vendor call the run checks a positive control: at least 100 models-index
-documents must carry an `insight.role`, the field the PURPOSE page filters on. Without
-it, an index whose projection had failed wholesale would turn PURPOSE into POPULARITY
-and the study into a quiet "no difference". The report also counts the scored prompts
-where both arms returned the same first K model ids; if that is every one of them, the
-run is void rather than null.
+The positive control reads the field the PURPOSE page filters on. Without it, an index
+whose projection had failed wholesale would turn PURPOSE into POPULARITY and the study
+into a quiet "no difference". The report also counts the scored prompts where both
+arms returned the same first K model ids; if that is every one of them, the arms are
+indistinguishable at K (the purpose page returned nothing, or the label re-rank never
+moved the head) and the run is void rather than null.
 
 What it does NOT do: it is offline, so it grades the ordering on a past corpus and
 writes nothing to `resourceIntentShadow` — the shadow-table closing condition above is

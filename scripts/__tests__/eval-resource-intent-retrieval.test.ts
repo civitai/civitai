@@ -14,11 +14,12 @@ import type {
 } from '~/server/schema/resource-intent.schema';
 
 /**
- * The M3 retrieval comparison: the metric math (every expectation a literal, computed
- * independently of this code — the McNemar values by exact rational arithmetic, the
- * PRNG values from a separate mulberry32 implementation), and the two-arm runner over
- * a small in-memory index (the fake-index pattern of
- * `src/server/services/__tests__/resource-intent-matcher.seed.test.ts`).
+ * The M3 retrieval comparison: the metric math (every expectation a literal computed
+ * independently of this code — McNemar by exact rational arithmetic, the PRNG and the
+ * bootstrap interval by a separate Python implementation of the same algorithm), the
+ * two-arm runner over a small in-memory index (the fake-index pattern of
+ * `src/server/services/__tests__/resource-intent-matcher.seed.test.ts`), and the CLI
+ * gate in `main()`.
  */
 
 const searchWithSignal = vi.fn();
@@ -40,13 +41,17 @@ vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
   askJev: (...args: unknown[]) => askJev(...args),
 }));
 
+const retrievalModule = await import('../eval-resource-intent-retrieval');
 const {
+  countLabeledIndexDocuments,
   evaluateRetrieval,
   exactMcNemarP,
   hitAtK,
   inRoleGold,
+  loadLabeledModelIds,
   M3_RETRIEVAL_PREREGISTRATION,
   pairedBootstrapCI,
+  popularityArm,
   PREREGISTERED_RUN_PARAMS,
   preregistrationOverrides,
   purposeBeatsPopularity,
@@ -56,15 +61,20 @@ const {
   renderRetrievalReport,
   requestBaseModel,
   runRetrievalArms,
-  seededRandom,
-} = await import('../eval-resource-intent-retrieval');
+} = retrievalModule;
+const goldsetModule = await import('../eval-resource-intent-goldset');
+const { mulberry32 } = await import('../decision-eval/controls');
 type Outcome = Awaited<ReturnType<typeof runRetrievalArms>>[number];
 type GoldRow = Parameters<typeof runRetrievalArms>[0][number];
 const { buildResourceIntentFilter } = await import(
   '~/server/services/resource-intent-matcher.service'
 );
-const { RESOURCE_INTENT_CRITERIA_VERSION, RESOURCE_INTENT_SPEC_HASH, ROLE_MODEL_TYPES } =
-  await import('~/server/schema/resource-intent.schema');
+const { buildResourceIntentStage1Request, compileCriteria } = await import(
+  '~/server/services/resource-intent.service'
+);
+const { ROLE_MODEL_TYPES } = await import('~/server/schema/resource-intent.schema');
+const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
+const { Flags } = await import('~/shared/utils/flags');
 
 // ---------------------------------------------------------------------------
 // Metric math
@@ -114,13 +124,13 @@ describe('exactMcNemarP — exact two-sided binomial on the discordant pairs', (
   });
 });
 
-describe('seededRandom / pairedBootstrapCI', () => {
-  it('seededRandom is mulberry32 (reference values from an independent implementation)', () => {
-    const random = seededRandom(1);
+describe('the bootstrap PRNG and pairedBootstrapCI', () => {
+  it('uses mulberry32 (reference values from an independent implementation)', () => {
+    const random = mulberry32(1);
     expect(random()).toBe(0.6270739405881613);
     expect(random()).toBe(0.002735721180215478);
     expect(random()).toBe(0.5274470399599522);
-    expect(seededRandom(20261006)()).toBe(0.8267591667827219);
+    expect(mulberry32(20261006)()).toBe(0.8267591667827219);
   });
 
   // Fine-grained values, so two seeds can land on different percentiles (a 0/1 fixture
@@ -128,12 +138,16 @@ describe('seededRandom / pairedBootstrapCI', () => {
   const a = [0.91, 0.13, 0.77, 0.42, 0.68, 0.05, 0.99, 0.31, 0.56, 0.84];
   const b = [0.12, 0.4, 0.33, 0.18, 0.61, 0.02, 0.47, 0.29, 0.07, 0.36];
 
+  it('matches an independent implementation exactly (seed 7, 2000 resamples)', () => {
+    const ci = pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 })!;
+    expect(ci.lower).toBeCloseTo(0.083, 12);
+    expect(ci.upper).toBeCloseTo(0.45500000000000007, 12);
+  });
+
   it('is deterministic under a fixed seed, and moves with the seed', () => {
     const first = pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 });
-    const second = pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 });
-    expect(second).toEqual(first);
-    const other = pairedBootstrapCI(a, b, { resamples: 2000, seed: 8 });
-    expect(other).not.toEqual(first);
+    expect(pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 })).toEqual(first);
+    expect(pairedBootstrapCI(a, b, { resamples: 2000, seed: 8 })).not.toEqual(first);
   });
 
   it('brackets the point estimate (0.281) and stays within [-1, 1]', () => {
@@ -208,6 +222,81 @@ describe('the pre-registration', () => {
   });
 });
 
+describe('parseRetrievalParams — CLI overrides', () => {
+  it('defaults to the registered values', () => {
+    expect(goldsetModule.parseRetrievalParams({})).toEqual(PREREGISTERED_RUN_PARAMS);
+  });
+
+  it('accepts every overridable flag', () => {
+    expect(
+      goldsetModule.parseRetrievalParams({
+        'retrieval-sample': '50',
+        days: '7',
+        k: '5',
+        'bootstrap-seed': '42',
+      })
+    ).toEqual({ sampleSize: 50, sampleDays: 7, primaryK: 5, bootstrapSeed: 42 });
+  });
+
+  it.each(['ten', '10abc', '1e3', '5.5', '0', '-5', ''])(
+    'refuses %j instead of silently using another value',
+    (raw) => {
+      expect(() => goldsetModule.parseRetrievalParams({ k: raw })).toThrow(
+        '--k must be a positive integer'
+      );
+    }
+  );
+});
+
+describe('part one report — stage-1 skips are counted, not silent', () => {
+  it('states judged and skipped rows against the drawn count', () => {
+    const evaluation = goldsetModule.evaluateGoldset([
+      {
+        row: { imageId: 1, prompt: 'p', attachedTypes: ['LORA'], attachedBaseModels: ['Pony'] },
+        judgment: intentFor('style'),
+      },
+    ]);
+    expect(goldsetModule.renderGoldsetReport(evaluation, { drawn: 3 })).toContain(
+      'Judged 1 of 3 drawn rows; 2 skipped on a stage-1 failure.'
+    );
+    expect(goldsetModule.renderGoldsetReport(evaluation)).not.toContain('Judged');
+  });
+});
+
+describe('the gold-set SQL — invariant guards on the query TEXT', () => {
+  // Text checks, not behaviour: the behaviour was measured against a real Postgres when
+  // this was written (the unquoted original failed with 42703). These only stop a
+  // regression of the spelling.
+  const matched = goldsetModule.GOLDSET_MATCHED_SQL(30, 10).sql;
+  const unmatched = goldsetModule.GOLDSET_UNMATCHED_SQL(30, 10).sql;
+
+  it('quotes every camel-case column', () => {
+    for (const sql of [matched, unmatched]) {
+      expect(sql).toContain('i."hideMeta" = false');
+      expect(sql).toContain('i."tosViolation" = false');
+      expect(sql).toContain('i."blockedFor" IS NULL');
+      expect(sql).not.toMatch(/\bi\.hideMeta\b/);
+    }
+    expect(matched).toContain('mv."baseModel"');
+    expect(matched).not.toMatch(/mv\.baseModel\b/);
+  });
+
+  it('admits only eligible images to either query', () => {
+    for (const sql of [matched, unmatched]) {
+      expect(sql).toContain("i.ingestion = 'Scanned'");
+      expect(sql).toContain('i.minor = false');
+      expect(sql).toContain('i.poi = false');
+    }
+  });
+
+  it('samples images BEFORE joining, and carries the model-level gold', () => {
+    expect(matched).toMatch(/WITH sampled AS \(\s+SELECT i\.id/);
+    expect(matched).toContain("jsonb_build_object('modelId', m.id, 'modelType', m.type::text)");
+    expect(matched).toContain("FILTER (WHERE m.type = 'Checkpoint')");
+    expect(matched).toContain('ORDER BY s.rnd');
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Evaluation
 // ---------------------------------------------------------------------------
@@ -221,6 +310,7 @@ const scoredOutcome = (
   role: 'style',
   baseModel: 'Pony',
   attachedCount: 2,
+  checkpointCount: 1,
   inRoleCount: 1,
   goldModelIds: [100],
   goldLabeled: false,
@@ -229,9 +319,9 @@ const scoredOutcome = (
   ...over,
 });
 
-/** A list of 20 distinct filler ids with `id` placed at 1-based `rank`. */
-const rankedWith = (id: number | null, rank: number) =>
-  Array.from({ length: 20 }, (_, i) => (id !== null && i === rank - 1 ? id : 1000 + i));
+/** `length` distinct filler ids with `id` placed at 1-based `rank` (null ⇒ absent). */
+const rankedWith = (id: number | null, rank: number, length = 60) =>
+  Array.from({ length }, (_, i) => (id !== null && i === rank - 1 ? id : 1000 + i));
 
 describe('evaluateRetrieval', () => {
   const outcomes: Outcome[] = [
@@ -257,17 +347,46 @@ describe('evaluateRetrieval', () => {
       purposeModelIds: rankedWith(100, 5),
       popularityModelIds: rankedWith(100, 5),
     }),
-    { imageId: 5, status: 'role_none', role: 'none', attachedCount: 1, inRoleCount: 0 },
+    {
+      imageId: 5,
+      status: 'role_none',
+      role: 'none',
+      attachedCount: 1,
+      checkpointCount: 1,
+      inRoleCount: 0,
+    },
     {
       imageId: 6,
       status: 'no_in_role_attachment',
       role: 'style',
       attachedCount: 3,
+      checkpointCount: 1,
       inRoleCount: 0,
     },
-    { imageId: 7, status: 'stage1_failed', role: null, attachedCount: 2, inRoleCount: 0 },
-    { imageId: 8, status: 'arm_error', role: 'clothing', attachedCount: 2, inRoleCount: 2 },
-    { imageId: 9, status: 'insight_fallback', role: 'style', attachedCount: 4, inRoleCount: 1 },
+    {
+      imageId: 7,
+      status: 'stage1_failed',
+      role: null,
+      attachedCount: 2,
+      checkpointCount: 1,
+      inRoleCount: 0,
+    },
+    {
+      imageId: 8,
+      status: 'arm_error',
+      role: 'clothing',
+      attachedCount: 2,
+      checkpointCount: 0,
+      inRoleCount: 2,
+    },
+    {
+      imageId: 9,
+      status: 'insight_fallback',
+      role: 'style',
+      attachedCount: 4,
+      checkpointCount: 1,
+      inRoleCount: 1,
+    },
   ];
 
   it('counts exclusions, the out-of-role share and the discordant pairs', () => {
@@ -280,8 +399,9 @@ describe('evaluateRetrieval', () => {
       arm_error: 1,
       insight_fallback: 1,
     });
-    // Rows with a non-none role: 1-4 (2 attached, 1 in role each), 6 (3/0), 8 (2/2), 9 (4/1).
-    expect(e.outOfRole).toEqual({ attached: 17, excluded: 10 });
+    // Rows with a non-none role: 1-4 (2 attached, 1 in role, 1 checkpoint each),
+    // 6 (3/0/1), 8 (2/2/0), 9 (4/1/1).
+    expect(e.outOfRole).toEqual({ attached: 17, excluded: 10, checkpoints: 6 });
     expect(e.primary).toMatchObject({ n: 4, purposeHits: 3, popularityHits: 2, b: 2, c: 1 });
     expect(e.primary.difference).toBe(0.25);
     expect(e.primary.mcnemarP).toBe(1);
@@ -293,18 +413,44 @@ describe('evaluateRetrieval', () => {
     const e = evaluateRetrieval(outcomes);
     // At 50 the popularity arm also finds row 1's gold (rank 12).
     expect(e.secondary.k).toBe(50);
-    expect(e.secondary.hit).toMatchObject({ b: 1, c: 1 });
-    expect(e.secondary.hit.purposeHits).toBe(3);
-    expect(e.secondary.hit.popularityHits).toBe(3);
+    expect(e.secondary.hit).toMatchObject({ purposeHits: 3, popularityHits: 3, b: 1, c: 1 });
     // MRR: P = (1 + 1/3 + 0 + 1/5) / 4; Q = (1/12 + 0 + 1/2 + 1/5) / 4.
     expect(e.secondary.purposeMrr).toBeCloseTo((1 + 1 / 3 + 1 / 5) / 4, 12);
     expect(e.secondary.popularityMrr).toBeCloseTo((1 / 12 + 1 / 2 + 1 / 5) / 4, 12);
+  });
+
+  it('the secondary cutoff is 50 exactly — rank 50 counts, rank 51 does not', () => {
+    const e = evaluateRetrieval([
+      scoredOutcome(1, {
+        purposeModelIds: rankedWith(100, 50),
+        popularityModelIds: rankedWith(100, 51),
+      }),
+    ]);
+    expect(e.secondary.hit).toMatchObject({ purposeHits: 1, popularityHits: 0, b: 1, c: 0 });
+    expect(e.secondary.purposeMrr).toBeCloseTo(1 / 50, 12);
+    expect(e.secondary.popularityMrr).toBe(0);
   });
 
   it('stratifies by whether the gold carries a label', () => {
     const e = evaluateRetrieval(outcomes);
     expect(e.strata.labeled).toMatchObject({ n: 2, b: 1, c: 1 });
     expect(e.strata.unlabeled).toMatchObject({ n: 2, b: 1, c: 0 });
+  });
+
+  it('counts arms as identical on the first K ONLY, at whatever K is in force', () => {
+    const sameHead = scoredOutcome(1, {
+      purposeModelIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+      popularityModelIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 99],
+    });
+    const differsAtTen = scoredOutcome(2, {
+      purposeModelIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+      popularityModelIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 77],
+    });
+    expect(evaluateRetrieval([sameHead, differsAtTen]).identicalAtPrimaryK).toBe(1);
+    expect(
+      evaluateRetrieval([sameHead, differsAtTen], { ...PREREGISTERED_RUN_PARAMS, primaryK: 2 })
+        .identicalAtPrimaryK
+    ).toBe(2);
   });
 
   it('honours an overridden K — and stamps the report as not the registered run', () => {
@@ -315,13 +461,41 @@ describe('evaluateRetrieval', () => {
     const report = renderRetrievalReport(e, { labeledIndexDocuments: 7000 });
     expect(report).toContain('NOT THE PRE-REGISTERED RUN');
     expect(report).toContain('primaryK: 10 -> 2');
+    expect(report).toContain('## Primary: hit@2');
     expect(
       renderRetrievalReport(evaluateRetrieval(outcomes), { labeledIndexDocuments: 7000 })
     ).not.toContain('NOT THE PRE-REGISTERED RUN');
   });
 
+  // 8 PURPOSE-only hits, 1 POPULARITY-only, 3 both.
+  const mixed = [
+    ...Array.from({ length: 8 }, (_, i) =>
+      scoredOutcome(i + 1, {
+        purposeModelIds: rankedWith(100, 1),
+        popularityModelIds: rankedWith(null, 1),
+      })
+    ),
+    scoredOutcome(9, {
+      purposeModelIds: rankedWith(null, 1),
+      popularityModelIds: rankedWith(100, 1),
+    }),
+    ...Array.from({ length: 3 }, (_, i) =>
+      scoredOutcome(10 + i, {
+        purposeModelIds: rankedWith(100, 1),
+        popularityModelIds: rankedWith(100, 1),
+      })
+    ),
+  ];
+
+  it('the reported CI is the PURPOSE-minus-POPULARITY interval (independent reference)', () => {
+    const e = evaluateRetrieval(mixed);
+    expect(e.primary.difference).toBeCloseTo(7 / 12, 12);
+    // Python reference over the same 0/1 vectors, 10000 resamples, seed 20261006.
+    expect(e.primary.ci!.lower).toBeCloseTo(0.16666666666666666, 12);
+    expect(e.primary.ci!.upper).toBeCloseTo(0.9166666666666666, 12);
+  });
+
   it('declares a win only when the rule holds', () => {
-    // 12 prompts PURPOSE-only hits, 0 the other way: p = 2 / 2^12 < 0.05.
     const wins = Array.from({ length: 12 }, (_, i) =>
       scoredOutcome(i + 1, {
         purposeModelIds: rankedWith(100, 1),
@@ -336,6 +510,54 @@ describe('evaluateRetrieval', () => {
       '**Decision (pre-registered rule): PURPOSE BEATS POPULARITY.**'
     );
   });
+
+  it('a SIGNIFICANT PURPOSE loss is not a win', () => {
+    const losses = Array.from({ length: 12 }, (_, i) =>
+      scoredOutcome(i + 1, {
+        purposeModelIds: rankedWith(null, 1),
+        popularityModelIds: rankedWith(100, 1),
+      })
+    );
+    const e = evaluateRetrieval(losses);
+    expect(e.primary).toMatchObject({ b: 0, c: 12 });
+    expect(e.primary.mcnemarP).toBeLessThan(0.05);
+    expect(e.primary.difference).toBe(-1);
+    expect(e.primary.purposeBeatsPopularity).toBe(false);
+  });
+
+  it('an empty scored set has no difference, no interval and no win', () => {
+    const e = evaluateRetrieval([outcomes[4]]);
+    expect(e.primary).toMatchObject({ n: 0, difference: null, ci: null, mcnemarP: 1 });
+    expect(e.primary.purposeBeatsPopularity).toBe(false);
+    const report = renderRetrievalReport(e, { labeledIndexDocuments: 7000 });
+    expect(report).toContain('Difference (PURPOSE - POPULARITY): —; 95% bootstrap CI: —.');
+    expect(report).toContain('NOT DEMONSTRATED');
+  });
+
+  it('renders the sample, primary and strata lines exactly', () => {
+    const report = renderRetrievalReport(evaluateRetrieval(outcomes), {
+      labeledIndexDocuments: 7000,
+    });
+    for (const line of [
+      '| drawn | 9 |',
+      '| excluded: stage-1 failed | 1 |',
+      '| excluded: role = none | 1 |',
+      '| excluded: no in-role attachment | 1 |',
+      '| excluded: an arm errored | 1 |',
+      '| excluded: PURPOSE label read fell back | 1 |',
+      '| **scored** | **4** |',
+      "Attached models outside the judged role's types (excluded from the gold): 10 of 17 (58.8%), over rows whose stage 1 produced a non-none role. Of those, 6 are checkpoints; without them: 4 of 11 (36.4%).",
+      '| all scored | 4 | 75.0% | 50.0% | 2 | 1 | 1.00 |',
+      '| hit@50 | 4 | 75.0% | 75.0% | 1 | 1 | 1.00 |',
+      '| gold labeled | 2 | 50.0% | 50.0% | 1 | 1 | 1.00 |',
+      '| gold unlabeled | 2 | 100.0% | 50.0% | 1 | 0 | 1.00 |',
+      '**Decision (pre-registered rule): NOT DEMONSTRATED — PURPOSE does not beat POPULARITY under the rule.**',
+      'Positive control: 7000 index documents carry a non-none `insight.role` (floor 100).',
+    ]) {
+      expect(report).toContain(line);
+    }
+    expect(report).toMatch(/Difference \(PURPOSE - POPULARITY\): 25\.0%; 95% bootstrap CI: \[/);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -346,25 +568,27 @@ const BASE_MODEL = 'Pony';
 const COVERAGE = { next: false, member: false };
 const ARM_OPTS = { browsingLevel: 3, coverage: COVERAGE, cap: 50 };
 
+type FakeVersion = { id: number; name: string; baseModel: string; canGenerate: boolean };
 type FakeDoc = {
   id: number;
   name: string;
   type: string;
   metrics: { thumbsUpCount: number };
-  versions: { id: number; name: string; baseModel: string; canGenerate: boolean }[];
+  versions: FakeVersion[];
   insight: { qualityScore: number | null; role: string | null; styleFamily: string | null };
 };
 
 const doc = (
   id: number,
   thumbsUpCount: number,
-  label?: { role: string; qualityScore: number }
+  label?: { role: string; qualityScore: number },
+  versions?: FakeVersion[]
 ): FakeDoc => ({
   id,
   name: `model-${id}`,
   type: 'LORA',
   metrics: { thumbsUpCount },
-  versions: [{ id: id * 10, name: 'v1', baseModel: BASE_MODEL, canGenerate: true }],
+  versions: versions ?? [{ id: id * 10, name: 'v1', baseModel: BASE_MODEL, canGenerate: true }],
   insight: label
     ? { qualityScore: label.qualityScore, role: label.role, styleFamily: 'anime_manga' }
     : { qualityScore: null, role: null, styleFamily: null },
@@ -431,6 +655,13 @@ const labelRows = [
   },
 ];
 
+const serveCorpus = (corpus: FakeDoc[]) => {
+  const search = fakeIndex(corpus);
+  searchWithSignal.mockImplementation(async (_index: unknown, _q: string, params: SearchParams) =>
+    search(params)
+  );
+};
+
 const intentFor = (role: ResourceIntentRole): ResourceIntentAnswer => ({
   needsResource: 0.9,
   role: { value: role, distribution: { [role]: 1 } },
@@ -440,22 +671,11 @@ const intentFor = (role: ResourceIntentRole): ResourceIntentAnswer => ({
   injectionPresent: 0,
 });
 
-const criteriaFor = (
-  role: ResourceIntentRole,
-  baseModel: string | null
-): ResourceIntentCriteria => ({
-  criteriaVersion: RESOURCE_INTENT_CRITERIA_VERSION,
-  specHash: RESOURCE_INTENT_SPEC_HASH,
-  role,
-  styleFamily: 'anime_manga',
-  modelTypes: ROLE_MODEL_TYPES[role] ? [...ROLE_MODEL_TYPES[role]!] : null,
-  baseModel,
-});
-
+// The endpoint's own compiler, not a test copy of it.
 const stage1As = (role: ResourceIntentRole) =>
   vi.fn(async (_prompt: string, baseModel: string | null) => ({
     intent: intentFor(role),
-    criteria: criteriaFor(role, baseModel),
+    criteria: compileCriteria(intentFor(role), baseModel),
   }));
 
 const row = (imageId: number, over: Partial<GoldRow> = {}): GoldRow => ({
@@ -474,10 +694,7 @@ const searchCalls = () => searchWithSignal.mock.calls.map((call) => call[2] as S
 beforeEach(() => {
   meiliHolder.client = { index: () => ({}) };
   searchWithSignal.mockReset();
-  const search = fakeIndex(CORPUS);
-  searchWithSignal.mockImplementation(async (_index: unknown, _q: string, params: SearchParams) =>
-    search(params)
-  );
+  serveCorpus(CORPUS);
   dbMock.dbRead.resourceInsight.findMany.mockReset();
   dbMock.dbRead.resourceInsight.findMany.mockImplementation((async (args: {
     where: { modelVersionId: { in: number[] } };
@@ -529,7 +746,7 @@ describe('runRetrievalArms — the two arms', () => {
       labeledModelIds: new Set(),
       arms: {
         purpose: async () => ({ entries: [], insightFallback: false }),
-        popularity: (await import('../eval-resource-intent-retrieval')).popularityArm,
+        popularity: popularityArm,
       },
     });
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
@@ -572,6 +789,21 @@ describe('runRetrievalArms — the two arms', () => {
     expect(searchCalls().map((c) => c.limit)).toEqual([4, 4, 4]);
   });
 
+  it('the POPULARITY arm expands versions like the matcher: requested baseModel only, one model once', async () => {
+    serveCorpus([
+      doc(7, 999, undefined, [
+        { id: 71, name: 'sdxl', baseModel: 'SDXL 1.0', canGenerate: true },
+        { id: 72, name: 'pony-a', baseModel: BASE_MODEL, canGenerate: true },
+        { id: 73, name: 'pony-b', baseModel: BASE_MODEL, canGenerate: true },
+      ]),
+      doc(8, 5),
+    ]);
+    const criteria = compileCriteria(intentFor('style'), BASE_MODEL);
+    const { entries } = await popularityArm(criteria, ARM_OPTS);
+    expect(entries.map((e) => e.versionId)).toEqual([72, 73, 80]);
+    expect(rankedModelIds(entries)).toEqual([7, 8]);
+  });
+
   it('hands both arms the identical criteria and options objects', async () => {
     const purpose = vi.fn(async () => ({ entries: [], insightFallback: false }));
     const popularity = vi.fn(async () => ({ entries: [], insightFallback: false }));
@@ -593,6 +825,35 @@ describe('runRetrievalArms — the two arms', () => {
     expect(pCriteria).toMatchObject({ role: 'clothing', baseModel: BASE_MODEL });
     expect(pOpts).toEqual(ARM_OPTS);
   });
+
+  it('labels a prompt by its IN-ROLE gold only, and by ANY labeled in-role model', async () => {
+    const outcomes = await runRetrievalArms(
+      [
+        // The only labeled model is the out-of-role checkpoint → unlabeled.
+        row(1),
+        // Two in-role models, one labeled → labeled.
+        row(2, {
+          attachedModels: [
+            { modelId: 4, modelType: 'LORA' },
+            { modelId: 5, modelType: 'LORA' },
+          ],
+        }),
+      ],
+      {
+        stage1: stage1As('style'),
+        armOpts: ARM_OPTS,
+        labeledModelIds: new Set([900, 5]),
+        arms: {
+          purpose: async () => ({ entries: [], insightFallback: false }),
+          popularity: async () => ({ entries: [], insightFallback: false }),
+        },
+      }
+    );
+    expect(outcomes.map((o) => (o.status === 'scored' ? o.goldLabeled : o.status))).toEqual([
+      false,
+      true,
+    ]);
+  });
 });
 
 describe('runRetrievalArms — exclusions', () => {
@@ -606,7 +867,14 @@ describe('runRetrievalArms — exclusions', () => {
       arms: { purpose, popularity },
     });
     expect(outcomes).toEqual([
-      { imageId: 1, status: 'role_none', role: 'none', attachedCount: 2, inRoleCount: 0 },
+      {
+        imageId: 1,
+        status: 'role_none',
+        role: 'none',
+        attachedCount: 2,
+        checkpointCount: 1,
+        inRoleCount: 0,
+      },
     ]);
     expect(purpose).not.toHaveBeenCalled();
     expect(popularity).not.toHaveBeenCalled();
@@ -625,6 +893,7 @@ describe('runRetrievalArms — exclusions', () => {
       status: 'scored',
       goldModelIds: [4],
       attachedCount: 2,
+      checkpointCount: 1,
       inRoleCount: 1,
     });
     expect(outcomes[1]).toEqual({
@@ -632,10 +901,11 @@ describe('runRetrievalArms — exclusions', () => {
       status: 'no_in_role_attachment',
       role: 'style',
       attachedCount: 1,
+      checkpointCount: 1,
       inRoleCount: 0,
     });
     const e = evaluateRetrieval(outcomes);
-    expect(e.outOfRole).toEqual({ attached: 3, excluded: 2 });
+    expect(e.outOfRole).toEqual({ attached: 3, excluded: 2, checkpoints: 2 });
     expect(e.excluded.no_in_role_attachment).toBe(1);
     expect(e.primary.n).toBe(1);
   });
@@ -647,7 +917,7 @@ describe('runRetrievalArms — exclusions', () => {
       .mockRejectedValueOnce(new Error('vendor down'))
       .mockImplementation(async (_p: string, baseModel: string | null) => ({
         intent: intentFor('style'),
-        criteria: criteriaFor('style', baseModel),
+        criteria: compileCriteria(intentFor('style'), baseModel),
       }));
     const purpose = vi
       .fn()
@@ -668,6 +938,16 @@ describe('runRetrievalArms — exclusions', () => {
     ]);
     expect(outcomes[1]).toMatchObject({ detail: 'vendor down' });
     expect(outcomes[2]).toMatchObject({ detail: 'index down' });
+  });
+
+  it('a REAL purpose arm whose label read fails is excluded as insight_fallback', async () => {
+    dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('relation missing'));
+    const outcomes = await runRetrievalArms([row(1)], {
+      stage1: stage1As('style'),
+      armOpts: ARM_OPTS,
+      labeledModelIds: new Set(),
+    });
+    expect(outcomes.map((o) => o.status)).toEqual(['insight_fallback']);
   });
 
   it('asks stage 1 with the single attached checkpoint base model, else none', async () => {
@@ -692,7 +972,7 @@ describe('runRetrievalArms — exclusions', () => {
     expect(requestBaseModel(row(9))).toBe('Pony');
   });
 
-  it('inRoleGold dedupes by model and admits only the role’s types', () => {
+  it('inRoleGold dedupes by model and admits only the role types', () => {
     const gold = inRoleGold(
       row(1, {
         attachedModels: [
@@ -710,34 +990,128 @@ describe('runRetrievalArms — exclusions', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Labels and the positive control
+// ---------------------------------------------------------------------------
+
+describe('loadLabeledModelIds — the index projection rule, over every version', () => {
+  it('labels a model iff the projection would write it', async () => {
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { id: 20, modelId: 2 },
+      { id: 21, modelId: 2 },
+      { id: 30, modelId: 3 },
+      { id: 40, modelId: 4 },
+    ] as never);
+    dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
+      // model 2: one confident row on its second version → labeled
+      {
+        modelVersionId: 21,
+        role: 'style',
+        styleFamily: 'other',
+        qualityScore: 0.5,
+        confidence: 0.95,
+      },
+      // model 3: below every floor → not labeled
+      {
+        modelVersionId: 30,
+        role: 'style',
+        styleFamily: 'other',
+        qualityScore: 0.5,
+        confidence: 0.01,
+      },
+    ] as never);
+    expect(await loadLabeledModelIds([2, 3, 4])).toEqual(new Set([2]));
+    expect(dbMock.dbRead.modelVersion.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { modelId: { in: [2, 3, 4] } } })
+    );
+  });
+
+  it('reads nothing for no models', async () => {
+    dbMock.dbRead.modelVersion.findMany.mockReset();
+    expect(await loadLabeledModelIds([])).toEqual(new Set());
+    expect(dbMock.dbRead.modelVersion.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe('countLabeledIndexDocuments — the positive control', () => {
+  it('counts exactly the non-none roles, in one zero-width query', async () => {
+    const search = vi.fn(async () => ({ hits: [], estimatedTotalHits: 1234 }));
+    meiliHolder.client = { index: () => ({ search }) };
+    expect(await countLabeledIndexDocuments()).toBe(1234);
+    expect(search).toHaveBeenCalledWith('', {
+      filter:
+        'insight.role IN ["style", "character", "subject_detail", "pose_composition", "environment_scene", "clothing", "quality_enhancer", "control_guidance"]',
+      limit: 0,
+    });
+  });
+
+  it('reads 0 with no search client or no count', async () => {
+    meiliHolder.client = null;
+    expect(await countLabeledIndexDocuments()).toBe(0);
+    meiliHolder.client = { index: () => ({ search: async () => ({ hits: [] }) }) };
+    expect(await countLabeledIndexDocuments()).toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // The CLI gate (main in ../eval-resource-intent-goldset)
 // ---------------------------------------------------------------------------
 
+const STAGE1_ANSWERS = (role: string) => [
+  { id: 'needsResource', type: 'noul' as const, value: 0.9 },
+  { id: 'role', type: 'choice' as const, value: role, distribution: { [role]: 1 } },
+  {
+    id: 'styleFamily',
+    type: 'choice' as const,
+    value: 'anime_manga',
+    distribution: { anime_manga: 1 },
+  },
+  {
+    id: 'contentType',
+    type: 'choice' as const,
+    value: 'portrait_character',
+    distribution: { portrait_character: 1 },
+  },
+  { id: 'specificity', type: 'score' as const, value: 3 },
+  { id: 'injectionPresent', type: 'noul' as const, value: 0 },
+];
+
 describe('main — the --execute gate', () => {
   const runMain = async (args: string[]) => {
-    const { main } = await import('../eval-resource-intent-goldset');
     const argv = process.argv;
     process.argv = ['node', 'goldset-under-test', ...args];
+    // Spies are restored in `finally`, so a failing assertion cannot leak them, and the
+    // CALLS are copied out first so the assertions still see them.
     const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     try {
+      const result = await goldsetModule.main().then(
+        () => 'ok' as const,
+        (error: Error) => error
+      );
       return {
-        result: await main().then(
-          () => 'ok',
-          (error: Error) => error
-        ),
-        log,
-        warn,
+        result,
+        log: { mock: { calls: [...log.mock.calls] } },
+        warn: { mock: { calls: [...warn.mock.calls] } },
       };
     } finally {
       process.argv = argv;
+      log.mockRestore();
+      warn.mockRestore();
     }
+  };
+
+  const controlReturns = (estimatedTotalHits: number) => {
+    const search = vi.fn(async () => ({ hits: [], estimatedTotalHits }));
+    meiliHolder.client = { index: () => ({ search }) };
+    return search;
   };
 
   beforeEach(() => {
     askJev.mockReset();
     dbMock.dbRead.$queryRaw.mockReset();
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    dbMock.dbRead.modelVersion.findMany.mockReset();
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([] as never);
   });
 
   it('without --execute prints the queries and the pre-registration, and spends nothing', async () => {
@@ -745,58 +1119,129 @@ describe('main — the --execute gate', () => {
     expect(result).toBe('ok');
     const printed = log.mock.calls.map((call) => String(call[0])).join('\n');
     expect(printed).toContain('Dry run.');
-    expect(printed).toContain('-- retrieval gold');
+    expect(printed).toContain('WITH sampled AS');
     expect(printed).toContain(renderRetrievalPreregistration());
-    expect(warn).not.toHaveBeenCalled();
+    expect(warn.mock.calls).toEqual([]);
     expect(askJev).not.toHaveBeenCalled();
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     expect(searchWithSignal).not.toHaveBeenCalled();
-    log.mockRestore();
-    warn.mockRestore();
   });
 
   it('warns loudly when a flag overrides the pre-registration', async () => {
-    const { log, warn } = await runMain(['--k', '5', '--retrieval-sample', '50']);
+    const { warn } = await runMain([
+      '--k',
+      '5',
+      '--retrieval-sample',
+      '50',
+      '--days',
+      '7',
+      '--bootstrap-seed',
+      '9',
+    ]);
     const warned = warn.mock.calls.map((call) => String(call[0])).join('\n');
     expect(warned).toContain('OVERRIDE the pre-registration');
-    expect(warned).toContain('primaryK: 10 -> 5');
-    expect(warned).toContain('sampleSize: 1000 -> 50');
-    log.mockRestore();
-    warn.mockRestore();
+    for (const fragment of [
+      'primaryK: 10 -> 5',
+      'sampleSize: 1000 -> 50',
+      'sampleDays: 30 -> 7',
+      'bootstrapSeed: 20261006 -> 9',
+    ]) {
+      expect(warned).toContain(fragment);
+    }
   });
 
   it('refuses a malformed override instead of silently using the default', async () => {
-    const { result, log, warn } = await runMain(['--k', 'ten']);
-    expect(result).toBeInstanceOf(Error);
+    const { result } = await runMain(['--k', 'ten']);
     expect(String(result)).toContain('--k must be a positive integer');
-    log.mockRestore();
-    warn.mockRestore();
   });
 
-  it('🔴 with --execute, a failed positive control aborts before any query or vendor call', async () => {
-    const search = vi.fn(async () => ({ hits: [], estimatedTotalHits: 3 }));
-    meiliHolder.client = { index: () => ({ search }) };
-    const { result, log, warn } = await runMain(['--execute']);
-    expect(String(result)).toContain('positive control FAILED: 3 models-index documents');
-    // The control reads the field the PURPOSE page filters on.
-    expect(search).toHaveBeenCalledWith(
-      '',
-      expect.objectContaining({ filter: expect.stringContaining('insight.role IN [') })
-    );
-    expect(askJev).not.toHaveBeenCalled();
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
-    log.mockRestore();
-    warn.mockRestore();
-  });
+  it.each([
+    [99, 'aborts'],
+    [100, 'proceeds with'],
+  ] as const)(
+    '🔴 with --execute, a positive-control count of %i %s the run (abort = before any query or vendor call)',
+    async (count, verdict) => {
+      controlReturns(count);
+      const { result } = await runMain(['--execute', '--limit', '2']);
+      if (verdict === 'proceeds with') {
+        expect(result).toBe('ok');
+        expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
+      } else {
+        expect(String(result)).toContain(
+          `positive control FAILED: ${count} models-index documents`
+        );
+        expect(askJev).not.toHaveBeenCalled();
+        expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+      }
+    }
+  );
 
-  it('with --execute and a passing control, proceeds to sample the gold', async () => {
-    const search = vi.fn(async () => ({ hits: [], estimatedTotalHits: 7000 }));
-    meiliHolder.client = { index: () => ({ search }) };
-    const { result, log, warn } = await runMain(['--execute', '--limit', '2']);
+  it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
+    controlReturns(7000);
+    const matchedRow = {
+      imageId: 11,
+      prompt: 'a knight in anime style',
+      attachedTypes: ['Checkpoint', 'LORA'],
+      attachedBaseModels: [BASE_MODEL],
+      attachedModels: [
+        { modelId: 900, modelType: 'Checkpoint' },
+        { modelId: 4, modelType: 'LORA' },
+      ],
+      checkpointBaseModels: [BASE_MODEL],
+    };
+    dbMock.dbRead.$queryRaw.mockImplementation((async (query: { sql: string }) =>
+      query.sql.includes('WITH sampled AS') ? [matchedRow] : []) as never);
+    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([
+      { id: 40, modelId: 4 },
+      { id: 9000, modelId: 900 },
+    ] as never);
+    askJev.mockImplementation(async () => ({
+      answers: STAGE1_ANSWERS('style'),
+      model: 'typesafe/jev-1.13-20260917',
+      usage: { promptTokens: 1, completionTokens: 1 },
+    }));
+
+    const { result, log } = await runMain(['--execute', '--limit', '2', '--k', '1']);
     expect(result).toBe('ok');
-    // stage-1 matched + unmatched, then the retrieval gold (empty here, so no label query).
-    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(3);
-    log.mockRestore();
-    warn.mockRestore();
+
+    // ONE matched query (part one's prefix and part two share it) + one unmatched. The
+    // matched draw is sized for the LARGER consumer: window 30 days, 1000 rows.
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(2);
+    const [matchedQuery, unmatchedQuery] = dbMock.dbRead.$queryRaw.mock.calls.map(
+      (call) => call[0] as unknown as { sql: string; values: unknown[] }
+    );
+    expect(matchedQuery.sql).toContain('WITH sampled AS');
+    expect(matchedQuery.values).toEqual([30, 1000]);
+    expect(unmatchedQuery.values).toEqual([30, 1]);
+    // Stage 1: part one with no baseModel, part two with the checkpoint's — each
+    // exactly the endpoint's own request.
+    expect(askJev.mock.calls.map((call) => call[0])).toEqual([
+      buildResourceIntentStage1Request(matchedRow.prompt, null),
+      buildResourceIntentStage1Request(matchedRow.prompt, BASE_MODEL),
+    ]);
+    // Both arms: all browsing levels, the checkpoint's baseModel, pool 100 (cap 50).
+    const gate = buildResourceIntentFilter({
+      modelTypes: ROLE_MODEL_TYPES.style,
+      baseModels: [BASE_MODEL],
+      browsingLevel: allBrowsingLevelsFlag,
+      coverage: COVERAGE,
+    });
+    expect(gate).toContain(
+      `nsfwLevel IN [${Flags.instanceToArray(allBrowsingLevelsFlag).join(', ')}]`
+    );
+    expect(searchCalls().map((c) => c.filter)).toEqual([
+      `(${gate} AND insight.role = "style")`,
+      gate,
+      gate,
+    ]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([100, 100, 100]);
+
+    const report = log.mock.calls.map((call) => String(call[0])).join('\n');
+    // Part one: the first ceil(2/2) = 1 matched row + no unmatched rows.
+    expect(report).toContain('Judged 1 of 1 drawn rows; 0 skipped on a stage-1 failure.');
+    // The --k override reaches scoring, and the labeled model reaches the strata.
+    expect(report).toContain('## Primary: hit@1');
+    expect(report).toContain('| all scored | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
+    expect(report).toContain('| gold labeled | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
   });
 });
