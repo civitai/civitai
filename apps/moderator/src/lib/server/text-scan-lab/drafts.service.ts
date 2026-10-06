@@ -124,7 +124,6 @@ export async function createDraft(
   return toDraft(row);
 }
 
-/** Why a guarded write matched no row. */
 async function refusal(id: number): Promise<DraftError> {
   const draft = await getDraft(id);
   if (!draft) return new DraftNotFoundError(id);

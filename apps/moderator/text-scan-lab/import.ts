@@ -1,14 +1,12 @@
 /**
- * Seeds a NEW text-scan test set from a local JSON file. Prints counts only, never text.
+ * Seeds a NEW text-scan test set from a local JSON file.
  *
  *   CIVITAI_API_KEY=<your own key> pnpm --filter @civitai/moderator-app exec \
  *     tsx --env-file=.env text-scan-lab/import.ts --file <path.json> --set "<name>" --by <moderatorId> [--dry-run]
  *
- * File shape and validation: `src/lib/server/text-scan-lab/seed-file.ts`. Entity cases snapshot the
- * text the main app composes for them (`/api/mod/text-scan` composeEntities, which bills nothing);
- * ids it cannot compose are skipped and counted. An entity case that already carries `fields` (a
- * snapshot composed earlier) and every free-text case are stored as given. The set and
- * every case are written in one transaction, so a failed import leaves nothing behind.
+ * File shape: `seed-file.ts`. Entity cases without `fields` snapshot the text `/api/mod/text-scan`
+ * composeEntities returns (bills nothing); ids it cannot compose are skipped and counted. The set and
+ * all cases are written in one transaction.
  *
  * Env: MODERATOR_DATABASE_URL, CIVITAI_APP_URL, and (only to compose entity cases without fields)
  * CIVITAI_API_KEY — the running moderator's own API key. `/api/mod/*` takes a moderator's key for
@@ -22,12 +20,12 @@ import {
   type SeedCase,
 } from '../src/lib/server/text-scan-lab/seed-file';
 import { hashLabText } from '../src/lib/server/text-scan-lab/text-hash';
+import { chunk } from '../src/lib/text-scan-lab/chunk';
 import { normaliseLabFields } from '../src/lib/text-scan-lab/compose';
+import { HARNESS_LIMITS } from '../src/lib/text-scan-lab/limits';
 import type { LabEntityType } from '../src/lib/text-scan-lab/types';
 import { CliError, createKyselyClients, requireEnv } from './cli';
 
-/** The harness refuses more ids than this in one request. */
-const HARNESS_BATCH_LIMIT = 50;
 const INSERT_BATCH = 200;
 
 type Composed =
@@ -77,14 +75,14 @@ async function composeEntities(
   ids: number[]
 ): Promise<Composed[]> {
   const results: Composed[] = [];
-  for (let i = 0; i < ids.length; i += HARNESS_BATCH_LIMIT) {
+  for (const entityIds of chunk(ids, HARNESS_LIMITS.textsPerRequest)) {
     const res = await fetch(`${appUrl}/api/mod/text-scan`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
       body: JSON.stringify({
         action: 'composeEntities',
         entityType,
-        entityIds: ids.slice(i, i + HARNESS_BATCH_LIMIT),
+        entityIds,
       }),
       signal: AbortSignal.timeout(150_000),
     });
@@ -208,14 +206,10 @@ async function main() {
         .values({ name: args.set, description: null, created_by: args.by })
         .returning('id')
         .executeTakeFirstOrThrow();
-      for (let i = 0; i < rows.length; i += INSERT_BATCH)
+      for (const batch of chunk(rows, INSERT_BATCH))
         await trx
           .insertInto('text_scan_test_case')
-          .values(
-            rows
-              .slice(i, i + INSERT_BATCH)
-              .map((r) => ({ ...r, set_id: set.id, added_by: args.by }))
-          )
+          .values(batch.map((r) => ({ ...r, set_id: set.id, added_by: args.by })))
           .execute();
       return set.id;
     });

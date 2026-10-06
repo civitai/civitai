@@ -34,7 +34,6 @@ export function expectedFromOutput(
   return expected;
 }
 
-/** Throws `InvalidExpectedError` naming what is wrong. With `labels`, only those labels may be set. */
 export function parseExpected(json: unknown, labels: readonly LabLabel[] = ALL_LABELS): Expected {
   if (!json || typeof json !== 'object' || Array.isArray(json))
     throw new InvalidExpectedError('Expected must be an object.');
@@ -67,7 +66,6 @@ export function parseExpected(json: unknown, labels: readonly LabLabel[] = ALL_L
   return expected;
 }
 
-/** One short chip per scored label, e.g. `nsfw pg13–r`, `poi no`. */
 export function describeExpected(expected: Expected): string[] {
   const chips: string[] = [];
   if (expected.nsfw) {

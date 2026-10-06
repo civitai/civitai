@@ -50,8 +50,7 @@ export function parseForm<T extends z.ZodType>(schema: T, form: FormData): z.inf
   return parsed.success ? parsed.data : parsed.error.issues[0]?.message ?? 'Invalid input.';
 }
 
-/** A form field carrying JSON: parsed, then validated by `schema`. Malformed JSON fails with `message`,
- *  a schema failure with its first issue's message. */
+/** Malformed JSON fails with `message`, a schema failure with its first issue's message. */
 export const jsonField = <T extends z.ZodType>(schema: T, message = 'Malformed form data.') =>
   z.string().transform((raw, ctx): z.infer<T> => {
     let value: unknown;

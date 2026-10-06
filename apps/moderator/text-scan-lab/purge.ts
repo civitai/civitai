@@ -1,11 +1,9 @@
 /**
- * Wipes the text of text-scan test cases whose source entity or author account was deleted. Prints
- * counts only, never text. Idempotent; run it weekly — the spoke has no scheduler.
+ * Wipes the text of text-scan test cases whose source entity or author account was deleted.
  *
  *   pnpm --filter @civitai/moderator-app exec tsx --env-file=.env text-scan-lab/purge.ts [--set <id>]
  *
- * Rules: `src/lib/server/text-scan-lab/purge.service.ts`. Opening a set's page and starting a run
- * purge that one set as well.
+ * Run weekly — the spoke has no scheduler. Rules: `src/lib/server/text-scan-lab/purge.service.ts`.
  *
  * Env: MODERATOR_DATABASE_URL (written) and DATABASE_REPLICA_URL (main database, read only).
  */

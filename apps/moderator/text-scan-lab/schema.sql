@@ -11,7 +11,6 @@ CREATE TABLE IF NOT EXISTS text_scan_prompt_draft (
   created_at  timestamptz(3) NOT NULL DEFAULT date_trunc('milliseconds', now()),
   updated_by  integer NOT NULL,
   updated_at  timestamptz(3) NOT NULL DEFAULT date_trunc('milliseconds', now()),
-  -- Set when published; a published draft is read-only.
   published_at timestamptz,
   published_prompt_ids jsonb
 );

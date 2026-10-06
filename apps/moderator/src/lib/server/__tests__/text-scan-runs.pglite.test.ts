@@ -553,6 +553,22 @@ describe('rerunErrors', () => {
     await expect(rerunErrors(setId, run.id)).rejects.toThrow(message);
     expect(harness.scanTexts).not.toHaveBeenCalled();
   });
+
+  it('refuses a run that did not record its model or thinking setting', async () => {
+    const { setId } = await setWithCases(1);
+    harness.scanTexts.mockImplementation(async (_t: string, texts: LabText[]) =>
+      texts.map((t) => ({ key: t.key, ok: false, error: 'x' }))
+    );
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    await holder.pg!.query(
+      'UPDATE text_scan_test_run SET model = NULL, thinking = NULL WHERE id = $1',
+      [run.id]
+    );
+    harness.scanTexts.mockClear();
+
+    await expect(rerunErrors(setId, run.id)).rejects.toThrow(/did not record its model/);
+    expect(harness.scanTexts).not.toHaveBeenCalled();
+  });
 });
 
 describe('scoring against current expectations', () => {

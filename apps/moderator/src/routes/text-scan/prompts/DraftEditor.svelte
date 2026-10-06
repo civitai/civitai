@@ -24,9 +24,7 @@
     draft: PromptDraft;
     promptKey: PromptKey;
     active: LabPrompt | undefined;
-    /** False when the active prompts failed to load: an override would then start from nothing. */
     activeLoaded: boolean;
-    /** Rendered under the editor with whether unsaved edits exist; absent without the publish grant. */
     publish?: Snippet<[{ dirty: boolean }]>;
   } = $props();
 

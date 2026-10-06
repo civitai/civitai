@@ -17,7 +17,6 @@
     entityType: LabEntityType;
     labels: readonly LabLabel[];
     versionB: string;
-    /** Sets a case can be saved to; empty for a moderator who cannot edit test sets. */
     testSets: { id: number; name: string }[];
   } = $props();
 

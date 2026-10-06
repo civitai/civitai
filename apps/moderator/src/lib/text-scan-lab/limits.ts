@@ -10,23 +10,25 @@ export const HARNESS_LIMITS = {
   fieldsPerText: 500,
   charsPerText: 200_000,
   charsPerRequest: 1_000_000,
+  headingChars: 100,
 } as const;
 
-/** Above this many billed scans, a batch is quoted and has to be confirmed first. */
+export const HEADING_TOO_LONG = `A field heading is at most ${HARNESS_LIMITS.headingChars} characters.`;
+
 export const QUOTE_ABOVE = 10;
 
 export const textChars = (fields: readonly LabField[]) =>
   fields.reduce((sum, field) => sum + field.text.length, 0);
 
-/** Why the harness would refuse this text, or null when it fits. */
 export function textTooLarge(fields: readonly LabField[]): string | null {
+  if (fields.some((field) => field.heading.length > HARNESS_LIMITS.headingChars))
+    return HEADING_TOO_LONG;
   const chars = textChars(fields);
   if (fields.length <= HARNESS_LIMITS.fieldsPerText && chars <= HARNESS_LIMITS.charsPerText)
     return null;
   return `too large: ${fields.length} fields / ${chars} chars (the scan limit is ${HARNESS_LIMITS.fieldsPerText} fields / ${HARNESS_LIMITS.charsPerText} chars)`;
 }
 
-/** Splits fitting texts into requests of at most `size` texts and the per-request character cap. */
 export function chunkTexts<T extends { fields: readonly LabField[] }>(
   texts: readonly T[],
   size: number

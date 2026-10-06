@@ -1,6 +1,6 @@
 export type DiffLine = { op: 'same' | 'add' | 'del'; text: string };
 
-/** Line diff by longest common subsequence: deletions before additions within a changed run. */
+/** Longest common subsequence. */
 export function diffLines(before: string, after: string): DiffLine[] {
   const a = before.split('\n');
   const b = after.split('\n');

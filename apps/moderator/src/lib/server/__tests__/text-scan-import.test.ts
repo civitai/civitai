@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { MISSING_HEADING, normaliseLabFields } from '$lib/text-scan-lab/compose';
+import { HARNESS_LIMITS, HEADING_TOO_LONG, textTooLarge } from '$lib/text-scan-lab/limits';
 import { parseSeedFile, SeedFileError } from '../text-scan-lab/seed-file';
 
 const entityCase = (over: Record<string, unknown> = {}) => ({
@@ -203,5 +204,14 @@ describe('normaliseLabFields', () => {
   it('refuses text without a heading, and ignores a headingless field with no text', () => {
     expect(normaliseLabFields([{ heading: ' ', text: 'FAKE' }])).toBe(MISSING_HEADING);
     expect(normaliseLabFields([{ heading: '', text: null }])).toEqual([]);
+  });
+
+  it('refuses a heading the harness would refuse, measured after trimming', () => {
+    const heading = 'H'.repeat(HARNESS_LIMITS.headingChars);
+    expect(normaliseLabFields([{ heading: ` ${heading} `, text: 'FAKE' }])).toEqual([
+      { heading, text: 'FAKE' },
+    ]);
+    expect(normaliseLabFields([{ heading: `${heading}H`, text: 'FAKE' }])).toBe(HEADING_TOO_LONG);
+    expect(textTooLarge([{ heading: `${heading}H`, text: 'FAKE' }])).toBe(HEADING_TOO_LONG);
   });
 });

@@ -13,7 +13,7 @@
   import QuoteDialog from '$lib/components/text-scan-lab/QuoteDialog.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, num } from '$lib/format';
-  import { QUOTE_ABOVE } from '$lib/text-scan-lab/limits';
+  import { HARNESS_LIMITS, QUOTE_ABOVE } from '$lib/text-scan-lab/limits';
   import {
     DEFAULT_HEADING,
     LAB_ENTITY_TYPES,
@@ -49,7 +49,6 @@
   const draft = $derived(data.drafts.find((d) => String(d.id) === draftId));
 
   function setEntityType(next: LabEntityType) {
-    // A heading still at the old type's default follows the type; one the moderator typed stays.
     fields = fields.map((f) =>
       f.heading === DEFAULT_HEADING[entityType] ? { ...f, heading: DEFAULT_HEADING[next] } : f
     );
@@ -135,6 +134,7 @@
               <!-- Enter here would implicitly submit a billed run. -->
               <Input
                 aria-label="Field heading"
+                maxlength={HARNESS_LIMITS.headingChars}
                 onkeydown={(e) => e.key === 'Enter' && e.preventDefault()}
                 class="h-8 w-64 text-xs"
                 bind:value={() => field.heading, (v) => (fields[i].heading = v)}
@@ -239,14 +239,16 @@
 <QuoteDialog
   quote={pendingQuote}
   formId="playground-run"
-  title="Run {pendingQuote?.count} items?"
+  title={(q) => `Run ${q.count} items?`}
   submitting={runForm.submitting}
   onclose={() => (pendingQuote = null)}
 >
-  {(pendingQuote?.count ?? 0) * 2} billed scans (A and B per item).
-  {#if pendingQuote?.skipped.length}
-    Skipped: {pendingQuote.skipped.map((s) => `${s.entityId} (${s.error})`).join(', ')}.
-  {/if}
+  {#snippet children(q)}
+    {q.count * 2} billed scans (A and B per item).
+    {#if q.skipped.length}
+      Skipped: {q.skipped.map((s) => `${s.entityId} (${s.error})`).join(', ')}.
+    {/if}
+  {/snippet}
 </QuoteDialog>
 
 {#if lastRun}

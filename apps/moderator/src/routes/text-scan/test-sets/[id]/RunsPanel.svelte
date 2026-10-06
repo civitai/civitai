@@ -38,7 +38,6 @@
 
   let version = $state('active');
   let pending = $state<{ formId: string; quote: Quote } | null>(null);
-  // Follow the URL's comparison, and otherwise offer the two latest runs.
   let compareA = $derived(String(compared?.a ?? runs[1]?.id ?? ''));
   let compareB = $derived(String(compared?.b ?? runs[0]?.id ?? ''));
 
@@ -55,8 +54,6 @@
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
   }
 
-  /** The run form and every row's re-run form open the same quote dialog, which posts back to the
-   *  form that asked. */
   let submittedFormId = $state('');
   const billed = () =>
     new FormState({
@@ -230,12 +227,14 @@
 <QuoteDialog
   quote={pending?.quote ?? null}
   formId={pending?.formId ?? ''}
-  title="Scan {pending ? plural(pending.quote.count, 'case') : ''}?"
+  title={(q) => `Scan ${plural(q.count, 'case')}?`}
   {submitting}
   onclose={() => (pending = null)}
 >
-  {pending?.quote.count} billed scans.
-  {#if pending?.quote.skipped}
-    {plural(pending.quote.skipped, 'case')} without text will be skipped.
-  {/if}
+  {#snippet children(q)}
+    {q.count} billed scans.
+    {#if q.skipped}
+      {plural(q.skipped, 'case')} without text will be skipped.
+    {/if}
+  {/snippet}
 </QuoteDialog>

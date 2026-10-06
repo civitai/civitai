@@ -5,7 +5,6 @@ const FLAG_LABELS = ['poi', 'minor', 'scam'] as const;
 /** nsfw's precision and recall treat "R or higher" as the positive class. */
 const NSFW_POSITIVE = ORDER.indexOf('r');
 
-/** Per label the case expects and the output answers: whether the output is within expectation. */
 export function caseCorrect(
   expected: Expected,
   output: Record<string, any>
@@ -84,7 +83,6 @@ export function totals(
 
 type Flip = { caseId: number; label: string };
 
-/** Labels scored in both runs whose correctness changed from `a` to `b`. */
 export function diffRuns(
   a: Map<number, Record<string, boolean>>,
   b: Map<number, Record<string, boolean>>
@@ -102,9 +100,7 @@ export function diffRuns(
   return { newlyWrong, newlyRight };
 }
 
-/** One `label correct/scored` chip per label the run scored. */
 export const scoreChips = (t: Record<string, LabelTotals> | null): string[] =>
   Object.entries(t ?? {}).map(([label, v]) => `${label} ${v.correct}/${v.scored}`);
 
-/** A precision or recall as a whole percentage; null (nothing to divide by) as a dash. */
 export const percent = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);

@@ -106,8 +106,6 @@ const fieldsField = jsonField(
 );
 const expectedField = jsonField(z.unknown());
 
-/** Wraps a test-set action: the edit permission, the set id from the path, and service refusals as
- *  form failures. */
 const setAction = <S extends z.ZodType>(
   schema: S,
   run: (setId: number, input: z.infer<S>, userId: number) => Promise<Record<string, unknown>>
@@ -133,8 +131,6 @@ const versionField = z.union([
     .refine((v) => v > 0 && v <= Number.MAX_SAFE_INTEGER, 'Choose a version to run.'),
 ]);
 
-/** A billed batch: quoted and returned for confirmation first when it is over the quote threshold,
- *  and run only when the confirmation matches what would run now. */
 const billedAction =
   <S extends z.ZodType>(
     schema: S,
@@ -158,8 +154,6 @@ const billedAction =
   };
 
 export const actions: Actions = {
-  // Runs inside the request: a set is at most MAX_RUN_CASES scans, written chunk by chunk, so a
-  // request cut short leaves the run 'running' with whatever was scanned.
   run: billedAction(z.object({ version: versionField }), (setId, input) =>
     prepareRun({ setId, version: input.version })
   ),

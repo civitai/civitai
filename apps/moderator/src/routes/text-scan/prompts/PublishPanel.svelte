@@ -17,21 +17,19 @@
   }: {
     draft: PromptDraft;
     dirty: boolean;
-    /** Per test set, the draft's and active's latest run totals. Informational; never gates publish. */
     totals?: Snippet;
   } = $props();
 
   const keys = $derived(PROMPT_KEYS.filter((k) => k in draft.prompts));
-  let confirming = $state(false);
-  // An edit after "Publish…" must be saved and confirmed afresh.
-  $effect(() => {
-    if (dirty) confirming = false;
-  });
+  // Bound to the saved version, so an edit after "Publish…" must be saved and confirmed afresh.
+  let confirmedAt = $state<string | null>(null);
+  const savedAt = $derived(draft.updatedAt.toISOString());
+  const confirming = $derived(!dirty && confirmedAt === savedAt);
 
   const publish = new FormState({
     reload: true,
     onSuccess: (data) => {
-      confirming = false;
+      confirmedAt = null;
       const published = (data?.published as string[] | undefined) ?? [];
       toast.success(
         published.length ? `Published ${published.join(', ')}` : 'Draft marked published'
@@ -58,7 +56,7 @@
 
   <form method="POST" action="?/publish" use:enhance={publish.enhance} class="mt-3">
     <input type="hidden" name="draftId" value={draft.id} />
-    <input type="hidden" name="expectedUpdatedAt" value={draft.updatedAt.toISOString()} />
+    <input type="hidden" name="expectedUpdatedAt" value={savedAt} />
     <Label for="publish-note" class="text-xs text-dark-2">Publish note (recorded on each version)</Label>
     <Textarea
       id="publish-note"
@@ -81,10 +79,10 @@
         <Button type="submit" size="sm" variant="destructive" disabled={publish.submitting}>
           {publish.submitting ? 'Publishing…' : 'Confirm publish'}
         </Button>
-        <Button size="sm" variant="ghost" onclick={() => (confirming = false)}>Cancel</Button>
+        <Button size="sm" variant="ghost" onclick={() => (confirmedAt = null)}>Cancel</Button>
       </div>
     {:else}
-      <Button class="mt-2" size="sm" onclick={() => (confirming = true)}>Publish…</Button>
+      <Button class="mt-2" size="sm" onclick={() => (confirmedAt = savedAt)}>Publish…</Button>
     {/if}
     {#if publish.error}
       <p class="mt-2 text-sm text-red-300">{publish.error}</p>

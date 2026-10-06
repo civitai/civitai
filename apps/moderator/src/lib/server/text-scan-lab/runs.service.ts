@@ -321,7 +321,6 @@ async function scoreRuns(runIds: Array<string | number>): Promise<Map<string, Sc
   return scored;
 }
 
-/** Closes the run: `failed` when every scanned case errored. */
 async function finishRun(
   runId: number,
   promptIds: Record<string, number> | null,
@@ -354,7 +353,6 @@ async function finishRun(
   return toRun(run);
 }
 
-/** Scans, then closes the run; an unexpected throw still closes it as failed with what was written. */
 async function execute(runId: number, cases: RunCase[], overrides: DraftPrompts | undefined) {
   try {
     const promptIds = await scanCases(runId, cases, overrides);
@@ -365,7 +363,6 @@ async function execute(runId: number, cases: RunCase[], overrides: DraftPrompts 
   }
 }
 
-/** Runs every case in the set that still has text; the rest are recorded as skipped. */
 export async function startRun(
   input: { setId: number; version: RunVersion },
   userId: number
@@ -409,7 +406,6 @@ async function getRunRow(setId: number, runId: number) {
   return row;
 }
 
-/** The run's error cases, as they read now; a case whose source was deleted since is skipped. */
 async function planRerun(setId: number, runId: number) {
   const set = await getSet(setId);
   if (set?.archivedAt) throw new RunError(`Test set "${set.name}" is archived.`, 409);
@@ -460,7 +456,6 @@ async function changedSinceRun(run: Selectable<text_scan_test_run>): Promise<str
   const changed = Object.entries(promptIds)
     .filter(([key, id]) => id > 0 && current.active[promptKeyOf(key)]?.id !== id)
     .map(([key]) => `active ${promptKeyOf(key)}`);
-  // An unrecorded setting cannot be shown to match.
   if (run.model !== current.config.model) changed.push('the model');
   if (run.thinking !== current.config.thinking) changed.push('the thinking setting');
   return changed;
@@ -490,6 +485,11 @@ async function rerunPlanned(
   runId: number,
   { run, overrides, runnable, skipped }: Awaited<ReturnType<typeof planRerun>>
 ): Promise<TestRun> {
+  if (run.model === null || run.thinking === null)
+    throw new RunError(
+      "This run did not record its model or thinking setting, so it can't be re-run safely — start a new run.",
+      409
+    );
   const changed = await changedSinceRun(run);
   if (changed.length) {
     const what = changed.join(', ');
@@ -519,7 +519,6 @@ export type RunListItem = TestRun & {
   errors: { caseId: number; error: string }[];
 };
 
-/** The set's latest runs, newest first, each with its result counts and error messages. */
 export async function listRuns(setId: number, limit = 20): Promise<RunListItem[]> {
   const db = getModeratorDb();
   const runs = await db
@@ -605,7 +604,6 @@ export type LatestRun = {
 
 export type SetLatestRuns = { active: LatestRun | null; drafts: Record<string, LatestRun> };
 
-/** Per set, each version's latest finished run: what the publish panel shows beside a draft. */
 export async function latestRunTotalsForSets(
   setIds: number[]
 ): Promise<Map<number, SetLatestRuns>> {

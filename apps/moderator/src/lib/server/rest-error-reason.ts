@@ -52,8 +52,7 @@ export function restErrorReason(body: unknown, status: number): string | null {
 
 const MAX_ISSUES = 5;
 
-/** `defineModeratorEndpoint`'s 400 lists the failing fields under `issues` (zod issues); without them
- *  the operator sees only "Invalid request". */
+/** Without the 400's `issues`, the operator sees only "Invalid request". */
 function issueSummary(raw: unknown): string | null {
   if (!Array.isArray(raw)) return null;
   const parts = raw.flatMap((issue) => {

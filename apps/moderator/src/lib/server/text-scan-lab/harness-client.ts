@@ -5,17 +5,13 @@ import { chunk } from '$lib/text-scan-lab/chunk';
 import { HARNESS_LIMITS, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
 import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
-// The main app's text-scan harness (`/api/mod/text-scan`). Every scan is a billed workflow.
-
-// One chunk is one wave (chunk size = concurrency), so a request takes at most one workflow wait, well
-// inside the timeout and the harness's 120s budget; a timed-out request still bills every workflow it
-// submitted.
+// A timed-out request still bills every workflow it submitted. One chunk = one wave of
+// SCAN_CONCURRENCY, so a request stays under the harness's 120s budget.
 const SCAN_CONCURRENCY = 8;
 const SCAN_CHUNK_SIZE = SCAN_CONCURRENCY;
 const SCAN_WAIT_SECONDS = 60;
 const HARNESS_TIMEOUT_MS = 150_000;
 
-/** The main app's harness refused or failed: a bad gateway from the page's point of view. */
 export class LabHarnessError extends LabError {
   constructor(message: string) {
     super(message, 502);
@@ -199,7 +195,6 @@ function toLabComposed(r: HarnessComposedEntity): LabComposedEntity {
   return { ...r, fields };
 }
 
-/** Fields come back normalised (no null or blank text), so every consumer can store or scan them as is. */
 export async function composeEntities(
   entityType: LabEntityType,
   ids: number[]

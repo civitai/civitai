@@ -37,7 +37,6 @@ export type SetRunTotals = {
   draft: LatestRun | null;
 };
 
-/** Per open test set, the draft's and active's latest finished run — shown beside publish, never gating it. */
 async function draftRunTotals(draftId: number): Promise<SetRunTotals[]> {
   const sets = await listSets();
   const latest = await latestRunTotalsForSets(sets.map((s) => s.id));

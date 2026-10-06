@@ -33,7 +33,6 @@ import {
   type LabText,
 } from '$lib/text-scan-lab/types';
 
-/** One run is one harness request's worth of items. */
 const MAX_ITEMS = HARNESS_LIMITS.textsPerRequest;
 
 const querySchema = z.object({
@@ -86,7 +85,6 @@ type RunItem = {
   key: string;
   title: string;
   fields: LabField[];
-  /** Null for free text. */
   entityId: number | null;
   authorId: number | null;
 };

@@ -6,7 +6,6 @@ import type { LabEntityType } from '../../text-scan-lab/types';
 
 // Relative imports only: the purge CLI loads this file through tsx, which resolves no `$lib`/`$env`.
 
-/** Ids per main-database lookup, and per wipe. */
 export const PURGE_BATCH = 500;
 
 type Source = {
@@ -41,7 +40,7 @@ export const SOURCES: Record<LabEntityType, Source> = {
 
 export type PurgeDbs = { moderator: Kysely<ModeratorDB>; main: Kysely<MainDB> };
 
-/** The ids whose row is gone, soft-deleted, or whose author's account is deleted. Primary-key lookups only. */
+// Primary-key lookups only.
 async function goneIds(main: Kysely<MainDB>, source: Source, ids: number[]): Promise<number[]> {
   const deleted = source.softDelete ? sql`e."deletedAt" IS NOT NULL` : sql`false`;
   const { rows } = await sql<{ id: number; gone: boolean }>`
@@ -55,9 +54,7 @@ async function goneIds(main: Kysely<MainDB>, source: Source, ids: number[]): Pro
   return ids.filter((id) => !live.has(id));
 }
 
-/** Wipes the text of entity cases whose source entity or author account was deleted, keeping the
- *  expectation, hash and note, and drops every stored output of a wiped case. Free text (no entity
- *  id) is never touched. Idempotent. */
+// Free text (no entity id) is never touched.
 export async function purgeDeletedSources(
   { moderator, main }: PurgeDbs,
   setId?: number

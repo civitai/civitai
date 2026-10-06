@@ -1,7 +1,6 @@
 import { MAX_INT4 } from '../users.service';
 
-/** Ids separated by commas or whitespace, deduplicated. Every token must be an id: a typo silently
- *  dropped would act on fewer items than were asked for. Returns the refusal as a string. */
+// Every token must be an id: a typo silently dropped would act on fewer items than asked for.
 export function parseEntityIds(raw: string, max: number): number[] | string {
   const tokens = raw.split(/[\s,]+/).filter(Boolean);
   const bad = tokens.filter((t) => {

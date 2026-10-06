@@ -14,7 +14,7 @@ import {
   type LabField,
 } from '$lib/text-scan-lab/types';
 
-/** Ids composed per "Add entities" request — sequential harness calls of 50 each. */
+/** Ids composed per "Add entities" request (sequential harness calls). */
 export const MAX_ADD_ENTITIES = 200;
 
 export class TestSetError extends LabError {}
@@ -266,7 +266,6 @@ async function insertCase(
   return { case: toCase(row), created: row.inserted };
 }
 
-/** Re-adding an entity already in the set replaces its snapshot, expectation and note. */
 export async function addCase(input: NewCase, userId: number) {
   await requireOpenSet(input.setId);
   return insertCase(input, userId);
@@ -311,9 +310,8 @@ export async function removeCase(setId: number, caseId: number): Promise<void> {
   if (!res.numDeletedRows) throw caseNotFound(caseId);
 }
 
-/** Snapshots each entity's live text. A new case starts with no expectation; one already in the set
- *  gets the fresh text and keeps the expectation and note a moderator set. Ids the harness could not compose
- *  (not found, too short) come back in `skipped` with its reason. */
+/** A case already in the set gets the fresh text and keeps its expectation and note. Ids the harness
+ *  can't compose come back in `skipped`. */
 export async function addEntities(
   setId: number,
   entityType: LabEntityType,

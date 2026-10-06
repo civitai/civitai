@@ -8,8 +8,7 @@
     type NsfwLevelName,
   } from '$lib/text-scan-lab/types';
 
-  // Posts the expectation as one JSON `expected` field. Only the entity type's own labels are
-  // offered; the server re-validates (parseExpected), this only keeps the choices sensible.
+  // The server re-validates (parseExpected); this only keeps the choices sensible.
   let {
     labels,
     expected = $bindable(),

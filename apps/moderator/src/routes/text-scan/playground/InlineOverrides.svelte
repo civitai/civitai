@@ -9,7 +9,6 @@
     active,
   }: {
     overrides: Partial<Record<PromptKey, string>>;
-    /** Active prompt text by key, to start an override from; null when it could not be loaded. */
     active: Record<string, string> | null;
   } = $props();
 
