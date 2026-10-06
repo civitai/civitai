@@ -20,6 +20,11 @@
 
   {#if !result.ok}
     <p class="mt-2 whitespace-pre-wrap break-words text-sm text-red-300">{result.error}</p>
+    {#if result.workflowId}
+      <p class="mt-1 break-all text-xs text-dark-2">
+        Workflow <span class="font-mono text-dark-0">{result.workflowId}</span>
+      </p>
+    {/if}
   {:else}
     <p class="mt-1 break-all text-xs text-dark-2">
       Workflow <span class="font-mono text-dark-0">{result.workflowId}</span> · {num(

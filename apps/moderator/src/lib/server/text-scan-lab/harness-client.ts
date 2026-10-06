@@ -83,10 +83,16 @@ type HarnessScanResult =
       rawContent?: string;
       elapsedMs: number;
     }
-  | { key: string; ok: false; error: string };
+  | { key: string; ok: false; error: string; workflowId?: string };
 
 function toLabScanResult(r: HarnessScanResult): LabScanResult {
-  if (!r.ok) return { key: r.key, ok: false, error: r.error };
+  if (!r.ok)
+    return {
+      key: r.key,
+      ok: false,
+      error: r.error,
+      ...(r.workflowId ? { workflowId: r.workflowId } : {}),
+    };
   return {
     key: r.key,
     ok: true,

@@ -259,6 +259,29 @@ describe('startRun', () => {
     expect(run.status).toBe('done');
   });
 
+  it("stores a failed workflow's orchestrator error verbatim, with its workflow id", async () => {
+    const { setId } = await setWithCases(1);
+    harness.scanTexts.mockImplementation(async (_t: string, texts: LabText[]) => [
+      {
+        key: texts[0].key,
+        ok: false,
+        error: 'workflow wf-x failed: model not found',
+        workflowId: 'wf-x',
+      },
+    ]);
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    const row = (
+      await holder.pg!.query<{ output: any; workflow_id: string }>(
+        'SELECT output, workflow_id FROM text_scan_test_result WHERE run_id = $1',
+        [run.id]
+      )
+    ).rows[0];
+    expect(row).toEqual({
+      output: { error: 'workflow wf-x failed: model not found' },
+      workflow_id: 'wf-x',
+    });
+  });
+
   it('stores an unparsed reply as an error', async () => {
     const { setId } = await setWithCases(1);
     harness.scanTexts.mockImplementation(async (_t: string, texts: LabText[]) => [

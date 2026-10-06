@@ -80,7 +80,8 @@ export type LabScanResult =
       rawContent?: string;
       elapsedMs: number;
     }
-  | { key: string; ok: false; error: string };
+  /** `workflowId` is set when the workflow was submitted but failed or did not finish in time. */
+  | { key: string; ok: false; error: string; workflowId?: string };
 
 /** The prompt keys a draft may override; the main app's prompt store keys. */
 export const PROMPT_KEYS = [

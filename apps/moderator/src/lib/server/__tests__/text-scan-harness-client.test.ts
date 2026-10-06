@@ -85,13 +85,20 @@ describe('scanTexts', () => {
           scannedOk('a'),
           { ...scannedOk('b'), parse: { ok: false, reason: 'refused' }, rawContent: 'I cannot' },
           { key: 'c', ok: false, error: 'too-short' },
+          {
+            key: 'd',
+            ok: false,
+            error: 'workflow wf-d expired',
+            workflowId: 'wf-d',
+            workflowStatus: 'expired',
+          },
         ],
       },
     });
 
     const results = await scanTexts(
       'Model',
-      ['a', 'b', 'c'].map((key) => ({ key, fields: [{ heading: 'Name', text: key }] })),
+      ['a', 'b', 'c', 'd'].map((key) => ({ key, fields: [{ heading: 'Name', text: key }] })),
       { base: 'BASE PROMPT' }
     );
 
@@ -115,6 +122,7 @@ describe('scanTexts', () => {
         elapsedMs: 12,
       },
       { key: 'c', ok: false, error: 'too-short' },
+      { key: 'd', ok: false, error: 'workflow wf-d expired', workflowId: 'wf-d' },
     ]);
     expect(call.mock.calls[0][1]).toMatchObject({ promptOverrides: { base: 'BASE PROMPT' } });
   });

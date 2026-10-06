@@ -168,7 +168,7 @@ function toResultRow(c: RunCase, r: LabScanResult | undefined): ResultRow {
     workflow_id: workflowId,
   });
   if (!r) return error('No result returned for this case.');
-  if (!r.ok) return error(r.error);
+  if (!r.ok) return error(r.error, r.workflowId ?? null);
   if (!r.output) return error(`Unparsed reply: ${r.parseError ?? 'no output'}`, r.workflowId);
   return {
     case_id: c.id,
