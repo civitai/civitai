@@ -1,6 +1,7 @@
 import { spawnSync } from 'child_process';
 import { createHash } from 'crypto';
-import { readFileSync } from 'fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'fs';
+import os from 'os';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
 
@@ -15,19 +16,34 @@ import { describe, expect, it } from 'vitest';
  * engine-load rejection exited 1 after the full dry run had printed — but only on a host
  * without a Prisma engine, so the test passed wherever the engine was installed.
  *
- * 🔴 SO THE CHILD IS HERMETIC: every inherited `PRISMA_*` variable is removed, so the dry
- * run must not need a Prisma engine at all. The server env schema still validates at
- * import, so the child gets the tracked `.env-example` values; nothing in the dry run
- * connects to anything, so those values are never used to reach a service.
+ * 🔴 THE GUARD IS WHAT THE CHILD LOADS, NOT WHETHER IT CRASHES. Whether an unused Prisma
+ * client kills the process depends on the host (an installed engine hides it), so the
+ * primary assertion is a module-load trace: `fixtures/module-load-trace.cjs` records every
+ * module each process loaded, and the dry run must load neither `src/server/db/client`
+ * nor `src/server/meilisearch/client` — on any host. The trace has a positive control:
+ * it must contain the registration module the dry run does load.
+ *
+ * As a second layer the child gets no `PRISMA_*` variable, so on a host without a
+ * bundled engine an unused client would also crash the run. The server env schema still
+ * validates at import, so the child gets the tracked `.env-example` values; nothing in
+ * the dry run connects to anything, so those values are never used to reach a service.
  */
 
 const ROOT = path.resolve(__dirname, '../..');
 const TSX_CLI = path.join(ROOT, 'node_modules/tsx/dist/cli.mjs');
+const TRACE_PRELOAD = path.join(ROOT, 'scripts/__tests__/fixtures/module-load-trace.cjs');
+
+/** Modules the dry run must never load: each constructs a client it has no use for. */
+const FORBIDDEN_IN_DRY_RUN = ['src/server/db/client.ts', 'src/server/meilisearch/client.ts'];
 
 /**
- * sha256 of the pre-registration text as `origin/main` printed it at c8bc91037f (the
- * merge of #5441), taken from that commit's own dry-run stdout. The registration is v1
- * and must not change by accident: moving code around must leave it byte-identical.
+ * The deliberate-amendment guard for the CURRENT registration: the sha256 of the
+ * pre-registration text the dry run prints. Literal-line tests pin the decision rule,
+ * the verdict block, the confound and the power assumption; nothing else pins the Sample,
+ * Stage 1, Gold and Arms paragraphs, so this hash does. It is meant to be UPDATED ON
+ * PURPOSE, in the same commit that amends the registration (and before any run under
+ * it) — never to make an accidental change pass. Current value: v1 as printed by
+ * `origin/main` at c8bc91037f, taken from that commit's own dry-run stdout.
  */
 const REGISTERED_PREREGISTRATION_SHA256 =
   '0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3';
@@ -53,12 +69,15 @@ function withoutPrismaEngine(env: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 describe('eval-resource-intent-goldset under tsx (the real entry point)', () => {
-  it('🔴 the dry run needs no Prisma engine: it prints the queries and the pre-registration, and exits 0', async () => {
+  it('🔴 the dry run loads no database or search client, needs no Prisma engine, prints the queries and the pre-registration, and exits 0', async () => {
     const { renderRetrievalPreregistration } = await import('../eval-resource-intent-registration');
+    const traceDir = mkdtempSync(path.join(os.tmpdir(), 'm3-dry-run-trace-'));
     const env: NodeJS.ProcessEnv = {
       ...withoutPrismaEngine(process.env),
       ...exampleEnv(),
       NODE_ENV: 'development',
+      NODE_OPTIONS: `--require ${TRACE_PRELOAD}`,
+      M3_MODULE_TRACE_DIR: traceDir,
     };
     expect(Object.keys(env).filter((key) => key.startsWith('PRISMA_'))).toEqual([]);
     const run = spawnSync(
@@ -66,6 +85,21 @@ describe('eval-resource-intent-goldset under tsx (the real entry point)', () => 
       [TSX_CLI, path.join(ROOT, 'scripts/eval-resource-intent-goldset.ts')],
       { cwd: ROOT, env, encoding: 'utf8', timeout: 150_000 }
     );
+    const loaded = new Set<string>();
+    try {
+      for (const file of readdirSync(traceDir)) {
+        for (const entry of JSON.parse(readFileSync(path.join(traceDir, file), 'utf8'))) {
+          loaded.add(path.relative(ROOT, entry).split(path.sep).join('/'));
+        }
+      }
+    } finally {
+      rmSync(traceDir, { recursive: true, force: true });
+    }
+
+    // The primary guard, host-independent: what the dry run LOADED.
+    expect(loaded.has('scripts/eval-resource-intent-registration.ts')).toBe(true); // control
+    expect(FORBIDDEN_IN_DRY_RUN.filter((module) => loaded.has(module))).toEqual([]);
+
     const output = `${run.stdout}\n${run.stderr}`;
     expect(output).not.toContain('TypeError');
     expect(output).not.toContain('PrismaClientInitializationError');
@@ -75,9 +109,15 @@ describe('eval-resource-intent-goldset under tsx (the real entry point)', () => 
     expect(run.stdout).toContain('-- unmatched (part one)');
     expect(run.stdout).toContain(renderRetrievalPreregistration());
 
-    // The PRINTED pre-registration block, byte-for-byte as registered.
-    const printed = run.stdout.slice(run.stdout.indexOf('M3 RETRIEVAL PRE-REGISTRATION'));
-    expect(createHash('sha256').update(printed.replace(/\n+$/, '')).digest('hex')).toBe(
+    // The PRINTED pre-registration block, byte-for-byte as registered. Sliced by the
+    // block's own line count, so a log line printed after it cannot leak into the hash.
+    const blockLines = renderRetrievalPreregistration().split('\n').length;
+    const printed = run.stdout
+      .slice(run.stdout.indexOf('M3 RETRIEVAL PRE-REGISTRATION'))
+      .split('\n')
+      .slice(0, blockLines)
+      .join('\n');
+    expect(createHash('sha256').update(printed).digest('hex')).toBe(
       REGISTERED_PREREGISTRATION_SHA256
     );
   }, 180_000);

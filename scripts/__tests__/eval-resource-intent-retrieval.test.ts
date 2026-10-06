@@ -1,4 +1,3 @@
-import { createHash } from 'crypto';
 import type { SearchParams } from 'meilisearch';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -149,6 +148,8 @@ describe('the pre-registration', () => {
   it('pins the registered values', () => {
     expect(PREREGISTERED_RUN_PARAMS).toEqual({ sampleSize: 1000, sampleDays: 30 });
     expect(M3_RETRIEVAL_PREREGISTRATION).toMatchObject({
+      version: 1,
+      registeredOn: '2026-10-06',
       primaryK: 10,
       secondaryK: 50,
       alpha: 0.05,
@@ -159,14 +160,6 @@ describe('the pre-registration', () => {
       pilotSampleSize: 100,
     });
     expect(M3_RETRIEVAL_PREREGISTRATION).not.toHaveProperty('bootstrapSeed');
-  });
-
-  it('🔴 the registered values are byte-identical to v1 as merged (c8bc91037f)', () => {
-    // sha256 of JSON.stringify(M3_RETRIEVAL_PREREGISTRATION) taken from origin/main's own
-    // module at that commit — not from this code.
-    expect(
-      createHash('sha256').update(JSON.stringify(M3_RETRIEVAL_PREREGISTRATION)).digest('hex')
-    ).toBe('da26f6a1b9e35a00a4a8cb619d9d9550ffd7f408b7ab2da1b34284c7a3ea5325');
   });
 
   it('reports every override, and none for the registered run', () => {
