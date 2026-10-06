@@ -3,6 +3,7 @@ import {
   ENTITY_TYPE_NAMES,
   checkExpected,
   describeExpected,
+  expectedSummary,
   describeVerdict,
   expectedChips,
   promptKeyName,
@@ -173,5 +174,19 @@ describe('verdictsDiffer', () => {
     expect(verdictsDiffer('scam', failed('no'), ok({ scam: { detected: false } }))).toBe(true);
     expect(verdictsDiffer('nsfw', failed('a'), failed('b'))).toBe(false);
     expect(verdictsDiffer('scam', { ok: true, output: null, parseError: 'x' }, ok({}))).toBe(false);
+  });
+});
+
+describe('expectedSummary', () => {
+  it('joins the scored labels, in the order asked for', () => {
+    expect(expectedSummary({ poi: true, scam: false })).toBe('Names a real person · Not a scam');
+    expect(expectedSummary({ poi: true, scam: false }, ['scam', 'poi'])).toBe(
+      'Not a scam · Names a real person'
+    );
+  });
+
+  it('says nothing is scored otherwise', () => {
+    expect(expectedSummary({})).toBe('nothing scored');
+    expect(expectedSummary({ poi: true }, ['scam'])).toBe('nothing scored');
   });
 });

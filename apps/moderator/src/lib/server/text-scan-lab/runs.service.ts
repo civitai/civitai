@@ -19,7 +19,6 @@ import { caseCorrect, diffRuns, totals, type LabelTotals } from '$lib/text-scan-
 import type { RunRow } from '$lib/text-scan-lab/run-summary';
 import type { Expected, LabEntityType, LabField, LabScanResult } from '$lib/text-scan-lab/types';
 
-/** The most cases one run scans. */
 export const MAX_RUN_CASES = 500;
 /** A running run with no chunk landing for this long was interrupted (its process stopped). */
 export const RUN_STALE_MS = 5 * 60_000;
@@ -118,7 +117,6 @@ function validOverrides(prompts: Record<string, unknown>, name: string): DraftPr
   return overrides;
 }
 
-/** `userId` runs the set: another moderator's working copy is invisible to them, so never runnable. */
 async function planRun(setId: number, version: RunVersion, userId: number): Promise<Plan> {
   const set = await getSet(setId);
   if (!set) throw new RunError(`Test set ${setId} not found.`, 404);
@@ -153,8 +151,7 @@ function byEntityType(cases: RunCase[]): Map<LabEntityType, RunCase[]> {
 
 const toTexts = (cases: RunCase[]) => cases.map((c) => ({ key: String(c.id), fields: c.fields }));
 
-/** A planned run, to confirm or start. The stamp binds a confirmation to this case count and draft
- *  version, so a set or draft edited after the confirmation is asked about again rather than run. */
+/** Binds a confirmation to this case count and draft version, so an edited set or draft is asked about again. */
 export async function prepareRun(
   input: { setId: number; version: RunVersion },
   userId: number
@@ -278,7 +275,12 @@ async function scanCases(
       }
       let results: LabScanResult[];
       try {
-        results = await scanTexts(entityType, toTexts(part), overrides, { keyLabel: 'case' });
+        // A chunk is several harness requests of up to a minute each: stamping each one keeps a
+        // live run from reading as interrupted behind a slow orchestrator.
+        results = await scanTexts(entityType, toTexts(part), overrides, {
+          keyLabel: 'case',
+          onRequest: () => recordProgress(runId, 0),
+        });
       } catch (e) {
         const message =
           e instanceof LabHarnessError ? e.message : 'The scan request failed unexpectedly.';
@@ -384,7 +386,9 @@ async function execute(runId: number, cases: RunCase[], overrides: DraftPrompts 
     const promptIds = await scanCases(runId, cases, overrides);
     return await finishRun(runId, promptIds);
   } catch (e) {
-    await finishRun(runId, null, { failed: true }).catch(() => undefined);
+    await writeUnreached(runId, cases)
+      .then(() => finishRun(runId, null, { failed: true }))
+      .catch(() => undefined);
     throw e;
   }
 }
@@ -411,7 +415,6 @@ async function launch(
   return { run: toRun(row), finished };
 }
 
-/** Starts a run and waits for it to finish. */
 export async function startRun(
   input: { setId: number; version: RunVersion },
   userId: number
@@ -460,39 +463,45 @@ async function getRunRow(setId: number, runId: number) {
 
 const INTERRUPTED = 'The run was interrupted before this case was scanned.';
 
+/** An error row for each case the run never reached, so re-running its errors covers them. */
+async function writeUnreached(runId: number, cases: RunCase[]): Promise<number> {
+  const seen = new Set(
+    (
+      await getModeratorDb()
+        .selectFrom('text_scan_test_result')
+        .select('case_id')
+        .where('run_id', '=', String(runId))
+        .execute()
+    ).map((r) => Number(r.case_id))
+  );
+  const missed = cases.filter((c) => !seen.has(c.id));
+  await writeResults(
+    runId,
+    missed.map((c) => toResultRow(c, { key: String(c.id), ok: false, error: INTERRUPTED }))
+  );
+  return missed.length;
+}
+
 /**
  * Closes an interrupted run as failed, with an error for each case it never reached, so re-running its
- * errors finishes it. Guarded on the stale progress it was judged by, so a run that moves meanwhile is
- * left alone.
+ * errors finishes it. Claimed only while still stale, so a run that moves meanwhile is left alone.
  */
 async function closeInterrupted(setId: number, run: Selectable<text_scan_test_run>) {
-  const db = getModeratorDb();
-  const claimed = await db
+  const claimed = await getModeratorDb()
     .updateTable('text_scan_test_run')
     .set({ progress_at: sql`now()` })
     .where('id', '=', run.id)
     .where('status', '=', 'running')
-    .where(sql<boolean>`progress_at IS NOT DISTINCT FROM ${run.progress_at}`)
+    // Not an equality on the progress_at read earlier: Postgres keeps microseconds a JS Date drops.
+    .where(
+      sql<boolean>`coalesce(progress_at, started_at) < now() - ${RUN_STALE_MS} * interval '1 millisecond'`
+    )
     .executeTakeFirst();
   if (!claimed.numUpdatedRows) return;
-  const seen = new Set(
-    (
-      await db
-        .selectFrom('text_scan_test_result')
-        .select('case_id')
-        .where('run_id', '=', run.id)
-        .execute()
-    ).map((r) => Number(r.case_id))
-  );
-  const missed = splitCases(await listCases(setId)).runnable.filter((c) => !seen.has(c.id));
-  await writeResults(
-    Number(run.id),
-    missed.map((c) => toResultRow(c, { key: String(c.id), ok: false, error: INTERRUPTED }))
-  );
-  await finishRun(Number(run.id), null, { failed: missed.length > 0 });
+  const missed = await writeUnreached(Number(run.id), splitCases(await listCases(setId)).runnable);
+  await finishRun(Number(run.id), null, { failed: missed > 0 });
 }
 
-/** `userId` re-runs: a run of another moderator's working copy is theirs alone, like the copy. */
 async function planRerun(setId: number, runId: number, userId: number) {
   const set = await getSet(setId);
   if (set?.archivedAt) throw new RunError(`Test set "${set.name}" is archived.`, 409);
@@ -743,15 +752,17 @@ export async function latestRunTotals(setId: number): Promise<SetLatestRuns> {
   return (await latestRunTotalsForSets([setId])).get(setId)!;
 }
 
-/** How fast the set's last finished run scanned, or null without one to measure. */
+/**
+ * How fast the set scans: the median rate of its last three finished runs, or null without one to
+ * measure. Only a run that scanned alone and recorded its scan time counts: wall-clock spans and a run
+ * sharing the harness with its pair both read several times slower than a run goes.
+ */
 export async function casesPerSecond(setId: number): Promise<number | null> {
   const db = getModeratorDb();
-  const run = await db
+  const runs = await db
     .selectFrom('text_scan_test_run as r')
     .select((eb) => [
-      sql<number>`coalesce(r.scan_seconds, extract(epoch from r.finished_at - r.started_at))`.as(
-        'seconds'
-      ),
+      'r.scan_seconds as seconds',
       eb
         .selectFrom('text_scan_test_result as x')
         .whereRef('x.run_id', '=', 'r.id')
@@ -761,12 +772,29 @@ export async function casesPerSecond(setId: number): Promise<number | null> {
     ])
     .where('r.set_id', '=', String(setId))
     .where('r.status', '=', 'done')
+    .where('r.scan_seconds', 'is not', null)
+    .where(({ not, exists, selectFrom }) =>
+      not(
+        exists(
+          selectFrom('text_scan_test_run as o')
+            .select('o.id')
+            .whereRef('o.set_id', '=', 'r.set_id')
+            .whereRef('o.id', '<>', 'r.id')
+            .whereRef('o.started_at', '<', 'r.finished_at')
+            .where(sql<boolean>`coalesce(o.finished_at, now()) > r.started_at`)
+        )
+      )
+    )
     .orderBy('r.finished_at', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  const seconds = Number(run?.seconds);
-  const scanned = Number(run?.scanned);
-  return seconds > 0 && scanned > 0 ? scanned / seconds : null;
+    .limit(3)
+    .execute();
+  const rates = runs
+    .map((r) => Number(r.scanned) / Number(r.seconds))
+    .filter((rate) => Number.isFinite(rate) && rate > 0)
+    .sort((a, b) => a - b);
+  if (!rates.length) return null;
+  const mid = rates.length >> 1;
+  return rates.length % 2 ? rates[mid] : (rates[mid - 1] + rates[mid]) / 2;
 }
 
 export type RunOutcome = {
@@ -776,7 +804,6 @@ export type RunOutcome = {
   errors: { caseId: number; error: string }[];
 };
 
-/** A run's results with each case's current expectation, for the Check page's set summary. */
 export async function getRunOutcome(setId: number, runId: number): Promise<RunOutcome> {
   const run = await getRunRow(setId, runId);
   const rows = await getModeratorDb()
@@ -812,7 +839,7 @@ export type RunProgress = {
   total: number | null;
 };
 
-/** One run's state, cheap enough to poll while it scans. */
+/** Polled every round, so keep it to one cheap read. */
 export async function getRunProgress(setId: number, runId: number): Promise<RunProgress> {
   const run = toRun(await getRunRow(setId, runId));
   return { runId: run.id, status: run.status, done: run.scanDone, total: run.scanTotal };

@@ -1,7 +1,7 @@
 import { commentV2Url, entityUrl, userLookupUrl } from '../entity-url';
+import { ENTITY_TYPE_NAMES } from './labels';
 import type { LabEntityType, LabField } from './types';
 
-/** A case's text as one line to recognise it by: field texts only, whitespace collapsed. */
 export function casePreview(fields: readonly LabField[] | null, max = 140): string | null {
   if (!fields) return null;
   const text = fields
@@ -11,7 +11,6 @@ export function casePreview(fields: readonly LabField[] | null, max = 140): stri
   return text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
-/** Where a case's source opens: on Civitai, or in User Lookup for an account. */
 export function caseSourceHref(
   civitaiUrl: string,
   entityType: LabEntityType,
@@ -23,3 +22,6 @@ export function caseSourceHref(
   if (entityType === 'User' || entityType === 'UserProfile') return userLookupUrl(entityId);
   return entityUrl(civitaiUrl, entityType, entityId);
 }
+
+export const caseTitle = (entityType: LabEntityType, entityId: number | null): string =>
+  `${ENTITY_TYPE_NAMES[entityType]} ${entityId ?? 'text'}`;

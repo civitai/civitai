@@ -11,6 +11,7 @@
   import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
   import type { RunListItem, TestRun } from '$lib/server/text-scan-lab/runs.service';
   import { scoreChips } from '$lib/text-scan-lab/labels';
+  import type { ConfirmRequest } from '$lib/server/text-scan-lab/confirm';
   import { CONFIRM_ABOVE } from '$lib/text-scan-lab/limits';
   import { fetchRunProgress, pollRuns, progressText } from '$lib/text-scan-lab/run-poll';
 
@@ -21,6 +22,7 @@
     maxRunCases,
     compared,
     versionLabel,
+    caseName,
   }: {
     runs: RunListItem[];
     drafts: { id: number; name: string; published: boolean }[];
@@ -28,15 +30,8 @@
     maxRunCases: number;
     compared: { a: number; b: number } | null;
     versionLabel: (run: TestRun) => string;
+    caseName: (caseId: number) => string;
   } = $props();
-
-  type ConfirmRequest = {
-    count: number;
-    skipped: number;
-    seconds: number;
-    stamp: string;
-    changed: boolean;
-  };
 
   let version = $state('active');
   let pending = $state<{ formId: string; request: ConfirmRequest } | null>(null);
@@ -44,11 +39,12 @@
   let compareB = $derived(String(compared?.b ?? runs[0]?.id ?? ''));
 
   const versionName = (v: string) =>
-    v === 'active' ? 'Active' : drafts.find((d) => String(d.id) === v)?.name ?? `Draft #${v}`;
+    v === 'active' ? 'Active' : drafts.find((d) => String(d.id) === v)?.name ?? 'Draft';
   const runName = (id: string) => {
     const run = runs.find((r) => String(r.id) === id);
-    return run ? `#${run.id} · ${versionLabel(run)}` : 'Choose a run';
+    return run ? runLabel(run) : 'Choose a run';
   };
+  const runLabel = (run: TestRun) => `${versionLabel(run)} · ${dateTime(run.startedAt)}`;
 
   function duration(run: TestRun) {
     if (!run.finishedAt) return '—';
@@ -74,7 +70,6 @@
         if (result.type !== 'success') pending = null;
       },
     });
-  // Runs scan after the request that started them: follow the running ones, then reload the page.
   const runningKey = $derived(
     runs
       .filter((r) => r.status === 'running')
@@ -85,16 +80,22 @@
   let followError = $state<string | null>(null);
   $effect(() => {
     if (!runningKey) return;
-    const running = runningKey.split(',').map((k) => k.split(':').map(Number));
+    const setOf = new Map(
+      runningKey.split(',').map((k) => {
+        const [setId, runId] = k.split(':').map(Number);
+        return [runId, setId] as const;
+      })
+    );
     const controller = new AbortController();
     pollRuns({
-      runIds: running.map(([, runId]) => runId),
-      read: (runId) => fetchRunProgress(running[0][0], runId),
+      runIds: [...setOf.keys()],
+      read: (runId) => fetchRunProgress(setOf.get(runId)!, runId),
       onProgress: (p) =>
         (progress = Object.fromEntries(p.map((x) => [x.runId, progressText([x], [''])]))),
       signal: controller.signal,
     }).then(
       (done) => {
+        followError = null;
         if (done) void invalidateAll();
       },
       (e: Error) => (followError = e.message)
@@ -114,7 +115,7 @@
       <Select.Trigger {id} class="w-64">{runName(get())}</Select.Trigger>
       <Select.Content>
         {#each runs as run (run.id)}
-          <Select.Item value={String(run.id)}>#{run.id} · {versionLabel(run)}</Select.Item>
+          <Select.Item value={String(run.id)}>{runLabel(run)}</Select.Item>
         {/each}
       </Select.Content>
     </Select.Root>
@@ -175,7 +176,7 @@
         {#each runs as run (run.id)}
           <Table.Row>
             <Table.Cell class="align-top">
-              <p class="text-dark-0">#{run.id} · {versionLabel(run)}</p>
+              <p class="text-dark-0">{versionLabel(run)}</p>
               {#if run.model}<p class="text-xs text-dark-2">{run.model}</p>{/if}
             </Table.Cell>
             <Table.Cell class="align-top">
@@ -203,7 +204,7 @@
                   <ul class="mt-1 max-h-48 space-y-1 overflow-y-auto">
                     {#each run.errors as e (e.caseId)}
                       <li>
-                        <a href="#case-{e.caseId}" class={LINK_CLASS}>case #{e.caseId}</a>:
+                        <a href="#case-{e.caseId}" class={LINK_CLASS}>{caseName(e.caseId)}</a>:
                         <span class="whitespace-pre-wrap break-words text-dark-0">{e.error}</span>
                       </li>
                     {/each}

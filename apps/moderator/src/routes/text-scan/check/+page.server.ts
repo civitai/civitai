@@ -39,9 +39,12 @@ import {
   prepareRun,
   type TestRun,
 } from '$lib/server/text-scan-lab/runs.service';
+import { dbRead } from '$lib/server/db';
+import { getModeratorDb } from '$lib/server/moderator-db';
+import { purgeDeletedSources } from '$lib/server/text-scan-lab/purge.service';
 import { getCase, getCases, listSets } from '$lib/server/text-scan-lab/test-sets.service';
 import { userIdByUsername } from '$lib/server/users.service';
-import { casePreview } from '$lib/text-scan-lab/case-view';
+import { casePreview, caseTitle } from '$lib/text-scan-lab/case-view';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { estimateSeconds } from '$lib/text-scan-lab/estimate';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
@@ -65,7 +68,6 @@ const TEST_SETS_PATH = '/text-scan/test-sets';
 
 const querySchema = z.object({
   draft: z.coerce.number().int().positive().optional().catch(undefined),
-  // "Open in Check" on a test set's case.
   set: z.coerce.number().int().positive().optional().catch(undefined),
   case: z.coerce.number().int().positive().optional().catch(undefined),
 });
@@ -122,7 +124,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
   return {
     testSets: sets.map((s) => ({ id: s.id, name: s.name, caseCount: s.caseCount })),
-    // Saving posts to the set page's action, which its page grant gates as well.
     canSaveCase: canUseSets && !!locals.grants['textScan.testSet.edit'],
     active,
     changes,
@@ -150,7 +151,6 @@ type CheckSubject = {
   fields: LabField[];
   entityId: number | null;
   authorId: number | null;
-  /** Saved with the case so the purge checks every message of a ChatMessage window. */
   sourceIds?: number[];
 };
 type Skipped = { entityId: number; error: string };
@@ -171,7 +171,6 @@ export type CheckItemResult = CheckSubject & {
   fromCase: { setId: number; caseId: number; expected: Expected } | null;
 };
 
-/** What `check` and `checkCase` answer with. */
 export type CheckResult = {
   checked: true;
   entityType: LabEntityType;
@@ -218,7 +217,6 @@ async function entityPlan(
   return { entityType, subjects, skipped, notice: null };
 }
 
-/** What to scan, or a refusal to show. Everything here runs before any scan is submitted. */
 async function plan(input: z.infer<typeof checkSchema>): Promise<Plan | string> {
   const parsed = parseCheckInput(input.input);
   const named = (type: LabEntityType) => (id: number) => `${ENTITY_TYPE_NAMES[type]} ${id}`;
@@ -252,7 +250,6 @@ const missing = (key: string): LabScanResult => ({
   error: 'No result returned for this item.',
 });
 
-/** Scans with the current prompts and, when there are changes, with them too, side by side. */
 async function scanSubjects(
   entityType: LabEntityType,
   subjects: CheckSubject[],
@@ -291,7 +288,6 @@ async function scanSubjects(
   }));
 }
 
-/** The overrides a check tests, or the refusal to show: a blank key is named before anything runs. */
 function checkOverrides(raw: Record<string, unknown>): DraftPrompts | ReturnType<typeof fail> {
   try {
     return validateDraftPrompts(raw);
@@ -309,14 +305,12 @@ export type SetRunSide = {
   errors: { caseId: number; error: string }[];
 };
 
-/** A set run as the Check page shows it: both runs' scores per label and what the changes moved. */
 export type SetRunView = {
   setRun: true;
   setId: number;
   current: SetRunSide;
   changed: SetRunSide | null;
   summary: RunSummary;
-  /** Preview and source of every case the summary lists. */
   cases: Record<
     number,
     { entityType: LabEntityType; entityId: number | null; preview: string | null }
@@ -426,7 +420,6 @@ export const actions: Actions = {
     } satisfies CheckResult;
   },
 
-  /** Loads one test case: its snapshot text is checked like any other, against its expectation. */
   checkCase: async ({ request, locals }) => {
     if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
     const input = parseForm(
@@ -441,17 +434,15 @@ export const actions: Actions = {
     const overrides = checkOverrides(input.overrides);
     if (isFailure(overrides)) return overrides;
 
+    // A deep link can reach a case before any list purged it.
+    await purgeDeletedSources({ moderator: getModeratorDb(), main: dbRead }, input.setId);
     const found = await getCase(input.setId, input.caseId);
-    if (!found) return fail(404, { error: `Test case ${input.caseId} is not in this set.` });
+    if (!found) return fail(404, { error: 'That test case is no longer in this set.' });
     if (!found.fields || found.sourceDeletedAt)
       return fail(400, { error: "This case's text was removed when its source was deleted." });
-    const name = ENTITY_TYPE_NAMES[found.entityType];
     const subject: CheckSubject = {
       key: `case-${found.id}`,
-      title:
-        found.entityId === null
-          ? `Test case ${found.id} · ${name} text`
-          : `Test case ${found.id} · ${name} ${found.entityId}`,
+      title: `Test case · ${caseTitle(found.entityType, found.entityId)}`,
       fields: found.fields,
       entityId: found.entityId,
       authorId: found.authorId,
@@ -494,11 +485,11 @@ export const actions: Actions = {
         input.draftId === undefined
           ? null
           : await prepareRun({ setId: input.setId, version: input.draftId }, me);
-      const runs = changed ? 2 : 1;
+      // The two runs scan side by side, so the pair takes about as long as one.
       const ask = await confirmRequest(
         form,
         { ...current, stamp: [current.stamp, changed?.stamp].join('|') },
-        async () => estimateSeconds(current.count * runs, await casesPerSecond(input.setId))
+        async () => estimateSeconds(current.count, await casesPerSecond(input.setId))
       );
       if (ask) return ask;
 
@@ -521,7 +512,6 @@ export const actions: Actions = {
     }
   },
 
-  /** Starts a re-run of one of a set run's two runs' errors; the page follows it like `runSet`. */
   rerunSetErrors: async ({ request, locals }) => {
     if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
     const form = await request.formData();
@@ -556,7 +546,6 @@ export const actions: Actions = {
     }
   },
 
-  /** The finished pair's scores per label and what the changes fixed or broke. */
   setRunSummary: async ({ request, locals }) => {
     if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
     const input = parseForm(

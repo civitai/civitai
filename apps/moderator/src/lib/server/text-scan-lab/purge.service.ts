@@ -54,7 +54,6 @@ async function goneIds(main: Kysely<MainDB>, source: Source, ids: number[]): Pro
   return ids.filter((id) => !live.has(id));
 }
 
-/** The rows a case's text came from: every message of a ChatMessage window, else the entity itself. */
 function sourceIdsOf(entityId: number, sourceIds: unknown): number[] {
   const ids = Array.isArray(sourceIds) ? sourceIds.filter((id) => Number.isInteger(id)) : [];
   return ids.length ? ids : [entityId];

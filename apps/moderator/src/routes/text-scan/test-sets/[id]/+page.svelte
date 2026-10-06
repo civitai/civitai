@@ -7,6 +7,7 @@
   import RunComparison from './RunComparison.svelte';
   import RunsPanel from './RunsPanel.svelte';
   import type { TestRun } from '$lib/server/text-scan-lab/runs.service';
+  import { caseTitle } from '$lib/text-scan-lab/case-view';
 
   let { data } = $props();
   const canEdit = $derived(!!data.grants['textScan.testSet.edit'] && !data.set.archivedAt);
@@ -14,10 +15,16 @@
   function versionLabel(run: TestRun) {
     if (run.version === 'active') return 'Active';
     const draft = data.runDrafts.find((d) => d.id === run.draftId);
-    if (!draft) return `Draft #${run.version} (deleted)`;
+    if (!draft) return 'A deleted draft';
     const edited =
       run.draftUpdatedAt && draft.updatedAt.getTime() !== run.draftUpdatedAt.getTime();
     return `${draft.label}${edited ? ' (edited since)' : ''}`;
+  }
+
+  const caseById = $derived(new Map(data.cases.map((c) => [c.id, c])));
+  function caseName(id: number) {
+    const c = caseById.get(id);
+    return c ? caseTitle(c.entityType, c.entityId) : 'A removed case';
   }
 </script>
 
@@ -43,12 +50,13 @@
   maxRunCases={data.maxRunCases}
   compared={data.comparison ? { a: data.comparison.a.id, b: data.comparison.b.id } : null}
   {versionLabel}
+  {caseName}
 />
 {#if data.compareError}
   <p class="mb-4 text-sm text-red-300">{data.compareError}</p>
 {/if}
 {#if data.comparison}
-  <RunComparison comparison={data.comparison} cases={data.cases} {versionLabel} />
+  <RunComparison comparison={data.comparison} {versionLabel} {caseName} />
 {/if}
 
 {#if canEdit}

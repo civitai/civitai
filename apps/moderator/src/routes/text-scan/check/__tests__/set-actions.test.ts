@@ -38,6 +38,9 @@ vi.mock('$lib/server/text-scan-lab/test-sets.service', async (importOriginal) =>
   ...sets,
 }));
 
+const purge = vi.hoisted(() => ({ purgeDeletedSources: vi.fn() }));
+vi.mock('$lib/server/text-scan-lab/purge.service', () => purge);
+
 const { actions } = await import('../+page.server');
 const { RunError } = await import('$lib/server/text-scan-lab/runs.service');
 
@@ -128,6 +131,10 @@ describe('checkCase', () => {
       overrides: JSON.stringify({ 'label:scam': 'MY SCAM DEF' }),
     });
 
+    expect(purge.purgeDeletedSources).toHaveBeenCalledWith(expect.anything(), 3);
+    expect(purge.purgeDeletedSources.mock.invocationCallOrder[0]).toBeLessThan(
+      sets.getCase.mock.invocationCallOrder[0]
+    );
     expect(sets.getCase).toHaveBeenCalledWith(3, 5);
     const texts = [{ key: 'case-5', fields: [{ heading: 'Comment', text: 'buy now' }] }];
     expect(harness.scanTexts).toHaveBeenCalledWith('Comment', texts);
@@ -140,7 +147,7 @@ describe('checkCase', () => {
       labels: ['scam'],
       items: [
         {
-          title: 'Test case 5 · Model comment (old) 77',
+          title: 'Test case · Model comment (old) 77',
           entityId: 77,
           fromCase: { setId: 3, caseId: 5, expected: { scam: true } },
           current: { ok: true },
@@ -234,7 +241,7 @@ describe('setRunSummary', () => {
 });
 
 describe('runSet — confirming', () => {
-  it('asks before running more than 10 cases twice, estimating from both runs', async () => {
+  it('asks before running more than 10 cases twice, estimating one run since the pair runs in parallel', async () => {
     const current = planned(40, 1, '40:');
     const changed = planned(40, 2, '40:2026-10-06T00:00:00.000Z');
     runs.prepareRun.mockResolvedValueOnce(current).mockResolvedValueOnce(changed);
@@ -248,7 +255,7 @@ describe('runSet — confirming', () => {
       count: 40,
       skipped: 0,
       stamp: '40:|40:2026-10-06T00:00:00.000Z',
-      seconds: 20,
+      seconds: 10,
       changed: false,
     });
     expect(current.execute).not.toHaveBeenCalled();

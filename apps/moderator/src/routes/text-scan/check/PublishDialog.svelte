@@ -21,7 +21,6 @@
   }: {
     changes: ChangesState;
     runTotals: SetRunTotals[];
-    /** Prefills the publish note. */
     note: string;
     draftLabel: string;
   } = $props();
@@ -38,7 +37,6 @@
       const published = (data?.published as string[] | undefined) ?? [];
       toast.success(published.length ? `Published ${names(published)}` : 'Marked published');
     },
-    // A partial publish changed the live prompts even though the action failed.
     onSettled: (result) => {
       if (result.type === 'failure' && (result.data?.published as string[] | undefined)?.length)
         void invalidateAll();

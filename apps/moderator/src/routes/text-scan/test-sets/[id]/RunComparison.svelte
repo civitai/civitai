@@ -1,38 +1,29 @@
 <script lang="ts">
   import * as Table from '@civitai/ui/components/ui/table/index.js';
-  import { LINK_CLASS, plural } from '$lib/format';
+  import { LINK_CLASS, dateTime, plural } from '$lib/format';
   import type { CaseFlip, RunComparison, TestRun } from '$lib/server/text-scan-lab/runs.service';
-  import type { TestCase } from '$lib/server/text-scan-lab/test-sets.service';
-  import { ENTITY_TYPE_NAMES, labelName } from '$lib/text-scan-lab/labels';
+  import { labelName } from '$lib/text-scan-lab/labels';
   import { percent, type LabelTotals } from '$lib/text-scan-lab/score';
 
   let {
     comparison,
-    cases,
     versionLabel,
+    caseName,
   }: {
     comparison: RunComparison;
-    cases: TestCase[];
     versionLabel: (run: TestRun) => string;
+    caseName: (caseId: number) => string;
   } = $props();
 
   const { a, b } = $derived(comparison);
   const labels = $derived([
     ...new Set([...Object.keys(a.totals ?? {}), ...Object.keys(b.totals ?? {})]),
   ]);
-  const caseById = $derived(new Map(cases.map((c) => [c.id, c])));
 
   const cell = (t: LabelTotals | undefined) =>
     t
       ? `${t.correct}/${t.scored} · P ${percent(t.precision)} · R ${percent(t.recall)}`
       : 'not scored';
-  const caseName = (id: number) => {
-    const c = caseById.get(id);
-    if (!c) return `case #${id} (removed)`;
-    return `case #${id} · ${ENTITY_TYPE_NAMES[c.entityType]} ${
-      c.entityId === null ? 'free text' : `#${c.entityId}`
-    }`;
-  };
   const json = (v: unknown) => JSON.stringify(v, null, 2);
 </script>
 
@@ -64,7 +55,7 @@
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h2 class="mb-3 text-sm font-semibold text-white">
-    A #{a.id} · {versionLabel(a)} → B #{b.id} · {versionLabel(b)}
+    A: {versionLabel(a)}, {dateTime(a.startedAt)} → B: {versionLabel(b)}, {dateTime(b.startedAt)}
   </h2>
   {#if labels.length}
     <Table.Root>

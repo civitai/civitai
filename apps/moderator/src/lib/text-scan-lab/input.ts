@@ -32,7 +32,6 @@ const isCivitaiHost = (host: string) =>
   CIVITAI_HOSTS.has(host.replace(/^www\./, '')) || LOCAL_HOSTS.has(host);
 
 function toUrl(raw: string): URL | null {
-  // A link pasted from a sentence often carries its punctuation.
   const token = raw.replace(/^[(<'"]+/, '').replace(/[.;:!?)>\]}'"]+$/, '');
   const withScheme = /^https?:\/\//i.test(token)
     ? token
@@ -81,7 +80,6 @@ function matchCivitaiPath(url: URL): UrlMatch | null {
   if (root === 'models') {
     const modelId = toId(a);
     if (!modelId) return null;
-    // A legacy comment's deep link is its model page with the thread dialog open.
     const commentId =
       url.searchParams.get('dialog') === 'commentThread'
         ? toId(url.searchParams.get('highlight'))
@@ -125,7 +123,6 @@ function idList(ids: number[]): number[] | { count: number } {
   return unique.length > MAX_INPUT_IDS ? { count: unique.length } : unique;
 }
 
-/** What the Check box was given: Civitai link(s), bare id(s), or text to judge. */
 export function parseCheckInput(raw: string): CheckInput {
   const text = raw.trim();
   if (!text) return { kind: 'empty' };

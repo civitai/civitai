@@ -5,6 +5,7 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { FormState } from '$lib/form-state.svelte';
+  import { plural } from '$lib/format';
   import { parseCheckInput, type CheckInput } from '$lib/text-scan-lab/input';
   import { ENTITY_TYPE_NAMES, LABEL_NAMES } from '$lib/text-scan-lab/labels';
   import { LAB_ENTITY_TYPES, LAB_LABELS, type LabEntityType } from '$lib/text-scan-lab/types';
@@ -15,9 +16,7 @@
     onstart,
     onchecked,
   }: {
-    /** The prompt changes to test beside the current prompts, as JSON; `{}` for none. */
     overrides: string;
-    /** Why the changes cannot be tested as they stand; blocks the check. */
     overridesError: string | null;
     onstart: () => void;
     onchecked: (result: Record<string, unknown>) => void;
@@ -51,7 +50,6 @@
     }
   });
 
-  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const detected = (p: CheckInput): string | null => {
     switch (p.kind) {
       case 'ids':

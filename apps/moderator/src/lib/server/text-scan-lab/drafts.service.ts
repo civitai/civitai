@@ -95,7 +95,6 @@ export async function listDrafts({ includeWorking = false } = {}): Promise<Promp
   return rows.map(toDraft);
 }
 
-/** Working copies included: for naming the runs that ran them, never for showing their prompts. */
 export async function getDraftsByIds(ids: number[]): Promise<PromptDraft[]> {
   if (!ids.length) return [];
   const rows = await getModeratorDb()
@@ -135,11 +134,10 @@ export async function createDraft(
   return toDraft(row);
 }
 
-/** A moderator's working copy is private: to anyone else it does not exist. */
 const hiddenFrom = (draft: PromptDraft, userId: number) =>
   draft.kind === 'working' && draft.createdBy !== userId;
 
-/** The draft as `userId` may see it: null when missing or another moderator's working copy. */
+/** Another moderator's working copy is invisible: null, as if missing. */
 export async function getVisibleDraft(id: number, userId: number): Promise<PromptDraft | null> {
   const draft = await getDraft(id);
   return draft && !hiddenFrom(draft, userId) ? draft : null;
@@ -180,9 +178,7 @@ export async function updateDraft(
   return toDraft(row);
 }
 
-// A published working copy becomes 'proposed' so it leaves the one-per-moderator slot: the next edit
-// starts a fresh copy, and the published one stays in the drafts list as a record — under
-// `workingName`, since "My changes" would not say what it was.
+// 'proposed' frees the one-per-moderator working-copy slot; the published copy stays listed under workingName.
 export async function markPublished(
   id: number,
   promptIds: Record<string, number>,

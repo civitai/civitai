@@ -17,14 +17,15 @@
     entityType,
     labels,
     testSets,
+    onsaved,
   }: {
     item: CheckItemResult;
     entityType: LabEntityType;
     labels: readonly LabLabel[];
     testSets: { id: number; name: string }[];
+    onsaved: () => void;
   } = $props();
 
-  // Prefilled from the current verdict; the moderator corrects it before saving.
   let expected = $state<Expected>(
     untrack(() => expectedFromOutput(item.current.ok ? item.current.output : null, labels))
   );
@@ -38,6 +39,7 @@
     onSuccess: (r) => {
       saved = { setId, created: r?.created === true };
       open = false;
+      onsaved();
     },
   });
   // The action lives on the test-set route: applying its unexpected error would render that route's

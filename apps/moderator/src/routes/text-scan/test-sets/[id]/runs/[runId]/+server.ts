@@ -7,7 +7,6 @@ const idOf = (raw: string) => {
   return Number.isSafeInteger(id) && id > 0 ? id : null;
 };
 
-/** A run's progress, polled while it scans. Gated, like the set page, by the test-sets page grant. */
 export const GET: RequestHandler = async ({ params }) => {
   const setId = idOf(params.id);
   const runId = idOf(params.runId);

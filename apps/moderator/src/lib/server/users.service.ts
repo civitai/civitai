@@ -78,8 +78,7 @@ export async function usernameExists(username: string): Promise<boolean> {
   return !!row;
 }
 
-/** A profile link's username to its live account id. `username` is citext, so this match is already
- *  case-insensitive and served by the unique index. */
+/** citext: matches case-insensitively via the unique index. */
 export async function userIdByUsername(username: string): Promise<number | null> {
   const row = await dbRead
     .selectFrom('User')

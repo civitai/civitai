@@ -50,7 +50,7 @@ const runIdParam = z.coerce
   .catch(undefined);
 const compareSchema = z.object({ a: runIdParam, b: runIdParam });
 
-/** What each run ran, by draft id. A working copy is named for its owner; its prompts stay private. */
+/** A working copy is named for its owner; its prompts stay private. */
 async function runDraftNames(runs: TestRun[]) {
   const ids = [...new Set(runs.filter((r) => r.draftId !== null).map((r) => r.draftId!))];
   const drafts = await getDraftsByIds(ids);
@@ -168,7 +168,6 @@ const confirmedAction =
         estimateSeconds(planned.count, await casesPerSecond(setId))
       );
       if (ask) return ask;
-      // Scans after the response; the page polls the run until it finishes.
       const { run } = await planned.execute(locals.user.id);
       return { ran: true as const, runId: run.id, status: run.status };
     } catch (e) {

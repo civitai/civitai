@@ -1,4 +1,3 @@
-/** A run's state as `/text-scan/test-sets/<set>/runs/<run>` reports it. */
 export type RunProgress = {
   runId: number;
   status: 'running' | 'done' | 'failed' | 'interrupted';
@@ -7,7 +6,6 @@ export type RunProgress = {
 };
 
 export const POLL_MS = 3000;
-/** Consecutive failed reads before giving up on following a run. */
 const MAX_FAILED_READS = 5;
 
 export const LOST_TRACK = 'Lost track of the run — it keeps going; see Test sets for its results.';
@@ -59,7 +57,6 @@ export async function pollRuns(opts: {
   }
 }
 
-/** "Current 120 of 421 · With my changes 80 of 421", in the order of `titles`. */
 export function progressText(progress: RunProgress[], titles: string[]): string {
   return progress
     .map((p, i) => {

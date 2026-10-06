@@ -16,7 +16,6 @@ export type CaseListItem = {
   expected: Expected;
 };
 
-/** The Check page's case picker. Gated, like the set page, by the test-sets page grant. */
 export const GET: RequestHandler = async ({ params }) => {
   const setId = Number(params.id);
   const set = Number.isSafeInteger(setId) && setId > 0 ? await getSet(setId) : null;

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { LINK_CLASS } from '$lib/format';
   import type { SetRunTotals } from '$lib/server/text-scan-lab/publish';
-  import { scoreChips } from '$lib/text-scan-lab/labels';
+  import { NOTHING_SCORED, scoreChips } from '$lib/text-scan-lab/labels';
 
   let {
     rows,
@@ -9,13 +9,12 @@
     draftLabel = 'draft',
   }: {
     rows: SetRunTotals[];
-    /** The draft as it stands now; a run of an older version is marked as such. */
     draftUpdatedAt: Date | null;
     draftLabel?: string;
   } = $props();
 
   const chips = (run: SetRunTotals['active']) =>
-    run ? scoreChips(run.totals).join(' · ') || 'nothing scored' : 'not run';
+    run ? scoreChips(run.totals).join(' · ') || NOTHING_SCORED : 'not run';
 </script>
 
 <div class="text-xs text-dark-2">

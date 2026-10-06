@@ -24,6 +24,7 @@ import {
   publishSchema,
 } from '$lib/server/text-scan-lab/publish';
 import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
+import { usersByIds } from '$lib/server/users.service';
 
 const querySchema = z.object({
   key: z.enum(PROMPT_KEYS).catch('base'),
@@ -49,7 +50,13 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     : null;
   const runTotals =
     draft && canAccess(locals.user, '/text-scan/test-sets') ? await draftRunTotals(draft.id) : [];
-  return { key: q.key, drafts, draft, prompts, runTotals, wide: true };
+  const authorIds = prompts.ok
+    ? (prompts.value.history ?? []).flatMap((v) => (v.createdById == null ? [] : [v.createdById]))
+    : [];
+  const authors = Object.fromEntries(
+    [...(await usersByIds(authorIds))].map(([id, u]) => [id, u.username ?? 'unknown'])
+  );
+  return { key: q.key, drafts, draft, prompts, authors, runTotals, wide: true };
 };
 
 const fail400 = (error: string) => fail(400, { error });

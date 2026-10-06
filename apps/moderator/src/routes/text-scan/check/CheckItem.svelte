@@ -1,6 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { describeExpected } from '$lib/text-scan-lab/labels';
+  import { expectedSummary } from '$lib/text-scan-lab/labels';
   import type { LabEntityType, LabLabel, PromptKey } from '$lib/text-scan-lab/types';
   import type { CheckItemResult } from './+page.server';
   import SaveCaseForm from './SaveCaseForm.svelte';
@@ -14,28 +14,21 @@
     testSets,
     changedTitle,
     onedit,
+    oncasesaved,
   }: {
     item: CheckItemResult;
     entityType: LabEntityType;
     labels: readonly LabLabel[];
-    /** Sets a case can be saved to; none hides saving. */
     testSets: { id: number; name: string }[];
-    /** Heading of the second column, when the item was also scanned with changes. */
     changedTitle: string;
     onedit: (key: PromptKey) => void;
+    oncasesaved: () => void;
   } = $props();
 
   const labelKey = (label: LabLabel): PromptKey => `label:${label}`;
 
   const expected = $derived(item.fromCase?.expected ?? null);
-  const expectedText = $derived(
-    expected
-      ? labels
-          .map((l) => describeExpected(expected)[l])
-          .filter(Boolean)
-          .join(' · ') || 'nothing scored'
-      : null
-  );
+  const expectedText = $derived(expected ? expectedSummary(expected, labels) : null);
 
   const columns = $derived(
     item.changed
@@ -85,6 +78,6 @@
   </details>
 
   {#if testSets.length && !item.fromCase}
-    <SaveCaseForm {item} {entityType} {labels} {testSets} />
+    <SaveCaseForm {item} {entityType} {labels} {testSets} onsaved={oncasesaved} />
   {/if}
 </section>

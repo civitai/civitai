@@ -6,9 +6,10 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import ConfirmRunDialog from '$lib/components/text-scan-lab/ConfirmRunDialog.svelte';
   import { num, plural } from '$lib/format';
-  import { ENTITY_TYPE_NAMES, describeExpected } from '$lib/text-scan-lab/labels';
+  import type { ConfirmRequest } from '$lib/server/text-scan-lab/confirm';
+  import { caseTitle } from '$lib/text-scan-lab/case-view';
+  import { expectedSummary } from '$lib/text-scan-lab/labels';
   import { fetchRunProgress, pollRuns, progressText } from '$lib/text-scan-lab/run-poll';
-  import type { Expected } from '$lib/text-scan-lab/types';
   import type { CaseListItem } from '../test-sets/[id]/cases/+server';
   import type { CheckResult, SetRunStarted, SetRunView } from './+page.server';
   import { actionError, type ChangesState } from './changes';
@@ -24,6 +25,7 @@
     openCase,
     onstart,
     onchecked,
+    casesSaved,
   }: {
     testSets: { id: number; name: string; caseCount: number }[];
     changes: ChangesState;
@@ -33,6 +35,8 @@
     openCase: { setId: number; caseId: number } | null;
     onstart: () => void;
     onchecked: (result: CheckResult) => void;
+    /** Bumped when Check saves a case, so the list shows it. */
+    casesSaved: number;
   } = $props();
 
   const SHOWN_CASES = 200;
@@ -40,26 +44,31 @@
   let setId = $state('');
   let query = $state('');
 
-  const cases = $derived(
-    browser && setId
-      ? fetch(`/text-scan/test-sets/${setId}/cases`).then(async (res) => {
-          if (!res.ok) throw new Error('Could not load the cases.');
-          return ((await res.json()) as { cases: CaseListItem[] }).cases;
-        })
-      : null
-  );
+  let cases = $state<Promise<CaseListItem[]> | null>(null);
+  $effect(() => {
+    void casesSaved;
+    if (!browser || !setId) {
+      cases = null;
+      return;
+    }
+    const controller = new AbortController();
+    cases = fetch(`/text-scan/test-sets/${setId}/cases`, { signal: controller.signal }).then(
+      async (res) => {
+        if (!res.ok) throw new Error('Could not load the cases.');
+        return ((await res.json()) as { cases: CaseListItem[] }).cases;
+      }
+    );
+    return () => controller.abort();
+  });
 
   const setName = (id: string) => testSets.find((s) => String(s.id) === id)?.name;
-  const caseTitle = (c: CaseListItem) =>
-    `${ENTITY_TYPE_NAMES[c.entityType]} ${c.entityId ?? 'text'}`;
-  const expectedText = (expected: Expected) =>
-    Object.values(describeExpected(expected)).join(' · ') || 'nothing scored';
+  const titleOf = (c: CaseListItem) => caseTitle(c.entityType, c.entityId);
 
   function matching(list: CaseListItem[], q: string) {
     const needle = q.trim().toLowerCase();
     if (!needle) return list;
     return list.filter((c) =>
-      [caseTitle(c), String(c.id), c.preview ?? '', expectedText(c.expected)].some((t) =>
+      [titleOf(c), String(c.id), c.preview ?? '', expectedSummary(c.expected)].some((t) =>
         t.toLowerCase().includes(needle)
       )
     );
@@ -94,15 +103,6 @@
     void loadCase(openCase.caseId);
   });
 
-  type ConfirmAsk = {
-    needsConfirm: true;
-    count: number;
-    skipped: number;
-    seconds: number;
-    stamp: string;
-    changed: boolean;
-  };
-
   let running = $state(false);
   let runError = $state<string | null>(null);
   let progress = $state<string | null>(null);
@@ -111,14 +111,13 @@
   let following: AbortController | null = null;
   onDestroy(() => following?.abort());
   let pending = $state<{
-    request: ConfirmAsk;
+    request: ConfirmRequest;
     note: string | null;
     confirm: (stamp: string) => void;
   } | null>(null);
   const withChanges = $derived(changes.keys.length > 0);
   const shownView = $derived(view && String(view.setId) === setId ? view : null);
 
-  /** Follows started runs until they finish, then shows their summary. */
   async function follow(started: SetRunStarted) {
     const runIds = [started.currentRunId];
     if (started.changedRunId !== null) runIds.push(started.changedRunId);
@@ -150,7 +149,6 @@
     } else runError = actionError(summary);
   }
 
-  /** Posts a set run, asking first when the server wants a confirmation. */
   async function submitRun(
     action: string,
     fields: Record<string, string>,
@@ -166,7 +164,7 @@
         runError = actionError(result);
         return;
       }
-      const data = result.data as SetRunStarted | ConfirmAsk;
+      const data = result.data as SetRunStarted | ConfirmRequest;
       if ('needsConfirm' in data) {
         pending = {
           request: data,
@@ -186,7 +184,6 @@
     runError = null;
     const fields: Record<string, string> = { setId };
     if (withChanges) {
-      // The run reads the changes from the database, so they are saved first.
       if (changes.blankError) {
         runError = changes.blankError;
         return;
@@ -271,9 +268,6 @@
         aria-label="Search cases"
         bind:value={query}
       />
-      {#if caseError}
-        <p class="mt-2 whitespace-pre-wrap text-sm text-red-300">{caseError}</p>
-      {/if}
       {#if found.length}
         <ul class="mt-2 max-h-80 divide-y divide-dark-4 overflow-y-auto rounded-lg border border-dark-4">
           {#each found.slice(0, SHOWN_CASES) as c (c.id)}
@@ -285,8 +279,8 @@
                 onclick={() => void loadCase(c.id)}
               >
                 <span class="flex flex-wrap justify-between gap-x-3 text-xs text-dark-2">
-                  <span>{caseTitle(c)}{loadingCase === c.id ? ' · checking…' : ''}</span>
-                  <span>Expected: {expectedText(c.expected)}</span>
+                  <span>{titleOf(c)}{loadingCase === c.id ? ' · checking…' : ''}</span>
+                  <span>Expected: {expectedSummary(c.expected)}</span>
                 </span>
                 <span class="mt-0.5 block break-words text-sm text-dark-0">
                   {c.preview ?? 'Text removed with its source.'}
@@ -306,6 +300,9 @@
     {:catch e}
       <p class="mt-3 text-sm text-red-300">{e instanceof Error ? e.message : 'Could not load the cases.'}</p>
     {/await}
+  {/if}
+  {#if caseError}
+    <p class="mt-2 whitespace-pre-wrap text-sm text-red-300">{caseError}</p>
   {/if}
 
   {#if shownView}

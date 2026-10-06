@@ -5,8 +5,8 @@ import { chunk } from '$lib/text-scan-lab/chunk';
 import { HARNESS_LIMITS, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
 import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
-// A timed-out request still bills every workflow it submitted. One chunk = one wave of
-// SCAN_CONCURRENCY, so a request stays under the harness's 120s budget.
+// A timed-out request still runs every workflow it submitted. One chunk is one wave of
+// SCAN_CONCURRENCY, which stays under the harness's 120s budget.
 const SCAN_CONCURRENCY = 8;
 const SCAN_CHUNK_SIZE = SCAN_CONCURRENCY;
 const SCAN_WAIT_SECONDS = 60;
@@ -114,7 +114,13 @@ export async function scanTexts(
   entityType: LabEntityType,
   texts: LabText[],
   promptOverrides?: Record<string, string>,
-  { keyLabel = 'text' }: { keyLabel?: string } = {}
+  {
+    keyLabel = 'text',
+    onRequest,
+  }: {
+    keyLabel?: string;
+    /** After each harness request, answered or not. */ onRequest?: () => Promise<void>;
+  } = {}
 ): Promise<LabScanResult[]> {
   const { fitting, oversize } = splitOversize(texts);
   const byKey = new Map(oversize.map((r) => [r.key, r]));
@@ -132,6 +138,7 @@ export async function scanTexts(
       'Text-scan scan'
     );
     sent++;
+    await onRequest?.();
     if (result.ok) {
       for (const r of (result.body.results as HarnessScanResult[]).map(toLabScanResult))
         byKey.set(r.key, r);

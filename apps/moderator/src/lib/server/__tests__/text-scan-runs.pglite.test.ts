@@ -147,7 +147,7 @@ describe('startRun', () => {
         { key: String(caseIds[1]), fields: [{ heading: 'Name', text: 'model 2' }] },
       ],
       undefined,
-      { keyLabel: 'case' }
+      expect.objectContaining({ keyLabel: 'case' })
     );
     expect((await results(run.id)).map((r) => [r.status, r.output.nsfw.level])).toEqual([
       ['ok', 'x'],
@@ -222,7 +222,7 @@ describe('startRun', () => {
     const run = await startRun({ setId, version: 'active' }, MOD);
 
     expect(harness.scanTexts).toHaveBeenCalledTimes(1);
-    expect(harness.scanTexts.mock.calls[0][3]).toEqual({ keyLabel: 'case' });
+    expect(harness.scanTexts.mock.calls[0][3]).toMatchObject({ keyLabel: 'case' });
     const statuses = (await results(run.id)).map((r) => r.status);
     expect(statuses.filter((s) => s === 'error')).toHaveLength(150);
     expect(run.status).toBe('failed');
@@ -740,7 +740,7 @@ describe('casesPerSecond', () => {
     expect(await casesPerSecond(setId)).toBeCloseTo(1, 1);
   });
 
-  it('falls back to the wall-clock span for a run from before scan time was recorded', async () => {
+  it('ignores a run without recorded scan time', async () => {
     const { setId } = await setWithCases(2);
     harness.scanTexts.mockImplementation(allOk());
     const run = await startRun({ setId, version: 'active' }, MOD);
@@ -748,7 +748,40 @@ describe('casesPerSecond', () => {
       `UPDATE text_scan_test_run SET scan_seconds = NULL, started_at = now() - interval '4 seconds', finished_at = now() WHERE id = $1`,
       [run.id]
     );
-    expect(await casesPerSecond(setId)).toBeCloseTo(0.5, 1);
+    expect(await casesPerSecond(setId)).toBeNull();
+  });
+
+  it('ignores a run that overlapped another run of the set, measuring the last lone one', async () => {
+    const { setId } = await setWithCases(2);
+    harness.scanTexts.mockImplementation(allOk());
+    const lone = await startRun({ setId, version: 'active' }, MOD);
+    const a = await startRun({ setId, version: 'active' }, MOD);
+    const b = await startRun({ setId, version: 'active' }, MOD);
+    await holder.pg!.query(
+      `UPDATE text_scan_test_run SET scan_seconds = 1, started_at = now() - interval '1 hour', finished_at = now() - interval '59 minutes' WHERE id = $1`,
+      [lone.id]
+    );
+    await holder.pg!.query(
+      `UPDATE text_scan_test_run SET scan_seconds = 8, started_at = now() - interval '10 seconds', finished_at = now() WHERE id = ANY($1::bigint[])`,
+      [[a.id, b.id]]
+    );
+    expect(await casesPerSecond(setId)).toBeCloseTo(2, 1);
+  });
+
+  it('takes the median of the last three lone runs', async () => {
+    const { setId } = await setWithCases(2);
+    harness.scanTexts.mockImplementation(allOk());
+    for (const [i, seconds] of [100, 1, 2, 4].entries()) {
+      const run = await startRun({ setId, version: 'active' }, MOD);
+      await holder.pg!.query(
+        `UPDATE text_scan_test_run SET scan_seconds = $2,
+           started_at = now() - make_interval(hours => $3), finished_at = now() - make_interval(hours => $3) + interval '1 minute'
+         WHERE id = $1`,
+        [run.id, seconds, 10 - i]
+      );
+    }
+    // 2 cases over 1, 2 and 4 seconds; the oldest run (100 s) is past the last three.
+    expect(await casesPerSecond(setId)).toBeCloseTo(1, 1);
   });
 
   it('is null for a set that never finished a run', async () => {
@@ -887,12 +920,63 @@ describe('an interrupted run', () => {
     expect((await results(runId)).map((r) => r.status)).toEqual(['ok', 'ok', 'ok']);
   });
 
+  it('is finished on real Postgres too, whose progress_at has microseconds a JS Date drops', async () => {
+    const { setId, runId } = await abandoned(1);
+    await holder.pg!.query(
+      `UPDATE text_scan_test_run SET progress_at = progress_at + interval '0.000123 seconds' WHERE id = $1`,
+      [runId]
+    );
+    harness.scanTexts.mockImplementation(allOk());
+    const run = await (await (await prepareRerun(setId, runId, MOD)).execute(MOD)).finished;
+    expect(run.status).toBe('done');
+  });
+
   it('is not re-run while it is still moving', async () => {
     const { setId, runId } = await abandoned(1);
     await holder.pg!.query('UPDATE text_scan_test_run SET progress_at = now() WHERE id = $1', [
       runId,
     ]);
     await expect(prepareRerun(setId, runId, MOD)).rejects.toThrow('not finished');
+  });
+});
+
+describe('a run that stops midway', () => {
+  it('leaves an error for every case it never reached, so re-running its errors covers them', async () => {
+    const { setId } = await setWithCases(3);
+    harness.scanTexts.mockResolvedValue(null);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const started = await (await prepareRun({ setId, version: 'active' }, MOD)).execute(MOD);
+    await expect(started.finished).rejects.toThrow();
+    error.mockRestore();
+
+    const rows = await results(started.run.id);
+    expect(rows.map((r) => r.status)).toEqual(['error', 'error', 'error']);
+    expect((await prepareRerun(setId, started.run.id, MOD)).count).toBe(3);
+  });
+
+  it('stamps its progress after every harness request, not only every chunk', async () => {
+    const { setId } = await setWithCases(1);
+    let stampedAfterRequest = false;
+    harness.scanTexts.mockImplementation(
+      async (
+        _t: string,
+        texts: LabText[],
+        _o: unknown,
+        opts: { onRequest: () => Promise<void> }
+      ) => {
+        await holder.pg!.query(
+          `UPDATE text_scan_test_run SET progress_at = now() - interval '1 hour' WHERE status = 'running'`
+        );
+        await opts.onRequest();
+        const { rows } = await holder.pg!.query<{ fresh: boolean }>(
+          `SELECT progress_at > now() - interval '1 minute' AS fresh FROM text_scan_test_run WHERE status = 'running'`
+        );
+        stampedAfterRequest = rows[0].fresh;
+        return texts.map((t) => okResult(t.key));
+      }
+    );
+    await startRun({ setId, version: 'active' }, MOD);
+    expect(stampedAfterRequest).toBe(true);
   });
 });
 

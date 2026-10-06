@@ -5,8 +5,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
- * The set page's write actions over real rows. They are also what the playground's "Save as test
- * case" posts to, so the form shape that page sends is exercised here.
+ * The set page's write actions over real rows. Check's "Save as test case" posts to them too, so the
+ * form shape it sends is exercised here.
  */
 
 const HERE = dirname(fileURLToPath(import.meta.url));

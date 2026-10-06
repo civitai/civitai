@@ -5,7 +5,7 @@
  *     tsx --env-file=.env text-scan-lab/import.ts --file <path.json> --set "<name>" --by <moderatorId> [--dry-run]
  *
  * File shape: `seed-file.ts`. Entity cases without `fields` snapshot the text `/api/mod/text-scan`
- * composeEntities returns (bills nothing); ids it cannot compose are skipped and counted. The set and
+ * composeEntities returns; ids it cannot compose are skipped and counted. The set and
  * all cases are written in one transaction.
  *
  * Env: MODERATOR_DATABASE_URL, CIVITAI_APP_URL, and (only to compose entity cases without fields)

@@ -52,7 +52,7 @@
 <div class="grid gap-4 lg:grid-cols-2">
   <div>
     {#if data.prompts.ok}
-      <ActivePromptPanel promptKey={data.key} prompts={data.prompts.value} />
+      <ActivePromptPanel promptKey={data.key} prompts={data.prompts.value} authors={data.authors} />
     {:else}
       <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
         <p class="text-sm text-red-300">{data.prompts.error}</p>

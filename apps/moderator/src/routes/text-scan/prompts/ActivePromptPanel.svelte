@@ -5,22 +5,28 @@
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import DiffView from '$lib/components/text-scan-lab/DiffView.svelte';
 
-  let { promptKey, prompts }: { promptKey: PromptKey; prompts: LabPrompts } = $props();
+  let {
+    promptKey,
+    prompts,
+    authors,
+  }: { promptKey: PromptKey; prompts: LabPrompts; authors: Record<number, string> } = $props();
 
   const active = $derived(prompts.active[promptKey]);
   const history = $derived([...(prompts.history ?? [])].sort((a, b) => b.id - a.id));
   const activeMeta = $derived(history.find((v) => v.id === active?.id));
 
   const when = (iso: string) => new Date(iso).toLocaleString();
+  const author = (id: number | null | undefined) => (id == null ? 'unknown' : authors[id] ?? 'unknown');
 </script>
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h2 class="text-sm font-semibold text-white">Current · {promptKeyName(promptKey)}</h2>
   {#if active}
     <p class="mt-1 text-xs text-dark-2">
-      Version #{active.id}
       {#if activeMeta}
-        · by user {activeMeta.createdById ?? 'unknown'} · {when(activeMeta.createdAt)}
+        Published {when(activeMeta.createdAt)} by {author(activeMeta.createdById)}
+      {:else}
+        Live version
       {/if}
     </p>
     <pre
@@ -38,11 +44,11 @@
           <Collapsible.Root>
             <Collapsible.Trigger class="flex w-full items-baseline justify-between gap-2 text-left">
               <span class="text-sm text-dark-0">
-                #{version.id}
+                {when(version.createdAt)}
                 {#if version.id === active?.id}<span class="text-xs text-green-300">current</span>{/if}
               </span>
               <span class="text-xs text-dark-2">
-                user {version.createdById ?? 'unknown'} · {when(version.createdAt)}
+                by {author(version.createdById)}
               </span>
             </Collapsible.Trigger>
             {#if version.note}
@@ -50,7 +56,7 @@
             {/if}
             <Collapsible.Content class="mt-2">
               {#if previous}
-                <p class="mb-1 text-xs text-dark-2">Changes from #{previous.id}</p>
+                <p class="mb-1 text-xs text-dark-2">Changes from the version of {when(previous.createdAt)}</p>
                 <DiffView before={previous.content} after={version.content} />
               {:else}
                 <!-- The harness returns only the latest versions, so this may not be the first. -->

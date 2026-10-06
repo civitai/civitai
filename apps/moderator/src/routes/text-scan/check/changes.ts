@@ -5,7 +5,7 @@ import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 import type { PostAction } from './post-action';
 
 export const AUTOSAVE_MS = 800;
-/** Browsers refuse a keepalive request whose body (with every other one in flight) is over 64KiB. */
+// Browsers cap in-flight keepalive bodies at 64KiB combined; stay under it.
 export const KEEPALIVE_MAX_BYTES = 60 * 1024;
 
 export const actionError = (result: ActionResult) =>
@@ -25,7 +25,6 @@ export type ChangesInit = {
   editable: boolean;
 };
 
-/** Everything the page renders from. The page passes these in as `$state`, a test as a plain object. */
 export type ChangesFields = {
   prompts: DraftPrompts;
   draftId: number | null;
@@ -49,9 +48,8 @@ export const emptyChangesFields = (): ChangesFields => ({
 });
 
 /**
- * The prompt changes the page tests, auto-saved. Saves run one at a time, each sending the token the
- * previous one returned. A conflict stops autosave until the page reloads: saving over another tab's
- * version would silently drop it.
+ * Saves run one at a time, each sending the token the previous one returned. A conflict stops autosave
+ * until the page reloads: saving over another tab's version would silently drop it.
  */
 export class ChangesState {
   #f: ChangesFields;
@@ -118,13 +116,11 @@ export class ChangesState {
     return this.json !== this.#f.savedJson;
   }
 
-  /** Why the changes cannot be saved or tested as they stand, or null. */
   get blankError(): string | null {
     const blank = blankPromptKeys(this.#f.prompts);
     return blank.length ? describeBlankPrompts(blank) : null;
   }
 
-  /** A version equal to the current text is no change, so it leaves the set. */
   set(key: PromptKey, text: string, current: string | undefined) {
     if (!this.editable) return;
     const { [key]: _old, ...rest } = this.#f.prompts;
@@ -139,7 +135,6 @@ export class ChangesState {
     this.#schedule();
   }
 
-  /** Saves now; resolves true once what is on screen is saved. */
   flush(): Promise<boolean> {
     clearTimeout(this.#timer);
     this.#chain = this.#chain.then(() => this.#save());
@@ -163,7 +158,6 @@ export class ChangesState {
     return true;
   }
 
-  /** Stops autosave and waits out a save in flight, so nothing recreates the copy afterwards. */
   async settle() {
     clearTimeout(this.#timer);
     this.#generation++;
@@ -214,7 +208,6 @@ export class ChangesState {
   }
 }
 
-/** The slice of `FormState` that `submitSaved` drives. */
 type SubmittingForm = { submitting: boolean; error: string | null; enhance: SubmitFunction };
 
 /**

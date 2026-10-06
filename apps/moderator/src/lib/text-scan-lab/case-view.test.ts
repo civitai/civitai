@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { casePreview, caseSourceHref } from './case-view';
+import { casePreview, caseSourceHref, caseTitle } from './case-view';
 
 describe('casePreview', () => {
   it('joins field texts without headings, whitespace collapsed', () => {
@@ -25,5 +25,12 @@ describe('caseSourceHref', () => {
     expect(caseSourceHref('https://civitai.com', 'Model', 5)).toBe('https://civitai.com/models/5');
     expect(caseSourceHref('https://civitai.com', 'UserProfile', 7)).toContain('7');
     expect(caseSourceHref('https://civitai.com', 'Model', null)).toBeNull();
+  });
+});
+
+describe('caseTitle', () => {
+  it("names the entity, or its type's free text", () => {
+    expect(caseTitle('Model', 5)).toBe('Model 5');
+    expect(caseTitle('Model', null)).toBe('Model text');
   });
 });

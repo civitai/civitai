@@ -22,14 +22,24 @@
     editable: source.kind === 'mine' || source.editable,
   });
 
-  // Outlives the bar, which a discard removes along with the changes it reports on.
   let barError = $state<string | null>(null);
   const changes = createChanges(untrack(() => changesInit(data.changes)));
-  // A reload (after propose, publish, discard, or a conflict) or another ?draft= replaces what is tested,
-  // and with it any error the bar reported about the old changes.
+  const sourceKey = (source: ChangesSource) =>
+    source.kind === 'draft' ? `draft:${source.draft.id}:${source.editable}` : 'mine';
+  let loadedKey = untrack(() => sourceKey(data.changes));
+  // Most reloads (a run, a saved case, a failed publish) leave the changes alone: resetting would drop
+  // an edit still waiting to save. Reset for another draft, the conflict Reload, or a newer saved row
+  // when nothing here is unsaved.
   $effect(() => {
     const next = changesInit(data.changes);
+    const key = sourceKey(data.changes);
     untrack(() => {
+      const replaced =
+        !changes.dirty &&
+        !changes.saving &&
+        (next.draftId !== changes.draftId || (next.token ?? '') > (changes.token ?? ''));
+      if (key === loadedKey && !changes.conflict && !replaced) return;
+      loadedKey = key;
       changes.reset(next);
       barError = null;
     });
@@ -61,9 +71,9 @@
   });
 
   let result = $state<CheckResult | null>(null);
-  // What was tested in the shown result, to say when the changes moved on since.
   let checkedWith = $state<string | null>(null);
   let editing = $state<PromptKey | null>(null);
+  let casesSaved = $state(0);
 
   const current = $derived(data.active.ok ? data.active.content : {});
   const viewing = $derived(data.changes.kind === 'draft');
@@ -122,6 +132,7 @@
     openCase={data.openCase}
     onstart={startCheck}
     onchecked={(r) => (result = r)}
+    casesSaved={casesSaved}
   />
 {/if}
 
@@ -150,6 +161,7 @@
           testSets={saveSets}
           {changedTitle}
           onedit={(key) => (editing = key)}
+          oncasesaved={() => casesSaved++}
         />
       {/each}
     {/key}

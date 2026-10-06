@@ -17,11 +17,9 @@
     currentError,
     onclose,
   }: {
-    /** The prompt being edited; null closes the drawer. */
     promptKey: PromptKey | null;
     changes: ChangesState;
     current: Partial<Record<PromptKey, string>>;
-    /** Why the current prompts could not be loaded, if they could not. */
     currentError: string | null;
     onclose: () => void;
   } = $props();

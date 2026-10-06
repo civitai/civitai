@@ -9,10 +9,8 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
   scam: 'Scam / phishing',
 };
 
-/** A label's friendly name; a key the lab does not know (an old run's totals) as it is. */
 export const labelName = (label: string): string => LABEL_NAMES[label as LabLabel] ?? label;
 
-/** One "Rating 3/4" per label a run scored. */
 export const scoreChips = (t: Record<string, LabelTotals> | null): string[] =>
   Object.entries(t ?? {}).map(([label, v]) => `${labelName(label)} ${v.correct}/${v.scored}`);
 
@@ -21,7 +19,6 @@ export const promptKeyName = (key: PromptKey): string =>
     ? 'General instructions'
     : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
 
-/** Keys of a set of prompt changes left empty, which would publish an empty prompt. */
 export const blankPromptKeys = (prompts: Partial<Record<PromptKey, unknown>>): PromptKey[] =>
   (Object.keys(prompts) as PromptKey[]).filter((k) => {
     const v = prompts[k];
@@ -68,7 +65,6 @@ const FLAG_PHRASES: Record<Exclude<LabLabel, 'nsfw'>, { yes: string; no: string 
 export type VerdictTone = 'clear' | 'neutral' | 'flagged' | 'unknown';
 export type Verdict = { headline: string; tone: VerdictTone; reason?: string };
 
-/** A scan result, or a test-set run row mapped to one. `LabScanResult` fits. */
 export type VerdictSource =
   | { ok: true; output: Record<string, unknown> | null; parseError?: string }
   | { ok: false; error: string };
@@ -139,7 +135,15 @@ export function describeExpected(expected: Expected): Partial<Record<LabLabel, s
   return out;
 }
 
-/** One chip per scored label: "Rating PG-13 or lower", "Not a scam". */
+export const NOTHING_SCORED = 'nothing scored';
+
+/** The expectation on one line, over `labels` (default every label) in their order. */
+export function expectedSummary(expected: Expected, labels?: readonly LabLabel[]): string {
+  const described = describeExpected(expected);
+  const texts = labels ? labels.map((l) => described[l]) : Object.values(described);
+  return texts.filter(Boolean).join(' · ') || NOTHING_SCORED;
+}
+
 export const expectedChips = (expected: Expected): string[] =>
   Object.entries(describeExpected(expected)).map(([label, text]) =>
     label === 'nsfw' && !text.startsWith('Any') ? `Rating ${text}` : text

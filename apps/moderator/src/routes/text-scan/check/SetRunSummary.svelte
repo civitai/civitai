@@ -1,8 +1,8 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { LINK_CLASS, plural } from '$lib/format';
-  import { caseSourceHref } from '$lib/text-scan-lab/case-view';
-  import { ENTITY_TYPE_NAMES, LABEL_NAMES } from '$lib/text-scan-lab/labels';
+  import { caseSourceHref, caseTitle } from '$lib/text-scan-lab/case-view';
+  import { LABEL_NAMES } from '$lib/text-scan-lab/labels';
   import { asExpectedText, type CaseChange, type SideScore } from '$lib/text-scan-lab/run-summary';
   import type { SetRunSide, SetRunView } from './+page.server';
 
@@ -17,11 +17,8 @@
     onrerun,
   }: {
     view: SetRunView;
-    /** Why the run with changes did not start, when Current did. */
     changedError: string | null;
-    /** Heading of the second column ("With my changes"). */
     changedTitle: string;
-    /** Who fixed or broke cases ("Your changes"). */
     changesName: string;
     civitaiUrl: string;
     busy: boolean;
@@ -41,8 +38,7 @@
   const score = (s: SideScore | null) => (s ? asExpectedText(s) : 'not scored');
   const caseName = (caseId: number) => {
     const c = view.cases[caseId];
-    if (!c) return `Case ${caseId}`;
-    return `${ENTITY_TYPE_NAMES[c.entityType]} ${c.entityId ?? 'text'}`;
+    return c ? caseTitle(c.entityType, c.entityId) : 'A removed case';
   };
 </script>
 

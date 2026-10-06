@@ -17,7 +17,6 @@
     actions,
   }: {
     label: LabLabel;
-    /** One column, or two (current and changed) side by side. */
     columns: { title: string; result: LabScanResult }[];
     expected?: Expected | null;
     actions?: Snippet;

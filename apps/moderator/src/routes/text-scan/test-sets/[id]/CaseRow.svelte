@@ -11,7 +11,7 @@
   import type { TestCase } from '$lib/server/text-scan-lab/test-sets.service';
   import { caseSourceHref } from '$lib/text-scan-lab/case-view';
   import { composeUserMessage } from '$lib/text-scan-lab/compose';
-  import { ENTITY_TYPE_NAMES, expectedChips } from '$lib/text-scan-lab/labels';
+  import { ENTITY_TYPE_NAMES, NOTHING_SCORED, expectedChips } from '$lib/text-scan-lab/labels';
   import { LAB_LABELS, type Expected } from '$lib/text-scan-lab/types';
 
   let {
@@ -81,7 +81,7 @@
       {#each chips as chip (chip)}
         <Badge variant="secondary">{chip}</Badge>
       {:else}
-        <span class="text-xs text-dark-2">nothing scored</span>
+        <span class="text-xs text-dark-2">{NOTHING_SCORED}</span>
       {/each}
     </div>
   </Table.Cell>

@@ -2,7 +2,7 @@
   import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { plural } from '$lib/format';
-  import { aboutMinutes } from '$lib/text-scan-lab/estimate';
+  import { aboutTime } from '$lib/text-scan-lab/estimate';
 
   type Request = {
     count: number;
@@ -21,10 +21,8 @@
     onclose,
   }: {
     request: Request | null;
-    /** The form Run submits, posting the stamp as `confirmed`; without one, `onconfirm` runs. */
     formId?: string | null;
     onconfirm?: (stamp: string) => void;
-    /** What the run does beyond scanning the cases, such as also running them with changes. */
     note?: string | null;
     submitting: boolean;
     onclose: () => void;
@@ -53,7 +51,7 @@
               The set or the changes moved on since you were asked — check the new numbers.
             </span>
           {/if}
-          {aboutMinutes(shown.seconds)}
+          {aboutTime(shown.seconds)}
           {#if note}{note}{/if}
           {#if shown.skipped}
             {plural(shown.skipped, 'case')} without text will be skipped.

@@ -24,12 +24,10 @@
   }: {
     changes: ChangesState;
     source: ChangesSource;
-    /** My own working copy, which "Copy into my changes" replaces. */
     workingCopy: PromptDraft | null;
     canPublish: boolean;
     runTotals: SetRunTotals[];
     onedit: (key: PromptKey) => void;
-    /** Reports a refused discard or copy (null clears it). */
     onerror: (error: string | null) => void;
   } = $props();
 
@@ -43,7 +41,9 @@
     busy = true;
     await changes.settle();
     const error = actionError(await postAction('discardChanges', {}));
-    // After the reload, which clears the page's error along with the old changes.
+    // Unsaved edits are gone too, which the page's reload would otherwise keep.
+    if (!error)
+      changes.reset({ prompts: {}, draftId: null, token: null, target: null, editable: true });
     await invalidateAll();
     onerror(error);
     busy = false;
