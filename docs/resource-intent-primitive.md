@@ -35,7 +35,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Samples the gold and grades stage-1 agreement, then runs the retrieval comparison below. |
-| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the pre-registration, the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar, paired bootstrap) and its report. |
+| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the pre-registration, the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar), the MET / NOT MET / VOID verdict and its report. |
 
 ## Hard rules
 
@@ -458,52 +458,30 @@ PURPOSE is `findResourceIntentCandidates` itself. POPULARITY is the endpoint's o
 popularity seed page, alone: its filter, pool width, baseModels and cap come from
 `resolveResourceIntentSeedPlan`, its page from `buildResourceIntentSeedQueries`, its
 fetch from `searchResourceIntentSeedPage`, and it is never handed to the label
-re-rank. Neither arm calls stage 3. The decision is fixed in advance, in
-`M3_RETRIEVAL_PREREGISTRATION`; the block below is the text
-`renderRetrievalPreregistration()` builds from it, and a test fails if this copy drifts:
+re-rank. Neither arm calls stage 3.
 
-```text
-M3 RETRIEVAL PRE-REGISTRATION v1 (registered 2026-10-06, before any run)
+**The pre-registration lives in code, not here:** `M3_RETRIEVAL_PREREGISTRATION` in
+`scripts/eval-resource-intent-retrieval.ts`, rendered as text by
+`renderRetrievalPreregistration()`. Read it by running the script without `--execute`
+(`pnpm run tsscript scripts/eval-resource-intent-goldset.ts`), which prints the committed
+queries and that text and spends nothing; every report opens with the same text. In
+brief: the primary metric is hit@10; the decision rule is b > c AND exact two-sided
+McNemar p < 0.05 on the hit@10 discordant pairs; and every run reports exactly one
+verdict on the closing clause — **MET** (the rule holds), **NOT MET** (it does not: the
+clause is judged not met, the question is closed as not delivered, and any follow-up
+such as better gold or new labels is new work under a new registration, not a re-run of
+this one) or **VOID** (a registered value was overridden, no prompt scored, or both arms
+returned the same top 10 on every scored prompt). The labeled/unlabeled breakdown is
+reported but never decisive.
 
-Question: does the shipped purpose-first matcher (PURPOSE arm) retrieve a resource
-people actually attached more often than the popularity seed alone (POPULARITY arm)?
-
-Sample: 1000 images drawn at random from the last 30 days with a
-non-empty public prompt (hideMeta false) and >=1 attached resource, that are publicly
-searchable: scanned, not in a review queue, not ToS-violating, blocked, or flagged
-minor or POI, in a published (not scheduled) post that is neither Private nor
-Unsearchable.
-Stage 1: run per prompt through the endpoint's own request builder and answer parser,
-with baseModel = the base model of the image's attached checkpoint when exactly one
-is attached, otherwise none. Stage 3 is not run by either arm.
-Gold: the attached models (ImageResourceNew -> ModelVersion -> Model) whose type is in
-ROLE_MODEL_TYPES[stage-1 role]. Attached models of other types are excluded from the
-gold; their share is reported, with checkpoints (which no role admits) also reported
-apart from it.
-Arms: identical criteria, browsingLevel (all levels), coverage (the anonymous audience,
-resolved as the endpoint does) and cap (50). PURPOSE = findResourceIntentCandidates
-(purpose-first seed + label re-rank). POPULARITY = the same gate filter, sorted by
-metrics.thumbsUpCount:desc alone, expanded and capped the same way, no label ordering.
-
-Primary metric: hit@10 = the fraction of scored prompts where at least one gold
-model id is among the arm's first 10 distinct shortlist model ids.
-Test: exact two-sided McNemar on the discordant pairs (b = PURPOSE hit and POPULARITY
-miss, c = the reverse), and a 10000-resample paired bootstrap 95% CI
-(seed 20261006) on hit-rate(PURPOSE) - hit-rate(POPULARITY).
-Decision rule: PURPOSE beats POPULARITY iff that difference > 0 AND McNemar p < 0.05.
-Secondary (reported, never decisive): hit@50 and MRR@50, and
-hit@10 stratified by whether any gold model carries a non-stale ResourceInsight
-label at or above the promote-confidence floor the index projection applies.
-
-Excluded and counted, never scored: a stage-1 failure, role = none, no in-role
-attachment, either arm erroring, and a PURPOSE label read that fell back.
-Positive control: abort before any vendor call unless >= 100 index
-documents carry a non-none insight.role.
-
-Known confound: people attach popular models, so attached-resource gold is biased
-TOWARD the POPULARITY arm. A PURPOSE win is therefore conservative; a PURPOSE loss is
-not by itself evidence against the labels.
-```
+**Run the pilot first.** Before the registered run, run
+`--execute --retrieval-sample 100` — no new flags; the override stamps the report as not
+the registered run, so its verdict is VOID by construction. Its report prints the two
+rates the sample size was planned on: the scored fraction (assumed >= 66.7% of drawn
+prompts) and the hit@10 discordant rate, (b + c) / scored (assumed >= 15%), and flags
+either one that falls below. If the discordant rate is under 15%, re-plan the sample size
+BEFORE the registered run: change the registered values only in a new commit dated
+before that run, and say why in it.
 
 The positive control reads the field the PURPOSE page filters on. Without it, an index
 whose projection had failed wholesale would turn PURPOSE into POPULARITY and the study
@@ -537,4 +515,4 @@ Unit suites (fixture-based, no external calls):
 - `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
-- `scripts/__tests__/eval-resource-intent-retrieval.test.ts` — the M3 retrieval metric math against literal values, the pre-registration and its copy in this doc, and both arms over an in-memory index.
+- `scripts/__tests__/eval-resource-intent-retrieval.test.ts` — the M3 retrieval metric math against literal values, the verdict mapping, the pre-registration constants, both arms over an in-memory index, and the CLI gate.

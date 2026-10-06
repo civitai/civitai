@@ -15,8 +15,8 @@ import type {
 
 /**
  * The M3 retrieval comparison: the metric math (every expectation a literal computed
- * independently of this code — McNemar by exact rational arithmetic, the PRNG and the
- * bootstrap interval by a separate Python implementation of the same algorithm), the
+ * independently of this code — McNemar by exact rational arithmetic), the verdict
+ * mapping, the
  * two-arm runner over a small in-memory index (the fake-index pattern of
  * `src/server/services/__tests__/resource-intent-matcher.seed.test.ts`), and the CLI
  * gate in `main()`.
@@ -50,7 +50,6 @@ const {
   inRoleGold,
   loadLabeledModelIds,
   M3_RETRIEVAL_PREREGISTRATION,
-  pairedBootstrapCI,
   popularityArm,
   PREREGISTERED_RUN_PARAMS,
   preregistrationOverrides,
@@ -59,11 +58,11 @@ const {
   reciprocalRankAtK,
   renderRetrievalPreregistration,
   renderRetrievalReport,
+  retrievalVerdict,
   requestBaseModel,
   runRetrievalArms,
 } = retrievalModule;
 const goldsetModule = await import('../eval-resource-intent-goldset');
-const { mulberry32 } = await import('../decision-eval/controls');
 type Outcome = Awaited<ReturnType<typeof runRetrievalArms>>[number];
 type GoldRow = Parameters<typeof runRetrievalArms>[0][number];
 const { buildResourceIntentFilter } = await import(
@@ -124,65 +123,19 @@ describe('exactMcNemarP — exact two-sided binomial on the discordant pairs', (
   });
 });
 
-describe('the bootstrap PRNG and pairedBootstrapCI', () => {
-  it('uses mulberry32 (reference values from an independent implementation)', () => {
-    const random = mulberry32(1);
-    expect(random()).toBe(0.6270739405881613);
-    expect(random()).toBe(0.002735721180215478);
-    expect(random()).toBe(0.5274470399599522);
-    expect(mulberry32(20261006)()).toBe(0.8267591667827219);
-  });
-
-  // Fine-grained values, so two seeds can land on different percentiles (a 0/1 fixture
-  // this small has so few distinct resample means that two seeds often agree).
-  const a = [0.91, 0.13, 0.77, 0.42, 0.68, 0.05, 0.99, 0.31, 0.56, 0.84];
-  const b = [0.12, 0.4, 0.33, 0.18, 0.61, 0.02, 0.47, 0.29, 0.07, 0.36];
-
-  it('matches an independent implementation exactly (seed 7, 2000 resamples)', () => {
-    const ci = pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 })!;
-    expect(ci.lower).toBeCloseTo(0.083, 12);
-    expect(ci.upper).toBeCloseTo(0.45500000000000007, 12);
-  });
-
-  it('is deterministic under a fixed seed, and moves with the seed', () => {
-    const first = pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 });
-    expect(pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 })).toEqual(first);
-    expect(pairedBootstrapCI(a, b, { resamples: 2000, seed: 8 })).not.toEqual(first);
-  });
-
-  it('brackets the point estimate (0.281) and stays within [-1, 1]', () => {
-    const ci = pairedBootstrapCI(a, b, { resamples: 2000, seed: 7 })!;
-    expect(ci.lower).toBeLessThan(0.281);
-    expect(ci.upper).toBeGreaterThan(0.281);
-    expect(ci.lower).toBeGreaterThanOrEqual(-1);
-    expect(ci.upper).toBeLessThanOrEqual(1);
-  });
-
-  it('collapses to the difference when every pair is identical', () => {
-    expect(pairedBootstrapCI([1, 1, 1], [0, 0, 0], { resamples: 100, seed: 1 })).toEqual({
-      lower: 1,
-      upper: 1,
-    });
-    expect(pairedBootstrapCI([1, 0, 1], [1, 0, 1], { resamples: 100, seed: 1 })).toEqual({
-      lower: 0,
-      upper: 0,
-    });
-  });
-
-  it('has no interval on an empty sample, and refuses unpaired arms', () => {
-    expect(pairedBootstrapCI([], [], { resamples: 10, seed: 1 })).toBeNull();
-    expect(() => pairedBootstrapCI([1], [1, 0], { resamples: 10, seed: 1 })).toThrow(/length/);
-  });
-});
-
-describe('purposeBeatsPopularity — the pre-registered decision rule', () => {
-  it('needs BOTH a positive difference AND p strictly under alpha', () => {
+describe('purposeBeatsPopularity — the pre-registered decision rule: b > c AND exact McNemar p < 0.05', () => {
+  it.each([
+    [12, 0, true], // p = 2/4096
+    [9, 1, true], // p = 0.0215
+    [8, 2, false], // b > c, p = 0.109
+    [3, 0, false], // b > c, p = 0.25
+    [5, 5, false], // tie
+    [1, 9, false], // p < 0.05 but c > b
+    [0, 12, false], // a significant loss
+    [0, 0, false],
+  ])('b=%i c=%i → %s', (b, c, expected) => {
     expect(M3_RETRIEVAL_PREREGISTRATION.alpha).toBe(0.05);
-    expect(purposeBeatsPopularity(0.05, 0.01)).toBe(true);
-    expect(purposeBeatsPopularity(0.05, 0.05)).toBe(false);
-    expect(purposeBeatsPopularity(0.05, 0.2)).toBe(false);
-    expect(purposeBeatsPopularity(-0.05, 0.01)).toBe(false);
-    expect(purposeBeatsPopularity(0, 0.01)).toBe(false);
+    expect(purposeBeatsPopularity(b, c)).toBe(expected);
   });
 });
 
@@ -192,33 +145,60 @@ describe('purposeBeatsPopularity — the pre-registered decision rule', () => {
 
 describe('the pre-registration', () => {
   it('pins the registered values', () => {
-    expect(PREREGISTERED_RUN_PARAMS).toEqual({
-      primaryK: 10,
-      sampleSize: 1000,
-      sampleDays: 30,
-      bootstrapSeed: 20261006,
-    });
+    expect(PREREGISTERED_RUN_PARAMS).toEqual({ sampleSize: 1000, sampleDays: 30 });
     expect(M3_RETRIEVAL_PREREGISTRATION).toMatchObject({
+      primaryK: 10,
       secondaryK: 50,
+      alpha: 0.05,
       cap: 50,
-      bootstrapResamples: 10000,
       labeledIndexFloor: 100,
+      powerAssumption: { discordantRate: 0.15, scoredFraction: 0.667 },
+      pilotSampleSize: 100,
     });
+    expect(M3_RETRIEVAL_PREREGISTRATION).not.toHaveProperty('bootstrapSeed');
   });
 
   it('reports every override, and none for the registered run', () => {
     expect(preregistrationOverrides(PREREGISTERED_RUN_PARAMS)).toEqual([]);
     expect(
-      preregistrationOverrides({ ...PREREGISTERED_RUN_PARAMS, primaryK: 5, bootstrapSeed: 1 })
-    ).toEqual(['primaryK: 10 -> 5', 'bootstrapSeed: 20261006 -> 1']);
+      preregistrationOverrides({ ...PREREGISTERED_RUN_PARAMS, sampleSize: 100, sampleDays: 7 })
+    ).toEqual(['sampleSize: 1000 -> 100', 'sampleDays: 30 -> 7']);
   });
 
-  it('🔴 is copied VERBATIM into docs/resource-intent-primitive.md', () => {
-    const doc = readFileSync(
-      path.resolve(__dirname, '../../docs/resource-intent-primitive.md'),
-      'utf8'
-    );
-    expect(doc).toContain(renderRetrievalPreregistration());
+  it('🔴 states the decision rule and all three verdicts, NOT MET included, in full', () => {
+    const text = renderRetrievalPreregistration();
+    for (const block of [
+      [
+        'Decision rule: PURPOSE beats POPULARITY iff b > c AND the exact two-sided McNemar p',
+        'on (b, c) is < 0.05.',
+      ],
+      [
+        'Verdict on the closing clause — every run reports exactly one:',
+        '  MET     — the decision rule holds.',
+        '  NOT MET — it does not. The closing clause is judged not met and the question is',
+        '            closed as not delivered. Any follow-up (better gold, new labels) is new',
+        '            work under a new registration, not a re-run of this one.',
+        '  VOID    — no verdict on the clause: any registered value was overridden (including',
+        '            the 100-prompt pilot), no prompt scored, or both arms returned the same',
+        '            first 10 model ids on every scored prompt. (A failed positive control',
+        '            aborts before any run, so it produces no report at all.)',
+      ],
+      [
+        'Known confound: people attach popular models, so attached-resource gold is biased',
+        'TOWARD the POPULARITY arm. A MET verdict is therefore conservative. A NOT MET verdict',
+        'stands as the verdict on the closing clause; what the confound limits is only the',
+        'reading of WHY it was not met — the gold measures retrieval of what people attached,',
+        'not the labels themselves — which the labeled/unlabeled breakdown is reported to',
+        'inform.',
+      ],
+      [
+        'Power assumption (measured by the pilot first): >= 66.7% of drawn prompts score, and the',
+        'arms are discordant at hit@10 on >= 15.0% of scored prompts.',
+      ],
+    ]) {
+      expect(text).toContain(block.join('\n'));
+    }
+    expect(text).not.toMatch(/bootstrap|not by itself evidence/);
   });
 });
 
@@ -227,22 +207,18 @@ describe('parseRetrievalParams — CLI overrides', () => {
     expect(goldsetModule.parseRetrievalParams({})).toEqual(PREREGISTERED_RUN_PARAMS);
   });
 
-  it('accepts every overridable flag', () => {
-    expect(
-      goldsetModule.parseRetrievalParams({
-        'retrieval-sample': '50',
-        days: '7',
-        k: '5',
-        'bootstrap-seed': '42',
-      })
-    ).toEqual({ sampleSize: 50, sampleDays: 7, primaryK: 5, bootstrapSeed: 42 });
+  it('accepts the two overridable flags', () => {
+    expect(goldsetModule.parseRetrievalParams({ 'retrieval-sample': '100', days: '7' })).toEqual({
+      sampleSize: 100,
+      sampleDays: 7,
+    });
   });
 
   it.each(['ten', '10abc', '1e3', '5.5', '0', '-5', ''])(
     'refuses %j instead of silently using another value',
     (raw) => {
-      expect(() => goldsetModule.parseRetrievalParams({ k: raw })).toThrow(
-        '--k must be a positive integer'
+      expect(() => goldsetModule.parseRetrievalParams({ 'retrieval-sample': raw })).toThrow(
+        '--retrieval-sample must be a positive integer'
       );
     }
   );
@@ -417,8 +393,9 @@ describe('evaluateRetrieval', () => {
     expect(e.primary).toMatchObject({ n: 4, purposeHits: 3, popularityHits: 2, b: 2, c: 1 });
     expect(e.primary.difference).toBe(0.25);
     expect(e.primary.mcnemarP).toBe(1);
-    expect(e.primary.purposeBeatsPopularity).toBe(false); // positive, but p = 1
+    expect(e.primary.purposeBeatsPopularity).toBe(false); // b > c, but p = 1
     expect(e.identicalAtPrimaryK).toBe(1);
+    expect(e.verdict.verdict).toBe('NOT MET');
   });
 
   it('scores the secondary K and MRR on the same rows', () => {
@@ -449,7 +426,7 @@ describe('evaluateRetrieval', () => {
     expect(e.strata.unlabeled).toMatchObject({ n: 2, b: 1, c: 0 });
   });
 
-  it('counts arms as identical on the first K ONLY, at whatever K is in force', () => {
+  it('counts arms as identical on the first K ONLY', () => {
     const sameHead = scoredOutcome(1, {
       purposeModelIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
       popularityModelIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 99],
@@ -459,52 +436,6 @@ describe('evaluateRetrieval', () => {
       popularityModelIds: [1, 2, 3, 4, 5, 6, 7, 8, 9, 77],
     });
     expect(evaluateRetrieval([sameHead, differsAtTen]).identicalAtPrimaryK).toBe(1);
-    expect(
-      evaluateRetrieval([sameHead, differsAtTen], { ...PREREGISTERED_RUN_PARAMS, primaryK: 2 })
-        .identicalAtPrimaryK
-    ).toBe(2);
-  });
-
-  it('honours an overridden K — and stamps the report as not the registered run', () => {
-    const params = { ...PREREGISTERED_RUN_PARAMS, primaryK: 2 };
-    const e = evaluateRetrieval(outcomes, params);
-    // At K=2: row 1 P hit, row 2 miss (rank 3), row 3 Q hit, row 4 neither (rank 5).
-    expect(e.primary).toMatchObject({ purposeHits: 1, popularityHits: 1, b: 1, c: 1 });
-    const report = renderRetrievalReport(e, { labeledIndexDocuments: 7000 });
-    expect(report).toContain('NOT THE PRE-REGISTERED RUN');
-    expect(report).toContain('primaryK: 10 -> 2');
-    expect(report).toContain('## Primary: hit@2');
-    expect(
-      renderRetrievalReport(evaluateRetrieval(outcomes), { labeledIndexDocuments: 7000 })
-    ).not.toContain('NOT THE PRE-REGISTERED RUN');
-  });
-
-  // 8 PURPOSE-only hits, 1 POPULARITY-only, 3 both.
-  const mixed = [
-    ...Array.from({ length: 8 }, (_, i) =>
-      scoredOutcome(i + 1, {
-        purposeModelIds: rankedWith(100, 1),
-        popularityModelIds: rankedWith(null, 1),
-      })
-    ),
-    scoredOutcome(9, {
-      purposeModelIds: rankedWith(null, 1),
-      popularityModelIds: rankedWith(100, 1),
-    }),
-    ...Array.from({ length: 3 }, (_, i) =>
-      scoredOutcome(10 + i, {
-        purposeModelIds: rankedWith(100, 1),
-        popularityModelIds: rankedWith(100, 1),
-      })
-    ),
-  ];
-
-  it('the reported CI is the PURPOSE-minus-POPULARITY interval (independent reference)', () => {
-    const e = evaluateRetrieval(mixed);
-    expect(e.primary.difference).toBeCloseTo(7 / 12, 12);
-    // Python reference over the same 0/1 vectors, 10000 resamples, seed 20261006.
-    expect(e.primary.ci!.lower).toBeCloseTo(0.16666666666666666, 12);
-    expect(e.primary.ci!.upper).toBeCloseTo(0.9166666666666666, 12);
   });
 
   it('declares a win only when the rule holds', () => {
@@ -518,9 +449,7 @@ describe('evaluateRetrieval', () => {
     expect(e.primary).toMatchObject({ b: 12, c: 0 });
     expect(e.primary.mcnemarP).toBeCloseTo(2 / 4096, 12);
     expect(e.primary.purposeBeatsPopularity).toBe(true);
-    expect(renderRetrievalReport(e, { labeledIndexDocuments: 7000 })).toContain(
-      '**Decision (pre-registered rule): PURPOSE BEATS POPULARITY.**'
-    );
+    expect(e.verdict.verdict).toBe('MET');
   });
 
   it('a SIGNIFICANT PURPOSE loss is not a win', () => {
@@ -535,15 +464,18 @@ describe('evaluateRetrieval', () => {
     expect(e.primary.mcnemarP).toBeLessThan(0.05);
     expect(e.primary.difference).toBe(-1);
     expect(e.primary.purposeBeatsPopularity).toBe(false);
+    expect(e.verdict.verdict).toBe('NOT MET');
   });
 
-  it('an empty scored set has no difference, no interval and no win', () => {
+  it('an empty scored set has no difference and no win, and is VOID', () => {
     const e = evaluateRetrieval([outcomes[4]]);
-    expect(e.primary).toMatchObject({ n: 0, difference: null, ci: null, mcnemarP: 1 });
+    expect(e.primary).toMatchObject({ n: 0, difference: null, mcnemarP: 1 });
     expect(e.primary.purposeBeatsPopularity).toBe(false);
+    expect(e.verdict).toEqual({ verdict: 'VOID', reason: 'no prompt scored' });
     const report = renderRetrievalReport(e, { labeledIndexDocuments: 7000 });
-    expect(report).toContain('Difference (PURPOSE - POPULARITY): —; 95% bootstrap CI: —.');
-    expect(report).toContain('NOT DEMONSTRATED');
+    expect(report).toContain(
+      'Difference (PURPOSE - POPULARITY): —. Decision rule (b > c AND p < 0.05): does not hold.'
+    );
   });
 
   it('renders the sample, primary and strata lines exactly', () => {
@@ -563,12 +495,98 @@ describe('evaluateRetrieval', () => {
       '| hit@50 | 4 | 75.0% | 75.0% | 1 | 1 | 1.00 |',
       '| gold labeled | 2 | 50.0% | 50.0% | 1 | 1 | 1.00 |',
       '| gold unlabeled | 2 | 100.0% | 50.0% | 1 | 0 | 1.00 |',
-      '**Decision (pre-registered rule): NOT DEMONSTRATED — PURPOSE does not beat POPULARITY under the rule.**',
+      'Difference (PURPOSE - POPULARITY): 25.0%. Decision rule (b > c AND p < 0.05): does not hold.',
+      '## Verdict: NOT MET',
+      'NOT MET — the decision rule does not hold (b = 2, c = 1); the question is closed as not delivered.',
       'Positive control: 7000 index documents carry a non-none `insight.role` (floor 100).',
+      // The pilot's two rates: 4 of 9 drawn scored; (2 + 1) / 4 discordant.
+      'Power assumption — scored fraction: 44.4% of drawn (assumed >= 66.7%); discordant rate (b + c) / scored at hit@10: 75.0% (assumed >= 15.0%). 🔴 BELOW THE ASSUMPTION — re-plan the sample size in a new commit before the registered run.',
     ]) {
       expect(report).toContain(line);
     }
-    expect(report).toMatch(/Difference \(PURPOSE - POPULARITY\): 25\.0%; 95% bootstrap CI: \[/);
+    expect(report).not.toMatch(/bootstrap|NOT DEMONSTRATED/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The verdict — every outcome maps to exactly one
+// ---------------------------------------------------------------------------
+
+describe('retrievalVerdict — MET / NOT MET / VOID', () => {
+  const winning = Array.from({ length: 12 }, (_, i) =>
+    scoredOutcome(i + 1, {
+      purposeModelIds: rankedWith(100, 1),
+      popularityModelIds: rankedWith(null, 1),
+    })
+  );
+  // The same 12 rows with PURPOSE's head identical to POPULARITY's (both miss).
+  const identical = Array.from({ length: 12 }, (_, i) =>
+    scoredOutcome(i + 1, {
+      purposeModelIds: rankedWith(null, 1),
+      popularityModelIds: rankedWith(null, 1),
+    })
+  );
+  const verdictOf = (rows: Outcome[], params = PREREGISTERED_RUN_PARAMS) =>
+    evaluateRetrieval(rows, params).verdict.verdict;
+
+  it('MET iff the decision rule holds on a registered, scoring, non-identical run', () => {
+    expect(verdictOf(winning)).toBe('MET');
+  });
+
+  it('NOT MET when the rule fails: a loss, a tie, a non-significant win', () => {
+    const flip = (rows: Outcome[]) =>
+      rows.map((r) =>
+        r.status === 'scored'
+          ? { ...r, purposeModelIds: r.popularityModelIds, popularityModelIds: r.purposeModelIds }
+          : r
+      );
+    expect(verdictOf(flip(winning))).toBe('NOT MET');
+    expect(verdictOf([...winning.slice(0, 3), ...flip(winning).slice(3, 6)])).toBe('NOT MET');
+    expect(verdictOf(winning.slice(0, 3))).toBe('NOT MET'); // b = 3, c = 0, p = 0.25
+  });
+
+  it('VOID — and never MET — on an overridden run, even one the rule would pass', () => {
+    const e = evaluateRetrieval(winning, { ...PREREGISTERED_RUN_PARAMS, sampleSize: 100 });
+    expect(e.primary.purposeBeatsPopularity).toBe(true);
+    expect(e.verdict).toEqual({
+      verdict: 'VOID',
+      reason: 'not the registered run (overridden: sampleSize: 1000 -> 100)',
+    });
+  });
+
+  it('VOID when no prompt scored, and when the arms are identical at K on every scored prompt', () => {
+    expect(verdictOf([])).toBe('VOID');
+    expect(evaluateRetrieval(identical).verdict).toEqual({
+      verdict: 'VOID',
+      reason: 'both arms returned the same first 10 model ids on every scored prompt',
+    });
+    // One prompt that differs is enough to leave VOID.
+    expect(verdictOf([...identical, winning[0]])).toBe('NOT MET');
+  });
+
+  it('the report prints exactly one verdict', () => {
+    for (const [rows, params, expected] of [
+      [winning, PREREGISTERED_RUN_PARAMS, 'MET'],
+      [winning.slice(0, 3), PREREGISTERED_RUN_PARAMS, 'NOT MET'],
+      [winning, { ...PREREGISTERED_RUN_PARAMS, sampleDays: 7 }, 'VOID'],
+    ] as const) {
+      const report = renderRetrievalReport(evaluateRetrieval(rows, params), {
+        labeledIndexDocuments: 7000,
+      });
+      const verdicts = report.split('\n').filter((line) => line.startsWith('## Verdict: '));
+      expect(verdicts).toEqual([`## Verdict: ${expected}`]);
+    }
+  });
+
+  it('is a pure mapping over the evaluation fields', () => {
+    expect(
+      retrievalVerdict({ overrides: [], primary: { n: 12, b: 12, c: 0 }, identicalAtPrimaryK: 0 })
+        .verdict
+    ).toBe('MET');
+    expect(
+      retrievalVerdict({ overrides: [], primary: { n: 12, b: 12, c: 0 }, identicalAtPrimaryK: 12 })
+        .verdict
+    ).toBe('VOID');
   });
 });
 
@@ -746,9 +764,8 @@ describe('runRetrievalArms — the two arms', () => {
       purposeModelIds: [4, 1, 3, 2],
       popularityModelIds: [1, 2, 3, 4],
     });
-    // With K = 1 the arms disagree on this prompt, in PURPOSE's favour.
-    const e = evaluateRetrieval([outcome], { ...PREREGISTERED_RUN_PARAMS, primaryK: 1 });
-    expect(e.primary).toMatchObject({ b: 1, c: 0 });
+    // Both arms put model 4 inside the first 10, so hit@10 does not separate them here.
+    expect(evaluateRetrieval([outcome]).primary).toMatchObject({ b: 0, c: 0 });
   });
 
   it('🔴 the POPULARITY arm never reads labels and never asks for a quality sort or a role filter', async () => {
@@ -1140,31 +1157,23 @@ describe('main — the --execute gate', () => {
   });
 
   it('warns loudly when a flag overrides the pre-registration', async () => {
-    const { warn } = await runMain([
-      '--k',
-      '5',
-      '--retrieval-sample',
-      '50',
-      '--days',
-      '7',
-      '--bootstrap-seed',
-      '9',
-    ]);
+    const { warn } = await runMain(['--retrieval-sample', '100', '--days', '7']);
     const warned = warn.mock.calls.map((call) => String(call[0])).join('\n');
     expect(warned).toContain('OVERRIDE the pre-registration');
-    for (const fragment of [
-      'primaryK: 10 -> 5',
-      'sampleSize: 1000 -> 50',
-      'sampleDays: 30 -> 7',
-      'bootstrapSeed: 20261006 -> 9',
-    ]) {
+    expect(warned).toContain('its verdict is VOID');
+    for (const fragment of ['sampleSize: 1000 -> 100', 'sampleDays: 30 -> 7']) {
       expect(warned).toContain(fragment);
     }
   });
 
+  it.each(['--k', '--bootstrap-seed'])('no longer accepts %s', async (flag) => {
+    const { result } = await runMain([flag, '5']);
+    expect(String(result)).toContain(`Unknown option '${flag}'`);
+  });
+
   it('refuses a malformed override instead of silently using the default', async () => {
-    const { result } = await runMain(['--k', 'ten']);
-    expect(String(result)).toContain('--k must be a positive integer');
+    const { result } = await runMain(['--retrieval-sample', 'ten']);
+    expect(String(result)).toContain('--retrieval-sample must be a positive integer');
   });
 
   it.each([
@@ -1260,7 +1269,14 @@ describe('main — the --execute gate', () => {
       usage: { promptTokens: 1, completionTokens: 1 },
     }));
 
-    const { result, log } = await runMain(['--execute', '--limit', '2', '--k', '1']);
+    // Twelve unlabeled models more popular than model 4, so POPULARITY's first 10 miss it
+    // while PURPOSE seeds it first.
+    serveCorpus([
+      ...Array.from({ length: 12 }, (_, i) => doc(100 + i, 5000 - i)),
+      doc(4, 10, { role: 'style', qualityScore: 0.8 }),
+    ]);
+
+    const { result, log } = await runMain(['--execute', '--limit', '2']);
     expect(result).toBe('ok');
 
     // ONE matched query (part one's prefix and part two share it) + one unmatched. The
@@ -1298,9 +1314,56 @@ describe('main — the --execute gate', () => {
     const report = log.mock.calls.map((call) => String(call[0])).join('\n');
     // Part one: the first ceil(2/2) = 1 matched row + no unmatched rows.
     expect(report).toContain('Judged 1 of 1 drawn rows; 0 skipped on a stage-1 failure.');
-    // The --k override reaches scoring, and the labeled model reaches the strata.
-    expect(report).toContain('## Primary: hit@1');
+    // A registered run: scored at hit@10, the labeled model reaches the strata, and one
+    // discordant pair cannot pass McNemar, so the one verdict is NOT MET.
+    expect(report).toContain('## Primary: hit@10');
     expect(report).toContain('| all scored | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
     expect(report).toContain('| gold labeled | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
+    expect(report.split('\n').filter((l) => l.startsWith('## Verdict: '))).toEqual([
+      '## Verdict: NOT MET',
+    ]);
+    expect(report).not.toContain('NOT THE PRE-REGISTERED RUN');
+  });
+
+  it('splits an ODD --limit as ceil to matched, floor to unmatched', async () => {
+    controlReturns(7000);
+    const matchedRows = [11, 12, 13].map((imageId) => ({
+      imageId,
+      prompt: `matched prompt ${imageId}`,
+      attachedTypes: ['LORA'],
+      attachedBaseModels: [BASE_MODEL],
+      attachedModels: [{ modelId: 4, modelType: 'LORA' }],
+      checkpointBaseModels: [],
+    }));
+    // The mock ignores LIMIT, so it returns what the query asked for: 1 unmatched row.
+    const unmatchedRows = [21].map((imageId) => ({
+      imageId,
+      prompt: `unmatched prompt ${imageId}`,
+      attachedTypes: [],
+      attachedBaseModels: [],
+    }));
+    dbMock.dbRead.$queryRaw.mockImplementation((async (query: { sql: string }) =>
+      query.sql.includes('WITH sampled AS') ? matchedRows : unmatchedRows) as never);
+    askJev.mockImplementation(async () => ({
+      answers: STAGE1_ANSWERS('none'),
+      model: 'typesafe/jev-1.13-20260917',
+      usage: { promptTokens: 1, completionTokens: 1 },
+    }));
+
+    // --limit 3 → part one: ceil = 2 matched + floor = 1 unmatched.
+    const { result, log } = await runMain(['--execute', '--limit', '3', '--retrieval-sample', '1']);
+    expect(result).toBe('ok');
+    const [matchedQuery, unmatchedQuery] = dbMock.dbRead.$queryRaw.mock.calls.map(
+      (call) => call[0] as unknown as { values: unknown[] }
+    );
+    expect(matchedQuery.values).toEqual([30, 2]); // max(ceil(3/2), 1)
+    expect(unmatchedQuery.values).toEqual([30, 1]); // floor(3/2)
+    expect(askJev.mock.calls.slice(0, 3).map((call) => call[0])).toEqual([
+      buildResourceIntentStage1Request('matched prompt 11', null),
+      buildResourceIntentStage1Request('matched prompt 12', null),
+      buildResourceIntentStage1Request('unmatched prompt 21', null),
+    ]);
+    const report = log.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(report).toContain('Judged 3 of 3 drawn rows; 0 skipped on a stage-1 failure.');
   });
 });

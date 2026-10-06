@@ -2,7 +2,6 @@ import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
 import { searchClient } from '~/server/meilisearch/client';
 import { loadResourceInsights, modelInsightProjection } from '~/server/services/resource-insight';
-import { mulberry32 } from './decision-eval/controls';
 import { inArray } from '~/shared/utils/meili-filter';
 import {
   buildResourceIntentSeedQueries,
@@ -33,8 +32,8 @@ import {
  *
  * Everything that decides the answer is fixed BEFORE any run, in
  * `M3_RETRIEVAL_PREREGISTRATION` below and the text `renderRetrievalPreregistration`
- * builds from it. That text is copied verbatim into
- * `docs/resource-intent-primitive.md`.
+ * builds from it, which the dry run prints and every report opens with. The doc points
+ * here rather than keeping a copy.
  *
  * Committed, NOT executed: a live run needs a prod replica read, the models index and
  * an OpenRouter key, and is meant to run only once the purpose-first seed is serving
@@ -43,9 +42,9 @@ import {
 
 /**
  * 🔴 The pre-registered constants. Changing any of these after a run has been seen
- * turns the study into a fishing expedition — the CLI can override four of them
- * (sample size, sample window, K, bootstrap seed), and an override prints a warning and stamps the
- * report as NOT the pre-registered run.
+ * turns the study into a fishing expedition. The CLI can override two of them (sample
+ * size and sample window, for the pilot); an override prints a warning, stamps the report
+ * as NOT the pre-registered run, and makes its verdict VOID.
  *
  * Why these values:
  *   - `primaryK` 10: the head of the shortlist, where the two arms are designed to
@@ -56,15 +55,12 @@ import {
  *   - `sampleSize` 1000 drawn images: given the discordant split, McNemar's power
  *     depends only on the DISCORDANT count. Exact two-sided α = 0.05 needs a 61/39 split
  *     at 100 discordant pairs and 83/57 at 140; power against a true 65/35 split is 0.83
- *     at 100 and 0.93 at 140. Reaching 100 discordant pairs needs ≥667 of the 1000 to
- *     survive the exclusions if the arms disagree on 15% of scored prompts — both
- *     ASSUMPTIONS, which is why the report prints the scored and discordant counts. The
- *     cost is one stage-1 vendor call per drawn image plus two or three index pages when
- *     the arms run, on top of part one's own ~`--limit` stage-1 calls (about half of them
+ *     at 100 and 0.93 at 140. Reaching 100 discordant pairs needs the two
+ *     `powerAssumption` rates below (667 scored × 15% ≈ 100). Both are ASSUMPTIONS: the
+ *     pilot measures them, and the report prints both against these values. The cost is
+ *     one stage-1 vendor call per drawn image plus two or three index pages when the arms
+ *     run, on top of part one's own ~`--limit` stage-1 calls (about half of them
  *     re-judging prompts in this sample, with no baseModel).
- *   - `bootstrapResamples` 10000 / `bootstrapSeed` 20261006: enough resamples that the
- *     2.5/97.5 percentiles are stable to well under a point; the seed is the date this
- *     was registered, chosen before any data existed.
  *   - `cap` 50 = `RESOURCE_INTENT_DEFAULT_LIMIT`, the width a caller gets by default.
  *   - `labeledIndexFloor` 100: the positive control. The PURPOSE arm filters on
  *     `insight.role`; if no index document carries one, its purpose page is empty, it
@@ -80,25 +76,21 @@ export const M3_RETRIEVAL_PREREGISTRATION = {
   alpha: 0.05,
   sampleSize: 1000,
   sampleDays: 30,
-  bootstrapResamples: 10000,
-  bootstrapSeed: 20261006,
   cap: RESOURCE_INTENT_DEFAULT_LIMIT,
   labeledIndexFloor: 100,
+  powerAssumption: { discordantRate: 0.15, scoredFraction: 0.667 },
+  pilotSampleSize: 100,
 } as const;
 
 export type RetrievalRunParams = {
-  primaryK: number;
   sampleSize: number;
   sampleDays: number;
-  bootstrapSeed: number;
 };
 
 /** The CLI-overridable subset, at its pre-registered values. */
 export const PREREGISTERED_RUN_PARAMS: RetrievalRunParams = {
-  primaryK: M3_RETRIEVAL_PREREGISTRATION.primaryK,
   sampleSize: M3_RETRIEVAL_PREREGISTRATION.sampleSize,
   sampleDays: M3_RETRIEVAL_PREREGISTRATION.sampleDays,
-  bootstrapSeed: M3_RETRIEVAL_PREREGISTRATION.bootstrapSeed,
 };
 
 /** Every overridden parameter, as `name: preregistered -> used`. Empty ⇒ the registered run. */
@@ -109,11 +101,12 @@ export function preregistrationOverrides(params: RetrievalRunParams): string[] {
 }
 
 /**
- * The pre-registration, as the text that goes into the doc and the PR verbatim. Built
- * from the constants so the text cannot state a value the code does not use.
+ * The pre-registration as text — printed by the dry run and at the top of every report.
+ * Built from the constants so the text cannot state a value the code does not use.
  */
 export function renderRetrievalPreregistration(): string {
   const p = M3_RETRIEVAL_PREREGISTRATION;
+  const k = p.primaryK;
   return [
     `M3 RETRIEVAL PRE-REGISTRATION v${p.version} (registered ${p.registeredOn}, before any run)`,
     '',
@@ -137,24 +130,43 @@ export function renderRetrievalPreregistration(): string {
     '(purpose-first seed + label re-rank). POPULARITY = the same gate filter, sorted by',
     'metrics.thumbsUpCount:desc alone, expanded and capped the same way, no label ordering.',
     '',
-    `Primary metric: hit@${p.primaryK} = the fraction of scored prompts where at least one gold`,
-    `model id is among the arm's first ${p.primaryK} distinct shortlist model ids.`,
-    'Test: exact two-sided McNemar on the discordant pairs (b = PURPOSE hit and POPULARITY',
-    `miss, c = the reverse), and a ${p.bootstrapResamples}-resample paired bootstrap 95% CI`,
-    `(seed ${p.bootstrapSeed}) on hit-rate(PURPOSE) - hit-rate(POPULARITY).`,
-    `Decision rule: PURPOSE beats POPULARITY iff that difference > 0 AND McNemar p < ${p.alpha}.`,
+    `Primary metric: hit@${k} = the fraction of scored prompts where at least one gold`,
+    `model id is among the arm's first ${k} distinct shortlist model ids.`,
+    `Discordant pairs at hit@${k}: b = PURPOSE hit and POPULARITY miss, c = the reverse.`,
+    `Decision rule: PURPOSE beats POPULARITY iff b > c AND the exact two-sided McNemar p`,
+    `on (b, c) is < ${p.alpha}.`,
+    '',
+    'Verdict on the closing clause — every run reports exactly one:',
+    '  MET     — the decision rule holds.',
+    '  NOT MET — it does not. The closing clause is judged not met and the question is',
+    '            closed as not delivered. Any follow-up (better gold, new labels) is new',
+    '            work under a new registration, not a re-run of this one.',
+    `  VOID    — no verdict on the clause: any registered value was overridden (including`,
+    `            the ${p.pilotSampleSize}-prompt pilot), no prompt scored, or both arms returned the same`,
+    `            first ${k} model ids on every scored prompt. (A failed positive control`,
+    '            aborts before any run, so it produces no report at all.)',
+    '',
     `Secondary (reported, never decisive): hit@${p.secondaryK} and MRR@${p.secondaryK}, and`,
-    `hit@${p.primaryK} stratified by whether any gold model carries a non-stale ResourceInsight`,
+    `hit@${k} stratified by whether any gold model carries a non-stale ResourceInsight`,
     'label at or above the promote-confidence floor the index projection applies.',
     '',
     'Excluded and counted, never scored: a stage-1 failure, role = none, no in-role',
     'attachment, either arm erroring, and a PURPOSE label read that fell back.',
     `Positive control: abort before any vendor call unless >= ${p.labeledIndexFloor} index`,
     'documents carry a non-none insight.role.',
+    `Power assumption (measured by the pilot first): >= ${(
+      p.powerAssumption.scoredFraction * 100
+    ).toFixed(1)}% of drawn prompts score, and the`,
+    `arms are discordant at hit@${k} on >= ${(p.powerAssumption.discordantRate * 100).toFixed(
+      1
+    )}% of scored prompts.`,
     '',
     'Known confound: people attach popular models, so attached-resource gold is biased',
-    'TOWARD the POPULARITY arm. A PURPOSE win is therefore conservative; a PURPOSE loss is',
-    'not by itself evidence against the labels.',
+    'TOWARD the POPULARITY arm. A MET verdict is therefore conservative. A NOT MET verdict',
+    'stands as the verdict on the closing clause; what the confound limits is only the',
+    'reading of WHY it was not met — the gold measures retrieval of what people attached,',
+    'not the labels themselves — which the labeled/unlabeled breakdown is reported to',
+    'inform.',
   ].join('\n');
 }
 
@@ -210,37 +222,9 @@ export function exactMcNemarP(b: number, c: number): number {
   return Math.min(1, 2 * tail);
 }
 
-/**
- * Paired percentile bootstrap of mean(a) - mean(b), resampling PROMPTS (so each
- * resample keeps a prompt's two outcomes together). Nearest-rank percentiles: the
- * 2.5th is the ceil(0.025·B)-th smallest resampled difference, the 97.5th the
- * ceil(0.975·B)-th.
- */
-export function pairedBootstrapCI(
-  a: readonly number[],
-  b: readonly number[],
-  opts: { resamples: number; seed: number }
-): { lower: number; upper: number } | null {
-  if (a.length !== b.length) throw new Error('pairedBootstrapCI: arms differ in length');
-  const n = a.length;
-  if (n === 0) return null;
-  const random = mulberry32(opts.seed);
-  const diffs: number[] = [];
-  for (let r = 0; r < opts.resamples; r++) {
-    let sum = 0;
-    for (let i = 0; i < n; i++) {
-      const j = Math.floor(random() * n);
-      sum += a[j] - b[j];
-    }
-    diffs.push(sum / n);
-  }
-  diffs.sort((x, y) => x - y);
-  const at = (q: number) => diffs[Math.max(0, Math.ceil(q * opts.resamples) - 1)];
-  return { lower: at(0.025), upper: at(0.975) };
-}
-
-export function purposeBeatsPopularity(difference: number, mcnemarP: number): boolean {
-  return difference > 0 && mcnemarP < M3_RETRIEVAL_PREREGISTRATION.alpha;
+/** The pre-registered decision rule: b > c AND exact McNemar p < alpha. */
+export function purposeBeatsPopularity(b: number, c: number): boolean {
+  return b > c && exactMcNemarP(b, c) < M3_RETRIEVAL_PREREGISTRATION.alpha;
 }
 
 // ---------------------------------------------------------------------------
@@ -526,6 +510,8 @@ export type ArmComparison = {
   mcnemarP: number;
 };
 
+export type RetrievalVerdict = 'MET' | 'NOT MET' | 'VOID';
+
 export type RetrievalEvaluation = {
   params: RetrievalRunParams;
   overrides: string[];
@@ -537,10 +523,7 @@ export type RetrievalEvaluation = {
    * stage 1's role choice).
    */
   outOfRole: { attached: number; excluded: number; checkpoints: number };
-  primary: ArmComparison & {
-    ci: { lower: number; upper: number } | null;
-    purposeBeatsPopularity: boolean;
-  };
+  primary: ArmComparison & { purposeBeatsPopularity: boolean };
   secondary: {
     k: number;
     hit: ArmComparison;
@@ -550,7 +533,43 @@ export type RetrievalEvaluation = {
   strata: { labeled: ArmComparison; unlabeled: ArmComparison };
   /** Scored prompts where the two arms returned the same first-K model ids, in order. */
   identicalAtPrimaryK: number;
+  /** The one verdict on the closing clause, and why. */
+  verdict: { verdict: RetrievalVerdict; reason: string };
 };
+
+/**
+ * The pre-registered mapping from an evaluation to exactly one verdict. VOID first —
+ * a run that cannot speak to the clause must not reach the decision rule — then MET iff
+ * the decision rule holds, else NOT MET.
+ */
+export function retrievalVerdict(e: {
+  overrides: readonly string[];
+  primary: Pick<ArmComparison, 'n' | 'b' | 'c'>;
+  identicalAtPrimaryK: number;
+}): { verdict: RetrievalVerdict; reason: string } {
+  if (e.overrides.length) {
+    return {
+      verdict: 'VOID',
+      reason: `not the registered run (overridden: ${e.overrides.join('; ')})`,
+    };
+  }
+  if (e.primary.n === 0) return { verdict: 'VOID', reason: 'no prompt scored' };
+  if (e.identicalAtPrimaryK === e.primary.n) {
+    return {
+      verdict: 'VOID',
+      reason: `both arms returned the same first ${M3_RETRIEVAL_PREREGISTRATION.primaryK} model ids on every scored prompt`,
+    };
+  }
+  return purposeBeatsPopularity(e.primary.b, e.primary.c)
+    ? {
+        verdict: 'MET',
+        reason: `b > c and exact McNemar p < ${M3_RETRIEVAL_PREREGISTRATION.alpha}`,
+      }
+    : {
+        verdict: 'NOT MET',
+        reason: `the decision rule does not hold (b = ${e.primary.b}, c = ${e.primary.c}); the question is closed as not delivered`,
+      };
+}
 
 type Scored = Extract<RetrievalRowOutcome, { status: 'scored' }>;
 
@@ -605,13 +624,13 @@ export function evaluateRetrieval(
     }
   }
 
-  const k = params.primaryK;
+  const k = M3_RETRIEVAL_PREREGISTRATION.primaryK;
   const primary = compareArms(scored, k);
-  const ci = pairedBootstrapCI(
-    scored.map((row) => (hitAtK(row.purposeModelIds, new Set(row.goldModelIds), k) ? 1 : 0)),
-    scored.map((row) => (hitAtK(row.popularityModelIds, new Set(row.goldModelIds), k) ? 1 : 0)),
-    { resamples: M3_RETRIEVAL_PREREGISTRATION.bootstrapResamples, seed: params.bootstrapSeed }
-  );
+  const overrides = preregistrationOverrides(params);
+  const identicalAtPrimaryK = scored.filter(
+    (row) =>
+      row.purposeModelIds.slice(0, k).join(',') === row.popularityModelIds.slice(0, k).join(',')
+  ).length;
 
   const secondaryK = M3_RETRIEVAL_PREREGISTRATION.secondaryK;
   const mrr = (pick: (row: Scored) => number[]) =>
@@ -624,7 +643,7 @@ export function evaluateRetrieval(
 
   return {
     params,
-    overrides: preregistrationOverrides(params),
+    overrides,
     drawn: outcomes.length,
     excluded,
     outOfRole: {
@@ -632,12 +651,7 @@ export function evaluateRetrieval(
       excluded: outOfRoleExcluded,
       checkpoints: outOfRoleCheckpoints,
     },
-    primary: {
-      ...primary,
-      ci,
-      purposeBeatsPopularity:
-        primary.difference !== null && purposeBeatsPopularity(primary.difference, primary.mcnemarP),
-    },
+    primary: { ...primary, purposeBeatsPopularity: purposeBeatsPopularity(primary.b, primary.c) },
     secondary: {
       k: secondaryK,
       hit: compareArms(scored, secondaryK),
@@ -654,10 +668,8 @@ export function evaluateRetrieval(
         k
       ),
     },
-    identicalAtPrimaryK: scored.filter(
-      (row) =>
-        row.purposeModelIds.slice(0, k).join(',') === row.popularityModelIds.slice(0, k).join(',')
-    ).length,
+    identicalAtPrimaryK,
+    verdict: retrievalVerdict({ overrides, primary, identicalAtPrimaryK }),
   };
 }
 
@@ -667,8 +679,14 @@ export function renderRetrievalReport(
 ): string {
   const pct = (v: number | null) => (v === null ? '—' : `${(v * 100).toFixed(1)}%`);
   const rate = (hits: number, n: number) => pct(n ? hits / n : null);
-  const { primary, secondary, strata, excluded, outOfRole, params } = evaluation;
-  const k = params.primaryK;
+  const { primary, secondary, strata, excluded, outOfRole } = evaluation;
+  const k = M3_RETRIEVAL_PREREGISTRATION.primaryK;
+  const { powerAssumption } = M3_RETRIEVAL_PREREGISTRATION;
+  const scoredFraction = evaluation.drawn ? primary.n / evaluation.drawn : null;
+  const discordantRate = primary.n ? (primary.b + primary.c) / primary.n : null;
+  const belowAssumption =
+    (scoredFraction !== null && scoredFraction < powerAssumption.scoredFraction) ||
+    (discordantRate !== null && discordantRate < powerAssumption.discordantRate);
   const scored = primary.n;
   const comparisonRow = (label: string, cmp: ArmComparison) =>
     `| ${label} | ${cmp.n} | ${rate(cmp.purposeHits, cmp.n)} | ${rate(
@@ -682,7 +700,7 @@ export function renderRetrievalReport(
       ? [
           `> 🔴 **NOT THE PRE-REGISTERED RUN.** Overridden: ${evaluation.overrides.join(
             '; '
-          )}. The decision below is not the registered decision.`,
+          )}. Its verdict is VOID; it does not judge the closing clause.`,
           '',
         ]
       : []),
@@ -691,6 +709,10 @@ export function renderRetrievalReport(
     } index documents carry a non-none \`insight.role\` (floor ${
       M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor
     }).`,
+    '',
+    `## Verdict: ${evaluation.verdict.verdict}`,
+    '',
+    `${evaluation.verdict.verdict} — ${evaluation.verdict.reason}.`,
     '',
     '## Pre-registration',
     '',
@@ -730,15 +752,9 @@ export function renderRetrievalReport(
     '|---|---|---|---|---|---|---|',
     comparisonRow('all scored', primary),
     '',
-    `Difference (PURPOSE - POPULARITY): ${pct(primary.difference)}; 95% bootstrap CI: ${
-      primary.ci ? `[${pct(primary.ci.lower)}, ${pct(primary.ci.upper)}]` : '—'
-    }.`,
-    '',
-    `**Decision (pre-registered rule): ${
-      primary.purposeBeatsPopularity
-        ? 'PURPOSE BEATS POPULARITY'
-        : 'NOT DEMONSTRATED — PURPOSE does not beat POPULARITY under the rule'
-    }.**`,
+    `Difference (PURPOSE - POPULARITY): ${pct(primary.difference)}. Decision rule (b > c AND p < ${
+      M3_RETRIEVAL_PREREGISTRATION.alpha
+    }): ${primary.purposeBeatsPopularity ? 'holds' : 'does not hold'}.`,
     '',
     '## Secondary (not decisive)',
     '',
@@ -759,9 +775,19 @@ export function renderRetrievalReport(
     '',
     '## Diagnostics',
     '',
-    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. 🔴 If this is ALL of them, the arms are indistinguishable at K — the purpose page returned nothing or the label re-rank never moved the head — so treat the run as void, not as a null result.`,
+    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. If this is ALL of them the arms are indistinguishable at K (the purpose page returned nothing or the label re-rank never moved the head), and the verdict is VOID.`,
     '',
-    'Known confound: people attach popular models, so this gold favours POPULARITY. A PURPOSE win is conservative; a PURPOSE loss is not by itself evidence against the labels.',
+    `Power assumption — scored fraction: ${pct(scoredFraction)} of drawn (assumed >= ${pct(
+      powerAssumption.scoredFraction
+    )}); discordant rate (b + c) / scored at hit@${k}: ${pct(discordantRate)} (assumed >= ${pct(
+      powerAssumption.discordantRate
+    )}).${
+      belowAssumption
+        ? ' 🔴 BELOW THE ASSUMPTION — re-plan the sample size in a new commit before the registered run.'
+        : ''
+    }`,
+    '',
+    'Known confound: people attach popular models, so this gold favours POPULARITY. A MET verdict is conservative. A NOT MET verdict stands; the confound limits only the reading of why — the gold measures retrieval of what people attached, not the labels themselves.',
     '',
   ];
   return lines.join('\n');

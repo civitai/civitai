@@ -62,8 +62,9 @@ import {
  *   pnpm run tsscript scripts/eval-resource-intent-goldset.ts --execute --limit 200 --out /tmp/goldset-report.md
  *
  * Retrieval flags (defaults ARE the pre-registered values; overriding one prints a
- * warning and stamps the report as not the registered run): `--retrieval-sample`,
- * `--k`, `--bootstrap-seed`, and `--days`, which also sets the retrieval window.
+ * warning, stamps the report as not the registered run and makes its verdict VOID):
+ * `--retrieval-sample` and `--days` (which also sets part one's window). The pilot the
+ * doc describes is `--execute --retrieval-sample 100`.
  */
 
 export const GOLDSET_REVIEW_THRESHOLDS = [0.4, 0.5, 0.6, 0.7, 0.8] as const;
@@ -410,8 +411,6 @@ export async function main(): Promise<void> {
       days: { type: 'string' },
       out: { type: 'string' },
       'retrieval-sample': { type: 'string' },
-      k: { type: 'string' },
-      'bootstrap-seed': { type: 'string' },
     },
     strict: true,
   });
@@ -431,7 +430,7 @@ export async function main(): Promise<void> {
     console.warn(
       `\n🔴🔴🔴 WARNING: retrieval parameters OVERRIDE the pre-registration (${overrides.join(
         '; '
-      )}). This is NOT the pre-registered run, and its decision is not the registered decision.\n`
+      )}). This is NOT the pre-registered run: its verdict is VOID and it does not judge the closing clause.\n`
     );
   }
 
@@ -542,8 +541,6 @@ async function runStage1(
 export function parseRetrievalParams(values: {
   'retrieval-sample'?: string;
   days?: string;
-  k?: string;
-  'bootstrap-seed'?: string;
 }): RetrievalRunParams {
   const int = (raw: string | undefined, fallback: number, name: string) => {
     if (raw === undefined) return fallback;
@@ -560,12 +557,6 @@ export function parseRetrievalParams(values: {
       'retrieval-sample'
     ),
     sampleDays: int(values.days, PREREGISTERED_RUN_PARAMS.sampleDays, 'days'),
-    primaryK: int(values.k, PREREGISTERED_RUN_PARAMS.primaryK, 'k'),
-    bootstrapSeed: int(
-      values['bootstrap-seed'],
-      PREREGISTERED_RUN_PARAMS.bootstrapSeed,
-      'bootstrap-seed'
-    ),
   };
 }
 
