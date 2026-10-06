@@ -5,6 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as JevModule from '~/server/services/ai/jev';
+import type * as FliptModule from '~/server/flipt/client';
 import type {
   ResourceIntentAnswer,
   ResourceIntentCriteria,
@@ -34,6 +35,16 @@ vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
 }));
 
 const askJev = vi.fn();
+// Feature-flag evaluation for the coverage guard. `null` = could not be evaluated (what
+// `isFliptSync` returns when Flipt is unreachable); a boolean = a real evaluation.
+const fliptSync = vi.fn<(flag: string, entityId?: string) => boolean | null>(() => false);
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptModule>()),
+  ensureFliptInitialized: async () => undefined,
+  isFliptSync: (flag: string, entityId?: string) => fliptSync(flag, entityId),
+  isFlipt: async (flag: string, entityId?: string) => fliptSync(flag, entityId) === true,
+}));
+
 vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
   ...(await importOriginal<typeof JevModule>()),
   askJev: (...args: unknown[]) => askJev(...args),
@@ -64,6 +75,7 @@ const {
   renderRetrievalPreregistration,
 } = registrationModule;
 const goldsetModule = await import('../eval-resource-intent-goldset');
+const executeModule = await import('../eval-resource-intent-goldset-execute');
 type Outcome = Awaited<ReturnType<typeof runRetrievalArms>>[number];
 type GoldRow = Parameters<typeof runRetrievalArms>[0][number];
 const { buildResourceIntentFilter } = await import(
@@ -148,7 +160,7 @@ describe('the pre-registration', () => {
   it('pins the registered values', () => {
     expect(PREREGISTERED_RUN_PARAMS).toEqual({ sampleSize: 1000, sampleDays: 30 });
     expect(M3_RETRIEVAL_PREREGISTRATION).toMatchObject({
-      version: 1,
+      version: 2,
       registeredOn: '2026-10-06',
       primaryK: 10,
       secondaryK: 50,
@@ -186,8 +198,11 @@ describe('the pre-registration', () => {
         '            (including the 100-prompt pilot); fewer than 667 prompts scored (the n the',
         '            power calculation assumes); infrastructure exclusions (stage-1 failure,',
         '            arm error, label-read fallback) exceed 10% of drawn prompts; or both',
-        '            arms returned the same first 10 model ids on every scored prompt. (A failed',
-        '            positive control aborts before any run, so it produces no report at all.)',
+        '            arms returned the same first 10 model ids on every scored prompt. Two',
+        '            checks abort before any index read or vendor call, so they produce no',
+        '            report at all: coverage flags that cannot be evaluated (Flipt unreachable',
+        '            or a flag missing — a run on flag defaults is not the endpoint), and a',
+        '            failed positive control.',
       ],
       [
         'Known confound: people attach popular models, so attached-resource gold is biased',
@@ -1184,6 +1199,8 @@ describe('main — the --execute gate', () => {
   };
 
   beforeEach(() => {
+    fliptSync.mockReset();
+    fliptSync.mockReturnValue(false);
     askJev.mockReset();
     dbMock.dbRead.$queryRaw.mockReset();
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
@@ -1292,6 +1309,16 @@ describe('main — the --execute gate', () => {
     expect(report).toContain('| **scored** | **2** |');
   });
 
+  it('🔴 with --execute and Flipt unreachable, aborts before the index, the replica or the vendor', async () => {
+    const search = controlReturns(7000);
+    fliptSync.mockReturnValue(null);
+    const { result } = await runMain(['--execute', '--limit', '2']);
+    expect(String(result)).toContain('feature flags could not be evaluated');
+    expect(search).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(askJev).not.toHaveBeenCalled();
+  });
+
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
     controlReturns(7000);
     const matchedRow = {
@@ -1364,6 +1391,10 @@ describe('main — the --execute gate', () => {
     expect(report).toContain('Judged 1 of 1 drawn rows; 0 skipped on a stage-1 failure.');
     // A registered run, scored at hit@10; the labeled model reaches the strata.
     expect(report).toContain('## Primary: hit@10');
+    // Flags evaluated (real false): the coverage the endpoint resolves, printed.
+    expect(report).toContain(
+      'Coverage (resolved as the endpoint does, for an anonymous caller): next=false, member=true.'
+    );
     expect(report).toContain('| all scored | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
     expect(report).toContain('| gold labeled | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
     // One scored prompt is far under the registered minimum: VOID, and exactly one verdict.
@@ -1413,5 +1444,63 @@ describe('main — the --execute gate', () => {
     ]);
     const report = log.mock.calls.map((call) => String(call[0])).join('\n');
     expect(report).toContain('Judged 3 of 3 drawn rows; 0 skipped on a stage-1 failure.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The coverage guard — never grade a filter the endpoint does not use
+// ---------------------------------------------------------------------------
+
+describe('resolveEndpointCoverage — fails closed when the coverage flags cannot be evaluated', () => {
+  const deps = (evaluateSync: (flag: string, entityId: string) => boolean | null) => {
+    const calls: string[] = [];
+    const audience = vi.fn(async () => ({ next: true, member: false }));
+    return {
+      calls,
+      audience,
+      deps: {
+        ensureInitialized: async () => {
+          calls.push('init');
+        },
+        evaluateSync: (flag: string, entityId: string) => {
+          calls.push(`${flag}@${entityId}`);
+          return evaluateSync(flag, entityId);
+        },
+        audience,
+      },
+    };
+  };
+
+  it('🔴 Flipt unreachable (every flag null): throws, names both flags, never resolves an audience', async () => {
+    const { deps: d, audience } = deps(() => null);
+    await expect(executeModule.resolveEndpointCoverage(d)).rejects.toThrow(
+      'feature flags could not be evaluated (generation-coverage-next, generation-loading-open-to-all)'
+    );
+    expect(audience).not.toHaveBeenCalled();
+  });
+
+  it('one flag unevaluable is enough to abort', async () => {
+    const { deps: d, audience } = deps((flag) =>
+      flag === 'generation-loading-open-to-all' ? null : true
+    );
+    await expect(executeModule.resolveEndpointCoverage(d)).rejects.toThrow(
+      'feature flags could not be evaluated (generation-loading-open-to-all)'
+    );
+    expect(audience).not.toHaveBeenCalled();
+  });
+
+  it('a real FALSE is not a failure: both flags evaluated → the endpoint audience', async () => {
+    const { deps: d, audience, calls } = deps(() => false);
+    await expect(executeModule.resolveEndpointCoverage(d)).resolves.toEqual({
+      next: true,
+      member: false,
+    });
+    expect(audience).toHaveBeenCalledTimes(1);
+    // Initialised first, then each flag with the entity id coverageAudience uses.
+    expect(calls).toEqual([
+      'init',
+      'generation-coverage-next@global',
+      'generation-loading-open-to-all@0',
+    ]);
   });
 });

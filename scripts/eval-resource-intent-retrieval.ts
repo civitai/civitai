@@ -578,7 +578,7 @@ export function evaluateRetrieval(
 
 export function renderRetrievalReport(
   evaluation: RetrievalEvaluation,
-  context: { labeledIndexDocuments: number }
+  context: { labeledIndexDocuments: number; coverage?: ResourceIntentCoverage }
 ): string {
   const pct = (v: number | null) => (v === null ? '—' : `${(v * 100).toFixed(1)}%`);
   const rate = (hits: number, n: number) => pct(n ? hits / n : null);
@@ -611,7 +611,11 @@ export function renderRetrievalReport(
       context.labeledIndexDocuments
     } index documents carry a non-none \`insight.role\` (floor ${
       M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor
-    }).`,
+    }).${
+      context.coverage
+        ? ` Coverage (resolved as the endpoint does, for an anonymous caller): next=${context.coverage.next}, member=${context.coverage.member}.`
+        : ''
+    }`,
     '',
     `## Verdict: ${evaluation.verdict.verdict}`,
     '',

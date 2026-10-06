@@ -492,6 +492,16 @@ either one that falls below. If the discordant rate is under 15%, re-plan the sa
 BEFORE the registered run: change the registered values only in a new commit dated
 before that run, and say why in it.
 
+**Coverage must resolve as the endpoint's does, or the run does not happen.** Both arms
+filter on generation coverage from `coverageAudience(undefined)`, which reads Flipt through
+`isFlipt` — and `isFlipt` returns `false` both for a flag that is off and when Flipt is
+unreachable, so an unreachable Flipt silently grades a filter the endpoint does not use.
+`--execute` therefore initialises Flipt and requires a real evaluation (`isFliptSync` not
+`null`) of both coverage flags before any index read or vendor call, aborting otherwise;
+the report prints the resolved `{next, member}`. The first pilot (2026-10-06) ran on flag
+defaults for exactly this reason and was discarded — the registration (v2) records it,
+and its power assumption is pending the corrected pilot.
+
 The positive control reads the field the PURPOSE page filters on. Without it, an index
 whose projection had failed wholesale would turn PURPOSE into POPULARITY and the study
 into a quiet "no difference". The report also counts the scored prompts where both

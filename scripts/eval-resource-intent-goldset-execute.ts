@@ -1,7 +1,9 @@
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbRead } from '~/server/db/client';
 import { askJev, JEV_TIMEOUT_MS } from '~/server/services/ai/jev';
+import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
+import type { ResourceIntentCoverage } from '~/server/services/resource-intent-matcher.service';
 import {
   buildResourceIntentStage1Request,
   compileCriteria,
@@ -55,7 +57,11 @@ export async function executeGoldsetStudy({
   retrievalParams: RetrievalRunParams;
   out: string | undefined;
 }): Promise<void> {
-  // The retrieval study's positive control runs FIRST, before any vendor spend, and so
+  // Coverage first: if the flags behind it cannot be evaluated, the run would grade a filter
+  // the endpoint does not use. Fails closed, before any index read or vendor call.
+  const coverage = await resolveEndpointCoverage();
+
+  // The retrieval study's positive control runs next, before any vendor spend, and so
   // also gates part one: a models index with no projected `insight.role` would turn
   // the purpose arm into the popularity arm and the study into a silent null result.
   const labeledIndexDocuments = await countLabeledIndexDocuments();
@@ -98,7 +104,7 @@ export async function executeGoldsetStudy({
     armOpts: {
       browsingLevel: allBrowsingLevelsFlag,
       // The anonymous audience, resolved exactly as the endpoint does on a cache miss.
-      coverage: await coverageAudience(undefined),
+      coverage,
       cap: M3_RETRIEVAL_PREREGISTRATION.cap,
     },
     labeledModelIds,
@@ -107,7 +113,7 @@ export async function executeGoldsetStudy({
 
   const report = [
     renderGoldsetReport(evaluateGoldset(pairs), { drawn: partOneRows.length }),
-    renderRetrievalReport(retrieval, { labeledIndexDocuments }),
+    renderRetrievalReport(retrieval, { labeledIndexDocuments, coverage }),
   ].join('\n');
   if (out) {
     const { writeFile } = await import('fs/promises');
@@ -140,4 +146,51 @@ async function runStage1(
     console.warn(`[goldset] stage-1 error: ${error instanceof Error ? error.message : error}`);
     return null;
   }
+}
+
+/**
+ * The flags `coverageAudience` reads for an anonymous caller, with the entity id it passes.
+ * `GENERATION_LOADING_OPEN_TO_ALL` is read only when the first is on; both are checked here
+ * regardless, so a half-reachable Flipt cannot slip through on one branch.
+ */
+const COVERAGE_FLAGS = [
+  { flag: FLIPT_FEATURE_FLAGS.GENERATION_COVERAGE_NEXT, entityId: 'global' },
+  { flag: FLIPT_FEATURE_FLAGS.GENERATION_LOADING_OPEN_TO_ALL, entityId: '0' },
+] as const;
+
+/**
+ * The coverage the endpoint resolves for an anonymous caller — or an error, never a guess.
+ *
+ * 🔴 `coverageAudience` cannot be trusted on its own here. It reads flags through `isFlipt`,
+ * which returns `false` both for a flag that is really off AND when the Flipt client never
+ * initialised (unreachable, bad credentials) or the flag failed to evaluate. The two are
+ * indistinguishable through `isFlipt`, so an unreachable Flipt silently yields the flag
+ * defaults — which is how the first pilot (2026-10-06) graded `{next:false, member:true}`
+ * while the endpoint resolves `{next:true, member:false}`. `isFliptSync` does tell them
+ * apart: it returns `null` when the client is not initialised or the evaluation threw. So
+ * this initialises Flipt, requires a real boolean for every coverage flag, and only then
+ * lets the endpoint's own `coverageAudience` resolve the value (one rule, not a copy).
+ */
+export async function resolveEndpointCoverage(deps?: {
+  ensureInitialized: () => Promise<void>;
+  evaluateSync: (flag: string, entityId: string) => boolean | null;
+  audience: () => Promise<ResourceIntentCoverage>;
+}): Promise<ResourceIntentCoverage> {
+  const { ensureInitialized, evaluateSync, audience } = deps ?? {
+    ensureInitialized: ensureFliptInitialized,
+    evaluateSync: (flag: string, entityId: string) => isFliptSync(flag, entityId),
+    audience: () => coverageAudience(undefined),
+  };
+  await ensureInitialized();
+  const unevaluated = COVERAGE_FLAGS.filter(
+    ({ flag, entityId }) => evaluateSync(flag, entityId) === null
+  ).map(({ flag }) => flag);
+  if (unevaluated.length) {
+    throw new Error(
+      `[goldset] feature flags could not be evaluated (${unevaluated.join(
+        ', '
+      )}) — Flipt unreachable or the flag is missing. Coverage would fall back to flag defaults, which the endpoint does not use; aborting before any index read or vendor call.`
+    );
+  }
+  return audience();
 }

@@ -52,7 +52,7 @@ import { RESOURCE_INTENT_DEFAULT_LIMIT } from '~/server/schema/resource-intent.s
  *     only catches a TOTAL projection fault, by design.
  */
 export const M3_RETRIEVAL_PREREGISTRATION = {
-  version: 1,
+  version: 2,
   registeredOn: '2026-10-06',
   primaryK: 10,
   secondaryK: RESOURCE_INTENT_DEFAULT_LIMIT,
@@ -94,6 +94,14 @@ export function renderRetrievalPreregistration(): string {
   return [
     `M3 RETRIEVAL PRE-REGISTRATION v${p.version} (registered ${p.registeredOn}, before any run)`,
     '',
+    'History: v1 was registered 2026-10-06. Its first pilot (2026-10-06,',
+    `--retrieval-sample ${p.pilotSampleSize}) ran with feature-flag evaluation failing (Flipt`,
+    'unreachable), so coverage fell back to flag defaults instead of resolving as the',
+    'endpoint does; that pilot was DISCARDED and none of its measurements are used here.',
+    'v2 differs from v1 in: the run now aborts when the coverage flags cannot be',
+    'evaluated (below); the power assumption is PENDING — to be replaced by the corrected',
+    "pilot's measured rates in a dated commit before any registered run.",
+    '',
     'Question: does the shipped purpose-first matcher (PURPOSE arm) retrieve a resource',
     'people actually attached more often than the popularity seed alone (POPULARITY arm)?',
     '',
@@ -110,7 +118,8 @@ export function renderRetrievalPreregistration(): string {
     'gold; their share is reported, with checkpoints (which no role admits) also reported',
     'apart from it.',
     `Arms: identical criteria, browsingLevel (all levels), coverage (the anonymous audience,`,
-    `resolved as the endpoint does) and cap (${p.cap}). PURPOSE = findResourceIntentCandidates`,
+    `resolved as the endpoint does and printed in the report) and cap (${p.cap}).`,
+    'PURPOSE = findResourceIntentCandidates',
     '(purpose-first seed + label re-rank). POPULARITY = the same gate filter, sorted by',
     'metrics.thumbsUpCount:desc alone, expanded and capped the same way, no label ordering.',
     '',
@@ -131,8 +140,11 @@ export function renderRetrievalPreregistration(): string {
     `            arm error, label-read fallback) exceed ${(
       p.voidIf.maxInfraExclusionFraction * 100
     ).toFixed(0)}% of drawn prompts; or both`,
-    `            arms returned the same first ${k} model ids on every scored prompt. (A failed`,
-    '            positive control aborts before any run, so it produces no report at all.)',
+    `            arms returned the same first ${k} model ids on every scored prompt. Two`,
+    '            checks abort before any index read or vendor call, so they produce no',
+    '            report at all: coverage flags that cannot be evaluated (Flipt unreachable',
+    '            or a flag missing — a run on flag defaults is not the endpoint), and a',
+    '            failed positive control.',
     '',
     `Secondary (reported, never decisive): hit@${p.secondaryK} and MRR@${p.secondaryK}, and`,
     `hit@${k} stratified by whether any gold model carries a non-stale ResourceInsight`,
