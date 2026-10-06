@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import DecisionStoreNotice from '$lib/components/DecisionStoreNotice.svelte';
-  import { versionedHref } from '$lib/decisions';
+  import { requesterTierLabel, versionedHref } from '$lib/decisions';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural } from '$lib/format';
   import { denied } from '$lib/permissions';
@@ -17,6 +16,7 @@
     versionedHref(`/decisions/support/ticket/${id}`, data.version, data.overridden);
 
   const rep = $derived(data.detail.representative);
+  const repLabel = $derived(rep ? requesterTierLabel(rep.memberTier, rep.payingPriority) : null);
 
 </script>
 
@@ -51,8 +51,7 @@
       · user
       <a class={LINK_CLASS} href={userLookupUrl(rep.civitaiUserId, 'basic')}>{rep.civitaiUserId}</a>
     {/if}
-    {#if rep?.memberTier}· {rep.memberTier}{/if}
-    {#if rep?.payingPriority}<Badge variant="outline" class="ml-1">paying priority</Badge>{/if}
+    {#if repLabel}· {repLabel}{/if}
   </p>
   {#if group.stale || group.closedAt}
     <p class="text-dark-2 mt-2 text-sm">

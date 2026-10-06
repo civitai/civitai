@@ -31,6 +31,34 @@ export const probabilityLabel = (p: number | null): string =>
 export const versionedHref = (path: string, version: string | null, overridden: boolean): string =>
   overridden && version ? `${path}?version=${encodeURIComponent(version)}` : path;
 
+const PAYING_TIERS: ReadonlySet<string> = new Set(['gold', 'silver']);
+
+/**
+ * A support requester's membership tier and routing priority, each labelled — rendered after the
+ * requester on both the ticket page and the group page.
+ *
+ * 🔴 THE PRIORITY FLAG IS NOT A STATEMENT ABOUT THE REQUESTER'S TIER. The router sets it when the tier
+ * is gold/silver OR the ticket's topic is payment-domain, so a free-tier requester with a billing
+ * ticket carries it. Rendered bare beside the tier ("free · paying priority") that reads as a
+ * contradiction; the reason is named instead. A flag on a non-gold/silver tier can only have come from
+ * the topic arm of that rule — if the router's rule changes, this inference must change with it.
+ */
+export function requesterTierLabel(
+  memberTier: string | null,
+  payingPriority: boolean
+): string | null {
+  const parts: string[] = [];
+  if (memberTier) parts.push(`tier: ${memberTier}`);
+  if (payingPriority) {
+    parts.push(
+      memberTier && PAYING_TIERS.has(memberTier)
+        ? 'priority: paying member'
+        : 'priority: payment topic'
+    );
+  }
+  return parts.length ? parts.join(' · ') : null;
+}
+
 /**
  * The one ruling a set of members carries, or `'mixed'` when they disagree.
  *

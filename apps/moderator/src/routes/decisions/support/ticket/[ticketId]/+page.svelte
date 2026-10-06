@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { probabilityLabel, versionedHref } from '$lib/decisions';
+  import { probabilityLabel, requesterTierLabel, versionedHref } from '$lib/decisions';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { PageData } from './$types';
@@ -8,6 +7,7 @@
   let { data }: { data: PageData } = $props();
 
   const t = $derived(data.ticket);
+  const requesterLabel = $derived(requesterTierLabel(t.memberTier, t.payingPriority));
   const href = (path: string) => versionedHref(path, data.version, data.overridden);
   const usd = (micro: number) => `$${(micro / 1_000_000).toFixed(6)}`;
 </script>
@@ -39,8 +39,7 @@
       {:else}
         <span class="text-dark-2">no linked Civitai account</span>
       {/if}
-      {#if t.memberTier}· {t.memberTier}{/if}
-      {#if t.payingPriority}<Badge variant="outline" class="ml-1">paying priority</Badge>{/if}
+      {#if requesterLabel}· {requesterLabel}{/if}
     </dd>
     {#if data.canSeeEmail}
       <dt class="text-dark-2">Email</dt>
