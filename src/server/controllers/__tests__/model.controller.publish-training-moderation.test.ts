@@ -174,6 +174,19 @@ describe('publishModelHandler — training moderation gate', () => {
     expect(mockPublishModelById).not.toHaveBeenCalled();
   });
 
+  it('republishes an unstamped model that was published before, when its run is gone (NOT_FOUND)', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Unpublished',
+      meta: { trainingStudioWorkflowId: 'wf-1' },
+      nsfw: false,
+      userId: OWNER_ID,
+      publishedAt: new Date('2026-09-10'),
+    } as never);
+    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+    await expect(publish()).resolves.toMatchObject({ id: MODEL_ID });
+    expect(mockPublishModelById).toHaveBeenCalledTimes(1);
+  });
+
   it('does not read any workflow for a model with no source workflow', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({
       status: 'Draft',
@@ -254,5 +267,19 @@ describe('publishPrivateModelHandler — training moderation gate', () => {
     mockGetWorkflow.mockResolvedValue(trainingRun('rejected'));
     await expect(run({ id: MODERATOR_ID, isModerator: true })).rejects.toThrow(NOT_APPROVED);
     expect(mockGetToken.mock.calls).toEqual([[OWNER_ID, undefined, { bypassCache: true }]]);
+  });
+
+  it('makes public an unstamped privately-published model whose run is gone (NOT_FOUND)', async () => {
+    mockGetModel.mockResolvedValue({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      status: 'Published',
+      availability: 'Private',
+      meta: { trainingStudioWorkflowId: 'wf-1' },
+      publishedAt: null,
+    });
+    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+    await expect(run()).resolves.toBe(true);
+    expect(mockPublishPrivateModel).toHaveBeenCalledTimes(1);
   });
 });

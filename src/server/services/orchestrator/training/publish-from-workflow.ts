@@ -431,31 +431,40 @@ export async function stampWorkflowDraftModel({
   }
 }
 
+/** The stored model fields the publish-time check reads. */
+export type TrainingSourceModel = {
+  userId: number;
+  meta: unknown;
+  status: ModelStatus;
+  publishedAt: Date | null;
+};
+
 /**
  * The publish-time half of `assertTrainingModerationApproved`: every path that makes a model (or one
- * of its versions) published or public calls this with the model's stored meta. A model whose meta
- * names no source workflow is not training-studio-born and is not checked here. Otherwise the
- * workflow is read with the model OWNER's token (a moderator can publish someone else's model), like
+ * of its versions) published or public calls this with the stored model. A model whose meta names no
+ * source workflow is not training-studio-born and is not checked here. Otherwise the workflow is read
+ * with the model OWNER's token (a moderator can publish someone else's model), like
  * `stampWorkflowPublished`, and must report an approved status.
  *
- * Both keys it reads are server-owned (`SERVER_OWNED_META_KEYS`): only
- * `createDraftModelFromWorkflow` writes them, after reading the workflow with the owner's own token.
- * When the orchestrator no longer returns the workflow (NOT_FOUND), it is let through only if the
- * draft carries the approval stamp written at materialization; without the stamp it is refused, since
- * nothing left can show the run was approved. Any other read failure is rethrown, so the publish fails
- * and can be retried rather than going ahead unchecked.
+ * Both meta keys it reads are server-owned (`SERVER_OWNED_META_KEYS`), written only by
+ * `createDraftModelFromWorkflow`. When the orchestrator no longer returns the workflow (NOT_FOUND),
+ * the model is let through if it carries the approval stamp, or if it has left Draft status or has a
+ * `publishedAt` — evidence it was already published, privately or publicly, by an earlier publish
+ * (every model created since the stamp existed carries the stamp). A never-published draft without
+ * the stamp is refused. Any other read failure is rethrown, so the publish fails and can be retried
+ * rather than going ahead unchecked.
  */
 export async function assertTrainingSourcePublishable({
-  meta,
-  ownerId,
+  model,
   callerId,
 }: {
-  meta: ModelMeta | null | undefined;
-  ownerId: number;
+  model: TrainingSourceModel;
   callerId: number;
 }): Promise<void> {
+  const meta = model.meta as ModelMeta | null | undefined;
   const workflowId = meta?.trainingStudioWorkflowId;
   if (!workflowId) return;
+  const ownerId = model.userId;
   const token = await getOrchestratorToken(ownerId, undefined, {
     bypassCache: callerId !== ownerId,
   });
@@ -465,6 +474,7 @@ export async function assertTrainingSourcePublishable({
   } catch (error) {
     if (error instanceof TRPCError && error.code === 'NOT_FOUND') {
       if (meta?.trainingStudioModerationApproved === true) return;
+      if (model.status !== ModelStatus.Draft || model.publishedAt != null) return;
       refuse(TRAINING_UNVERIFIABLE_MESSAGE);
     }
     throw error;

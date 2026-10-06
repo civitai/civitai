@@ -434,7 +434,16 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
     trainingStudioModerationApproved: true,
   };
   const UNSTAMPED = { trainingStudioWorkflowId: 'wf-studio-1' };
-  const args = { meta: STAMPED, ownerId: 5, callerId: 5 };
+  type ModelFields = {
+    meta?: unknown;
+    status?: 'Draft' | 'Published' | 'Unpublished' | 'Scheduled';
+    publishedAt?: Date | null;
+  };
+  const check = (fields: ModelFields = {}, callerId = 5) =>
+    assertTrainingSourcePublishable({
+      model: { userId: 5, meta: STAMPED, status: 'Draft', publishedAt: null, ...fields },
+      callerId,
+    } as Parameters<typeof assertTrainingSourcePublishable>[0]);
   const UNVERIFIABLE = /can no longer be checked for an approved dataset/;
 
   beforeEach(() => {
@@ -443,7 +452,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
 
   it('allows an approved run, reading it with the owner token', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+    await expect(check()).resolves.toBeUndefined();
     expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: false });
     expect(mockGetWorkflow).toHaveBeenCalledWith({
       token: 'owner-token',
@@ -453,18 +462,18 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
 
   it('mints the owner token with the cache bypass when a moderator publishes', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('approved'));
-    await assertTrainingSourcePublishable({ ...args, callerId: 999 });
+    await check({}, 999);
     expect(mockGetToken).toHaveBeenCalledWith(5, undefined, { bypassCache: true });
   });
 
   it.each([...REFUSED_STATUSES, undefined])('refuses a run whose status is %s', async (status) => {
     mockGetWorkflow.mockResolvedValue(runWithModeration(status));
-    await expect(assertTrainingSourcePublishable(args)).rejects.toThrow(NOT_APPROVED);
+    await expect(check()).rejects.toThrow(NOT_APPROVED);
   });
 
   it('marks a refusal so callers can tell it from other errors', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
-    const error = await assertTrainingSourcePublishable(args).catch((e: unknown) => e);
+    const error = await check().catch((e: unknown) => e);
     expect(isTrainingNotApprovedRefusal(error)).toBe(true);
     expect(isTrainingNotApprovedRefusal(new Error('dataset has not been approved'))).toBe(false);
   });
@@ -472,7 +481,7 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
   it.each([null, undefined, {}])(
     'does not read anything for a model whose meta (%s) names no workflow',
     async (meta) => {
-      await expect(assertTrainingSourcePublishable({ ...args, meta })).resolves.toBeUndefined();
+      await expect(check({ meta })).resolves.toBeUndefined();
       expect(mockGetWorkflow).not.toHaveBeenCalled();
       expect(mockGetToken).not.toHaveBeenCalled();
     }
@@ -480,32 +489,49 @@ describe('training moderation gate — assertTrainingSourcePublishable', () => {
 
   it('lets an unreadable (NOT_FOUND) run through when the draft carries the approval stamp', async () => {
     mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-    await expect(assertTrainingSourcePublishable(args)).resolves.toBeUndefined();
+    await expect(check()).resolves.toBeUndefined();
   });
 
   it.each([UNSTAMPED, { ...UNSTAMPED, trainingStudioModerationApproved: false }])(
     'refuses an unreadable (NOT_FOUND) run when the draft has no approval stamp (%o)',
     async (meta) => {
       mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
-      const error = await assertTrainingSourcePublishable({ ...args, meta }).catch(
-        (e: unknown) => e
-      );
+      const error = await check({ meta }).catch((e: unknown) => e);
       expect(error).toBeInstanceOf(TRPCError);
       expect((error as Error).message).toMatch(UNVERIFIABLE);
       expect(isTrainingNotApprovedRefusal(error)).toBe(true);
     }
   );
 
+  // Models published before the approval stamp existed carry no stamp. Once their workflow is gone,
+  // their publish history is what lets them through; a never-published unstamped draft stays refused.
+  it.each<[string, ModelFields]>([
+    ['published (public)', { status: 'Published', publishedAt: new Date('2026-09-10') }],
+    ['published privately (no publishedAt)', { status: 'Published', publishedAt: null }],
+    ['unpublished after a publish', { status: 'Unpublished', publishedAt: new Date('2026-09-10') }],
+    ['a draft that was published before', { status: 'Draft', publishedAt: new Date('2026-09-10') }],
+  ])('lets an unreadable (NOT_FOUND) unstamped model through when it is %s', async (_, fields) => {
+    mockGetWorkflow.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND', message: 'gone' }));
+    await expect(check({ meta: UNSTAMPED, ...fields })).resolves.toBeUndefined();
+  });
+
+  it('publish history does not override a readable run that is not approved', async () => {
+    mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
+    await expect(
+      check({ meta: UNSTAMPED, status: 'Published', publishedAt: new Date('2026-09-10') })
+    ).rejects.toThrow(NOT_APPROVED);
+  });
+
   it('the stamp does not override a readable run that is not approved', async () => {
     mockGetWorkflow.mockResolvedValue(runWithModeration('rejected'));
-    await expect(assertTrainingSourcePublishable(args)).rejects.toThrow(NOT_APPROVED);
+    await expect(check()).rejects.toThrow(NOT_APPROVED);
   });
 
   it('rethrows any other read failure instead of publishing unchecked', async () => {
     mockGetWorkflow.mockRejectedValue(
       new TRPCError({ code: 'SERVICE_UNAVAILABLE', message: 'orchestrator down' })
     );
-    await expect(assertTrainingSourcePublishable(args)).rejects.toThrow('orchestrator down');
+    await expect(check()).rejects.toThrow('orchestrator down');
   });
 });
 
