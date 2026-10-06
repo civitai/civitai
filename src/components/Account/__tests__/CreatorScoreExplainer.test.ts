@@ -118,4 +118,22 @@ describe('StrikesCard', () => {
     expect(anchor).not.toBeNull();
     expect(visibleText(anchor as Element)).toContain('How Creator Score works');
   });
+
+  // The account shell keeps the fragment when it redirects a legacy link to this pane; this is
+  // what that fragment is for.
+  it.each([
+    ['#creator-score', ['creator-score']],
+    ['', []],
+  ])('scrolls to the matching anchor when the URL hash is %j', (hash, scrolledTo) => {
+    window.history.replaceState(null, '', `/user/account/profile${hash}`);
+    const scroll = vi.spyOn(window.HTMLElement.prototype, 'scrollIntoView');
+    try {
+      render(React.createElement(StrikesCard, { flat: true }));
+
+      expect(scroll.mock.contexts.map((node) => (node as HTMLElement).id)).toEqual(scrolledTo);
+    } finally {
+      scroll.mockRestore();
+      window.history.replaceState(null, '', '/');
+    }
+  });
 });
