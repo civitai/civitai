@@ -144,6 +144,9 @@ export const appRouter = router({
   creatorProgram: lazy(() =>
     import('~/server/routers/creator-program.router').then((m) => m.creatorProgramRouter)
   ),
+  creatorJourney: lazy(() =>
+    import('~/server/routers/creator-journey.router').then((m) => m.creatorJourneyRouter)
+  ),
   auction: lazy(() => import('~/server/routers/auction.router').then((m) => m.auctionRouter)),
   resourceLoad: lazy(() =>
     import('~/server/routers/resource-load.router').then((m) => m.resourceLoadRouter)

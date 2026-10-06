@@ -194,3 +194,25 @@ export function resolveLegacyAnchor(hash: string) {
   if (!sectionId) return undefined;
   return accountSections.find((section) => section.id === sectionId);
 }
+
+// Keeps the fragment so the pane can scroll to it, and returns nothing once already on the target
+// pane: the redirected URL still carries the same legacy hash, so a second pass must be a no-op.
+export function resolveLegacyAnchorRedirect({
+  pathname,
+  search,
+  hash,
+}: {
+  pathname: string;
+  search: string;
+  hash: string;
+}) {
+  const section = resolveLegacyAnchor(hash);
+  if (!section) return undefined;
+  const target = getAccountSectionHref(section);
+  if (pathname === target) return undefined;
+  return {
+    pathname: target,
+    query: Object.fromEntries(new URLSearchParams(search).entries()),
+    hash: hash.replace(/^#/, ''),
+  };
+}

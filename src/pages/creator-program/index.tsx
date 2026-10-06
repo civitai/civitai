@@ -51,6 +51,8 @@ import {
 import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import {
   useCreatorProgramRequirements,
   usePrevMonthStats,
@@ -611,20 +613,20 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 <>
                   <CreatorProgramRequirement
                     isMet={hasEnoughCreatorScore}
-                    title={`Have a Creator Score higher than ${abbreviateNumber(
+                    title={`Have a Creator Score of at least ${numberWithCommas(
                       requirements?.score.min ?? MIN_CREATOR_SCORE
                     )}`}
                     content={
                       <p className="my-0">
-                        Your current{' '}
-                        <Anchor component={NextLink} href="/user/account#creator-score">
-                          Creator Score
-                        </Anchor>{' '}
-                        is{' '}
-                        <Anchor component={NextLink} href="/user/account#creator-score">
-                          {abbreviateNumber(requirements?.score.current ?? 0)}
-                        </Anchor>
-                        .
+                        <CreatorScoreGateMessage
+                          score={requirements?.score.current}
+                          total={
+                            currentUser?.meta?.scores
+                              ? creatorScoreFromMeta(currentUser.meta)
+                              : undefined
+                          }
+                          required={requirements?.score.min ?? MIN_CREATOR_SCORE}
+                        />
                       </p>
                     }
                   />
