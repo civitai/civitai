@@ -10373,8 +10373,58 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           expect(mockReserveAppSpend).not.toHaveBeenCalled();
           expect(blockCapIncrs()).toHaveLength(0);
           expect(mockPersistCustomComfySettle).not.toHaveBeenCalled();
+          // The claim is taken (so a replay can win) and then released.
+          expect(mockClaimGen).toHaveBeenCalledTimes(1);
+          expect(mockReleaseGen).toHaveBeenCalledTimes(1);
+          expect(mockFinalizeGen).not.toHaveBeenCalled();
+          // The refusal is still counted, as the ratio the counter exists for.
+          expect(mockRecordStepPriceCheck).toHaveBeenCalledWith('__passthrough__', 'absent');
         }
       );
+
+      it('a refused key can be retried and goes through once a quote exists', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(null, 4);
+        const body = ptBody({ $type: 'training' });
+        const first = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-retry',
+        });
+        expect(first.snapshot).toEqual(REFUSAL);
+        ptQuoting(31, 31);
+        const second = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-retry',
+        });
+        expect(second.snapshot.workflowId).toBe('wf_pt_1');
+        expect(ptRealSubmits()).toHaveLength(1);
+      });
+
+      // A same-key retry of a run that already went through must get its REPLAY,
+      // not a "try again" — which would invite a second paid training run.
+      it('a same-key retry of a COMMITTED training submit replays it, even unquoted', async () => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(31, 31);
+        const body = ptBody({ $type: 'training' });
+        const first = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-replay',
+        });
+        expect(first.snapshot.workflowId).toBe('wf_pt_1');
+        ptQuoting(null, 4);
+        const retry = await caller().submitWorkflow({
+          blockToken: 'tok',
+          body,
+          idempotencyKey: 'idem-train-replay',
+        });
+        expect(retry.snapshot).toEqual(first.snapshot);
+        expect(ptRealSubmits(), 'no second training run').toHaveLength(1);
+      });
 
       it('a QUOTED training submit is unchanged: submitted, reserves the quote, no timeout', async () => {
         mockVerifyBlockToken.mockResolvedValue(ptClaims());
@@ -10386,6 +10436,8 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
         });
         expect(result.snapshot.workflowId).toBe('wf_pt_1');
         expect(mockReserveAppSpend).toHaveBeenCalledWith('apb_test', 31);
+        // Positive control for the zero-count filter used by the refusal cases.
+        expect(blockCapIncrs().length).toBeGreaterThan(0);
         expect(ptRealSubmits()[0][0].body.steps[0].timeout).toBeUndefined();
       });
 
@@ -10420,6 +10472,10 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
           expect(result.snapshot).toEqual(REFUSAL);
           expect(result.snapshot).not.toHaveProperty('cost');
           expect(ptRealSubmits()).toHaveLength(0);
+          expect(mockRecordStepPriceCheck).toHaveBeenCalledWith(
+            '__passthrough__',
+            'estimate_absent'
+          );
         }
       );
 

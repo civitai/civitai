@@ -11342,12 +11342,8 @@ async function submitPassThroughStepWorkflow(opts: {
   // reachable types are priced per unit at submit, where a timeout bounds
   // wall-clock and nothing else. Operator decision, recorded in the PR.
   //
-  // The exception is a training `$type`: it is refused here, before any
-  // reservation, rather than given a `maxBuzz`-second timeout that would cancel
-  // the run. See `refuseUnquotedTraining`.
-  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
-  if (refusal) return refusal;
-
+  // The exception is a training `$type`, refused after the idempotency claim
+  // below — see `refuseUnquotedTraining`.
   const ceiling = Math.max(body.maxBuzz, quotedBuzz ?? body.maxBuzz);
 
   if (quotedBuzz === null) stampUnquotedTimeout(orchestratorStep, body.maxBuzz);
@@ -11400,6 +11396,16 @@ async function submitPassThroughStepWorkflow(opts: {
       });
     }
     genClaimKey = claim.key;
+  }
+
+  // 🔴 AFTER THE CLAIM, NOT BEFORE IT: a same-key retry of a submit that already
+  // went through must get its replay (or CONFLICT while it is in flight), never
+  // a "try again" that invites a second paid run. Still before any reservation,
+  // and the claim is released so the key can be retried once a quote exists.
+  const refusal = refuseUnquotedTraining(body.$type, quotedBuzz);
+  if (refusal) {
+    if (genClaimKey) await releaseGenIdempotency(genClaimKey);
+    return refusal;
   }
 
   // (2) Reserve the CEILING against the per-user cumulative cap.
