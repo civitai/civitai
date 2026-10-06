@@ -38,6 +38,12 @@ falls in a fixed bucket (0–99), so raising a percentage only adds ids; `active
 missing field is off. It is set with the harness action `putModes`, which refuses any `active` share
 without `allowActive: true` and logs who changed it; pods pick a change up within 15 seconds.
 
+Above the rollout sits the Flipt boolean `text-scan`, a kill switch. Off, or Flipt unreachable,
+every entity type is off whatever the hash says, so XGuard and the profanity filter run as before, and
+Clavata runs again for any entity cut over by `disableClavataFor` (the cutover is kept in its own
+set, `system:text-scan:clavata-cutover`, and the Clavata job honours it only while the switch is on).
+Turning it off does not undo verdicts already applied.
+
 - **off** — nothing is submitted.
 - **shadow** — scans run and verdicts are written to a separate `<Entity>:shadow` row that nothing
   reads; no action runs.

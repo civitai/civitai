@@ -1,5 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import type * as FliptClient from '~/server/flipt/client';
+
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClient>()),
+  isFlipt: vi.fn(),
+}));
+const { isFlipt } = await import('~/server/flipt/client');
 
 const {
   getTextScanMode,
@@ -20,7 +27,17 @@ const hash = (fields: Record<string, string>) =>
 describe('getTextScanMode', () => {
   beforeEach(() => {
     redisMock.sysRedis.hGetAll.mockReset();
+    vi.mocked(isFlipt).mockReset().mockResolvedValue(true);
     resetTextScanRolloutCache();
+  });
+
+  it('is off for every entity while the text-scan kill switch is off, whatever the rollout', async () => {
+    hash({ Model: '{"shadow":100,"active":100}' });
+    vi.mocked(isFlipt).mockResolvedValue(false);
+    expect(await getTextScanMode('Model', 1)).toBe('off');
+    expect(isFlipt).toHaveBeenCalledWith('text-scan');
+    vi.mocked(isFlipt).mockRejectedValue(new Error('flipt down'));
+    expect(await getTextScanMode('Model', 1)).toBe('off');
   });
 
   it('is off when the entity type has no field', async () => {

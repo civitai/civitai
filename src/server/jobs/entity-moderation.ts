@@ -13,6 +13,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
+import { isTextScanEnabled } from '~/server/services/text-scan/mode';
 import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
@@ -254,11 +255,20 @@ async function getPolicies() {
 }
 
 async function getDisabledEntities() {
-  const policies = await sysRedis.hGet(
-    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
-    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
-  );
-  return policies ? (JSON.parse(policies) as RedisDisabledType) : ({} as RedisDisabledType);
+  const [policies, cutover, textScanOn] = await Promise.all([
+    sysRedis.hGet(
+      REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+      REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
+    ),
+    sysRedis.sMembers(REDIS_SYS_KEYS.TEXT_SCAN.CLAVATA_CUTOVER),
+    isTextScanEnabled(),
+  ]);
+  const disabled = policies
+    ? (JSON.parse(policies) as RedisDisabledType)
+    : ({} as RedisDisabledType);
+  // An entity cut over to text scan goes back to Clavata whenever the text-scan kill switch is off.
+  if (textScanOn) for (const key of cutover) disabled[key as AllModKeys] = false;
+  return disabled;
 }
 
 function getPolicyFor(entity: AllModKeys, policies: RedisPolicyType) {

@@ -10,6 +10,7 @@ import type * as ModeModule from '~/server/services/text-scan/mode';
 vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeModule>()),
   getTextScanMode: vi.fn(),
+  isTextScanEnabled: vi.fn(),
 }));
 
 const {
@@ -23,10 +24,9 @@ const {
   getClavataCutoverStatus,
   UNMODERATED_OVERRIDE,
 } = await import('~/server/services/text-scan/clavata-cutover');
-const { getTextScanMode } = await import('~/server/services/text-scan/mode');
+const { getTextScanMode, isTextScanEnabled } = await import('~/server/services/text-scan/mode');
 
-const BASE = REDIS_SYS_KEYS.ENTITY_MODERATION.BASE;
-const ENTITIES = REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES;
+const CUTOVER = REDIS_SYS_KEYS.TEXT_SCAN.CLAVATA_CUTOVER;
 const MIGRATIONS = join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations');
 
 beforeEach(() => {
@@ -99,14 +99,14 @@ describe('disableClavataFor', () => {
       notActive: [2],
       code: 'CONFLICT',
     });
-    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('refuses when there is nothing to probe', async () => {
     vi.mocked(dbMock.dbRead.post.findMany).mockResolvedValue([] as never);
     await expect(disableClavataFor('Post')).rejects.toMatchObject({ reason: 'nothing-to-probe' });
-    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
   });
 
   it('refuses the override outside ChatMessage', async () => {
@@ -117,14 +117,14 @@ describe('disableClavataFor', () => {
       reason: 'override-not-allowed',
     });
     expect(getTextScanMode).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
   });
 
   it('refuses the override for Collection', async () => {
     await expect(disableClavataFor('Collection', { allowUnmoderated: true })).rejects.toMatchObject(
       { reason: 'override-not-allowed' }
     );
-    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
   });
 
   it('probes only public collections readable as Public or Unlisted', async () => {
@@ -139,15 +139,12 @@ describe('disableClavataFor', () => {
     expect(getTextScanMode).toHaveBeenCalledWith('Collection', 9);
   });
 
-  it('disables the key, keeps other overrides, and drains the lane', async () => {
+  it('adds the key to the cutover set, leaves the operator toggles alone, and drains the lane', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValueOnce(12 as never);
     const result = await disableClavataFor('Post');
-    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
-      BASE,
-      ENTITIES,
-      JSON.stringify({ Comment: false, Post: false })
-    );
+    expect(redisMock.sysRedis.sAdd).toHaveBeenCalledWith(CUTOVER, 'Post');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
     expect(result).toMatchObject({
       clavataKey: 'Post',
       probed: 2,
@@ -159,11 +156,7 @@ describe('disableClavataFor', () => {
   it('disables Chat without touching JobQueue', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     const result = await disableClavataFor('ChatMessage');
-    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
-      BASE,
-      ENTITIES,
-      JSON.stringify({ Comment: false, Chat: false })
-    );
+    expect(redisMock.sysRedis.sAdd).toHaveBeenCalledWith(CUTOVER, 'Chat');
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(result.drain).toBeNull();
   });
@@ -187,11 +180,7 @@ describe('disableClavataFor', () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
     vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValueOnce(3 as never);
     const result = await disableClavataFor('Collection');
-    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
-      BASE,
-      ENTITIES,
-      JSON.stringify({ Comment: false, Collection: false })
-    );
+    expect(redisMock.sysRedis.sAdd).toHaveBeenCalledWith(CUTOVER, 'Collection');
     expect(result).toMatchObject({
       clavataKey: 'Collection',
       drain: { deleted: 3, complete: true },
@@ -200,16 +189,20 @@ describe('disableClavataFor', () => {
 });
 
 describe('enableClavataFor', () => {
-  it('removes the override without probing the flag', async () => {
+  it('removes the key from the cutover set without probing the mode', async () => {
+    vi.mocked(redisMock.sysRedis.sMembers).mockResolvedValue(['Post'] as never);
     const result = await enableClavataFor('Comment');
     expect(getTextScanMode).not.toHaveBeenCalled();
-    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(BASE, ENTITIES, JSON.stringify({}));
-    expect(result.entities).toEqual({});
+    expect(redisMock.sysRedis.sRem).toHaveBeenCalledWith(CUTOVER, 'Comment');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    expect(result.cutover).toEqual(['Post']);
   });
 });
 
 describe('getClavataCutoverStatus', () => {
   it('reports each target against the override, the live triggers and the queue', async () => {
+    vi.mocked(redisMock.sysRedis.sMembers).mockResolvedValue([] as never);
+    vi.mocked(isTextScanEnabled).mockResolvedValue(true);
     vi.mocked(dbMock.dbRead.$queryRaw)
       .mockResolvedValueOnce([{ name: 'trg_moderation_post' }] as never)
       .mockResolvedValueOnce([{ entityType: 'Post', count: 4 }] as never);
@@ -228,6 +221,21 @@ describe('getClavataCutoverStatus', () => {
       trigger: null,
       triggerPresent: null,
       jobQueueRows: null,
+    });
+  });
+
+  it('reports a cut-over entity as skipped only while the kill switch is on', async () => {
+    vi.mocked(redisMock.sysRedis.sMembers).mockResolvedValue(['Post'] as never);
+    vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([] as never);
+    vi.mocked(isTextScanEnabled).mockResolvedValue(true);
+    expect((await getClavataCutoverStatus()).find((r) => r.entityType === 'Post')).toMatchObject({
+      cutOver: true,
+      clavataSkipped: true,
+    });
+    vi.mocked(isTextScanEnabled).mockResolvedValue(false);
+    expect((await getClavataCutoverStatus()).find((r) => r.entityType === 'Post')).toMatchObject({
+      cutOver: true,
+      clavataSkipped: false,
     });
   });
 });

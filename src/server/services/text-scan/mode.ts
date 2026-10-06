@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import type { TextScanEntityType, TextScanMode } from '~/server/services/text-scan/types';
 
@@ -80,11 +81,21 @@ export function modeForBucket(rollout: TextScanRollout | undefined, bucket: numb
   return 'off';
 }
 
+/** The Flipt kill switch. Read inside a call: hand-written flipt mocks often omit the enum. */
+export async function isTextScanEnabled() {
+  try {
+    return await isFlipt(FLIPT_FEATURE_FLAGS.TEXT_SCAN);
+  } catch {
+    return false;
+  }
+}
+
 export async function getTextScanMode(
   entityType: TextScanEntityType,
   entityId: number
 ): Promise<TextScanMode> {
   try {
+    if (!(await isTextScanEnabled())) return 'off';
     const rollouts = await getTextScanRollouts();
     return modeForBucket(rollouts[entityType], textScanBucket(entityType, entityId));
   } catch {

@@ -2329,6 +2329,12 @@ export const REDIS_SYS_KEYS = {
         (percent of entity ids in each mode; active wins)
      */
     MODES: 'system:text-scan:modes',
+    /*
+      Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
+        Clavata job skips them only while the `text-scan` Flipt kill switch is on.
+      Structure: set of Clavata keys
+     */
+    CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
   },
   CONTENT: {
     /*
