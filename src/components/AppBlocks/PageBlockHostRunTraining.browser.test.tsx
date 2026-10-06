@@ -436,4 +436,41 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     );
     replies.stop();
   });
+
+  test('a resend after a soft navigation to ANOTHER app keeps the token the request started with', async () => {
+    let failFirst: (err: Error) => void = () => undefined;
+    submitMutate
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            failFirst = reject;
+          })
+      )
+      .mockResolvedValueOnce({ snapshot: SNAPSHOT });
+    const view = await mount();
+    await driveToReady();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_13', body: BODY });
+    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
+    await expect.element(confirmBtn).toBeInTheDocument();
+    await confirmBtn.click();
+    await vi.waitFor(() => expect(submitMutate).toHaveBeenCalledTimes(1));
+    // The same host is reused for another app (no `key` on the run page)…
+    await view.rerender(
+      <>
+        <PageBlockHost
+          {...baseProps}
+          appBlockId="apb_other"
+          blockInstanceId="page_apb_other"
+          token="tok_other_app"
+        />
+        <DialogProvider />
+      </>
+    );
+    // …and then the first submit's response is lost.
+    failFirst(new Error('Failed to fetch'));
+    await vi.waitFor(() => expect(submitMutate).toHaveBeenCalledTimes(2));
+    expect(submitMutate.mock.calls.map((c) => (c[0] as { blockToken: string }).blockToken)).toEqual(
+      ['tok_abc', 'tok_abc']
+    );
+  });
 });

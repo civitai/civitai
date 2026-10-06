@@ -183,14 +183,15 @@ export const TRAINING_SUBMIT_RECOVERY_DELAYS_MS = [
 ];
 
 /**
- * After a lost response, the only server errors that prove no run started from the
- * first attempt. A malformed request is refused the same way every time, and a quote
- * that is gone means the first attempt either never claimed it or failed and released
- * its claim (a finished run replays instead). Every other code — an expired token, a
- * transient failure, a rate limit, a permission that changed — can come from checks
- * that run before the per-quote claim, so it says nothing about the first attempt.
+ * After a lost response, the only server error that proves the first attempt started
+ * no run: a BAD_REQUEST is either input the server refuses the same way every time,
+ * or a check this resend reached only after claiming the quote itself — so the first
+ * attempt never held it. Every other code can be true while the first attempt's run
+ * exists: an expired token, a transient failure, a rate limit or a changed permission
+ * comes from checks before the per-quote claim, and a quote that is gone may have been
+ * spent by a first attempt whose orchestrator call failed ambiguously.
  */
-export const TRAINING_SUBMIT_CONCLUSIVE_CODES: readonly string[] = ['BAD_REQUEST', 'NOT_FOUND'];
+export const TRAINING_SUBMIT_CONCLUSIVE_CODES: readonly string[] = ['BAD_REQUEST'];
 
 /**
  * Submit a training run, recovering from a lost response.

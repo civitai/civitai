@@ -922,10 +922,12 @@ export function PageBlockHost({
   // cover that remainder — a drop there fails FAST instead of hanging.
   const statusRef = useRef<Status>('loading');
   statusRef.current = status;
-  // The latest page token, for a training resend that outlives the token it started
-  // with (the host refreshes the token; the in-flight submit must use the new one).
-  const latestTokenRef = useRef(token);
-  latestTokenRef.current = token;
+  // The latest page token and the block it was minted for, for a training resend that
+  // outlives the token it started with. The run page reuses this host across a soft
+  // navigation to another app, so a resend takes the refreshed token only while it is
+  // still for the block the request started on.
+  const latestTokenRef = useRef({ token, blockInstanceId });
+  latestTokenRef.current = { token, blockInstanceId };
   // #4 Retry: bumped by the terminal-fallback Retry button to re-key the
   // <iframe> below. Re-keying forces React to unmount + remount the iframe (a
   // fresh `contentWindow`), so the re-armed init handshake talks to a clean
@@ -4494,6 +4496,7 @@ export function PageBlockHost({
         return;
       }
       const { requestId, quoteId, body } = gate.request;
+      const requestInstanceId = blockInstanceId;
       const settlement = createPostSettlement({
         requestId,
         emit: (payload) => send('TRAINING_RESULT', payload),
@@ -4546,7 +4549,10 @@ export function PageBlockHost({
                 const outcome = await submitTrainingWithRecovery(
                   () =>
                     submitWorkflowMutation.mutateAsync({
-                      blockToken: latestTokenRef.current ?? token,
+                      blockToken:
+                        (latestTokenRef.current.blockInstanceId === requestInstanceId
+                          ? latestTokenRef.current.token
+                          : null) ?? token,
                       // Schema-validated server-side and checked against the quote's
                       // body hash; the host never renders or trusts it.
                       body: body as never,
@@ -4580,6 +4586,7 @@ export function PageBlockHost({
     trpcUtils,
     submitWorkflowMutation,
     reportNoToken,
+    blockInstanceId,
   ]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the

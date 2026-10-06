@@ -134,20 +134,19 @@ describe('submitTrainingWithRecovery', () => {
     expect(sleep.mock.calls.map((c) => c[0])).toEqual([10, 20, 30]);
   });
 
-  it.each(['NOT_FOUND', 'BAD_REQUEST'])(
-    'after a transport loss, %s proves no run started and is thrown',
-    async (code) => {
-      const submit = vi
-        .fn<() => Promise<string>>()
-        .mockRejectedValueOnce(transport())
-        .mockRejectedValueOnce(coded(code));
-      await expect(submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).rejects.toThrow(code);
-      expect(submit).toHaveBeenCalledTimes(2);
-    }
-  );
+  it('after a transport loss, BAD_REQUEST proves no run started and is thrown', async () => {
+    const submit = vi
+      .fn<() => Promise<string>>()
+      .mockRejectedValueOnce(transport())
+      .mockRejectedValueOnce(coded('BAD_REQUEST'));
+    await expect(submitTrainingWithRecovery(submit, sleep, [1, 2, 3])).rejects.toThrow(
+      'BAD_REQUEST'
+    );
+    expect(submit).toHaveBeenCalledTimes(2);
+  });
 
-  it('only BAD_REQUEST and NOT_FOUND are conclusive after a transport loss', () => {
-    expect([...TRAINING_SUBMIT_CONCLUSIVE_CODES].sort()).toEqual(['BAD_REQUEST', 'NOT_FOUND']);
+  it('only BAD_REQUEST is conclusive after a transport loss', () => {
+    expect([...TRAINING_SUBMIT_CONCLUSIVE_CODES]).toEqual(['BAD_REQUEST']);
   });
 
   it.each([
@@ -156,8 +155,9 @@ describe('submitTrainingWithRecovery', () => {
     'TOO_MANY_REQUESTS',
     'SERVICE_UNAVAILABLE',
     'FORBIDDEN',
+    'NOT_FOUND',
   ])(
-    'after a transport loss, %s (may come from a check before the claim) keeps waiting and ends unconfirmed',
+    'after a transport loss, %s (can be true while the first attempt runs) keeps waiting and ends unconfirmed',
     async (code) => {
       const submit = vi
         .fn<() => Promise<string>>()
