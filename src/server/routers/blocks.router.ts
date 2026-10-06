@@ -572,12 +572,7 @@ async function authorizeBlockPostRequest(
   // Both halves are bound to the signed-in viewer: the token's subject must be
   // the session the request arrived with. Checked before any flag or hydration
   // read, so a mismatched request does no further work.
-  if (sessionUserId !== userId) {
-    throw new TRPCError({
-      code: 'FORBIDDEN',
-      message: 'this app session belongs to a different account; reload the page to continue',
-    });
-  }
+  assertBlockSubjectIsSessionUser(userId, sessionUserId);
   await assertAppBlocksEnabledForTokenUser(userId);
 
   const subjectUser = (await sessionClient.getSessionUserById(userId)) as SessionUser | null;
@@ -1847,6 +1842,22 @@ async function createBlockTextToImageStep(opts: {
         : workflowMetadata,
     modelSubstitutions,
   };
+}
+
+/**
+ * Refuses unless the block token's subject is the signed-in user the request
+ * arrived with. For bridge writes that run as `protectedProcedure`s: the session
+ * proves who is at the keyboard, the token proves which app and install is asking,
+ * and the two must name the same person. Shared by `publishGenerationOutputs` and
+ * both post procedures (via `authorizeBlockPostRequest`).
+ */
+function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: number): void {
+  if (subjectUserId !== sessionUserId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'this app session belongs to a different account; reload the page to continue',
+    });
+  }
 }
 
 export const blocksRouter = router({
@@ -5118,8 +5129,13 @@ export const blocksRouter = router({
   /**
    * PUBLISH selected outputs of ONE of the calling app's OWN workflows as bare,
    * REAL-SCANNED public `Image` rows — the write half of the Model-Benchmarking
-   * shared-grid seam. FAIL-CLOSED, and identical gate order to
-   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard.
+   * shared-grid seam. FAIL-CLOSED, and the same gate order as
+   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard, plus one gate
+   * those two do not carry: the request must arrive with the viewer's signed-in
+   * session (`protectedProcedure`, API-key and OAuth-token requests refused), and
+   * the token's subject must be that session's user. That comparison runs right
+   * after the non-anon subject check, before any flag read, rate bucket or
+   * orchestrator call.
    *
    * The block sends `workflowId` + optional `imageIndexes` (indexes into the same
    * ordered `images` array queryAppWorkflows exposes) — NEVER urls: the HOST
@@ -5138,7 +5154,8 @@ export const blocksRouter = router({
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
-  publishGenerationOutputs: publicProcedure
+  publishGenerationOutputs: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -5164,6 +5181,7 @@ export const blocksRouter = router({
           message: 'publishing requires an authenticated viewer',
         });
       }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
       // Publish has its OWN (image-weighted) bucket — separate from the catalog
       // read bucket. Charge a base token per call up front (bounds call frequency
@@ -5373,16 +5391,17 @@ export const blocksRouter = router({
    * app") is FALSE for a profile post, and that sentence is the security control.
    *
    * GUARDS, in order — those marked ✚ are additions over the publish path:
-   *   0. ✚ a signed-in browser session (`protectedProcedure`, with API-key and
-   *      OAuth-token requests refused).
+   *   0. a signed-in browser session (`protectedProcedure`, with API-key and
+   *      OAuth-token requests refused) — the publish path carries this too.
    *   1. `authorizeBlockBridgeToken` — token validity, instance revocation, and
    *      the backing app still `approved`. All three, in one call, because that
    *      helper is the single gate for every bridge proc.
    *   2. ✚ scope `posts:write:self` — consent-GATED and sensitive, NOT
    *      `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
    *      generation has NOT thereby been authorised to publish under their name.
-   *   3. non-anon subject — there is no anonymous profile to post to — and ✚
+   *   3. non-anon subject — there is no anonymous profile to post to — and
    *      that subject is the signed-in user from (0); anything else is refused.
+   *      The publish path makes the same subject/session check.
    *   4. `assertAppBlocksEnabledForTokenUser` — the runtime flag, on the SUBJECT.
    *   5. ✚ `isAppBlocksPostCreationEnabled` — the DEDICATED fail-closed flag, so
    *      a GA widening of the runtime flag does not arm public post creation on
