@@ -288,10 +288,27 @@ describe('header warnings', () => {
     expect(w).toHaveLength(1);
     expect(w[0]).toMatch(/216 of 240/);
   });
-  it('warns on more than one question spec under one version', () => {
-    expect(headerWarnings({ activeGroups: 1, lastRoutedAt: fresh, specCount: 2 }, now)[0]).toMatch(
-      /2 different question specs/
-    );
+  it('warns ADMINS on more than one question spec under one version', () => {
+    expect(
+      headerWarnings({ activeGroups: 1, lastRoutedAt: fresh, specCount: 2 }, now, false, true)[0]
+    ).toMatch(/2 different question specs/);
+  });
+  it('does not show the question-spec note to a moderator, who cannot act on it', () => {
+    expect(headerWarnings({ activeGroups: 1, lastRoutedAt: fresh, specCount: 2 }, now)).toEqual([]);
+  });
+  it('the cap and stopped-routing warnings reach everyone, admin or not', () => {
+    const old = new Date(now - (STALE_ROUTING_MINUTES + 1) * 60_000).toISOString();
+    for (const admin of [false, true]) {
+      const w = headerWarnings(
+        { activeGroups: 230, lastRoutedAt: old, specCount: 1 },
+        now,
+        false,
+        admin
+      );
+      expect(w).toHaveLength(2);
+      expect(w[0]).toMatch(/230 of 240/);
+      expect(w[1]).toMatch(/No ticket routed for over/);
+    }
   });
   it('does not call a PINNED (usually retired) version stopped', () => {
     const old = new Date(now - (STALE_ROUTING_MINUTES + 1) * 60_000).toISOString();

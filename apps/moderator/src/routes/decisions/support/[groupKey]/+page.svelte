@@ -46,11 +46,17 @@
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   {#if group.gist}
+    <h2 class="text-dark-2 mb-1 text-xs font-medium tracking-wide uppercase">Group definition</h2>
     <!-- Customer-written text: rendered as text, never as HTML. -->
-    <p class="mb-2 break-words whitespace-pre-wrap">{group.gist}</p>
+    <p class="mb-2 break-words whitespace-pre-wrap text-white">{group.gist}</p>
+    <p class="text-dark-2 mb-3 text-sm">
+      Mark a member <strong class="text-dark-0">Yes</strong> (belongs) when its ticket fits this
+      definition. The founder is only the first ticket that matched — compare each member to the
+      definition, not to the founder.
+    </p>
   {/if}
   <p class="text-sm">
-    Representative:
+    Founder:
     {#if rep?.routed}
       <a class={LINK_CLASS} href={ticketHref(group.foundedTicketId)}>#{group.foundedTicketId}</a>
     {:else}

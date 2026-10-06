@@ -16,6 +16,7 @@ import {
 } from '$lib/server/decision-resolution.service';
 import { moderatorDbStatus, type ModeratorDbStatus } from '$lib/moderator-db-status';
 import { isAreaSlug } from '$lib/server/decision-sources/support';
+import { isSuper } from '$lib/server/access';
 import { DEFAULT_STATE, STATE_FILTERS, buildInbox } from './inbox';
 
 const querySchema = z.object({
@@ -29,7 +30,7 @@ const querySchema = z.object({
   page: z.coerce.number().int().min(1).catch(1),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const { source, topic, state, page } = parseQuery(url, querySchema);
   const filters = { source, topic, state };
 
@@ -47,7 +48,7 @@ export const load: PageServerLoad = async ({ url }) => {
     if (version) {
       const v = version;
       [header, topics, { rows: items, truncated }] = await Promise.all([
-        getSupportHeader(v, { pinned: overridden }),
+        getSupportHeader(v, { pinned: overridden, admin: isSuper(locals.user) }),
         listSupportTopics(v),
         listSupportGroups({ version: v, topic }),
       ]);

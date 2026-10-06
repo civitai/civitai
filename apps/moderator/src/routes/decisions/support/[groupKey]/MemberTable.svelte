@@ -11,7 +11,12 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
-  import { MEMBER_RULINGS, MEMBER_RULING_LABEL, type MemberRuling } from '$lib/decision-rulings';
+  import {
+    MEMBER_RULINGS,
+    MEMBER_RULING_LABEL,
+    MEMBER_RULING_SHORT_LABEL,
+    type MemberRuling,
+  } from '$lib/decision-rulings';
   import { probabilityLabel } from '$lib/decisions';
   import { LINK_CLASS, MUTED_LINK_CLASS, dateTime } from '$lib/format';
   import type { PageData } from './$types';
@@ -38,11 +43,16 @@
     draft: AnswerDraft;
   } = $props();
 
-  /** A row toggle's look, on or off — the label buttons and "Use a reply" share it. */
+  const toneClass = (on: boolean) =>
+    on ? 'bg-blue-4/20 text-white' : 'text-dark-2 hover:text-dark-0';
+  /** "Use a reply" — a standalone toggle. */
   const toggleClass = (on: boolean) =>
     `rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
-      on ? 'border-blue-4 bg-blue-4/20 text-white' : 'border-dark-4 text-dark-2 hover:text-dark-0'
-    }`;
+      on ? 'border-blue-4' : 'border-dark-4'
+    } ${toneClass(on)}`;
+  /** One segment of the label control; the group draws the border and the dividers. */
+  const segmentClass = (on: boolean) =>
+    `px-2 py-0.5 text-xs disabled:opacity-50 ${toneClass(on)}`;
 
   // ticketId → the label this session just submitted, shown until its own write settles.
   const pending = new SvelteMap<string, MemberRuling>();
@@ -97,7 +107,7 @@
       <TableHead class="text-right">p group</TableHead>
       <TableHead class="text-right">p novel</TableHead>
       <TableHead>Status</TableHead>
-      <TableHead>Belongs?</TableHead>
+      <TableHead>Fits the definition?</TableHead>
       {#if canAnswer}<TableHead>Answer</TableHead>{/if}
     </TableRow>
   </TableHeader>
@@ -130,7 +140,11 @@
           {#if m.isFounder}
             <span class="text-dark-2 text-xs">founder</span>
           {:else if canRule}
-            <div class="flex gap-1">
+            <div
+              class="inline-flex divide-x divide-dark-4 overflow-hidden rounded border border-dark-4"
+              role="group"
+              aria-label="Does #{m.ticketId} fit the group definition?"
+            >
               {#each MEMBER_RULINGS as r (r)}
                 <form method="POST" action="?/label" use:enhance={submit(m.ticketId, r)}>
                   <input type="hidden" name="version" value={version} />
@@ -140,7 +154,9 @@
                     type="submit"
                     disabled={pending.has(m.ticketId)}
                     aria-pressed={shown === r}
-                    class={toggleClass(shown === r)}>{MEMBER_RULING_LABEL[r]}</button
+                    aria-label={MEMBER_RULING_LABEL[r]}
+                    title={MEMBER_RULING_LABEL[r]}
+                    class={segmentClass(shown === r)}>{MEMBER_RULING_SHORT_LABEL[r]}</button
                   >
                 </form>
               {/each}

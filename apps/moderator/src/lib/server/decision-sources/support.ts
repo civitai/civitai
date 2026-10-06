@@ -320,7 +320,9 @@ export function headerWarnings(
   h: Omit<SupportHeader, 'warnings' | 'version' | 'cap'>,
   now = Date.now(),
   /** A version pinned by `?version=` is usually a retired one, whose quiet is expected, not a fault. */
-  pinned = false
+  pinned = false,
+  /** Admins also see the router's own data-quality notes, which no moderator can act on. */
+  admin = false
 ): string[] {
   const out: string[] = [];
   if (h.activeGroups >= CATALOG_WARN_AT)
@@ -328,7 +330,8 @@ export function headerWarnings(
       `The catalog holds ${h.activeGroups} of ${ROUTER_CATALOG_CAP} active groups. At the cap the ` +
         'router stops routing, and nothing retires groups automatically.'
     );
-  if (h.specCount > 1)
+  // Engineer-facing: two specs under one version is expected while a spec change rolls out.
+  if (admin && h.specCount > 1)
     out.push(
       `${h.specCount} different question specs answered under this one router version, so its ` +
         'answers mix questions that were worded differently.'
@@ -344,7 +347,7 @@ export function headerWarnings(
 
 export async function getSupportHeader(
   version: string,
-  opts: { pinned?: boolean; now?: number } = {},
+  opts: { pinned?: boolean; now?: number; admin?: boolean } = {},
   client = reader()
 ): Promise<SupportHeader> {
   const [r] = await rows<{
@@ -363,7 +366,12 @@ export async function getSupportHeader(
     version,
     cap: ROUTER_CATALOG_CAP,
     ...base,
-    warnings: headerWarnings(base, opts.now ?? Date.now(), opts.pinned ?? false),
+    warnings: headerWarnings(
+      base,
+      opts.now ?? Date.now(),
+      opts.pinned ?? false,
+      opts.admin ?? false
+    ),
   };
 }
 

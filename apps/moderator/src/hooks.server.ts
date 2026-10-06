@@ -131,7 +131,8 @@ export const handle: Handle = async ({ event, resolve }) => {
     // Says WHY on arrival. A bare bounce is indistinguishable from the page being broken — it was
     // reported as "bulk image manager tosses you back to dashboard" by a moderator who simply had no
     // grant for it, and there was nothing on screen that could have told them otherwise.
-    const denied = `/?denied=${encodeURIComponent(event.url.pathname)}`;
+    // The query string rides along so the dashboard can link back to exactly what was asked for.
+    const denied = `/?denied=${encodeURIComponent(event.url.pathname + event.url.search)}`;
     return new Response(null, { status: 303, headers: { location: denied } });
   }
 

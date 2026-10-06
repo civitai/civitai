@@ -81,6 +81,14 @@ export const MEMBER_RULING_LABEL: Record<MemberRuling, string> = {
   unsure: 'Unsure',
 };
 
+/** The same, as the compact buttons on a member row show them — under a "Fits the definition?"
+ *  heading. The full label stays the buttons' accessible name. */
+export const MEMBER_RULING_SHORT_LABEL: Record<MemberRuling, string> = {
+  belongs: 'Yes',
+  not_belongs: 'No',
+  unsure: 'Unsure',
+};
+
 /** The inbox's per-item state, derived from the latest group ruling. */
 export const ITEM_STATES = ['unruled', 'ruled', 'escalated', 'resolved'] as const;
 export type ItemState = (typeof ITEM_STATES)[number];

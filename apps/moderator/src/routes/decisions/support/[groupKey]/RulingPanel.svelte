@@ -91,6 +91,10 @@
 
 <section class="mt-6 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h2 class="mb-1 text-white">Ruling on the group</h2>
+  <p class="text-dark-2 mb-3 text-sm">
+    While the router runs in shadow mode, rulings are recorded as training data and change nothing in
+    Freshdesk. A Resolved group's answer is what later tickets matching it are meant to be routed to.
+  </p>
   {#if current}
     <p class="text-dark-2 mb-3 text-sm">
       Last ruling: <strong class="text-dark-0">{GROUP_RULING_LABEL[current.ruling]}</strong>

@@ -80,12 +80,35 @@
   </dl>
 </section>
 
-<section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-  <h2 class="mb-2 text-white">Excerpt</h2>
-  <p class="text-dark-2 mb-2 text-xs">
-    Customer-written, capped by the router. The membership shown is the CURRENT assignment only — the
-    router keeps no history of earlier ones.
-  </p>
-  <!-- 🔴 TEXT, NEVER `{@html}`: this is a customer's own words, arriving through a third system. -->
+<!-- 🔴 TEXT, NEVER `{@html}`, in every branch: a customer's own words, arriving through a third system.
+     The Freshdesk version is converted to plain text server-side. -->
+{#snippet stored(note: string)}
+  <p class="text-dark-2 mb-2 text-xs">{note}</p>
   <p class="break-words whitespace-pre-wrap">{t.bodyExcerpt || '—'}</p>
+{/snippet}
+
+<section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
+  <h2 class="mb-2 text-white">Ticket</h2>
+  <p class="text-dark-2 mb-2 text-xs">
+    Customer-written. The membership shown is the CURRENT assignment only — the router keeps no
+    history of earlier ones.
+  </p>
+  {#await data.description}
+    {@render stored('Showing the stored text while the formatted version loads from Freshdesk…')}
+  {:then d}
+    {#if d.status === 'found'}
+      <p class="break-words whitespace-pre-wrap">{d.text}</p>
+      {#if d.truncated}
+        <p class="text-dark-2 mt-2 text-xs">Cut short here — the rest is in Freshdesk.</p>
+      {/if}
+    {:else}
+      {@render stored(
+        `Showing the stored text, which can lose its formatting — ${
+          d.status === 'none' ? 'Freshdesk has no description for this ticket.' : d.reason
+        }`
+      )}
+    {/if}
+  {:catch}
+    {@render stored('Showing the stored text, which can lose its formatting — Freshdesk could not be read.')}
+  {/await}
 </section>
