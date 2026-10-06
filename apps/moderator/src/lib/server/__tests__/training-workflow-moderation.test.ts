@@ -56,9 +56,12 @@ const {
   getTrainingWorkflowDetail,
   resolveTrainingWorkflowBlob,
   clearTrainingWorkflowBlobCache,
+  invalidatePendingWorkflowGates,
+  getDatasetItemStates,
   MAX_PENDING_CANDIDATES,
 } = await import('../training-moderation.service');
-const { releaseModerationGate } = await import('../orchestrator');
+const { releaseModerationGate, probeOrchestratorBlob } = await import('../orchestrator');
+const { mapBounded } = await import('../bounded');
 const blobRoute = await import(
   '../../../routes/api/training-workflow-blob/[workflowId]/[index]/+server'
 );
@@ -154,6 +157,7 @@ beforeEach(() => {
   fileRows.mockResolvedValue([]);
   pageGranted = true;
   clearTrainingWorkflowBlobCache();
+  invalidatePendingWorkflowGates();
 });
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -621,6 +625,9 @@ describe('resolveTrainingWorkflowBlob', () => {
 });
 
 const byIdOf = (url: URL) => decodeURIComponent(url.pathname.split('/').pop()!);
+const CONTENT = '/v2/consumer/blobs/content/';
+const BLOCKED = '/v2/consumer/blobs/blocked/';
+const redirectTo = (location: string) => new Response(null, { status: 308, headers: { location } });
 
 describe('GET /api/training-workflow-blob/[workflowId]/[index]', () => {
   const call = (index: string, user: { id: number } | null = { id: 7 }) =>
@@ -638,9 +645,36 @@ describe('GET /api/training-workflow-blob/[workflowId]/[index]', () => {
     }
   };
 
+  /** The blob read redirects to its content; `blob` answers the content URL. */
   function serve(blob: () => Response) {
-    route = (url) => (url.pathname.startsWith('/v2/consumer/blobs/') ? blob() : json(workflow()));
+    route = (url) => {
+      if (url.pathname.startsWith(CONTENT)) return blob();
+      if (url.pathname.startsWith('/v2/consumer/blobs/')) return redirectTo(`${CONTENT}tok`);
+      return json(workflow());
+    };
   }
+
+  it('refuses a blocked item instead of serving the placeholder, and never fetches it', async () => {
+    route = (url) => {
+      if (url.pathname.startsWith('/v2/consumer/blobs/blocked/'))
+        return new Response('placeholder', { headers: { 'content-type': 'image/png' } });
+      if (url.pathname.startsWith('/v2/consumer/blobs/')) return redirectTo(`${BLOCKED}tok`);
+      return json(workflow());
+    };
+    expect(await status(call('0'))).toBe(451);
+    expect(callsTo('tok')).toHaveLength(0);
+    expect(logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'training-workflow-blob' })
+    );
+  });
+
+  it('answers 502 when the blob read does not redirect to content', async () => {
+    route = (url) =>
+      url.pathname.startsWith('/v2/consumer/blobs/')
+        ? new Response(null, { status: 404 })
+        : json(workflow());
+    expect(await status(call('0'))).toBe(502);
+  });
 
   it('refuses without a session or without the page grant', async () => {
     serve(() => new Response('x', { headers: { 'content-type': 'image/png' } }));
@@ -680,7 +714,10 @@ describe('GET /api/training-workflow-blob/[workflowId]/[index]', () => {
   it('answers 502 when the upstream refuses or cannot be reached', async () => {
     serve(() => new Response(null, { status: 500 }));
     expect(await status(call('0'))).toBe(502);
-    clearTrainingWorkflowBlobCache();
+    serve(() => {
+      throw new TypeError('fetch failed');
+    });
+    expect(await status(call('0'))).toBe(502);
     route = (url) => {
       if (url.pathname.startsWith('/v2/consumer/blobs/')) throw new TypeError('fetch failed');
       return json(workflow());
@@ -778,5 +815,203 @@ describe('getTrainingWorkflowDetail', () => {
     expect(await getTrainingWorkflowDetail(WF)).toMatchObject({ ok: false, status: 404 });
     orchestrator([new Response(null, { status: 500 })]);
     expect(await getTrainingWorkflowDetail(WF)).toMatchObject({ ok: false, status: 502 });
+  });
+});
+
+describe('probeOrchestratorBlob', () => {
+  const probeWith = (res: () => Response) => {
+    route = () => res();
+    return probeOrchestratorBlob(KEY_A);
+  };
+
+  it('tells a viewable item from a blocked one by where the read redirects', async () => {
+    expect(await probeWith(() => redirectTo(`${CONTENT}abc`))).toEqual({
+      kind: 'content',
+      url: `https://orchestrator.example${CONTENT}abc`,
+    });
+    expect(await probeWith(() => redirectTo(`${BLOCKED}abc`))).toEqual({ kind: 'blocked' });
+    // It asks without following, so the placeholder is never fetched as if it were the item.
+    expect(fetchMock.mock.calls.every(([, init]) => init.redirect === 'manual')).toBe(true);
+  });
+
+  it('accepts no target off the orchestrator origin, and no unknown path', async () => {
+    expect(await probeWith(() => redirectTo(`https://elsewhere.example${CONTENT}abc`))).toEqual({
+      kind: 'unavailable',
+      status: 308,
+    });
+    expect(await probeWith(() => redirectTo('/somewhere/else'))).toEqual({
+      kind: 'unavailable',
+      status: 308,
+    });
+    expect(await probeWith(() => new Response(null, { status: 404 }))).toEqual({
+      kind: 'unavailable',
+      status: 404,
+    });
+  });
+});
+
+describe('getDatasetItemStates', () => {
+  const dataset = {
+    kind: 'blobs' as const,
+    items: [
+      { index: 0, blobKey: KEY_A, caption: null, media: null },
+      { index: 1, blobKey: KEY_B, caption: null, media: null },
+      { index: 2, blobKey: null, caption: null, media: null },
+      { index: 3, blobKey: `${'d'.repeat(32)}.png`, caption: null, media: null },
+    ],
+  };
+
+  it('labels each stored item viewable, blocked or unavailable, skipping non-blobs', async () => {
+    route = (url) => {
+      const key = byIdOf(url);
+      if (key === KEY_A) return redirectTo(`${CONTENT}a`);
+      if (key === KEY_B) return redirectTo(`${BLOCKED}b`);
+      return new Response(null, { status: 404 });
+    };
+    expect(await getDatasetItemStates(dataset)).toEqual({
+      0: 'viewable',
+      1: 'blocked',
+      3: 'unavailable',
+    });
+  });
+
+  it('marks items unchecked, never viewable, when the orchestrator hangs or fails', async () => {
+    route = (url) =>
+      byIdOf(url) === KEY_A
+        ? new Promise<Response>(() => {})
+        : (() => {
+            throw new TypeError('fetch failed');
+          })();
+    expect(await getDatasetItemStates(dataset, { budgetMs: 30 })).toEqual({
+      0: 'unchecked',
+      1: 'unchecked',
+      3: 'unchecked',
+    });
+  });
+
+  it('has nothing to probe for an archive dataset', async () => {
+    expect(await getDatasetItemStates({ kind: 'archive', count: 3 })).toEqual({});
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('approving a dataset that cannot be previewed', () => {
+  const archive = () => {
+    const w = workflow();
+    (w.steps[0].input as Record<string, unknown>).trainingData = { type: 'zip', count: 4 };
+    return w;
+  };
+
+  it('is refused without the moderator confirming they reviewed it another way', async () => {
+    orchestrator([archive()]);
+    const result = await rule(true);
+    expect(!result.ok && result.error).toContain('cannot be previewed here');
+    expect(gateCalls()).toHaveLength(0);
+  });
+
+  it('goes through with the confirmation, and deny never needs it', async () => {
+    orchestrator([archive(), workflow({ moderationStatus: 'Approved' })]);
+    expect(
+      await moderateTrainingWorkflow(
+        { workflowId: WF, approve: true, moderatorId: 7, reviewedElsewhere: true },
+        { recheckDelaysMs: [0] }
+      )
+    ).toEqual({ ok: true, moderationStatus: 'approved' });
+    orchestrator([archive(), workflow({ moderationStatus: 'Rejected' })]);
+    expect(await rule(false)).toEqual({ ok: true, moderationStatus: 'rejected' });
+  });
+
+  it('a previewable dataset needs no confirmation', async () => {
+    orchestrator([workflow(), workflow({ moderationStatus: 'Approved' })]);
+    expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
+  });
+
+  it('the page action passes the tick through', async () => {
+    orchestrator([archive(), workflow({ moderationStatus: 'Approved' })]);
+    const form = new FormData();
+    form.set('reviewedElsewhere', 'yes');
+    const result = await reviewPage.actions.approve({
+      params: { workflowId: WF },
+      locals: { user: { id: 7 } },
+      request: new Request('http://x/', { method: 'POST', body: form }),
+    } as unknown as Parameters<typeof reviewPage.actions.approve>[0]);
+    expect(result).toEqual({ success: true, moderationStatus: 'approved' });
+  }, 15_000);
+});
+
+describe('the pending queue is bounded and shared', () => {
+  const ids = [1, 2, 3].map((n) => `${n}-20261005123456789`);
+  const ledgerOf = (list: string[]) =>
+    chQuery.mockImplementation(async (sql: string) =>
+      sql.includes("type = 'training'") ? list.map((workflowId) => ({ workflowId })) : []
+    );
+
+  it('lists what did not answer within the budget as unchecked, without waiting for it', async () => {
+    ledgerOf(ids);
+    route = (url) =>
+      byIdOf(url) === ids[0] ? json(workflow({ id: ids[0] })) : new Promise<Response>(() => {});
+    const started = Date.now();
+    const result = await getPendingWorkflowGates({ readBudgetMs: 50 });
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(result.items.map((i) => [i.workflowId, i.verified])).toEqual([
+      [ids[0], true],
+      [ids[1], false],
+      [ids[2], false],
+    ]);
+    expect(result.workflowFilterUnavailable).toBe(true);
+  });
+
+  it('serves concurrent and repeat loads from one build, until a ruling clears it', async () => {
+    ledgerOf(ids);
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    const [a, b] = await Promise.all([getPendingWorkflowGates(), getPendingWorkflowGates()]);
+    await getPendingWorkflowGates();
+    expect(a).toBe(b);
+    expect(chQuery).toHaveBeenCalledTimes(3); // one build: three ledger queries
+
+    // A ruling made here clears it, so the ruled run does not linger in the queue.
+    orchestrator([workflow(), workflow({ moderationStatus: 'Approved' })]);
+    await rule(true);
+    route = (url) => json(workflow({ id: byIdOf(url) }));
+    await getPendingWorkflowGates();
+    expect(chQuery).toHaveBeenCalledTimes(6);
+  });
+
+  it('does not hold on to a ledger failure', async () => {
+    chQuery.mockRejectedValueOnce(new Error('down'));
+    route = () => new Response(null, { status: 599 });
+    expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(true);
+    ledgerOf([]);
+    expect((await getPendingWorkflowGates()).ledgerUnavailable).toBe(false);
+  });
+
+  it('expires after its window', async () => {
+    ledgerOf([]);
+    route = () => new Response(null, { status: 599 });
+    await getPendingWorkflowGates();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(Date.now() + 31_000);
+    await getPendingWorkflowGates();
+    expect(chQuery).toHaveBeenCalledTimes(6);
+  });
+});
+
+describe('mapBounded', () => {
+  it('keeps order, respects concurrency, and leaves unfinished slots undefined', async () => {
+    let running = 0;
+    let peak = 0;
+    const result = await mapBounded(
+      [5, 1, 3, 1000],
+      async (ms) => {
+        running++;
+        peak = Math.max(peak, running);
+        await new Promise((r) => setTimeout(r, ms));
+        running--;
+        return ms * 2;
+      },
+      { concurrency: 2, budgetMs: 100 }
+    );
+    expect(result).toEqual([10, 2, 6, undefined]);
+    expect(peak).toBe(2);
   });
 });

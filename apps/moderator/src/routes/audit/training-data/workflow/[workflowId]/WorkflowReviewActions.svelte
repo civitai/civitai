@@ -1,13 +1,24 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { relativeTime } from '$lib/format';
 
-  let { expiresAt, expiringSoon }: { expiresAt: string; expiringSoon: boolean } = $props();
+  let {
+    expiresAt,
+    expiringSoon,
+    requiresAck,
+  }: {
+    expiresAt: string;
+    expiringSoon: boolean;
+    /** The dataset cannot be previewed here, so Approve asks the moderator to confirm reviewing it
+     *  another way. The server refuses an approval without it; this is only how the page asks. */
+    requiresAck: boolean;
+  } = $props();
 
   const VERDICTS: Record<string, string> = {
     '?/approve': 'Training run approved',
@@ -35,8 +46,18 @@
   </p>
 {/if}
 <div class="mb-2 flex flex-wrap items-start gap-4">
-  <form method="POST" action="?/approve" use:enhance={form.enhance}>
-    <Button type="submit" size="sm" disabled={form.submitting}>Approve</Button>
+  <form method="POST" action="?/approve" use:enhance={form.enhance} class="flex flex-col gap-2">
+    {#if requiresAck}
+      <!-- Uncontrolled, like the other checkbox groups in this app: nothing reads the tick but the
+           server, through the primitive's hidden input. -->
+      <div class="flex items-center gap-1.5" data-touch-target>
+        <Checkbox id="reviewed-elsewhere" name="reviewedElsewhere" value="yes" />
+        <Label for="reviewed-elsewhere" class="text-xs leading-snug font-normal text-dark-2">
+          I reviewed this dataset another way
+        </Label>
+      </div>
+    {/if}
+    <Button type="submit" size="sm" disabled={form.submitting} class="self-start">Approve</Button>
   </form>
   <form method="POST" action="?/deny" use:enhance={form.enhance} class="flex flex-col gap-2">
     <Label for="deny-reason" class="text-xs text-dark-2">Reason (optional, shown to the user)</Label>

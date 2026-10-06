@@ -115,20 +115,62 @@ export async function getManagerWorkflow(
   }
 }
 
+export type BlobProbe =
+  /** Viewable: `url` is where its bytes are served, on the orchestrator's own origin. */
+  | { kind: 'content'; url: string }
+  /** Withheld when it was uploaded: the orchestrator answers with its blocked-content placeholder. */
+  | { kind: 'blocked' }
+  /** Missing, not yet scanned, or refused — `status` is the orchestrator's answer. */
+  | { kind: 'unavailable'; status: number };
+
+const BLOCKED_PATH = '/v2/consumer/blobs/blocked/';
+const CONTENT_PATH = '/v2/consumer/blobs/content/';
+
 /**
- * One consumer-uploaded blob, by KEY — never a URL: the caller resolves the key from a workflow it has
- * read itself, so nothing a browser posts can choose what this fetches.
+ * Where one consumer-uploaded blob resolves, by KEY — never a URL: the caller resolves the key from a
+ * workflow it has read itself, so nothing a browser posts can choose what this asks for.
+ *
+ * The blob read answers with a redirect, and the redirect's TARGET is what separates a viewable item
+ * from a withheld one: following it blindly would hand a moderator the placeholder image as if it
+ * were the upload. Only a target on the orchestrator's own origin is accepted. Throws on a transport
+ * failure.
+ */
+export async function probeOrchestratorBlob(
+  blobKey: string,
+  timeoutMs = 15_000
+): Promise<BlobProbe> {
+  const config = orchestratorConfig();
+  if (!config) return { kind: 'unavailable', status: 0 };
+  const res = await fetch(`${config.base}/v2/consumer/blobs/${encodeURIComponent(blobKey)}`, {
+    headers: { authorization: `Bearer ${config.token}` },
+    redirect: 'manual',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  void res.body?.cancel();
+  const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+  if (!location) return { kind: 'unavailable', status: res.status };
+  const target = new URL(location, `${config.base}/`);
+  if (target.origin !== new URL(config.base).origin)
+    return { kind: 'unavailable', status: res.status };
+  if (target.pathname.startsWith(BLOCKED_PATH)) return { kind: 'blocked' };
+  if (target.pathname.startsWith(CONTENT_PATH)) return { kind: 'content', url: target.href };
+  return { kind: 'unavailable', status: res.status };
+}
+
+/**
+ * The bytes behind a `probeOrchestratorBlob` content URL.
  *
  * The timeout covers reaching the response, not reading it: the body is streamed straight to the
  * browser, and a long dataset video must not be cut off partway with no error.
  */
-export async function fetchOrchestratorBlob(blobKey: string): Promise<Response | null> {
+export async function fetchOrchestratorBlobContent(url: string): Promise<Response> {
   const config = orchestratorConfig();
-  if (!config) return null;
+  if (!config || new URL(url).origin !== new URL(config.base).origin)
+    throw new Error('Refusing to fetch a blob from outside the orchestrator.');
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 60_000);
   try {
-    return await fetch(`${config.base}/v2/consumer/blobs/${encodeURIComponent(blobKey)}`, {
+    return await fetch(url, {
       headers: { authorization: `Bearer ${config.token}` },
       signal: controller.signal,
     });

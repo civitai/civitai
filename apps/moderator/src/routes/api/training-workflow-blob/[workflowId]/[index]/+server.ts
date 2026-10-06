@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireAccess } from '$lib/server/access';
-import { fetchOrchestratorBlob } from '$lib/server/orchestrator';
+import { fetchOrchestratorBlobContent, probeOrchestratorBlob } from '$lib/server/orchestrator';
 import { resolveTrainingWorkflowBlob } from '$lib/server/training-moderation.service';
 import { logToAxiom } from '$lib/server/axiom';
 
@@ -24,7 +24,18 @@ export const GET: RequestHandler = async ({ params, locals }) => {
   const resolved = await resolveTrainingWorkflowBlob(params.workflowId, index);
   if (!resolved.ok) error(resolved.status, resolved.error);
 
-  const upstream = await fetchOrchestratorBlob(resolved.blobKey).catch((e) => {
+  const probe = await probeOrchestratorBlob(resolved.blobKey).catch((e) => {
+    console.error('[training-workflow-blob] probe failed', e);
+    return null;
+  });
+  if (!probe) error(502, 'Could not reach the orchestrator.');
+  // Never pass the placeholder off as the item: the moderator would be judging an image the uploader
+  // never sent.
+  if (probe.kind === 'blocked') error(451, 'Blocked at upload — not viewable here.');
+  if (probe.kind === 'unavailable')
+    error(502, `The orchestrator would not serve this item (${probe.status}).`);
+
+  const upstream = await fetchOrchestratorBlobContent(probe.url).catch((e) => {
     console.error('[training-workflow-blob] fetch failed', e);
     return null;
   });

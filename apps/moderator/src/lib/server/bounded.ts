@@ -20,3 +20,37 @@ export const bounded = async <T>(run: () => Promise<T>, ms = 3_000): Promise<T |
     clearTimeout(timer);
   }
 };
+
+/**
+ * `fn` over `items`, at most `concurrency` at a time, for at most `budgetMs` in total. A slot whose item
+ * did not finish in time is `undefined` — the caller decides what an unfinished item means, and must not
+ * read it as an answer.
+ *
+ * Like `bounded`, abandoning a call does not cancel it: an in-flight request runs to its own timeout.
+ */
+export async function mapBounded<T, R>(
+  items: readonly T[],
+  fn: (item: T) => Promise<R>,
+  { concurrency, budgetMs }: { concurrency: number; budgetMs: number }
+): Promise<(R | undefined)[]> {
+  const results: (R | undefined)[] = new Array(items.length).fill(undefined);
+  let timer: NodeJS.Timeout | undefined;
+  const deadline = new Promise<'expired'>((resolve) => {
+    timer = setTimeout(() => resolve('expired'), budgetMs);
+  });
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      const outcome = await Promise.race([fn(items[i]).then((value) => ({ value })), deadline]);
+      if (outcome === 'expired') return;
+      results[i] = outcome.value;
+    }
+  };
+  try {
+    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+  } finally {
+    clearTimeout(timer);
+  }
+  return results;
+}

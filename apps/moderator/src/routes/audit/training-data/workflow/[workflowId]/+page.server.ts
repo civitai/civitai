@@ -1,6 +1,7 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
 import {
+  getDatasetItemStates,
   getTrainingWorkflowDetail,
   moderateTrainingWorkflow,
 } from '$lib/server/training-moderation.service';
@@ -11,7 +12,11 @@ import {
 export const load: PageServerLoad = async ({ params }) => {
   const loaded = await getTrainingWorkflowDetail(params.workflowId);
   if (!loaded.ok) error(loaded.status, loaded.error);
-  return { detail: loaded.detail };
+  return {
+    detail: loaded.detail,
+    // Streamed: one probe per stored item, so a large dataset must not hold the page.
+    itemStates: getDatasetItemStates(loaded.detail.dataset),
+  };
 };
 
 const rule = async (event: RequestEvent, approve: boolean) => {
@@ -23,6 +28,7 @@ const rule = async (event: RequestEvent, approve: boolean) => {
     approve,
     message: typeof reason === 'string' ? reason : null,
     moderatorId: event.locals.user.id,
+    reviewedElsewhere: form.get('reviewedElsewhere') === 'yes',
   });
   if (!result.ok) return fail(400, { error: result.error });
   return { success: true, moderationStatus: result.moderationStatus };

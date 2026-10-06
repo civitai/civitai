@@ -6,6 +6,7 @@ import {
   getManagerWorkflow,
   getOrchestratorClient,
   isGoneStatus,
+  probeOrchestratorBlob,
   releaseModerationGate,
 } from './orchestrator';
 import { trainingMediaOf, type TrainingAssetKind } from '$lib/training-media';
@@ -17,6 +18,7 @@ import { logToAxiom } from './axiom';
 import { getClickhouse } from './clickhouse';
 import { TRAINING_STEP_TYPES } from './training-orchestration.service';
 import { usersByIds } from './users.service';
+import { mapBounded } from './bounded';
 
 export const TRAINING_DATA_FILE_TYPE = 'Training Data';
 const ANNOUNCEMENT_KEY = 'training-announcement';
@@ -1043,8 +1045,8 @@ export async function getTrainingWorkflowDetail(
 
 const MAX_RULING_MESSAGE = 1000;
 
-/** Delays between re-reads after a release. The release returns before the gate job completes, so the
- *  first read can still say under review for a ruling that is about to land. */
+/** Delays between re-reads after a release. The release returns before the run's status reflects it,
+ *  so the first read can still say under review for a ruling that is about to land. */
 const RECHECK_DELAYS_MS = [750, 1500, 3000];
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -1054,12 +1056,19 @@ const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve,
  *
  * Every refusal happens BEFORE the gate is touched, from a read this call made itself. The release is
  * the one irreversible step, so it is recorded the moment the orchestrator accepts it — as the version
- * path does — whatever the re-read says next. The re-read only decides what the moderator is told: the
- * orchestrator answers 204 even for a gate it is not tracking, so a status that has not moved is
- * reported as not applied rather than as done. Refunds on deny/expiry are the orchestrator's.
+ * path does — whatever the re-read says next. An accepted release is not proof the ruling took effect,
+ * so the run is re-read and only a status that moved is reported as done; one that has not is reported
+ * as not applied. Refunds on deny/expiry are the orchestrator's.
  */
 export async function moderateTrainingWorkflow(
-  input: { workflowId: string; approve: boolean; message?: string | null; moderatorId: number },
+  input: {
+    workflowId: string;
+    approve: boolean;
+    message?: string | null;
+    moderatorId: number;
+    /** The moderator confirmed reviewing a dataset this app cannot preview. Required to approve one. */
+    reviewedElsewhere?: boolean;
+  },
   options: { recheckDelaysMs?: number[] } = {}
 ): Promise<{ ok: true; moderationStatus: string } | { ok: false; error: string }> {
   const { workflowId, approve, moderatorId } = input;
@@ -1082,11 +1091,21 @@ export async function moderateTrainingWorkflow(
       }). Nothing was changed.`,
     };
 
+  // Approving what nobody here could look at needs the moderator to say they looked at it elsewhere.
+  // Checked on the server: the checkbox is only how the page asks.
+  if (approve && before.dataset.kind !== 'blobs' && !input.reviewedElsewhere)
+    return {
+      ok: false,
+      error:
+        "This run's dataset cannot be previewed here. Approve only after reviewing it another way, and tick that you did. Nothing was changed.",
+    };
+
   const message = approve
     ? undefined
     : input.message?.trim().slice(0, MAX_RULING_MESSAGE) || undefined;
   const released = await releaseModerationGate(workflowId, approve, message);
   if (!released.ok) return { ok: false, error: released.error };
+  invalidatePendingWorkflowGates();
 
   await recordModActivity({
     userId: moderatorId,
@@ -1150,6 +1169,12 @@ const PENDING_WINDOW_MS = 49 * 3_600_000;
 /** Workflows read from the orchestrator per page load. Exported for tests. */
 export const MAX_PENDING_CANDIDATES = 300;
 const PENDING_READ_CONCURRENCY = 8;
+/** The whole fan-out of orchestrator reads gets this long; whatever has not answered is listed as
+ *  unchecked rather than holding the page. */
+const PENDING_READ_BUDGET_MS = 20_000;
+/** One queue serves every moderator opening the page within this window, and concurrent loads share
+ *  one build. A ruling made here clears it. */
+const PENDING_CACHE_MS = 30_000;
 
 export type PendingWorkflowGate = {
   workflowId: string;
@@ -1189,9 +1214,37 @@ const ymdhms = (ms: number) => new Date(ms).toISOString().slice(0, 19).replace('
  *
  * A run submitted at no charge has no ledger row and does not appear here.
  */
-export async function getPendingWorkflowGates(
-  options: { now?: number } = {}
+export function getPendingWorkflowGates(
+  options: { now?: number; readBudgetMs?: number } = {}
 ): Promise<PendingWorkflowGates> {
+  const now = Date.now();
+  if (pendingCache && now - pendingCache.at < PENDING_CACHE_MS) return pendingCache.result;
+  const result = buildPendingWorkflowGates(options);
+  const entry = { at: now, result };
+  pendingCache = entry;
+  // A failed build is not worth holding: the next load should try again.
+  void result.then(
+    (r) => {
+      if (r.ledgerUnavailable && pendingCache === entry) pendingCache = null;
+    },
+    () => {
+      if (pendingCache === entry) pendingCache = null;
+    }
+  );
+  return result;
+}
+
+let pendingCache: { at: number; result: Promise<PendingWorkflowGates> } | null = null;
+
+/** Called after any accepted ruling, and by tests. */
+export function invalidatePendingWorkflowGates(): void {
+  pendingCache = null;
+}
+
+async function buildPendingWorkflowGates(options: {
+  now?: number;
+  readBudgetMs?: number;
+}): Promise<PendingWorkflowGates> {
   const since = ymdhms((options.now ?? Date.now()) - PENDING_WINDOW_MS);
   // Three queries, not one: the same anti-join written as `NOT IN (subquery)` measured over 20s against
   // under 1s for the three run separately.
@@ -1236,31 +1289,26 @@ export async function getPendingWorkflowGates(
   const page = candidates.slice(0, MAX_PENDING_CANDIDATES);
 
   type Checked = { workflowId: string; reading?: WorkflowReading; unknown: boolean };
-  const checked = new Map<string, Checked | null>();
-  let next = 0;
-  const worker = async () => {
-    while (next < page.length) {
-      const workflowId = page[next++];
+  const checked = await mapBounded(
+    page,
+    async (workflowId): Promise<Checked | null> => {
       const loaded = await getManagerWorkflow(workflowId);
-      if (!loaded.ok) {
-        checked.set(workflowId, loaded.gone ? null : { workflowId, unknown: true });
-        continue;
-      }
+      if (!loaded.ok) return loaded.gone ? null : { workflowId, unknown: true };
       const read = readTrainingWorkflow(workflowId, loaded.workflow);
-      checked.set(
-        workflowId,
-        read.ok && read.reading.underReview
-          ? { workflowId, reading: read.reading, unknown: false }
-          : null
-      );
+      return read.ok && read.reading.underReview
+        ? { workflowId, reading: read.reading, unknown: false }
+        : null;
+    },
+    {
+      concurrency: PENDING_READ_CONCURRENCY,
+      budgetMs: options.readBudgetMs ?? PENDING_READ_BUDGET_MS,
     }
-  };
-  await Promise.all(
-    Array.from({ length: Math.min(PENDING_READ_CONCURRENCY, page.length) }, worker)
   );
 
-  // Back into ledger order — the workers finish out of order.
-  const kept = page.map((id) => checked.get(id)).filter((c): c is Checked => !!c);
+  // In ledger order. A read that did not finish within the budget is not an answer: listed, unchecked.
+  const kept = page
+    .map((workflowId, i) => (checked[i] === undefined ? { workflowId, unknown: true } : checked[i]))
+    .filter((c): c is Checked => !!c);
 
   // Model-version claims, confirmed in one query. A confirmed one is the version queue's; an unconfirmed
   // one stays here, flagged. If the check itself fails the claimed rows stay, unverified.
@@ -1350,4 +1398,35 @@ export async function resolveTrainingWorkflowBlob(
   if (!item.blobKey)
     return { ok: false, status: 404, error: 'This dataset item is not a stored blob.' };
   return { ok: true, blobKey: item.blobKey, ownerId };
+}
+
+/**
+ * What a moderator can actually see of each stored dataset item: `blocked` was withheld when it was
+ * uploaded and is not viewable here (it would otherwise render as a placeholder that reads like the
+ * upload), `unavailable` is missing or not yet scanned, `unchecked` did not answer within the budget.
+ */
+export type DatasetItemState = 'viewable' | 'blocked' | 'unavailable' | 'unchecked';
+
+const ITEM_PROBE_CONCURRENCY = 8;
+const ITEM_PROBE_BUDGET_MS = 20_000;
+
+export async function getDatasetItemStates(
+  dataset: WorkflowDataset,
+  options: { budgetMs?: number } = {}
+): Promise<Record<number, DatasetItemState>> {
+  if (dataset.kind !== 'blobs') return {};
+  const stored = dataset.items.filter((item) => item.blobKey);
+  const probed = await mapBounded(
+    stored,
+    async (item): Promise<DatasetItemState> => {
+      try {
+        const probe = await probeOrchestratorBlob(item.blobKey!);
+        return probe.kind === 'content' ? 'viewable' : probe.kind;
+      } catch {
+        return 'unchecked';
+      }
+    },
+    { concurrency: ITEM_PROBE_CONCURRENCY, budgetMs: options.budgetMs ?? ITEM_PROBE_BUDGET_MS }
+  );
+  return Object.fromEntries(stored.map((item, i) => [item.index, probed[i] ?? 'unchecked']));
 }

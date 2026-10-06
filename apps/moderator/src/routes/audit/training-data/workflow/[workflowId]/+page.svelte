@@ -1,9 +1,8 @@
 <script lang="ts">
-  import TrainingAssetGrid from '$lib/components/TrainingAssetGrid.svelte';
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
   import { gateExpiresSoon, workflowOriginLabel } from '$lib/training-workflow';
-  import type { TrainingAsset } from '$lib/training-media';
+  import WorkflowDataset from './WorkflowDataset.svelte';
   import WorkflowReviewActions from './WorkflowReviewActions.svelte';
   import type { PageData } from './$types';
 
@@ -13,27 +12,8 @@
   const expiringSoon = $derived(gateExpiresSoon(detail.expiresAt));
   const reviewable = $derived(detail.underReview && detail.modelVersionId === null);
 
-  // Items are served by position through this app, never from a URL the workflow carries.
-  const blobItems = $derived(detail.dataset.kind === 'blobs' ? detail.dataset.items : []);
-  const itemUrl = (index: number) =>
-    `/api/training-workflow-blob/${encodeURIComponent(detail.workflowId)}/${index}`;
-  const assets = $derived(
-    blobItems.flatMap((item): TrainingAsset[] =>
-      item.blobKey && item.media
-        ? [
-            {
-              url: itemUrl(item.index),
-              name: `Item ${item.index + 1}`,
-              ...item.media,
-              caption: item.caption,
-            },
-          ]
-        : []
-    )
-  );
-  // Stored, but not a type the grid renders: still openable, so nothing in a dataset is unviewable.
-  const otherItems = $derived(blobItems.filter((item) => item.blobKey && !item.media));
-  const unserved = $derived(blobItems.filter((item) => !item.blobKey).length);
+  // Approve needs an explicit "reviewed it another way" when nothing here can show the dataset.
+  const previewable = $derived(detail.dataset.kind === 'blobs');
 </script>
 
 <header class="page-header">
@@ -97,7 +77,11 @@
 
 {#if reviewable}
   {#key detail.workflowId}
-    <WorkflowReviewActions expiresAt={detail.expiresAt} {expiringSoon} />
+    <WorkflowReviewActions
+      expiresAt={detail.expiresAt}
+      {expiringSoon}
+      requiresAck={!previewable}
+    />
   {/key}
 {/if}
 
@@ -122,30 +106,11 @@
 
 <h2 class="mb-2 text-lg font-semibold text-white">Dataset</h2>
 {#if detail.dataset.kind === 'blobs'}
-  <p class="mb-3 text-xs text-dark-2">
-    {blobItems.length} items{unserved
-      ? `, ${unserved} of which are not stored uploads and cannot be shown`
-      : ''}. An item withheld when it was uploaded may show as a placeholder.
-  </p>
-  {#if assets.length || !otherItems.length}
-    <TrainingAssetGrid
-      {assets}
-      preload="none"
-      columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
-    />
-  {/if}
-  {#if otherItems.length}
-    <ul class="mt-3 flex flex-col gap-1 text-sm">
-      {#each otherItems as item (item.index)}
-        <li>
-          <a href={itemUrl(item.index)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
-            Item {item.index + 1} (not previewable — open) ↗
-          </a>
-          <span class="text-dark-2"> — {item.caption ?? '(no caption)'}</span>
-        </li>
-      {/each}
-    </ul>
-  {/if}
+  <WorkflowDataset
+    workflowId={detail.workflowId}
+    items={detail.dataset.items}
+    itemStates={data.itemStates}
+  />
 {:else if detail.dataset.kind === 'archive'}
   <p class="text-sm text-dark-2">
     This run's dataset is a packaged archive{detail.dataset.count != null
