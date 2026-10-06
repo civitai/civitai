@@ -24,7 +24,7 @@ vi.mock('~/server/services/text-scan/harness', async (importOriginal) => ({
   runTextScanHarnessAction: vi.fn(async () => ({ kind: 'json', body: { ok: true } })),
 }));
 
-const handler = (await import('~/pages/api/mod/text-scan')).default;
+const { default: handler, config } = await import('~/pages/api/mod/text-scan');
 const { runTextScanHarnessAction } = await import('~/server/services/text-scan/harness');
 
 function call(body: unknown, query: Record<string, string> = {}) {
@@ -62,6 +62,10 @@ beforeEach(() => {
 });
 
 describe('mod/text-scan', () => {
+  it('raises the body limit above a full request of texts', () => {
+    expect(config.api.bodyParser.sizeLimit).toBe('4mb');
+  });
+
   it('refuses a caller with no session, and a signed-in non-moderator, without reaching the harness', async () => {
     session.current = null;
     expect((await call({ action: 'getPrompts' })).status).toBe(401);

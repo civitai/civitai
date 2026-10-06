@@ -78,8 +78,7 @@
  *     "promptOverrides"?, "model"?, "thinking"?, "concurrency"?, "wait"? }
  *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
  *     Free text declares nothing, so the outcome is what would fire on an entity that
- *     declares nothing. A missing prompt key comes back as that item's error. Refused
- *     when ceil(texts / concurrency) * wait exceeds 120 seconds.
+ *     declares nothing. A missing prompt key comes back as that item's error.
  *
  *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
  *     "model"?, "thinking"? }

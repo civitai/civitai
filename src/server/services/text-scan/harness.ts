@@ -67,6 +67,7 @@ export const TEXT_SCAN_HARNESS_LIMITS = {
   fieldsPerText: 500,
   charsPerText: 200_000,
   charsPerRequest: 1_000_000,
+  headingChars: 100,
 } as const;
 const fieldChars = (fields: { text: string }[]) =>
   fields.reduce((sum, field) => sum + field.text.length, 0);
@@ -77,7 +78,7 @@ const texts = z
       fields: z
         .array(
           z.object({
-            heading: z.string().min(1).max(100),
+            heading: z.string().min(1).max(TEXT_SCAN_HARNESS_LIMITS.headingChars),
             text: z.string().max(TEXT_SCAN_HARNESS_LIMITS.charsPerText),
           })
         )
@@ -266,7 +267,6 @@ function workflowErrorText(error: unknown, fallback: string): string {
 const FAILED_WORKFLOW_STATUSES = ['failed', 'expired', 'canceled'];
 const ERROR_KEYS = ['error', 'errors', 'reason', 'blockedReason', 'message'];
 
-/** Every error-ish string the orchestrator put on the step, its jobs or its metadata, verbatim. */
 function orchestratorErrorDetail(step: unknown): string {
   const found: string[] = [];
   const collect = (node: unknown) => {
@@ -289,8 +289,8 @@ function orchestratorErrorDetail(step: unknown): string {
 }
 
 /**
- * Why a workflow has no reply to parse, in the orchestrator's own words, or null when it finished.
- * A workflow still running after `wait` keeps running (and bills); only its result is out of reach.
+ * Why a workflow has no reply to parse, in the orchestrator's own words, or null when finished. A
+ * workflow still running after `wait` keeps running and bills.
  */
 function unfinishedWorkflowError(
   workflow: { id: string; status?: string; steps?: unknown },

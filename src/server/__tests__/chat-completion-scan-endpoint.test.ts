@@ -498,6 +498,7 @@ const SCAM_OVERRIDES = { base: 'BASE PROMPT', 'label:scam': 'SCAM DEF' };
 const scamWorkflow = (id: string) => ({
   data: {
     id,
+    status: 'succeeded',
     steps: [
       {
         $type: 'chatCompletion',
@@ -636,6 +637,56 @@ describe('free-text actions', () => {
     const res = await call({ action: 'quoteTexts', entityType: 'Comment', texts });
     expect(res._status()).toBe(400);
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('quoteTexts refuses more than textsPerRequest texts on `texts`', async () => {
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: Array.from({ length: 51 }, (_, i) => ({
+        key: `k${i}`,
+        fields: [{ heading: 'Comment', text: 'hello' }],
+      })),
+    });
+    expect(res._status()).toBe(400);
+    expect((res._body() as { issues: Array<{ path: unknown[] }> }).issues[0].path).toEqual([
+      'texts',
+    ]);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    {
+      name: '500 fields',
+      texts: [{ key: 'a', fields: Array(500).fill({ heading: 'H', text: 'x' }) }],
+    },
+    {
+      name: '200,000 characters in one text',
+      texts: [{ key: 'a', fields: [{ heading: 'H', text: 'x'.repeat(200_000) }] }],
+    },
+    {
+      name: '1,000,000 characters in one request',
+      texts: Array.from({ length: 5 }, (_, i) => ({
+        key: `k${i}`,
+        fields: [{ heading: 'H', text: 'x'.repeat(200_000) }],
+      })),
+    },
+    {
+      name: 'exactly 50 texts',
+      texts: Array.from({ length: 50 }, (_, i) => ({
+        key: `k${i}`,
+        fields: [{ heading: 'Comment', text: 'hello' }],
+      })),
+    },
+  ])('quoteTexts accepts $name', async ({ texts }) => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: { id: 'q', cost: { total: 1 } } } as never);
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts,
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect(res._status()).toBe(200);
   });
 
   it.each([
@@ -822,6 +873,56 @@ describe('free-text actions', () => {
       },
       error: 'workflow wf-e expired',
       outcome: 'workflow_expired',
+    },
+    {
+      name: 'a canceled workflow',
+      data: {
+        id: 'wf-c',
+        status: 'canceled',
+        steps: [{ $type: 'chatCompletion', status: 'canceled' }],
+      },
+      error: 'workflow wf-c canceled',
+      outcome: 'workflow_canceled',
+    },
+    {
+      name: 'a failed workflow whose step status differs',
+      data: {
+        id: 'wf-s',
+        status: 'failed',
+        steps: [{ $type: 'chatCompletion', status: 'expired' }],
+      },
+      error: 'workflow wf-s failed: step expired',
+      outcome: 'workflow_failed',
+    },
+    {
+      name: 'error detail on the step metadata',
+      data: {
+        id: 'wf-m',
+        status: 'failed',
+        steps: [{ $type: 'chatCompletion', status: 'failed', metadata: { reason: 'quota' } }],
+      },
+      error: 'workflow wf-m failed: quota',
+      outcome: 'workflow_failed',
+    },
+    {
+      name: 'error detail on the step output',
+      data: {
+        id: 'wf-u',
+        status: 'failed',
+        steps: [{ $type: 'chatCompletion', status: 'failed', output: { message: 'bad output' } }],
+      },
+      error: 'workflow wf-u failed: bad output',
+      outcome: 'workflow_failed',
+    },
+    {
+      name: 'an array of errors',
+      data: {
+        id: 'wf-a',
+        status: 'failed',
+        steps: [{ $type: 'chatCompletion', status: 'failed', errors: ['first', 'second'] }],
+      },
+      error: 'workflow wf-a failed: first; second',
+      outcome: 'workflow_failed',
     },
     {
       name: 'a workflow still running after wait',
