@@ -32,7 +32,7 @@ const reportCategories = [
     color: 'red',
     icon: IconFlag,
     tooltip:
-      'Points deducted for content this user posted that was removed for Terms of Service violations',
+      'Points deducted for images this user posted that were removed for Terms of Service violations',
   },
   {
     key: 'reportsActioned' as const,
