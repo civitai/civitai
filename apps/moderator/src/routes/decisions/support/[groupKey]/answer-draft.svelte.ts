@@ -1,4 +1,5 @@
 import type { GroupRuling } from '$lib/decision-rulings';
+import type { ResolutionAnswer } from '$lib/server/decision-resolution.service';
 import type { AgentReply } from '$lib/server/freshdesk.service';
 
 /**
@@ -12,7 +13,7 @@ export class AnswerDraft {
   ruling = $state<GroupRuling | ''>('');
   text = $state('');
   /** The reply the text was pre-filled from. Cleared to record the answer without a source. */
-  source = $state<{ ticketId: string; conversationId: string; text: string } | null>(null);
+  source = $state<(NonNullable<ResolutionAnswer['source']> & { text: string }) | null>(null);
   /** The member whose replies are open, or null. */
   replyTicket = $state<string | null>(null);
 

@@ -38,13 +38,13 @@
     draft: AnswerDraft;
   } = $props();
 
-  // ticketId → the label this session just submitted, shown until its own write settles.
   /** A row toggle's look, on or off — the label buttons and "Use a reply" share it. */
   const toggleClass = (on: boolean) =>
     `rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
       on ? 'border-blue-4 bg-blue-4/20 text-white' : 'border-dark-4 text-dark-2 hover:text-dark-0'
     }`;
 
+  // ticketId → the label this session just submitted, shown until its own write settles.
   const pending = new SvelteMap<string, MemberRuling>();
   // ticketId → why the last label on that row was refused. Held HERE, per row, rather than read off
   // the page-level `form`: that one is shared with the ruling panel, and a refusal routed by a scope

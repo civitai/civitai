@@ -103,6 +103,16 @@ describe('getPublicAgentReplies', () => {
     expect(out).toMatchObject({ status: 'found', truncated: true });
   });
 
+  it("is unavailable, not 'none', when the cap cut the read short and nothing read is a reply", async () => {
+    const full = Array.from({ length: CONVERSATIONS_PER_PAGE }, (_, i) =>
+      convo({ id: 1 + i, incoming: true })
+    );
+    fetchMock.mockImplementation(async () => page(full));
+    const out = await getPublicAgentReplies('73618');
+    expect(out.status).toBe('unavailable');
+    expect(out.status === 'unavailable' && out.reason).toMatch(/Only the first 500 conversations/);
+  });
+
   it("is 'none' when the ticket has no public agent reply", async () => {
     fetchMock.mockResolvedValueOnce(page([convo({ incoming: true }), convo({ private: true })]));
     expect(await getPublicAgentReplies('73618')).toEqual({ status: 'none' });
@@ -172,6 +182,14 @@ describe('getFreshdeskContact', () => {
     expect(fetchMock.mock.calls[0][0]).toMatch(
       /^https:\/\/help\.example\.test\/api\/v2\/search\/contacts\?query=/
     );
+  });
+
+  it('is unavailable, not none, on a body that is not an object', async () => {
+    fetchMock.mockResolvedValueOnce(page(null));
+    expect(await getFreshdeskContact('rv@example.test')).toEqual({
+      status: 'unavailable',
+      reason: 'Freshdesk returned an unexpected response.',
+    });
   });
 
   it("is 'none' on an empty result", async () => {

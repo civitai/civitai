@@ -155,7 +155,15 @@ export async function getPublicAgentReplies(ticketId: string): Promise<AgentRepl
     .filter((r) => isFreshdeskId(r.conversationId) && r.text !== '')
     // ISO-8601 timestamps sort as strings; a reply with none sorts last.
     .sort((x, y) => (y.createdAt ?? '').localeCompare(x.createdAt ?? ''));
-  return replies.length > 0 ? { status: 'found', replies, truncated } : { status: 'none' };
+  if (replies.length > 0) return { status: 'found', replies, truncated };
+  // Nothing in what was read is not "no reply" when there was more to read.
+  return truncated
+    ? unavailable(
+        `Only the first ${
+          CONVERSATION_PAGE_CAP * CONVERSATIONS_PER_PAGE
+        } conversations were read, and none of them is a public agent reply.`
+      )
+    : { status: 'none' };
 }
 
 export async function getFreshdeskContact(email: string | null): Promise<FreshdeskResult> {
@@ -165,10 +173,14 @@ export async function getFreshdeskContact(email: string | null): Promise<Freshde
   const query = encodeURIComponent(`"email:'${email.replace(/'/g, '')}'"`);
   const res = await freshdeskGet(`/search/contacts?query=${query}`, 'search');
   if (res.status !== 'ok') return res;
+  if (typeof res.body !== 'object' || res.body === null) {
+    console.error('[freshdesk] search: unexpected body');
+    return unavailable('Freshdesk returned an unexpected response.');
+  }
   const body = res.body as {
     results?: { id: number; name?: string; email?: string; created_at?: string }[];
-  } | null;
-  const hit = body?.results?.[0];
+  };
+  const hit = body.results?.[0];
   if (!hit) return { status: 'none' };
   return {
     status: 'found',
