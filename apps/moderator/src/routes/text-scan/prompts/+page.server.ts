@@ -57,7 +57,9 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       (p): { ok: true; value: LabPrompts } => ({ ok: true, value: p }),
       (e: unknown) => ({
         ok: false as const,
-        error: e instanceof LabHarnessError ? e.message : 'Could not load prompts.',
+        error: `Could not load prompts: ${
+          e instanceof LabHarnessError ? e.message : 'unexpected error'
+        }`,
       })
     ),
   ]);
@@ -168,7 +170,9 @@ export const actions: Actions = {
       active = (await getPrompts()).active;
     } catch (e) {
       return fail(502, {
-        error: e instanceof LabHarnessError ? e.message : 'Could not load prompts.',
+        error: `Could not load prompts: ${
+          e instanceof LabHarnessError ? e.message : 'unexpected error'
+        }`,
       });
     }
 

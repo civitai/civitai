@@ -93,6 +93,7 @@
           draft={data.draft}
           promptKey={data.key}
           {active}
+          activeLoaded={data.prompts.ok}
           publish={data.grants['textScan.prompt.publish'] ? publishPanel : undefined}
         />
       {/key}

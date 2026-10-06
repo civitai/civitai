@@ -5,11 +5,14 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import {
+    ToggleGroup,
+    ToggleGroupItem,
+  } from '@civitai/ui/components/ui/toggle-group/index.js';
   import QuoteDialog from '$lib/components/text-scan-lab/QuoteDialog.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { num } from '$lib/format';
+  import { LINK_CLASS, num } from '$lib/format';
   import { QUOTE_ABOVE } from '$lib/text-scan-lab/limits';
   import {
     DEFAULT_HEADING,
@@ -114,12 +117,16 @@
         <p class="pb-2 text-xs text-dark-2">Labels: {LAB_LABELS[entityType].join(', ')}</p>
       </div>
 
-      <Tabs value={mode} onValueChange={(v) => (mode = v as Mode)}>
-        <TabsList>
-          <TabsTrigger value="text">Text</TabsTrigger>
-          <TabsTrigger value="entities">Entities</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        aria-label="Scan input"
+        bind:value={() => mode, (v) => v && (mode = v as Mode)}
+      >
+        <ToggleGroupItem value="text">Text</ToggleGroupItem>
+        <ToggleGroupItem value="entities">Entities</ToggleGroupItem>
+      </ToggleGroup>
 
       {#if mode === 'text'}
         {#each fields as field, i (field.id)}
@@ -169,12 +176,16 @@
 
     <div class="space-y-3">
       <p class="text-sm text-dark-0">A runs the active prompts. B runs:</p>
-      <Tabs value={version} onValueChange={(v) => (version = v as Version)}>
-        <TabsList>
-          <TabsTrigger value="draft">A draft</TabsTrigger>
-          <TabsTrigger value="inline">Inline overrides</TabsTrigger>
-        </TabsList>
-      </Tabs>
+      <ToggleGroup
+        type="single"
+        variant="outline"
+        size="sm"
+        aria-label="Version B"
+        bind:value={() => version, (v) => v && (version = v as Version)}
+      >
+        <ToggleGroupItem value="draft">A draft</ToggleGroupItem>
+        <ToggleGroupItem value="inline">Inline overrides</ToggleGroupItem>
+      </ToggleGroup>
 
       {#if version === 'draft'}
         {#if data.drafts.length}
@@ -193,14 +204,14 @@
           {#if draft}
             <p class="text-xs text-dark-2">
               Overrides {draft.keys.join(', ') || 'nothing — it would run active'}.
-              <a href="/text-scan/prompts?draft={draft.id}" class="text-blue-4 hover:underline"
+              <a href="/text-scan/prompts?draft={draft.id}" class={LINK_CLASS}
                 >Edit draft</a
               >
             </p>
           {/if}
         {:else}
           <p class="text-sm text-dark-2">
-            No drafts yet — create one on <a href="/text-scan/prompts" class="text-blue-4 hover:underline"
+            No drafts yet — create one on <a href="/text-scan/prompts" class={LINK_CLASS}
               >Prompts</a
             >, or use inline overrides.
           </p>

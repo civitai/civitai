@@ -139,7 +139,7 @@
           <Table.Head>Took</Table.Head>
           <Table.Head>Results</Table.Head>
           <Table.Head>Correct</Table.Head>
-          {#if canRun}<Table.Head></Table.Head>{/if}
+          {#if canRun}<Table.Head><span class="sr-only">Actions</span></Table.Head>{/if}
         </Table.Row>
       </Table.Header>
       <Table.Body>

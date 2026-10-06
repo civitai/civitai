@@ -1,11 +1,14 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { enhance } from '$app/forms';
+  import { beforeNavigate } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import { cn } from '@civitai/ui/utils.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { FormState } from '$lib/form-state.svelte';
+  import { LINK_CLASS } from '$lib/format';
   import type { DraftPrompts, PromptDraft } from '$lib/server/text-scan-lab/drafts.service';
   import type { LabPrompt } from '$lib/server/text-scan-lab/harness-client';
   import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
@@ -15,11 +18,14 @@
     draft,
     promptKey,
     active,
+    activeLoaded,
     publish,
   }: {
     draft: PromptDraft;
     promptKey: PromptKey;
     active: LabPrompt | undefined;
+    /** False when the active prompts failed to load: an override would then start from nothing. */
+    activeLoaded: boolean;
     /** Rendered under the editor with whether unsaved edits exist; absent without the publish grant. */
     publish?: Snippet<[{ dirty: boolean }]>;
   } = $props();
@@ -53,14 +59,27 @@
     const { [key]: _removed, ...rest } = prompts;
     setPrompts(rest);
   }
+  function discard() {
+    edits = null;
+    editNote = null;
+    editBase = null;
+  }
+
+  // Another draft (or page) remounts this editor and drops the edits; switching key keeps them.
+  beforeNavigate((nav) => {
+    if (!dirty) return;
+    const to = nav.to?.url;
+    if (to && to.pathname === nav.from?.url.pathname && to.searchParams.get('draft') === String(draft.id))
+      return;
+    if (nav.type === 'leave') nav.cancel();
+    else if (!confirm(`Discard unsaved changes to "${draft.name}"?`)) nav.cancel();
+  });
 
   const save = new FormState({
     reload: true,
     reset: false,
     onSuccess: () => {
-      edits = null;
-      editNote = null;
-      editBase = null;
+      discard();
       toast.success('Draft saved');
     },
   });
@@ -83,7 +102,7 @@
   <p class="mt-3 text-xs text-dark-2">
     Overrides:
     {#each PROMPT_KEYS.filter((k) => k in prompts) as key (key)}
-      <a href="?draft={draft.id}&key={key}" class="ml-1 text-dark-0 underline">{key}</a>
+      <a href="?draft={draft.id}&key={key}" class="ml-1 {LINK_CLASS}">{key}</a>
     {:else}
       none — every key runs active.
     {/each}
@@ -111,9 +130,12 @@
           <DiffView before={active.content} after={prompts[promptKey] ?? ''} />
         </div>
       {/if}
+      {#if readOnly}
+        <p class="mt-2 text-xs text-dark-2">Published — read only.</p>
+      {/if}
       <Textarea
         id="draft-prompt"
-        class="mt-2 min-h-72 font-mono text-xs"
+        class={cn('mt-2 min-h-72 font-mono text-xs', readOnly && 'cursor-default bg-dark-7 text-dark-1')}
         readonly={readOnly}
         bind:value={
           () => prompts[promptKey] ?? '', (v) => setPrompts({ ...prompts, [promptKey]: v })
@@ -121,7 +143,7 @@
       />
     {:else}
       <p class="text-sm text-dark-2">This draft runs the active {promptKey}.</p>
-      {#if !readOnly}
+      {#if !readOnly && activeLoaded}
         <Button
           class="mt-2"
           size="sm"
@@ -130,6 +152,10 @@
         >
           Override {promptKey}
         </Button>
+      {:else if !readOnly}
+        <p class="mt-2 text-xs text-amber-300">
+          The active prompts did not load, so an override cannot start from them — reload to try again.
+        </p>
       {/if}
     {/if}
   </div>
@@ -157,17 +183,7 @@
           {save.submitting ? 'Saving…' : 'Save draft'}
         </Button>
         {#if dirty}
-          <Button
-            size="sm"
-            variant="ghost"
-            onclick={() => {
-              edits = null;
-              editNote = null;
-              editBase = null;
-            }}
-          >
-            Discard changes
-          </Button>
+          <Button size="sm" variant="ghost" onclick={discard}>Discard changes</Button>
         {/if}
       </div>
       {#if save.error}

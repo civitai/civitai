@@ -63,7 +63,7 @@
           <Table.Head>Set</Table.Head>
           <Table.Head>Cases</Table.Head>
           <Table.Head>Last run per version</Table.Head>
-          {#if canEdit}<Table.Head></Table.Head>{/if}
+          {#if canEdit}<Table.Head><span class="sr-only">Actions</span></Table.Head>{/if}
         </Table.Row>
       </Table.Header>
       <Table.Body>

@@ -23,6 +23,10 @@
 
   const keys = $derived(PROMPT_KEYS.filter((k) => k in draft.prompts));
   let confirming = $state(false);
+  // An edit after "Publish…" must be saved and confirmed afresh.
+  $effect(() => {
+    if (dirty) confirming = false;
+  });
 
   const publish = new FormState({
     reload: true,

@@ -64,7 +64,7 @@
           <Table.Head>Source</Table.Head>
           <Table.Head>Text</Table.Head>
           <Table.Head>Expected</Table.Head>
-          {#if canEdit}<Table.Head></Table.Head>{/if}
+          {#if canEdit}<Table.Head><span class="sr-only">Actions</span></Table.Head>{/if}
         </Table.Row>
       </Table.Header>
       <Table.Body>

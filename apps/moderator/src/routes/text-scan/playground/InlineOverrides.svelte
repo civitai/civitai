@@ -32,7 +32,7 @@
   {#each included as key (key)}
     <div>
       <div class="flex items-center justify-between">
-        <Label for="override-{key}" class="text-xs text-dark-2">{key}</Label>
+        <Label for="override-{key}" class="text-xs text-dark-2">{key} override</Label>
         <Button size="xs" variant="ghost" onclick={() => remove(key)}>Remove</Button>
       </div>
       <Textarea
