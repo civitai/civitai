@@ -92,6 +92,10 @@ const CALL_SITE_LEDGER: Record<string, string[]> = {
   'components/Modals/BuyBuzzModal.tsx': ['earnBlueBuzzRewards'],
   'components/RemixGallery/RemixGalleryExplainer.tsx': ['remixGalleryExplainer'],
   'components/Referrals/ReferralDashboard.tsx': ['referralKickback', 'referralLiteOnboarding'],
+  'components/CreatorJourney/FirstPublishCard.tsx': [
+    'firstArticlePublished',
+    'firstModelPublished',
+  ],
   'components/Referrals/ReferralDashboardFull.tsx': [
     'referralHowItWorks',
     'referralKickback',

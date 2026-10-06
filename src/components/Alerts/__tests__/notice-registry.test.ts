@@ -36,6 +36,8 @@ describe('FEATURE_NOTICES', () => {
     referralKickback: 'referral-kickback-info',
     referralHowItWorks: 'referral-how-it-works',
     referralTokenShop: 'referral-token-shop-info',
+    firstModelPublished: 'first-model-published',
+    firstArticlePublished: 'first-article-published',
   };
 
   test.each(Object.entries(ID_AT_ITS_ORIGINAL_CALL_SITE))(

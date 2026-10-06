@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   getCreatorJourney,
   getCreatorScoreLadder,
+  getFirstPublishCard,
   maskUnearnedMilestone,
 } from '~/server/services/creator-journey.service';
+import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
 
 const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[0]> = {}) => ({
   key: 'hidden:remix',
@@ -122,5 +124,91 @@ describe('getCreatorScoreLadder', () => {
     expect((await getCreatorScoreLadder()).tiers).toEqual([
       { key: 'hidden:777', name: '???', threshold: 777, hint: 'Someone builds on your work' },
     ]);
+  });
+});
+
+describe('getFirstPublishCard', () => {
+  const owner = 7;
+  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const published = (overrides: Record<string, unknown> = {}) => ({
+    userId: owner,
+    status: 'Published',
+    publishedAt: daysAgo(1),
+    ...overrides,
+  });
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("shows on the owner's only published model", async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(published() as never);
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null as never);
+
+    await expect(
+      getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 })
+    ).resolves.toEqual({ show: true });
+    expect(dbMock.dbWrite.model.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: owner, id: { not: 1 }, publishedAt: { not: null } },
+      })
+    );
+  });
+
+  // A replica can still show the model unpublished right after publish, and the client keeps the
+  // first answer for the session, so a lagged "no" would hide the card for good.
+  it('reads the primary, never a replica', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(published() as never);
+    dbMock.dbWrite.model.findFirst.mockResolvedValue(null as never);
+
+    await getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 });
+    expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not show once any other model was published, in any status', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(published() as never);
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 2 } as never);
+
+    await expect(
+      getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 })
+    ).resolves.toEqual({ show: false });
+  });
+
+  it.each([
+    ['someone else', { userId: owner + 1 }],
+    ['an unpublished model', { status: 'Unpublished' }],
+    ['a draft', { publishedAt: null }],
+    ['a model past the window', { publishedAt: daysAgo(FIRST_PUBLISH_CARD_DAYS + 1) }],
+  ])('refuses %s before looking for earlier models', async (_label, overrides) => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(published(overrides) as never);
+
+    await expect(
+      getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 })
+    ).resolves.toEqual({ show: false });
+    expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
+  });
+
+  it("shows on the owner's only published article, and checks articles, not models", async () => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(published() as never);
+    dbMock.dbWrite.article.findFirst.mockResolvedValue(null as never);
+
+    await expect(
+      getFirstPublishCard({ userId: owner, entityType: 'article', id: 3 })
+    ).resolves.toEqual({ show: true });
+    expect(dbMock.dbWrite.article.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: owner, id: { not: 3 }, publishedAt: { not: null } },
+      })
+    );
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('does not show an article to someone who does not own it', async () => {
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(published({ userId: owner + 1 }) as never);
+
+    await expect(
+      getFirstPublishCard({ userId: owner, entityType: 'article', id: 3 })
+    ).resolves.toEqual({ show: false });
+    expect(dbMock.dbWrite.article.findFirst).not.toHaveBeenCalled();
   });
 });
