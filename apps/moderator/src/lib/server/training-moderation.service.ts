@@ -7,6 +7,7 @@ import {
   getOrchestratorClient,
   isGoneStatus,
   probeOrchestratorBlob,
+  type BlobProbe,
   releaseModerationGate,
 } from './orchestrator';
 import { trainingMediaOf, type TrainingAssetKind } from '$lib/training-media';
@@ -18,8 +19,7 @@ import { logToAxiom } from './axiom';
 import { getClickhouse } from './clickhouse';
 import { TRAINING_STEP_TYPES } from './training-orchestration.service';
 import { usersByIds } from './users.service';
-import { mapBounded } from './bounded';
-import { hasViewableItem } from '$lib/training-workflow';
+import { mapBounded, someBounded } from './bounded';
 
 export const TRAINING_DATA_FILE_TYPE = 'Training Data';
 const ANNOUNCEMENT_KEY = 'training-announcement';
@@ -1072,7 +1072,7 @@ export async function moderateTrainingWorkflow(
     reviewedElsewhere?: boolean;
   },
   options: { recheckDelaysMs?: number[]; probeBudgetMs?: number } = {}
-): Promise<{ ok: true; moderationStatus: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; moderationStatus: string } | { ok: false; error: string; needsAck?: true }> {
   const { workflowId, approve, moderatorId } = input;
   // A malformed id is refused inside the load, before anything is asked of the orchestrator.
   const loaded = await loadTrainingWorkflow(workflowId);
@@ -1094,16 +1094,16 @@ export async function moderateTrainingWorkflow(
     };
 
   // Approving what nobody here could look at needs the moderator to say they looked at it elsewhere.
-  // Decided from this call's own probe of the items: the checkbox is only how the page asks.
+  // Decided from this call's own probe of the items — the checkbox is only how the page asks — and
+  // the probe stops at the first viewable item: one is all the rule needs.
   if (
     approve &&
     !input.reviewedElsewhere &&
-    !hasViewableItem(
-      await getDatasetItemStates(before.dataset, { budgetMs: options.probeBudgetMs })
-    )
+    !(await anyItemViewable(before.dataset, { budgetMs: options.probeBudgetMs }))
   )
     return {
       ok: false,
+      needsAck: true,
       error:
         "No item of this run's dataset can be viewed here. Approve only after reviewing it another way, and tick that you did. Nothing was changed.",
     };
@@ -1434,13 +1434,8 @@ export async function getDatasetItemStates(
     async (item): Promise<DatasetItemState> => {
       try {
         const probe = await probeOrchestratorBlob(item.blobKey!);
-        if (probe.kind === 'content') return 'viewable';
-        // Busy or failing (or not configured) is no answer about the item: shown, unchecked.
-        if (
-          probe.kind === 'unavailable' &&
-          (probe.status === 0 || probe.status === 429 || probe.status >= 500)
-        )
-          return 'unchecked';
+        if (isViewableProbe(probe)) return 'viewable';
+        if (probe.kind === 'unavailable' && isNoAnswer(probe.status)) return 'unchecked';
         return probe.kind;
       } catch {
         return 'unchecked';
@@ -1449,4 +1444,29 @@ export async function getDatasetItemStates(
     { concurrency: ITEM_PROBE_CONCURRENCY, budgetMs: options.budgetMs ?? ITEM_PROBE_BUDGET_MS }
   );
   return Object.fromEntries(stored.map((item, i) => [item.index, probed[i] ?? 'unchecked']));
+}
+
+/** THE rule for "a moderator can see this item": the page's `viewable` state and the approve-time
+ *  check both come from it, so `hasViewableItem` on the page and `anyItemViewable` here agree. */
+const isViewableProbe = (probe: BlobProbe) => probe.kind === 'content';
+
+/** A probe status that says nothing about the item — the orchestrator was busy, failing, refused this
+ *  app, or is not configured (0) — as opposed to an answer that the item is missing or unscanned. */
+const isNoAnswer = (status: number) =>
+  status === 0 || status === 401 || status === 403 || status === 429 || status >= 500;
+
+/**
+ * Whether at least one stored item probes viewable — the approve-time form of `hasViewableItem`, which
+ * stops at the first one instead of mapping the whole dataset. `false` includes "none answered in time".
+ */
+async function anyItemViewable(
+  dataset: WorkflowDataset,
+  options: { budgetMs?: number } = {}
+): Promise<boolean> {
+  if (dataset.kind !== 'blobs') return false;
+  return someBounded(
+    dataset.items.filter((item) => item.blobKey),
+    async (item) => isViewableProbe(await probeOrchestratorBlob(item.blobKey!)),
+    { concurrency: ITEM_PROBE_CONCURRENCY, budgetMs: options.budgetMs ?? ITEM_PROBE_BUDGET_MS }
+  );
 }

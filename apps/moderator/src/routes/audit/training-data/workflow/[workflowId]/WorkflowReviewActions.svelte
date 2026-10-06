@@ -32,20 +32,32 @@
   // One FormState for both verdicts: one place for a refusal, and only one can be in flight. `reload`
   // re-reads the run, so the page then shows the orchestrator's state after the ruling, not ours.
   let verdict = '';
+  // Held in state, not only in the checkbox: the `{#await}` below swaps the element when the probe
+  // answers, and an uncontrolled tick would vanish with the old one.
+  let reviewedElsewhere = $state(false);
+  // The server re-probes at approve time and can disagree with this page's probe (a busy orchestrator,
+  // a large dataset). When it refuses for want of the tick, the tick is offered whatever the page saw.
+  let serverAsked = $state(false);
   const form = new FormState({
     reload: true,
     onSubmit: ({ action }) => (verdict = VERDICTS[action.search] ?? ''),
     onSuccess: () => {
       if (verdict) toast.success(verdict);
     },
+    onSettled: (result) => {
+      if (result.type === 'failure' && result.data?.needsAck === true) serverAsked = true;
+    },
   });
 </script>
 
-<!-- Uncontrolled, like the other checkbox groups in this app: nothing reads the tick but the server,
-     through the primitive's hidden input. -->
 {#snippet ack()}
   <div class="flex items-center gap-1.5" data-touch-target>
-    <Checkbox id="reviewed-elsewhere" name="reviewedElsewhere" value="yes" />
+    <Checkbox
+      id="reviewed-elsewhere"
+      name="reviewedElsewhere"
+      value="yes"
+      bind:checked={reviewedElsewhere}
+    />
     <Label for="reviewed-elsewhere" class="text-xs leading-snug font-normal text-dark-2">
       I reviewed this dataset another way
     </Label>
@@ -59,12 +71,12 @@
 {/if}
 <div class="mb-2 flex flex-wrap items-start gap-4">
   <form method="POST" action="?/approve" use:enhance={form.enhance} class="flex flex-col gap-2">
-    <!-- Awaited here, not around this component, so the probe answering does not wipe a reason the
-         moderator is already typing. -->
+    <!-- Awaited here, not around this component, so the probe answering does not remount the deny
+         reason the moderator may be typing. -->
     {#await viewable}
       {@render ack()}
     {:then canSee}
-      {#if !canSee}{@render ack()}{/if}
+      {#if !canSee || serverAsked}{@render ack()}{/if}
     {:catch}
       {@render ack()}
     {/await}

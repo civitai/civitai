@@ -120,7 +120,8 @@ export type BlobProbe =
   | { kind: 'content'; url: string }
   /** Blocked by the orchestrator's screening: it answers with its blocked-content placeholder. */
   | { kind: 'blocked' }
-  /** Missing, not yet scanned, or refused — `status` is the orchestrator's answer. */
+  /** Anything else — `status` is the orchestrator's answer (0 when it is not configured). Whether that
+   *  is an answer about the item or about the orchestrator is the caller's call. */
   | { kind: 'unavailable'; status: number };
 
 const BLOCKED_PATH = '/v2/consumer/blobs/blocked/';

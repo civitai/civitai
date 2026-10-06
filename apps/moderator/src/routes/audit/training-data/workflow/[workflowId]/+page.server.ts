@@ -30,7 +30,8 @@ const rule = async (event: RequestEvent, approve: boolean) => {
     moderatorId: event.locals.user.id,
     reviewedElsewhere: form.get('reviewedElsewhere') === 'yes',
   });
-  if (!result.ok) return fail(400, { error: result.error });
+  if (!result.ok)
+    return fail(400, { error: result.error, ...('needsAck' in result ? { needsAck: true } : {}) });
   return { success: true, moderationStatus: result.moderationStatus };
 };
 

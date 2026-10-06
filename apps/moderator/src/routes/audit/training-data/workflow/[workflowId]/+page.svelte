@@ -12,7 +12,6 @@
   const expiringSoon = $derived(gateExpiresSoon(detail.expiresAt));
   const reviewable = $derived(detail.underReview && detail.modelVersionId === null);
   const viewable = $derived(data.itemStates.then(hasViewableItem));
-
 </script>
 
 <header class="page-header">

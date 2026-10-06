@@ -61,7 +61,8 @@ const {
   MAX_PENDING_CANDIDATES,
 } = await import('../training-moderation.service');
 const { releaseModerationGate, probeOrchestratorBlob } = await import('../orchestrator');
-const { mapBounded } = await import('../bounded');
+const { mapBounded, someBounded } = await import('../bounded');
+const { hasViewableItem } = await import('$lib/training-workflow');
 const blobRoute = await import(
   '../../../routes/api/training-workflow-blob/[workflowId]/[index]/+server'
 );
@@ -866,7 +867,7 @@ describe('getDatasetItemStates', () => {
   };
 
   it('counts a busy or failing orchestrator as no answer (unchecked), not as a missing item', async () => {
-    for (const status of [429, 500, 503]) {
+    for (const status of [401, 403, 429, 500, 503]) {
       route = () => new Response(null, { status });
       expect(await getDatasetItemStates(dataset)).toEqual({
         0: 'unchecked',
@@ -964,6 +965,34 @@ describe('approving a dataset that cannot be previewed', () => {
     expect(gateCalls()).toHaveLength(0);
   });
 
+  it('stops probing at the first viewable item', async () => {
+    const many = Array.from({ length: 40 }, (_, n) => ({
+      air: `${n.toString(16).padStart(32, '0')}.png`,
+    }));
+    orchestrator([workflow({ items: many }), workflow({ moderationStatus: 'Approved' })]);
+    expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
+    // One wave of 8 concurrent probes answers; nothing more is started.
+    expect(callsTo('.png').length).toBeLessThanOrEqual(8);
+  });
+
+  it('tells the page the tick is wanted, so it can ask even if its own probe saw an item', async () => {
+    orchestrator([workflow()], undefined, () => new Response(null, { status: 503 }));
+    const result = await reviewPage.actions.approve({
+      params: { workflowId: WF },
+      locals: { user: { id: 7 } },
+      request: new Request('http://x/', { method: 'POST', body: new FormData() }),
+    } as unknown as Parameters<typeof reviewPage.actions.approve>[0]);
+    expect(result).toMatchObject({ status: 400, data: { needsAck: true } });
+    // Other refusals do not ask for it.
+    orchestrator([workflow({ moderationStatus: 'Approved' })]);
+    const other = await reviewPage.actions.approve({
+      params: { workflowId: WF },
+      locals: { user: { id: 7 } },
+      request: new Request('http://x/', { method: 'POST', body: new FormData() }),
+    } as unknown as Parameters<typeof reviewPage.actions.approve>[0]);
+    expect((other as { data: Record<string, unknown> }).data.needsAck).toBeUndefined();
+  });
+
   it('one viewable item is enough, even beside blocked ones', async () => {
     orchestrator([workflow(), workflow({ moderationStatus: 'Approved' })], undefined, (key) =>
       key === KEY_A ? redirectTo(`${BLOCKED}a`) : redirectTo(`${CONTENT}b`)
@@ -1043,6 +1072,64 @@ describe('the pending queue is bounded and shared', () => {
     vi.setSystemTime(Date.now() + 31_000);
     await getPendingWorkflowGates();
     expect(chQuery).toHaveBeenCalledTimes(6);
+  });
+});
+
+describe('hasViewableItem', () => {
+  it('needs at least one item that probed viewable — not merely a stored or answered one', () => {
+    expect(hasViewableItem({})).toBe(false);
+    expect(hasViewableItem({ 0: 'blocked', 1: 'unavailable', 2: 'unchecked' })).toBe(false);
+    expect(hasViewableItem({ 0: 'blocked', 1: 'viewable' })).toBe(true);
+  });
+});
+
+describe('someBounded', () => {
+  it('starts nothing after the deadline', async () => {
+    const started: number[] = [];
+    const found = await someBounded(
+      [0, 1, 2],
+      (n) => {
+        started.push(n);
+        return n === 0 ? new Promise<boolean>(() => {}) : Promise.resolve(true);
+      },
+      { concurrency: 1, budgetMs: 20 }
+    );
+    expect(found).toBe(false);
+    expect(started).toEqual([0]);
+  });
+
+  it('stops starting calls at the first true', async () => {
+    const started: number[] = [];
+    const found = await someBounded(
+      [0, 1, 2, 3],
+      async (n) => {
+        started.push(n);
+        return n === 1;
+      },
+      { concurrency: 1, budgetMs: 1_000 }
+    );
+    expect(found).toBe(true);
+    expect(started).toEqual([0, 1]);
+  });
+
+  it('is false on the deadline, on rejection, and on nothing to ask — never true by default', async () => {
+    expect(
+      await someBounded([0], () => new Promise<boolean>(() => {}), {
+        concurrency: 1,
+        budgetMs: 20,
+      })
+    ).toBe(false);
+    expect(
+      await someBounded(
+        [0, 1],
+        (n) => (n === 0 ? Promise.reject(new Error('x')) : Promise.resolve(false)),
+        {
+          concurrency: 1,
+          budgetMs: 1_000,
+        }
+      )
+    ).toBe(false);
+    expect(await someBounded([], async () => true, { concurrency: 2, budgetMs: 10 })).toBe(false);
   });
 });
 

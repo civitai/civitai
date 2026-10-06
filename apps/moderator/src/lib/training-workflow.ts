@@ -19,7 +19,9 @@ export const gateExpiresSoon = (expiresAt: string | null, now = Date.now()): boo
  * Whether a moderator can actually see at least one item of the dataset, judged by what the items
  * PROBED as — not by their shape: a dataset of stored items that are all blocked or unserved shows
  * nothing. Decides whether Approve needs an explicit "reviewed it another way". The page asks from its
- * probe; the server refuses from its own probe at approve time, never from anything the page posts.
+ * probe; the server refuses from its own probe at approve time (`anyItemViewable`, which stops at the
+ * first viewable item), never from anything the page posts. Both read `viewable` the same way —
+ * `isViewableProbe` in the service.
  */
 export const hasViewableItem = (states: Record<number, DatasetItemState>): boolean =>
   Object.values(states).includes('viewable');
