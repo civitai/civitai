@@ -1,6 +1,7 @@
 import { callModEndpoint } from '../user-actions.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
-import { HARNESS_LIMITS, chunk, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
+import { chunk } from '$lib/text-scan-lab/chunk';
+import { HARNESS_LIMITS, chunkTexts, textTooLarge } from '$lib/text-scan-lab/limits';
 import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
 // The main app's text-scan harness (`/api/mod/text-scan`). Every scan is a billed workflow.

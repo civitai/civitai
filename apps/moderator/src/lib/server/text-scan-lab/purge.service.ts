@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../moderator-db/types';
+import { chunk } from '../../text-scan-lab/chunk';
 import type { LabEntityType } from '../../text-scan-lab/types';
 
 // Relative imports only: the purge CLI loads this file through tsx, which resolves no `$lib`/`$env`.
@@ -39,9 +40,6 @@ export const SOURCES: Record<LabEntityType, Source> = {
 };
 
 export type PurgeDbs = { moderator: Kysely<ModeratorDB>; main: Kysely<MainDB> };
-
-const chunks = <T>(xs: T[], size: number) =>
-  Array.from({ length: Math.ceil(xs.length / size) }, (_, i) => xs.slice(i * size, (i + 1) * size));
 
 /** The ids whose row is gone, soft-deleted, or whose author's account is deleted. Primary-key lookups only. */
 async function goneIds(main: Kysely<MainDB>, source: Source, ids: number[]): Promise<number[]> {
@@ -84,7 +82,7 @@ export async function purgeDeletedSources(
 
   let wiped = 0;
   for (const [type, ids] of idsByType) {
-    for (const batch of chunks([...ids], PURGE_BATCH)) {
+    for (const batch of chunk([...ids], PURGE_BATCH)) {
       const gone = await goneIds(main, SOURCES[type], batch);
       if (!gone.length) continue;
       wiped += await moderator.transaction().execute(async (trx) => {

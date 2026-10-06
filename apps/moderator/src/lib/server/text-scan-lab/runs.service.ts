@@ -5,6 +5,7 @@ import type { text_scan_test_run } from '../moderator-db/types';
 import { DraftError, getDraft, validateDraftPrompts, type DraftPrompts } from './drafts.service';
 import { LabHarnessError, getPrompts, quoteTexts, scanTexts } from './harness-client';
 import { purgeDeletedSources } from './purge.service';
+import { chunk } from '$lib/text-scan-lab/chunk';
 import { quoteStamp, type Billable } from './quote';
 import { getSet, listCases, type TestCase } from './test-sets.service';
 import { caseCorrect, diffRuns, totals, type LabelTotals } from '$lib/text-scan-lab/score';
@@ -246,25 +247,24 @@ async function scanCases(
     // Set when this type's first request is refused: its later chunks would be refused the same way.
     // A refusal after that is about its own chunk's texts. Another type's texts can still go through.
     let refusal: string | null = null;
-    for (let i = 0; i < group.length; i += RUN_CHUNK) {
-      const chunk = group.slice(i, i + RUN_CHUNK);
+    for (const [i, part] of chunk(group, RUN_CHUNK).entries()) {
       if (refusal !== null) {
         await writeResults(
           runId,
-          chunk.map((c) => toResultRow(c, { key: String(c.id), ok: false, error: refusal! }))
+          part.map((c) => toResultRow(c, { key: String(c.id), ok: false, error: refusal! }))
         );
         continue;
       }
       let results: LabScanResult[];
       try {
-        results = await scanTexts(entityType, toTexts(chunk), overrides, { keyLabel: 'case' });
+        results = await scanTexts(entityType, toTexts(part), overrides, { keyLabel: 'case' });
       } catch (e) {
         const message =
           e instanceof LabHarnessError ? e.message : 'The scan request failed unexpectedly.';
         if (!(e instanceof LabHarnessError))
           console.error('text-scan run: scan request failed', (e as Error)?.message);
         if (i === 0 && e instanceof LabHarnessError) refusal = message;
-        results = chunk.map((c) => ({ key: String(c.id), ok: false as const, error: message }));
+        results = part.map((c) => ({ key: String(c.id), ok: false as const, error: message }));
       }
       const byKey = new Map(results.map((r) => [r.key, r]));
       for (const r of results) {
@@ -273,7 +273,7 @@ async function scanCases(
       }
       await writeResults(
         runId,
-        chunk.map((c) => toResultRow(c, byKey.get(String(c.id))))
+        part.map((c) => toResultRow(c, byKey.get(String(c.id))))
       );
     }
   }

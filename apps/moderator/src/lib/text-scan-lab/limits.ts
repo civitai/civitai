@@ -26,12 +26,6 @@ export function textTooLarge(fields: readonly LabField[]): string | null {
   return `too large: ${fields.length} fields / ${chars} chars (the scan limit is ${HARNESS_LIMITS.fieldsPerText} fields / ${HARNESS_LIMITS.charsPerText} chars)`;
 }
 
-export function chunk<T>(items: readonly T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
-  return chunks;
-}
-
 /** Splits fitting texts into requests of at most `size` texts and the per-request character cap. */
 export function chunkTexts<T extends { fields: readonly LabField[] }>(
   texts: readonly T[],

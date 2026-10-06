@@ -9,29 +9,16 @@
  *
  * Env: MODERATOR_DATABASE_URL (written) and DATABASE_REPLICA_URL (main database, read only).
  */
-import * as kyselyModule from '@civitai/db/kysely';
 import type { DB as MainDB } from '@civitai/db-schema/kysely';
 import type { DB as ModeratorDB } from '../src/lib/server/moderator-db/types';
 import { purgeDeletedSources } from '../src/lib/server/text-scan-lab/purge.service';
-
-// @civitai/db has no `"type": "module"`, so tsx loads it as CommonJS and its exports arrive on `default`.
-const { createKyselyClients } = (
-  'default' in kyselyModule ? kyselyModule.default : kyselyModule
-) as typeof kyselyModule;
-
-class UsageError extends Error {}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new UsageError(`${name} not set`);
-  return v;
-}
+import { CliError, createKyselyClients, requireEnv } from './cli';
 
 function parseSetId(argv: string[]): number | undefined {
   const i = argv.indexOf('--set');
   if (i === -1) return undefined;
   const id = Number(argv[i + 1]);
-  if (!Number.isInteger(id) || id < 1) throw new UsageError('--set needs a test set id');
+  if (!Number.isInteger(id) || id < 1) throw new CliError('--set needs a test set id');
   return id;
 }
 
@@ -59,6 +46,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(err instanceof UsageError ? err.message : (err as Error)?.message ?? err);
+  console.error(err instanceof CliError ? err.message : (err as Error)?.message ?? err);
   process.exit(1);
 });
