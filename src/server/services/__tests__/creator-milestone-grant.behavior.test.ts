@@ -30,9 +30,11 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * excluding property, so an exclusion that matched everyone would fail on the twin.
  */
 
-const MIGRATION = join(
-  process.cwd(),
-  'packages/civitai-db-schema/prisma/migrations/20261005120000_creator_milestone/migration.sql'
+const MIGRATIONS = [
+  '20261005120000_creator_milestone',
+  '20261007120000_creator_milestone_cosmetic',
+].map((name) =>
+  join(process.cwd(), 'packages/civitai-db-schema/prisma/migrations', name, 'migration.sql')
 );
 
 const holder = { db: null as unknown as PGlite };
@@ -75,6 +77,21 @@ async function attachCosmetic(key: string) {
   return id;
 }
 
+async function attachExtraCosmetic(key: string) {
+  const [{ id }] = await q<{ id: number }>(`INSERT INTO "Cosmetic" DEFAULT VALUES RETURNING id`);
+  await q(`INSERT INTO "CreatorMilestoneCosmetic" ("milestoneKey", "cosmeticId") VALUES ($1, $2)`, [
+    key,
+    id,
+  ]);
+  return id;
+}
+
+const cosmeticsOf = (userId: number) =>
+  q<{ cosmeticId: number; claimKey: string }>(
+    `SELECT "cosmeticId", "claimKey" FROM "UserCosmetic" WHERE "userId" = $1 ORDER BY 1`,
+    [userId]
+  );
+
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
@@ -88,7 +105,7 @@ beforeAll(async () => {
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
   `);
-  await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
   // Definitions the score detector must ignore: another track below every score, and a score row
   // without a threshold. The migration seeds neither, so without them the track and threshold
   // filters would be untested.
@@ -100,7 +117,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "UserCosmetic", "UserCreatorMilestone", "User";
+    TRUNCATE "UserCosmetic", "UserCreatorMilestone", "User", "CreatorMilestoneCosmetic";
     UPDATE "CreatorMilestone" SET "cosmeticId" = NULL;
   `);
 });
@@ -358,6 +375,53 @@ describe('cosmetics for existing holders', () => {
 
     const again = await grantMilestoneCosmeticsBatch(pg, { afterUserId: 0, limit: 10 });
     expect(again.inserted).toBe(0);
+  });
+});
+
+describe('cosmetics beyond the badge', () => {
+  it('grants a crossing its badge and every extra, each claimed under the milestone key', async () => {
+    await addUser(ELIGIBLE, 400);
+    const badge = await attachCosmetic('score:spark');
+    const plate = await attachExtraCosmetic('score:spark');
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 600 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([
+      { cosmeticId: badge, claimKey: 'score:spark' },
+      { cosmeticId: plate, claimKey: 'score:spark' },
+    ]);
+  });
+
+  it('grants an extra on a milestone that has no badge', async () => {
+    await addUser(ELIGIBLE, 400);
+    const plate = await attachExtraCosmetic('score:spark');
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 600 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([{ cosmeticId: plate, claimKey: 'score:spark' }]);
+  });
+
+  it('gives an extra added later to holders who already have the badge, previewed exactly', async () => {
+    await addUser(ELIGIBLE, 600);
+    await addUser(LATE, 600);
+    const badge = await attachCosmetic('score:spark');
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    expect(await cosmeticsOf(ELIGIBLE)).toEqual([{ cosmeticId: badge, claimKey: 'score:spark' }]);
+
+    const plate = await attachExtraCosmetic('score:spark');
+    expect(await previewMilestoneCosmetics(pg, { afterUserId: 0 })).toEqual({ users: 2, rows: 2 });
+    expect(
+      await grantMilestoneCosmeticsBatch(pg, {
+        afterUserId: 0,
+        limit: 10,
+        milestoneKey: 'score:spark',
+      })
+    ).toEqual({ users: 2, inserted: 2, lastUserId: LATE });
+    for (const holderId of [ELIGIBLE, LATE]) {
+      expect(await cosmeticsOf(holderId)).toEqual([
+        { cosmeticId: badge, claimKey: 'score:spark' },
+        { cosmeticId: plate, claimKey: 'score:spark' },
+      ]);
+    }
+    expect(await previewMilestoneCosmetics(pg, { afterUserId: 0 })).toEqual({ users: 0, rows: 0 });
   });
 });
 

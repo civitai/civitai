@@ -50,13 +50,18 @@ export function insertMilestoneGrantsSql(candidates: string) {
       RETURNING "userId", "milestoneKey", "seenAt" IS NOT NULL AS silent`;
 }
 
-/** Grants each row of CTE `granted` its milestone's cosmetic, if any, claimed under the milestone key. */
+/** One row per cosmetic a milestone grants: its badge, then any extras. */
+const milestoneCosmeticsSql = `
+  SELECT key AS "milestoneKey", "cosmeticId" FROM "CreatorMilestone" WHERE "cosmeticId" IS NOT NULL
+  UNION
+  SELECT "milestoneKey", "cosmeticId" FROM "CreatorMilestoneCosmetic"`;
+
+/** Grants each row of CTE `granted` its milestone's cosmetics, claimed under the milestone key. */
 export function insertMilestoneCosmeticsSql(granted: string) {
   return `INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey")
-      SELECT g."userId", m."cosmeticId", m.key
+      SELECT g."userId", mc."cosmeticId", mc."milestoneKey"
       FROM ${granted} g
-      JOIN "CreatorMilestone" m ON m.key = g."milestoneKey"
-      WHERE m."cosmeticId" IS NOT NULL
+      JOIN (${milestoneCosmeticsSql}) mc ON mc."milestoneKey" = g."milestoneKey"
       ON CONFLICT DO NOTHING`;
 }
 
@@ -185,7 +190,7 @@ export async function backfillScoreTierBatch(
 }
 
 /**
- * Grants the cosmetic of every milestone that has one to that milestone's existing holders, for the
+ * Grants the cosmetics of every milestone that has any to that milestone's existing holders, for the
  * next `limit` holders above `afterUserId`. This is what runs after art is attached to a definition
  * that already has holders, since live grants only cover rows created from then on.
  */
@@ -201,9 +206,9 @@ export async function grantMilestoneCosmeticsBatch(
   const query = await pg.cancellableQuery<MilestoneBatchResult>(
     `
     WITH m AS (
-      SELECT key, "cosmeticId"
-      FROM "CreatorMilestone"
-      WHERE "cosmeticId" IS NOT NULL AND ($4::text IS NULL OR key = $4)
+      SELECT "milestoneKey" AS key, "cosmeticId"
+      FROM (${milestoneCosmeticsSql}) mc
+      WHERE $4::text IS NULL OR "milestoneKey" = $4
     ), batch AS (
       SELECT DISTINCT ucm."userId" AS id
       FROM "UserCreatorMilestone" ucm
@@ -264,14 +269,14 @@ export async function previewMilestoneCosmetics(
     `
     SELECT count(DISTINCT ucm."userId")::int AS users, count(*)::int AS rows
     FROM "UserCreatorMilestone" ucm
-    JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
+    JOIN (${milestoneCosmeticsSql}) mc ON mc."milestoneKey" = ucm."milestoneKey"
     ${joinMilestoneGrantableUserSql('u', 'ucm."userId"')}
-    WHERE m."cosmeticId" IS NOT NULL
-      AND ($3::text IS NULL OR m.key = $3)
+    WHERE ($3::text IS NULL OR mc."milestoneKey" = $3)
       AND ucm."userId" > $1 AND ($2::int IS NULL OR ucm."userId" <= $2)
       AND NOT EXISTS (
         SELECT 1 FROM "UserCosmetic" uc
-        WHERE uc."userId" = ucm."userId" AND uc."cosmeticId" = m."cosmeticId" AND uc."claimKey" = m.key
+        WHERE uc."userId" = ucm."userId" AND uc."cosmeticId" = mc."cosmeticId"
+          AND uc."claimKey" = mc."milestoneKey"
       )
     `,
     [afterUserId, maxUserId ?? null, milestoneKey ?? null]
