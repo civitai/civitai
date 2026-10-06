@@ -17,8 +17,8 @@ export function safeReturnPath(raw: string | null | undefined): string | null {
   } catch {
     return null;
   }
-  // The checks above should make this unreachable; it is the one that does not depend on knowing
-  // every way a browser normalises a URL.
-  if (url.origin !== PROBE_ORIGIN) return null;
+  // 🔴 CHECKED AGAIN ON THE OUTPUT, because the output is what gets used: dot segments normalise
+  // `/.//host` and `/a/..//host` to `//host`, which passed every check on the raw input above.
+  if (url.origin !== PROBE_ORIGIN || url.pathname.startsWith('//')) return null;
   return url.pathname + url.search + url.hash;
 }

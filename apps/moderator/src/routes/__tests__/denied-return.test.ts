@@ -40,6 +40,7 @@ describe('dashboard ?denied=', () => {
     ['//evil.example/decisions'],
     ['https://evil.example/decisions'],
     ['javascript:alert(1)'],
+    ['/.//evil.example/decisions'],
   ])('never redirects to or links %s, even for a user who can open everything', async (raw) => {
     const out = await run(`?denied=${encodeURIComponent(raw)}`, {
       id: 1,

@@ -43,6 +43,12 @@
     draft: AnswerDraft;
   } = $props();
 
+  /** The accessible name starts with the visible word, so a voice command naming it still works. */
+  const memberRulingName = (r: MemberRuling) =>
+    MEMBER_RULING_SHORT_LABEL[r] === MEMBER_RULING_LABEL[r]
+      ? MEMBER_RULING_LABEL[r]
+      : `${MEMBER_RULING_SHORT_LABEL[r]} — ${MEMBER_RULING_LABEL[r].toLowerCase()}`;
+
   const toneClass = (on: boolean) =>
     on ? 'bg-blue-4/20 text-white' : 'text-dark-2 hover:text-dark-0';
   /** "Use a reply" — a standalone toggle. */
@@ -129,9 +135,9 @@
             aria-label="Open #{m.ticketId} in Freshdesk">↗</a
           >
           {#if m.isFounder}<Badge variant="secondary" class="ml-1">founder</Badge>{/if}
-          {#if m.subject}<div class="text-dark-2 max-w-md truncate text-xs">{m.subject}</div>{/if}
+          {#if m.subject}<div class="text-dark-2 max-w-md text-xs break-words">{m.subject}</div>{/if}
         </TableCell>
-        <TableCell>{dateTime(m.ticketCreatedAt)}</TableCell>
+        <TableCell class="min-w-32 whitespace-normal">{dateTime(m.ticketCreatedAt)}</TableCell>
         <TableCell>{m.chosenTopic || '—'} {probabilityLabel(m.probabilities.topic)}</TableCell>
         <TableCell class="text-right">{probabilityLabel(m.probabilities.group)}</TableCell>
         <TableCell class="text-right">{probabilityLabel(m.probabilities.novel)}</TableCell>
@@ -146,7 +152,12 @@
               aria-label="Does #{m.ticketId} fit the group definition?"
             >
               {#each MEMBER_RULINGS as r (r)}
-                <form method="POST" action="?/label" use:enhance={submit(m.ticketId, r)}>
+                <form
+                  method="POST"
+                  action="?/label"
+                  class="flex"
+                  use:enhance={submit(m.ticketId, r)}
+                >
                   <input type="hidden" name="version" value={version} />
                   <input type="hidden" name="ticketId" value={m.ticketId} />
                   <input type="hidden" name="ruling" value={r} />
@@ -154,7 +165,7 @@
                     type="submit"
                     disabled={pending.has(m.ticketId)}
                     aria-pressed={shown === r}
-                    aria-label={MEMBER_RULING_LABEL[r]}
+                    aria-label={memberRulingName(r)}
                     title={MEMBER_RULING_LABEL[r]}
                     class={segmentClass(shown === r)}>{MEMBER_RULING_SHORT_LABEL[r]}</button
                   >

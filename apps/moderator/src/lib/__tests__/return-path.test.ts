@@ -24,6 +24,9 @@ describe('safeReturnPath', () => {
     ['relative, no leading slash', 'decisions'],
     ['empty', ''],
     ['too long', `/${'a'.repeat(2048)}`],
+    ['dot segment collapsing to //', '/.//evil.example/decisions'],
+    ['parent segment collapsing to //', '/a/..//evil.example/decisions'],
+    ['encoded dot segment collapsing to //', '/%2e//evil.example/decisions'],
   ])('refuses %s', (_name, raw) => {
     expect(safeReturnPath(raw)).toBeNull();
   });

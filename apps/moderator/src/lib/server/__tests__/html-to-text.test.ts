@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeEntities, htmlToText } from '../html-to-text';
+import { HTML_MAX_CHARS, decodeEntities, htmlToText } from '../html-to-text';
 
 /**
  * Freshdesk description HTML → the text the ticket page shows. Synthetic inputs only, shaped like the
@@ -105,6 +105,37 @@ describe('htmlToText', () => {
   it('plain text with no markup passes through, newlines collapsed like HTML would', () => {
     expect(htmlToText('just text')).toBe('just text');
     expect(htmlToText('')).toBe('');
+  });
+});
+
+describe('htmlToText on hostile input', () => {
+  it("a <br> before an item's text does not separate the bullet from it", () => {
+    expect(htmlToText('<ul><li><br>text</li></ul>')).toBe('• text');
+  });
+
+  it('reads at most HTML_MAX_CHARS of input', () => {
+    expect(htmlToText('a'.repeat(HTML_MAX_CHARS) + 'TAIL')).not.toContain('TAIL');
+  });
+
+  // 🔴 A BUDGET, NOT A BENCHMARK. The quadratic version took 0.7–12 s on these at 40k–160k chars; a
+  // linear one takes milliseconds. The bound is loose enough for a loaded CI box and still two orders
+  // of magnitude under what a quadratic scan costs at this size.
+  const n = HTML_MAX_CHARS;
+  it.each([
+    ['unclosed tag starts', '<a'.repeat(n / 2)],
+    ['unclosed tag starts with a space', '<a '.repeat(n / 3)],
+    ['unclosed quoted attributes', '<a "'.repeat(n / 4)],
+    ['ordinary markup', '<p>x<b>y</b></p>'.repeat(n / 16)],
+    ['unclosed scripts', '<script>x'.repeat(n / 9)],
+    ['closed scripts', '<script>x</script>'.repeat(n / 18)],
+    ['spaces inside <pre>', `<pre>${' '.repeat(n - 20)}x</pre>`],
+    ['newlines inside <pre>', `<pre>${'\n'.repeat(n - 20)}x</pre>`],
+    ['spaces then a break, repeated', `${' '.repeat(1000)}x<br>`.repeat(n / 1006)],
+    ['entities', '&lt;a'.repeat(n / 5)],
+  ])('stays linear: %s', (_name, html) => {
+    const t0 = performance.now();
+    htmlToText(html);
+    expect(performance.now() - t0).toBeLessThan(1000);
   });
 });
 

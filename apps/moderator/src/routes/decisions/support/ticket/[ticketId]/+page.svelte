@@ -103,12 +103,14 @@
       {/if}
     {:else}
       {@render stored(
-        `Showing the stored text, which can lose its formatting — ${
+        `Showing the stored text, which can lose its formatting and may be cut short — ${
           d.status === 'none' ? 'Freshdesk has no description for this ticket.' : d.reason
         }`
       )}
     {/if}
   {:catch}
-    {@render stored('Showing the stored text, which can lose its formatting — Freshdesk could not be read.')}
+    {@render stored(
+      'Showing the stored text, which can lose its formatting and may be cut short — Freshdesk could not be read.'
+    )}
   {/await}
 </section>

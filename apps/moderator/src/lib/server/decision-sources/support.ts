@@ -577,7 +577,7 @@ export type SupportGroupDetail = {
    * The founding ticket's member row, or `null` when the founder has been re-routed out.
    *
    * 🔴 NOT `decision.lead`. The lead falls back to the oldest member so the decision always has a
-   * face, but the page's "Representative" line names the FOUNDER — rendering a fallback member's
+   * face, but the page's "Founder" line names the FOUNDER — rendering a fallback member's
    * user, tier and badges next to the founder's ticket number would attribute one customer's details
    * to another's ticket.
    */
