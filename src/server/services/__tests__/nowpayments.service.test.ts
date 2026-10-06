@@ -77,6 +77,9 @@ import {
   processDeposit,
   getDepositHistory,
   reconcileDeposits,
+  reconcileUserDeposits,
+  reprocessDeposit,
+  retryFailedDeposits,
 } from '~/server/services/nowpayments.service';
 
 // The two clients stay split, exactly as the fixture they replace had them: the old `mockDbRead`
@@ -466,6 +469,7 @@ describe('processDeposit', () => {
     });
 
     it('looks up the payin hash for an IPN event and skips the grant', async () => {
+      mockGetMultipliersForUser.mockResolvedValueOnce({ purchasesMultiplier: 1.5 });
       mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce({ payin_hash: HASH });
       const result = await processDeposit(
         12345,
@@ -477,7 +481,12 @@ describe('processDeposit', () => {
       expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
       expect(result.transactionId).toBe('already_granted');
       const upsertCall = mockDbWrite.cryptoDeposit.upsert.mock.calls[0]?.[0];
-      expect(upsertCall?.create).toMatchObject({ status: 'finished' });
+      expect(upsertCall?.create).toMatchObject({
+        status: 'finished',
+        buzzCredited: 5000,
+        bonusBuzz: null,
+        multiplier: null,
+      });
     });
 
     it('uses the payin hash carried on a status-built event without a lookup', async () => {
@@ -504,16 +513,29 @@ describe('processDeposit', () => {
       expect(result.transactionId).toBe('tx_123');
     });
 
-    it('grants without a ledger lookup when NowPayments reports no payin hash', async () => {
+    it('does not trust a null payin hash on the event and looks it up', async () => {
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce({ payin_hash: HASH });
       const event = makeWebhookEvent({ outcome_amount: 5, payin_hash: null });
       const result = await processDeposit(12345, 'finished', event);
 
-      expect(mockNowpaymentsCaller.getPaymentStatus).not.toHaveBeenCalled();
+      expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(12345);
+      expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+      expect(result.transactionId).toBe('already_granted');
+    });
+
+    it('grants without a ledger lookup when NowPayments reports no payin hash', async () => {
+      mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce({ payin_hash: null });
+      const result = await processDeposit(
+        12345,
+        'finished',
+        makeWebhookEvent({ outcome_amount: 5 })
+      );
+
       expect(mockGetTransactionByExternalId).not.toHaveBeenCalled();
       expect(result.transactionId).toBe('tx_123');
     });
 
-    it('does not grant when the payin hash cannot be resolved, leaving it for the retry sweep', async () => {
+    it('does not grant when the payin hash cannot be resolved, marking it buzz_failed', async () => {
       mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce(null);
       const result = await processDeposit(
         12345,
@@ -736,6 +758,9 @@ function makePayment(
 describe('reconcileDeposits', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockNowpaymentsCaller.getPaymentStatus
+      .mockReset()
+      .mockRejectedValue(new Error('unexpected NowPayments status lookup'));
     mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
     mockDbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
     mockGetTransactionByExternalId.mockResolvedValue(null);
@@ -981,5 +1006,62 @@ describe('reconcileDeposits', () => {
 
     expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledWith(444);
     expect(mockNowpaymentsCaller.getListPayments).not.toHaveBeenCalled();
+  });
+});
+
+// ─── payin_hash passthrough from status-built events ────────────────────────
+
+describe('status-built events carry payin_hash into the manual-credit guard', () => {
+  const PAYIN = '0xPASS';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockNowpaymentsCaller.getPaymentStatus
+      .mockReset()
+      .mockRejectedValue(new Error('unexpected NowPayments status lookup'));
+    mockDbRead.cryptoWallet.findUnique.mockResolvedValue({ chain: 'evm' });
+    mockDbRead.cryptoDeposit.findUnique.mockResolvedValue(null);
+    mockGetTransactionByExternalId.mockImplementation(async (id: string) =>
+      id === 'np-payin-0xpass' ? { transactionId: 'manual_tx' } : null
+    );
+  });
+
+  it('reprocessDeposit', async () => {
+    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce(
+      makePayment({ payment_id: 12345, payin_hash: PAYIN })
+    );
+
+    await reprocessDeposit(12345);
+
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(1);
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  it('retryFailedDeposits', async () => {
+    mockDbRead.cryptoDeposit.findMany.mockResolvedValueOnce([
+      { paymentId: BigInt(12345), retryCount: 0 },
+    ]);
+    mockNowpaymentsCaller.getPaymentStatus.mockResolvedValueOnce(
+      makePayment({ payment_id: 12345, payin_hash: PAYIN })
+    );
+
+    await retryFailedDeposits();
+
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(1);
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
+  });
+
+  it('reconcileUserDeposits', async () => {
+    mockDbRead.cryptoWallet.findMany.mockResolvedValueOnce([{ smartAccount: '999' }]);
+    mockNowpaymentsCaller.getPaymentStatus
+      .mockResolvedValueOnce(
+        makePayment({ payment_id: 999, payment_status: 'waiting', payment_extra_ids: [12345] })
+      )
+      .mockResolvedValueOnce(makePayment({ payment_id: 12345, payin_hash: PAYIN }));
+
+    await reconcileUserDeposits(42);
+
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(2);
+    expect(mockGrantBuzzPurchase).not.toHaveBeenCalled();
   });
 });

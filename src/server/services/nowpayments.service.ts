@@ -63,10 +63,10 @@ const log = async (data: MixedObject) => {
 export const manualPayinCreditExternalId = (payinHash: string) =>
   `np-payin-${payinHash.toLowerCase()}`;
 
-// The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. Events
-// built from a status/list response already know it, including that it is null.
+// The IPN body carries no payin_hash, so an IPN-driven event costs one status lookup. A null on
+// the event is not trusted as "no hash": the status response is the authority.
 const resolvePayinHash = async (paymentId: number, event: NOWPayments.WebhookEvent) => {
-  if (event.payin_hash !== undefined) return event.payin_hash;
+  if (event.payin_hash) return event.payin_hash;
   const payment = await nowpaymentsCaller.getPaymentStatus(paymentId);
   if (!payment) throw new Error(`Could not resolve payin_hash for payment ${paymentId}`);
   return payment.payin_hash ?? null;
@@ -217,6 +217,8 @@ export const processDeposit = async (
 
         if (manualCredit) {
           transactionId = 'already_granted';
+          bonusBuzz = null;
+          multiplierInt = null;
           await log({
             type: 'info',
             message: 'Deposit already credited manually by payin hash; skipping grant',
