@@ -12,6 +12,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
   // Postgres) for matching users; everyone else keeps Meilisearch with the feed in shadow.
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
+  // The same for the public REST images endpoint, apart so either can be rolled back alone.
+  FEED_SERVICE_REST_IMAGES = 'feed-service-rest-images',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',

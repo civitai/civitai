@@ -22,15 +22,21 @@ import { env } from '~/env/server';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
-import { feedRequestCapture } from '~/server/services/feed-request-capture.service';
+import {
+  feedRequestCapture,
+  type CapturableSearchInput,
+} from '~/server/services/feed-request-capture.service';
 import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
 import {
+  countFeedPrimary,
   feedFliptContext,
   feedHydrateQuery,
   feedPrimaryAvailable,
   fetchFeedPrimary,
   serveFromFeed,
+  type FeedPrimaryRoute,
 } from '~/server/services/feed-primary.service';
+import { parseFeedCursor } from '~/server/common/feed-cursor';
 import { purgeCache } from '~/server/cloudflare/client';
 import {
   CacheTTL,
@@ -1702,6 +1708,8 @@ function applyHideChallengesExclusion(input: {
 const getAllImagesUncaptured = async (
   input: GetAllImagesInput & {
     userId?: number;
+    /** Rethrow a statement timeout instead of answering it with an empty page. */
+    throwOnStatementTimeout?: boolean;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -2513,6 +2521,7 @@ const getAllImagesUncaptured = async (
         },
       }).catch(() => undefined);
       noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
+      if (input.throwOnStatementTimeout) throw e;
       return { items: [], nextCursor: undefined };
     }
     throw e;
@@ -2788,12 +2797,155 @@ type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
 type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
   source?: 'feed' | AsyncReturnType<typeof getImagesFromSearch>['source'];
 };
-async function getUserIdByUsername(username: string) {
+export async function findUserIdByUsername(username: string) {
   const user =
     (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
     (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-  if (!user) throw throwNotFoundError('User not found');
-  return user.id;
+  return user?.id;
+}
+
+/**
+ * The request preparation both feed callers share, applied to `input` in place: browsing-tag
+ * enforcement, the hide-challenges exclusion, then the creator a `username` names. `userId` is
+ * undefined for an unknown username; each caller decides what that means.
+ */
+async function prepareImageFeedRequest(
+  input: Parameters<typeof enforceBlockedBrowsingTags>[0] & {
+    hideChallenges?: boolean;
+    userId?: number;
+    username?: string;
+  },
+  viewer: Parameters<typeof enforceBlockedBrowsingTags>[1]
+): Promise<{ blocked: true } | { blocked: false; userId: number | undefined }> {
+  const { emptyResult } = await enforceBlockedBrowsingTags(input, viewer);
+  if (emptyResult) return { blocked: true };
+  applyHideChallengesExclusion(input);
+  const userId =
+    input.userId ?? (input.username ? await findUserIdByUsername(input.username) : undefined);
+  return { blocked: false, userId };
+}
+
+/**
+ * Asks the feed service for the page and loads its rows from Postgres. `hydrateInput` is the
+ * image query the rows are loaded with; the feed's paging and period are dropped from it.
+ */
+async function serveImagesFromFeedService(
+  searchInput: CapturableSearchInput & { domain?: DomainColor },
+  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
+  route: FeedPrimaryRoute
+) {
+  const started = Date.now();
+  const { currentUserId } = searchInput;
+  const [followedUserIds, newCreatorUserIds] = await Promise.all([
+    searchInput.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
+    searchInput.newCreators
+      ? getNewCreatorUserIds({ entity: 'images', domain: searchInput.domain })
+      : undefined,
+  ]);
+  const served = await withSpan('image:feedPrimary', () =>
+    serveFromFeed(
+      { ...searchInput, followedUserIds, newCreatorUserIds },
+      {
+        fetchFeed: fetchFeedPrimary,
+        hydrate: async (ids) =>
+          (
+            await getAllImagesUncaptured(feedHydrateQuery(hydrateInput, ids))
+          ).items,
+        route,
+      }
+    )
+  );
+  if (served.ok) {
+    void feedRequestCapture().record(searchInput, {
+      source: 'getImagesFromSearch',
+      filterMode: 'feed',
+      elapsedMs: Date.now() - started,
+      resultIds: served.page.data.map((i) => i.id),
+      nextCursor: served.page.nextCursor,
+    });
+  }
+  return served;
+}
+
+const isTransientFeedReason = (reason: string) =>
+  ['timeout', 'error', 'hydrate:error'].includes(reason) || /^status:5\d\d$/.test(reason);
+
+/**
+ * The public REST images endpoint's feed-service branch. `undefined` means the feed service did
+ * not serve the request and the caller answers it from the search path, unchanged.
+ *
+ * A `feed:` cursor is answered here or refused, flag or not: the search path would read it as
+ * offset 0 and silently restart the scroll at page one.
+ */
+export async function getImagesFromFeedServiceForRest(
+  searchInput: ImageSearchInput & { headers?: Record<string, string> },
+  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0]
+): Promise<GetAllImagesIndexResult | undefined> {
+  const fallBack = (reason: string) => {
+    countFeedPrimary('unmapped', reason, 'rest');
+    return undefined;
+  };
+
+  const feedCursor = parseFeedCursor(searchInput.cursor) !== undefined;
+  if (!feedPrimaryAvailable()) {
+    if (feedCursor)
+      throw throwBadRequestError('This cursor can no longer be continued; start again without it');
+    return undefined;
+  }
+  if (!feedCursor) {
+    const enabled = await withSpan('image:flipt:feedRestImages', () =>
+      getFliptBoolean(
+        FLIPT_FEATURE_FLAGS.FEED_SERVICE_REST_IMAGES,
+        searchInput.currentUserId?.toString() || 'anonymous',
+        feedFliptContext(searchInput)
+      )
+    );
+    if (!enabled) return undefined;
+    // An `offset|sortAt` cursor belongs to a scroll the search path started; it finishes there.
+    if (String(searchInput.cursor ?? '').includes('|')) return fallBack('cursor:legacy');
+    // The feed query turns a zero limit into its default page size.
+    if (searchInput.limit < 1) return fallBack('limit:0');
+  }
+
+  const input = { ...searchInput };
+  const prepared = await prepareImageFeedRequest(input, {
+    id: input.currentUserId,
+    isModerator: input.isModerator,
+  });
+  if (prepared.blocked) return { items: [], nextCursor: undefined };
+  const { userId } = prepared;
+  // The search path answers an unknown username with an empty page, not a 404.
+  if (input.username && userId === undefined) return { items: [], nextCursor: undefined };
+
+  const served = await serveImagesFromFeedService(
+    { ...input, userId },
+    {
+      ...hydrateInput,
+      // Resolved already; without it getAllImages would look the username up again.
+      userId,
+      tags: input.tags,
+      excludedTagIds: input.excludedTagIds,
+    },
+    'rest'
+  );
+  if (served.ok)
+    return {
+      // The search path reports createdAt as GREATEST(publishedAt, scannedAt, createdAt), which
+      // getAllImages selects as sortAt; REST clients keep that meaning.
+      items: served.page.data.map((image) => ({ ...image, createdAt: image.sortAt })),
+      nextCursor: served.page.nextCursor,
+    };
+  if (feedCursor) {
+    // The hydrate filtered out every row of that page; the scroll steps past it, or ends.
+    if (served.reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
+    if (isTransientFeedReason(served.reason))
+      throw new TRPCError({
+        code: 'SERVICE_UNAVAILABLE',
+        message: 'Image search is temporarily overloaded — please retry.',
+      });
+    throw throwBadRequestError('This cursor cannot be continued with these filters');
+  }
+  return undefined;
 }
 
 export const getAllImagesIndex = async (
@@ -2846,13 +2998,14 @@ export const getAllImagesIndex = async (
 
   const { include, user } = input;
 
-  const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
+  const prepared = await prepareImageFeedRequest(input, {
     id: user?.id,
     username: user?.username,
     isModerator: user?.isModerator,
   });
-  if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
-  applyHideChallengesExclusion(input);
+  if (prepared.blocked) return { nextCursor: undefined, items: [] };
+  const { userId } = prepared;
+  if (input.username && userId === undefined) throw throwNotFoundError('User not found');
 
   // - cursor uses "offset|entryTimestamp" like "500|1724677401898"
   const cursorParsed = input.cursor?.toString().split('|');
@@ -2860,8 +3013,6 @@ export const getAllImagesIndex = async (
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
 
   const currentUserId = user?.id;
-  const userId =
-    input.userId ?? (input.username ? await getUserIdByUsername(input.username) : undefined);
 
   const searchInput = {
     ...input,
@@ -2882,35 +3033,9 @@ export const getAllImagesIndex = async (
       )
     );
     if (feedPrimary) {
-      const started = Date.now();
-      const [followedUserIds, newCreatorUserIds] = await Promise.all([
-        input.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
-        input.newCreators
-          ? getNewCreatorUserIds({ entity: 'images', domain: input.domain })
-          : undefined,
-      ]);
-      const served = await withSpan('image:feedPrimary', () =>
-        serveFromFeed(
-          { ...searchInput, followedUserIds, newCreatorUserIds },
-          {
-            fetchFeed: fetchFeedPrimary,
-            hydrate: async (ids) =>
-              (
-                await getAllImagesUncaptured(feedHydrateQuery(input, ids))
-              ).items,
-          }
-        )
-      );
-      if (served.ok) {
-        void feedRequestCapture().record(searchInput, {
-          source: 'getImagesFromSearch',
-          filterMode: 'feed',
-          elapsedMs: Date.now() - started,
-          resultIds: served.page.data.map((i) => i.id),
-          nextCursor: served.page.nextCursor,
-        });
+      const served = await serveImagesFromFeedService(searchInput, input, 'website');
+      if (served.ok)
         return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
-      }
       if (served.reason === DEEP_OFFSET)
         throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
       if (served.reason === CURSOR_UNPARSED)
