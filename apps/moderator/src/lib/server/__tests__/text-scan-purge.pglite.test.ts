@@ -203,4 +203,30 @@ describe('purgeDeletedSources', () => {
     );
     expect(wiped.rows.map((r) => r.entity_id)).toEqual([1, PURGE_BATCH + 1, n]);
   });
+  it("nulls the wiped case's stored outputs, keeping status and workflow id, and leaves others alone", async () => {
+    await mainPg.exec(`INSERT INTO "User" VALUES (1, NULL); INSERT INTO "Model" VALUES (10, 1, NULL);`);
+    const gone = await addCase('Model', 404);
+    const live = await addCase('Model', 10);
+    await modPg.exec(`
+      INSERT INTO text_scan_test_run (id, set_id, version, status, run_by) VALUES (1, ${setId}, 'active', 'done', 1);
+      INSERT INTO text_scan_test_result (run_id, case_id, status, output, workflow_id) VALUES
+        (1, ${gone}, 'ok', '{"scam":{"detected":true,"reason":"QUOTES TEXT"}}', 'wf-gone'),
+        (1, ${live}, 'ok', '{"scam":{"detected":false,"reason":"FINE"}}', 'wf-live');
+    `);
+    await purgeDeletedSources(dbs);
+    const { rows } = await modPg.query<{ case_id: number; status: string; output: unknown; workflow_id: string }>(
+      'SELECT case_id::int AS case_id, status, output, workflow_id FROM text_scan_test_result ORDER BY case_id'
+    );
+    expect(rows).toEqual([
+      { case_id: gone, status: 'ok', output: null, workflow_id: 'wf-gone' },
+      { case_id: live, status: 'ok', output: { scam: { detected: false, reason: 'FINE' } }, workflow_id: 'wf-live' },
+    ]);
+  });
+
+  it('counts as checked only the cases of a type it can look up', async () => {
+    await addCase('Model', 404);
+    const unknown = await addCase('RetiredType', 404);
+    expect(await purgeDeletedSources(dbs)).toEqual({ checked: 1, wiped: 1 });
+    expect((await caseRow(unknown)).fields).not.toBeNull();
+  });
 });

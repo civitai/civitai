@@ -481,6 +481,48 @@ describe('scoring against current expectations', () => {
   });
 });
 
+describe('a wiped case', () => {
+  const wipe = (caseId: number) =>
+    holder.pg!.query(
+      'UPDATE text_scan_test_case SET fields = NULL, source_deleted_at = now() WHERE id = $1',
+      [caseId]
+    );
+
+  it("drops out of earlier runs' totals and comparisons", async () => {
+    const { setId, caseIds } = await setWithCases(2); // expects nsfw r–x
+    harness.scanTexts.mockImplementation(allOk('pg13'));
+    const a = await startRun({ setId, version: 'active' }, MOD);
+    harness.scanTexts.mockImplementation(allOk('x'));
+    const b = await startRun({ setId, version: 'active' }, MOD);
+    expect((await compareRuns(setId, a.id, b.id)).newlyRight).toHaveLength(2);
+
+    await wipe(caseIds[0]);
+
+    const comparison = await compareRuns(setId, a.id, b.id);
+    expect(comparison.newlyRight.map((f) => f.caseId)).toEqual([caseIds[1]]);
+    expect(comparison.a.totals!.nsfw).toMatchObject({ scored: 1, correct: 0 });
+    expect(comparison.b.totals!.nsfw).toMatchObject({ scored: 1, correct: 1 });
+    expect((await listRuns(setId)).map((r) => r.totals!.nsfw.scored)).toEqual([1, 1]);
+    expect((await latestRunTotals(setId)).active!.totals.nsfw.scored).toBe(1);
+  });
+
+  it('keeps its status but stores no output when it is purged while the run is scanning', async () => {
+    const { setId, caseIds } = await setWithCases(2);
+    harness.scanTexts.mockImplementation(async (type: string, texts: LabText[]) => {
+      await wipe(caseIds[0]);
+      return allOk()(type, texts);
+    });
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    const rows = await holder.pg!.query<{ case_id: string; status: string; output: unknown; workflow_id: string }>(
+      'SELECT case_id, status, output, workflow_id FROM text_scan_test_result WHERE run_id = $1 ORDER BY case_id',
+      [run.id]
+    );
+    expect(rows.rows[0]).toMatchObject({ status: 'ok', output: null, workflow_id: `wf-${caseIds[0]}` });
+    expect(rows.rows[1].output).not.toBeNull();
+    expect((await runRow(run.id)).totals.nsfw.scored).toBe(1);
+  });
+});
+
 describe('latestRunTotals', () => {
   it("returns each version's latest finished run, ignoring one still running", async () => {
     const { setId } = await setWithCases(1);

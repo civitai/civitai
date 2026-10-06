@@ -181,19 +181,20 @@ function toResultRow(c: RunCase, r: LabScanResult | undefined): ResultRow {
 async function writeResults(runId: number, rows: ResultRow[]) {
   if (!rows.length) return;
   const db = getModeratorDb();
-  // A case removed while the run was scanning would fail the foreign key and lose the whole chunk.
-  const present = new Set(
+  // A case removed while the run was scanning would fail the foreign key and lose the whole chunk; one
+  // purged meanwhile keeps its status but not its output, whose `reason` can quote the wiped text.
+  const present = new Map(
     (
       await db
         .selectFrom('text_scan_test_case')
-        .select('id')
+        .select(['id', 'source_deleted_at'])
         .where(
           'id',
           'in',
           rows.map((r) => String(r.case_id))
         )
         .execute()
-    ).map((r) => Number(r.id))
+    ).map((r) => [Number(r.id), r.source_deleted_at !== null])
   );
   const values = rows
     .filter((r) => present.has(r.case_id))
@@ -201,7 +202,8 @@ async function writeResults(runId: number, rows: ResultRow[]) {
       run_id: String(runId),
       case_id: String(r.case_id),
       status: r.status,
-      output: r.output === null ? null : JSON.stringify(r.output),
+      output:
+        r.output === null || present.get(r.case_id) ? null : JSON.stringify(r.output),
       workflow_id: r.workflow_id,
     }));
   if (!values.length) return;
@@ -296,6 +298,8 @@ async function scoreRuns(runIds: Array<string | number>): Promise<Map<string, Sc
       runIds.map((id) => String(id))
     )
     .where('r.status', '=', 'ok')
+    // A wiped case drops out of every run's score, past ones included.
+    .where('c.source_deleted_at', 'is', null)
     .execute();
   const byRun = new Map<string, typeof rows>();
   for (const r of rows) byRun.set(String(r.run_id), [...(byRun.get(String(r.run_id)) ?? []), r]);

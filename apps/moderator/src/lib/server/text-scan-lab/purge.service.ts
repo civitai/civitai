@@ -23,6 +23,8 @@ export const SOURCES: Record<LabEntityType, Source> = {
   Model: { table: 'Model', key: 'id', author: 'userId', softDelete: true },
   Article: { table: 'Article', key: 'id', author: 'userId', softDelete: false },
   Post: { table: 'Post', key: 'id', author: 'userId', softDelete: false },
+  // Bounty, BountyEntry and Challenge authors are nullable (system-created rows); a null author is
+  // only checked for existence.
   Bounty: { table: 'Bounty', key: 'id', author: 'userId', softDelete: false },
   BountyEntry: { table: 'BountyEntry', key: 'id', author: 'userId', softDelete: false },
   Challenge: { table: 'Challenge', key: 'id', author: 'createdById', softDelete: false },
@@ -71,10 +73,12 @@ export async function purgeDeletedSources(
   const cases = await q.execute();
 
   const idsByType = new Map<LabEntityType, Set<number>>();
+  let checked = 0;
   for (const c of cases) {
     const type = c.entity_type as LabEntityType;
     // A type the lab no longer knows is left alone rather than guessed at.
     if (!(type in SOURCES)) continue;
+    checked++;
     idsByType.set(type, (idsByType.get(type) ?? new Set()).add(c.entity_id!));
   }
 
@@ -83,16 +87,26 @@ export async function purgeDeletedSources(
     for (const batch of chunks([...ids], PURGE_BATCH)) {
       const gone = await goneIds(main, SOURCES[type], batch);
       if (!gone.length) continue;
-      let wipe = moderator
-        .updateTable('text_scan_test_case')
-        .set({ fields: null, source_deleted_at: sql`now()`, updated_at: sql`now()` })
-        .where('entity_type', '=', type)
-        .where('entity_id', 'in', gone)
-        .where('fields', 'is not', null)
-        .where('synthetic', '=', false);
-      if (setId !== undefined) wipe = wipe.where('set_id', '=', String(setId));
-      wiped += Number((await wipe.executeTakeFirst()).numUpdatedRows);
+      wiped += await moderator.transaction().execute(async (trx) => {
+        let wipe = trx
+          .updateTable('text_scan_test_case')
+          .set({ fields: null, source_deleted_at: sql`now()`, updated_at: sql`now()` })
+          .where('entity_type', '=', type)
+          .where('entity_id', 'in', gone)
+          .where('fields', 'is not', null)
+          .where('synthetic', '=', false);
+        if (setId !== undefined) wipe = wipe.where('set_id', '=', String(setId));
+        const caseIds = (await wipe.returning('id').execute()).map((r) => r.id);
+        // A stored output's `reason` can quote the text.
+        if (caseIds.length)
+          await trx
+            .updateTable('text_scan_test_result')
+            .set({ output: null })
+            .where('case_id', 'in', caseIds)
+            .execute();
+        return caseIds.length;
+      });
     }
   }
-  return { checked: cases.length, wiped };
+  return { checked, wiped };
 }

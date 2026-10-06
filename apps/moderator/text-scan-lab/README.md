@@ -33,7 +33,8 @@ When the source entity or its author's account is deleted, `fields` is set to nu
 ## Purge
 
 Clears the text of entity cases whose source row is gone or soft-deleted, or whose author's account is
-deleted. Free-text and synthetic cases are never touched. Opening a set's page, quoting a run and
+deleted, and nulls the stored outputs of those cases' results (a model's reason can quote the text);
+wiped cases drop out of every run's score. Free-text and synthetic cases are never touched. Opening a set's page, quoting a run and
 starting one purge that set first; this command purges every set, and prints counts only.
 
 **Run it weekly** (an operator task: the spoke has no scheduler). It is idempotent.
