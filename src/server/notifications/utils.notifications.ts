@@ -19,6 +19,7 @@ import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.
 import { placementNotifications } from '~/server/notifications/placement.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
+import { creatorMilestoneNotifications } from '~/server/notifications/creator-milestone.notifications';
 import { creatorAnnouncementNotifications } from '~/server/notifications/creator-announcement.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
 import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
@@ -73,6 +74,7 @@ export const notificationProcessors = {
   ...strikeNotifications,
   ...referralNotifications,
   ...membershipGiftNotifications,
+  ...creatorMilestoneNotifications,
 };
 
 // Sort notifications by priority and group them by priority

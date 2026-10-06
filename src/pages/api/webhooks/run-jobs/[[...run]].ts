@@ -120,6 +120,7 @@ import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-recon
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
+import { userScoreHealthCheckJob } from '~/server/jobs/user-score-health-check';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
@@ -205,6 +206,7 @@ export const jobs: Job[] = [
   processingEngingEarlyAccess,
   syncGeneratorLoadedResources,
   updateUserScore,
+  userScoreHealthCheckJob,
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
