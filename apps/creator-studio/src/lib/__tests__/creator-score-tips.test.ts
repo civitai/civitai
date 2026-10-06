@@ -16,6 +16,7 @@ function mainAppActivities() {
 }
 
 const sentence = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 describe('CREATOR_SCORE_TIPS', () => {
   const activities = mainAppActivities();
@@ -29,11 +30,19 @@ describe('CREATOR_SCORE_TIPS', () => {
     });
   });
 
+  // The full phrase must be followed by "of"/"on", so a main-app phrase that loses a trailing
+  // activity no longer matches a tip that still lists it.
   it.each([
     ['Publish models people use', 'models'],
     ['Share images & posts', 'images'],
     ['Write articles', 'articles'],
   ] as const)('words "%s" with the main app explainer activities', (title, key) => {
-    expect(body(title)).toMatch(new RegExp(`^${sentence(activities[key] ?? '')} `));
+    const phrase = escapeRegExp(sentence(activities[key] ?? ''));
+    expect(body(title)).toMatch(new RegExp(`^${phrase} (of|on) `));
+  });
+
+  it('ranks no score source above another', () => {
+    for (const tip of CREATOR_SCORE_TIPS)
+      expect(tip.body).not.toMatch(/largest|biggest|most important/i);
   });
 });

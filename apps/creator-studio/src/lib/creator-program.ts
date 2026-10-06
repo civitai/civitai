@@ -39,15 +39,14 @@ export const CREATOR_PROGRAM_CAPABILITIES = [
   { label: 'Bank Buzz to claim a share of the Compensation Pool', everyone: false, member: true },
 ];
 
-// Actionable ways to raise the creator score, ordered by impact. Mirrors the main app's scoring job
-// (update-user-score.ts). Kept qualitative — the exact multipliers live server-side and change, so we
-// don't quote numbers. Moderation/report components are excluded (not creator actions).
+// The scoring multipliers are tunable server-side, so these name categories and activities only: no
+// numbers and no "counts more" ordering. Moderation/report components are excluded (not creator actions).
 // 🔴 The activity wording must match `creatorScoreActivities` in the main app's
 // src/components/Account/creator-score-copy.ts, which this app cannot import; a test pins the two.
 export const CREATOR_SCORE_TIPS = [
   {
     title: 'Build your following',
-    body: 'Followers are the largest factor in your score — post regularly and engage with the community to grow it.',
+    body: 'Your follower count raises your score. Post regularly and engage with the community to grow it.',
   },
   {
     title: 'Publish models people use',
