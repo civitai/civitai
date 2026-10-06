@@ -49,7 +49,3 @@ export function creatorAggregateScoreFromMeta(meta: unknown): number {
   const sum = AGGREGATE_CATEGORIES.reduce((acc, key) => acc + finiteOr0(scores?.[key]), 0);
   return Math.max(sum, finiteOr0(scores?.total));
 }
-
-export function creatorArticlesScoreFromMeta(meta: unknown): number {
-  return finiteOr0((meta as UserMetaCategoryScores | null | undefined)?.scores?.articles);
-}

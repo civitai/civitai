@@ -75,7 +75,7 @@ describe('getCreatorJourney', () => {
 
     const { scores } = await getCreatorJourney(1);
 
-    expect(scores).toMatchObject({ total: 100, aggregate: 330, articles: 0 });
+    expect(scores).toMatchObject({ total: 100, aggregate: 330 });
   });
 
   it('keeps the total when the categories sum to less', async () => {

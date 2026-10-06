@@ -6,11 +6,7 @@ import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
-import {
-  creatorAggregateScoreFromMeta,
-  creatorArticlesScoreFromMeta,
-  creatorScoreFromMeta,
-} from '~/shared/utils/creator-score';
+import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
 type MilestoneDefinition = {
   key: string;
@@ -104,7 +100,6 @@ export async function getCreatorJourney(userId: number) {
       ? {
           total: creatorScoreFromMeta(user?.meta),
           aggregate: creatorAggregateScoreFromMeta(user?.meta),
-          articles: creatorArticlesScoreFromMeta(user?.meta),
           breakdown: rawScores,
         }
       : null,
