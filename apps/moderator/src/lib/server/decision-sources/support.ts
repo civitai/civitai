@@ -9,8 +9,8 @@ import type { Decision } from '../../decisions';
  * 🔴 THE ONLY MODULE IN THIS APP THAT TOUCHES THE ROUTER'S TABLES, AND IT NEVER WRITES THEM. The
  * router is the single writer to its catalog, and the catalog decides what its model is asked next
  * run: a second writer here would change a live model's option set and could be silently undone by
- * the router's own re-inserts. Nothing in the database enforces this — the app's ClickHouse login can
- * read these tables and nothing has shown it cannot write them — so it is enforced here, structurally:
+ * the router's own re-inserts. Read-only access is enforced in this module rather than assumed from
+ * the database, structurally:
  *
  *   - every statement is a constant in `SUPPORT_SQL` (or built by `ticketSql`), so the full set is
  *     enumerable, and `decision-sources/__tests__/support.sql.test.ts` asserts each is a SELECT/WITH;
@@ -73,30 +73,37 @@ export const SUPPORT_SQL = {
     SELECT topic, count() AS n FROM support_issue_groups FINAL
     WHERE router_version = {v:String} AND stale = 0 AND closed_at IS NULL
     GROUP BY topic ORDER BY topic`,
-  // Sizes and low-confidence counts come from the router's own view, so the inbox and the router
-  // agree on one definition. The view is version-agnostic; the INNER JOIN on this version's groups
-  // is what scopes it (group keys hash the version).
+  // 🔴 SIZES ARE COUNTED HERE, SCOPED TO THE VERSION — NOT read from the router's
+  // `support_issue_open_state` view. That view is deliberately version-agnostic: it keeps each
+  // ticket's newest assignment across ALL versions, so a ticket re-routed under a newer version drops
+  // out of its older group's count, and a page pinned to the older version would show a group smaller
+  // than its own member list. `low_conf_members` mirrors the view's definition (p_novel > 0.4) so the
+  // two agree whenever only one version is routing.
   list: `
-    SELECT o.group_key AS group_key, o.title AS title, o.topic AS topic,
-           o.founded_ticket_id AS founded_ticket_id, o.founded_at AS founded_at,
-           o.n_members AS n_members, o.last_seen AS last_seen,
-           o.low_conf_members AS low_conf_members,
+    SELECT g.group_key AS group_key, g.title AS title, g.topic AS topic,
+           g.founded_ticket_id AS founded_ticket_id, g.founded_at AS founded_at,
            g.created_by AS created_by,
+           ifNull(d.n_members, 0) AS n_members,
+           if(ifNull(d.n_members, 0) = 0, g.founded_at, d.last_seen) AS last_seen,
+           ifNull(d.low_conf_members, 0) AS low_conf_members,
            ifNull(d.new_24h, 0) AS new_24h, ifNull(d.n_topics, 0) AS n_topics,
            r.ticket_subject AS rep_subject
-    FROM support_issue_open_state AS o
-    INNER JOIN (SELECT group_key, created_by FROM support_issue_groups FINAL
-                WHERE router_version = {v:String}) AS g ON g.group_key = o.group_key
+    FROM (SELECT group_key, title, topic, founded_ticket_id, founded_at, created_by
+          FROM support_issue_groups FINAL
+          WHERE router_version = {v:String} AND stale = 0 AND closed_at IS NULL
+            AND ({topic:String} = '' OR topic = {topic:String})) AS g
     LEFT JOIN (SELECT group_key,
+                      count()                                         AS n_members,
+                      max(ticket_created_at)                          AS last_seen,
+                      countIf(p_novel > 0.4)                          AS low_conf_members,
                       countIf(assigned_at > now() - INTERVAL 24 HOUR) AS new_24h,
                       uniqExact(chosen_topic)                         AS n_topics
                FROM support_issue_group_members FINAL
                WHERE router_version = {v:String} AND group_key != ''
-               GROUP BY group_key) AS d ON d.group_key = o.group_key
+               GROUP BY group_key) AS d ON d.group_key = g.group_key
     LEFT JOIN (SELECT ticket_id, ticket_subject FROM support_tickets_routed FINAL
-               WHERE router_version = {v:String}) AS r ON r.ticket_id = o.founded_ticket_id
-    WHERE o.is_active = 1 AND ({topic:String} = '' OR o.topic = {topic:String})
-    ORDER BY new_24h DESC, o.last_seen DESC
+               WHERE router_version = {v:String}) AS r ON r.ticket_id = g.founded_ticket_id
+    ORDER BY new_24h DESC, last_seen DESC
     LIMIT {limit:UInt32}`,
   group: `
     SELECT group_key, title, gist, topic, issue_type, founded_ticket_id, founded_at, closed_at,
@@ -258,6 +265,9 @@ export const isRouterVersion = (v: unknown): v is string =>
   typeof v === 'string' && /^[A-Za-z0-9._-]{1,64}$/.test(v);
 export const isGroupKey = (v: unknown): v is string =>
   typeof v === 'string' && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+/** A topic slug, which doubles as an area until an area taxonomy exists. */
+export const isAreaSlug = (v: unknown): v is string =>
+  typeof v === 'string' && /^[a-z0-9_-]{1,64}$/.test(v);
 export const isTicketId = (v: unknown): v is string =>
   typeof v === 'string' && /^\d{1,20}$/.test(v);
 
@@ -300,7 +310,9 @@ export type SupportHeader = {
 
 export function headerWarnings(
   h: Omit<SupportHeader, 'warnings' | 'version' | 'cap'>,
-  now = Date.now()
+  now = Date.now(),
+  /** A version pinned by `?version=` is usually a retired one, whose quiet is expected, not a fault. */
+  pinned = false
 ): string[] {
   const out: string[] = [];
   if (h.activeGroups >= CATALOG_WARN_AT)
@@ -314,7 +326,7 @@ export function headerWarnings(
         'answers mix questions that were worded differently.'
     );
   if (h.lastRoutedAt === null) out.push('No ticket has been routed under this version yet.');
-  else if (now - Date.parse(h.lastRoutedAt) > STALE_ROUTING_MINUTES * 60_000)
+  else if (!pinned && now - Date.parse(h.lastRoutedAt) > STALE_ROUTING_MINUTES * 60_000)
     out.push(
       `No ticket routed for over ${STALE_ROUTING_MINUTES} minutes — a quiet queue, or the router ` +
         'has stopped.'
@@ -324,8 +336,8 @@ export function headerWarnings(
 
 export async function getSupportHeader(
   version: string,
-  client = reader(),
-  now = Date.now()
+  opts: { pinned?: boolean; now?: number } = {},
+  client = reader()
 ): Promise<SupportHeader> {
   const [r] = await rows<{
     active_groups: number | string;
@@ -339,7 +351,12 @@ export async function getSupportHeader(
     lastRoutedAt: Number(r?.n_routed ?? 0) > 0 ? chDate(r?.last_routed) : null,
     specCount: Number(r?.n_specs ?? 0),
   };
-  return { version, cap: ROUTER_CATALOG_CAP, ...base, warnings: headerWarnings(base, now) };
+  return {
+    version,
+    cap: ROUTER_CATALOG_CAP,
+    ...base,
+    warnings: headerWarnings(base, opts.now ?? Date.now(), opts.pinned ?? false),
+  };
 }
 
 export async function listSupportTopics(
@@ -540,6 +557,15 @@ const mapGroup = (g: GroupRaw): SupportGroup => ({
 export type SupportGroupDetail = {
   group: SupportGroup;
   decision: Decision<SupportMember> | null;
+  /**
+   * The founding ticket's member row, or `null` when the founder has been re-routed out.
+   *
+   * 🔴 NOT `decision.lead`. The lead falls back to the oldest member so the decision always has a
+   * face, but the page's "Representative" line names the FOUNDER — rendering a fallback member's
+   * user, tier and badges next to the founder's ticket number would attribute one customer's details
+   * to another's ticket.
+   */
+  representative: SupportMember | null;
   founder: FounderPosition;
   topicsSpanned: string[];
   specHashes: string[];
@@ -562,8 +588,10 @@ export async function getSupportGroup(
     members.map((m) => m.ticketId),
     group.foundedTicketId
   );
+  const representative = members.find((m) => m.isFounder) ?? null;
   return {
     group,
+    representative,
     // The representative is the founder by the router's construction — not whoever sorts first.
     decision:
       members.length === 0
@@ -572,7 +600,7 @@ export async function getSupportGroup(
             id: `support:${group.groupKey}`,
             groupKey: group.groupKey,
             members,
-            lead: members.find((m) => m.isFounder) ?? members[0],
+            lead: representative ?? members[0],
           },
     founder,
     topicsSpanned: [...new Set(members.map((m) => m.chosenTopic).filter(Boolean))].sort(),

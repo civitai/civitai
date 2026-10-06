@@ -1,8 +1,8 @@
 <script lang="ts">
-  import type { ResolutionStoreStatus } from '$lib/decision-rulings';
+  import type { ModeratorDbStatus } from '$lib/moderator-db-status';
 
   /** Why `/decisions` cannot read or record rulings here. Renders nothing when it can. */
-  let { status }: { status: ResolutionStoreStatus } = $props();
+  let { status }: { status: ModeratorDbStatus } = $props();
 </script>
 
 {#if status === 'no-schema'}

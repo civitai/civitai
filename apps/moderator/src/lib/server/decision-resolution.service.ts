@@ -3,11 +3,15 @@ import { getModeratorDb } from './moderator-db';
 import type { DecisionResolutionTables } from './decision-resolution-tables';
 import {
   initialApplyState,
+  isGroupRuling,
+  isMemberRuling,
   type ApplyState,
   type DecisionRuling,
   type DecisionSource,
-  type ResolutionStoreStatus,
+  type GroupRuling,
+  type MemberRuling,
 } from '../decision-rulings';
+import { moderatorDbStatus } from '../moderator-db-status';
 
 /**
  * Human rulings on `/decisions` items — the app's own record, and the labelled data they produce.
@@ -24,22 +28,6 @@ const defaultDb = (): ResolutionDb =>
   getModeratorDb().withTables<DecisionResolutionTables>() as unknown as ResolutionDb;
 
 export const SCHEMA_FILE = 'apps/moderator/decisions/schema.sql';
-
-export type { ResolutionStoreStatus };
-
-/**
- * Classify a failed read of `decision_resolution`.
- *
- * `42P01` undefined_table: the DDL has not been applied here. `42501` insufficient_privilege: it was
- * applied as the wrong role (see the file header). An unset connection string throws before any query.
- */
-export function resolutionStoreStatus(e: unknown): Exclude<ResolutionStoreStatus, 'ok'> {
-  const code = (e as { code?: unknown } | null)?.code;
-  if (code === '42P01') return 'no-schema';
-  if (code === '42501') return 'no-grant';
-  if (e instanceof Error && e.message.includes('DATABASE_URL')) return 'not-configured';
-  return 'unreachable';
-}
 
 export type Resolution = {
   id: string;
@@ -102,6 +90,45 @@ export async function currentResolutions(
   }));
 }
 
+export type GroupRulingSummary = {
+  ruling: GroupRuling;
+  ruledBy: number;
+  ruledAt: Date;
+  targetKey: string | null;
+};
+export type MemberLabelSummary = { ruling: MemberRuling; ruledBy: number; ruledAt: Date };
+
+/**
+ * Split current resolutions into the ruling on each WHOLE item and the labels on its members.
+ *
+ * 🔴 THE ONE PLACE `sub_key = ''` IS READ AS "THE WHOLE ITEM". The inbox and the detail page both need
+ * this split; two copies of a stored-value convention disagree the first time one is edited, and then
+ * the inbox and the item page differ on whether an item is ruled. The DDL's scope CHECK pairs the
+ * convention with the ruling kind; the guards here narrow the type to match.
+ */
+export function partitionResolutions(resolutions: readonly Resolution[]): {
+  groups: Map<string, GroupRulingSummary>;
+  members: Map<string, Record<string, MemberLabelSummary>>;
+} {
+  const groups = new Map<string, GroupRulingSummary>();
+  const members = new Map<string, Record<string, MemberLabelSummary>>();
+  for (const r of resolutions) {
+    if (r.subKey === '' && isGroupRuling(r.ruling))
+      groups.set(r.itemKey, {
+        ruling: r.ruling,
+        ruledBy: r.ruledBy,
+        ruledAt: r.ruledAt,
+        targetKey: r.targetKey,
+      });
+    else if (r.subKey !== '' && isMemberRuling(r.ruling)) {
+      const labels = members.get(r.itemKey) ?? {};
+      labels[r.subKey] = { ruling: r.ruling, ruledBy: r.ruledBy, ruledAt: r.ruledAt };
+      members.set(r.itemKey, labels);
+    }
+  }
+  return { groups, members };
+}
+
 export type NewResolution = {
   source: DecisionSource;
   itemKey: string;
@@ -149,7 +176,7 @@ export async function recordResolution(
       .executeTakeFirst();
     return row ? { inserted: 1, id: String(row.id) } : { inserted: 0, id: null };
   } catch (e) {
-    const status = resolutionStoreStatus(e);
+    const status = moderatorDbStatus(e);
     if (status === 'no-schema')
       throw new Error(`decision_resolution does not exist — apply ${SCHEMA_FILE}`, { cause: e });
     if (status === 'no-grant')

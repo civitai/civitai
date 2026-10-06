@@ -5,7 +5,12 @@ import {
   type GroupRuling,
   type MemberRuling,
 } from '$lib/decision-rulings';
-import type { SupportGroupDetail } from '$lib/server/decision-sources/support';
+import {
+  isAreaSlug,
+  isTicketId,
+  type SupportGroupDetail,
+} from '$lib/server/decision-sources/support';
+import { parseForm } from '$lib/server/query';
 
 /**
  * What the moderator was shown when they ruled — stored with the ruling so the label stays tied to
@@ -85,29 +90,47 @@ export type ParsedGroupRuling = {
  * along on a `correct`. The DDL enforces the same pairing; this is what lets the refusal be specific.
  */
 export function parseGroupRuling(form: FormData, selfKey: string): ParsedGroupRuling | string {
-  const parsed = groupRulingSchema.safeParse(Object.fromEntries(form));
-  if (!parsed.success) return parsed.error.issues[0]?.message ?? 'Invalid ruling.';
-  const { ruling, note } = parsed.data;
-  const r = ruling as GroupRuling;
-  const targetKey = r === 'duplicate_of' ? parsed.data.targetKey : null;
-  const escalateTo = r === 'escalate' ? parsed.data.escalateTo : null;
+  const parsed = parseForm(groupRulingSchema, form);
+  if (typeof parsed === 'string') return parsed;
+  const r = parsed.ruling as GroupRuling;
+  const targetKey = r === 'duplicate_of' ? parsed.targetKey : null;
+  const escalateTo = r === 'escalate' ? parsed.escalateTo : null;
   if (r === 'duplicate_of' && !targetKey) return 'Choose the group this one duplicates.';
   if (r === 'duplicate_of' && targetKey === selfKey) return 'A group cannot duplicate itself.';
   if (r === 'escalate' && !escalateTo) return 'Choose who to escalate to.';
-  // Areas are the source's topic slugs until an area taxonomy exists.
-  if (escalateTo !== null && !/^[a-z0-9-]+$/.test(escalateTo)) return 'Unknown escalation area.';
-  return { ruling: r, targetKey, escalateTo, note };
+  // Areas are the source's topic slugs until an area taxonomy exists. Membership in the version's
+  // topic set is checked by the action, which has the source to ask.
+  if (escalateTo !== null && !isAreaSlug(escalateTo)) return 'Unknown escalation area.';
+  return { ruling: r, targetKey, escalateTo, note: parsed.note };
 }
 
 const memberLabelSchema = z.object({
-  ticketId: z.string().regex(/^\d{1,20}$/, 'Missing ticket id.'),
+  ticketId: z.string().refine(isTicketId, 'Missing ticket id.'),
   ruling: z.string().refine(isMemberRuling, 'Choose belongs, does not belong or unsure.'),
 });
 
 export function parseMemberLabel(
   form: FormData
 ): { ticketId: string; ruling: MemberRuling } | string {
-  const parsed = memberLabelSchema.safeParse(Object.fromEntries(form));
-  if (!parsed.success) return parsed.error.issues[0]?.message ?? 'Invalid label.';
-  return { ticketId: parsed.data.ticketId, ruling: parsed.data.ruling as MemberRuling };
+  const parsed = parseForm(memberLabelSchema, form);
+  if (typeof parsed === 'string') return parsed;
+  return { ticketId: parsed.ticketId, ruling: parsed.ruling as MemberRuling };
+}
+
+/**
+ * Has the group's membership changed since the moderator's page loaded?
+ *
+ * 🔴 THE SNAPSHOT IS ONLY "WHAT THE HUMAN SAW" IF NOTHING MOVED IN BETWEEN. It is built from a server
+ * re-read (so the client cannot forge it), and the router keeps adding and re-routing members while a
+ * page sits open. The page posts the member ids it rendered; a mismatch refuses the ruling rather
+ * than storing evidence the moderator never looked at. `null` (nothing posted) is a mismatch too.
+ */
+export function membershipChanged(
+  posted: FormDataEntryValue | null,
+  d: SupportGroupDetail
+): boolean {
+  if (typeof posted !== 'string') return true;
+  const seen = posted.split(',').filter(Boolean).sort();
+  const now = (d.decision?.members ?? []).map((m) => m.ticketId).sort();
+  return seen.length !== now.length || seen.some((id, i) => id !== now[i]);
 }

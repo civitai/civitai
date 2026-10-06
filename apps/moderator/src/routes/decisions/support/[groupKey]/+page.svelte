@@ -1,7 +1,9 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import DecisionStoreNotice from '$lib/components/DecisionStoreNotice.svelte';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { versionedHref } from '$lib/decisions';
+  import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural } from '$lib/format';
   import { denied } from '$lib/permissions';
   import MemberTable from './MemberTable.svelte';
@@ -15,18 +17,17 @@
   const ticketHref = (id: string) =>
     versionedHref(`/decisions/support/ticket/${id}`, data.version, data.overridden);
 
-  // One `form` serves both actions; each panel renders only its own refusal. `denied` comes from
-  // `requiresGrant` and belongs to whichever panel was used, so the ruling panel shows it.
-  const ruleError = $derived(
-    form && 'error' in form && form.error && (form.scope === 'rule' || form.scope === 'denied')
-      ? form.error
+  const rep = $derived(data.detail.representative);
+
+  // The ruling panel holds its own refusal (`FormState`). Label refusals arrive on the page-level
+  // `form`: one naming a ticket renders on that row, and any other — a denied grant, a malformed
+  // post — renders here, so no refusal is invisible.
+  const labelFailure = $derived(
+    form && 'error' in form && form.error && (form.scope === 'label' || form.scope === 'denied')
+      ? { ticketId: 'ticketId' in form ? (form.ticketId ?? null) : null, message: form.error }
       : null
   );
-  const labelError = $derived(
-    form && 'error' in form && form.error && form.scope === 'label' && 'ticketId' in form && form.ticketId
-      ? { ticketId: form.ticketId, message: form.error }
-      : null
-  );
+  const memberIds = $derived(decision?.members.map((m) => m.ticketId) ?? []);
 </script>
 
 <header class="page-header">
@@ -48,20 +49,20 @@
   {/if}
   <p class="text-sm">
     Representative:
-    {#if decision?.lead.routed}
+    {#if rep?.routed}
       <a class={LINK_CLASS} href={ticketHref(group.foundedTicketId)}>#{group.foundedTicketId}</a>
     {:else}
       #{group.foundedTicketId}
     {/if}
     <a class={LINK_CLASS} href={group.ticketUrl} target="_blank" rel="noreferrer">Freshdesk ↗</a>
-    {#if decision?.lead.civitaiUserId}
+    <!-- Only the FOUNDER's own details. When it has been re-routed out there is no member row to
+         read them from, and borrowing another member's would attribute them to the wrong ticket. -->
+    {#if rep?.civitaiUserId}
       · user
-      <a class={LINK_CLASS} href="/retool/user-lookup/basic?q={decision.lead.civitaiUserId}"
-        >{decision.lead.civitaiUserId}</a
-      >
+      <a class={LINK_CLASS} href={userLookupUrl(rep.civitaiUserId, 'basic')}>{rep.civitaiUserId}</a>
     {/if}
-    {#if decision?.lead.memberTier}· {decision.lead.memberTier}{/if}
-    {#if decision?.lead.payingPriority}<Badge variant="outline" class="ml-1">paying priority</Badge>{/if}
+    {#if rep?.memberTier}· {rep.memberTier}{/if}
+    {#if rep?.payingPriority}<Badge variant="outline" class="ml-1">paying priority</Badge>{/if}
   </p>
   {#if group.stale || group.closedAt}
     <p class="text-dark-2 mt-2 text-sm">
@@ -102,11 +103,15 @@
       version={data.version}
       {ticketHref}
       canRule={data.canRule}
-      error={labelError}
+      error={labelFailure?.ticketId ? { ticketId: labelFailure.ticketId, message: labelFailure.message } : null}
     />
   {/key}
 {:else}
   <p class="text-dark-2">No ticket is assigned to this group in this version.</p>
+{/if}
+
+{#if labelFailure && !labelFailure.ticketId}
+  <ErrorAlert class="mt-4" message={labelFailure.message} />
 {/if}
 
 {#if data.storeStatus === 'ok' && !data.canRule}
@@ -119,8 +124,8 @@
     topic={group.topic}
     topics={data.topics}
     targets={data.targets}
+    {memberIds}
     current={data.groupRuling}
     canRule={data.canRule}
-    error={ruleError}
   />
 {/key}

@@ -6,6 +6,7 @@ import {
   chDate,
   founderPosition,
   headerWarnings,
+  mapListRow,
   mapMember,
   mapTicket,
   probabilities,
@@ -146,6 +147,64 @@ describe('absent probabilities render "—", never "0%"', () => {
     );
     expect(t.probabilities).toEqual({ topic: 0.5, group: null, novel: null });
     expect('requesterEmail' in t).toBe(false);
+    // A novel routed row carries group_key '' — the group it FOUNDED comes from the member row.
+    expect(t.membership).toEqual({
+      groupKey: 'g_x',
+      title: 't',
+      createdBy: 'router_no_candidates',
+      isFounder: true,
+      assignedAt: '2026-10-04T09:52:00.000Z',
+    });
+    expect(t.ticketUrl).toMatch(/\/a\/tickets\/9$/);
+  });
+
+  it('a seed founder re-routed with p_group 0 but a real p_novel keeps BOTH real values', () => {
+    expect(
+      probabilities({ createdBy: 'seed', isFounder: true, pTopic: 0.4, pGroup: 0, pNovel: 0.93 })
+    ).toEqual({ topic: 0.4, group: 0, novel: 0.93 });
+    expect(
+      probabilities({ createdBy: 'seed', isFounder: true, pTopic: 0.4, pGroup: 0.3, pNovel: 0 })
+    ).toEqual({ topic: 0.4, group: 0.3, novel: 0 });
+  });
+
+  it('each member links to ITS OWN ticket, not the founder', () => {
+    const m = mapMember(member({ ticket_id: '10002' }), {
+      createdBy: 'router',
+      foundedTicketId: '1',
+    });
+    expect(m.ticketUrl).toMatch(/\/a\/tickets\/10002$/);
+  });
+
+  it('mapListRow: a seed founder (no routed subject) falls back to the title; the alarm is at 10', () => {
+    const base = {
+      group_key: 'g1',
+      title: 'Group title',
+      topic: 'crypto',
+      founded_ticket_id: '555',
+      founded_at: '2026-10-01 00:00:00.000',
+      n_members: '3',
+      last_seen: '2026-10-02 00:00:00.000',
+      low_conf_members: '1',
+      created_by: 'seed',
+      new_24h: '10',
+      n_topics: '2',
+      rep_subject: '',
+    };
+    const out = mapListRow(base);
+    expect(out).toMatchObject({
+      title: 'Group title',
+      members: 3,
+      new24h: 10,
+      new24hAlarm: true,
+      topicCount: 2,
+      lowConfidence: 1,
+      lastSeen: '2026-10-02T00:00:00.000Z',
+    });
+    expect(out.ticketUrl).toMatch(/\/a\/tickets\/555$/);
+    expect(mapListRow({ ...base, new_24h: '9', rep_subject: 'Subject' })).toMatchObject({
+      title: 'Subject',
+      new24hAlarm: false,
+    });
   });
 
   it('collapseRulings: empty is null, agreement is the value, disagreement is mixed', () => {
@@ -233,6 +292,13 @@ describe('header warnings', () => {
       /2 different question specs/
     );
   });
+  it('does not call a PINNED (usually retired) version stopped', () => {
+    const old = new Date(now - (STALE_ROUTING_MINUTES + 1) * 60_000).toISOString();
+    expect(headerWarnings({ activeGroups: 1, lastRoutedAt: old, specCount: 1 }, now, true)).toEqual(
+      []
+    );
+  });
+
   it('warns when routing has gone quiet past the threshold, and when nothing was ever routed', () => {
     const old = new Date(now - (STALE_ROUTING_MINUTES + 1) * 60_000).toISOString();
     expect(headerWarnings({ activeGroups: 1, lastRoutedAt: old, specCount: 1 }, now)).toHaveLength(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildInbox, groupRulingsByItem, type RulingSummary } from '../inbox';
+import { buildInbox, type RulingSummary } from '../inbox';
 
 const rows = Array.from({ length: 5 }, (_, i) => ({ groupKey: `g${i}` }));
 const ruled = (ruling: RulingSummary['ruling']): RulingSummary => ({
@@ -38,16 +38,5 @@ describe('buildInbox', () => {
     const out = buildInbox(rows, new Map(), { state: 'all', page: 9, pageSize: 2 });
     expect(out.page).toBe(3);
     expect(out.rows.map((r) => r.groupKey)).toEqual(['g4']);
-  });
-});
-
-describe('groupRulingsByItem', () => {
-  it('keeps group rulings and drops member labels', () => {
-    const m = groupRulingsByItem([
-      { itemKey: 'g0', subKey: '', ruling: 'park', ruledBy: 1, ruledAt: new Date(0) },
-      { itemKey: 'g0', subKey: '17', ruling: 'belongs', ruledBy: 1, ruledAt: new Date(0) },
-      { itemKey: 'g1', subKey: '18', ruling: 'unsure', ruledBy: 1, ruledAt: new Date(0) },
-    ]);
-    expect([...m.entries()].map(([k, v]) => [k, v.ruling])).toEqual([['g0', 'park']]);
   });
 });

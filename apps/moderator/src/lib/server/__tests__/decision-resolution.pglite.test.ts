@@ -61,6 +61,40 @@ describe('recordResolution', () => {
     expect((await allRows(pg))[0].shown).toEqual(shown);
   });
 
+  it('stores every field it was given — read back whole', async () => {
+    const { pg, k } = await setup();
+    await recordResolution(
+      ruling({
+        ruling: 'duplicate_of',
+        targetKey: 'g_000000000001',
+        note: 'same refund issue',
+        area: 'payment-refund',
+        sourceVersion: 'v-9',
+        ruledBy: 31,
+      }),
+      k
+    );
+    const row = (
+      await pg.query(
+        `SELECT source, item_key, sub_key, source_version, area, ruling, target_key, escalate_to,
+                note, ruled_by, apply_state FROM decision_resolution`
+      )
+    ).rows[0];
+    expect(row).toEqual({
+      source: 'support-ticket',
+      item_key: GK,
+      sub_key: '',
+      source_version: 'v-9',
+      area: 'payment-refund',
+      ruling: 'duplicate_of',
+      target_key: 'g_000000000001',
+      escalate_to: null,
+      note: 'same refund issue',
+      ruled_by: 31,
+      apply_state: 'pending',
+    });
+  });
+
   it('records the moderator id', async () => {
     const { pg, k } = await setup();
     await recordResolution(ruling({ ruledBy: 77 }), k);

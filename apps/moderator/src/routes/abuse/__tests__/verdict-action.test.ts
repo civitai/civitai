@@ -350,6 +350,9 @@ describe('the board executes nothing', () => {
       '$lib/abuse-verdicts',
       // Number formatting, and nothing else: `format.ts` imports nothing at all.
       '$lib/format',
+      // The shared classifier for WHY a moderator-database read failed — a pure function over an
+      // error, no imports.
+      '$lib/moderator-db-status',
       '$lib/server/abuse-detection.service',
       '$lib/server/query',
       './$types',

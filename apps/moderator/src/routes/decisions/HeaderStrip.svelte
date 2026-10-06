@@ -6,7 +6,7 @@
     $props();
 </script>
 
-<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-4">
+<section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   <p class="text-sm">
     <span class="font-semibold text-white">Support router</span>
     <span class="text-dark-2">

@@ -132,7 +132,7 @@ const HOSTILE = "g_x' OR 1=1 --";
 async function exerciseEverything(client: ClickhouseReader) {
   await latestRouterVersion(client);
   await supportVersion(null, client);
-  await getSupportHeader('v', client);
+  await getSupportHeader('v', {}, client);
   await listSupportTopics('v', client);
   await listSupportGroups({ version: 'v', topic: HOSTILE }, client);
   await getSupportGroup({ version: 'v', groupKey: HOSTILE }, client);
@@ -177,6 +177,100 @@ describe('what the adapter actually sends', () => {
     expect(planted).toContain('.insert(');
     // And a banned word in a COMMENT does not trip it, which is why comments are stripped.
     expect(stripComments('// never use $query here')).not.toContain('$query');
+  });
+});
+
+describe('each call binds the RIGHT value to each parameter', () => {
+  it("pins every statement's parameters", async () => {
+    const { client, calls } = recordingClient();
+    await getSupportGroup({ version: 'v1', groupKey: 'g_a' }, client);
+    await listSupportGroups({ version: 'v1', topic: 'crypto' }, client);
+    await listDuplicateTargets({ version: 'v1', groupKey: 'g_a', topic: 'crypto' }, client);
+    await getSupportTicket({ version: 'v1', ticketId: '42', includeEmail: false }, client);
+    const params = (sql: string) => calls.filter((c) => c.query === sql).map((c) => c.query_params);
+    expect(params(SUPPORT_SQL.group)).toEqual([{ v: 'v1', gk: 'g_a' }]);
+    expect(params(SUPPORT_SQL.members)).toEqual([{ v: 'v1', gk: 'g_a' }]);
+    expect(params(SUPPORT_SQL.list)).toEqual([{ v: 'v1', topic: 'crypto', limit: 1001 }]);
+    expect(params(SUPPORT_SQL.duplicateTargets)).toEqual([{ v: 'v1', gk: 'g_a', topic: 'crypto' }]);
+    expect(params(ticketSql(false))).toEqual([{ v: 'v1', tid: '42' }]);
+    expect(params(SUPPORT_SQL.membership)).toEqual([{ v: 'v1', tid: '42' }]);
+  });
+
+  it('the version is the latest by max(ingested_at) — the whole statement, normalised', () => {
+    expect(SUPPORT_SQL.latestVersion.replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT router_version FROM support_tickets_routed FINAL GROUP BY router_version ORDER BY max(ingested_at) DESC LIMIT 1'
+    );
+  });
+});
+
+describe('composition over real-shaped rows', () => {
+  const groupRow = {
+    group_key: 'g_a',
+    title: 'T',
+    gist: '',
+    topic: 'crypto',
+    issue_type: '',
+    founded_ticket_id: '2',
+    founded_at: '2026-10-01 00:00:00.000',
+    closed_at: null,
+    stale: 0,
+    created_by: 'router',
+    updated_at: '2026-10-01 00:00:00.000',
+  };
+  const memberRow = (id: string) => ({
+    ticket_id: id,
+    ticket_created_at: '2026-10-01 00:00:00.000',
+    p_group: 0.5,
+    p_novel: 0.1,
+    p_topic: 0.9,
+    chosen_topic: 'crypto',
+    assigned_at: '2026-10-01 00:00:00.000',
+    routed_ticket_id: id,
+    ticket_subject: `s${id}`,
+    ticket_status: 'open',
+    member_tier: '',
+    is_paying_priority: 0,
+    is_novel: 0,
+    civitai_user_id: null,
+    question_spec_hash: 'h',
+  });
+
+  it('the lead and representative are the FOUNDER, even when an older member sorts first', async () => {
+    const { client } = recordingClient((sql) =>
+      sql === SUPPORT_SQL.group
+        ? [groupRow]
+        : sql === SUPPORT_SQL.members
+        ? [memberRow('1'), memberRow('2')]
+        : []
+    );
+    const d = await getSupportGroup({ version: 'v', groupKey: 'g_a' }, client);
+    expect(d?.decision?.lead.ticketId).toBe('2');
+    expect(d?.representative?.ticketId).toBe('2');
+    expect(d?.founder).toBe('not-first');
+  });
+
+  it('a founder re-routed out leaves NO representative — never another member standing in', async () => {
+    const { client } = recordingClient((sql) =>
+      sql === SUPPORT_SQL.group ? [groupRow] : sql === SUPPORT_SQL.members ? [memberRow('3')] : []
+    );
+    const d = await getSupportGroup({ version: 'v', groupKey: 'g_a' }, client);
+    expect(d?.representative).toBeNull();
+    expect(d?.founder).toBe('absent');
+    expect(d?.decision?.lead.ticketId).toBe('3');
+  });
+
+  it('a group with no members has no decision', async () => {
+    const { client } = recordingClient((sql) => (sql === SUPPORT_SQL.group ? [groupRow] : []));
+    expect((await getSupportGroup({ version: 'v', groupKey: 'g_a' }, client))?.decision).toBeNull();
+  });
+
+  it('header: nothing routed is "never routed", not an epoch timestamp read as "stopped"', async () => {
+    const { client } = recordingClient(() => [
+      { active_groups: 3, n_routed: 0, last_routed: '1970-01-01 00:00:00.000', n_specs: 0 },
+    ]);
+    const h = await getSupportHeader('v', {}, client);
+    expect(h.lastRoutedAt).toBeNull();
+    expect(h.warnings).toEqual(['No ticket has been routed under this version yet.']);
   });
 });
 

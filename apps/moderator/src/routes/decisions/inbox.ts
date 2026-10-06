@@ -1,4 +1,4 @@
-import { itemState, isGroupRuling, type GroupRuling, type ItemState } from '$lib/decision-rulings';
+import { itemState, type GroupRuling, type ItemState } from '$lib/decision-rulings';
 
 /** The inbox's state filter. `all` is the absence of one. */
 export const STATE_FILTERS = ['unruled', 'ruled', 'escalated', 'all'] as const;
@@ -44,21 +44,4 @@ export function buildInbox<R extends { groupKey: string }>(
     page,
     stateApplied,
   };
-}
-
-/** The current GROUP rulings (sub_key '') by item key, from the store's latest-per-item rows. */
-export function groupRulingsByItem(
-  resolutions: readonly {
-    itemKey: string;
-    subKey: string;
-    ruling: string;
-    ruledBy: number;
-    ruledAt: Date;
-  }[]
-): Map<string, RulingSummary> {
-  const out = new Map<string, RulingSummary>();
-  for (const r of resolutions)
-    if (r.subKey === '' && isGroupRuling(r.ruling))
-      out.set(r.itemKey, { ruling: r.ruling, ruledBy: r.ruledBy, ruledAt: r.ruledAt });
-  return out;
 }

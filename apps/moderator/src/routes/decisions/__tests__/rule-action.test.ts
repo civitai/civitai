@@ -7,18 +7,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * it and what it refuses first.
  */
 
-const { getSupportGroup, recordResolution, currentResolutions } = vi.hoisted(() => ({
-  getSupportGroup: vi.fn(),
-  recordResolution: vi.fn(),
-  currentResolutions: vi.fn(),
-}));
+const { getSupportGroup, recordResolution, currentResolutions, listSupportTopics } = vi.hoisted(
+  () => ({
+    getSupportGroup: vi.fn(),
+    recordResolution: vi.fn(),
+    currentResolutions: vi.fn(),
+    listSupportTopics: vi.fn(),
+  })
+);
 
 vi.mock('$lib/server/decision-sources/support', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/decision-sources/support')>()),
   getSupportGroup,
   supportVersion: vi.fn(async () => ({ version: 'v-live', overridden: false })),
   listDuplicateTargets: vi.fn(async () => []),
-  listSupportTopics: vi.fn(async () => []),
+  listSupportTopics,
 }));
 vi.mock('$lib/server/decision-resolution.service', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/decision-resolution.service')>()),
@@ -65,7 +68,7 @@ const post = (
   (actions as unknown as Record<string, Handler>)[action]({
     request: new Request(`https://moderator.example/decisions/support/${GK}`, {
       method: 'POST',
-      body: new URLSearchParams({ version: 'v-shown', ...fields }),
+      body: new URLSearchParams({ version: 'v-shown', members: '1,2', ...fields }),
     }),
     params: { groupKey: GK },
     url: new URL(`https://moderator.example/decisions/support/${GK}`),
@@ -76,8 +79,13 @@ const post = (
   });
 
 beforeEach(() => {
-  for (const m of [getSupportGroup, recordResolution, currentResolutions]) m.mockReset();
+  for (const m of [getSupportGroup, recordResolution, currentResolutions, listSupportTopics])
+    m.mockReset();
   getSupportGroup.mockResolvedValue(detail());
+  listSupportTopics.mockResolvedValue([
+    { topic: 'billing-buzz', groups: 3 },
+    { topic: 'crypto', groups: 1 },
+  ]);
   recordResolution.mockResolvedValue({ inserted: 1, id: '1' });
   currentResolutions.mockResolvedValue([]);
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -126,9 +134,96 @@ describe('the rule action', () => {
       note: 'looks right',
       ruledBy: 77,
     });
-    // The founder's never-measured probabilities stay null in the stored evidence.
-    expect(arg.shown.members[0]).toMatchObject({ ticket_id: '1', p_group: null, p_novel: null });
-    expect(arg.shown.n_members).toBe(2);
+    expect(recordResolution).toHaveBeenCalledTimes(1);
+    // The WHOLE snapshot: the founder's never-measured probabilities stay null in the stored
+    // evidence, and every field is the re-read's, none the form's.
+    expect(arg.shown).toEqual({
+      topic: 'billing-buzz',
+      created_by: 'router',
+      founded_ticket_id: '1',
+      founder_position: 'first',
+      n_members: 2,
+      topics_spanned: ['billing-buzz'],
+      question_spec_hashes: ['h'],
+      members: [
+        {
+          ticket_id: '1',
+          chosen_topic: 'billing-buzz',
+          p_topic: 0.9,
+          p_group: null,
+          p_novel: null,
+        },
+        { ticket_id: '2', chosen_topic: 'billing-buzz', p_topic: 0.9, p_group: 0.8, p_novel: 0.1 },
+      ],
+    });
+  });
+
+  it('refuses a ruling when the group changed since the page loaded (409), without writing', async () => {
+    expect((await post('rule', { ruling: 'correct', members: '1' })).status).toBe(409);
+    expect((await post('rule', { ruling: 'correct', members: '1,2,3' })).status).toBe(409);
+    const noList = await (actions as unknown as Record<string, Handler>).rule({
+      request: new Request('https://moderator.example/x', {
+        method: 'POST',
+        body: new URLSearchParams({ version: 'v-shown', ruling: 'correct' }),
+      }),
+      params: { groupKey: GK },
+      locals: { user: { id: 1 }, grants: { 'decisions.rule': true } },
+    });
+    expect(noList.status).toBe(409);
+    expect(recordResolution).not.toHaveBeenCalled();
+    // Order does not matter — the same set is the same group.
+    expect((await post('rule', { ruling: 'correct', members: '2,1' })).success).toBe(true);
+  });
+
+  it('records an escalation with its area', async () => {
+    await post('rule', { ruling: 'escalate', escalateTo: 'crypto' });
+    expect(recordResolution.mock.calls[0][0]).toMatchObject({
+      ruling: 'escalate',
+      escalateTo: 'crypto',
+      targetKey: null,
+    });
+  });
+
+  it('refuses an escalation without an area, with a malformed one, or one not in the version', async () => {
+    expect((await post('rule', { ruling: 'escalate' })).status).toBe(400);
+    expect((await post('rule', { ruling: 'escalate', escalateTo: 'Bad Area!' })).status).toBe(400);
+    expect((await post('rule', { ruling: 'escalate', escalateTo: 'mobile-app' })).status).toBe(400);
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('drops a stray escalation area on a ruling that does not use one', async () => {
+    await post('rule', { ruling: 'correct', escalateTo: 'crypto' });
+    expect(recordResolution.mock.calls[0][0]).toMatchObject({
+      ruling: 'correct',
+      escalateTo: null,
+    });
+  });
+
+  it('records duplicate_of with a target that exists IN THE SHOWN VERSION', async () => {
+    await post('rule', { ruling: 'duplicate_of', targetKey: 'g_000000000001' });
+    expect(getSupportGroup).toHaveBeenCalledWith({
+      version: 'v-shown',
+      groupKey: 'g_000000000001',
+    });
+    expect(recordResolution.mock.calls[0][0]).toMatchObject({
+      ruling: 'duplicate_of',
+      targetKey: 'g_000000000001',
+    });
+  });
+
+  it('503s with the router named — not the database — when the re-read fails', async () => {
+    getSupportGroup.mockRejectedValue(new Error('socket hang up'));
+    const out = await post('rule', { ruling: 'correct' });
+    expect(out.status).toBe(503);
+    expect(out.data?.error).toMatch(/re-read the router/);
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('never shows the operator a raw driver error', async () => {
+    recordResolution.mockRejectedValue(new Error('duplicate key value violates xyz_internal'));
+    const out = await post('rule', { ruling: 'correct' });
+    expect(out.status).toBe(503);
+    expect(out.data?.error).not.toMatch(/xyz_internal/);
   });
 
   it('refuses duplicate_of without a target (400), and with itself as the target', async () => {
@@ -188,7 +283,31 @@ describe('the label action', () => {
       ruling: 'not_belongs',
       sourceVersion: 'v-shown',
     });
-    expect(recordResolution.mock.calls[0][0].shown).toMatchObject({ ticket_id: '2', p_group: 0.8 });
+    expect(recordResolution).toHaveBeenCalledTimes(1);
+    expect(recordResolution.mock.calls[0][0].shown).toEqual({
+      ticket_id: '2',
+      chosen_topic: 'billing-buzz',
+      p_topic: 0.9,
+      p_group: 0.8,
+      p_novel: 0.1,
+      is_founder: false,
+      question_spec_hash: 'h',
+      group_created_by: 'router',
+      n_members: 2,
+    });
+  });
+
+  it('refuses to label the founding ticket — that is the group ruling', async () => {
+    const out = await post('label', { ticketId: '1', ruling: 'belongs' });
+    expect(out.status).toBe(400);
+    expect(out.data).toMatchObject({ scope: 'label', ticketId: '1' });
+    expect(recordResolution).not.toHaveBeenCalled();
+  });
+
+  it('echoes the ticket id on a malformed post, so the refusal renders on its row', async () => {
+    const out = await post('label', { ticketId: '2', ruling: 'nope' });
+    expect(out.status).toBe(400);
+    expect(out.data).toMatchObject({ scope: 'label', ticketId: '2' });
   });
 
   it('404s a ticket that is no longer a member', async () => {
@@ -200,6 +319,59 @@ describe('the label action', () => {
 
   it('refuses a group ruling posted as a label', async () => {
     expect((await post('label', { ticketId: '2', ruling: 'park' })).status).toBe(400);
+  });
+});
+
+describe('load', () => {
+  const run = (grants: Record<string, true>) =>
+    (load as unknown as Handler)({
+      params: { groupKey: GK },
+      url: new URL(`https://moderator.example/decisions/support/${GK}`),
+      locals: { grants },
+    }) as unknown as Promise<{
+      storeStatus: string;
+      canRule: boolean;
+      groupRuling: unknown;
+      memberLabels: unknown;
+    }>;
+
+  it('enables the controls with the grant and a readable store', async () => {
+    const page = await run({ 'decisions.rule': true });
+    expect(page.storeStatus).toBe('ok');
+    expect(page.canRule).toBe(true);
+  });
+
+  it('splits the current resolutions into the group ruling and the member labels', async () => {
+    const at = new Date(0);
+    currentResolutions.mockResolvedValue([
+      {
+        id: '1',
+        itemKey: GK,
+        subKey: '',
+        ruling: 'park',
+        targetKey: null,
+        escalateTo: null,
+        note: null,
+        ruledBy: 5,
+        ruledAt: at,
+        applyState: 'pending',
+      },
+      {
+        id: '2',
+        itemKey: GK,
+        subKey: '2',
+        ruling: 'unsure',
+        targetKey: null,
+        escalateTo: null,
+        note: null,
+        ruledBy: 6,
+        ruledAt: at,
+        applyState: 'n/a',
+      },
+    ]);
+    const page = await run({});
+    expect(page.groupRuling).toEqual({ ruling: 'park', ruledBy: 5, ruledAt: at, targetKey: null });
+    expect(page.memberLabels).toEqual({ '2': { ruling: 'unsure', ruledBy: 6, ruledAt: at } });
   });
 });
 

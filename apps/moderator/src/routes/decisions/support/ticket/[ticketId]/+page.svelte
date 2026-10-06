@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { probabilityLabel, versionedHref } from '$lib/decisions';
+  import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num } from '$lib/format';
   import type { PageData } from './$types';
 
@@ -34,7 +35,7 @@
     <dt class="text-dark-2">Requester</dt>
     <dd>
       {#if t.civitaiUserId}
-        user <a class={LINK_CLASS} href="/retool/user-lookup/basic?q={t.civitaiUserId}">{t.civitaiUserId}</a>
+        user <a class={LINK_CLASS} href={userLookupUrl(t.civitaiUserId, 'basic')}>{t.civitaiUserId}</a>
       {:else}
         <span class="text-dark-2">no linked Civitai account</span>
       {/if}

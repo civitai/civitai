@@ -4,24 +4,27 @@ import { requiresGrant } from '$lib/server/access';
 import {
   getSupportGroup,
   isGroupKey,
-  listDuplicateTargets,
   isRouterVersion,
+  listDuplicateTargets,
   listSupportTopics,
   supportVersion,
+  type SupportGroupDetail,
 } from '$lib/server/decision-sources/support';
 import {
   currentResolutions,
+  partitionResolutions,
   recordResolution,
-  resolutionStoreStatus,
+  type GroupRulingSummary,
+  type MemberLabelSummary,
 } from '$lib/server/decision-resolution.service';
+import { moderatorDbStatus, type ModeratorDbStatus } from '$lib/moderator-db-status';
 import {
-  isGroupRuling,
-  isMemberRuling,
-  type GroupRuling,
-  type MemberRuling,
-  type ResolutionStoreStatus,
-} from '$lib/decision-rulings';
-import { groupSnapshot, memberSnapshot, parseGroupRuling, parseMemberLabel } from './ruling';
+  groupSnapshot,
+  memberSnapshot,
+  membershipChanged,
+  parseGroupRuling,
+  parseMemberLabel,
+} from './ruling';
 
 export const load: PageServerLoad = async ({ params, url, locals }) => {
   if (!isGroupKey(params.groupKey)) throw error(404, 'No such group.');
@@ -29,7 +32,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
 
   let version: string | null;
   let overridden: boolean;
-  let detail: Awaited<ReturnType<typeof getSupportGroup>>;
+  let detail: SupportGroupDetail | null;
   let targets: Awaited<ReturnType<typeof listDuplicateTargets>> = [];
   let topics: Awaited<ReturnType<typeof listSupportTopics>> = [];
   try {
@@ -49,38 +52,22 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
   // Zero rows is "this version has no such group" — a 404, never an empty group.
   if (!detail) throw error(404, `No group ${groupKey} in router version ${version}.`);
 
-  let storeStatus: ResolutionStoreStatus = 'ok';
-  let resolutions: Awaited<ReturnType<typeof currentResolutions>> = [];
+  let storeStatus: ModeratorDbStatus = 'ok';
+  let groupRuling: GroupRulingSummary | null = null;
+  let memberLabels: Record<string, MemberLabelSummary> = {};
   try {
-    resolutions = await currentResolutions({
-      source: 'support-ticket',
-      sourceVersion: version,
-      itemKeys: [groupKey],
-    });
+    const { groups, members } = partitionResolutions(
+      await currentResolutions({
+        source: 'support-ticket',
+        sourceVersion: version,
+        itemKeys: [groupKey],
+      })
+    );
+    groupRuling = groups.get(groupKey) ?? null;
+    memberLabels = members.get(groupKey) ?? {};
   } catch (e) {
     console.error('[decisions] resolution store read failed', e);
-    storeStatus = resolutionStoreStatus(e);
-  }
-
-  // The store returns the latest row per (item, sub-item); narrow each to the ruling kind its scope
-  // admits. The DDL's scope CHECK makes a mismatch unrepresentable; the guards make it untyped-safe.
-  let groupRuling: {
-    ruling: GroupRuling;
-    ruledBy: number;
-    ruledAt: Date;
-    targetKey: string | null;
-  } | null = null;
-  const memberLabels: Record<string, { ruling: MemberRuling; ruledBy: number; ruledAt: Date }> = {};
-  for (const r of resolutions) {
-    if (r.subKey === '' && isGroupRuling(r.ruling))
-      groupRuling = {
-        ruling: r.ruling,
-        ruledBy: r.ruledBy,
-        ruledAt: r.ruledAt,
-        targetKey: r.targetKey,
-      };
-    else if (r.subKey !== '' && isMemberRuling(r.ruling))
-      memberLabels[r.subKey] = { ruling: r.ruling, ruledBy: r.ruledBy, ruledAt: r.ruledAt };
+    storeStatus = moderatorDbStatus(e);
   }
 
   return {
@@ -98,31 +85,52 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
   };
 };
 
-type RuleScope = 'rule' | 'label';
+type Scope = 'rule' | 'label';
 
 /**
- * Re-read the group the action rules on. `null` = gone from that version (404).
+ * Re-read the group the action rules on: `{ ok: true, … }`, or the `fail()` to return.
  *
  * 🔴 THE VERSION IS THE ONE THE PAGE SHOWED, posted with the form — never re-resolved. "Latest" can
  * move between the page loading and the click, and a ruling must be recorded against the version the
  * moderator was looking at. (`?/rule` replaces the page's query string, so `?version=` is not on the
  * action's URL either.)
+ *
+ * Its own failure path, separate from the write's: a router-data outage reported as "the database
+ * refused the write" sends the operator to the wrong store.
  */
-async function readGroup(groupKey: string, rawVersion: FormDataEntryValue | null) {
-  if (!isRouterVersion(rawVersion)) return null;
-  const version = rawVersion;
-  const detail = await getSupportGroup({ version, groupKey });
-  return detail ? { version, detail } : null;
+async function reread(scope: Scope, groupKey: string, rawVersion: FormDataEntryValue | null) {
+  const gone = (ticketId?: string) =>
+    fail(404, {
+      scope,
+      ticketId,
+      error: 'This group is not in that router version any more — reload the page.',
+    });
+  if (!isRouterVersion(rawVersion)) return { ok: false as const, failure: gone() };
+  try {
+    const detail = await getSupportGroup({ version: rawVersion, groupKey });
+    return detail
+      ? { ok: true as const, version: rawVersion, detail }
+      : { ok: false as const, failure: gone() };
+  } catch (e) {
+    console.error('[decisions] router re-read failed', e);
+    return {
+      ok: false as const,
+      failure: fail(503, {
+        scope,
+        error: "Could not re-read the router's data — the ruling was NOT recorded.",
+      }),
+    };
+  }
 }
 
-/** A refused write, scoped to the panel that sent it. Never `throw error()`: that would unmount a
- *  page holding the moderator's half-written note. */
-function writeFailure(scope: RuleScope, e: unknown, ticketId?: string) {
-  console.error('[decisions] ruling failed', e);
+/** A refused write. Never `throw error()`: that would unmount a page holding a half-written note. */
+function writeFailure(scope: Scope, e: unknown, ticketId?: string) {
+  console.error('[decisions] ruling write failed', e);
+  // Only this module's own messages reach the operator — never a raw driver error.
   const message =
-    e instanceof Error && e.message.includes('schema.sql')
+    e instanceof Error && e.message.includes('decisions/schema.sql')
       ? e.message
-      : resolutionStoreStatus(e) === 'not-configured'
+      : moderatorDbStatus(e) === 'not-configured'
       ? 'MODERATOR_DATABASE_URL is not configured — the ruling was NOT recorded.'
       : 'The ruling was NOT recorded — the database refused the write.';
   return fail(503, { scope, error: message, ticketId });
@@ -134,6 +142,9 @@ function writeFailure(scope: RuleScope, e: unknown, ticketId?: string) {
  *
  * 🔴 NEITHER WRITES TO THE ROUTER. A ruling is appended to `decision_resolution`; `duplicate_of` and
  * `park` are recorded `apply_state = 'pending'` and the router remains the only writer to its catalog.
+ *
+ * 0 rows WRITTEN is a 503, not the `/abuse` 404: this is an INSERT, so the missing-target case is
+ * the re-read's 404, and an insert that wrote nothing is a failed write.
  */
 export const actions: Actions = {
   rule: requiresGrant('decisions.rule', async ({ request, params, locals }) => {
@@ -143,13 +154,15 @@ export const actions: Actions = {
     const parsed = parseGroupRuling(form, params.groupKey);
     if (typeof parsed === 'string') return fail(400, { scope: 'rule' as const, error: parsed });
 
+    const current = await reread('rule', params.groupKey, form.get('version'));
+    if (!current.ok) return current.failure;
+    if (membershipChanged(form.get('members'), current.detail))
+      return fail(409, {
+        scope: 'rule' as const,
+        error: 'The group changed since this page loaded — reload and look again before ruling.',
+      });
+
     try {
-      const current = await readGroup(params.groupKey, form.get('version'));
-      if (!current)
-        return fail(404, {
-          scope: 'rule' as const,
-          error: 'This group is not in the router version any more — reload the page.',
-        });
       if (parsed.targetKey !== null) {
         const target = await getSupportGroup({
           version: current.version,
@@ -161,6 +174,20 @@ export const actions: Actions = {
             error: 'The group chosen as the original does not exist in this version.',
           });
       }
+      if (parsed.escalateTo !== null) {
+        const topics = await listSupportTopics(current.version);
+        if (!topics.some((t) => t.topic === parsed.escalateTo))
+          return fail(400, { scope: 'rule' as const, error: 'Unknown escalation area.' });
+      }
+    } catch (e) {
+      console.error('[decisions] router re-read failed', e);
+      return fail(503, {
+        scope: 'rule' as const,
+        error: "Could not re-read the router's data — the ruling was NOT recorded.",
+      });
+    }
+
+    try {
       const { inserted } = await recordResolution({
         source: 'support-ticket',
         itemKey: params.groupKey,
@@ -175,7 +202,6 @@ export const actions: Actions = {
         ruledBy: locals.user.id,
         shown: groupSnapshot(current.detail),
       });
-      // Zero rows written is not a recorded ruling.
       if (inserted === 0)
         return fail(503, { scope: 'rule' as const, error: 'The ruling was NOT recorded.' });
       return { scope: 'rule' as const, success: true, ruling: parsed.ruling };
@@ -185,23 +211,36 @@ export const actions: Actions = {
   }),
 
   label: requiresGrant('decisions.rule', async ({ request, params, locals }) => {
-    if (!isGroupKey(params.groupKey))
-      return fail(404, { scope: 'label' as const, error: 'No such group.' });
     const form = await request.formData();
+    // Echoed on every refusal so the page can render it on the row that was clicked.
+    const rawTicket = form.get('ticketId');
+    const ticketId = typeof rawTicket === 'string' ? rawTicket : undefined;
+    if (!isGroupKey(params.groupKey))
+      return fail(404, { scope: 'label' as const, ticketId, error: 'No such group.' });
     const parsed = parseMemberLabel(form);
-    if (typeof parsed === 'string') return fail(400, { scope: 'label' as const, error: parsed });
+    if (typeof parsed === 'string')
+      return fail(400, { scope: 'label' as const, ticketId, error: parsed });
+
+    const current = await reread('label', params.groupKey, form.get('version'));
+    if (!current.ok) return current.failure;
+    // The ticket must be a CURRENT member: the router may have re-routed it since the page loaded,
+    // and a label recorded against a group it has left would be a label on the wrong pair.
+    const shown = memberSnapshot(current.detail, parsed.ticketId);
+    if (!shown)
+      return fail(404, {
+        scope: 'label' as const,
+        ticketId: parsed.ticketId,
+        error: 'That ticket is no longer in this group — reload the page.',
+      });
+    // The founder belongs by construction; whether founding was right is the group ruling.
+    if (shown.is_founder)
+      return fail(400, {
+        scope: 'label' as const,
+        ticketId: parsed.ticketId,
+        error: 'The founding ticket is not labelled — rule on the group instead.',
+      });
 
     try {
-      const current = await readGroup(params.groupKey, form.get('version'));
-      const shown = current ? memberSnapshot(current.detail, parsed.ticketId) : null;
-      // The ticket must be a CURRENT member: the router may have re-routed it since the page loaded,
-      // and a label recorded against a group it has left would be a label on the wrong pair.
-      if (!current || !shown)
-        return fail(404, {
-          scope: 'label' as const,
-          ticketId: parsed.ticketId,
-          error: 'That ticket is no longer in this group — reload the page.',
-        });
       const { inserted } = await recordResolution({
         source: 'support-ticket',
         itemKey: params.groupKey,

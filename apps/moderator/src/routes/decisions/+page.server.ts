@@ -11,17 +11,19 @@ import {
 } from '$lib/server/decision-sources/support';
 import {
   currentResolutions,
-  resolutionStoreStatus,
-  type ResolutionStoreStatus,
+  partitionResolutions,
+  type GroupRulingSummary,
 } from '$lib/server/decision-resolution.service';
-import { DEFAULT_STATE, STATE_FILTERS, buildInbox, groupRulingsByItem } from './inbox';
+import { moderatorDbStatus, type ModeratorDbStatus } from '$lib/moderator-db-status';
+import { isAreaSlug } from '$lib/server/decision-sources/support';
+import { DEFAULT_STATE, STATE_FILTERS, buildInbox } from './inbox';
 
 const querySchema = z.object({
   // One source today. In the URL already so a second source is a new enum value, not a new URL shape.
   source: z.enum(['support']).catch('support'),
   topic: z
     .string()
-    .regex(/^[a-z0-9-]{0,64}$/)
+    .refine((v) => v === '' || isAreaSlug(v))
     .catch(''),
   state: z.enum(STATE_FILTERS).catch(DEFAULT_STATE),
   page: z.coerce.number().int().min(1).catch(1),
@@ -45,7 +47,7 @@ export const load: PageServerLoad = async ({ url }) => {
     if (version) {
       const v = version;
       [header, topics, { rows: items, truncated }] = await Promise.all([
-        getSupportHeader(v),
+        getSupportHeader(v, { pinned: overridden }),
         listSupportTopics(v),
         listSupportGroups({ version: v, topic }),
       ]);
@@ -63,25 +65,25 @@ export const load: PageServerLoad = async ({ url }) => {
       total: 0,
       page: 1,
       truncated: false,
-      storeStatus: 'ok' as ResolutionStoreStatus,
+      storeStatus: 'ok' as ModeratorDbStatus,
       stateApplied: false,
     };
   }
 
-  let storeStatus: ResolutionStoreStatus = 'ok';
-  let rulings: ReturnType<typeof groupRulingsByItem> | null = null;
+  let storeStatus: ModeratorDbStatus = 'ok';
+  let rulings: Map<string, GroupRulingSummary> | null = null;
   if (version) {
     try {
-      rulings = groupRulingsByItem(
+      rulings = partitionResolutions(
         await currentResolutions({
           source: 'support-ticket',
           sourceVersion: version,
           itemKeys: items.map((r) => r.groupKey),
         })
-      );
+      ).groups;
     } catch (e) {
       console.error('[decisions] resolution store read failed', e);
-      storeStatus = resolutionStoreStatus(e);
+      storeStatus = moderatorDbStatus(e);
     }
   }
 

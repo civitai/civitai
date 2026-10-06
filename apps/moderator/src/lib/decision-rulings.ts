@@ -81,11 +81,3 @@ export type ItemState = (typeof ITEM_STATES)[number];
 
 export const itemState = (latest: GroupRuling | null): ItemState =>
   latest === null ? 'unruled' : latest === 'escalate' ? 'escalated' : 'ruled';
-
-/** Why the ruling store cannot be read, discriminated — each one has a different remedy. */
-export type ResolutionStoreStatus =
-  | 'ok'
-  | 'no-schema'
-  | 'no-grant'
-  | 'not-configured'
-  | 'unreachable';

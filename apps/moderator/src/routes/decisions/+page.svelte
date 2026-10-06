@@ -3,22 +3,14 @@
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
-  import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-  } from '@civitai/ui/components/ui/table/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import DecisionStoreNotice from '$lib/components/DecisionStoreNotice.svelte';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
-  import { GROUP_RULING_LABEL } from '$lib/decision-rulings';
   import { versionedHref } from '$lib/decisions';
-  import { LINK_CLASS, num } from '$lib/format';
-  import { clearPaging } from '$lib/paging';
+  import { num } from '$lib/format';
+  import { urlWith } from '$lib/url';
   import HeaderStrip from './HeaderStrip.svelte';
+  import InboxTable from './InboxTable.svelte';
   import { PAGE_SIZE, STATE_FILTERS } from './inbox';
   import type { PageData } from './$types';
 
@@ -27,18 +19,8 @@
   const ALL_AREAS = '__all__';
 
   /** Every filter change resets paging, per the URL filtering pattern. */
-  function urlWith(params: Record<string, string | number | null>, resetPage = true) {
-    const url = new URL(page.url);
-    for (const [k, v] of Object.entries(params)) {
-      if (v === null) url.searchParams.delete(k);
-      else url.searchParams.set(k, String(v));
-    }
-    if (resetPage) {
-      url.searchParams.delete('page');
-      clearPaging(url.searchParams);
-    }
-    return url.pathname + url.search;
-  }
+  const filterUrl = (params: Record<string, string | null>) =>
+    urlWith(page.url, { ...params, page: null });
 
   const STATE_LABEL: Record<(typeof STATE_FILTERS)[number], string> = {
     unruled: 'Unruled',
@@ -81,7 +63,7 @@
       <Select.Root
         type="single"
         value={data.filters.topic || ALL_AREAS}
-        onValueChange={(v) => goto(urlWith({ topic: v === ALL_AREAS ? null : v }))}
+        onValueChange={(v) => goto(filterUrl({ topic: v === ALL_AREAS ? null : v }))}
       >
         <Select.Trigger class="w-56">{areaLabel}</Select.Trigger>
         <Select.Content>
@@ -94,7 +76,7 @@
     </div>
     <div class="flex flex-col gap-1">
       <span class="text-xs font-medium text-dark-2">State</span>
-      <Tabs value={data.filters.state} onValueChange={(v) => v && goto(urlWith({ state: v }))}>
+      <Tabs value={data.filters.state} onValueChange={(v) => v && goto(filterUrl({ state: v }))}>
         <TabsList>
           {#each STATE_FILTERS as s (s)}
             <TabsTrigger value={s}>{STATE_LABEL[s]}</TabsTrigger>
@@ -119,63 +101,14 @@
   {#if data.rows.length === 0}
     <p class="text-dark-2">No items match these filters.</p>
   {:else}
-    <Table>
-      <TableHeader>
-        <TableRow>
-          <TableHead>Area</TableHead>
-          <TableHead>Item (representative ticket)</TableHead>
-          <TableHead class="text-right">Members</TableHead>
-          <TableHead class="text-right">+24h</TableHead>
-          <TableHead class="text-right">Low conf.</TableHead>
-          <TableHead>State</TableHead>
-        </TableRow>
-      </TableHeader>
-      <TableBody>
-        {#each data.rows as row (row.groupKey)}
-          <TableRow>
-            <TableCell>{row.topic || '—'}</TableCell>
-            <TableCell class="max-w-xl whitespace-normal">
-              <a class={LINK_CLASS} href={groupHref(row.groupKey)}>{row.title}</a>
-              <a
-                class="text-dark-2 ml-1 text-xs hover:underline"
-                href={row.ticketUrl}
-                target="_blank"
-                rel="noreferrer">#{row.foundedTicketId} ↗</a
-              >
-              {#if row.createdBy === 'seed'}
-                <Badge variant="secondary" class="ml-1">seed</Badge>
-              {:else if row.createdBy === 'router' || row.createdBy === 'router_no_candidates'}
-                <Badge variant="outline" class="ml-1">new</Badge>
-              {/if}
-              {#if row.topicCount > 1}
-                <Badge variant="outline" class="ml-1">{row.topicCount} topics</Badge>
-              {/if}
-            </TableCell>
-            <TableCell class="text-right">{num(row.members)}</TableCell>
-            <TableCell class="text-right {row.new24hAlarm ? 'text-amber-300' : ''}">
-              {num(row.new24h)}
-            </TableCell>
-            <TableCell class="text-right">{num(row.lowConfidence)}</TableCell>
-            <TableCell>
-              {#if row.state === null}
-                —
-              {:else if row.ruling}
-                {GROUP_RULING_LABEL[row.ruling.ruling]}
-              {:else}
-                <span class="text-dark-2">unruled</span>
-              {/if}
-            </TableCell>
-          </TableRow>
-        {/each}
-      </TableBody>
-    </Table>
+    <InboxTable rows={data.rows} {groupHref} />
 
     <NumberedPager
       page={data.page}
       total={data.total}
       perPage={PAGE_SIZE}
       label="items"
-      onPageChange={(p) => goto(urlWith({ page: p }, false))}
+      onPageChange={(p) => goto(urlWith(page.url, { page: p }))}
     />
   {/if}
 

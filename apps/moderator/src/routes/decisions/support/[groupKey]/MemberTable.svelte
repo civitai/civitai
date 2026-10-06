@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { untrack } from 'svelte';
   import { SvelteMap } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
@@ -13,7 +14,7 @@
   import { optimisticEnhancer } from '$lib/form-action';
   import { MEMBER_RULINGS, MEMBER_RULING_LABEL, type MemberRuling } from '$lib/decision-rulings';
   import { probabilityLabel } from '$lib/decisions';
-  import { LINK_CLASS, dateTime } from '$lib/format';
+  import { LINK_CLASS, MUTED_LINK_CLASS, dateTime } from '$lib/format';
   import type { PageData } from './$types';
 
   type Member = NonNullable<PageData['detail']['decision']>['members'][number];
@@ -38,10 +39,14 @@
   // ticketId → the label this session just submitted, shown until the reload lands or it is refused.
   const pending = new SvelteMap<string, MemberRuling>();
   $effect(() => {
-    // 🔴 READ FOR ITS DEPENDENCY: a reload replaces `labels`, and the optimistic marks must give way to
-    // what was actually stored.
-    labels;
-    pending.clear();
+    // 🔴 Drops only the marks the reload has CONFIRMED. Clearing them all would wipe a second row's
+    // mark while its own write is still in flight; a refused one is undone by its enhancer. Depends on
+    // `labels` alone — `pending` is read untracked, or the effect would re-run on its own deletes.
+    const stored = labels;
+    untrack(() => {
+      for (const [ticketId, ruling] of pending)
+        if (stored[ticketId]?.ruling === ruling) pending.delete(ticketId);
+    });
   });
 
   // 🔴 Reads only `ticketId`, the `{#each}` key — `use:enhance` captures this closure once at mount.
@@ -77,8 +82,12 @@
           {:else}
             #{m.ticketId}
           {/if}
-          <a class="text-dark-2 text-xs hover:underline" href={m.ticketUrl} target="_blank" rel="noreferrer"
-            >↗</a
+          <a
+            class={MUTED_LINK_CLASS}
+            href={m.ticketUrl}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Open #{m.ticketId} in Freshdesk">↗</a
           >
           {#if m.isFounder}<Badge variant="secondary" class="ml-1">founder</Badge>{/if}
           {#if m.subject}<div class="text-dark-2 max-w-md truncate text-xs">{m.subject}</div>{/if}
