@@ -26,6 +26,7 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
     getAllVoteCounts: vi.fn().mockResolvedValue({}),
     getVoteCount: vi.fn().mockResolvedValue(0),
     incrementVoteCount: vi.fn().mockResolvedValue(undefined),
+    processVoteAtomic: vi.fn(),
   },
 }));
 
@@ -293,6 +294,10 @@ describe('submitVote — per-judge cap on each entry', () => {
 
       await vote(10, 20);
 
+      expect(redisMock.sysRedis.eval).toHaveBeenCalledWith(expect.any(String), {
+        keys: [expect.stringMatching(/served-pair:1:42$/)],
+        arguments: [`10:20|anchor:${anchorId}`],
+      });
       expect(processVote).toHaveBeenCalledWith(1, 10, 20, expect.any(Object), side);
       const other = anchorId === 10 ? 20 : 10;
       expect(
@@ -301,6 +306,78 @@ describe('submitVote — per-judge cap on each entry', () => {
       ).toEqual([CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY, 1]);
     }
   );
+
+  it('refuses a vote whose anchor is not the one served, without using up the pair', async () => {
+    const { judgeVotes } = useFakeRedis();
+    const SERVED_KEY = `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:1:${JUDGE}`;
+    await redisMock.sysRedis.set(SERVED_KEY, '10:20');
+    // A concurrent submit naming entry 10 holds its last vote for a moment.
+    await redisMock.sysRedis.hIncrBy(
+      JUDGE_ENTRY_VOTES_KEY,
+      '10',
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+    );
+
+    await expect(vote(10, 20)).rejects.toThrow('no longer available');
+    expect(processVote).not.toHaveBeenCalled();
+    expect(judgeVotes('20'), 'count given back').toBe(0);
+
+    // The other submit fails its own served check and gives the vote back; the real one goes through.
+    await redisMock.sysRedis.hIncrBy(JUDGE_ENTRY_VOTES_KEY, '10', -1);
+    await vote(10, 20);
+    expect(processVote).toHaveBeenCalledWith(1, 10, 20, expect.any(Object), undefined);
+  });
+
+  it('accepts an anchor vote on the pair served with that anchor', async () => {
+    useFakeRedis();
+    await redisMock.sysRedis.set(
+      `${REDIS_SYS_KEYS.CRUCIBLE.SERVED_PAIR}:1:${JUDGE}`,
+      '10:20|anchor:20'
+    );
+    await redisMock.sysRedis.hIncrBy(
+      JUDGE_ENTRY_VOTES_KEY,
+      '20',
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+    );
+
+    await vote(10, 20);
+
+    expect(processVote).toHaveBeenCalledWith(1, 10, 20, expect.any(Object), 'loser');
+  });
+
+  it('hands the frozen side through to the rating script', async () => {
+    const { crucibleEloRedis } = await import('~/server/redis/crucible-elo.redis');
+    const actual = await vi.importActual<typeof CrucibleEloService>(
+      '~/server/services/crucible-elo.service'
+    );
+    vi.mocked(crucibleEloRedis.processVoteAtomic).mockResolvedValue({
+      winnerElo: 1530,
+      loserElo: 1500,
+      winnerOldElo: 1500,
+      loserOldElo: 1500,
+      winnerChange: 0,
+      loserChange: 0,
+    });
+    processVote.mockImplementationOnce(actual.processVote);
+    useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    await redisMock.sysRedis.hIncrBy(
+      JUDGE_ENTRY_VOTES_KEY,
+      '10',
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+    );
+
+    await vote(10, 20);
+
+    expect(crucibleEloRedis.processVoteAtomic).toHaveBeenCalledWith(
+      1,
+      10,
+      20,
+      expect.any(Object),
+      expect.any(Object),
+      'winner'
+    );
+  });
 
   it('gives back only the counted entry when an anchor vote fails', async () => {
     const { judgeVotes } = useFakeRedis();

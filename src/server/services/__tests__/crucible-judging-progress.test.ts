@@ -40,6 +40,24 @@ describe('countRemainingPairs', () => {
     expect(count([1, 2, 3], { votes: { 1: CAP, 2: CAP }, voted: ['1:3'] })).toBe(1);
   });
 
+  it('ignores a voted pair between two anchors', () => {
+    expect(count([1, 2, 3], { votes: { 1: CAP, 2: CAP }, voted: ['1:2'] })).toBe(2);
+  });
+
+  it('takes away a voted open pair while counting anchor pairs', () => {
+    expect(count([1, 2, 3, 4], { votes: { 1: CAP }, voted: ['2:3'] })).toBe(5);
+  });
+
+  it('bounds anchor pairs by each entry, not by the votes left overall', () => {
+    // Entry 3 has one vote left; entry 4 has five but has met both anchors and entry 3 already.
+    const voted = ['1:4', '2:4', '3:4'];
+    expect(count([1, 2, 3, 4], { votes: { 1: CAP, 2: CAP, 3: CAP - 1 }, voted })).toBe(1);
+  });
+
+  it('leaves no open pairs once anchor pairs take the votes left', () => {
+    expect(count([1, 2, 3], { votes: { 1: CAP, 2: CAP - 1, 3: CAP - 1 } })).toBe(2);
+  });
+
   it('spends one vote on an anchor pair, not two', () => {
     // Entry 2 has one vote left: one more pair, against either anchor.
     expect(count([1, 2, 3], { votes: { 1: CAP, 2: CAP - 1, 3: CAP } })).toBe(1);

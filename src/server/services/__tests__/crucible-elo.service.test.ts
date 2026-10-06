@@ -195,13 +195,25 @@ describe('CrucibleEloRedisClient.processVoteAtomic', () => {
     expect(args.slice(5)).toEqual(['1500', '0', '1500', '0', '']);
   });
 
-  it('tells the script which side an anchor vote leaves as it is', async () => {
-    const [script, { arguments: args }] = await run(undefined, 'loser');
+  it.each(['winner', 'loser'] as const)(
+    'tells the script to leave the %s of an anchor vote as it is',
+    async (side) => {
+      const [script, { arguments: args }] = await run(undefined, side);
+      const change = side === 'winner' ? 'winnerChange' : 'loserChange';
+      const field = side === 'winner' ? 'winnerField' : 'loserField';
+      const votes = side === 'winner' ? 'winnerVotes' : 'loserVotes';
+      const newElo = side === 'winner' ? 'newWinnerElo' : 'newLoserElo';
 
-    expect(args[9]).toBe('loser');
-    expect(script).toContain("if frozen == 'loser' then loserChange = 0 end");
-    expect(script).toMatch(
-      /if frozen ~= 'loser' then\s+redis\.call\('HSET', eloKey, loserField, newLoserElo\)\s+redis\.call\('HSET', votesKey, loserField, loserVotes \+ 1\)\s+end/
-    );
-  });
+      expect(args[9]).toBe(side);
+      expect(script).toContain('local frozen = ARGV[10]');
+      expect(script).toContain(`if frozen == '${side}' then ${change} = 0 end`);
+      expect(script).toMatch(
+        new RegExp(
+          `if frozen ~= '${side}' then\\s+` +
+            `redis\\.call\\('HSET', eloKey, ${field}, ${newElo}\\)\\s+` +
+            `redis\\.call\\('HSET', votesKey, ${field}, ${votes} \\+ 1\\)\\s+end`
+        )
+      );
+    }
+  );
 });

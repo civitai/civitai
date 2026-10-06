@@ -2104,6 +2104,15 @@ function createPairKey(entryId1: number, entryId2: number): string {
 }
 
 /**
+ * The served pair, plus its anchor when it has one. A vote must name the same anchor: deciding it
+ * from the counts at vote time alone would let a concurrent submit push an entry over the cap for a
+ * moment and turn a normal vote into one that moves only one side.
+ */
+function createServedPairValue(pairKey: string, anchorEntryId: number | null): string {
+  return anchorEntryId === null ? pairKey : `${pairKey}|anchor:${anchorEntryId}`;
+}
+
+/**
  * Mark pair as voted by user
  */
 export async function markPairVoted(
@@ -2426,15 +2435,19 @@ export function countRemainingPairs({
   const m = anchors.size;
 
   let votedOpen = 0;
-  let votedAnchor = 0;
+  const votedAnchorsOf = new Map<number, number>();
   for (const key of votedPairKeys) {
     const [a, b] = key.split(':').map(Number);
     if (votesLeft.has(a) && votesLeft.has(b)) votedOpen++;
-    else if ((votesLeft.has(a) && anchors.has(b)) || (anchors.has(a) && votesLeft.has(b)))
-      votedAnchor++;
+    else if (votesLeft.has(a) && anchors.has(b))
+      votedAnchorsOf.set(a, (votedAnchorsOf.get(a) ?? 0) + 1);
+    else if (anchors.has(a) && votesLeft.has(b))
+      votedAnchorsOf.set(b, (votedAnchorsOf.get(b) ?? 0) + 1);
   }
   const totalVotesLeft = [...votesLeft.values()].reduce((sum, left) => sum + left, 0);
-  const anchorPairs = Math.min(Math.max(0, n * m - votedAnchor), totalVotesLeft);
+  let anchorPairs = 0;
+  for (const [id, left] of votesLeft)
+    anchorPairs += Math.min(left, Math.max(0, m - (votedAnchorsOf.get(id) ?? 0)));
   const openPairs = Math.min(
     Math.max(0, (n * (n - 1)) / 2 - votedOpen),
     Math.floor((totalVotesLeft - anchorPairs) / 2)
@@ -2551,7 +2564,7 @@ function pickUnjudgedPair(
     const b = pool.reduce((nearest, candidate) =>
       distance(candidate) < distance(nearest) ? candidate : nearest
     );
-    return { a, b };
+    return { a, b, anchorEntryId: facesAnchor ? b.id : null };
   }
 
   return null;
@@ -2660,10 +2673,11 @@ export const getJudgingPair = async ({
   // look broken.
   const pair = (await search(excludeEntryIds)) ?? (excludeEntryIds?.length ? await search() : null);
   if (!pair) return null;
-  const { a: imageA, b: imageB } = pair;
+  const { a: imageA, b: imageB, anchorEntryId } = pair;
 
   // Replaces the judge's previous pair, so only the pair on screen can be voted.
-  await sysRedis.set(getServedPairKey(crucibleId, userId), createPairKey(imageA.id, imageB.id), {
+  const servedValue = createServedPairValue(createPairKey(imageA.id, imageB.id), anchorEntryId);
+  await sysRedis.set(getServedPairKey(crucibleId, userId), servedValue, {
     EX: JUDGE_KEY_TTL_SECONDS,
   });
 
@@ -2816,7 +2830,7 @@ export const submitVote = async ({
     const pairKey = createPairKey(winnerEntryId, loserEntryId);
     const served = await sysRedis.eval(DELETE_IF_EQUALS_SCRIPT, {
       keys: [getServedPairKey(crucibleId, userId)],
-      arguments: [pairKey],
+      arguments: [createServedPairValue(pairKey, anchorEntryId)],
     });
     if (!served) {
       throw throwBadRequestError(
