@@ -1,3 +1,4 @@
+import { createHash } from 'crypto';
 import type { SearchParams } from 'meilisearch';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,19 +48,22 @@ const {
   hitAtK,
   inRoleGold,
   loadLabeledModelIds,
-  M3_RETRIEVAL_PREREGISTRATION,
   popularityArm,
-  PREREGISTERED_RUN_PARAMS,
-  preregistrationOverrides,
   purposeBeatsPopularity,
   rankedModelIds,
   reciprocalRankAtK,
-  renderRetrievalPreregistration,
   renderRetrievalReport,
   retrievalVerdict,
   requestBaseModel,
   runRetrievalArms,
 } = retrievalModule;
+const registrationModule = await import('../eval-resource-intent-registration');
+const {
+  M3_RETRIEVAL_PREREGISTRATION,
+  PREREGISTERED_RUN_PARAMS,
+  preregistrationOverrides,
+  renderRetrievalPreregistration,
+} = registrationModule;
 const goldsetModule = await import('../eval-resource-intent-goldset');
 type Outcome = Awaited<ReturnType<typeof runRetrievalArms>>[number];
 type GoldRow = Parameters<typeof runRetrievalArms>[0][number];
@@ -157,6 +161,14 @@ describe('the pre-registration', () => {
     expect(M3_RETRIEVAL_PREREGISTRATION).not.toHaveProperty('bootstrapSeed');
   });
 
+  it('🔴 the registered values are byte-identical to v1 as merged (c8bc91037f)', () => {
+    // sha256 of JSON.stringify(M3_RETRIEVAL_PREREGISTRATION) taken from origin/main's own
+    // module at that commit — not from this code.
+    expect(
+      createHash('sha256').update(JSON.stringify(M3_RETRIEVAL_PREREGISTRATION)).digest('hex')
+    ).toBe('da26f6a1b9e35a00a4a8cb619d9d9550ffd7f408b7ab2da1b34284c7a3ea5325');
+  });
+
   it('reports every override, and none for the registered run', () => {
     expect(preregistrationOverrides(PREREGISTERED_RUN_PARAMS)).toEqual([]);
     expect(
@@ -249,13 +261,13 @@ describe('the gold-set SQL — the WHOLE query text, pinned', () => {
   const norm = (sql: string) => sql.replace(/\s+/g, ' ').trim();
 
   it('🔴 the matched query: eligibility, the sample-first CTE in random order, the gold', () => {
-    expect(norm(goldsetModule.GOLDSET_MATCHED_SQL(30, 10).sql)).toBe(
+    expect(norm(registrationModule.GOLDSET_MATCHED_SQL(30, 10).sql)).toBe(
       'WITH sampled AS ( SELECT i.id, i.meta->>\'prompt\' AS prompt, random() AS rnd FROM "Image" i JOIN "Post" p ON p.id = i."postId" WHERE i."createdAt" > now() - make_interval(days => ?::int) AND i."hideMeta" = false AND length(i.meta->>\'prompt\') > 0 AND i.ingestion = \'Scanned\' AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false AND p."publishedAt" IS NOT NULL AND p."publishedAt" <= now() AND p.availability != \'Private\'::"Availability" AND p.availability != \'Unsearchable\'::"Availability" AND NOT EXISTS ( SELECT 1 FROM "ImageResourceNew" fr JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId" JOIN "Model" fm ON fm.id = fmv."modelId" WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor) ) AND EXISTS (SELECT 1 FROM "ImageResourceNew" r WHERE r."imageId" = i.id) ORDER BY rnd LIMIT ?::int ) SELECT s.id AS "imageId", s.prompt, array_agg(DISTINCT m.type::text) AS "attachedTypes", array_agg(DISTINCT mv."baseModel") AS "attachedBaseModels", jsonb_agg(DISTINCT jsonb_build_object(\'modelId\', m.id, \'modelType\', m.type::text)) AS "attachedModels", COALESCE( array_agg(DISTINCT mv."baseModel") FILTER (WHERE m.type = \'Checkpoint\'), ARRAY[]::text[] ) AS "checkpointBaseModels" FROM sampled s JOIN "ImageResourceNew" irn ON irn."imageId" = s.id JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId" JOIN "Model" m ON m.id = mv."modelId" GROUP BY s.id, s.prompt, s.rnd ORDER BY s.rnd'
     );
   });
 
   it('🔴 the unmatched query: the same eligibility, no attachments', () => {
-    expect(norm(goldsetModule.GOLDSET_UNMATCHED_SQL(30, 10).sql)).toBe(
+    expect(norm(registrationModule.GOLDSET_UNMATCHED_SQL(30, 10).sql)).toBe(
       'SELECT i.id AS "imageId", i.meta->>\'prompt\' AS prompt, ARRAY[]::text[] AS "attachedTypes", ARRAY[]::text[] AS "attachedBaseModels" FROM "Image" i JOIN "Post" p ON p.id = i."postId" WHERE i."createdAt" > now() - make_interval(days => ?::int) AND i."hideMeta" = false AND length(i.meta->>\'prompt\') > 0 AND i.ingestion = \'Scanned\' AND i."tosViolation" = false AND i."needsReview" IS NULL AND i."blockedFor" IS NULL AND i.minor = false AND i.poi = false AND p."publishedAt" IS NOT NULL AND p."publishedAt" <= now() AND p.availability != \'Private\'::"Availability" AND p.availability != \'Unsearchable\'::"Availability" AND NOT EXISTS ( SELECT 1 FROM "ImageResourceNew" fr JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId" JOIN "Model" fm ON fm.id = fmv."modelId" WHERE fr."imageId" = i.id AND (fm.poi OR fm.minor) ) AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" irn WHERE irn."imageId" = i.id) ORDER BY random() LIMIT ?::int'
     );
   });
