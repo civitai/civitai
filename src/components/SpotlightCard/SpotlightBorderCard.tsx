@@ -1,7 +1,171 @@
 import clsx from 'clsx';
-import type { CSSProperties, MouseEvent, ReactNode } from 'react';
+import { forwardRef } from 'react';
+import type {
+  ButtonHTMLAttributes,
+  CSSProperties,
+  HTMLAttributes,
+  MouseEvent,
+  ReactNode,
+} from 'react';
 
 type SpotlightStyle = CSSProperties & Record<`--spotlight-${string}`, string | number>;
+
+// Written straight to the element's custom properties, so a mouse move never re-renders.
+function handleSpotlightMove(e: MouseEvent<HTMLElement>) {
+  const el = e.currentTarget;
+  // All reads before any write, so a move costs one layout rather than one per child.
+  const rect = el.getBoundingClientRect();
+  const children = [...el.querySelectorAll<HTMLElement>('[data-spotlight-local]')].map(
+    (child) => [child, child.getBoundingClientRect()] as const
+  );
+  el.style.setProperty('--spotlight-x', `${e.clientX - rect.left}px`);
+  el.style.setProperty('--spotlight-y', `${e.clientY - rect.top}px`);
+  el.style.setProperty('--spotlight-opacity', '1');
+  for (const [child, box] of children) {
+    child.style.setProperty('--spotlight-x', `${e.clientX - box.left}px`);
+    child.style.setProperty('--spotlight-y', `${e.clientY - box.top}px`);
+  }
+}
+
+function handleSpotlightLeave(e: MouseEvent<HTMLElement>) {
+  e.currentTarget.style.setProperty('--spotlight-opacity', '0');
+}
+
+type SurfaceBaseProps = {
+  /** Any CSS colour; becomes `--spotlight-color` for the glows and dividers inside. */
+  color?: string;
+  className?: string;
+  style?: CSSProperties;
+  children?: ReactNode;
+};
+type SpotlightSurfaceProps =
+  | (SurfaceBaseProps & { as?: 'div' } & Omit<
+        HTMLAttributes<HTMLDivElement>,
+        keyof SurfaceBaseProps
+      >)
+  | (SurfaceBaseProps & { as: 'button' } & Omit<
+        ButtonHTMLAttributes<HTMLButtonElement>,
+        keyof SurfaceBaseProps
+      >);
+
+/**
+ * Tracks the cursor for every `SpotlightGlow` and `SpotlightDivider` inside it. Renders no
+ * glow of its own.
+ */
+// Forwards its ref: a Mantine `Tooltip` around it attaches to the root element.
+export const SpotlightSurface = forwardRef<HTMLElement, SpotlightSurfaceProps>(
+  function SpotlightSurface({ as, color, className, style, children, ...rest }, ref) {
+    const vars: SpotlightStyle = {
+      ...(color ? { '--spotlight-color': color } : {}),
+      '--spotlight-opacity': 0,
+      ...style,
+    };
+    const shared = {
+      // Composed, not replaced: a wrapping `Tooltip` passes its own mouse handlers in.
+      onMouseMove: (e: MouseEvent<HTMLElement>) => {
+        handleSpotlightMove(e);
+        (rest.onMouseMove as ((e: MouseEvent<HTMLElement>) => void) | undefined)?.(e);
+      },
+      onMouseLeave: (e: MouseEvent<HTMLElement>) => {
+        handleSpotlightLeave(e);
+        (rest.onMouseLeave as ((e: MouseEvent<HTMLElement>) => void) | undefined)?.(e);
+      },
+      className: clsx('relative', className),
+      style: vars,
+    };
+
+    if (as === 'button')
+      return (
+        <button
+          type="button"
+          {...(rest as ButtonHTMLAttributes<HTMLButtonElement>)}
+          {...shared}
+          ref={ref as React.Ref<HTMLButtonElement>}
+        >
+          {children}
+        </button>
+      );
+    return (
+      <div
+        {...(rest as HTMLAttributes<HTMLDivElement>)}
+        {...shared}
+        ref={ref as React.Ref<HTMLDivElement>}
+      >
+        {children}
+      </div>
+    );
+  }
+);
+
+/**
+ * A layer that glows around the cursor of the nearest `SpotlightSurface`. Positioned
+ * absolutely; give the parent `relative`. With `local`, it measures the cursor against
+ * itself rather than the surface, for a glow placed away from the surface's origin.
+ */
+export function SpotlightGlow({
+  color = 'var(--spotlight-color)',
+  size = 400,
+  fade = 70,
+  local,
+  className = 'inset-0',
+}: {
+  color?: string;
+  size?: number;
+  /** Where the gradient reaches transparent, as a percentage of `size`. */
+  fade?: number;
+  local?: boolean;
+  /** Placement; defaults to `inset-0`. */
+  className?: string;
+}) {
+  return (
+    <div
+      aria-hidden
+      data-spotlight-local={local || undefined}
+      className={clsx('pointer-events-none absolute transition-opacity duration-500', className)}
+      style={{
+        opacity: 'var(--spotlight-opacity, 0)',
+        background: `radial-gradient(${size}px circle at var(--spotlight-x) var(--spotlight-y), ${color}, transparent ${fade}%)`,
+      }}
+    />
+  );
+}
+
+/**
+ * A 1px rule that lights under the cursor's x position whenever its surface is hovered.
+ * `overlay` draws only the glow, along the top edge of its positioned parent, for a section
+ * whose own `border-top` is the rule.
+ */
+export function SpotlightDivider({
+  color = 'var(--spotlight-color)',
+  size = 160,
+  overlay,
+  className,
+}: {
+  color?: string;
+  size?: number;
+  overlay?: boolean;
+  className?: string;
+}) {
+  return (
+    <div
+      aria-hidden
+      data-spotlight-local
+      className={clsx(
+        'pointer-events-none h-px',
+        overlay ? 'absolute inset-x-0 -top-px' : 'relative w-full bg-gray-2 dark:bg-dark-4',
+        className
+      )}
+    >
+      <div
+        className="absolute inset-0 transition-opacity duration-500"
+        style={{
+          opacity: 'var(--spotlight-opacity, 0)',
+          background: `radial-gradient(${size}px circle at var(--spotlight-x) 50%, ${color}, transparent 70%)`,
+        }}
+      />
+    </div>
+  );
+}
 
 /**
  * A card whose face AND border light up under the cursor, in one colour. Put a
@@ -27,87 +191,25 @@ export function SpotlightBorderCard({
   style?: CSSProperties;
   children: ReactNode;
 }) {
-  // Written straight to the element's custom properties, so a mouse move never re-renders.
-  const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
-    const el = e.currentTarget;
-    // All reads before any write, so a move costs one layout rather than one per child.
-    const rect = el.getBoundingClientRect();
-    const children = [...el.querySelectorAll<HTMLElement>('[data-spotlight-local]')].map(
-      (child) => [child, child.getBoundingClientRect()] as const
-    );
-    el.style.setProperty('--spotlight-x', `${e.clientX - rect.left}px`);
-    el.style.setProperty('--spotlight-y', `${e.clientY - rect.top}px`);
-    el.style.setProperty('--spotlight-opacity', '1');
-    for (const [child, box] of children) {
-      child.style.setProperty('--spotlight-x', `${e.clientX - box.left}px`);
-      child.style.setProperty('--spotlight-y', `${e.clientY - box.top}px`);
-    }
-  };
-  const handleMouseLeave = (e: MouseEvent<HTMLDivElement>) => {
-    e.currentTarget.style.setProperty('--spotlight-opacity', '0');
-  };
-
-  const vars: SpotlightStyle = {
-    '--spotlight-color': color,
-    '--spotlight-size': `${size}px`,
-    '--spotlight-border-size': `${Math.round((size * 2) / 3)}px`,
-    '--spotlight-opacity': 0,
-    ...style,
-  };
-
   return (
-    <div
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-      className={clsx('relative rounded-md bg-gray-3 p-px dark:bg-dark-4', className)}
-      style={vars}
+    <SpotlightSurface
+      color={color}
+      className={clsx('rounded-md bg-gray-3 p-px dark:bg-dark-4', className)}
+      style={style}
     >
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300"
-        style={{
-          opacity: 'var(--spotlight-opacity)',
-          background:
-            'radial-gradient(var(--spotlight-border-size) circle at var(--spotlight-x) var(--spotlight-y), var(--spotlight-color), transparent 70%)',
-        }}
-      />
+      <SpotlightGlow size={Math.round((size * 2) / 3)} className="inset-0 rounded-[inherit]" />
       <div
         className={clsx(
           'relative h-full overflow-hidden rounded-[calc(var(--mantine-radius-md)-1px)] bg-white dark:bg-dark-6',
           faceClassName
         )}
       >
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 transition-opacity duration-500"
-          style={{
-            opacity: 'var(--spotlight-opacity)',
-            background:
-              'radial-gradient(var(--spotlight-size) circle at var(--spotlight-x) var(--spotlight-y), color-mix(in srgb, var(--spotlight-color) 30%, transparent), transparent 70%)',
-          }}
+        <SpotlightGlow
+          size={size}
+          color="color-mix(in srgb, var(--spotlight-color) 30%, transparent)"
         />
         {children}
       </div>
-    </div>
-  );
-}
-
-/** A 1px rule that lights with its `SpotlightBorderCard`'s cursor, wherever it sits inside the card. */
-export function SpotlightDivider({ className }: { className?: string }) {
-  return (
-    <div
-      aria-hidden
-      data-spotlight-local
-      className={clsx('relative h-px w-full bg-gray-2 dark:bg-dark-4', className)}
-    >
-      <div
-        className="absolute inset-0 transition-opacity duration-300"
-        style={{
-          opacity: 'var(--spotlight-opacity, 0)',
-          background:
-            'radial-gradient(var(--spotlight-border-size, 160px) circle at var(--spotlight-x) var(--spotlight-y), var(--spotlight-color), transparent 70%)',
-        }}
-      />
-    </div>
+    </SpotlightSurface>
   );
 }

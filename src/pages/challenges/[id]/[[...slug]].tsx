@@ -104,7 +104,11 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { SpotlightCard } from '~/components/SpotlightCard/SpotlightCard';
+import {
+  SpotlightDivider,
+  SpotlightGlow,
+  SpotlightSurface,
+} from '~/components/SpotlightCard/SpotlightBorderCard';
 import type { ChallengeDetail } from '~/server/schema/challenge.schema';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { generationFormStore } from '~/store/generation-form.store';
@@ -135,9 +139,9 @@ import {
   getBackground,
   getShadow,
   PREVIEW_STATES,
+  SECTION_GLOWS,
 } from '~/components/Challenge/DynamicPrizeCard/constants';
 import { ProgressLegendDot } from '~/components/Challenge/DynamicPrizeCard/ProgressLegendDot';
-import { GlowDivider } from '~/components/Challenge/DynamicPrizeCard/GlowDivider';
 import { distributePrizes } from '~/server/games/daily-challenge/challenge-pool';
 
 function useInjectKeyframes() {
@@ -971,12 +975,8 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
     <Stack gap="md">
       {/* Combined Dynamic Prize Pool + Entries Card */}
       {isDynamicPool && (
-        <SpotlightCard
-          borderColor="transparent"
-          bg="transparent"
-          p={0}
-          style={{ overflow: 'hidden' }}
-        >
+        <SpotlightSurface className="overflow-hidden rounded-md">
+          <SpotlightGlow color="rgba(255,255,255,0.04)" />
           {/* TODO: REMOVE — preview state toggle (mod only) */}
           {currentUser?.isModerator && (
             <Group
@@ -1108,7 +1108,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               boxShadow: getShadow(cs, 'large'),
             }}
           >
-            <GlowDivider variant="teal" />
+            <SpotlightDivider overlay color={SECTION_GLOWS.teal} size={200} />
             <Stack gap="sm" p="md">
               <Group justify="space-between" align="center">
                 <Text size="sm" fw={700}>
@@ -1240,7 +1240,11 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
                 boxShadow: getShadow(cs, 'large'),
               }}
             >
-              <GlowDivider variant={hasUserEntries ? 'yellow' : 'gray'} />
+              <SpotlightDivider
+                overlay
+                color={SECTION_GLOWS[hasUserEntries ? 'yellow' : 'gray']}
+                size={200}
+              />
               <Group gap={8} wrap="nowrap">
                 <Button
                   onClick={() => openChallengeGenerator(challenge.modelVersionIds)}
@@ -1262,7 +1266,7 @@ function ChallengeSidebar({ challenge }: { challenge: ChallengeDetail }) {
               </Group>
             </div>
           )}
-        </SpotlightCard>
+        </SpotlightSurface>
       )}
 
       {/* Action buttons - shown when NOT dynamic pool; hidden on mobile */}
