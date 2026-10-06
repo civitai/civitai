@@ -280,10 +280,24 @@ describe('/api/v1/images served by the feed service', () => {
     ]);
   });
 
-  it('asks the feed service for ?page= as an offset', async () => {
+  it('ignores ?page= on the feed service, as the search path does, so feed health never decides the page', async () => {
+    await get({ limit: '10' });
     await get({ page: '3', limit: '10' });
-    expect(feedQuery().get('offset')).toBe('20');
-    expect(feedQuery().get('limit')).toBe('10');
+    expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(2);
+    expect(feedQuery(0).get('limit')).toBe('10');
+    expect(feedQuery(1).toString()).toBe(feedQuery(0).toString());
+    expect(feedQuery(1).get('offset')).toBeNull();
+  });
+
+  it('[invariant on the pre-change code and the previous head] ignores ?page= on the fallback too: the search path gets no offset', async () => {
+    h.fetchFeedPrimary.mockRejectedValue(
+      Object.assign(new Error('slow'), { name: 'TimeoutError' })
+    );
+    const res = await get({ page: '3', limit: '10' });
+    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
+    const meiliInput = h.meiliSearch.mock.calls[0][0];
+    expect(meiliInput).not.toHaveProperty('offset');
+    expect(meiliInput.cursor).toBeUndefined();
   });
 
   describe('falls back to the search path, with the request unchanged, when the feed does not serve', () => {
@@ -351,10 +365,7 @@ describe('/api/v1/images served by the feed service', () => {
       expect(meiliInput.cursor).toBe(query.cursor);
       expect(meiliInput).not.toHaveProperty('offset');
       expect(await counted()).toEqual([{ ...series, route: 'rest', value: 1 }]);
-      expect(h.record).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.objectContaining({ filterMode: 'feed-fallback' })
-      );
+      expect(h.record).not.toHaveBeenCalled();
     });
 
     it('a cursor the feed cannot parse (unreachable from the endpoint, which 400s it first)', async () => {

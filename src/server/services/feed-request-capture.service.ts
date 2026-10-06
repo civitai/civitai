@@ -144,12 +144,8 @@ export type FeedRequestSource = 'getImagesFromSearch' | 'getAllImages';
 
 export type FeedRequestOutcome = {
   source: FeedRequestSource;
-  /**
-   * Meili path only: which feed-fetch-filter variant answered ('none' = no search client).
-   * 'feed-fallback' is a REST request the feed service was asked for and did not serve; its
-   * row carries the request shape only, not the fallback's results.
-   */
-  filterMode?: 'pre' | 'post' | 'none' | 'feed' | 'feed-fallback';
+  /** Meili path only: which feed-fetch-filter variant answered ('none' = no search client). */
+  filterMode?: 'pre' | 'post' | 'none' | 'feed';
   error?: boolean;
   elapsedMs: number;
   resultIds: number[];

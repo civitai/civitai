@@ -286,8 +286,7 @@ export async function runImageSearch(
   const fromFeedService =
     feedService && !useLegacyMethod
       ? await getImagesFromFeedServiceForRest(
-          // ImagesFeed pages by cursor alone; the feed service reads `?page=` as an offset.
-          { ...searchQuery, offset: skip, headers: { src: '/api/v1/images' } },
+          { ...searchQuery, headers: { src: '/api/v1/images' } },
           dbQuery
         )
       : undefined;

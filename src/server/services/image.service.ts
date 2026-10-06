@@ -2863,15 +2863,8 @@ export async function getImagesFromFeedServiceForRest(
   searchInput: ImageSearchInput & { headers?: Record<string, string> },
   hydrateInput: Parameters<typeof getAllImagesUncaptured>[0]
 ): Promise<GetAllImagesIndexResult | undefined> {
-  const started = Date.now();
-  const fallBack = (reason?: string) => {
-    if (reason) countFeedPrimary('unmapped', reason, 'rest');
-    void feedRequestCapture().record(searchInput, {
-      source: 'getImagesFromSearch',
-      filterMode: 'feed-fallback',
-      elapsedMs: Date.now() - started,
-      resultIds: [],
-    });
+  const fallBack = (reason: string) => {
+    countFeedPrimary('unmapped', reason, 'rest');
     return undefined;
   };
 
@@ -2933,7 +2926,7 @@ export async function getImagesFromFeedServiceForRest(
       });
     throw throwBadRequestError('This cursor cannot be continued with these filters');
   }
-  return fallBack();
+  return undefined;
 }
 
 export const getAllImagesIndex = async (
