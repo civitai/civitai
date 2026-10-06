@@ -1,6 +1,6 @@
 # Resource-intent primitive (Jev)
 
-**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is seeded by the requested PURPOSE first — models whose projected `insight.role` matches the request, best `insight.qualityScore` first — and filled by popularity; see [Label ordering](#label-ordering) for what that does and does not buy, and [Rollout](#rollout) for the index precondition it carries. M3 (the gold-set study) is committed but has never been run, and grades stage-1 agreement rather than retrieval — see [Label ordering](#label-ordering). M4/M5 are gated follow-ons — see [Rollout](#rollout).
+**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is seeded by the requested PURPOSE first — models whose projected `insight.role` matches the request, best `insight.qualityScore` first — and filled by popularity; see [Label ordering](#label-ordering) for what that does and does not buy, and [Rollout](#rollout) for the index precondition it carries. M3 (the gold-set study) is committed but has never been run; it grades stage-1 agreement AND carries a pre-registered two-arm retrieval comparison (the purpose-first matcher against the popularity seed alone) — see [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison-never-run). M4/M5 are gated follow-ons — see [Rollout](#rollout).
 
 A versioned, headless API primitive: **prompt → intent + criteria → civitai resource suggestions**. A prompt becomes a typed intent (what kinds of resources it wants, with full probability distributions), the intent compiles into a deterministic shortlist over the model search index, and a second judgment ranks the shortlist. `none` is a first-class answer at every stage — most prompts need no resource.
 
@@ -31,10 +31,12 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/services/ai/jev.ts`                          | Vendor seam. Pinned model, fail-closed validation, 2s timeout.                                                                      |
 | `src/server/schema/resource-intent.schema.ts`            | Question spec v1, criteria schema, role→ModelType mapping, spec hash.                                                               |
 | `src/server/services/resource-intent.service.ts`         | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
+| `src/server/services/resource-intent-stage1.ts`          | Stage 1 as pure functions (request, answer parse, criteria compile), shared by the service and the M3 study. Imports only the schema and a jev type, so a standalone script can load it. |
 | `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + purpose-then-popularity seeded pool + `ResourceInsight` ordering + hard cap.                                  |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
-| `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Grades stage-1 agreement, not retrieval.            |
+| `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Samples the gold and grades stage-1 agreement, then runs the retrieval comparison below. |
+| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the pre-registration, the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar), the MET / NOT MET / VOID verdict and its report. |
 
 ## Hard rules
 
@@ -60,7 +62,7 @@ All six in one request; state is ONLY the prompt (+ optional baseModel string):
 | `specificity`      | score  | 1–5, scored against the 5-point `criteria` rubric in the schema file (quoted nowhere here, so a reword cannot leave a stale copy), `integer: true` |
 | `injectionPresent` | noul   | P(prompt contains instructions aimed at an AI system)                                                                                              |
 
-The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and the study (M3) decides whether any mapping earns its false-exclusions.
+The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and whether any mapping earns its false-exclusions is for a future study — neither part of M3 tests a filter mapping.
 
 ## Caching, rate limits, flag
 
@@ -430,26 +432,79 @@ clause (i). Closing either clause still needs the ClickHouse columns, the
 `ShadowEvent` fields to populate them, and for (i) a comparison of the returned
 slice against the slice the seed order would have produced.
 
-### The M3 study exists, has never been run, and does not grade this
+### The M3 study: a pre-registered retrieval comparison, never run
 
 `scripts/eval-resource-intent-goldset.ts` is committed and its own header says so:
-without `--execute` it prints its queries and exits, and a live run needs a
-replica read plus a vendor key. ⚠️ An earlier version of this section said the
-study had been "removed before merge" and was "parked on a branch" — that was
-wrong in the direction that wastes someone's day, since the runnable evaluator
-was in the tree the whole time.
+without `--execute` it prints its queries and the pre-registration below, and exits;
+a live run needs a replica read, the models index and a vendor key. ⚠️ An earlier
+version of this section said the study had been "removed before merge" and was
+"parked on a branch" — that was wrong in the direction that wastes someone's day,
+since the runnable evaluator was in the tree the whole time.
 
-What it measures is **stage-1 agreement** against the provenance corpus (role vs
-the resource types a prompt actually attached, `needsResource` calibration,
-review-rate curves). That is not the arm the parent arc's closing condition names
-— "a purpose-query arm beating the popularity arm" needs a retrieval comparison,
-which neither this evaluator nor this change provides.
+It has two parts, both drawn under ONE eligibility rule — the publicly searchable image
+(`imageWhere` in `src/server/search-index/images.search-index.ts`) with a public,
+non-empty prompt and no attached model flagged POI or minor, since those prompts go to the vendor. The matched draw is shared:
+part one takes a prefix, part two the first `sampleSize`; part one's unmatched half is
+a separate draw. **Part one** measures **stage-1 agreement** against that
+corpus (role vs the resource types a prompt actually attached, `needsResource`
+calibration, review-rate curves). It runs stage 1 through the endpoint's own
+`buildResourceIntentStage1Request` / `parseResourceIntentStage1Answers`, and its report
+says how many drawn rows a stage-1 failure skipped.
+
+**Part two** (`scripts/eval-resource-intent-retrieval.ts`) grades the resource-meaning
+layer's last closing clause: *"the M3 gold-set study shows the purpose-query arm
+beating the popularity arm on its pre-registered metric"*. Per sampled prompt it runs
+stage 1, then both arms with the same criteria, `browsingLevel`, coverage and cap.
+PURPOSE is `findResourceIntentCandidates` itself. POPULARITY is the endpoint's own
+popularity seed page, alone: its filter, pool width, baseModels and cap come from
+`resolveResourceIntentSeedPlan`, its page from `buildResourceIntentSeedQueries`, its
+fetch from `searchResourceIntentSeedPage`, and it is never handed to the label
+re-rank. Neither arm calls stage 3.
+
+**The pre-registration lives in code, not here:** `M3_RETRIEVAL_PREREGISTRATION` in
+`scripts/eval-resource-intent-retrieval.ts`, rendered as text by
+`renderRetrievalPreregistration()`. Read it by running the script without `--execute`
+(`pnpm run tsscript scripts/eval-resource-intent-goldset.ts`), which prints the committed
+queries and that text and spends nothing; every report opens with the same text. In
+brief: the primary metric is hit@10; the decision rule is b > c AND exact two-sided
+McNemar p < 0.05 on the hit@10 discordant pairs; and every run reports exactly one
+verdict on the closing clause — **MET** (the rule holds), **NOT MET** (it does not: the
+clause is judged not met, the question is closed as not delivered, and any follow-up
+such as better gold or new labels is new work under a new registration, not a re-run of
+this one) or **VOID** — the run is too degraded or too different to judge the clause: a
+registered value was overridden, fewer than 667 prompts scored (the n the power
+calculation assumes), infrastructure exclusions (stage-1 failures, arm errors, label-read
+fallbacks) exceed 10% of drawn prompts, or both arms returned the same top 10 on every
+scored prompt. VOID is checked before the decision rule, so a degraded run can never
+produce a binding NOT MET (or MET). The labeled/unlabeled breakdown is
+reported but never decisive.
+
+**Run the pilot first.** Before the registered run, run
+`--execute --retrieval-sample 100` — no new flags; the override stamps the report as not
+the registered run, so its verdict is VOID by construction. Its report prints the two
+rates the sample size was planned on: the scored fraction (assumed >= 66.7% of drawn
+prompts) and the hit@10 discordant rate, (b + c) / scored (assumed >= 15%), and flags
+either one that falls below. If the discordant rate is under 15%, re-plan the sample size
+BEFORE the registered run: change the registered values only in a new commit dated
+before that run, and say why in it.
+
+The positive control reads the field the PURPOSE page filters on. Without it, an index
+whose projection had failed wholesale would turn PURPOSE into POPULARITY and the study
+into a quiet "no difference". The report also counts the scored prompts where both
+arms returned the same first K model ids; if that is every one of them, the arms are
+indistinguishable at K (the purpose page returned nothing, or the label re-rank never
+moved the head) and the run is void rather than null.
+
+What it does NOT do: it is offline, so it grades the ordering on a past corpus and
+writes nothing to `resourceIntentShadow` — the shadow-table closing condition above is
+untouched by it. And attached-resource gold is biased toward popular models, the
+confound the pre-registration states.
 
 ## Rollout
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
 - **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index seed** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. 🔴 It carries an operational precondition of the same kind as the two above, and it is likewise not automatic: the purpose page SORTS on `insight.qualityScore` and FILTERS on `insight.role`, so an index whose settings lack either rejects that page, and the matcher fails the whole seed rather than falling back to the popularity page alone. The sortable list reaches a live index only via a manual full reset; the filterable list also via `src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts`. Checked 2026-10-06: the production models index carries both (and `insight.styleFamily` filterable), and the purpose-page query shape returned results there without error. Other environments may differ — check both settings on the target index before opening the flag there.
-- **M3 (committed, never run):** the gold-set study. It does NOT grade clause (iii) above. See the section above.
+- **M3 (committed, never run):** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the resource-meaning layer's last closing clause, quoted in that section. Run it only once the purpose-first seed serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison-never-run).
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.
   ⚠️ **The volume half is NOT affected, and the clause above is the reason:** the shadow write is unconditional, so rows/day tracks calls/day and is invariant to the miss rate. A volume reading stays trustworthy under this fault — do not discount it.
@@ -465,3 +520,5 @@ Unit suites (fixture-based, no external calls):
 - `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
+- `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks the dry run prints its queries and the pre-registration. The in-process suites cannot see a load-time import cycle; this can.
+- `scripts/__tests__/eval-resource-intent-retrieval.test.ts` — the M3 retrieval metric math against literal values, the verdict mapping, the pre-registration constants, both arms over an in-memory index, and the CLI gate.
