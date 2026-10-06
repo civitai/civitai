@@ -50,7 +50,7 @@ describe('/join creator journey link placement', () => {
 
   it('shows a qualifying member the link beside the join button', () => {
     const body = bodyFor(MIN_CREATOR_SCORE, JOURNEY_URL, true);
-    expect(body).toContain('action="?/join"');
+    expect(scorePanel(body)).toContain('action="?/join"');
     expect(links(scorePanel(body))).toBe(1);
     expect(links(body)).toBe(1);
   });
