@@ -116,7 +116,7 @@ describe('CreatorScoreGateMessage', () => {
     );
   });
 
-  // Met, unknown and no-score render nothing from the ladder, and this sits on every gate surface.
+  // Met and unknown render nothing from the ladder, and this sits on every gate surface.
   it.each([
     { score: 40_000, enabled: false },
     { score: undefined, enabled: false },

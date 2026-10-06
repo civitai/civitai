@@ -89,7 +89,8 @@ export function getMaxEarlyAccessModels({
 
 type EarlyAccessRungs = (typeof EARLY_ACCESS_CONFIG)['scoreTimeFrameUnlock'];
 
-const scoreRungs = (rungs: EarlyAccessRungs) =>
+/** The score-thresholded rungs of an early-access ladder, without the feature-flag ones. */
+export const scoreRungs = (rungs: EarlyAccessRungs) =>
   rungs.flatMap(([score, value]) => (typeof score === 'number' ? [[score, value] as const] : []));
 
 const valueAtScore = (rungs: EarlyAccessRungs, score: number) => {
@@ -128,14 +129,26 @@ export function chapterEarlyAccessLockedMessage(score: number | undefined) {
   return score == null ? opens : `${opens} You're at ${numberWithCommas(Math.floor(score))}.`;
 }
 
-export function chapterEarlyAccessCapMessage({ active, score }: { active: number; score: number }) {
+export function chapterEarlyAccessCapMessage({
+  active,
+  limit,
+  score,
+}: {
+  active: number;
+  limit: number;
+  score: number | undefined;
+}) {
+  if (limit === 0) return chapterEarlyAccessLockedMessage(score);
+  const chapters = `${active} ${active === 1 ? 'chapter' : 'chapters'}`;
+  // A feature-flag rung can set the cap instead of the score, and then no score raises it.
+  if (score == null || valueAtScore(EARLY_ACCESS_CONFIG.scoreQuantityUnlock, score) !== limit)
+    return `You already have ${chapters} in early access, your current limit.`;
+
   const raisedLater = scoreRungs(EARLY_ACCESS_CONFIG.scoreQuantityUnlock).some(
     ([minScore]) => minScore > score
   );
   return [
-    `You already have ${active} ${
-      active === 1 ? 'chapter' : 'chapters'
-    } in early access, the most your Creator Score of ${numberWithCommas(
+    `You already have ${chapters} in early access, the most your Creator Score of ${numberWithCommas(
       Math.floor(score)
     )} allows.`,
     raisedLater && 'Higher scores raise it.',

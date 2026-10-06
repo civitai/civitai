@@ -42,6 +42,8 @@ const rung = getEarlyAccessEntryRung() as NonNullable<ReturnType<typeof getEarly
 const threshold = rung.minScore.toLocaleString('en-US');
 
 describe('EarlyAccessLockedRow', () => {
+  // Deliberately NOT CreatorScoreGateMessage: the approved copy states the entry rung and what it
+  // grants, where the gate message would point at the nearest rung (often Spark).
   it('says the entry rung, where the creator stands, and what the rung grants', () => {
     const { text, hrefs } = render(4321.7);
 
@@ -54,7 +56,10 @@ describe('EarlyAccessLockedRow', () => {
     expect(hrefs).toEqual([CREATOR_JOURNEY_HREF]);
   });
 
-  it('leaves out the score when the session has none', () => {
+  it('leaves out the score when the session has none, but states a real 0', () => {
     expect(render(undefined).text).not.toMatch(/You're at/);
+    act(() => root?.unmount());
+    container?.remove();
+    expect(render(0).text).toMatch(/\| You're at 0\. At /);
   });
 });

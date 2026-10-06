@@ -120,17 +120,27 @@ describe('getEarlyAccessEntryRung', () => {
   });
 
   // The two entry rungs are equal in today's config, so only a config where they differ can tell
-  // "the later of the two" from "the earlier".
-  it('waits for the later gate when the two entry rungs differ', () => {
+  // "the later of the two" from "the earlier", and only one where the earlier ladder has already
+  // climbed past its first rung can tell a lookup at that score from "take the first rung".
+  it('waits for the later gate, and reads the earlier ladder at that score', () => {
     expect(
       getEarlyAccessEntryRung({
         scoreTimeFrameUnlock: [
           [1_000, 3],
           [5_000, 5],
         ],
-        scoreQuantityUnlock: [[4_000, 2]],
+        scoreQuantityUnlock: [[6_000, 2]],
       })
-    ).toEqual({ minScore: 4_000, days: 3, versions: 2 });
+    ).toEqual({ minScore: 6_000, days: 5, versions: 2 });
+    expect(
+      getEarlyAccessEntryRung({
+        scoreTimeFrameUnlock: [[6_000, 3]],
+        scoreQuantityUnlock: [
+          [1_000, 1],
+          [5_000, 4],
+        ],
+      })
+    ).toEqual({ minScore: 6_000, days: 3, versions: 4 });
   });
 });
 
@@ -145,12 +155,15 @@ describe('chapter early-access refusals', () => {
     );
   });
 
-  it('says nothing about a score it was not given', () => {
+  it('says nothing about a score it was not given, but states a real 0', () => {
     expect(chapterEarlyAccessLockedMessage(undefined)).not.toMatch(/You're at/);
+    expect(chapterEarlyAccessLockedMessage(0)).toMatch(/ You're at 0\.$/);
   });
 
   it('tells a creator below the top of the ladder that the cap rises', () => {
-    expect(chapterEarlyAccessCapMessage({ active: 1, score: rung.minScore })).toBe(
+    expect(
+      chapterEarlyAccessCapMessage({ active: 1, limit: rung.versions, score: rung.minScore })
+    ).toBe(
       `You already have 1 chapter in early access, the most your Creator Score of ${rung.minScore.toLocaleString(
         'en-US'
       )} allows. Higher scores raise it.`
@@ -158,7 +171,23 @@ describe('chapter early-access refusals', () => {
   });
 
   it('promises no rise above the top quantity rung', () => {
-    const [topScore] = EARLY_ACCESS_CONFIG.scoreQuantityUnlock.at(-2) as [number, number];
-    expect(chapterEarlyAccessCapMessage({ active: 3, score: topScore })).not.toMatch(/raise/);
+    const [topScore, topCap] = EARLY_ACCESS_CONFIG.scoreQuantityUnlock.at(-2) as [number, number];
+    expect(chapterEarlyAccessCapMessage({ active: 3, limit: topCap, score: topScore })).not.toMatch(
+      /raise/
+    );
+  });
+
+  // The thirtyDayEarlyAccess flag sets a cap above every score rung, and no score raises it.
+  it('does not credit the score with a cap a feature flag set', () => {
+    const [, flagCap] = EARLY_ACCESS_CONFIG.scoreQuantityUnlock.at(-1) as [unknown, number];
+    expect(chapterEarlyAccessCapMessage({ active: flagCap, limit: flagCap, score: 0 })).toBe(
+      `You already have ${flagCap} chapters in early access, your current limit.`
+    );
+  });
+
+  it('refuses a zero cap as locked, never as "0 chapters is the most"', () => {
+    expect(chapterEarlyAccessCapMessage({ active: 0, limit: 0, score: 0 })).toBe(
+      chapterEarlyAccessLockedMessage(0)
+    );
   });
 });

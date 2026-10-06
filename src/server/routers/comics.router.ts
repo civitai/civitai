@@ -28,7 +28,7 @@ import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import {
   Availability,
   ComicReferenceStatus,
@@ -661,9 +661,7 @@ async function assertCanGrantEarlyAccess({
     features: ctx.features,
   });
   if (maxDays === 0) {
-    throw throwBadRequestError(
-      chapterEarlyAccessLockedMessage(creatorScoreFromMeta(ctx.user.meta))
-    );
+    throw throwBadRequestError(chapterEarlyAccessLockedMessage(creatorScoreFromSession(ctx.user)));
   }
   if (timeframe > maxDays) {
     throw throwBadRequestError(
@@ -682,7 +680,8 @@ async function assertCanGrantEarlyAccess({
     throw throwBadRequestError(
       chapterEarlyAccessCapMessage({
         active: otherActive.length,
-        score: creatorScoreFromMeta(ctx.user.meta),
+        limit: maxActive,
+        score: creatorScoreFromSession(ctx.user),
       })
     );
   }

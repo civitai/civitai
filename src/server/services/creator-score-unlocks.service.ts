@@ -6,6 +6,7 @@ import {
   SALE_LIMITS_KEY,
 } from '@civitai/buzz';
 import { EARLY_ACCESS_CONFIG } from '~/server/common/constants';
+import { scoreRungs } from '~/server/utils/early-access-helpers';
 import { dbRead } from '~/server/db/client';
 import { dailyArticleTiers } from '~/server/schema/article.schema';
 import { COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE } from '~/server/schema/comment.schema';
@@ -40,9 +41,6 @@ export const compiledCreatorScoreUnlockInputs: CreatorScoreUnlockInputs = {
   placementPriceCapTiers: () => PLACEMENT_PRICE_CAP_TIERS,
   placementFreeSlotTiers: () => PLACEMENT_FREE_SLOT_CAP_TIERS,
 };
-
-const numericRungs = (rungs: (typeof EARLY_ACCESS_CONFIG)['scoreTimeFrameUnlock']) =>
-  rungs.flatMap(([score, value]) => (typeof score === 'number' ? [[score, value] as const] : []));
 
 /** Every privilege a Creator Score unlocks, lowest first. A threshold of 0 is not an unlock. */
 export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): CreatorScoreUnlock[] {
@@ -117,7 +115,7 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
       scoreKind: 'total',
       source: 'keyValue',
     },
-    ...numericRungs(EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock).map(
+    ...scoreRungs(EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock).map(
       ([minScore, days]): CreatorScoreUnlock => ({
         key: `early-access-days:${minScore}`,
         minScore,
@@ -127,7 +125,7 @@ export function buildCreatorScoreUnlocks(inputs: CreatorScoreUnlockInputs): Crea
         source: 'compiled',
       })
     ),
-    ...numericRungs(EARLY_ACCESS_CONFIG.scoreQuantityUnlock).map(
+    ...scoreRungs(EARLY_ACCESS_CONFIG.scoreQuantityUnlock).map(
       ([minScore, count]): CreatorScoreUnlock => ({
         key: `early-access-quantity:${minScore}`,
         minScore,

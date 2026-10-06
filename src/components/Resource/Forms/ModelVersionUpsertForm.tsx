@@ -790,6 +790,7 @@ export function ModelVersionUpsertForm({
     !gateSuppressed &&
     paidAccessUsageOk &&
     !isPublished &&
+    !atEarlyAccess &&
     (maxEarlyAccessModels === 0 || earlyAccessUnlockedDays.length === 0);
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
