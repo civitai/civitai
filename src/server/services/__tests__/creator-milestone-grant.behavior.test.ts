@@ -15,6 +15,7 @@ import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-re
 import {
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
+  grantMilestones,
   grantScoreTierMilestones,
   previewMilestoneCosmetics,
   previewScoreTierBackfill,
@@ -181,6 +182,62 @@ describe('nightly grant', () => {
       { userId: LATE, claimKey: 'score:spark' },
       { userId: NO_PRIOR_TOTAL, claimKey: 'score:spark' },
     ]);
+  });
+});
+
+describe('shared writer', () => {
+  const ACHIEVED = '2025-03-04 05:06:07';
+  const candidates = (rows: { userId: number; achievedAt: string | null; silent: boolean }[]) => ({
+    sql: `SELECT x."userId", 'create:decoy' AS "milestoneKey", x."achievedAt", x.silent
+      FROM jsonb_to_recordset($1::jsonb) AS x("userId" int, "achievedAt" timestamp, silent boolean)`,
+    params: [JSON.stringify(rows)],
+  });
+
+  beforeEach(async () => {
+    await addUser(ELIGIBLE, null);
+    await addUser(LATE, null);
+    await addUser(DELETED, null, 'deleted');
+    await addUser(BANNED, null, 'banned');
+    await addUser(SYSTEM, null);
+  });
+
+  it('grants any detector key with its own achievedAt, silent rows seen, excluded accounts skipped', async () => {
+    const cosmeticId = await attachCosmetic('create:decoy');
+    const grants = await grantMilestones(
+      pg,
+      candidates([
+        { userId: ELIGIBLE, achievedAt: ACHIEVED, silent: false },
+        { userId: LATE, achievedAt: null, silent: true },
+        { userId: DELETED, achievedAt: null, silent: false },
+        { userId: BANNED, achievedAt: null, silent: false },
+        { userId: SYSTEM, achievedAt: null, silent: false },
+      ])
+    );
+    expect(grants.map((g) => `${g.userId}:${g.silent}`).sort()).toEqual([
+      `${ELIGIBLE}:false`,
+      `${LATE}:true`,
+    ]);
+    expect(
+      await q(
+        `SELECT "userId", to_char("achievedAt", 'YYYY-MM-DD HH24:MI:SS') AS at, "seenAt" IS NOT NULL AS seen
+         FROM "UserCreatorMilestone" WHERE "userId" = $1`,
+        [ELIGIBLE]
+      )
+    ).toEqual([{ userId: ELIGIBLE, at: ACHIEVED, seen: false }]);
+    expect(await held(LATE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
+    expect(
+      await q(`SELECT "userId" FROM "UserCosmetic" WHERE "cosmeticId" = $1 ORDER BY 1`, [
+        cosmeticId,
+      ])
+    ).toEqual([{ userId: ELIGIBLE }, { userId: LATE }]);
+  });
+
+  it('returns nothing for a milestone already held, and leaves the held row as it was', async () => {
+    await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: true }]));
+    expect(
+      await grantMilestones(pg, candidates([{ userId: ELIGIBLE, achievedAt: null, silent: false }]))
+    ).toEqual([]);
+    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'create:decoy', seen: true }]);
   });
 });
 
