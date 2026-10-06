@@ -22,6 +22,7 @@ import {
 } from '~/shared/constants/creator-journey.constants';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
 import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
+import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 
 const mocks = vi.hoisted(() => ({
   getFirstPublishCard: vi.fn(),
@@ -132,6 +133,26 @@ describe('FirstPublishCardView', () => {
     expect(paragraphs(el)).toContain('Your next goal is Supernova at 1,000,000. |');
   });
 
+  // The Creator Program gate compares the aggregate score, which can sit above the total, so an
+  // unlock already reached on aggregate must not be listed as still to come.
+  it('judges an aggregate-score unlock against the aggregate score', () => {
+    const total = MIN_CREATOR_SCORE - 1;
+    const view = (aggregate?: number) =>
+      React.createElement(FirstPublishCardView, {
+        entityType: 'model',
+        total,
+        aggregate,
+        ladder,
+        onClose: () => undefined,
+      });
+
+    expect(paragraphs(mount(view()))).toContain('join the Creator Program');
+    unmount();
+    const text = paragraphs(mount(view(MIN_CREATOR_SCORE)));
+    expect(text).toContain('Your next goal is Supernova at 1,000,000');
+    expect(text).not.toContain('join the Creator Program');
+  });
+
   it('closes through the handler it is given', () => {
     const onClose = vi.fn();
     const el = mount(
@@ -238,5 +259,17 @@ describe('FirstPublishCard', () => {
 
     mocks.getFirstPublishCard.mockReturnValue({ data: { show: true } });
     expect(render().textContent).toMatch(/Your first model is live/);
+  });
+
+  it('reads the aggregate score from the session', () => {
+    mocks.getLadder.mockReturnValue({ data: ladder });
+    mocks.getFirstPublishCard.mockReturnValue({ data: { show: true } });
+    mocks.currentUser = {
+      id: 7,
+      meta: { scores: { total: MIN_CREATOR_SCORE - 1, models: MIN_CREATOR_SCORE } },
+    };
+    const text = render().textContent;
+    expect(text).toContain('Your next goal is Supernova');
+    expect(text).not.toContain('join the Creator Program');
   });
 });

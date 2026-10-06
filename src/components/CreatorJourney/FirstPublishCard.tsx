@@ -8,7 +8,7 @@ import {
   CREATOR_JOURNEY_HREF,
   FIRST_PUBLISH_CARD_DAYS,
 } from '~/shared/constants/creator-journey.constants';
-import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import type { CreatorScoreTier, CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import {
   buildCreatorScoreLadder,
@@ -79,6 +79,7 @@ export function FirstPublishCard({
     <FirstPublishCardView
       entityType={entityType}
       total={creatorScoreFromMeta(currentUser?.meta)}
+      aggregate={creatorAggregateScoreFromMeta(currentUser?.meta)}
       ladder={ladder}
       onClose={dismiss}
     />
@@ -88,17 +89,19 @@ export function FirstPublishCard({
 export function FirstPublishCardView({
   entityType,
   total,
+  aggregate,
   ladder,
   onClose,
 }: {
   entityType: Entity;
   total: number;
+  aggregate?: number;
   ladder: { unlocks: CreatorScoreUnlock[]; tiers: CreatorScoreTier[] };
   onClose: () => void;
 }) {
   const rungs = buildCreatorScoreLadder(ladder.unlocks, ladder.tiers);
   const next = nextCreatorScoreRung(rungs, total);
-  const pending = next ? pendingCreatorScoreUnlocks(next, { total }) : [];
+  const pending = next ? pendingCreatorScoreUnlocks(next, { total, aggregate }) : [];
   const { title, counts } = copy[entityType];
 
   return (
