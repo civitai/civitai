@@ -466,7 +466,10 @@ describe('/api/v1/images served by the feed service', () => {
       ],
       ['fetch error', () => h.fetchFeedPrimary.mockRejectedValue(new Error('refused'))],
       ['hydrate:error', () => h.hydrate.mockRejectedValue(new Error('db down'))],
-      ['status:502', () => h.fetchFeedPrimary.mockResolvedValue({ status: 502, ms: 3, ids: [] })],
+      ...[500, 502, 599].map((status): [string, () => void] => [
+        `status:${status}`,
+        () => h.fetchFeedPrimary.mockResolvedValue({ status, ms: 3, ids: [] }),
+      ]),
     ];
     it.each(outage)('is a retryable 503 on %s', async (_reason, arrange) => {
       arrange();
@@ -476,13 +479,16 @@ describe('/api/v1/images served by the feed service', () => {
       expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
-    it('is a 400 when the feed service refuses the query (status:4xx)', async () => {
-      h.fetchFeedPrimary.mockResolvedValue({ status: 404, ms: 3, ids: [] });
-      const res = await get({ cursor: 'feed:17:5' });
-      expect(res.statusCode).toBe(400);
-      expect(res.body.message).toBe('This cursor cannot be continued with these filters');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
-    });
+    it.each([400, 404, 499])(
+      'is a 400 when the feed service refuses the query (status:%i)',
+      async (status) => {
+        h.fetchFeedPrimary.mockResolvedValue({ status, ms: 3, ids: [] });
+        const res = await get({ cursor: 'feed:17:5' });
+        expect(res.statusCode).toBe(400);
+        expect(res.body.message).toBe('This cursor cannot be continued with these filters');
+        expect(h.meiliSearch).not.toHaveBeenCalled();
+      }
+    );
 
     it('steps past a page whose every row was filtered out at hydrate (hydrate:empty)', async () => {
       h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '18|3' });
@@ -668,6 +674,36 @@ describe('/api/v1/images served by the feed service', () => {
 });
 
 describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
+  it('falls back to the search path, counted as hydrate:error, when the hydrate query times out', async () => {
+    h.websiteFlagOn.mockReturnValue(true);
+    h.available.mockReturnValue(true);
+    h.counted.length = 0;
+    h.realHydrate = true;
+    h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
+    h.rawQuery.mockReset();
+    h.rawQuery.mockRejectedValue(
+      Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+    );
+    const r = await getAllImagesIndex(request(undefined));
+    h.realHydrate = false;
+    expect(h.rawQuery).toHaveBeenCalledTimes(1);
+    expect(r.source).not.toBe('feed');
+    expect(await counted()).toEqual([
+      { outcome: 'error', reason: 'hydrate:error', route: 'website', value: 1 },
+    ]);
+  });
+
+  it('[invariant on the pre-change code] answers an unknown username with NOT_FOUND', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(null);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
+    await expect(
+      getAllImagesIndex({ ...request(undefined), username: 'ghost' } as Parameters<
+        typeof getAllImagesIndex
+      >[0])
+    ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
+  });
+
   const request = (cursor: unknown) =>
     ({
       sort: 'Newest',
