@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
-import { parseForm, parseQuery } from '$lib/server/query';
+import { jsonField, parseForm, parseQuery } from '$lib/server/query';
 import {
   DraftConflictError,
   DraftError,
@@ -74,17 +74,10 @@ export const load: PageServerLoad = async ({ url, locals }) => {
 
 const fail400 = (error: string) => fail(400, { error });
 
-const promptsField = z.string().transform((raw, ctx) => {
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed))
-      return parsed as Record<string, unknown>;
-  } catch {
-    // falls through to the issue below
-  }
-  ctx.addIssue({ code: 'custom', message: 'Malformed prompts.' });
-  return z.NEVER;
-});
+const promptsField = jsonField(
+  z.record(z.string(), z.unknown(), { error: 'Malformed prompts.' }),
+  'Malformed prompts.'
+);
 const noteField = z
   .string()
   .trim()

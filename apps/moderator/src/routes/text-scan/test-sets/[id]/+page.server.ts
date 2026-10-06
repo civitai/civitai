@@ -4,7 +4,7 @@ import type { Action, Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
 import { dbRead } from '$lib/server/db';
 import { getModeratorDb } from '$lib/server/moderator-db';
-import { parseForm, parseQuery } from '$lib/server/query';
+import { jsonField, parseForm, parseQuery } from '$lib/server/query';
 import { listDrafts } from '$lib/server/text-scan-lab/drafts.service';
 import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
 import { refused } from '$lib/server/text-scan-lab/errors';
@@ -87,14 +87,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
   };
 };
 
-const jsonField = z.string().transform((raw, ctx): unknown => {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    ctx.addIssue({ code: 'custom', message: 'Malformed form data.' });
-    return z.NEVER;
-  }
-});
 const optionalId = z
   .string()
   .regex(/^\d*$/, 'Invalid id.')
@@ -109,9 +101,10 @@ const noteField = z
   .optional()
   .default(null);
 const caseIdField = z.coerce.number().int().positive();
-const fieldsField = jsonField.pipe(
+const fieldsField = jsonField(
   z.array(z.object({ heading: z.string(), text: z.string() }), { error: 'Malformed fields.' })
 );
+const expectedField = jsonField(z.unknown());
 
 /** Wraps a test-set action: the edit permission, the set id from the path, and service refusals as
  *  form failures. */
@@ -184,7 +177,7 @@ export const actions: Actions = {
       entityId: optionalId,
       authorId: optionalId,
       fields: fieldsField,
-      expected: jsonField,
+      expected: expectedField,
       note: noteField,
     }),
     async (setId, input, userId) => {
@@ -197,7 +190,7 @@ export const actions: Actions = {
   ),
 
   updateExpected: setAction(
-    z.object({ caseId: caseIdField, expected: jsonField, note: noteField }),
+    z.object({ caseId: caseIdField, expected: expectedField, note: noteField }),
     async (setId, input) => {
       await updateExpected(setId, input.caseId, input.expected, input.note);
       return {};

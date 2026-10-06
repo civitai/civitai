@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
-import { parseForm, parseQuery } from '$lib/server/query';
+import { jsonField, parseForm, parseQuery } from '$lib/server/query';
 import {
   DraftError,
   getDraft,
@@ -67,18 +67,6 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     wide: true,
   };
 };
-
-const jsonField = <T extends z.ZodType>(schema: T) =>
-  z.string().transform((raw, ctx): z.infer<T> => {
-    try {
-      const parsed = schema.safeParse(JSON.parse(raw));
-      if (parsed.success) return parsed.data;
-      ctx.addIssue({ code: 'custom', message: parsed.error.issues[0]?.message ?? 'Malformed.' });
-    } catch {
-      ctx.addIssue({ code: 'custom', message: 'Malformed form data.' });
-    }
-    return z.NEVER;
-  });
 
 const runSchema = z.object({
   entityType: z.enum(LAB_ENTITY_TYPES),
