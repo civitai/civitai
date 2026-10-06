@@ -2,8 +2,15 @@ import { LABEL_NAMES, describeExpected, describeVerdict, type VerdictSource } fr
 import { caseCorrect, diffRuns, totals } from './score';
 import type { Expected, LabLabel } from './types';
 
-/** One case's result in a test-set run, with the case's current expectation. */
-export type RunRow = { caseId: number; expected: Expected; status: string; output: unknown };
+/** One case's result in a test-set run, with the case's current expectation. `wiped`: the case's
+ *  text was purged (source_deleted_at set); like the runs service, the summary leaves it out entirely. */
+export type RunRow = {
+  caseId: number;
+  expected: Expected;
+  status: string;
+  output: unknown;
+  wiped: boolean;
+};
 
 export type SideScore = { correct: number; scored: number };
 export type LabelSummary = {
@@ -43,7 +50,8 @@ function toSource(row: RunRow | undefined): VerdictSource {
   };
 }
 
-function score(rows: RunRow[]) {
+function score(all: RunRow[]) {
+  const rows = all.filter((r) => !r.wiped);
   const ok = rows.filter(usable);
   return {
     totals: totals(ok),
@@ -55,7 +63,7 @@ function score(rows: RunRow[]) {
 
 /** Per label, how many cases came out as expected under the current prompts and, when given, with the
  *  moderator's changes; and which cases the changes fixed or broke. Only cases scored on both sides
- *  can be fixed or broken. */
+ *  can be fixed or broken; wiped cases count nowhere. */
 export function summariseRuns(current: RunRow[], changed?: RunRow[] | null): RunSummary {
   const a = score(current);
   const b = changed ? score(changed) : null;

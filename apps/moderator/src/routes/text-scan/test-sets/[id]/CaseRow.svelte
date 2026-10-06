@@ -11,7 +11,7 @@
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { TestCase } from '$lib/server/text-scan-lab/test-sets.service';
   import { composeUserMessage } from '$lib/text-scan-lab/compose';
-  import { describeExpected } from '$lib/text-scan-lab/expected';
+  import { expectedChips } from '$lib/text-scan-lab/expected';
   import { LAB_LABELS, type Expected } from '$lib/text-scan-lab/types';
 
   let {
@@ -31,7 +31,7 @@
       return userLookupUrl(id);
     return entityUrl(civitaiUrl, testCase.entityType, id);
   });
-  const chips = $derived(describeExpected(testCase.expected));
+  const chips = $derived(expectedChips(testCase.expected));
 
   let editing = $state(false);
   let draft = $state<Expected>({});

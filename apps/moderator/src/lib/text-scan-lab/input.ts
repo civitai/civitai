@@ -12,7 +12,10 @@ export type CheckInput =
   | { kind: 'ids'; ids: number[] }
   | { kind: 'too-many-ids'; count: number; max: number }
   | { kind: 'text'; text: string }
-  | { kind: 'unknown-url'; text: string; notice: string };
+  /** A link the checker doesn't know; the caller judges `text` as text and shows the notice. */
+  | { kind: 'unknown-url'; text: string; notice: string }
+  /** Links that can't be checked together (different kinds of content, several profiles). */
+  | { kind: 'refused'; notice: string };
 
 type UrlMatch = { entityType: LabEntityType; id: number } | { username: string };
 
@@ -28,7 +31,9 @@ const toId = (s: string | null | undefined): number | null => {
 const isCivitaiHost = (host: string) =>
   CIVITAI_HOSTS.has(host.replace(/^www\./, '')) || LOCAL_HOSTS.has(host);
 
-function toUrl(token: string): URL | null {
+function toUrl(raw: string): URL | null {
+  // A link pasted from a sentence often carries its punctuation.
+  const token = raw.replace(/^[(<'"]+/, '').replace(/[.;:!?)>\]}'"]+$/, '');
   const withScheme = /^https?:\/\//i.test(token)
     ? token
     : /^(www\.)?(civitai\.(com|red|green)|localhost|127\.0\.0\.1)([:/]|$)/i.test(token)
@@ -41,6 +46,24 @@ function toUrl(token: string): URL | null {
     return null;
   }
 }
+
+// The main app's own pages under src/pages/user, which take precedence over /user/[username].
+const USER_STATIC_PAGES = new Set([
+  'account',
+  'buzz-dashboard',
+  'downloads',
+  'earn-potential',
+  'membership',
+  'notifications',
+  'placements',
+  'pool-estimate',
+  'referrals',
+  'remix-submissions',
+  'sticker-placements',
+  'stripe-connect',
+  'transactions',
+  'vault',
+]);
 
 const SIMPLE_PATHS: Record<string, LabEntityType> = {
   articles: 'Article',
@@ -81,7 +104,7 @@ function matchCivitaiPath(url: URL): UrlMatch | null {
     const id = toId(b);
     return id ? { entityType: 'CommentV2', id } : null;
   }
-  if (root === 'user' && a) {
+  if (root === 'user' && a && !USER_STATIC_PAGES.has(a)) {
     try {
       return { username: decodeURIComponent(a) };
     } catch {
@@ -128,17 +151,17 @@ export function parseCheckInput(raw: string): CheckInput {
 
   const users = matches.filter((m) => 'username' in m);
   if (users.length) {
-    if (users.length < matches.length) return { kind: 'unknown-url', text, notice: MIXED_LINKS };
+    if (users.length < matches.length) return { kind: 'refused', notice: MIXED_LINKS };
     const names = new Set(users.map((m) => m.username.toLowerCase()));
     return names.size === 1
       ? { kind: 'user', username: users[0].username }
-      : { kind: 'unknown-url', text, notice: SEVERAL_PROFILES };
+      : { kind: 'refused', notice: SEVERAL_PROFILES };
   }
 
   const entities = matches as { entityType: LabEntityType; id: number }[];
   const entityType = entities[0].entityType;
   if (entities.some((m) => m.entityType !== entityType))
-    return { kind: 'unknown-url', text, notice: MIXED_LINKS };
+    return { kind: 'refused', notice: MIXED_LINKS };
   const list = idList(entities.map((m) => m.id));
   return Array.isArray(list)
     ? { kind: 'entity', entityType, ids: list }

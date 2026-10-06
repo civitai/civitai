@@ -10,18 +10,21 @@ const nsfw = (caseId: number, level: string, expected = PG13_OR_LOWER): RunRow =
   expected,
   status: 'ok',
   output: { nsfw: { level } },
+  wiped: false,
 });
 const scam = (caseId: number, detected: boolean): RunRow => ({
   caseId,
   expected: NOT_SCAM,
   status: 'ok',
   output: { scam: { detected } },
+  wiped: false,
 });
 const failed = (caseId: number, expected: Expected, error: string): RunRow => ({
   caseId,
   expected,
   status: 'error',
   output: { error },
+  wiped: false,
 });
 
 describe('summariseRuns', () => {
@@ -84,5 +87,22 @@ describe('summariseRuns', () => {
       },
     ]);
     expect(summary.broke).toEqual([]);
+  });
+
+  it('leaves out cases wiped after the run', () => {
+    const wiped = (row: RunRow): RunRow => ({ ...row, wiped: true });
+    const summary = summariseRuns(
+      [nsfw(1, 'none'), wiped(nsfw(2, 'r')), wiped(failed(3, NOT_SCAM, 'x'))],
+      [nsfw(1, 'none'), wiped(nsfw(2, 'none'))]
+    );
+    expect(summary.labels).toEqual([
+      {
+        label: 'nsfw',
+        name: 'Rating',
+        current: { correct: 1, scored: 1 },
+        changed: { correct: 1, scored: 1 },
+      },
+    ]);
+    expect(summary).toMatchObject({ fixed: [], broke: [], errors: { current: 0, changed: 0 } });
   });
 });

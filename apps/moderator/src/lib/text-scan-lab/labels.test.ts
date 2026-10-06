@@ -28,16 +28,24 @@ describe('friendly names', () => {
 
 describe('describeVerdict', () => {
   it.each([
-    ['none', 'Rated PG', 'clear'],
-    ['pg13', 'Rated PG-13', 'caution'],
-    ['r', 'Rated R', 'flagged'],
-    ['xxx', 'Rated XXX', 'flagged'],
-  ])('rates nsfw %s', (level, headline, tone) => {
+    ['none', 'Rated PG', 'neutral'],
+    ['pg13', 'Rated PG-13', 'neutral'],
+    ['r', 'Rated R', 'neutral'],
+    ['xxx', 'Rated XXX', 'neutral'],
+  ])('rates nsfw %s, neutrally without a declared level', (level, headline, tone) => {
     expect(describeVerdict('nsfw', ok({ nsfw: { level, reason: ' because ' } }))).toEqual({
       headline,
       tone,
       reason: 'because',
     });
+  });
+
+  it('flags a rating only when it is above the declared level', () => {
+    const rated = (level: string) => ok({ nsfw: { level } });
+    expect(describeVerdict('nsfw', rated('x'), 'r').tone).toBe('flagged');
+    expect(describeVerdict('nsfw', rated('r'), 'r').tone).toBe('neutral');
+    expect(describeVerdict('nsfw', rated('pg13'), 'r').tone).toBe('neutral');
+    expect(describeVerdict('nsfw', rated('r'), null).tone).toBe('neutral');
   });
 
   it('phrases flags both ways', () => {
@@ -71,6 +79,7 @@ describe('describeVerdict', () => {
     ).toBe("Couldn't judge: bad JSON");
     expect(describeVerdict('scam', ok({ nsfw: { level: 'r' } })).tone).toBe('unknown');
     expect(describeVerdict('nsfw', ok({ nsfw: { level: 'weird' } })).tone).toBe('unknown');
+    expect(describeVerdict('nsfw', ok({ nsfw: { level: 'constructor' } })).tone).toBe('unknown');
     expect(describeVerdict('scam', ok({ scam: { reason: 'no detected' } })).tone).toBe('unknown');
   });
 });

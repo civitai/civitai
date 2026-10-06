@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { composeUserMessage } from '../text-scan-lab/compose';
 import {
   InvalidExpectedError,
-  describeExpected,
+  expectedChips,
   expectedFromOutput,
   parseExpected,
 } from '../text-scan-lab/expected';
@@ -78,13 +78,13 @@ describe('composeUserMessage', () => {
   });
 });
 
-describe('describeExpected', () => {
+describe('expectedChips', () => {
   it('gives one chip per scored label', () => {
-    expect(describeExpected({ nsfw: { min: 'pg13', max: 'r' }, poi: false })).toEqual([
+    expect(expectedChips({ nsfw: { min: 'pg13', max: 'r' }, poi: false })).toEqual([
       'nsfw pg13–r',
       'poi no',
     ]);
-    expect(describeExpected({ nsfw: { min: 'x', max: 'x' }, scam: true })).toEqual([
+    expect(expectedChips({ nsfw: { min: 'x', max: 'x' }, scam: true })).toEqual([
       'nsfw x',
       'scam yes',
     ]);

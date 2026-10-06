@@ -1,3 +1,4 @@
+import { levelRank } from './expected';
 import { caseCorrect } from './score';
 import type { Expected, LabEntityType, LabLabel, NsfwLevelName, PromptKey } from './types';
 
@@ -9,7 +10,7 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
 };
 
 export const promptKeyName = (key: PromptKey): string =>
-  key === 'base' ? 'General instructions' : `${LABEL_NAMES[key.slice(6) as LabLabel]} definition`;
+  key === 'base' ? 'General instructions' : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
 
 export const ENTITY_TYPE_NAMES: Record<LabEntityType, string> = {
   Model: 'Model',
@@ -42,7 +43,8 @@ const FLAG_PHRASES: Record<Exclude<LabLabel, 'nsfw'>, { yes: string; no: string 
   scam: { yes: 'Scam', no: 'Not a scam' },
 };
 
-export type VerdictTone = 'clear' | 'caution' | 'flagged' | 'unknown';
+/** `neutral`: a rating is information, not a finding, unless it is above what the content declares. */
+export type VerdictTone = 'clear' | 'neutral' | 'flagged' | 'unknown';
 export type Verdict = { headline: string; tone: VerdictTone; reason?: string };
 
 /** A scan result, or a test-set run row mapped to one. `LabScanResult` fits. */
@@ -55,7 +57,11 @@ const couldNotJudge = (why: string): Verdict => ({
   tone: 'unknown',
 });
 
-export function describeVerdict(label: LabLabel, source: VerdictSource): Verdict {
+export function describeVerdict(
+  label: LabLabel,
+  source: VerdictSource,
+  declaredLevel?: NsfwLevelName | null
+): Verdict {
   if (!source.ok) return couldNotJudge(source.error);
   if (!source.output) return couldNotJudge(source.parseError ?? 'no answer');
   const v = source.output[label] as
@@ -66,8 +72,10 @@ export function describeVerdict(label: LabLabel, source: VerdictSource): Verdict
 
   if (label === 'nsfw') {
     const level = v.level as NsfwLevelName;
-    if (!(level in RATING_NAMES)) return couldNotJudge(`unknown rating ${String(v.level)}`);
-    const tone: VerdictTone = level === 'none' ? 'clear' : level === 'pg13' ? 'caution' : 'flagged';
+    if (!Object.hasOwn(RATING_NAMES, level))
+      return couldNotJudge(`unknown rating ${String(v.level)}`);
+    const tone: VerdictTone =
+      declaredLevel && levelRank(level) > levelRank(declaredLevel) ? 'flagged' : 'neutral';
     return { headline: `Rated ${RATING_NAMES[level]}`, tone, reason };
   }
 

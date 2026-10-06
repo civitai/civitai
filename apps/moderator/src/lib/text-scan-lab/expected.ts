@@ -66,7 +66,7 @@ export function parseExpected(json: unknown, labels: readonly LabLabel[] = ALL_L
   return expected;
 }
 
-export function describeExpected(expected: Expected): string[] {
+export function expectedChips(expected: Expected): string[] {
   const chips: string[] = [];
   if (expected.nsfw) {
     const { min, max } = expected.nsfw;

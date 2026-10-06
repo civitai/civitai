@@ -21,6 +21,8 @@ describe('parseCheckInput', () => {
     ['https://civitai.com/comments/v2/78', 'CommentV2', 78],
     ['https://civitai.com/models/1?dialog=commentThread&highlight=55', 'Comment', 55],
     ['civitai.com/models/123', 'Model', 123],
+    ['https://civitai.com/models/1.', 'Model', 1],
+    ['(civitai.com/posts/2)', 'Post', 2],
   ])('recognises %s', (url, entityType, id) => {
     expect(parseCheckInput(`  ${url}  `)).toEqual({ kind: 'entity', entityType, ids: [id] });
   });
@@ -36,9 +38,7 @@ describe('parseCheckInput', () => {
   it('refuses links to different kinds of content together', () => {
     expect(
       parseCheckInput('https://civitai.com/models/1 https://civitai.com/posts/2')
-    ).toMatchObject({
-      kind: 'unknown-url',
-    });
+    ).toEqual({ kind: 'refused', notice: expect.any(String) });
   });
 
   it('returns a profile link as a username to resolve', () => {
@@ -49,15 +49,15 @@ describe('parseCheckInput', () => {
   });
 
   it('refuses two different profiles', () => {
-    expect(parseCheckInput('civitai.com/user/a civitai.com/user/b')).toMatchObject({
-      kind: 'unknown-url',
-    });
+    expect(parseCheckInput('civitai.com/user/a civitai.com/user/b')).toEqual({ kind: 'refused', notice: expect.any(String) });
   });
 
   it.each([
     'https://civitai.com/images/123',
     'https://civitai.com/challenges/events/3',
     'https://civitai.com/models',
+    'https://civitai.com/user/vault',
+    'https://civitai.com/user/account/settings',
     'https://example.com/models/123',
     'https://civitai.com.evil.example/models/1',
   ])('treats %s as an unknown link, judged as text', (url) => {
