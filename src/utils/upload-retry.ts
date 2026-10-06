@@ -20,6 +20,50 @@ const MIN_RETRY_AFTER_MS = 1000;
 /** The relay route's body cap (Next's 10 MB truncation point) mirrored client-side. */
 export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
 
+// Bounds SILENCE, not part duration: it resets on every progress event, so a slow 25 MB part
+// keeps it alive while a half-open connection trips it. 30s is well past the inter-chunk gap
+// a usable mobile link produces, and `xhr.timeout` cannot express this — being total-duration,
+// any value short enough to catch a stall would kill a legitimate 25 MB part on a slow link.
+const PART_STALL_TIMEOUT_MS = 30_000;
+
+/**
+ * The silence window for one in-flight part: `arm` restarts it, `clear` ends it.
+ *
+ * 🔴 NOT a bare `setTimeout`, because of BACKGROUNDED TABS. Chromium throttles background
+ * timers to roughly one per minute and freezes a backgrounded mobile tab outright, so a
+ * window armed before the tab went away expires on a transfer that was merely suspended —
+ * and someone switching apps mid-upload is the population a stall watchdog is for. Neither a
+ * progress delta nor elapsed wall clock can separate the two, because no bytes move while
+ * hidden either; only `visibilityState` can. So time spent hidden does not count as silence,
+ * and a part that is genuinely dead is given away one full window after the tab comes back.
+ *
+ * 🔴 Lives HERE rather than inside the hook for the reason `isTerminalCompleteStatus` below
+ * gives: `s3-upload.store.ts` has the same missing timeout, and the one predicate that was
+ * open-coded in both went wrong in one of them.
+ */
+export function createPartStallWatchdog(onStall: () => void) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const arm = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (document.visibilityState !== 'visible') return arm();
+      onStall();
+    }, PART_STALL_TIMEOUT_MS);
+  };
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible') arm();
+  };
+  document.addEventListener('visibilitychange', onVisibilityChange);
+  return {
+    arm,
+    /** 🔴 Drops the listener too: one watchdog per part attempt, 4 parts at a time. */
+    clear: () => {
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    },
+  };
+}
+
 /**
  * The bounded, serializable reason a multipart upload gave up, carried in the
  * `/api/upload/abort` body so the server-side `s3-upload-abort` event can say WHY the

@@ -7,6 +7,7 @@ import { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
 import type { PartFailureReason, UploadPartError } from '~/utils/upload-retry';
 import {
+  createPartStallWatchdog,
   describePartFailure,
   getPartRetryDelay,
   isTerminalCompleteStatus,
@@ -20,11 +21,6 @@ import type { ClientDeclarableRelayFallbackOutcome } from '~/utils/relay-fallbac
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
-// Bounds SILENCE, not part duration: it resets on every progress event, so a slow 25 MB part
-// keeps it alive while a half-open connection trips it. 30s is well past the inter-chunk gap
-// a usable mobile link produces, and `xhr.timeout` cannot express this — being total-duration,
-// any value short enough to catch a stall would kill a legitimate 25 MB part on a slow link.
-const PART_STALL_TIMEOUT_MS = 30_000;
 
 // Abort-aware sleep so cancelling during a long Retry-After window
 // short-circuits the backoff instead of waiting it out.
@@ -222,7 +218,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       // effect closes over the `files` from its first render with `[]` deps, so it
       // always iterates an empty array and aborts nothing.
       //
-      // Neither live caller can reach the relay — `FileInputUpload` uploads
+      // Neither cancel-capable caller can reach the relay — `FileInputUpload` uploads
       // model/training files and `MultiFileInputUpload` uploads `type: 'default'`, while
       // the relay is image-only. So on the one path that CAN relay, nothing cancels an
       // upload today: the `userAborted` gate below is correct and tested, but it is not
@@ -341,24 +337,19 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           // the two shapes makes the watchdog fire into a gate it cannot pass: the upload still
           // fails and the relay still never runs.
           const stalledRef = { value: false };
-          let stallTimer: ReturnType<typeof setTimeout> | undefined;
-          const clearStallTimer = () => clearTimeout(stallTimer);
-          const armStallTimer = () => {
-            clearStallTimer();
-            stallTimer = setTimeout(() => {
-              stalledRef.value = true;
-              xhr.abort();
-            }, PART_STALL_TIMEOUT_MS);
-          };
+          const watchdog = createPartStallWatchdog(() => {
+            stalledRef.value = true;
+            xhr.abort();
+          });
           xhr.upload.addEventListener('progress', ({ loaded }) => {
-            armStallTimer();
+            watchdog.arm();
             partProgress.set(i, loaded);
             updateProgress();
           });
           xhr.upload.addEventListener('loadend', ({ loaded }) => {
             // The body is fully sent, so what follows is the response wait — a different phase.
             // Policing it with a progress watchdog would kill a slow-but-healthy server.
-            clearStallTimer();
+            watchdog.clear();
             partProgress.set(i, loaded);
           });
           xhr.addEventListener('load', () => {
@@ -367,7 +358,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           xhr.addEventListener('loadend', () => {
             // Fires after load, error AND abort, so this is the one clear that covers every
             // terminal outcome; the `upload.loadend` clear above is a phase boundary, not cleanup.
-            clearStallTimer();
+            watchdog.clear();
             activeXhrs.delete(xhr);
             if (xhr.readyState !== 4) return;
             if (xhr.status === 200) {
@@ -402,7 +393,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           });
           xhr.open('PUT', url);
           xhr.setRequestHeader('Content-Type', 'application/octet-stream');
-          armStallTimer();
+          watchdog.arm();
           xhr.send(part);
         });
 

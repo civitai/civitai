@@ -75,6 +75,13 @@ let hangAfterProgressBytes: number | null;
 let responseDelayMs: number;
 /** PUT attempts per part number, so a case can assert a part was never aborted and re-sent. */
 let partSendCounts: Map<number, number>;
+/**
+ * The most recent still-open PUT per part number, so a case can drive one by hand.
+ *
+ * The flag-driven hangs above script a part before it starts; a backgrounded tab has to be
+ * scripted DURING one — bytes, then silence, then a resume at a chosen point on the clock.
+ */
+let inFlight: Map<number, FakeXHR>;
 /** Fake-clock time of each part's response, for asserting the response wait really was long. */
 let partLoadTimes: number[];
 let relayCalls: number;
@@ -141,10 +148,26 @@ class FakeXHR {
     this.emit('abort');
     this.emit('loadend');
   }
+  /** A resumed transfer reporting bytes again, at a moment the case chooses. */
+  emitProgress(loaded: number) {
+    this.upload.listeners['progress']?.forEach((cb) => cb({ loaded }));
+  }
+  /** Finish a hand-driven part: body fully sent, then the response. */
+  finishOk(loaded: number) {
+    if (this.settled) return;
+    this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded }));
+    this.settled = true;
+    this.readyState = 4;
+    this.status = 200;
+    this.headers['ETag'] = 'etag';
+    this.emit('load');
+    this.emit('loadend');
+  }
   send(body: Blob) {
     const partNumber = Number(new URL(this.url, 'https://store.test').searchParams.get('part'));
     const attempt = (partSendCounts.get(partNumber) ?? 0) + 1;
     partSendCounts.set(partNumber, attempt);
+    inFlight.set(partNumber, this);
     setTimeout(() => {
       if (this.settled) return;
       if (
@@ -349,11 +372,15 @@ const CLOCK_TURN_MS = 60_000;
 /** Matches the sibling harness: far above this client's longest chain of sleeps. */
 const MAX_CLOCK_TURNS = 200;
 
-/** Advance the fake clock one turn, inside `act` so React flushes what the turn produced. */
-async function turnClock() {
+/** Advance the fake clock, inside `act` so React flushes what the advance produced. */
+async function advance(ms: number) {
   await act(async () => {
-    await vi.advanceTimersByTimeAsync(CLOCK_TURN_MS);
+    await vi.advanceTimersByTimeAsync(ms);
   });
+}
+
+async function turnClock() {
+  await advance(CLOCK_TURN_MS);
 }
 
 async function runUpload(
@@ -406,6 +433,7 @@ beforeEach(() => {
   hangAfterProgressBytes = null;
   responseDelayMs = 0;
   partSendCounts = new Map();
+  inFlight = new Map();
   partLoadTimes = [];
   relayCalls = 0;
   relayResponse = { ok: true, id: RELAY_KEY };
@@ -795,6 +823,163 @@ describe('useS3Upload part stall watchdog', () => {
     expect(h.statuses()).toEqual(['error']);
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
+    h.unmount();
+  });
+});
+
+/**
+ * THE WATCHDOG AGAINST A BACKGROUNDED TAB.
+ *
+ * The thing a stall watchdog must not do is kill a transfer that was merely suspended, and
+ * switching apps mid-upload is routine on a phone — the population this whole PR is for.
+ * Chromium backgrounds a tab in two ways and they need different handling, so both are
+ * modelled here:
+ *
+ *   THROTTLED — timers still run, roughly one per minute, so a window armed before the tab
+ *     went away expires while it is still hidden. Modelled by advancing the fake clock.
+ *   FROZEN — timers do not run at all while wall-clock time passes, so what is pending on
+ *     resume is a window that is already overdue. Modelled by `vi.setSystemTime`, which moves
+ *     `Date.now()` without running a single timer.
+ *
+ * 🔴 No progress-delta or elapsed-time check could tell either apart from a dead radio: no
+ * bytes move in either case. Only `visibilityState` can, which is why these cases drive it.
+ */
+describe('useS3Upload part stall watchdog across a backgrounded tab', () => {
+  /** Mirrors `createPartStallWatchdog`'s window, which is not exported. */
+  const STALL_WINDOW_MS = 30_000;
+  /** Long enough that no window measured from BEFORE the tab went away can survive it. */
+  const HIDDEN_WALL_CLOCK_MS = 10 * 60_000;
+
+  let visibility: DocumentVisibilityState;
+  /** Live `visibilitychange` callbacks, by identity — a leak is a count that never falls. */
+  let liveListeners: Set<unknown>;
+  let listenerAdds: number;
+
+  beforeEach(() => {
+    visibility = 'visible';
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => visibility,
+    });
+    liveListeners = new Set();
+    listenerAdds = 0;
+    const realAdd = document.addEventListener.bind(document);
+    const realRemove = document.removeEventListener.bind(document);
+    vi.spyOn(document, 'addEventListener').mockImplementation((type, cb, opts) => {
+      if (type === 'visibilitychange') {
+        listenerAdds++;
+        liveListeners.add(cb);
+      }
+      return realAdd(type, cb, opts);
+    });
+    vi.spyOn(document, 'removeEventListener').mockImplementation((type, cb, opts) => {
+      if (type === 'visibilitychange') liveListeners.delete(cb);
+      return realRemove(type, cb, opts);
+    });
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    // happy-dom defines `visibilityState` on the prototype, so dropping the own property
+    // put there above restores the real getter.
+    delete (document as unknown as { visibilityState?: unknown }).visibilityState;
+  });
+
+  const setVisibility = async (next: DocumentVisibilityState) => {
+    visibility = next;
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+  };
+
+  it('does not abort a part whose transfer resumes after the tab comes back', async () => {
+    // 🔴 THE CASE THE FIX EXISTS FOR. A part sends half its bytes, the person switches apps,
+    // ten minutes pass, they come back and the transfer continues. Nothing here is wrong with
+    // the upload, and a watchdog that counts hidden time against it re-sends up to 25 MB of
+    // somebody's cellular data per attempt, five attempts deep.
+    vi.stubGlobal('fetch', makeFetch(1));
+    hangPartNumbers = [1];
+    hangAfterProgressBytes = CHUNK / 2;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image, async () => {
+      await advanceUntil(() => inFlight.has(1), 'the first PUT');
+      // Foreground silence, inside the window: nothing has given up yet, so what follows is
+      // attributable to the tab going away rather than to time already spent.
+      await advance(STALL_WINDOW_MS - 5_000);
+      await setVisibility('hidden');
+      // THROTTLED: the window expires here, while hidden. Whatever is left of it afterwards
+      // is deliberately short, so the FROZEN half below is decisive on its own.
+      await advance(STALL_WINDOW_MS + 25_000);
+      expect(partSendCounts.get(1)).toBe(1);
+      // FROZEN, then the return.
+      vi.setSystemTime(Date.now() + HIDDEN_WALL_CLOCK_MS);
+      await setVisibility('visible');
+      // Past what was left of the pre-freeze window, inside one measured from the return.
+      await advance(10_000);
+      inFlight.get(1)!.emitProgress(CHUNK * 0.75);
+      inFlight.get(1)!.finishOk(CHUNK);
+    });
+
+    // ONE PUT: the part was never aborted and re-sent. Asserted first because it is the
+    // legible reading of a watchdog that counted hidden time — `expected 2 to be 1`.
+    expect(partSendCounts.get(1)).toBe(1);
+    expect(relayCalls).toBe(0);
+    expect(abortCalls).toEqual([]);
+    expect(result).toMatchObject({ key: UPLOAD_IDENTITY.key });
+    expect(h.statuses()).toEqual(['success']);
+    h.unmount();
+  });
+
+  it('aborts a part still silent a full window after the tab comes back, and relays it', async () => {
+    // The mirror, and the negative control for the case above: hidden time buying a reprieve
+    // must not buy immunity. A part that is still silent once the person is watching is dead,
+    // and is owed the abort, the `stalled` kind and the relay rescue.
+    vi.stubGlobal('fetch', makeFetch(1));
+    hangPartNumbers = [1];
+    hangAfterProgressBytes = CHUNK / 2;
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(CHUNK), UploadType.Image, async () => {
+      await advanceUntil(() => inFlight.has(1), 'the first PUT');
+      await setVisibility('hidden');
+      await advance(STALL_WINDOW_MS + 25_000);
+      vi.setSystemTime(Date.now() + HIDDEN_WALL_CLOCK_MS);
+      await setVisibility('visible');
+      // 🔴 THE CLAIM: the window is measured from the RETURN, not from the last byte. This
+      // part has been silent for over ten minutes of wall clock and is still not given up on
+      // five seconds short of a full foreground window.
+      await advance(STALL_WINDOW_MS - 5_000);
+      expect(partSendCounts.get(1)).toBe(1);
+    });
+
+    // The ladder was walked once the tab was back, and the stall reached the relay.
+    expect(partSendCounts.get(1)).toBe(MAX_PART_ATTEMPTS);
+    expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'stalled', partNumber: 1 }]);
+    expect(relayCalls).toBe(1);
+    expect(result).toMatchObject({ url: RELAY_KEY, key: RELAY_KEY });
+    expect(h.statuses()).toEqual(['success']);
+    // Five aborted attempts' worth of listeners, all gone. The abort path's half of the leak
+    // assertion below, which rides the success path.
+    expect(liveListeners.size).toBe(0);
+    h.unmount();
+  });
+
+  it('leaves no visibilitychange listener behind once the parts have settled', async () => {
+    // One `document` listener per part attempt, four parts in flight at a time, many parts
+    // per file: a watchdog that does not unregister leaks for the life of the page, and every
+    // leaked listener re-arms a timer for a part that finished long ago.
+    const PARTS = 8;
+    vi.stubGlobal('fetch', makeFetch(PARTS));
+    const h = await mountHook();
+
+    await runUpload(h, makeFile(CHUNK * PARTS), UploadType.Image);
+
+    expect(h.statuses()).toEqual(['success']);
+    // 🔴 THE POSITIVE CONTROL, and the case is vacuous without it: a watchdog that registered
+    // nothing at all also ends with zero live listeners.
+    expect(listenerAdds).toBe(PARTS);
+    expect(liveListeners.size).toBe(0);
     h.unmount();
   });
 });
