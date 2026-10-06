@@ -921,7 +921,7 @@ describe('approving a dataset that cannot be previewed', () => {
   it('is refused without the moderator confirming they reviewed it another way', async () => {
     orchestrator([archive()]);
     const result = await rule(true);
-    expect(!result.ok && result.error).toContain('No item of this run');
+    expect(!result.ok && result.error).toContain('could be confirmed viewable');
     expect(gateCalls()).toHaveLength(0);
   });
 
@@ -940,7 +940,7 @@ describe('approving a dataset that cannot be previewed', () => {
   it('a blob dataset with no stored item counts as unpreviewable too', async () => {
     orchestrator([workflow({ items: [{ air: 'https://elsewhere.example/x.png' }] })]);
     const result = await rule(true);
-    expect(!result.ok && result.error).toContain('No item of this run');
+    expect(!result.ok && result.error).toContain('could be confirmed viewable');
     expect(gateCalls()).toHaveLength(0);
   });
 
@@ -949,7 +949,7 @@ describe('approving a dataset that cannot be previewed', () => {
       key === KEY_A ? redirectTo(`${BLOCKED}a`) : new Response(null, { status: 404 })
     );
     const result = await rule(true);
-    expect(!result.ok && result.error).toContain('No item of this run');
+    expect(!result.ok && result.error).toContain('could be confirmed viewable');
     expect(gateCalls()).toHaveLength(0);
     // The server probed the items itself.
     expect(callsTo(`/v2/consumer/blobs/${KEY_A}`)).toHaveLength(1);
@@ -961,7 +961,7 @@ describe('approving a dataset that cannot be previewed', () => {
       { workflowId: WF, approve: true, moderatorId: 7 },
       { recheckDelaysMs: [0], probeBudgetMs: 30 }
     );
-    expect(!result.ok && result.error).toContain('No item of this run');
+    expect(!result.ok && result.error).toContain('could be confirmed viewable');
     expect(gateCalls()).toHaveLength(0);
   });
 
@@ -1096,6 +1096,17 @@ describe('someBounded', () => {
     );
     expect(found).toBe(false);
     expect(started).toEqual([0]);
+  });
+
+  it('answers at the first true without waiting for calls still in flight', async () => {
+    const started = Date.now();
+    const found = await someBounded(
+      [0, 1],
+      (n) => (n === 0 ? new Promise<boolean>(() => {}) : Promise.resolve(true)),
+      { concurrency: 2, budgetMs: 5_000 }
+    );
+    expect(found).toBe(true);
+    expect(Date.now() - started).toBeLessThan(1_000);
   });
 
   it('stops starting calls at the first true', async () => {

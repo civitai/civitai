@@ -1095,7 +1095,7 @@ export async function moderateTrainingWorkflow(
 
   // Approving what nobody here could look at needs the moderator to say they looked at it elsewhere.
   // Decided from this call's own probe of the items — the checkbox is only how the page asks — and
-  // the probe stops at the first viewable item: one is all the rule needs.
+  // the probe answers at the first viewable item: one is all the rule needs.
   if (
     approve &&
     !input.reviewedElsewhere &&
@@ -1105,7 +1105,7 @@ export async function moderateTrainingWorkflow(
       ok: false,
       needsAck: true,
       error:
-        "No item of this run's dataset can be viewed here. Approve only after reviewing it another way, and tick that you did. Nothing was changed.",
+        "No item of this run's dataset could be confirmed viewable just now. Approve only after reviewing it another way, and tick that you did. Nothing was changed.",
     };
 
   const message = approve
@@ -1415,8 +1415,9 @@ export async function resolveTrainingWorkflowBlob(
 /**
  * What a moderator can actually see of each stored dataset item: `blocked` was blocked by the
  * orchestrator's screening and is not viewable here (it would otherwise render as a placeholder that
- * reads like the upload), `unavailable` is missing or not yet scanned, `unchecked` did not answer
- * within the budget.
+ * reads like the upload), `unavailable` is missing or not yet scanned, `unchecked` got no answer about
+ * the item — none within the budget, or the orchestrator was busy, failing, refused this app or is
+ * not configured.
  */
 export type DatasetItemState = 'viewable' | 'blocked' | 'unavailable' | 'unchecked';
 
@@ -1457,7 +1458,7 @@ const isNoAnswer = (status: number) =>
 
 /**
  * Whether at least one stored item probes viewable — the approve-time form of `hasViewableItem`, which
- * stops at the first one instead of mapping the whole dataset. `false` includes "none answered in time".
+ * answers at the first one instead of mapping the whole dataset. `false` includes "none answered in time".
  */
 async function anyItemViewable(
   dataset: WorkflowDataset,

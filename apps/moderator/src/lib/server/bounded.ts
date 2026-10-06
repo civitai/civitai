@@ -64,8 +64,9 @@ export async function mapBounded<T, R>(
 
 /**
  * Whether `test` holds for ANY item, asked at most `concurrency` at a time for at most `budgetMs`.
- * Stops starting calls at the first `true`; `false` means none answered `true` in time — not that none
- * would have. A rejected call counts as not `true`.
+ * Answers at the first `true` — without waiting for calls still in flight — and starts nothing after
+ * it. `false` means none answered `true` in time, not that none would have. A rejected call counts as
+ * not `true`.
  */
 export async function someBounded<T>(
   items: readonly T[],
@@ -74,6 +75,8 @@ export async function someBounded<T>(
 ): Promise<boolean> {
   let found = false;
   let timer: NodeJS.Timeout | undefined;
+  let announce: () => void = () => {};
+  const foundOne = new Promise<void>((resolve) => (announce = resolve));
   const deadline = new Promise<'expired'>((resolve) => {
     timer = setTimeout(() => resolve('expired'), budgetMs);
   });
@@ -83,11 +86,17 @@ export async function someBounded<T>(
       const call = test(items[next++]).catch(() => false);
       const outcome = await Promise.race([call, deadline]);
       if (outcome === 'expired') return;
-      if (outcome) found = true;
+      if (outcome) {
+        found = true;
+        announce();
+      }
     }
   };
   try {
-    await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
+    await Promise.race([
+      Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker)),
+      foundOne,
+    ]);
   } finally {
     clearTimeout(timer);
   }
