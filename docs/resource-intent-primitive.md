@@ -498,9 +498,19 @@ filter on generation coverage from `coverageAudience(undefined)`, which reads Fl
 unreachable, so an unreachable Flipt silently grades a filter the endpoint does not use.
 `--execute` therefore initialises Flipt and requires a real evaluation (`isFliptSync` not
 `null`) of both coverage flags before any index read or vendor call, aborting otherwise;
-the report prints the resolved `{next, member}`. The first pilot (2026-10-06) ran on flag
-defaults for exactly this reason and was discarded — the registration (v2) records it,
-and its power assumption is pending the corrected pilot.
+the report prints the resolved `{next, member}`. A finished `--execute` closes the Flipt
+client and the replica connection and exits explicitly (an earlier run hung on an open
+handle after writing its report).
+
+**The pilot, and registration v2.** The first pilot (2026-10-06) ran on flag defaults
+for exactly this reason and was discarded. The corrected pilot (2026-10-06, Flipt
+reachable, coverage resolved live) measured 85.0% scored and a 17.6% hit@10 discordant
+rate — both meet the registered power assumption, so the sample size (1000) and both VOID
+floors (667 scored; 10% infrastructure) are unchanged. At those rates ~150 discordant
+pairs are expected, and power against the 65/35 alternative is 0.955. The pilot's
+direction played no part in any choice. Registration v2 differs from v1 only in the
+flag-evaluation abort, the coverage line in the report, and its History text, which
+records both pilots.
 
 The positive control reads the field the PURPOSE page filters on. Without it, an index
 whose projection had failed wholesale would turn PURPOSE into POPULARITY and the study

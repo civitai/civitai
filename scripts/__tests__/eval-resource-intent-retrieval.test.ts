@@ -38,9 +38,11 @@ const askJev = vi.fn();
 // Feature-flag evaluation for the coverage guard. `null` = could not be evaluated (what
 // `isFliptSync` returns when Flipt is unreachable); a boolean = a real evaluation.
 const fliptSync = vi.fn<(flag: string, entityId?: string) => boolean | null>(() => false);
+const fliptClient = { close: vi.fn() };
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptModule>()),
   ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => fliptClient,
   isFliptSync: (flag: string, entityId?: string) => fliptSync(flag, entityId),
   isFlipt: async (flag: string, entityId?: string) => fliptSync(flag, entityId) === true,
 }));
@@ -1201,6 +1203,9 @@ describe('main — the --execute gate', () => {
   beforeEach(() => {
     fliptSync.mockReset();
     fliptSync.mockReturnValue(false);
+    fliptClient.close.mockReset();
+    dbMock.dbRead.$disconnect.mockReset();
+    dbMock.dbRead.$disconnect.mockResolvedValue(undefined as never);
     askJev.mockReset();
     dbMock.dbRead.$queryRaw.mockReset();
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
@@ -1402,6 +1407,9 @@ describe('main — the --execute gate', () => {
       '## Verdict: VOID',
     ]);
     expect(report).not.toContain('NOT THE PRE-REGISTERED RUN');
+    // The completion path closes what it opened, so the process can exit.
+    expect(fliptClient.close).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$disconnect).toHaveBeenCalledTimes(1);
   });
 
   it('splits an ODD --limit as ceil to matched, floor to unmatched', async () => {
@@ -1502,5 +1510,52 @@ describe('resolveEndpointCoverage — fails closed when the coverage flags canno
       'generation-coverage-next@global',
       'generation-loading-open-to-all@0',
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shutdown — a finished --execute must exit, not hang on an open handle
+// ---------------------------------------------------------------------------
+
+describe('closeStudyHandles / runAsScript — a finished run exits', () => {
+  it('closes the Flipt client and disconnects the replica', async () => {
+    const order: string[] = [];
+    await executeModule.closeStudyHandles({
+      closeFlipt: () => order.push('flipt'),
+      disconnectDb: async () => {
+        order.push('db');
+      },
+    });
+    expect(order).toEqual(['flipt', 'db']);
+  });
+
+  it('still disconnects the replica when closing Flipt throws', async () => {
+    const disconnectDb = vi.fn(async () => undefined);
+    await expect(
+      executeModule.closeStudyHandles({
+        closeFlipt: () => {
+          throw new Error('close failed');
+        },
+        disconnectDb,
+      })
+    ).rejects.toThrow('close failed');
+    expect(disconnectDb).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 runAsScript exits 0 once main resolves, and 1 (only) when it throws', async () => {
+    const exit = vi.fn();
+    await goldsetModule.runAsScript(async () => undefined, exit);
+    expect(exit.mock.calls).toEqual([[0]]);
+
+    exit.mockClear();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await goldsetModule.runAsScript(async () => {
+        throw new Error('boom');
+      }, exit);
+    } finally {
+      error.mockRestore();
+    }
+    expect(exit.mock.calls).toEqual([[1]]);
   });
 });

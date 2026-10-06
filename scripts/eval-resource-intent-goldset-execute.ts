@@ -1,7 +1,12 @@
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbRead } from '~/server/db/client';
 import { askJev, JEV_TIMEOUT_MS } from '~/server/services/ai/jev';
-import { ensureFliptInitialized, FLIPT_FEATURE_FLAGS, isFliptSync } from '~/server/flipt/client';
+import {
+  ensureFliptInitialized,
+  FLIPT_FEATURE_FLAGS,
+  getFliptClientSync,
+  isFliptSync,
+} from '~/server/flipt/client';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
 import type { ResourceIntentCoverage } from '~/server/services/resource-intent-matcher.service';
 import {
@@ -123,6 +128,33 @@ export async function executeGoldsetStudy({
     );
   } else {
     console.log(report);
+  }
+  await closeStudyHandles();
+}
+
+/**
+ * Close what the study opened, so a finished `--execute` exits instead of hanging: the
+ * replica's Prisma pool (an idle session otherwise sits until the server times it out)
+ * and the Flipt SDK client (its config poller is a timer that keeps the process alive).
+ * The entry point (`runAsScript` in ./eval-resource-intent-goldset.ts) also exits
+ * explicitly once `main()` settles, because a handle opened deeper in the server graph
+ * cannot be enumerated from here; this is the clean half, that is the guarantee.
+ */
+export async function closeStudyHandles(deps?: {
+  disconnectDb: () => Promise<void>;
+  closeFlipt: () => void;
+}): Promise<void> {
+  const { disconnectDb, closeFlipt } = deps ?? {
+    disconnectDb: () => dbRead.$disconnect(),
+    // The SDK's package-root types declare its BROWSER client, which has no `close()`;
+    // under Node the NODE client is loaded, whose `close()` clears the config-refresh
+    // `setInterval` that keeps the process alive. Hence the structural type, not the import.
+    closeFlipt: () => (getFliptClientSync() as unknown as { close?: () => void } | null)?.close?.(),
+  };
+  try {
+    closeFlipt();
+  } finally {
+    await disconnectDb();
   }
 }
 

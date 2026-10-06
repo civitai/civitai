@@ -28,7 +28,10 @@ import { RESOURCE_INTENT_DEFAULT_LIMIT } from '~/server/schema/resource-intent.s
  *     at 100 discordant pairs and 83/57 at 140; power against a true 65/35 split is 0.83
  *     at 100 and 0.93 at 140. Reaching 100 discordant pairs needs the two
  *     `powerAssumption` rates below (667 scored × 15% ≈ 100). Both are ASSUMPTIONS: the
- *     pilot measures them, and the report prints both against these values. The cost is
+ *     pilot measures them, and the report prints both against these values. The
+ *     corrected 2026-10-06 pilot measured 85.0% scored and 17.6% discordant — both above
+ *     the assumption, so nothing here was re-planned (≈150 expected discordant pairs at
+ *     1000 drawn; power 0.955 against 65/35, needing 88 of 150). The cost is
  *     one stage-1 vendor call per drawn image plus two or three index pages when the arms
  *     run, on top of part one's own ~`--limit` stage-1 calls (about half of them
  *     re-judging prompts in this sample, with no baseModel).
@@ -98,9 +101,15 @@ export function renderRetrievalPreregistration(): string {
     `--retrieval-sample ${p.pilotSampleSize}) ran with feature-flag evaluation failing (Flipt`,
     'unreachable), so coverage fell back to flag defaults instead of resolving as the',
     'endpoint does; that pilot was DISCARDED and none of its measurements are used here.',
-    'v2 differs from v1 in: the run now aborts when the coverage flags cannot be',
-    'evaluated (below); the power assumption is PENDING — to be replaced by the corrected',
-    "pilot's measured rates in a dated commit before any registered run.",
+    'The corrected pilot (2026-10-06, the same command with Flipt reachable, coverage',
+    'resolved live) measured 85.0% scored and a 17.6% hit@10 discordant rate. Both meet',
+    'the power assumption below, so the sample size and both VOID floors are unchanged',
+    'from v1. At those rates 1000 drawn gives ~150 expected discordant pairs; exact',
+    'two-sided McNemar at 0.05 then needs 88 of 150, and power against the 65/35',
+    "alternative is 0.955. The pilot's direction (b vs c) played no part in any choice in",
+    'this registration.',
+    'v2 differs from v1 ONLY in: the run aborts when the coverage flags cannot be evaluated',
+    '(below); the report prints the resolved coverage; and this History text.',
     '',
     'Question: does the shipped purpose-first matcher (PURPOSE arm) retrieve a resource',
     'people actually attached more often than the popularity seed alone (POPULARITY arm)?',

@@ -43,12 +43,13 @@ const FORBIDDEN_IN_DRY_RUN = ['src/server/db/client.ts', 'src/server/meilisearch
  * Stage 1, Gold and Arms paragraphs, so this hash does. It is meant to be UPDATED ON
  * PURPOSE, in the same commit that amends the registration (and before any run under
  * it) — never to make an accidental change pass. Current value: v2 (the flag-evaluation
- * abort and the discarded first pilot; power assumption still pending), taken from the
- * dry run's own stdout in the commit that amended it. Previous: v1,
- * `0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3` (c8bc91037f).
+ * abort, the coverage line, and the History recording both pilots; power assumption
+ * unchanged from v1), taken from the dry run's own stdout in the commit that amended it.
+ * Previous: v1, `0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3`
+ * (c8bc91037f).
  */
 const REGISTERED_PREREGISTRATION_SHA256 =
-  'b3d306923604cb5f7fcdb59e8eb0ba072f1a0e23e00a53dea9c9ac3b121c6fe9';
+  '0847248f0f1fa9773e077855b3971d3e067c7d64913dab28d0347de20a5aa8f6';
 
 function exampleEnv(): Record<string, string> {
   const env: Record<string, string> = {};

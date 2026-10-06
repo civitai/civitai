@@ -392,9 +392,26 @@ export function parseRetrievalParams(values: {
   };
 }
 
-if (process.argv[1]?.endsWith('eval-resource-intent-goldset.ts')) {
-  main().catch((error) => {
+/**
+ * Run `main` as a script and EXIT when it settles: 0 on success, 1 on failure. Explicit
+ * because a finished `--execute` otherwise stayed alive on an open handle (it hung for
+ * 30+ minutes after writing its report); `closeStudyHandles` closes the known ones, and
+ * this makes the end of the run not depend on that list being complete.
+ */
+export async function runAsScript(
+  run: () => Promise<void> = main,
+  exit: (code: number) => void = (code) => process.exit(code)
+): Promise<void> {
+  try {
+    await run();
+  } catch (error) {
     console.error(error);
-    process.exit(1);
-  });
+    exit(1);
+    return;
+  }
+  exit(0);
+}
+
+if (process.argv[1]?.endsWith('eval-resource-intent-goldset.ts')) {
+  void runAsScript();
 }
