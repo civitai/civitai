@@ -6,7 +6,7 @@
 node .claude/skills/dev-server/cli.mjs wt new <name> <branch> [--no-install] [--base origin/<b>]
 ```
 
-`wt new` fetches, runs `git worktree add -b <branch> --no-track <base>`, initialises the `event-engine-common` submodule, writes `.envrc` (`use flake`) when the primary checkout has one, copies the skills' credentials from the primary, runs `pnpm install` (unless `--no-install`), and checks that `git status -sb` prints `## <branch>` alone. Don't hand-roll it, and don't create worktrees with the `EnterWorktree` tool: it puts the tree in `.claude/worktrees/` (outside the Defender-excluded repos root, so it runs slow) and branches the shorthand way, so the branch tracks `origin/main`. Entering an existing worktree with `EnterWorktree` `path:` is fine.
+`wt new` fetches, runs `git worktree add -b <branch> --no-track <base>`, initialises the `event-engine-common` submodule, writes `.envrc` (`use flake`) when the primary checkout has one, copies every `.env` file from the primary (root, per-app, and the skills' credentials), runs `pnpm install` (unless `--no-install`; on Windows it launches the pnpm shim through a shell), and checks that `git status -sb` prints `## <branch>` alone. Don't hand-roll it, and don't create worktrees with the `EnterWorktree` tool: it puts the tree in `.claude/worktrees/` (outside the Defender-excluded repos root, so it runs slow) and branches the shorthand way, so the branch tracks `origin/main`. Entering an existing worktree with `EnterWorktree` `path:` is fine.
 
 Worktrees live in `<repos-root>/worktrees/<name>`, with no prefix on the directory name. Keep them under the repos root: `.claude/skills/dev-server/scripts/defender-exclusions.ps1` excludes that path from Defender scanning, and a tree outside it runs slow. Run the script once with `-ReposRoot <repos-root>` to cover the parent (its default covers only the checkout it lives in).
 
@@ -74,6 +74,16 @@ Two obvious checks return success-shaped output while telling you nothing:
   went missing from the primary while their siblings sat untouched since May, and discord's had to
   be re-obtained through an interactive browser login. The store sits outside the repo on purpose;
   a backup inside it dies to the same clean.
+
+- **The app `.env` files are full copies, so they go stale.** `wt new` copies the root `.env`
+  and every per-app one (any untracked `.env` / `.env.*` git finds, minus examples and `.bak`
+  files) so a tree works outside the dev-server daemon too. The daemon still layers the primary's
+  `.env` under the tree's, but a full copy restates every key and so masks later edits to the
+  primary. After changing a primary `.env`, bring existing trees up to date with:
+
+  ```bash
+  node .claude/skills/dev-server/cli.mjs wt env <worktree> --refresh   # re-copies those the primary edited since
+  ```
 
 - **A fresh worktree has no `.envrc`** (gitignored; `wt new` writes `use flake` only when the primary checkout has one). Without it you silently get system Node instead of the flake's, and no `PRISMA_*_ENGINE_*` paths, so Prisma looks for a `linux-nixos` engine that was never published. Mismatched node produced spurious `window.localStorage is undefined` failures under happy-dom plus Prisma engine errors, all misattributed to the code under test. Fix: `cp .envrc.example <worktree>/.envrc && direnv allow`, or run commands through `nix develop`.
 - **Confirm your cwd is actually the worktree.** A run whose cwd was a different repo lost two suites to collection failures and 77 tests silently never ran, with otherwise normal output.
