@@ -1,5 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TRPCError } from '@trpc/server';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import {
+  throwBadRequestError,
+  throwInsufficientFundsError,
+  throwRateLimitError,
+} from '~/server/utils/errorHandling';
 import type * as BridgeAuthModule from '~/server/services/blocks/block-bridge-auth.service';
 import type * as TokenAccessModule from '~/server/services/blocks/block-token-access.service';
 import type * as FlagModule from '~/server/services/app-blocks-flag';
@@ -395,6 +401,7 @@ async function submit(b: Record<string, unknown>) {
 beforeEach(() => {
   store.clear();
   for (const fn of Object.values(h)) fn.mockClear();
+  loggingMock.logToAxiom.mockClear();
   installRedis();
   installOrchestrator();
   whatifPrice = { total: 1200 };
@@ -755,6 +762,13 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
       });
       const r = await expectUnconfirmed(submit(body({ quoteId })));
       expect(r.snapshot).toEqual(expect.objectContaining({ cost: { total: 1200 } }));
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'block-training-submit-failed',
+          outcome: 'unconfirmed',
+          quoteId,
+        })
+      );
       expect(realSubmits()).toHaveLength(1);
       // The run may exist and be charged: every reservation stays counted.
       expect(counter('system:blocks:buzz-cap')).toBe(1200);
@@ -766,6 +780,62 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
       expect(keysWith(`system:blocks:training-dataset:${DATASET_ID}:runs`)).toEqual([]);
       // …and the per-quote claim was released: the spent quote is simply gone.
       await expect(submit(body({ quoteId }))).rejects.toThrow('training quote not found');
+    }
+  );
+
+  it.each([
+    [
+      'insufficient funds (orchestrator 403)',
+      () => throwInsufficientFundsError('Insufficient funds'),
+    ],
+    ['a rate limit (orchestrator 429)', () => throwRateLimitError('Too many requests')],
+    ['any other orchestrator 4xx', () => throwBadRequestError('model is not enabled')],
+  ])(
+    'an orchestrator REFUSAL — %s — is definite: refunded, claim released, rethrown',
+    async (_label, makeError) => {
+      dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+        buzzBudgetPerDay: 5000,
+        revokedAt: null,
+      });
+      h.getActiveDevTunnel.mockImplementation(async () => ({
+        sessionId: 's1',
+        spendCapBuzz: 5000,
+      }));
+      h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: true, total: 1200 }));
+      const quoteId = await confirmedQuote();
+      let thrown: unknown;
+      h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+        if (args.query?.whatif) return { cost: { total: 1200 } };
+        try {
+          makeError();
+        } catch (e) {
+          thrown = e;
+        }
+        throw thrown;
+      });
+      const err = await submit(body({ quoteId })).then(
+        () => null,
+        (e: unknown) => e
+      );
+      expect(err).toBeInstanceOf(TRPCError);
+      expect((err as TRPCError).message).toBe((thrown as TRPCError).message);
+      expect(realSubmits()).toHaveLength(1);
+      // Every reservation refunded…
+      expect(counter('system:blocks:buzz-cap')).toBe(0);
+      expect(counter('system:blocks:consent-budget')).toBe(0);
+      expect(h.refundAppSpend).toHaveBeenCalledWith('app-daily', 1200);
+      expect(h.refundDevSessionBuzz).toHaveBeenCalledWith('s1', 1200);
+      // …the claim released (the spent quote is simply gone)…
+      await expect(submit(body({ quoteId }))).rejects.toThrow('training quote not found');
+      // …and the refusal is logged as such.
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'block-training-submit-failed',
+          outcome: 'refused',
+          quoteId,
+          code: (thrown as TRPCError).code,
+        })
+      );
     }
   );
 

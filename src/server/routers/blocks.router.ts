@@ -1,5 +1,6 @@
 import { GLOBAL_SCOPE_ACTIVITY_OR } from '~/server/services/blocks/scope-activity-predicate';
 import { TRPCError } from '@trpc/server';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import * as z from 'zod';
 import {
   KNOWN_SLOT_IDS as SLOT_KNOWN_SLOT_IDS,
@@ -12101,6 +12102,18 @@ async function loadEligibleBlockTrainingDataset(
 }
 
 /**
+ * True for an orchestrator refusal: a tRPC error whose HTTP status is 4xx — which is
+ * what `submitWorkflow` turns every orchestrator 4xx into (BAD_REQUEST,
+ * UNAUTHORIZED, TOO_MANY_REQUESTS; insufficient funds is a BAD_REQUEST). A 5xx or an
+ * uncoded error is not a refusal.
+ */
+function isDefiniteOrchestratorRefusal(e: unknown): boolean {
+  if (!(e instanceof TRPCError)) return false;
+  const status = getHTTPStatusCodeFromError(e);
+  return status >= 400 && status < 500;
+}
+
+/**
  * The viewer's Buzz across the accounts a training run charges: the block's allowed
  * set for its maturity (`getBlockAllowedAccountTypes`), the same set
  * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
@@ -12480,45 +12493,61 @@ async function submitTrainingWorkflow(opts: {
   const submittedAt = Date.now();
   let submitted: Awaited<ReturnType<typeof submitWorkflow>>;
   try {
-    submitted = await submitWorkflow({
-      token,
-      body: {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        steps: [step as any],
-        tags,
-        currencies,
-        ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+    try {
+      submitted = await submitWorkflow({
+        token,
+        body: {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          steps: [step as any],
+          tags,
+          currencies,
+          ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
+          externalId: blockExternalId,
+        },
+      });
+    } catch (e) {
+      // `submitWorkflow` returns an orchestrator 4xx at once (no retry) and surfaces a
+      // network failure or 5xx after its last retry as a 5xx/plain error; its retries
+      // reuse this `externalId`. So a 4xx is a DEFINITE refusal (refunded below) and
+      // anything else is AMBIGUOUS — the run may exist and be charged.
+      const definite = isDefiniteOrchestratorRefusal(e);
+      logToAxiom({
+        name: 'block-training-submit-failed',
+        type: definite ? 'warning' : 'error',
+        outcome: definite ? 'refused' : 'unconfirmed',
+        userId,
+        appBlockId: claims.appBlockId,
+        quoteId,
         externalId: blockExternalId,
-      },
-    });
-  } catch {
-    // AMBIGUOUS: the orchestrator call was attempted, so the run may exist and be
-    // charged (a lost response on the last internal retry looks exactly like a
-    // refusal here). The reservations are NOT refunded: with no workflow id there is
-    // no settle record, so nothing reconciles them later — each stays counted until
-    // its own window key expires. The run generation is not advanced, so a retry of
-    // this body (after a fresh estimate) reuses the same orchestrator `externalId`.
-    await releaseGenIdempotency(genClaimKey);
-    return {
-      snapshot: {
-        workflowId: 'failed',
-        status: 'failed' as const,
-        cost: { total: runBuzz },
-        error: BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE,
-      },
-      submissionUnconfirmed: true as const,
-    };
-  }
-
-  try {
+        code: e instanceof TRPCError ? e.code : null,
+        error: e instanceof Error ? e.message : String(e),
+      }).catch(() => undefined);
+      if (definite) throw e;
+      // AMBIGUOUS: the reservations are NOT refunded. With no workflow id there is no
+      // settle record, so nothing reconciles them later — each stays counted until
+      // its own window key expires. The run generation is not advanced, so a retry of
+      // this body (after a fresh estimate) reuses the same orchestrator `externalId`.
+      await releaseGenIdempotency(genClaimKey);
+      return {
+        snapshot: {
+          workflowId: 'failed',
+          status: 'failed' as const,
+          cost: { total: runBuzz },
+          error: BLOCK_TRAINING_SUBMISSION_UNCONFIRMED_MESSAGE,
+        },
+        submissionUnconfirmed: true as const,
+      };
+    }
     // The owner check the training form's own submit runs: a run the orchestrator
     // attributed to someone else is torn down and refused — a definite outcome for
-    // this viewer, so their reservations are refunded.
+    // this viewer, so it is refunded below like a refusal.
     const { assertWorkflowOwner } = await import(
       '~/server/services/orchestrator/assert-workflow-owner'
     );
     await assertWorkflowOwner(submitted, userId, token);
   } catch (e) {
+    // A DEFINITE refusal (an orchestrator 4xx, or an owner mismatch): no run is
+    // charged to this viewer, so every reservation is refunded.
     await refundBlockBuzzReservation(reservation, runBuzz);
     if (appSpendReserve) {
       const { refundAppSpend } = await import('~/server/services/blocks/app-spend-cap.service');
