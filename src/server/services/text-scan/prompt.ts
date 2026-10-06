@@ -139,7 +139,8 @@ export function composeTextScanMessages({
   maxInputChars: number;
 }) {
   const keys = ['base', ...labels.map((label) => `label:${label}`)];
-  const missing = keys.filter((key) => !prompts[key]);
+  // A blank row would compose an empty definition and be submitted everywhere; treat it as missing.
+  const missing = keys.filter((key) => !prompts[key]?.content?.trim());
   if (missing.length) throw new MissingTextScanPromptError(missing);
 
   const system = [

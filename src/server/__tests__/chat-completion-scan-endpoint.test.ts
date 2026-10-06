@@ -17,6 +17,9 @@ vi.mock('~/server/services/text-scan/prompt', async (importOriginal) => ({
 }));
 
 const { default: handler } = await import('~/pages/api/testing/chat-completion-scan');
+const { runTextScanHarnessAction, textScanHarnessSchema } = await import(
+  '~/server/services/text-scan/harness'
+);
 const { registerTextScanProfile } = await import('~/server/services/text-scan/profiles');
 const { submitWorkflow } = await import('@civitai/client');
 const {
@@ -147,6 +150,21 @@ describe('chat-completion-scan text-scan actions', () => {
     expect(
       (await call({ action: 'putPrompt', key: 'base', content: 'x', note: 'n' }))._status()
     ).toBe(400);
+    expect(insertTextScanPrompt).not.toHaveBeenCalled();
+  });
+
+  it.each(['   ', '\n\t'])('putPrompt rejects whitespace-only content %j', async (content) => {
+    const res = await call({
+      action: 'putPrompt',
+      key: 'base',
+      content,
+      note: 'n',
+      createdById: 5,
+    });
+    expect(res._status()).toBe(400);
+    expect((res._body() as { issues: Array<{ path: unknown[] }> }).issues[0].path).toEqual([
+      'content',
+    ]);
     expect(insertTextScanPrompt).not.toHaveBeenCalled();
   });
 
@@ -462,6 +480,25 @@ registerTextScanProfile({
       ids.filter((id) => commentSubjects.has(id)).map((id) => [id, commentSubjects.get(id)!])
     ),
 });
+registerTextScanProfile({
+  entityType: 'Model',
+  labels: ['nsfw'],
+  load: async (ids) =>
+    new Map(
+      ids.map((id) => [
+        id,
+        {
+          fields: [
+            { heading: 'Name', text: 'My LoRA' },
+            { heading: 'Description', text: null },
+            { heading: 'Trained words', text: '  ' },
+          ],
+          declared: {},
+          userId: 3,
+        },
+      ])
+    ),
+});
 const SCAM_OVERRIDES = { base: 'BASE PROMPT', 'label:scam': 'SCAM DEF' };
 const scamWorkflow = (id: string) => ({
   data: {
@@ -571,14 +608,22 @@ describe('free-text actions', () => {
     ).toBe(400);
   });
 
+  it('composeEntities is refused on the unattributed testing route', async () => {
+    const res = await call({ action: 'composeEntities', entityType: 'Comment', entityIds: [7] });
+    expect(res._status()).toBe(403);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
   it('composeEntities returns the composed text without submitting', async () => {
-    const res = await call({
-      action: 'composeEntities',
-      entityType: 'Comment',
-      entityIds: [7, 8, 9],
-    });
-    expect(res._status()).toBe(200);
-    expect(res._body()).toEqual({
+    const res = await runTextScanHarnessAction(
+      textScanHarnessSchema.parse({
+        action: 'composeEntities',
+        entityType: 'Comment',
+        entityIds: [7, 8, 9],
+      }),
+      { moderatorId: 1 }
+    );
+    expect(res.body).toEqual({
       entityType: 'Comment',
       results: [
         {
@@ -593,6 +638,29 @@ describe('free-text actions', () => {
       ],
     });
     expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('composeEntities drops fields whose text is null or blank', async () => {
+    const res = await runTextScanHarnessAction(
+      textScanHarnessSchema.parse({
+        action: 'composeEntities',
+        entityType: 'Model',
+        entityIds: [1],
+      }),
+      { moderatorId: 1 }
+    );
+    expect(res.body).toEqual({
+      entityType: 'Model',
+      results: [
+        {
+          entityId: 1,
+          ok: true,
+          text: '## Name\nMy LoRA',
+          fields: [{ heading: 'Name', text: 'My LoRA' }],
+          userId: 3,
+        },
+      ],
+    });
   });
 
   it('quoteTexts prices the composition with whatif', async () => {
@@ -654,6 +722,177 @@ describe('free-text actions', () => {
       key: 'a',
       ok: false,
       error: 'quota',
+    });
+  });
+
+  it.each(['scanTexts', 'quoteTexts'] as const)(
+    '%s sends a model override in the step',
+    async (action) => {
+      vi.mocked(submitWorkflow).mockResolvedValue({
+        ...scamWorkflow('wf'),
+        data: { ...scamWorkflow('wf').data, cost: { total: 1 } },
+      } as never);
+      await call({
+        action,
+        entityType: 'Comment',
+        texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
+        promptOverrides: SCAM_OVERRIDES,
+        model: 'air:override',
+      });
+      expect((vi.mocked(submitWorkflow).mock.calls[0][0].body!.steps[0] as any).input.model).toBe(
+        'air:override'
+      );
+    }
+  );
+
+  it('scanTexts passes wait through to the workflow query', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue(scamWorkflow('wf') as never);
+    await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
+      promptOverrides: SCAM_OVERRIDES,
+      wait: 30,
+    });
+    expect(vi.mocked(submitWorkflow).mock.calls[0][0].query).toEqual({ wait: 30 });
+  });
+
+  it('scanTexts never has more than `concurrency` workflows in flight', async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    vi.mocked(submitWorkflow).mockImplementation((async () => {
+      maxInFlight = Math.max(maxInFlight, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight--;
+      return scamWorkflow('wf');
+    }) as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: Array.from({ length: 6 }, (_, i) => ({
+        key: `k${i}`,
+        fields: [{ heading: 'Comment', text: `text ${i}` }],
+      })),
+      promptOverrides: SCAM_OVERRIDES,
+      concurrency: 2,
+      wait: 30,
+    });
+    expect(res._status()).toBe(200);
+    expect(submitWorkflow).toHaveBeenCalledTimes(6);
+    expect(maxInFlight).toBe(2);
+  });
+
+  it.each([
+    { texts: 9, concurrency: 8, wait: 61 },
+    { texts: 4, concurrency: undefined, wait: undefined },
+  ])('scanTexts refuses a request that could outrun the time budget (%o)', async (shape) => {
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: Array.from({ length: shape.texts }, (_, i) => ({
+        key: `k${i}`,
+        fields: [{ heading: 'Comment', text: 'x' }],
+      })),
+      promptOverrides: SCAM_OVERRIDES,
+      concurrency: shape.concurrency,
+      wait: shape.wait,
+    });
+    expect(res._status()).toBe(400);
+    expect((res._body() as { issues: Array<{ path: unknown[] }> }).issues[0].path).toEqual([
+      'wait',
+    ]);
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('scanTexts accepts one wave of 8 at wait 60', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue(scamWorkflow('wf') as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: Array.from({ length: 8 }, (_, i) => ({
+        key: `k${i}`,
+        fields: [{ heading: 'Comment', text: 'x' }],
+      })),
+      promptOverrides: SCAM_OVERRIDES,
+      concurrency: 8,
+      wait: 60,
+    });
+    expect(res._status()).toBe(200);
+  });
+
+  it.each([
+    { action: 'scanEntity', entityId: 7 },
+    { action: 'batchEntities', entityIds: [7] },
+    { action: 'quoteEntities', entityIds: [7] },
+  ])('$action reports a missing prompt key per entity without submitting', async (input) => {
+    const res = await call({ entityType: 'Comment', promptOverrides: { base: 'B' }, ...input });
+    expect(res._status()).toBe(200);
+    const body = res._body() as { results?: unknown[] };
+    expect(body.results?.[0] ?? body).toMatchObject({
+      entityId: 7,
+      ok: false,
+      error: expect.stringContaining('label:scam'),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('quoteTexts reports a missing prompt key per text without submitting', async () => {
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
+      promptOverrides: { base: 'B' },
+    });
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({
+      key: 'a',
+      ok: false,
+      error: expect.stringContaining('label:scam'),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('counts a missing prompt as missing_prompt, not submit_failed', async () => {
+    const res = await call({
+      action: 'batchEntities',
+      entityType: 'Comment',
+      entityIds: [7, 8],
+      promptOverrides: { base: 'B' },
+    });
+    expect((res._body() as { byOutcome: unknown }).byOutcome).toEqual({
+      missing_prompt: 1,
+      too_short: 1,
+    });
+  });
+
+  it('a blank active prompt is reported as missing', async () => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue({
+      base: { id: 1, key: 'base', content: 'BASE PROMPT' },
+      'label:scam': { id: 2, key: 'label:scam', content: '  ' },
+    });
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
+    });
+    expect((res._body() as { results: unknown[] }).results[0]).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('label:scam'),
+    });
+    expect(submitWorkflow).not.toHaveBeenCalled();
+  });
+
+  it("reports 'no workflow id' when the orchestrator returns neither an id nor an error", async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: undefined, error: null } as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect((res._body() as { results: unknown[] }).results[0]).toEqual({
+      key: 'a',
+      ok: false,
+      error: 'no workflow id',
     });
   });
 });

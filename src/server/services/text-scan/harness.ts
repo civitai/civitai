@@ -48,17 +48,14 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
 export const isTextScanHarnessAction = (action: unknown) =>
   typeof action === 'string' && (TEXT_SCAN_HARNESS_ACTIONS as readonly string[]).includes(action);
 
-const promptOverrides = z
-  .record(
-    z.string().regex(TEXT_SCAN_PROMPT_KEY),
-    z.string().refine((s) => s.trim().length > 0, 'empty prompt')
-  )
-  .optional();
+const promptContent = z.string().refine((s) => s.trim().length > 0, 'empty prompt');
+const promptOverrides = z.record(z.string().regex(TEXT_SCAN_PROMPT_KEY), promptContent).optional();
 const entityType = z
   .string()
   .refine(isTextScanEntityType, 'unknown text-scan entity type')
   .transform((value) => value as TextScanEntityType);
 const moderatorId = z.number().int().positive();
+export const SCAN_TEXTS_BUDGET_SECONDS = 120;
 const texts = z
   .array(
     z.object({
@@ -81,7 +78,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('putPrompt'),
     key: z.string().regex(TEXT_SCAN_PROMPT_KEY),
-    content: z.string().min(1),
+    content: promptContent,
     note: z.string().min(1),
     createdById: moderatorId.optional(),
   }),
@@ -139,16 +136,28 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     entityType,
     entityIds: z.array(z.number().int().positive()).min(1).max(50),
   }),
-  z.object({
-    action: z.literal('scanTexts'),
-    entityType,
-    texts,
-    promptOverrides,
-    model: z.string().min(1).optional(),
-    thinking: z.boolean().optional(),
-    concurrency: z.number().int().min(1).max(8).default(3),
-    wait: z.number().int().min(1).max(120).default(90),
-  }),
+  z
+    .object({
+      action: z.literal('scanTexts'),
+      entityType,
+      texts,
+      promptOverrides,
+      model: z.string().min(1).optional(),
+      thinking: z.boolean().optional(),
+      concurrency: z.number().int().min(1).max(8).default(3),
+      wait: z.number().int().min(1).max(120).default(90),
+    })
+    .superRefine(({ texts, concurrency, wait }, ctx) => {
+      // Each wave of `concurrency` texts can take up to `wait` seconds; past the budget the caller
+      // (and any proxy in front of it) times out while every submitted workflow still bills.
+      const worstCase = Math.ceil(texts.length / concurrency) * wait;
+      if (worstCase > SCAN_TEXTS_BUDGET_SECONDS)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['wait'],
+          message: `${texts.length} texts at concurrency ${concurrency} and wait ${wait}s could take ${worstCase}s; keep ceil(texts / concurrency) * wait within ${SCAN_TEXTS_BUDGET_SECONDS}s`,
+        });
+    }),
   z.object({
     action: z.literal('quoteTexts'),
     entityType,
@@ -200,7 +209,8 @@ async function composeStep({ subject, profile, promptOverrides, model, thinking 
       maxInputChars: config.maxInputChars,
     });
   } catch (e) {
-    if (e instanceof MissingTextScanPromptError) return { ok: false as const, error: e.message };
+    if (e instanceof MissingTextScanPromptError)
+      return { ok: false as const, error: e.message, missingPrompts: e.keys };
     throw e;
   }
   const useThinking = thinking ?? config.thinking;
@@ -292,6 +302,8 @@ function summarizeScans<T extends ScanResult>(entityType: TextScanEntityType, re
         : r.parse.reason
       : r.error === 'too-short'
       ? 'too_short'
+      : 'missingPrompts' in r
+      ? 'missing_prompt'
       : 'submit_failed';
     byOutcome[key] = (byOutcome[key] ?? 0) + 1;
     for (const label of (r.ok && r.outcome?.triggeredLabels) || [])
@@ -334,7 +346,10 @@ async function composeEntities(entityType: TextScanEntityType, entityIds: number
       entityId,
       ok: true as const,
       text: composeUserMessage(subject, config.maxInputChars),
-      fields: subject.fields,
+      // An absent optional field loads as null text; callers take `fields` as non-blank strings.
+      fields: subject.fields.flatMap(({ heading, text }) =>
+        typeof text === 'string' && text.trim() ? [{ heading, text }] : []
+      ),
       userId: subject.userId ?? null,
     };
   });

@@ -59,10 +59,12 @@
  *     "promptOverrides"?: { "<key>": "..." }, "model"?, "thinking"?, "wait"? }
  *     Dry-runs the production composition for one entity synchronously: no
  *     callback, no EntityModeration write. Overridden keys report prompt id 0.
+ *     A missing or blank prompt key comes back as the item's error, unsubmitted.
  *
  *   { "action": "batchEntities", "entityType": "...", "entityIds": [1, 2], ... }
  *     `scanEntity` over up to 50 ids, with outcome counts, refusal rate and
- *     per-label firing counts. Text below the profile's minChars is not sent.
+ *     per-label firing counts. Text below the profile's minChars is not sent, and an
+ *     item whose prompt key is missing counts as `missing_prompt`.
  *
  *   { "action": "sampleShadow", "entityType": "Post", "label": "nsfw", "verdict"?: "triggered",
  *     "n"?: 100, "sinceDays"?: 14, "seed"?: "shadow", "promptScope"?: "active" | "any",
@@ -74,16 +76,16 @@
  *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
  *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
  *
- *   { "action": "composeEntities", "entityType": "Post", "entityIds": [...] }
- *     The exact user message production would send for up to 50 entities, with the raw
- *     fields and author id. Submits nothing.
+ *   composeEntities is refused here (403): it reads any entity's text, private messages
+ *     included, so it is only served by the attributed, audited /api/mod/text-scan.
  *
  *   { "action": "scanTexts", "entityType": "Comment",
  *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
  *     "promptOverrides"?, "model"?, "thinking"?, "concurrency"?, "wait"? }
  *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
  *     Free text declares nothing, so the outcome is what would fire on an entity that
- *     declares nothing. A missing prompt key comes back as that item's error.
+ *     declares nothing. A missing prompt key comes back as that item's error. Refused
+ *     when ceil(texts / concurrency) * wait exceeds 120 seconds.
  *
  *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
  *     "model"?, "thinking"? }
@@ -385,7 +387,12 @@ async function runOne(input: Omit<ScanInput, 'action'> & { text: string }) {
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (isTextScanHarnessAction((req.body as { action?: unknown } | undefined)?.action)) {
+  const action = (req.body as { action?: unknown } | undefined)?.action;
+  if (action === 'composeEntities')
+    return res.status(403).json({
+      error: 'composeEntities is only served by /api/mod/text-scan, which records who read what.',
+    });
+  if (isTextScanHarnessAction(action)) {
     try {
       const harnessInput = textScanHarnessSchema.safeParse(req.body);
       if (!harnessInput.success)
