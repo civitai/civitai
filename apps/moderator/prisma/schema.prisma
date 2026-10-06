@@ -463,6 +463,7 @@ model text_scan_prompt_draft {
   updated_at           DateTime             @default(dbgenerated("date_trunc('milliseconds'::text, now())")) @db.Timestamptz(3)
   published_at         DateTime?            @db.Timestamptz(6)
   published_prompt_ids Json?
+  kind                 String               @default("proposed")
   text_scan_test_run   text_scan_test_run[]
 }
 
@@ -479,6 +480,7 @@ model text_scan_test_case {
   synthetic             Boolean                 @default(false)
   note                  String?
   source_deleted_at     DateTime?               @db.Timestamptz(6)
+  source_ids            Json?
   added_by              Int
   added_at              DateTime                @default(now()) @db.Timestamptz(6)
   updated_at            DateTime                @default(now()) @db.Timestamptz(6)

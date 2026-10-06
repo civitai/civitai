@@ -32,12 +32,17 @@ vi.mock('../moderator-db', async () => {
 
 const {
   DraftConflictError,
+  DraftNotFoundError,
   DraftPublishedError,
   DraftValidationError,
   createDraft,
+  discardWorkingCopy,
   getDraft,
+  getWorkingCopy,
   listDrafts,
   markPublished,
+  proposeWorkingCopy,
+  saveWorkingCopy,
   updateDraft,
 } = await import('../text-scan-lab/drafts.service');
 
@@ -168,5 +173,158 @@ describe('markPublished', () => {
     await expect(markPublished(draft.id, { 'label:scam': 42 }, draft.updatedAt)).rejects.toThrow(
       DraftPublishedError
     );
+  });
+});
+
+describe('working copy', () => {
+  const save = (userId: number, prompts: Record<string, unknown>, expected: Date | null) =>
+    saveWorkingCopy(userId, prompts, expected);
+
+  it('is created on the first save and read back per moderator', async () => {
+    expect(await getWorkingCopy(MOD)).toBeNull();
+    const copy = await save(MOD, { 'label:nsfw': 'NSFW DEF' }, null);
+    expect(copy).toMatchObject({
+      kind: 'working',
+      prompts: { 'label:nsfw': 'NSFW DEF' },
+      createdBy: MOD,
+      publishedAt: null,
+    });
+    expect(await getWorkingCopy(MOD)).toEqual(copy);
+    expect(await getWorkingCopy(OTHER_MOD)).toBeNull();
+  });
+
+  it('keeps one working copy per moderator: a save updates it in place and moves the token', async () => {
+    const first = await save(MOD, { base: 'BASE PROMPT' }, null);
+    const second = await save(MOD, { base: 'BASE 2' }, first!.updatedAt);
+    expect(second!.id).toBe(first!.id);
+    expect(second!.updatedAt.getTime()).toBeGreaterThan(first!.updatedAt.getTime());
+    expect((await getWorkingCopy(MOD))?.prompts).toEqual({ base: 'BASE 2' });
+  });
+
+  it('gives each moderator their own copy', async () => {
+    const mine = await save(MOD, { base: 'MINE' }, null);
+    const theirs = await save(OTHER_MOD, { base: 'THEIRS' }, null);
+    expect(theirs!.id).not.toBe(mine!.id);
+    expect((await getWorkingCopy(MOD))?.prompts).toEqual({ base: 'MINE' });
+  });
+
+  it('refuses a stale save (another tab saved first) without writing', async () => {
+    const loaded = await save(MOD, { base: 'TAB A 1' }, null);
+    await save(MOD, { base: 'TAB A 2' }, loaded!.updatedAt);
+    await expect(save(MOD, { base: 'TAB B' }, loaded!.updatedAt)).rejects.toThrow(
+      DraftConflictError
+    );
+    expect((await getWorkingCopy(MOD))?.prompts).toEqual({ base: 'TAB A 2' });
+  });
+
+  it('refuses a first save when another tab already created the copy', async () => {
+    await save(MOD, { base: 'TAB A' }, null);
+    await expect(save(MOD, { base: 'TAB B' }, null)).rejects.toThrow(DraftConflictError);
+    expect((await getWorkingCopy(MOD))?.prompts).toEqual({ base: 'TAB A' });
+  });
+
+  it('refuses a save against a copy discarded in another tab', async () => {
+    const loaded = await save(MOD, { base: 'BASE PROMPT' }, null);
+    await discardWorkingCopy(MOD);
+    await expect(save(MOD, { base: 'LATE' }, loaded!.updatedAt)).rejects.toThrow(
+      DraftConflictError
+    );
+    expect(await getWorkingCopy(MOD)).toBeNull();
+  });
+
+  it('refuses a blank key and names it, without writing', async () => {
+    const loaded = await save(MOD, { base: 'BASE PROMPT' }, null);
+    await expect(
+      save(MOD, { base: 'BASE PROMPT', 'label:scam': ' ' }, loaded!.updatedAt)
+    ).rejects.toThrow(/label:scam/);
+    expect(await getWorkingCopy(MOD)).toEqual(loaded);
+  });
+
+  it('deletes the copy when a save leaves no override', async () => {
+    const loaded = await save(MOD, { base: 'BASE PROMPT' }, null);
+    expect(await save(MOD, {}, loaded!.updatedAt)).toBeNull();
+    expect(await getWorkingCopy(MOD)).toBeNull();
+  });
+
+  it('refuses an emptying save that is stale', async () => {
+    const loaded = await save(MOD, { base: 'BASE 1' }, null);
+    await save(MOD, { base: 'BASE 2' }, loaded!.updatedAt);
+    await expect(save(MOD, {}, loaded!.updatedAt)).rejects.toThrow(DraftConflictError);
+    expect((await getWorkingCopy(MOD))?.prompts).toEqual({ base: 'BASE 2' });
+  });
+
+  it('discard removes only my copy', async () => {
+    await save(MOD, { base: 'MINE' }, null);
+    await save(OTHER_MOD, { base: 'THEIRS' }, null);
+    await discardWorkingCopy(MOD);
+    expect(await getWorkingCopy(MOD)).toBeNull();
+    expect((await getWorkingCopy(OTHER_MOD))?.prompts).toEqual({ base: 'THEIRS' });
+  });
+
+  it('is hidden from listDrafts unless asked for', async () => {
+    const proposed = await newDraft();
+    const working = await save(MOD, { base: 'BASE PROMPT' }, null);
+    expect((await listDrafts()).map((d) => d.id)).toEqual([proposed.id]);
+    expect((await listDrafts({ includeWorking: true })).map((d) => d.id).sort()).toEqual(
+      [proposed.id, working!.id].sort()
+    );
+  });
+
+  it('cannot be edited through updateDraft', async () => {
+    const working = await save(MOD, { base: 'BASE PROMPT' }, null);
+    await expect(
+      updateDraft(
+        working!.id,
+        { prompts: { base: 'OTHER' }, note: null, expectedUpdatedAt: working!.updatedAt },
+        OTHER_MOD
+      )
+    ).rejects.toThrow(DraftNotFoundError);
+    expect((await getWorkingCopy(MOD))?.prompts).toEqual({ base: 'BASE PROMPT' });
+  });
+});
+
+describe('proposeWorkingCopy', () => {
+  it('turns my copy into a named proposed draft, and the next edit starts a fresh copy', async () => {
+    const working = await saveWorkingCopy(MOD, { 'label:scam': 'SCAM DEF' }, null);
+    const proposed = await proposeWorkingCopy(MOD, 'tighter scam', 'catches gift cards');
+    expect(proposed).toMatchObject({
+      id: working!.id,
+      kind: 'proposed',
+      name: 'tighter scam',
+      note: 'catches gift cards',
+      prompts: { 'label:scam': 'SCAM DEF' },
+    });
+    expect(await getWorkingCopy(MOD)).toBeNull();
+    expect((await listDrafts()).map((d) => d.id)).toEqual([working!.id]);
+
+    const fresh = await saveWorkingCopy(MOD, { base: 'BASE PROMPT' }, null);
+    expect(fresh!.id).not.toBe(working!.id);
+  });
+
+  it('refuses when I have no changes', async () => {
+    await saveWorkingCopy(OTHER_MOD, { base: 'THEIRS' }, null);
+    await expect(proposeWorkingCopy(MOD, 'x', null)).rejects.toThrow(/no changes to propose/);
+  });
+
+  it('refuses a blank or over-long name without proposing', async () => {
+    await saveWorkingCopy(MOD, { base: 'BASE PROMPT' }, null);
+    await expect(proposeWorkingCopy(MOD, '  ', null)).rejects.toThrow(DraftValidationError);
+    await expect(proposeWorkingCopy(MOD, 'n'.repeat(101), null)).rejects.toThrow(
+      DraftValidationError
+    );
+    expect((await getWorkingCopy(MOD))?.kind).toBe('working');
+  });
+});
+
+describe('publishing a working copy', () => {
+  it('marks it published and frees the slot for a fresh copy', async () => {
+    const working = await saveWorkingCopy(MOD, { base: 'BASE PROMPT' }, null);
+    const published = await markPublished(working!.id, { base: 51 }, working!.updatedAt);
+    expect(published).toMatchObject({ id: working!.id, publishedPromptIds: { base: 51 } });
+    expect(published.publishedAt).toBeInstanceOf(Date);
+    expect(await getWorkingCopy(MOD)).toBeNull();
+
+    const fresh = await saveWorkingCopy(MOD, { base: 'NEXT' }, null);
+    expect(fresh!.id).not.toBe(working!.id);
   });
 });

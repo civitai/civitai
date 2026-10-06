@@ -12,8 +12,12 @@ CREATE TABLE IF NOT EXISTS text_scan_prompt_draft (
   updated_by  integer NOT NULL,
   updated_at  timestamptz(3) NOT NULL DEFAULT date_trunc('milliseconds', now()),
   published_at timestamptz,
-  published_prompt_ids jsonb
+  published_prompt_ids jsonb,
+  -- 'working': a moderator's unnamed, auto-saved changes, at most one each. 'proposed': named, shared.
+  kind        text NOT NULL DEFAULT 'proposed' CHECK (kind IN ('working', 'proposed'))
 );
+ALTER TABLE text_scan_prompt_draft ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'proposed' CHECK (kind IN ('working', 'proposed'));
+CREATE UNIQUE INDEX IF NOT EXISTS text_scan_prompt_draft_working_idx ON text_scan_prompt_draft (created_by) WHERE kind = 'working';
 
 CREATE TABLE IF NOT EXISTS text_scan_test_set (
   id          bigserial PRIMARY KEY,
@@ -40,11 +44,14 @@ CREATE TABLE IF NOT EXISTS text_scan_test_case (
   synthetic     boolean NOT NULL DEFAULT false,
   note          text CHECK (char_length(note) <= 1000),
   source_deleted_at timestamptz,
+  -- ChatMessage: the id of every message in the snapshot, so a purge sees any one of them go.
+  source_ids    jsonb,
   added_by      integer NOT NULL,
   added_at      timestamptz NOT NULL DEFAULT now(),
   updated_at    timestamptz NOT NULL DEFAULT now(),
   UNIQUE (set_id, entity_type, entity_id)
 );
+ALTER TABLE text_scan_test_case ADD COLUMN IF NOT EXISTS source_ids jsonb;
 CREATE INDEX IF NOT EXISTS text_scan_test_case_set_idx ON text_scan_test_case (set_id);
 CREATE INDEX IF NOT EXISTS text_scan_test_case_entity_idx ON text_scan_test_case (entity_type, entity_id) WHERE entity_id IS NOT NULL;
 

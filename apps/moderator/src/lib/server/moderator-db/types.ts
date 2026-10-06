@@ -602,6 +602,7 @@ export type text_scan_prompt_draft = {
   updated_at: Generated<Timestamp>;
   published_at: Timestamp | null;
   published_prompt_ids: unknown | null;
+  kind: Generated<string>;
 };
 export type text_scan_test_case = {
   id: Generated<string>;
@@ -615,6 +616,7 @@ export type text_scan_test_case = {
   synthetic: Generated<boolean>;
   note: string | null;
   source_deleted_at: Timestamp | null;
+  source_ids: unknown | null;
   added_by: number;
   added_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;

@@ -6,8 +6,11 @@ import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 
 export type DraftPrompts = Partial<Record<PromptKey, string>>;
 
+export type DraftKind = 'working' | 'proposed';
+
 export type PromptDraft = {
   id: number;
+  kind: DraftKind;
   name: string;
   prompts: DraftPrompts;
   note: string | null;
@@ -66,6 +69,7 @@ export function validateDraftPrompts(prompts: Record<string, unknown>): DraftPro
 function toDraft(r: Selectable<text_scan_prompt_draft>): PromptDraft {
   return {
     id: Number(r.id),
+    kind: r.kind as DraftKind,
     name: r.name,
     prompts: r.prompts as DraftPrompts,
     note: r.note,
@@ -84,10 +88,11 @@ function toDraft(r: Selectable<text_scan_prompt_draft>): PromptDraft {
 const firstStamp = sql<Date>`date_trunc('milliseconds', now())`;
 const nextStamp = sql<Date>`greatest(date_trunc('milliseconds', now()), updated_at + interval '1 millisecond')`;
 
-export async function listDrafts(): Promise<PromptDraft[]> {
+export async function listDrafts({ includeWorking = false } = {}): Promise<PromptDraft[]> {
   const rows = await getModeratorDb()
     .selectFrom('text_scan_prompt_draft')
     .selectAll()
+    .$if(!includeWorking, (q) => q.where('kind', '=', 'proposed'))
     .orderBy(sql`published_at IS NOT NULL`)
     .orderBy('updated_at', 'desc')
     .limit(100)
@@ -124,9 +129,9 @@ export async function createDraft(
   return toDraft(row);
 }
 
-async function refusal(id: number): Promise<DraftError> {
+async function refusal(id: number, { workingIsMissing = false } = {}): Promise<DraftError> {
   const draft = await getDraft(id);
-  if (!draft) return new DraftNotFoundError(id);
+  if (!draft || (workingIsMissing && draft.kind === 'working')) return new DraftNotFoundError(id);
   if (draft.publishedAt) return new DraftPublishedError();
   return new DraftConflictError();
 }
@@ -146,14 +151,18 @@ export async function updateDraft(
       updated_at: nextStamp,
     })
     .where('id', '=', String(id))
+    .where('kind', '=', 'proposed')
     .where('updated_at', '=', input.expectedUpdatedAt)
     .where('published_at', 'is', null)
     .returningAll()
     .executeTakeFirst();
-  if (!row) throw await refusal(id);
+  // A working copy changes only through its owner's saveWorkingCopy.
+  if (!row) throw await refusal(id, { workingIsMissing: true });
   return toDraft(row);
 }
 
+// A published working copy becomes 'proposed' so it leaves the one-per-moderator slot: the next edit
+// starts a fresh copy, and the published one stays in the drafts list as a record.
 export async function markPublished(
   id: number,
   promptIds: Record<string, number>,
@@ -161,12 +170,118 @@ export async function markPublished(
 ): Promise<PromptDraft> {
   const row = await getModeratorDb()
     .updateTable('text_scan_prompt_draft')
-    .set({ published_at: sql`now()`, published_prompt_ids: JSON.stringify(promptIds) })
+    .set({
+      published_at: sql`now()`,
+      published_prompt_ids: JSON.stringify(promptIds),
+      kind: 'proposed',
+    })
     .where('id', '=', String(id))
     .where('updated_at', '=', expectedUpdatedAt)
     .where('published_at', 'is', null)
     .returningAll()
     .executeTakeFirst();
   if (!row) throw await refusal(id);
+  return toDraft(row);
+}
+
+const WORKING_COPY_NAME = 'My changes';
+
+export async function getWorkingCopy(userId: number): Promise<PromptDraft | null> {
+  const row = await getModeratorDb()
+    .selectFrom('text_scan_prompt_draft')
+    .selectAll()
+    .where('created_by', '=', userId)
+    .where('kind', '=', 'working')
+    .executeTakeFirst();
+  return row ? toDraft(row) : null;
+}
+
+/**
+ * Saves the moderator's working copy. `expectedUpdatedAt` is the copy's token as loaded, or null when
+ * none was: anything else on the row (another tab's save, create or discard) is a conflict. Saving no
+ * override deletes the copy and returns null.
+ */
+export async function saveWorkingCopy(
+  userId: number,
+  prompts: Record<string, unknown>,
+  expectedUpdatedAt: Date | null
+): Promise<PromptDraft | null> {
+  const valid = validateDraftPrompts(prompts);
+  const db = getModeratorDb();
+
+  if (!Object.keys(valid).length) {
+    if (!expectedUpdatedAt) {
+      if (await getWorkingCopy(userId)) throw new DraftConflictError();
+      return null;
+    }
+    const deleted = await db
+      .deleteFrom('text_scan_prompt_draft')
+      .where('created_by', '=', userId)
+      .where('kind', '=', 'working')
+      .where('updated_at', '=', expectedUpdatedAt)
+      .executeTakeFirst();
+    if (!deleted.numDeletedRows) throw new DraftConflictError();
+    return null;
+  }
+
+  const row = expectedUpdatedAt
+    ? await db
+        .updateTable('text_scan_prompt_draft')
+        .set({ prompts: JSON.stringify(valid), updated_by: userId, updated_at: nextStamp })
+        .where('created_by', '=', userId)
+        .where('kind', '=', 'working')
+        .where('updated_at', '=', expectedUpdatedAt)
+        .returningAll()
+        .executeTakeFirst()
+    : await db
+        .insertInto('text_scan_prompt_draft')
+        .values({
+          kind: 'working',
+          name: WORKING_COPY_NAME,
+          prompts: JSON.stringify(valid),
+          created_by: userId,
+          updated_by: userId,
+          updated_at: firstStamp,
+        })
+        .onConflict((oc) => oc.column('created_by').where('kind', '=', 'working').doNothing())
+        .returningAll()
+        .executeTakeFirst();
+  if (!row) throw new DraftConflictError();
+  return toDraft(row);
+}
+
+export async function discardWorkingCopy(userId: number): Promise<void> {
+  await getModeratorDb()
+    .deleteFrom('text_scan_prompt_draft')
+    .where('created_by', '=', userId)
+    .where('kind', '=', 'working')
+    .execute();
+}
+
+/** Names the moderator's working copy and shares it as a proposed draft. */
+export async function proposeWorkingCopy(
+  userId: number,
+  name: string,
+  note: string | null
+): Promise<PromptDraft> {
+  const trimmed = name.trim();
+  if (!trimmed || trimmed.length > 100)
+    throw new DraftValidationError('Name the draft in 1 to 100 characters.');
+  if (note && note.length > 2000)
+    throw new DraftValidationError('Note is at most 2000 characters.');
+  const row = await getModeratorDb()
+    .updateTable('text_scan_prompt_draft')
+    .set({
+      kind: 'proposed',
+      name: trimmed,
+      note,
+      updated_by: userId,
+      updated_at: nextStamp,
+    })
+    .where('created_by', '=', userId)
+    .where('kind', '=', 'working')
+    .returningAll()
+    .executeTakeFirst();
+  if (!row) throw new DraftError('You have no changes to propose.', 404);
   return toDraft(row);
 }
