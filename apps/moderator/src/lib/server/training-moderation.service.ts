@@ -883,11 +883,12 @@ export type WorkflowReading = {
 
 export type TrainingWorkflowDetail = WorkflowReading & {
   username: string | null;
-  /** Set only when the claimed version's own training file names THIS workflow: the run is then the
-   *  version's, and is reviewed on the version route, which also takes the version out of Paused. */
+  /** Set only when the claimed version's GATED training file (`pickGatedTrainingFile`) names THIS
+   *  workflow: the run is then the one the version route releases, and is reviewed there, which also
+   *  takes the version out of Paused. */
   modelVersionId: number | null;
-  /** A `modelVersion:` tag the version does not back up (or cannot be read). The run is treated as
-   *  workflow-only, and the page says why. */
+  /** A `modelVersion:` tag that is unreadable, or names a version whose review would not release
+   *  this run. The run is treated as workflow-only, and the page says why. */
   versionClaimUnconfirmed: boolean;
 };
 
@@ -937,8 +938,9 @@ export function readTrainingWorkflow(
 
 /**
  * Which of these runs really belong to the version their tag names: the training file that version's
- * gate review acts on (`pickGatedTrainingFile`) must carry the workflow id. The tag alone is the submitter's to write, and trusting it would let
- * any run hide from this queue behind a version that never heard of it.
+ * gate review acts on (`pickGatedTrainingFile`) must carry the workflow id. The tag alone is the
+ * submitter's to write, and trusting it would let any run hide from this queue behind a version that
+ * never heard of it — or behind one whose review releases a different run.
  *
  * Read through the WRITE connection for the reason `getTrainingVersionDetail` gives: on the replica the
  * TOASTed `trainingResults` comes back empty. Throws on a database failure — callers decide whether
@@ -1158,7 +1160,7 @@ export type PendingWorkflowGate = {
   expiresAt: string | null;
   /** False when the run could not be fully checked (orchestrator or database), so it is listed as is. */
   verified: boolean;
-  /** Carries a `modelVersion:` tag its version does not back up. */
+  /** Carries a `modelVersion:` tag, but is not the run that version's review would release. */
   versionClaimUnconfirmed: boolean;
 };
 

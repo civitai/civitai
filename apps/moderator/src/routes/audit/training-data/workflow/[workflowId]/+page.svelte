@@ -85,8 +85,8 @@
   </p>
 {:else if detail.versionClaimUnconfirmed}
   <p class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-    This run carries a model-version tag that its version does not back up, so it is treated as a
-    workflow-only run.
+    This run carries a model-version tag, but it is not the run that version's review acts on, so it
+    is treated as a workflow-only run.
   </p>
 {/if}
 {#if detail.modelVersionId === null && !detail.underReview}
@@ -127,11 +127,13 @@
       ? `, ${unserved} of which are not stored uploads and cannot be shown`
       : ''}. An item withheld when it was uploaded may show as a placeholder.
   </p>
-  <TrainingAssetGrid
-    {assets}
-    preload="none"
-    columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
-  />
+  {#if assets.length || !otherItems.length}
+    <TrainingAssetGrid
+      {assets}
+      preload="none"
+      columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+    />
+  {/if}
   {#if otherItems.length}
     <ul class="mt-3 flex flex-col gap-1 text-sm">
       {#each otherItems as item (item.index)}

@@ -249,7 +249,7 @@ describe('moderateTrainingWorkflow — refusals before the gate', () => {
     expect(!result.ok && result.error).toContain('/audit/training-data/123');
   });
 
-  it('accepts a body with no id, but not one naming a different workflow', async () => {
+  it('accepts a body with no id', async () => {
     const { id: _, ...noId } = workflow();
     orchestrator([noId, workflow({ moderationStatus: 'Approved' })]);
     expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
