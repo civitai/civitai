@@ -2066,28 +2066,33 @@ const JUDGE_KEY_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 /**
  * Counts the vote against both entries before it is processed, so concurrent votes cannot each
- * pass a read of the same count.
- * @returns a release that takes the counts back, or null when either entry is already at the cap
+ * pass a read of the same count. An entry already at the cap takes no count and becomes the
+ * vote's anchor, which the rating update leaves as it is.
+ * @returns a release that takes the counts back and the anchor, or null when both entries are at
+ * the cap
  */
 async function reserveJudgeEntryVotes(
   crucibleId: number,
   userId: number,
   entryIds: [number, number]
-): Promise<(() => Promise<void>) | null> {
+): Promise<{ release: () => Promise<void>; anchorEntryId: number | null } | null> {
   const key = getJudgeEntryVotesKey(crucibleId, userId);
-  const fields = entryIds.map(String);
-  const release = async () => {
-    await Promise.all(fields.map((field) => sysRedis.hIncrBy(key, field, -1)));
-  };
+  const takeBack = (ids: number[]) =>
+    Promise.all(ids.map((id) => sysRedis.hIncrBy(key, String(id), -1)));
   const [counts] = await Promise.all([
-    Promise.all(fields.map((field) => sysRedis.hIncrBy(key, field, 1))),
+    Promise.all(entryIds.map((id) => sysRedis.hIncrBy(key, String(id), 1))),
     sysRedis.expire(key, JUDGE_KEY_TTL_SECONDS),
   ]);
-  if (counts.some((count) => count > CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY)) {
-    await release();
-    return null;
-  }
-  return release;
+  const capped = entryIds.filter((_, i) => counts[i] > CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY);
+  if (capped.length) await takeBack(capped);
+  if (capped.length === entryIds.length) return null;
+  const counted = entryIds.filter((id) => !capped.includes(id));
+  return {
+    release: async () => {
+      await takeBack(counted);
+    },
+    anchorEntryId: capped[0] ?? null,
+  };
 }
 
 /**
@@ -2395,8 +2400,9 @@ async function fetchEntrySample(
 }
 
 /**
- * Unjudged pairs among entries this judge can still vote on, bounded by the votes left on them: a
- * vote spends one of each entry's per-judge allowance.
+ * Unjudged pairs with at least one entry this judge can still vote on, bounded by the votes left
+ * on them: a pair of two such entries spends one of each one's per-judge allowance, a pair against
+ * an anchor (an entry already at the cap) spends only the other entry's.
  */
 export function countRemainingPairs({
   entryIds,
@@ -2410,19 +2416,30 @@ export function countRemainingPairs({
   maxVotesPerEntry: number;
 }) {
   const votesLeft = new Map<number, number>();
+  const anchors = new Set<number>();
   for (const id of entryIds) {
     const left = maxVotesPerEntry - Number(judgeEntryVotes[id] ?? 0);
     if (left > 0) votesLeft.set(id, left);
+    else anchors.add(id);
   }
   const n = votesLeft.size;
-  if (n < 2) return 0;
+  const m = anchors.size;
 
-  const votedAmongThem = votedPairKeys.filter((key) => {
+  let votedOpen = 0;
+  let votedAnchor = 0;
+  for (const key of votedPairKeys) {
     const [a, b] = key.split(':').map(Number);
-    return votesLeft.has(a) && votesLeft.has(b);
-  }).length;
+    if (votesLeft.has(a) && votesLeft.has(b)) votedOpen++;
+    else if ((votesLeft.has(a) && anchors.has(b)) || (anchors.has(a) && votesLeft.has(b)))
+      votedAnchor++;
+  }
   const totalVotesLeft = [...votesLeft.values()].reduce((sum, left) => sum + left, 0);
-  return Math.max(0, Math.min((n * (n - 1)) / 2 - votedAmongThem, Math.floor(totalVotesLeft / 2)));
+  const anchorPairs = Math.min(Math.max(0, n * m - votedAnchor), totalVotesLeft);
+  const openPairs = Math.min(
+    Math.max(0, (n * (n - 1)) / 2 - votedOpen),
+    Math.floor((totalVotesLeft - anchorPairs) / 2)
+  );
+  return anchorPairs + openPairs;
 }
 
 export const getJudgingProgress = async ({
@@ -2496,9 +2513,15 @@ type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };
  * already paired it with. "Least-voted" ranks this judge's own votes on the entry before everyone's:
  * a late entry stays least-voted overall for a long time, and ranked on that alone it anchors every
  * pair the judge sees until it reaches their per-judge cap.
+ *
+ * `anchors` are entries this judge has voted on as often as allowed. They are never the least-voted
+ * side, but stay opponents, chosen in proportion to how many of them are left: without them, a judge
+ * who capped every early entry is only ever shown later entries against each other, and those never
+ * get rated against the field.
  */
 function pickUnjudgedPair(
   entries: RatedEntry[],
+  anchors: RatedEntry[],
   votedPairs: Set<string>,
   { allowSameAuthor }: { allowSameAuthor: boolean }
 ) {
@@ -2513,18 +2536,19 @@ function pickUnjudgedPair(
     .map(({ entry }) => entry);
 
   for (const a of byVotes) {
-    const opponents = byVotes
-      .filter(
-        (b) =>
-          b.id !== a.id &&
-          (allowSameAuthor || b.userId !== a.userId) &&
-          !votedPairs.has(createPairKey(a.id, b.id))
-      )
-      .slice(0, OPPONENT_POOL_SIZE);
-    if (!opponents.length) continue;
+    const canFace = (b: RatedEntry) =>
+      b.id !== a.id &&
+      (allowSameAuthor || b.userId !== a.userId) &&
+      !votedPairs.has(createPairKey(a.id, b.id));
+    const opponents = byVotes.filter(canFace);
+    const anchorOpponents = anchors.filter(canFace);
+    if (!opponents.length && !anchorOpponents.length) continue;
 
+    const facesAnchor =
+      Math.random() * (opponents.length + anchorOpponents.length) < anchorOpponents.length;
+    const pool = facesAnchor ? anchorOpponents : opponents.slice(0, OPPONENT_POOL_SIZE);
     const distance = (entry: RatedEntry) => Math.abs(entry.score - a.score);
-    const b = opponents.reduce((nearest, candidate) =>
+    const b = pool.reduce((nearest, candidate) =>
       distance(candidate) < distance(nearest) ? candidate : nearest
     );
     return { a, b };
@@ -2618,9 +2642,12 @@ export const getJudgingPair = async ({
         exclusions
       );
       const candidates = sample.filter(underJudgeCap).map(rate);
-      const crossAuthor = pickUnjudgedPair(candidates, votedPairs, { allowSameAuthor: false });
+      const anchors = sample.filter((entry) => !underJudgeCap(entry)).map(rate);
+      const crossAuthor = pickUnjudgedPair(candidates, anchors, votedPairs, {
+        allowSameAuthor: false,
+      });
       if (crossAuthor) return crossAuthor;
-      sameAuthor ??= pickUnjudgedPair(candidates, votedPairs, { allowSameAuthor: true });
+      sameAuthor ??= pickUnjudgedPair(candidates, anchors, votedPairs, { allowSameAuthor: true });
       // A short sample already held every entry, so another draw returns the same set.
       if (sample.length < SAMPLE_SIZE) break;
     }
@@ -2772,15 +2799,16 @@ export const submitVote = async ({
   }
 
   // Reserved before the served pair is claimed, so a refusal here does not burn the pair.
-  const releaseJudgeEntryVotes = await reserveJudgeEntryVotes(crucibleId, userId, [
+  const reservation = await reserveJudgeEntryVotes(crucibleId, userId, [
     winnerEntryId,
     loserEntryId,
   ]);
-  if (!releaseJudgeEntryVotes) {
+  if (!reservation) {
     throw throwBadRequestError(
-      "You've judged one of these entries as many times as allowed. Please wait for the next pair to load."
+      "You've judged both of these entries as many times as allowed. Please wait for the next pair to load."
     );
   }
+  const { release: releaseJudgeEntryVotes, anchorEntryId } = reservation;
 
   let winnerElo: number;
   let loserElo: number;
@@ -2810,10 +2838,17 @@ export const submitVote = async ({
       );
     }
 
-    ({ winnerElo, loserElo } = await processEloVote(crucibleId, winnerEntryId, loserEntryId, {
-      winner: winnerEntry,
-      loser: loserEntry,
-    }));
+    ({ winnerElo, loserElo } = await processEloVote(
+      crucibleId,
+      winnerEntryId,
+      loserEntryId,
+      { winner: winnerEntry, loser: loserEntry },
+      anchorEntryId === winnerEntryId
+        ? 'winner'
+        : anchorEntryId === loserEntryId
+        ? 'loser'
+        : undefined
+    ));
   } catch (error) {
     await releaseJudgeEntryVotes().catch((releaseError: unknown) =>
       log(

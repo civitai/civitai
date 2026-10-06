@@ -148,10 +148,16 @@ describe('submitVote — after a Redis wipe', () => {
   it("gives the rating script each entry's last synced score and vote count", async () => {
     await vote(20, 10);
 
-    expect(processVote).toHaveBeenCalledWith(1, 20, 10, {
-      winner: expect.objectContaining({ score: 1520, voteCount: 20 }),
-      loser: expect.objectContaining({ score: 1510, voteCount: 10 }),
-    });
+    expect(processVote).toHaveBeenCalledWith(
+      1,
+      20,
+      10,
+      {
+        winner: expect.objectContaining({ score: 1520, voteCount: 20 }),
+        loser: expect.objectContaining({ score: 1510, voteCount: 10 }),
+      },
+      undefined
+    );
   });
 });
 
@@ -244,14 +250,59 @@ describe('submitVote — rating update', () => {
 
     await vote(10, 20);
 
-    expect(processVote).toHaveBeenCalledWith(1, 10, 20, expect.any(Object));
+    expect(processVote).toHaveBeenCalledWith(1, 10, 20, expect.any(Object), undefined);
     expect(crucibleEloRedis.getVoteCount).not.toHaveBeenCalled();
     expect(crucibleEloRedis.incrementVoteCount).not.toHaveBeenCalled();
   });
 });
 
 describe('submitVote — per-judge cap on each entry', () => {
-  it('refuses once the judge has voted on either entry as often as allowed', async () => {
+  it('refuses once the judge has voted on both entries as often as allowed', async () => {
+    const { judgeVotes } = useFakeRedis();
+    redisMock.sysRedis.eval.mockResolvedValue(1);
+    for (const field of ['10', '20'])
+      await redisMock.sysRedis.hIncrBy(
+        JUDGE_ENTRY_VOTES_KEY,
+        field,
+        CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+      );
+
+    await expect(vote()).rejects.toThrow('as many times as allowed');
+    expect(processVote).not.toHaveBeenCalled();
+    // Refused before the served pair is claimed, so it is not burned.
+    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
+    expect([judgeVotes('10'), judgeVotes('20')], 'counts after the refusal').toEqual([
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+      CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+    ]);
+  });
+
+  it.each([
+    ['loser', 20],
+    ['winner', 10],
+  ] as const)(
+    'takes a vote against an entry at the cap as an anchor vote that leaves the %s as it is',
+    async (side, anchorId) => {
+      const { judgeVotes } = useFakeRedis();
+      redisMock.sysRedis.eval.mockResolvedValue(1);
+      await redisMock.sysRedis.hIncrBy(
+        JUDGE_ENTRY_VOTES_KEY,
+        String(anchorId),
+        CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
+      );
+
+      await vote(10, 20);
+
+      expect(processVote).toHaveBeenCalledWith(1, 10, 20, expect.any(Object), side);
+      const other = anchorId === 10 ? 20 : 10;
+      expect(
+        [judgeVotes(String(anchorId)), judgeVotes(String(other))],
+        'the anchor is not charged; the other entry is'
+      ).toEqual([CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY, 1]);
+    }
+  );
+
+  it('gives back only the counted entry when an anchor vote fails', async () => {
     const { judgeVotes } = useFakeRedis();
     redisMock.sysRedis.eval.mockResolvedValue(1);
     await redisMock.sysRedis.hIncrBy(
@@ -259,12 +310,11 @@ describe('submitVote — per-judge cap on each entry', () => {
       '20',
       CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
     );
+    processVote.mockRejectedValueOnce(new Error('rating script failed'));
 
-    await expect(vote()).rejects.toThrow('as many times as allowed');
-    expect(processVote).not.toHaveBeenCalled();
-    // Refused before the served pair is claimed, so it is not burned.
-    expect(redisMock.sysRedis.eval).not.toHaveBeenCalled();
-    expect([judgeVotes('10'), judgeVotes('20')], 'counts after the refusal').toEqual([
+    await expect(vote(10, 20)).rejects.toThrow('rating script failed');
+
+    expect([judgeVotes('10'), judgeVotes('20')]).toEqual([
       0,
       CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
     ]);
@@ -283,7 +333,7 @@ describe('submitVote — per-judge cap on each entry', () => {
     );
   });
 
-  it('admits only one of two concurrent votes that would take an entry past the cap', async () => {
+  it('lets only one of two concurrent votes count against an entry at its last vote', async () => {
     const { judgeVotes } = useFakeRedis();
     redisMock.sysRedis.eval.mockResolvedValue(1);
     await redisMock.sysRedis.hIncrBy(
@@ -292,17 +342,15 @@ describe('submitVote — per-judge cap on each entry', () => {
       CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY - 1
     );
 
-    const results = await Promise.allSettled([vote(10, 20), vote(10, 30)]);
+    await Promise.all([vote(10, 20), vote(10, 30)]);
 
-    expect(results.map((r) => r.status).sort(), 'outcomes of the two votes').toEqual([
-      'fulfilled',
-      'rejected',
-    ]);
-    expect(processVote).toHaveBeenCalledTimes(1);
+    // The vote that lost the race takes 10 as its anchor and leaves its rating alone.
+    const frozenSides = processVote.mock.calls.map((call) => call[4]);
+    expect(frozenSides.sort(), 'frozen side of each vote').toEqual(['winner', undefined]);
     expect(judgeVotes('10'), 'count on the shared entry').toBe(
       CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY
     );
-    expect(judgeVotes('20') + judgeVotes('30'), 'counts on the other entries').toBe(1);
+    expect(judgeVotes('20') + judgeVotes('30'), 'counts on the other entries').toBe(2);
   });
 
   it('gives the counts back when the pair is no longer served', async () => {
