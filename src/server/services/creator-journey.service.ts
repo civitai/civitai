@@ -4,6 +4,7 @@ import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.cons
 import { ArticleStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
+import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
 import {
   creatorAggregateScoreFromMeta,
@@ -64,7 +65,7 @@ function toTier(milestone: TierDefinition, earned: boolean): CreatorScoreTier {
   // A masked tier's art would give it away as surely as its name.
   const badgeUrl =
     visible === milestone
-      ? (milestone.cosmetic?.data as { url?: string } | null)?.url ?? null
+      ? (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null
       : null;
   return {
     key: visible.key,

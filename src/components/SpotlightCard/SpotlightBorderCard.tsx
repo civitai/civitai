@@ -30,25 +30,28 @@ export function SpotlightBorderCard({
   // Written straight to the element's custom properties, so a mouse move never re-renders.
   const handleMouseMove = (e: MouseEvent<HTMLDivElement>) => {
     const el = e.currentTarget;
+    // All reads before any write, so a move costs one layout rather than one per child.
     const rect = el.getBoundingClientRect();
+    const children = [...el.querySelectorAll<HTMLElement>('[data-spotlight-local]')].map(
+      (child) => [child, child.getBoundingClientRect()] as const
+    );
     el.style.setProperty('--spotlight-x', `${e.clientX - rect.left}px`);
     el.style.setProperty('--spotlight-y', `${e.clientY - rect.top}px`);
-    el.style.setProperty('--spotlight-on', '1');
-    el.querySelectorAll<HTMLElement>('[data-spotlight-local]').forEach((child) => {
-      const box = child.getBoundingClientRect();
+    el.style.setProperty('--spotlight-opacity', '1');
+    for (const [child, box] of children) {
       child.style.setProperty('--spotlight-x', `${e.clientX - box.left}px`);
       child.style.setProperty('--spotlight-y', `${e.clientY - box.top}px`);
-    });
+    }
   };
   const handleMouseLeave = (e: MouseEvent<HTMLDivElement>) => {
-    e.currentTarget.style.setProperty('--spotlight-on', '0');
+    e.currentTarget.style.setProperty('--spotlight-opacity', '0');
   };
 
   const vars: SpotlightStyle = {
     '--spotlight-color': color,
     '--spotlight-size': `${size}px`,
     '--spotlight-border-size': `${Math.round((size * 2) / 3)}px`,
-    '--spotlight-on': 0,
+    '--spotlight-opacity': 0,
     ...style,
   };
 
@@ -63,7 +66,7 @@ export function SpotlightBorderCard({
         aria-hidden
         className="pointer-events-none absolute inset-0 rounded-[inherit] transition-opacity duration-300"
         style={{
-          opacity: 'var(--spotlight-on)',
+          opacity: 'var(--spotlight-opacity)',
           background:
             'radial-gradient(var(--spotlight-border-size) circle at var(--spotlight-x) var(--spotlight-y), var(--spotlight-color), transparent 70%)',
         }}
@@ -78,7 +81,7 @@ export function SpotlightBorderCard({
           aria-hidden
           className="pointer-events-none absolute inset-0 transition-opacity duration-500"
           style={{
-            opacity: 'var(--spotlight-on)',
+            opacity: 'var(--spotlight-opacity)',
             background:
               'radial-gradient(var(--spotlight-size) circle at var(--spotlight-x) var(--spotlight-y), color-mix(in srgb, var(--spotlight-color) 30%, transparent), transparent 70%)',
           }}
@@ -100,7 +103,7 @@ export function SpotlightDivider({ className }: { className?: string }) {
       <div
         className="absolute inset-0 transition-opacity duration-300"
         style={{
-          opacity: 'var(--spotlight-on, 0)',
+          opacity: 'var(--spotlight-opacity, 0)',
           background:
             'radial-gradient(var(--spotlight-border-size, 160px) circle at var(--spotlight-x) var(--spotlight-y), var(--spotlight-color), transparent 70%)',
         }}

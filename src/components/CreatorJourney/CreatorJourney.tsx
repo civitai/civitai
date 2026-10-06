@@ -83,7 +83,11 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
   const next = nextCreatorScoreRung(rungs, total);
   const currentTier = currentCreatorScoreTier(rungs, total);
   const articleUnlocks = journey.unlocks.filter((u) => u.scoreKind === 'articles');
-  const nextTier = journey.tiers.find((tier) => tier.threshold > total) ?? null;
+  // Unlocks between tiers fold into the higher tier's rung, so the next rung is unnamed only past the top tier.
+  const nextTier = next?.tier ?? null;
+  // A badge is earned when it is granted, not when the score crosses its threshold: granting runs in
+  // a job, and a hidden tier stays masked until then.
+  const earnedKeys = new Set(journey.earned.map((badge) => badge.key));
   const accent = accentOf(currentTier);
 
   return (
@@ -113,7 +117,10 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
         />
         <div className="relative flex flex-col gap-6 p-5 sm:p-7">
           <div className="flex flex-col items-center gap-5 text-center sm:flex-row sm:items-center sm:text-left">
-            <HeroBadge tier={currentTier ?? nextTier} earned={!!currentTier} />
+            <HeroBadge
+              tier={currentTier ?? nextTier}
+              earned={!!currentTier && earnedKeys.has(currentTier.key)}
+            />
             <Stack gap={6} className="min-w-0 flex-1">
               <Text size="xs" tt="uppercase" c="dimmed" fw={600} className="tracking-wider">
                 Your Creator Score
@@ -147,7 +154,9 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
             )}
           </div>
 
-          {journey.tiers.length > 0 && <BadgeStrip tiers={journey.tiers} total={total} />}
+          {journey.tiers.length > 0 && (
+            <BadgeStrip tiers={journey.tiers} earnedKeys={earnedKeys} nextKey={nextTier?.key} />
+          )}
         </div>
       </Card>
 
@@ -162,6 +171,7 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
               rung={rung}
               kinds={kinds}
               isNext={rung === next}
+              badgeEarned={!!rung.tier && earnedKeys.has(rung.tier.key)}
               isLast={index === rungs.length - 1}
             />
           ))}
@@ -306,7 +316,8 @@ function TierBadge({
         <EdgeMedia
           src={badgeUrl}
           alt={name}
-          width={size * 2}
+          // The source art is ~144px; two request widths let the page share cached images.
+          width={size <= 44 ? 88 : 144}
           className="size-full object-contain"
           optimized
         />
@@ -354,9 +365,16 @@ function HeroBadge({ tier, earned }: { tier: CreatorScoreTier | null; earned: bo
   );
 }
 
-function BadgeStrip({ tiers, total }: { tiers: CreatorScoreTier[]; total: number }) {
-  const earnedCount = tiers.filter((tier) => tier.threshold <= total).length;
-  const nextKey = tiers.find((tier) => tier.threshold > total)?.key;
+function BadgeStrip({
+  tiers,
+  earnedKeys,
+  nextKey,
+}: {
+  tiers: CreatorScoreTier[];
+  earnedKeys: Set<string>;
+  nextKey?: string;
+}) {
+  const earnedCount = tiers.filter((tier) => earnedKeys.has(tier.key)).length;
 
   return (
     <div className="flex flex-col gap-2">
@@ -365,8 +383,11 @@ function BadgeStrip({ tiers, total }: { tiers: CreatorScoreTier[]; total: number
       </Text>
       <div className="grid grid-cols-9 gap-1">
         {tiers.map((tier) => {
-          const state: BadgeState =
-            tier.threshold <= total ? 'earned' : tier.key === nextKey ? 'next' : 'locked';
+          const state: BadgeState = earnedKeys.has(tier.key)
+            ? 'earned'
+            : tier.key === nextKey
+            ? 'next'
+            : 'locked';
           return (
             <Tooltip
               key={tier.key}
@@ -461,15 +482,17 @@ function LadderRung({
   kinds,
   isNext,
   isLast,
+  badgeEarned,
 }: {
   rung: CreatorScoreRung;
   kinds: CreatorScoreKinds;
   isNext: boolean;
   isLast: boolean;
+  badgeEarned: boolean;
 }) {
   const reached = kinds.total >= rung.minScore;
   const accent = accentOf(rung.tier);
-  const state: BadgeState = reached ? 'earned' : isNext ? 'next' : 'locked';
+  const state: BadgeState = badgeEarned ? 'earned' : isNext ? 'next' : 'locked';
 
   return (
     <div className="flex gap-3 sm:gap-4" style={accentVar(accent)}>
