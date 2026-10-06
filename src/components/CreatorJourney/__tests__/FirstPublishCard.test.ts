@@ -59,6 +59,7 @@ const ladder = {
   tiers: [
     { key: 'score:spark', name: 'Spark', threshold: CRUCIBLE_JUDGE_MIN_CREATOR_SCORE, hint: null },
     { key: 'score:flame', name: 'Flame', threshold: CHALLENGE_MIN_CREATOR_SCORE, hint: null },
+    { key: 'score:supernova', name: 'Supernova', threshold: 1_000_000, hint: null },
   ],
 };
 
@@ -115,6 +116,20 @@ describe('FirstPublishCardView', () => {
     expect(paragraphs(el)).toMatch(
       /^Your first article is live \| Reads, reactions and comments on it now count toward your Creator Score\. Your next goal is Flame at 5,000, which unlocks: /
     );
+  });
+
+  // A prestige tier gates nothing, but it is still the next goal.
+  it('names a next tier that unlocks nothing, without an unlocks clause', () => {
+    const el = mount(
+      React.createElement(FirstPublishCardView, {
+        entityType: 'model',
+        total: 900_000,
+        ladder,
+        onClose: () => undefined,
+      })
+    );
+
+    expect(paragraphs(el)).toContain('Your next goal is Supernova at 1,000,000. |');
   });
 
   it('closes through the handler it is given', () => {

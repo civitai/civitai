@@ -111,13 +111,14 @@ export function FirstPublishCardView({
           </Text>
           <Text size="sm" c="dimmed">
             {counts}
-            {next && pending.length > 0 && (
+            {next && (next.tier || pending.length > 0) && (
               <>
                 {' '}
                 Your {currentCreatorScoreTier(rungs, total) ? 'next' : 'first'} goal is{' '}
                 {next.tier ? `${next.tier.name} at ` : 'a score of '}
-                {numberWithCommas(next.minScore)}, which unlocks:{' '}
-                {describeCreatorScoreUnlocks(pending)}.
+                {numberWithCommas(next.minScore)}
+                {pending.length > 0 && <>, which unlocks: {describeCreatorScoreUnlocks(pending)}</>}
+                .
               </>
             )}
           </Text>
