@@ -23,5 +23,8 @@ export type DecisionResolutionTables = {
     ruled_at: Generated<Timestamp>;
     apply_state: Generated<ApplyState>;
     shown: unknown;
+    answer_text: string | null;
+    answer_ticket_id: string | null;
+    answer_conversation_id: string | null;
   };
 };

@@ -1,8 +1,10 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
+import { denied } from '$lib/permissions';
 import {
   getSupportGroup,
+  groupMember,
   isGroupKey,
   isRouterVersion,
   listDuplicateTargets,
@@ -14,9 +16,12 @@ import {
   currentResolutions,
   partitionResolutions,
   recordResolution,
+  resolutionAnswer,
   type GroupRulingSummary,
   type MemberLabelSummary,
+  type ResolutionAnswer,
 } from '$lib/server/decision-resolution.service';
+import { getPublicAgentReplies } from '$lib/server/freshdesk.service';
 import { moderatorDbStatus, type ModeratorDbStatus } from '$lib/moderator-db-status';
 import {
   groupSnapshot,
@@ -56,6 +61,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
   let storeStatus: ModeratorDbStatus = 'ok';
   let groupRuling: GroupRulingSummary | null = null;
   let memberLabels: Record<string, MemberLabelSummary> = {};
+  let answer: ResolutionAnswer | null = null;
   try {
     const { groups, members } = partitionResolutions(
       await currentResolutions({
@@ -66,6 +72,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     );
     groupRuling = groups.get(groupKey) ?? null;
     memberLabels = members.get(groupKey) ?? {};
+    if (groupRuling?.ruling === 'resolved') answer = await resolutionAnswer(groupRuling.id);
   } catch (e) {
     console.error('[decisions] resolution store read failed', e);
     storeStatus = moderatorDbStatus(e);
@@ -78,6 +85,7 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     targets,
     topics: topics.map((t) => t.topic),
     groupRuling,
+    answer,
     memberLabels,
     // Posted back with a group ruling, so a group that moved underneath the page is refused.
     fingerprint: snapshotFingerprint(detail),
@@ -85,6 +93,11 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     // Both halves: the permission, and a store that can take the write. Controls are withheld rather
     // than shown-and-broken when either is missing.
     canRule: !!locals.grants['decisions.rule'] && storeStatus === 'ok',
+    // `resolved` needs both permissions; the action checks the same pair.
+    canAnswer:
+      !!locals.grants['decisions.rule'] &&
+      !!locals.grants['decisions.answer'] &&
+      storeStatus === 'ok',
   };
 };
 
@@ -126,6 +139,40 @@ async function reread(scope: Scope, groupKey: string, rawVersion: FormDataEntryV
   }
 }
 
+/**
+ * Confirm the reply a `resolved` answer cites: a public agent reply, on a ticket that is a CURRENT
+ * member of the group. `null` when it holds, else the `fail()` to return.
+ *
+ * 🔴 RE-ASKED HERE, NEVER TAKEN FROM THE FORM. The ids are posted by the page, so without this check
+ * the stored provenance would be whatever the client sent. Freshdesk being unreachable refuses the
+ * ruling rather than storing an unconfirmed source; removing the source records the answer alone.
+ */
+async function confirmAnswerSource(
+  source: NonNullable<ResolutionAnswer['source']>,
+  detail: SupportGroupDetail
+) {
+  if (!groupMember(detail, source.ticketId))
+    return fail(400, {
+      scope: 'rule' as const,
+      error: `Ticket #${source.ticketId} is no longer in this group — remove the source or pick another reply.`,
+    });
+  const replies = await getPublicAgentReplies(source.ticketId);
+  if (replies.status === 'unavailable')
+    return fail(503, {
+      scope: 'rule' as const,
+      error: `Could not confirm the source reply (${replies.reason}) — the ruling was NOT recorded. Remove the source to record the answer without it.`,
+    });
+  if (
+    replies.status === 'none' ||
+    !replies.replies.some((r) => r.conversationId === source.conversationId)
+  )
+    return fail(400, {
+      scope: 'rule' as const,
+      error: `That reply is not a public agent reply on ticket #${source.ticketId} — remove the source or pick another.`,
+    });
+  return null;
+}
+
 /** A refused write. Never `throw error()`: that would unmount a page holding a half-written note. */
 function writeFailure(scope: Scope, e: unknown, ticketId?: string) {
   console.error('[decisions] ruling write failed', e);
@@ -141,7 +188,8 @@ function writeFailure(scope: Scope, e: unknown, ticketId?: string) {
 
 /**
  * 🔴 BOTH ACTIONS ARE GATED ON `decisions.rule`, ON TOP OF THE PAGE GRANT. Opening the page is a
- * read; a ruling is labelled data, so who may produce it is a separate, deliberate grant.
+ * read; a ruling is labelled data, so who may produce it is a separate, deliberate grant. A `resolved`
+ * ruling also needs `decisions.answer` — its answer is text meant for customers.
  *
  * 🔴 NEITHER WRITES TO THE ROUTER. A ruling is appended to `decision_resolution`; `duplicate_of` and
  * `park` are recorded `apply_state = 'pending'` and the router remains the only writer to its catalog.
@@ -154,6 +202,9 @@ export const actions: Actions = {
     if (!isGroupKey(params.groupKey))
       return fail(404, { scope: 'rule' as const, error: 'No such group.' });
     const form = await request.formData();
+    // Before parsing, so a refusal never depends on what else the form held.
+    if (form.get('ruling') === 'resolved' && !locals.grants['decisions.answer'])
+      return fail(403, { scope: 'denied' as const, error: denied('decisions.answer') });
     const parsed = parseGroupRuling(form, params.groupKey);
     if (typeof parsed === 'string') return fail(400, { scope: 'rule' as const, error: parsed });
 
@@ -192,6 +243,12 @@ export const actions: Actions = {
       });
     }
 
+    const answerSource = parsed.answer?.source ?? null;
+    if (answerSource) {
+      const refused = await confirmAnswerSource(answerSource, current.detail);
+      if (refused) return refused;
+    }
+
     try {
       const { inserted } = await recordResolution({
         source: 'support-ticket',
@@ -205,7 +262,17 @@ export const actions: Actions = {
         note: parsed.note,
         // The user ID, never the username — a username can be reassigned.
         ruledBy: locals.user.id,
-        shown: groupSnapshot(current.detail),
+        // Ids only — the reply's text is customer correspondence and is never stored.
+        shown: answerSource
+          ? {
+              ...groupSnapshot(current.detail),
+              answer_source: {
+                ticket_id: answerSource.ticketId,
+                conversation_id: answerSource.conversationId,
+              },
+            }
+          : groupSnapshot(current.detail),
+        answer: parsed.answer,
       });
       if (inserted === 0)
         return fail(503, { scope: 'rule' as const, error: 'The ruling was NOT recorded.' });

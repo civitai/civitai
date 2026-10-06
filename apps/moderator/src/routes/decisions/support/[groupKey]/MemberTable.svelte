@@ -15,6 +15,7 @@
   import { probabilityLabel } from '$lib/decisions';
   import { LINK_CLASS, MUTED_LINK_CLASS, dateTime } from '$lib/format';
   import type { PageData } from './$types';
+  import type { AnswerDraft } from './answer-draft.svelte';
 
   type Member = NonNullable<PageData['detail']['decision']>['members'][number];
 
@@ -24,13 +25,24 @@
     version,
     ticketHref,
     canRule,
+    canAnswer,
+    draft,
   }: {
     members: Member[];
     labels: PageData['memberLabels'];
     version: string;
     ticketHref: (ticketId: string) => string;
     canRule: boolean;
+    canAnswer: boolean;
+    /** Opening a member's replies goes through the draft the ruling panel records. */
+    draft: AnswerDraft;
   } = $props();
+
+  /** A row toggle's look, on or off — the label buttons and "Use a reply" share it. */
+  const toggleClass = (on: boolean) =>
+    `rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
+      on ? 'border-blue-4 bg-blue-4/20 text-white' : 'border-dark-4 text-dark-2 hover:text-dark-0'
+    }`;
 
   // ticketId → the label this session just submitted, shown until its own write settles.
   const pending = new SvelteMap<string, MemberRuling>();
@@ -86,6 +98,7 @@
       <TableHead class="text-right">p novel</TableHead>
       <TableHead>Status</TableHead>
       <TableHead>Belongs?</TableHead>
+      {#if canAnswer}<TableHead>Answer</TableHead>{/if}
     </TableRow>
   </TableHeader>
   <TableBody>
@@ -127,9 +140,7 @@
                     type="submit"
                     disabled={pending.has(m.ticketId)}
                     aria-pressed={shown === r}
-                    class="rounded border px-2 py-0.5 text-xs {shown === r
-                      ? 'border-blue-4 bg-blue-4/20 text-white'
-                      : 'border-dark-4 text-dark-2 hover:text-dark-0'} disabled:opacity-50">{MEMBER_RULING_LABEL[r]}</button
+                    class={toggleClass(shown === r)}>{MEMBER_RULING_LABEL[r]}</button
                   >
                 </form>
               {/each}
@@ -141,6 +152,16 @@
             <p class="mt-1 text-xs text-red-300" role="alert">{refused.get(m.ticketId)}</p>
           {/if}
         </TableCell>
+        {#if canAnswer}
+          <TableCell>
+            <button
+              type="button"
+              aria-pressed={draft.replyTicket === m.ticketId}
+              class={toggleClass(draft.replyTicket === m.ticketId)}
+              onclick={() => (draft.replyTicket = m.ticketId)}>Use a reply ▸</button
+            >
+          </TableCell>
+        {/if}
       </TableRow>
     {/each}
   </TableBody>

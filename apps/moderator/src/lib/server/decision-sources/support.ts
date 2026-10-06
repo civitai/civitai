@@ -1,6 +1,6 @@
 import { getClickhouse } from '../clickhouse';
 import { clickhouseDate } from '../clickhouse-date';
-import { freshdeskTicketUrl } from '../freshdesk.service';
+import { freshdeskTicketUrl, isFreshdeskId } from '../freshdesk.service';
 import type { Decision } from '../../decisions';
 
 /**
@@ -277,8 +277,7 @@ export const isGroupKey = (v: unknown): v is string =>
 /** A topic slug, which doubles as an area until an area taxonomy exists. */
 export const isAreaSlug = (v: unknown): v is string =>
   typeof v === 'string' && /^[a-z0-9_-]{1,64}$/.test(v);
-export const isTicketId = (v: unknown): v is string =>
-  typeof v === 'string' && /^\d{1,20}$/.test(v);
+export const isTicketId = isFreshdeskId;
 
 // ---------------------------------------------------------------------------------------------
 // Reads.
@@ -618,6 +617,13 @@ export async function getSupportGroup(
     ].sort(),
   };
 }
+
+/**
+ * The ticket's member row in this group, or `null` when it is not a CURRENT member — the router may
+ * have re-routed it since a page loaded. The one membership test for anything acting on a member.
+ */
+export const groupMember = (d: SupportGroupDetail, ticketId: string): SupportMember | null =>
+  d.decision?.members.find((m) => m.ticketId === ticketId) ?? null;
 
 export async function listDuplicateTargets(
   input: { version: string; groupKey: string; topic: string },

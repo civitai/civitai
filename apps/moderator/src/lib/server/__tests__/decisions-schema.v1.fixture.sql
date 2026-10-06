@@ -3,8 +3,7 @@
 -- Lives in the `internal_tools` database (MODERATOR_DATABASE_URL), beside `abuse_detection_*`.
 --
 -- 🔴 APPLIED BY HAND, in each environment — no runner, no auto-apply on deploy. Until it is applied the
--- page still renders every item read-only and says the table is missing. Apply it BEFORE releasing app
--- code that writes a column or ruling it adds — until then that one write is refused.
+-- page still renders every item read-only and says the table is missing.
 --
 --   psql "$MODERATOR_DATABASE_URL" -f apps/moderator/decisions/schema.sql
 --
@@ -14,7 +13,7 @@
 --   ALTER TABLE    decision_resolution        OWNER TO internal_tools;
 --   ALTER SEQUENCE decision_resolution_id_seq OWNER TO internal_tools;
 --
--- Idempotent: safe to re-run, on an empty database AND on one an earlier version of this file built.
+-- Idempotent: safe to re-run.
 
 \set ON_ERROR_STOP on
 
@@ -55,31 +54,21 @@ CREATE TABLE IF NOT EXISTS decision_resolution (
 CREATE INDEX IF NOT EXISTS decision_resolution_item
   ON decision_resolution (source, item_key, sub_key, ruled_at DESC);
 
--- `resolved`: the canonical answer to a whole group, written by a moderator. ALTER-only, never in the
--- CREATE TABLE above, so an empty database and an upgraded one run the same statement.
---   answer_text            the answer itself — moderator-written, no customer details.
---   answer_ticket_id       optional provenance: the Freshdesk ticket, and the public agent reply on
---   answer_conversation_id it, that the text was pre-filled from. Ids only — the reply is not stored.
-ALTER TABLE decision_resolution ADD COLUMN IF NOT EXISTS answer_text            text;
-ALTER TABLE decision_resolution ADD COLUMN IF NOT EXISTS answer_ticket_id       text;
-ALTER TABLE decision_resolution ADD COLUMN IF NOT EXISTS answer_conversation_id text;
-
 -- `ADD CONSTRAINT` has no `IF NOT EXISTS`, so each is guarded by name to keep the file re-runnable.
 -- The value sets MUST equal the tuples in `src/lib/decision-rulings.ts`;
 -- `src/lib/server/__tests__/decision-resolution.schema.test.ts` applies this file and checks both
 -- directions.
---
--- 🔴 A NAME GUARD NEVER UPDATES A CONSTRAINT. On a database that already has the name it skips the
--- ADD, so an edited body reaches only empty databases: every test on a fresh database passes and
--- production keeps the old rule. A constraint whose body has changed, or is expected to, is DROPPED
--- AND RE-ADDED instead (the two at the end). Both statements are inside this one DO block, which runs
--- as one transaction, so no instant exists without the constraint. The upgrade test in the schema
--- test applies the previous version of this file first and requires the same result as an empty one.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'decision_resolution'::regclass AND conname = 'decision_resolution_source_valid') THEN
     ALTER TABLE decision_resolution ADD CONSTRAINT decision_resolution_source_valid
       CHECK (source IN ('support-ticket'));
+  END IF;
+
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'decision_resolution'::regclass AND conname = 'decision_resolution_ruling_valid') THEN
+    ALTER TABLE decision_resolution ADD CONSTRAINT decision_resolution_ruling_valid
+      CHECK (ruling IN ('correct', 'split', 'duplicate_of', 'park', 'escalate', 'skip',
+                        'belongs', 'not_belongs', 'unsure'));
   END IF;
 
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'decision_resolution'::regclass AND conname = 'decision_resolution_apply_state_valid') THEN
@@ -112,24 +101,5 @@ BEGIN
     ALTER TABLE decision_resolution ADD CONSTRAINT decision_resolution_apply_matches_ruling
       CHECK ((ruling IN ('duplicate_of', 'park')) = (apply_state <> 'n/a'));
   END IF;
-
-  -- ── Dropped and re-added on every run (see above). ──────────────────────────────────────────────
-  ALTER TABLE decision_resolution DROP CONSTRAINT IF EXISTS decision_resolution_ruling_valid;
-  ALTER TABLE decision_resolution ADD CONSTRAINT decision_resolution_ruling_valid
-    CHECK (ruling IN ('correct', 'split', 'duplicate_of', 'park', 'escalate', 'skip', 'resolved',
-                      'belongs', 'not_belongs', 'unsure'));
-
-  -- A `resolved` ruling carries its answer, and nothing else carries one — so withdrawing an answer
-  -- is a newer ruling of another kind, never an UPDATE. Provenance is optional: both ids, or neither.
-  ALTER TABLE decision_resolution DROP CONSTRAINT IF EXISTS decision_resolution_answer_valid;
-  ALTER TABLE decision_resolution ADD CONSTRAINT decision_resolution_answer_valid CHECK (
-    -- `\S`, not `btrim(...) <> ''`: btrim strips spaces only, so a newline-only answer passed it.
-    ((ruling = 'resolved') = (answer_text IS NOT NULL AND answer_text ~ '\S'))
-    AND (answer_text IS NULL OR char_length(answer_text) <= 8000)
-    AND (ruling = 'resolved' OR (answer_ticket_id IS NULL AND answer_conversation_id IS NULL))
-    AND ((answer_ticket_id IS NULL) = (answer_conversation_id IS NULL))
-    AND (answer_ticket_id IS NULL OR answer_ticket_id ~ '^[0-9]{1,20}$')
-    AND (answer_conversation_id IS NULL OR answer_conversation_id ~ '^[0-9]{1,20}$')
-  );
 END
 $$;

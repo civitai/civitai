@@ -26,6 +26,7 @@
     unruled: 'Unruled',
     ruled: 'Ruled',
     escalated: 'Escalated',
+    resolved: 'Resolved',
     all: 'All',
   };
 
