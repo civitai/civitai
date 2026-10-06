@@ -1,5 +1,6 @@
 import { error, fail } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
+import { moderatorDbStatus, storeUnavailableMessage } from '$lib/moderator-db-status';
 import {
   getAbuseFindings,
   getAbuseRun,
@@ -7,6 +8,12 @@ import {
   recordAbuseVerdict,
 } from '$lib/server/abuse-detection.service';
 import { isAbuseVerdict } from '$lib/abuse-verdicts';
+
+const ABUSE_STORE = {
+  tables: 'The abuse-detection tables',
+  database: 'the abuse-detection database',
+  schemaFile: 'schema.sql',
+};
 
 /** Shared by the load's 404 and the action's refusal, so the two cannot drift apart. */
 const parseRunId = (raw: string): number | null => {
@@ -41,20 +48,9 @@ export const load: PageServerLoad = async ({ params }) => {
     if (typeof (e as { status?: number }).status === 'number') throw e;
     console.error('[abuse-detection] run load failed', e);
     // Same discrimination as the list page. A flat "could not read the tables" here sends an
-    // operator hunting a database outage when the tables have simply never been created.
-    const code = (e as { code?: unknown }).code;
-    if (code === '42P01')
-      throw error(503, 'The abuse-detection tables do not exist yet — apply schema.sql.');
-    // See the list page: created by the wrong role is a distinct, likely, and otherwise
-    // indistinguishable-from-an-outage state.
-    if (code === '42501')
-      throw error(
-        503,
-        'The abuse-detection tables exist but this role cannot read them — re-run schema.sql as the application role.'
-      );
-    if (e instanceof Error && e.message.includes('DATABASE_URL'))
-      throw error(503, 'MODERATOR_DATABASE_URL is not configured for this environment.');
-    throw error(503, 'Could not reach the abuse-detection database.');
+    // operator hunting a database outage when the tables have simply never been created, or were
+    // created by the wrong role.
+    throw error(503, storeUnavailableMessage(moderatorDbStatus(e), ABUSE_STORE));
   }
 };
 
