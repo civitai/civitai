@@ -105,11 +105,11 @@
     </p>
   {/if}
 
-  {@render shown(states, blocked.length + unavailable.length > 0)}
+  {@render shown(states, unserved + blocked.length + unavailable.length > 0)}
 {:catch}
   <p class="mb-3 text-sm text-amber-200">
     Could not check which items were blocked by screening, so a blocked item below shows as a broken
     tile — treat one as blocked, which weighs toward Deny.
   </p>
-  {@render shown({}, false)}
+  {@render shown({}, unserved > 0)}
 {/await}
