@@ -181,7 +181,9 @@ describe('earlier-publish evidence survives the paths that clear it', () => {
       return [];
     }) as never);
     await restoreModelById({ id: MODEL_ID });
-    expect(row.status).toBe('Draft');
+    expect(row.status, 'restore SQL shape changed: update the restore emulation above').toBe(
+      'Draft'
+    );
 
     await expect(publish()).resolves.toBeDefined();
   });
