@@ -31,11 +31,23 @@ async function callHarness<T>(
   return result.body as T;
 }
 
+/** The key Check gives pasted text, which the harness's errors would otherwise call "text text". */
+export const FREE_TEXT_KEY = 'text';
+
 /** The harness reports a refused text by its position (`texts.7.fields`); name it by its key instead. */
 const nameTexts = (error: string, batch: LabText[]) =>
-  error.replace(/\btexts\.(\d+)/g, (match, i: string) =>
-    batch[Number(i)] ? `text ${batch[Number(i)].key}` : match
-  );
+  error.replace(/\btexts\.(\d+)/g, (match, i: string) => {
+    const key = batch[Number(i)]?.key;
+    if (key === undefined) return match;
+    return key === FREE_TEXT_KEY ? 'your text' : `item ${key}`;
+  });
+
+// The harness's per-item codes, in the words a moderator reads.
+const PLAIN_ERRORS: Record<string, string> = {
+  'too-short': 'not enough text to judge',
+  'entity not found': 'not found',
+};
+const plainError = (error: string) => PLAIN_ERRORS[error] ?? error;
 
 /** Texts the harness would refuse become their own errors, so they never sink a shared request. */
 function splitOversize(texts: LabText[]) {
@@ -88,7 +100,7 @@ function toLabScanResult(r: HarnessScanResult): LabScanResult {
     return {
       key: r.key,
       ok: false,
-      error: r.error,
+      error: plainError(r.error),
       ...(r.workflowId ? { workflowId: r.workflowId } : {}),
     };
   return {
@@ -172,10 +184,10 @@ type HarnessComposedEntity =
   | { entityId: number; ok: false; error: string };
 
 function toLabComposed(r: HarnessComposedEntity): LabComposedEntity {
-  if (!r.ok) return r;
+  if (!r.ok) return { ...r, error: plainError(r.error) };
   const fields = normaliseLabFields(r.fields);
   if (typeof fields === 'string') return { entityId: r.entityId, ok: false, error: fields };
-  if (!fields.length) return { entityId: r.entityId, ok: false, error: 'too-short' };
+  if (!fields.length) return { entityId: r.entityId, ok: false, error: plainError('too-short') };
   return { ...r, fields };
 }
 

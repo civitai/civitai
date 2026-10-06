@@ -121,7 +121,7 @@ describe('scanTexts', () => {
         rawContent: 'I cannot',
         elapsedMs: 12,
       },
-      { key: 'c', ok: false, error: 'too-short' },
+      { key: 'c', ok: false, error: 'not enough text to judge' },
       { key: 'd', ok: false, error: 'workflow wf-d expired', workflowId: 'wf-d' },
     ]);
     expect(call.mock.calls[0][1]).toMatchObject({ promptOverrides: { base: 'BASE PROMPT' } });
@@ -241,6 +241,17 @@ describe('harness limits', () => {
     expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([5, 1]);
   });
 
+  it('calls pasted text "your text" in a refusal', async () => {
+    call.mockResolvedValueOnce({
+      ok: false,
+      status: 400,
+      error: 'Invalid request: texts.0.fields: Too big',
+    });
+    await expect(
+      scanTexts('Model', [{ key: 'text', fields: [{ heading: 'Name', text: 'x' }] }])
+    ).rejects.toThrow('Invalid request: your text.fields: Too big');
+  });
+
   it('names a refused text by its key, not its position', async () => {
     call
       .mockResolvedValueOnce({ ok: true, body: { results: texts(8).map((t) => scannedOk(t.key)) } })
@@ -255,7 +266,7 @@ describe('harness limits', () => {
     expect(results[9]).toEqual({
       key: 't9',
       ok: false,
-      error: 'Invalid request: text t9.fields: Too big',
+      error: 'Invalid request: item t9.fields: Too big',
     });
   });
 });
@@ -292,13 +303,20 @@ describe('getPrompts / composeEntities', () => {
   });
 
   it('returns the composed results for the requested ids', async () => {
-    const results = [
-      { entityId: 1, ok: true, fields: [{ heading: 'Name', text: 'x' }], text: 'x', userId: 9 },
-      { entityId: 2, ok: false, error: 'entity not found' },
-    ];
+    const ok = {
+      entityId: 1,
+      ok: true,
+      fields: [{ heading: 'Name', text: 'x' }],
+      text: 'x',
+      userId: 9,
+    };
+    const results = [ok, { entityId: 2, ok: false, error: 'entity not found' }];
     call.mockResolvedValue({ ok: true, body: { entityType: 'Model', results } });
 
-    expect(await composeEntities('Model', [1, 2])).toEqual(results);
+    expect(await composeEntities('Model', [1, 2])).toEqual([
+      ok,
+      { entityId: 2, ok: false, error: 'not found' },
+    ]);
     expect(call.mock.calls[0][1]).toEqual({
       action: 'composeEntities',
       entityType: 'Model',
@@ -341,7 +359,7 @@ describe('getPrompts / composeEntities', () => {
         text: '## Name\nx',
         userId: 9,
       },
-      { entityId: 2, ok: false, error: 'too-short' },
+      { entityId: 2, ok: false, error: 'not enough text to judge' },
       { entityId: 3, ok: false, error: 'Every field with text needs a heading.' },
     ]);
   });
