@@ -33,12 +33,9 @@ When the source entity or its author's account is deleted, `fields` is set to nu
 ## Purge
 
 Clears the text of entity cases whose source row is gone or soft-deleted, or whose author's account is
-deleted, and nulls the stored outputs of those cases' results (a model's reason can quote the text);
-wiped cases drop out of every run's score. Free-text cases (no entity id) are never touched; a seed
-file's `synthetic: true` case may not carry an `entityId`. Opening a set's page, quoting a run and
-starting one purge that set first; this command purges every set, and prints counts only.
+deleted, and nulls the stored outputs of those cases' results. Free-text cases are never touched.
 
-**Run it weekly** (an operator task: the spoke has no scheduler). It is idempotent.
+**Run it weekly** (the spoke has no scheduler).
 
 ```bash
 pnpm --filter @civitai/moderator-app exec tsx --env-file=.env text-scan-lab/purge.ts [--set <id>]

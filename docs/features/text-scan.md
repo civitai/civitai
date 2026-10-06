@@ -51,8 +51,17 @@ A verdict that arrives after the mode has left `active` is not written to the li
 ## Testing and operations
 
 - `src/server/services/text-scan/harness.ts` composes the production prompt for a real entity and
-  scans it synchronously without recording it, prices it (`whatif`), or samples shadow verdicts for
-  grading. Locally it is reached through `/api/testing/chat-completion-scan`; on deployed builds
-  through the moderator endpoint `/api/mod/text-scan`, which attributes prompt and config writes to
-  the signed-in moderator.
+  scans it synchronously without recording it (`scanEntity`, `batchEntities`), does the same for free
+  text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
+  returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
+  (`sampleShadow`). Locally, the scan and quote actions are reached through
+  `/api/testing/chat-completion-scan`. `composeEntities` and `sampleShadow` read any entity's text
+  and author, so they are refused there (403) and only the attributed, audited moderator endpoint
+  `/api/mod/text-scan` serves them. That endpoint also attributes prompt and config writes to the
+  signed-in moderator.
+- The moderator app's `/text-scan` lab (playground, prompts with drafts and publish, test sets, scored
+  runs) drives those actions. Its tables live in the moderator database and are applied by hand; see
+  `apps/moderator/text-scan-lab/README.md`. Publishing a prompt needs the `textScan.prompt.publish`
+  permission and editing test sets needs `textScan.testSet.edit`. Neither is held by anyone until
+  granted on `/admin`, and the pages themselves are unreachable until granted there too.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.

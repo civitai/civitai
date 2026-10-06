@@ -31,15 +31,19 @@ enum and this paragraph is the fix.
 
 ## What is in here that the app does not use
 
-The pull takes all 51 tables, so the generated types describe the database rather than the subset with a
-screen. Two consequences worth stating:
+The pull takes every table, so the generated types describe the database rather than the subset with a
+screen. Consequences worth stating:
 
 - **Moderators are recorded by NAME** in `createdBy` / `lastUpdateBy` / `handledBy`, not by user id. The
   types say `string | null` because that is the truth; consolidating those onto ids is tracked in
   [`docs/moderator-app/moderator-db-backfill-tasks.md`](../../../docs/moderator-app/moderator-db-backfill-tasks.md).
-- **Nine of the 51 tables belong to `xguard-lab/`** (`sample`, `eval_run`, `eval_result`, `label_def`,
+- **Nine tables belong to `xguard-lab/`** (`sample`, `eval_run`, `eval_result`, `label_def`,
   `label_policy`, `label_term`, …). The lab shares this database, and its `schema*.sql` files are still
   where those tables are *authored* — a pull reads them, it does not own them. Change one there.
+- **Five `text_scan_*` tables belong to `text-scan-lab/`** (`text_scan_prompt_draft`,
+  `text_scan_test_set`, `text_scan_test_case`, `text_scan_test_run`, `text_scan_test_result`). They are
+  authored in `text-scan-lab/schema.sql` (applied by hand), and the app does use them. A pull reads
+  them, it does not own them. Change one there.
 - **`TimedMutes` is present but must stay unread.** A timed mute is `User.muteExpiresAt` in the *main*
   database, drained hourly by `processTimedUnmutesJob`. This table duplicated that with no consumer, so a
   mute recorded only here never lifted. It is history awaiting a drop, not storage.
