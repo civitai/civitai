@@ -47,12 +47,13 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  * meili-filter builder) — but NOT the same sort any more: see below.
  *
  * 🔴 The candidate POOL IS SEEDED BY THE REQUESTED PURPOSE FIRST, then by popularity
- * (`searchShortlistModels`). Two pages are fetched in parallel over the same gate
- * filter and merged, purpose page first:
+ * (`searchShortlistModels`). Up to two pages over the same gate filter, merged purpose
+ * page first:
  *   - PURPOSE: the gate filter AND `insight.role = <criteria.role>`, sorted
  *     `insight.qualityScore:desc` then `metrics.thumbsUpCount:desc`;
  *   - POPULARITY: the gate filter alone, sorted `metrics.thumbsUpCount:desc` — the
- *     pre-insight seed, which fills whatever the purpose page leaves empty.
+ *     pre-insight seed. Fetched ONLY when the purpose page came back short of the pool
+ *     width, and then it fills whatever the purpose page left empty.
  * Duplicates (a purpose hit that is also popular) keep their purpose-page position.
  *
  * Why not one sort. The previous seed was a single sort, quality first and thumbs
@@ -77,7 +78,10 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  * role was projected from: a model's other versions, a row re-labelled since the
  * document was written, or a floor moved since, can each reach `insightBucket` with a
  * label that does not agree or sits below the floor for its direction — and the re-rank
- * then leaves it neutral or demotes it as for any other candidate.
+ * then leaves it neutral or demotes it as for any other candidate. 🔴 A NEUTRAL one keeps
+ * its seed advantage, though: neutral candidates keep seed order, so such a version (say
+ * an unlabeled version on the requested base model, of a model whose role came from a
+ * version on another) still sorts ahead of the entire popularity fill.
  *
  * `applyInsightRanking` permutes the pool it is handed and tiebreaks on the seed index
  * (the merged purpose-then-popularity order).
@@ -107,8 +111,8 @@ export type ResourceIntentShortlistEntry = {
  *
  * `clampResourceIntentCap` is therefore the ONE bound on the pool and on each seed
  * page's `limit` below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
- * also raises this re-rank's work bound, and doubles into the fetch since there are
- * two pages. A second ceiling here was deleted for being unreachable while that
+ * also raises this re-rank's work bound, and the fetch bound with it (up to two
+ * pages). A second ceiling here was deleted for being unreachable while that
  * constant stays under it; if it is ever raised past Meilisearch's own
  * `maxTotalHits`, a page silently truncates and the ceiling has to come back.
  */
@@ -385,46 +389,15 @@ async function searchShortlistModels(
 ): Promise<ModelSearchIndexRecord[]> {
   const client = searchClient;
   if (!client) return [];
-  // 🔴 ONE DOCUMENT PER TARGETED VERSION — each page's `limit`, and the merged pool,
-  // is the POOL width, not the response cap, with no multiplier on top. A model
-  // USUALLY contributes at least one matching version, but not always: the indexed
-  // coverage and baseModel filters are both nested-array matches, so one document can
-  // match on two DIFFERENT versions and expand to zero (measured at 20 of the 49,000
-  // documents the sweep below returned, 0.04%). What carries this width is that
-  // measurement, not the invariant.
-  //
-  // The sweep: over 98 populated role x baseModel x browsing-level cells, this width
-  // filled the pool in EVERY cell at each of the caps measured — 1, 5, 50 and the
-  // maximum 255 — consuming 10-48 documents at the default cap of 50 and 173 in the
-  // worst cell at 255. ⚠️ It queried the live index but re-implemented the filter and
-  // expansion rather than calling them, so it is evidence about the index's shape, not
-  // a test of this function. ⚠️ And it was taken under the EARLIER single-page seed
-  // order: the purpose-first merge feeds `expandShortlist` different documents first,
-  // and that order has not been re-swept. Re-measure through the service before
-  // trusting it against a change to the seed or to `expandShortlist`. Caps in between
-  // were not individually swept; 255 was the hardest point, since the multi-version
-  // head is consumed first and the margin narrows with depth (2.1x at cap 50 against
-  // 1.47x at 255).
-  //
-  // By ARITHMETIC: the merged pool is at most `poolCap` documents, which is the width
-  // of the single page before the insight seed for caps 1-127, strictly narrower for
-  // 128-255, and never wider. 🔴 That bounds the POOL, not the FETCH: two pages are
-  // requested, so up to 2 x poolCap documents cross the wire and are parsed. When the
-  // purpose page comes back full the popularity page contributes nothing to the pool
-  // and is pure cost. That happens in a busy cell, where a role's labeled models
-  // outnumber the pool; how often requests land in such cells has not been measured.
-  // Same shape as the 2x page an earlier revision removed, which
-  // measured at 1.6-2.6x the payload and its blocking JSON.parse plus roughly double the
-  // index's processing time on a Meilisearch shared with the resource picker. That
-  // figure was measured for one double-width page, not for two parallel pages, so treat
-  // it as the order of magnitude and not as this design's measured cost. Because the
-  // pages are fetched in parallel, the popularity page is paid for whether or not the
-  // merge uses it.
+  // 🔴 Each page asks for `poolCap` documents — one per targeted version, no multiplier.
+  // A document USUALLY expands to at least one matching version, but not always: the
+  // coverage and baseModel filters are nested-array matches, so a document can match on
+  // two different versions and expand to zero. The merged pool is at most `poolCap`
+  // documents. The FETCH is one page (≤ poolCap documents) when the purpose page comes
+  // back full, and two sequential pages (≤ 2 x poolCap documents, two round trips) when it
+  // comes back short. Whether this width still fills the pool under the purpose-first
+  // order has not been re-swept.
   const { purpose, popularity } = buildResourceIntentSeedQueries({ filter, role, poolCap });
-  // One controller for both pages, so a failure on one cancels the other instead of
-  // leaving it holding a resource-select limiter slot (shared with the generation
-  // picker) until its own timeout, for a result nobody will read.
-  const sibling = new AbortController();
   const search = (request: SearchParams) =>
     withMeiliResourceSelect(
       (searchSignal) =>
@@ -434,21 +407,22 @@ async function searchShortlistModels(
           request,
           searchSignal
         ),
-      { signal: sibling.signal }
+      {}
     );
   try {
-    // Two calls, each under its own resource-select limiter slot and timeout, rather
-    // than one multi-search: nothing in this repo wraps `multiSearch` with the
-    // undelivered-body guard `searchWithSignal` carries. Either failing fails the seed,
-    // exactly as the single page did — there is deliberately no popularity-only
-    // fallback, so an index that cannot answer the purpose page fails loudly.
-    const [purposeResults, popularityResults] = await Promise.all([
-      search(purpose),
-      search(popularity),
-    ]);
+    // One call per page rather than a multi-search: nothing in this repo wraps
+    // `multiSearch` with the undelivered-body guard `searchWithSignal` carries. Either
+    // page failing fails the seed — there is deliberately no popularity-only fallback, so
+    // an index that cannot answer the purpose page fails loudly.
+    const purposeResults = await search(purpose);
+    // The fill is requested at the full width, not `poolCap - purpose.length`: the merge
+    // drops popularity hits already on the purpose page, so a narrower page could underfill.
+    if (purposeResults.hits.length >= poolCap) {
+      return mergeSeedHits(purposeResults.hits, [], poolCap);
+    }
+    const popularityResults = await search(popularity);
     return mergeSeedHits(purposeResults.hits, popularityResults.hits, poolCap);
   } catch (err) {
-    sibling.abort();
     if (isTransientMeiliError(err)) {
       throw new Error(`Resource-intent model search temporarily unavailable: ${String(err)}`);
     }

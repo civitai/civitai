@@ -29,12 +29,7 @@ vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
     return meiliHolder.client;
   },
   searchWithSignal: (...args: unknown[]) => searchWithSignal(...args),
-  // Passes the caller's signal through (the real wrapper combines it with a timeout), so
-  // the seed's sibling-cancel is observable.
-  withMeiliResourceSelect: (
-    fn: (signal?: AbortSignal) => unknown,
-    opts: { signal?: AbortSignal } = {}
-  ) => fn(opts.signal),
+  withMeiliResourceSelect: (fn: (signal?: AbortSignal) => unknown) => fn(undefined),
   isTransientMeiliError: () => false,
 }));
 
@@ -76,19 +71,28 @@ type FakeDoc = {
 };
 
 /** One single-version model; a label, when given, is projected the way the index does. */
-const docOf = (modelId: number, versionId: number, thumbsUpCount: number, label?: Label) =>
+const docOf = (
+  modelId: number,
+  versionId: number,
+  thumbsUpCount: number,
+  label?: Label,
+  // Multi-version models: the versions, and which one the projected label came from.
+  multi?: { versions: FakeDoc['versions']; labelVersionId: number }
+) =>
   ({
     id: modelId,
     name: `model-${modelId}`,
     type: 'LORA',
     metrics: { thumbsUpCount },
-    versions: [{ id: versionId, name: 'v1', baseModel: BASE_MODEL, canGenerate: true }],
+    versions: multi?.versions ?? [
+      { id: versionId, name: 'v1', baseModel: BASE_MODEL, canGenerate: true },
+    ],
     insight: label
       ? {
           qualityScore: label.qualityScore,
           role: label.role,
           styleFamily: label.styleFamily,
-          modelVersionId: versionId,
+          modelVersionId: multi?.labelVersionId ?? versionId,
         }
       : { qualityScore: null, role: null, styleFamily: null, modelVersionId: null },
   } satisfies FakeDoc);
@@ -249,7 +253,8 @@ describe('mergeSeedHits — purpose first, popularity fill, one entry per model'
  * more popular than everything else.
  */
 function busyCell(
-  clothing: { modelId: number; versionId: number; quality: number; thumbs: number }[]
+  clothing: { modelId: number; versionId: number; quality: number; thumbs: number }[],
+  extra: { docs: FakeDoc[]; labels: [number, Label][] } = { docs: [], labels: [] }
 ) {
   const labels = new Map<number, Label>();
   const corpus: FakeDoc[] = [];
@@ -274,6 +279,8 @@ function busyCell(
     corpus.push(docOf(c.modelId, c.versionId, c.thumbs, label));
   }
   for (let i = 0; i < 20; i++) corpus.push(docOf(5500 + i, 550000 + i, 9000 - i * 13));
+  corpus.push(...extra.docs);
+  for (const [versionId, label] of extra.labels) labels.set(versionId, label);
 
   const search = fakeIndex(corpus);
   searchWithSignal.mockImplementation(async (_index, _q, params: SearchParams) => search(params));
@@ -380,37 +387,98 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
     expect(pooled).toEqual(Array.from({ length: 10 }, (_, i) => 340000 + i));
   });
 
-  // 🔴 Either page failing fails the seed — there is no popularity-only fallback — and the
-  // surviving page is cancelled rather than left holding a limiter slot. Both directions,
-  // because a fallback written for one page only would pass the other.
-  it.each([
-    ['purpose', (params: SearchParams) => String(params.filter).includes('insight.role')],
-    ['popularity', (params: SearchParams) => !String(params.filter).includes('insight.role')],
-  ] as const)(
-    '🔴 a failing %s page fails the seed and aborts the other page',
-    async (_label, isFailingPage) => {
-      let survivorSignal: AbortSignal | undefined;
-      searchWithSignal.mockImplementation(
-        (_index, _q, params: SearchParams, signal: AbortSignal) => {
-          if (isFailingPage(params)) return Promise.reject(new Error('page failed'));
-          survivorSignal = signal;
-          // A slower request: rejects if aborted, otherwise resolves a moment later. It
-          // must be able to resolve on its own, or a mutant that swallows the failing
-          // page would hang this test into a timeout instead of failing its assertion.
-          return new Promise((resolve, reject) => {
-            const timer = setTimeout(() => resolve({ hits: [], estimatedTotalHits: 0 }), 25);
-            signal.addEventListener('abort', () => {
-              clearTimeout(timer);
-              reject(new Error('aborted'));
-            });
-          });
-        }
-      );
+  // 🔴 The popularity page is fetched ONLY when the purpose page came back short. A full
+  // purpose page fills the pool on its own, so a second request would be pure cost.
+  it('🔴 a FULL purpose page issues no popularity request', async () => {
+    busyCell(
+      Array.from({ length: 14 }, (_, i) => ({
+        modelId: 3400 + i,
+        versionId: 340000 + i,
+        quality: 0.69 - i * 0.03,
+        thumbs: 10 + i,
+      }))
+    );
 
-      await expect(
-        findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
-      ).rejects.toThrow('page failed');
-      expect(survivorSignal?.aborted).toBe(true);
-    }
-  );
+    await findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 });
+
+    const calls = seedCalls();
+    expect(calls).toHaveLength(1);
+    expect(String(calls[0].filter)).toContain('insight.role = "clothing"');
+  });
+
+  it('🔴 a SHORT purpose page is followed by the popularity request, at the full width', async () => {
+    busyCell([
+      { modelId: 3301, versionId: 330001, quality: 0.61, thumbs: 5 },
+      { modelId: 3302, versionId: 330002, quality: 0.54, thumbs: 7 },
+    ]);
+
+    await findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 });
+
+    const calls = seedCalls();
+    expect(calls).toHaveLength(2);
+    expect(String(calls[0].filter)).toContain('insight.role = "clothing"');
+    expect(String(calls[1].filter)).not.toContain('insight.role');
+    expect(calls[1].sort).toEqual(['metrics.thumbsUpCount:desc']);
+    // Not `poolCap - 2`: the merge drops popularity hits already on the purpose page.
+    expect(calls[1].limit).toBe(10);
+  });
+
+  // 🔴 Either page failing fails the seed — there is no popularity-only fallback.
+  it('🔴 a failing purpose page fails the seed and requests no popularity page', async () => {
+    searchWithSignal.mockImplementation(async (_index, _q, params: SearchParams) => {
+      if (String(params.filter).includes('insight.role')) throw new Error('page failed');
+      return { hits: [], estimatedTotalHits: 0 };
+    });
+
+    await expect(
+      findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
+    ).rejects.toThrow('page failed');
+    expect(seedCalls()).toHaveLength(1);
+  });
+
+  it('🔴 a failing popularity page (after a short purpose page) fails the seed', async () => {
+    searchWithSignal.mockImplementation(async (_index, _q, params: SearchParams) => {
+      if (!String(params.filter).includes('insight.role')) throw new Error('page failed');
+      return { hits: [], estimatedTotalHits: 0 };
+    });
+
+    await expect(
+      findResourceIntentCandidates(criteria, { browsingLevel: 3, coverage: COVERAGE, cap: 5 })
+    ).rejects.toThrow('page failed');
+    expect(seedCalls()).toHaveLength(2);
+  });
+
+  // 🔴 The SEED ADVANTAGE of a cross-base-model match, pinned as the behaviour it is. Model
+  // 3701's projected `clothing` role came from its SDXL version; the request is for Pony, so
+  // only its UNLABELED Pony version enters the pool. The re-rank leaves that version neutral
+  // — but neutral keeps seed order, so it still leads the whole popularity fill. If this
+  // changes, it should change on purpose.
+  it('🔴 a role matched on ANOTHER base model still seeds its neutral version ahead of the fill', async () => {
+    const clothingLabel = {
+      role: 'clothing',
+      styleFamily: 'photorealistic',
+      qualityScore: 0.8,
+      confidence: 0.9,
+    };
+    busyCell([], {
+      docs: [
+        docOf(3701, 370002, 1, clothingLabel, {
+          versions: [
+            { id: 370001, name: 'sdxl', baseModel: 'SDXL 1.0', canGenerate: true },
+            { id: 370002, name: 'pony', baseModel: BASE_MODEL, canGenerate: true },
+          ],
+          labelVersionId: 370001,
+        }),
+      ],
+      labels: [[370001, clothingLabel]],
+    });
+
+    const { entries } = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 3,
+    });
+
+    expect(entries.map((e) => e.versionId)).toEqual([370002, 550000, 550001]);
+  });
 });

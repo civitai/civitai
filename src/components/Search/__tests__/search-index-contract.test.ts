@@ -128,24 +128,23 @@ describe('the models index sort contract', () => {
   // pointing the client at the new name in the same release leaves the client asking for something
   // the live index has never heard of, and every sorted model search 400s until someone runs a
   // reset. Update these two lists only together with a reset that has actually shipped.
-  // 🔴 ONE ENTRY IN THE LIST BELOW IS NOT YET PROVISIONED ON THE LIVE INDEX, so this assertion is
-  // no longer purely a read-back of it. `insight.qualityScore` was added ahead of the reset that
-  // provisions it — which the sibling comment above permits for an ADDITION ("takes effect
-  // whenever a reset next happens") but which leaves a real window: until
-  // `search-index-sync-models-reset` has run, the live `models_v9` has never heard of this
-  // attribute, so ANY client that sorts on it gets `Attribute ... is not sortable` and the query
-  // 400s.
+  // `insight.qualityScore` was added to this list AHEAD of the reset that provisions it, which the
+  // sibling comment above permits for an ADDITION. Checked 2026-10-06: the production models
+  // index's sortable list now equals this list exactly, `insight.qualityScore` included, and its
+  // filterable list carries `insight.qualityScore`, `insight.role` and `insight.styleFamily` — so
+  // in production the reset HAS shipped. Other environments are not covered by that check: until
+  // `search-index-sync-models-reset` has run in one, its index has never heard of the attribute,
+  // and any client that sorts on it gets `Attribute ... is not sortable` and the query 400s.
   //
   // Today exactly one client sorts on it — `searchShortlistModels` in
   // ~/server/services/resource-intent-matcher.service.ts, whose role filter also needs
-  // `insight.role` in the index's filterable list — and it
-  // is unreachable in production while the resource-intent Flipt flag is off. That flag is the
-  // ONLY thing closing this window.
-  // 🔴 So: do not enable that flag until the reset has shipped. Flipping it first turns every
+  // `insight.role` in the index's filterable list — and it is unreachable while the
+  // resource-intent Flipt flag is off. 🔴 So: check both settings on the target environment's
+  // index before enabling that flag there. Enabling it on an unprovisioned index turns every
   // shortlist query into a 400.
   //
-  // ⚠ It is not the only attribute waiting on that reset: `sortMetrics` is in the same state for a
-  // different reason, recorded at src/components/Search/parsers/model.parser.ts:21-24 (declared
+  // ⚠ `sortMetrics` is a separate attribute still waiting on a reset, for a different
+  // reason, recorded at src/components/Search/parsers/model.parser.ts:21-24 (declared
   // nowhere yet, so the client still sorts on `metrics.*`). An earlier version of this comment
   // claimed "nothing else in either repo records this", which was wrong.
   //
@@ -159,7 +158,7 @@ describe('the models index sort contract', () => {
     expect(modelsSortableAttributes.slice().sort()).toEqual([
       'createdAt',
       'id',
-      // 🔴 NOT YET PROVISIONED ON THE LIVE INDEX — see the comment above.
+      // Provisioned in production (checked 2026-10-06); other environments — see above.
       'insight.qualityScore',
       'metrics.collectedCount',
       'metrics.commentCount',

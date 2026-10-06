@@ -77,19 +77,21 @@ The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file �
 reads it to order the shortlist.
 
 **What it orders, and what seeds it.** The ordering permutes a candidate pool that
-`searchShortlistModels` seeds from two index pages fetched in parallel over the same
-gate filter: a PURPOSE page (the filter AND `insight.role = <requested role>`, sorted
-`insight.qualityScore:desc` then `metrics.thumbsUpCount:desc`) and a POPULARITY page
-(the filter alone, sorted `metrics.thumbsUpCount:desc`). They are merged purpose page
-first, deduped by model id, and truncated to the pool width. A role with few labeled
-matches yields a short purpose page and the popularity page fills the rest.
+`searchShortlistModels` seeds from up to two index pages over the same gate filter: a
+PURPOSE page (the filter AND `insight.role = <requested role>`, sorted
+`insight.qualityScore:desc` then `metrics.thumbsUpCount:desc`) and, ONLY when that page
+comes back short of the pool width, a POPULARITY page (the filter alone, sorted
+`metrics.thumbsUpCount:desc`, at the full width because the merge drops models already
+on the purpose page). They are merged purpose page first, deduped by model id, and
+truncated to the pool width. A busy cell therefore costs one page; a role with few
+labeled matches costs a second, sequential round trip.
 
 Why two pages rather than one sort: a single quality-first sort with no role filter
 ranked labeled models by quality regardless of purpose, and a busy type × baseModel cell
 holds more labeled models than the pool is wide — one LoRA cell held ~1,265 `character`
-labels against ~131 `clothing` (a facet over the production index, 2026-10-06) — so a `clothing` request was seeded with a handful of
-clothing LoRAs among ~100 for other purposes, and the ordering below can only permute
-what it is handed.
+labels against ~131 `clothing` (a facet over the production index, 2026-10-06) — so a
+`clothing` request was seeded with a handful of clothing LoRAs among ~100 for other
+purposes, and the ordering below can only permute what it is handed.
 
 ⚠️ **The purpose page cannot filter on label confidence.** The index carries the role of
 each model's best-scoring version among those at or above the promote floor when the
@@ -99,10 +101,12 @@ one. And the pooled version is not always the one the role came from — another
 of the model (including one on a different base model, since the filter matches
 `versions.baseModel` across all versions), a row re-labelled since, or a moved floor can
 each reach the ordering with a label that disagrees or sits below the floor, where it is
-treated like any other candidate.
+treated like any other candidate. A version left NEUTRAL that way keeps its seed
+advantage, since neutral candidates keep seed order: an unlabeled version on the
+requested base model, of a model whose role came from a version on another, still sorts
+ahead of the whole popularity fill.
 
-The seed reaches `applyInsightRanking` only as the tiebreak index, so the ordering was
-left unchanged by the purpose-first seed.
+The seed reaches `applyInsightRanking` only as the tiebreak index.
 
 🔴 **A label write is ANNOUNCED to the models index, and that is a prerequisite
 rather than a nicety.** A model enters the incremental models-index sync on
@@ -281,12 +285,10 @@ order — a promotion into a fixed-width page is an eviction out of it, and what
 evicted may be an unlabeled candidate. And the SEED excludes too: whenever the purpose
 page is non-empty, its hits displace the least popular models a popularity-only pool
 would have held — by design, since that displacement is the point of seeding by
-purpose. What is bounded is the WIDTH. By ARITHMETIC: the merged pool is at most one
-page wide, identical to the pre-feature page for every cap from 1 to 127, strictly
-narrower from 128 to 255, and never wider — though two pages are now FETCHED, so up to
-twice that many documents cross the wire. MEASURED, under the earlier single-page seed
-order and not re-swept since: a 255-document page filled a 255-version pool in all 98
-populated role x baseModel x browsing-level cells, the worst consuming 173 documents.
+purpose. What is bounded is the WIDTH: the merged pool is at most `poolCap` documents,
+and a request fetches at most one page of `poolCap` when the purpose page is full, two
+(≤ 2 × `poolCap` documents) when it is short. Whether that width still fills the pool
+under the purpose-first order has not been re-swept.
 
 Four details that are decisions, not oversights.
 
@@ -443,7 +445,7 @@ which neither this evaluator nor this change provides.
 ## Rollout
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
-- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index seed** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. 🔴 It carries an operational precondition of the same kind as the two above, and it is likewise not automatic: the purpose page SORTS on `insight.qualityScore` and FILTERS on `insight.role`, so an index whose settings lack either rejects that page, and the matcher fails the whole seed rather than falling back to the popularity page alone. The sortable list reaches a live index only via a manual full reset; the filterable list also via `src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts`. Check both settings on the target index before opening the flag there.
+- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index seed** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. 🔴 It carries an operational precondition of the same kind as the two above, and it is likewise not automatic: the purpose page SORTS on `insight.qualityScore` and FILTERS on `insight.role`, so an index whose settings lack either rejects that page, and the matcher fails the whole seed rather than falling back to the popularity page alone. The sortable list reaches a live index only via a manual full reset; the filterable list also via `src/pages/api/admin/temp/apply-models-index-filterable-attributes.ts`. Checked 2026-10-06: the production models index carries both (and `insight.styleFamily` filterable), and the purpose-page query shape returned results there without error. Other environments may differ — check both settings on the target index before opening the flag there.
 - **M3 (committed, never run):** the gold-set study. It does NOT grade clause (iii) above. See the section above.
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.

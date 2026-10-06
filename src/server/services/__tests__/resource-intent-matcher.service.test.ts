@@ -239,7 +239,7 @@ describe('findResourceIntentCandidates', () => {
   // The seed's QUERY SHAPE (the purpose page and the popularity page) and its merge are
   // pinned in ./resource-intent-matcher.seed.test.ts, against an in-memory index that
   // honours the role filter and the sort arrays. Every hit fixture in THIS file is served
-  // to both pages alike, so here the merge reduces to the fixture order.
+  // to whichever pages are requested alike, so here the merge reduces to the fixture order.
   it('returns the capped shortlist from the seed', async () => {
     searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
     const { entries } = await findResourceIntentCandidates(criteria, {
