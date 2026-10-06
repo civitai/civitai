@@ -4,10 +4,16 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import type * as NextRouter from 'next/router';
 import type * as GateMessage from '~/components/CreatorJourney/CreatorScoreGateMessage';
-import { CrucibleJudgeScoreRequired } from '~/components/Crucible/CrucibleJudgeScoreRequired';
+import { ChallengeCreateRequirements } from '~/components/Challenge/ChallengeCreateRequirements';
+import { CHALLENGE_MIN_CREATOR_SCORE } from '~/shared/constants/challenge.constants';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 
+vi.mock('next/router', async (importOriginal) => ({
+  ...(await importOriginal<typeof NextRouter>()),
+  useRouter: () => ({ back: vi.fn(), push: vi.fn() }),
+}));
 vi.mock('~/components/CreatorJourney/CreatorScoreGateMessage', async (importOriginal) => {
   const original = await importOriginal<typeof GateMessage>();
   const { createElement } = await import('react');
@@ -29,7 +35,12 @@ const act = (React as unknown as { act: typeof actType }).act;
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function render(props: React.ComponentProps<typeof CrucibleJudgeScoreRequired>) {
+function renderScoreRow(current: number) {
+  const met = current >= CHALLENGE_MIN_CREATOR_SCORE;
+  const eligibility = {
+    canCreate: met,
+    requirements: [{ key: 'score', met, current, min: CHALLENGE_MIN_CREATOR_SCORE }],
+  } as unknown as React.ComponentProps<typeof ChallengeCreateRequirements>['eligibility'];
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -38,11 +49,11 @@ function render(props: React.ComponentProps<typeof CrucibleJudgeScoreRequired>) 
       React.createElement(
         MantineProvider,
         null,
-        React.createElement(CrucibleJudgeScoreRequired, props)
+        React.createElement(ChallengeCreateRequirements, { eligibility })
       )
     );
   });
-  return container;
+  return document.body.textContent ?? '';
 }
 
 afterEach(() => {
@@ -50,23 +61,18 @@ afterEach(() => {
   container?.remove();
 });
 
-describe('CrucibleJudgeScoreRequired', () => {
-  it('names the threshold, the judge’s own score, and the gap', () => {
-    const el = render({ score: 120, backHref: '/crucibles/1/test' });
-
-    expect(el.textContent).toContain('Judging needs a Creator Score of 500');
-    expect(el.textContent).toContain("You're at 120, 380 to go.");
-    const hrefs = [...el.querySelectorAll('a')].map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual(['/user/account#creator-score', '/crucibles/1/test']);
+describe('ChallengeCreateRequirements score row', () => {
+  it('tells someone below the gate how far they have to go', () => {
+    const text = renderScoreRow(CHALLENGE_MIN_CREATOR_SCORE - 100);
+    expect(text).toContain("You're at 4,900, 100 to go.");
+    expect(text).not.toContain('Your Creator Score is');
   });
 
-  it('still explains the threshold when only the server refusal is known', () => {
-    const el = render({ backHref: '/crucibles/1/test' });
-
-    expect(el.textContent).toContain('Judging needs a Creator Score of 500');
-    expect(el.textContent).not.toContain("You're at");
-    expect(el.textContent).toMatch(/grows when people react to, comment on or download/);
-    const hrefs = [...el.querySelectorAll('a')].map((a) => a.getAttribute('href'));
-    expect(hrefs).toEqual([CREATOR_JOURNEY_HREF, '/crucibles/1/test']);
+  it('states the score of someone who meets it, without a gap', () => {
+    const text = renderScoreRow(CHALLENGE_MIN_CREATOR_SCORE + 250);
+    expect(text).toContain('Your Creator Score is 5,250.');
+    expect(text).not.toContain('to go');
+    const hrefs = [...document.body.querySelectorAll('a')].map((a) => a.getAttribute('href'));
+    expect(hrefs).toContain(CREATOR_JOURNEY_HREF);
   });
 });

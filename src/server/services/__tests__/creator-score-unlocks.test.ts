@@ -17,10 +17,12 @@ import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
   getCreatorScoreUnlocks,
+} from '~/server/services/creator-score-unlocks.service';
+import {
   nextCreatorScoreUnlocks,
   type CreatorScoreKind,
   type CreatorScoreUnlock,
-} from '~/server/services/creator-score-unlocks.service';
+} from '~/shared/utils/creator-score-unlocks';
 import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
