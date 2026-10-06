@@ -96,18 +96,18 @@ vi.mock('~/server/search-index/base.search-index', async (importOriginal) => ({
 }));
 
 /**
- * `insight.qualityScore` is the attribute the resource-intent pool is SEEDED by,
  * `insight.role` / `insight.styleFamily` are the two MEANING axes — filterable, not
- * sortable, nothing reads them yet — and `insight.modelVersionId` is the id of the version
- * all three were taken from, projected but declared in NO attribute list, so no search path
- * can return it at all (argued at the projection site in ../models.search-index.ts; the four
- * absences are pinned below). This file pins the wiring that puts all four on a document.
+ * sortable — and the resource-intent pool's purpose page FILTERS on `insight.role` and
+ * SORTS on `insight.qualityScore`; `insight.styleFamily` is read by nothing.
+ * `insight.modelVersionId` is the id of the version all three were taken from, projected but
+ * declared in NO attribute list, so no search path can return it at all (argued at the
+ * projection site in ../models.search-index.ts; the four absences are pinned below). This
+ * file pins the wiring that puts all four on a document.
  *
- * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's sort array. Adding the axes to the
- * projection changed `searchShortlistModels` not at all — what the index WRITES and how the
- * seed ORDERS are separable — and that array is already pinned whole by
- * `toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc'])` in
- * ~/server/services/__tests__/resource-intent-matcher.service.test.ts. A second guard here
+ * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's queries. What the index WRITES and
+ * how the seed QUERIES are separable, and the two seed pages (filter, sort and limit) are
+ * already pinned in ~/server/services/__tests__/resource-intent-matcher.seed.test.ts, which
+ * also runs the matcher against an in-memory index that honours them. A second guard here
  * would fail in exactly the cases that one already fails in, so there isn't one.
  *
  * ⚠️ An earlier version of this paragraph said "the attribute lists reach a live index only

@@ -96,7 +96,7 @@ const genResource = (id: number) => ({
   air: `air:${id}`,
 });
 
-// Popularity-descending, which is the order the index sort produces.
+// Served to both seed pages alike, so after the merge's dedupe this is the seed order.
 const SEED_HITS = [hitFor(8801, 81001, 94), hitFor(8802, 82002, 57), hitFor(8803, 83003, 19)];
 
 beforeEach(() => {
@@ -154,7 +154,7 @@ describe('resource-intent — a label changes the served response', () => {
       },
       // 82002 carries no row and sorts between the two. (Not "the ~99% case" an
       // earlier version of this comment claimed — that is the corpus-wide rate, and
-      // coverage inside a popularity-seeded pool measures 33-45%.)
+      // coverage inside a popularity-ordered top-100 measured 33-45%.)
       {
         modelVersionId: 83003,
         role: 'style',
@@ -232,7 +232,7 @@ describe('resource-intent — a label changes the served response', () => {
 
     expect(redisMock.redis.packed.set).toHaveBeenCalledTimes(1);
     expect(redisMock.redis.packed.set.mock.calls[0][2]).toEqual({ EX: 60 });
-    // What was served is the popularity seed order, unordered by any label — which
+    // What was served is the seed order, with no per-version label ordering — which
     // is exactly why the hour was wrong.
     expect(result.suggestions.map((s) => s.versionId)).toEqual([81001, 82002, 83003]);
     // And not a degrade: a real intent, real suggestions, the vendor's own model.

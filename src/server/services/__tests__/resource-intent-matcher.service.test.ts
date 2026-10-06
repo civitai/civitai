@@ -236,44 +236,19 @@ describe('findResourceIntentCandidates', () => {
     baseModel: 'SDXL 1.0',
   };
 
-  it('seeds the pool by INSIGHT first and popularity second, and returns the capped shortlist', async () => {
+  // The seed's QUERY SHAPE (the purpose page and the popularity page) and its merge are
+  // pinned in ./resource-intent-matcher.seed.test.ts, against an in-memory index that
+  // honours the role filter and the sort arrays. Every hit fixture in THIS file is served
+  // to both pages alike, so here the merge reduces to the fixture order.
+  it('returns the capped shortlist from the seed', async () => {
     searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
     const { entries } = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 50,
     });
-    const args = meiliArgsOf();
-    expect(args.sort).toEqual(['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc']);
-    expect(args.limit).toBeGreaterThanOrEqual(50);
     expect(entries).toHaveLength(1);
     expect(entries[0]).toMatchObject({ versionId: 11, modelType: 'LORA', baseModel: 'SDXL 1.0' });
-  });
-
-  // 🔴 Separate from the whole-array assertion above on purpose, and it is the one that encodes
-  // the POINT of the change rather than its spelling. The arc's closing condition is that the
-  // pool stops being popularity-SEEDED; `metrics.thumbsUpCount:desc` legitimately remains in the
-  // array as the SECOND key (it is what orders the ~99% of documents that carry no label — see
-  // `modelInsightQualityScore`). So "popularity is absent" is the wrong invariant and a grep for
-  // that string is the wrong guard: what must hold is that popularity is not FIRST.
-  //
-  // Demoting insight to second, or dropping it, restores a popularity-seeded pool while the sort
-  // array still mentions insight — which reads as correct in a diff. This fails on exactly that.
-  it('🔴 never lets popularity be the FIRST sort key', async () => {
-    searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
-    await findResourceIntentCandidates(criteria, {
-      browsingLevel: 3,
-      coverage: COVERAGE,
-      cap: 50,
-    });
-    const sort = meiliArgsOf().sort ?? [];
-    expect(sort.length).toBeGreaterThan(0);
-    expect(sort[0]).toBe('insight.qualityScore:desc');
-    expect(sort[0]).not.toMatch(/thumbsUpCount/);
-    // A second key is REQUIRED, not optional: without one, the unlabeled documents come back in
-    // document order. Measured against Meilisearch v1.15.0 — they are not dropped and they sort
-    // last in both directions, but their internal order is arbitrary until a second key orders it.
-    expect(sort.length).toBeGreaterThanOrEqual(2);
   });
 
   it('returns [] without querying when the role is none', async () => {
@@ -450,13 +425,13 @@ describe('findResourceIntentCandidates — the labels change the response', () =
       versions: [{ id: versionId, name: 'v1', baseModel: 'SDXL 1.0', canGenerate: true }],
     });
 
-  // Meilisearch hands these back popularity-descending, which is the seed order.
+  // Served to both seed pages alike, so after the merge's dedupe this IS the seed order.
   const seed = [hitFor(7701, 10701, 97), hitFor(7702, 20802, 61), hitFor(7703, 30903, 23)];
 
-  it('🔴 orders the shortlist by the labels, not by the popularity seed', async () => {
+  it('🔴 orders the shortlist by the labels, not by the seed order', async () => {
     searchWithSignal.mockResolvedValue({ hits: seed, estimatedTotalHits: 3 });
     dbMock.dbRead.resourceInsight.findMany.mockResolvedValue([
-      // The most popular candidate is also the highest-quality one and agrees on neither axis.
+      // The first-seeded candidate is also the highest-quality one and agrees on neither axis.
       insightRow(10701, {
         role: 'character',
         styleFamily: 'pixel_retro',
@@ -480,7 +455,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     expect(entries.map((e) => e.versionId)).toEqual([30903, 20802, 10701]);
   });
 
-  it('🔴 promotes a candidate the popularity seed ranked outside the cap', async () => {
+  it('🔴 promotes a candidate the seed ranked outside the cap', async () => {
     searchWithSignal.mockResolvedValue({
       hits: [...seed, hitFor(7704, 40904, 8)],
       estimatedTotalHits: 4,

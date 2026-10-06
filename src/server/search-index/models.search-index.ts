@@ -352,8 +352,12 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // refinement widget, which is where the array form in the retracted claim came from —
       // the two coexist, and reading only the widget is how the singular one was missed.
       //
-      // So the two are un-ANDed today for one reason only: nothing reads `insight.*` at all
-      // yet. That is the half about to change. The FIRST `insight.*` filter added to that page
+      // So the two are un-ANDed on that page today for one reason only: the page reads no
+      // `insight.*` yet. (One server-side reader exists — the resource-intent matcher's
+      // purpose seed filters `insight.role` beside the ARRAY form `versions.baseModel IN
+      // [...]`, never the singular `version.*`, so it does not inherit this predicate. It has
+      // the any-version analogue instead: the role can come from a version on another base
+      // model than the versions the shortlist expands to.) The FIRST `insight.*` filter added to that page
       // inherits a cross-version `version.*` predicate whether its author asks for one or not,
       // and the disagreement probability rises with a model's version count — which correlates
       // with maturity, i.e. with whatever outcome such a filter is being judged on.
