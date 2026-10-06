@@ -19,6 +19,7 @@ import {
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
+import { showCreatePostError } from '~/components/Post/showCreatePostError';
 import { showErrorNotification, showWarningNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { getStepMeta } from './GenerationForm/generation.utils';
@@ -128,11 +129,7 @@ export function GeneratedImageActions({
       });
       deselect();
     } catch (e) {
-      const error = e as Error;
-      showErrorNotification({
-        title: 'Failed to create post',
-        error: new Error(error.message),
-      });
+      showCreatePostError((e as Error).message);
     }
   };
 

@@ -4,10 +4,10 @@ import { isDailyPostLimitMessage } from '~/server/schema/post.schema';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 import { showErrorNotification } from '~/utils/notifications';
 
-export function showCreatePostError(message: string) {
+export function showCreatePostError(message: string, title = 'Failed to create post') {
   const atDailyLimit = isDailyPostLimitMessage(message);
   showErrorNotification({
-    title: 'Failed to create post',
+    title,
     error: new Error(message),
     reason: atDailyLimit ? (
       <>
