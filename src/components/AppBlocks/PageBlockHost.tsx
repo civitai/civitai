@@ -2154,7 +2154,8 @@ export function PageBlockHost({
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
   // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
-  // consent payload server-side, then the write. Both are block-token-authed.
+  // consent payload server-side, then the write. Both take the block token; the
+  // write also requires the viewer's signed-in session.
   const previewPostFromAppMutation = trpc.blocks.previewPostFromApp.useMutation();
   const createPostFromAppMutation = trpc.blocks.createPostFromApp.useMutation();
 
@@ -4431,8 +4432,8 @@ export function PageBlockHost({
                   // write resolve `sources` independently, so a workflow that
                   // gains an output between them would publish more images than
                   // the dialog displayed. The server refuses on a mismatch. This
-                  // value is host chrome, not block input: the block never holds
-                  // the block token and cannot reach the procedure.
+                  // value comes from the server's preview via host chrome, never
+                  // from block input.
                   confirmedImageCount: preview.images.length,
                 });
                 settlement.reply({ result });
