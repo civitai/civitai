@@ -4,7 +4,7 @@ import type { UploadPartError } from '~/utils/upload-retry';
 import {
   createPartStallWatchdog,
   describePartFailure,
-  PART_RESPONSE_TIMEOUT_MS,
+  getPartRetryDelay,
   shouldRetryPartError,
 } from '~/utils/upload-retry';
 
@@ -19,14 +19,21 @@ const SUPPORTED_CONTENT_TYPES = [
   'video/webm',
 ] as const;
 const PRESIGN_TIMEOUT_MS = 15_000;
-// Each attempt fetches a fresh presigned URL: nothing says the previous one is reusable.
+// Silence allowed after the body is sent. Short because a browser can report a small body as sent
+// before it leaves the device, so on a dead link this is the window the user actually waits out.
+const RESPONSE_TIMEOUT_MS = 60_000;
 const MAX_ATTEMPTS = 2;
 
 type SupportedContentType = (typeof SUPPORTED_CONTENT_TYPES)[number];
 
 /** `kind` is built only from fixed strings and integer statuses, so it is safe to log as-is. */
 export class ConsumerBlobUploadError extends Error {
-  constructor(message: string, readonly kind: string, readonly retryable: boolean) {
+  constructor(
+    message: string,
+    readonly kind: string,
+    readonly retryable: boolean,
+    readonly failure?: UploadPartError
+  ) {
     super(message);
     this.name = 'ConsumerBlobUploadError';
   }
@@ -38,7 +45,9 @@ export class ConsumerBlobUploadError extends Error {
  */
 export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignResponse> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), PRESIGN_TIMEOUT_MS);
+  // The watchdog rather than a bare timer so time in a backgrounded tab does not count.
+  const watchdog = createPartStallWatchdog(() => controller.abort());
+  watchdog.arm(PRESIGN_TIMEOUT_MS);
   try {
     const response = await fetch('/api/orchestrator/getConsumerBlobUploadUrl', {
       signal: controller.signal,
@@ -47,7 +56,8 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
       throw new ConsumerBlobUploadError(
         response.status === 403 ? await response.text() : 'Failed to get upload URL',
         `presign-http-${response.status}`,
-        false
+        response.status === 429 || response.status >= 500,
+        { status: response.status, retryAfter: response.headers.get('Retry-After') }
       );
     }
     return await response.json();
@@ -65,7 +75,7 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
       true
     );
   } finally {
-    clearTimeout(timer);
+    watchdog.clear();
   }
 }
 
@@ -77,7 +87,7 @@ function toUploadError(err: UploadPartError, responseText: string) {
     : err.networkError
     ? 'Upload failed. Check your connection and try again.'
     : `Failed to upload blob: ${responseText || err.status}`;
-  return new ConsumerBlobUploadError(message, kind, shouldRetryPartError(err));
+  return new ConsumerBlobUploadError(message, kind, shouldRetryPartError(err), err);
 }
 
 function postBlob(uploadUrl: string, data: Blob, contentType: string) {
@@ -94,7 +104,7 @@ function postBlob(uploadUrl: string, data: Blob, contentType: string) {
     xhr.upload.addEventListener('progress', () => watchdog.arm());
     xhr.upload.addEventListener('load', () => {
       bodySent = true;
-      watchdog.arm(PART_RESPONSE_TIMEOUT_MS);
+      watchdog.arm(RESPONSE_TIMEOUT_MS);
     });
     xhr.addEventListener('loadend', () => {
       watchdog.clear();
@@ -130,7 +140,7 @@ function postBlob(uploadUrl: string, data: Blob, contentType: string) {
 
 /**
  * Uploads a blob/file to the orchestrator using a presigned URL, directly from the browser.
- * A stalled or dropped upload is aborted and retried once before the error is thrown.
+ * Retries once, with a fresh presigned URL, on a stall, network error, 429 or 5xx.
  *
  * @throws Error if file exceeds 64MB, has unsupported content type, or the upload fails
  */
@@ -150,6 +160,7 @@ export async function uploadConsumerBlob(data: Blob | File): Promise<UploadConsu
 
   for (let attempt = 1; ; attempt++) {
     try {
+      // Re-presigned per attempt: nothing says a used upload URL can be reused.
       const { uploadUrl } = await getConsumerBlobUploadUrl();
       return await postBlob(uploadUrl, data, contentType);
     } catch (e) {
@@ -161,6 +172,8 @@ export async function uploadConsumerBlob(data: Blob | File): Promise<UploadConsu
         resolveStack: false,
       });
       if (!e.retryable || attempt >= MAX_ATTEMPTS) throw e;
+      const delay = getPartRetryDelay(e.failure ?? { status: null }, attempt - 1);
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
   }
 }

@@ -33,16 +33,6 @@ export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
 // any value short enough to catch a stall would kill a legitimate 25 MB part on a slow link.
 const PART_STALL_TIMEOUT_MS = 30_000;
 
-// The VISIBLE-silence window once the body is fully sent, and wider than the body's because a
-// server legitimately takes its time producing an ETag while no `upload.progress` re-arms it.
-//
-// 🔴 NOT a cap on the wait — sizing it from a total-wait budget sizes the wrong quantity.
-// `createPartStallWatchdog` re-arms across a hidden tab, so a backgrounded response legitimately
-// takes multiples of this (17 minutes, in the hidden-across case in `useS3Upload.test.ts`). And
-// the MAGNITUDE has no rationale: it is derived from no measured ETag latency, and no sentence
-// here should be read as one.
-export const PART_RESPONSE_TIMEOUT_MS = 5 * 60_000;
-
 /**
  * The silence window for one in-flight part: `arm` restarts it, `clear` ends it.
  *
