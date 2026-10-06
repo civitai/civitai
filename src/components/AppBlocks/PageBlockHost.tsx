@@ -52,6 +52,7 @@ import {
   type CreatePostPreview,
 } from './createPostFromAppGate';
 import { CreatePostConsentBody } from './CreatePostConsentBody';
+import { handlePrepareTrainingDataset } from './prepareTrainingDatasetGate';
 import {
   buildTrainingConsentCopy,
   resolveRunTrainingRequest,
@@ -4575,6 +4576,26 @@ export function PageBlockHost({
     submitWorkflowMutation,
     reportNoToken,
   ]);
+
+  // ── PREPARE_TRAINING_DATASET → TRAINING_DATASET_RESULT ─────────────────────
+  // Step 1 of the training flow: the host calls `blocks.prepareTrainingDataset`
+  // with the page's block token, which the block's own origin cannot reach. No
+  // dialog — nothing is charged. Decision + reply live in `prepareTrainingDatasetGate.ts`.
+  useEffect(() => {
+    const off = onMessage<unknown>('PREPARE_TRAINING_DATASET', (raw) => {
+      void handlePrepareTrainingDataset({
+        raw,
+        ready: readGateStatus() === 'ready',
+        signedIn: viewer != null,
+        reviewNack,
+        token,
+        prepare: (input) => trpcUtils.client.blocks.prepareTrainingDataset.mutate(input),
+        send,
+        onNoToken: () => reportNoToken('PREPARE_TRAINING_DATASET'),
+      });
+    });
+    return off;
+  }, [onMessage, send, token, readGateStatus, viewer, reviewNack, trpcUtils, reportNoToken]);
 
   // ONE sanitized label for the whole launch surface — the avatar initial, the
   // loading skeleton's accessible name and the visible "Starting …" copy all derive from

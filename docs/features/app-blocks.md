@@ -379,8 +379,9 @@ read that file. As of this writing the families are:
   surface and both stay (see "Direction" under Routes). Page host only today.
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
-  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, and `RUN_TRAINING` (→ `TRAINING_RESULT`, page
-  host only — see "Training runs").
+  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, `PREPARE_TRAINING_DATASET` (→
+  `TRAINING_DATASET_RESULT`) and `RUN_TRAINING` (→ `TRAINING_RESULT`), the last two
+  page host only — see "Training runs".
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
 - **Resource pickers** (host chrome so the iframe only learns the one resource the
@@ -465,8 +466,22 @@ own fail-closed flag, `app-blocks-training-kind`. Page tokens only: dev, dev-tun
 review-sandbox tokens are refused, and so is an editor's read-only private run. The app
 owner's own private run is allowed, under the private-run Buzz cap.
 
-1. **Dataset** — `blocks.prepareTrainingDataset({ items: [{ imageId, caption }] })`
-   admits only the viewer's own scanned, unflagged images within the token's maturity
+**Prerequisites.** The app is a page app (`/apps/run/<slug>`); the model slot has no
+training bridge and answers both training messages with an error. The manifest declares
+`ai:write:budgeted`, and the viewer has granted it. `app-blocks-training-kind` is on for
+the viewer, and the viewer is signed in. Steps 1–3 check these server-side.
+
+1. **Dataset** — `PREPARE_TRAINING_DATASET { requestId, items: [{ imageId, caption }] }`
+   → `TRAINING_DATASET_RESULT { requestId, result: { datasetId, count, rejected } }` or
+   `{ requestId, error }`. The block cannot call the procedure itself (the web tRPC
+   endpoint refuses its origin), so the host calls `blocks.prepareTrainingDataset` with
+   the page's block token. No dialog: preparing charges nothing. The host refuses a
+   payload that fails the server's item schema (`blockTrainingDatasetItemsSchema`: 1 to
+   `BLOCK_TRAINING_DATASET_MAX_ITEMS` (50) items, positive integer ids, captions up to
+   `BLOCK_TRAINING_CAPTION_MAX_CHARS` (1,000) characters, no other keys) with
+   `invalid training dataset`, before any call; its other refusals are `review-mode`,
+   `block is not ready`, `sign in to train` and `no block token`. Server refusals arrive
+   in the same `error` field. The server admits only the viewer's own scanned, unflagged images within the token's maturity
    ceiling, moderates the captions, imports the admitted images under the viewer's
    orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
    bound to the viewer, app and install; the image count is always server-derived.
@@ -488,6 +503,15 @@ owner's own private run is allowed, under the private-run Buzz cap.
    same body (new estimate, new confirmation) reuses that run's orchestrator id; but after a
    dropped connection the server may already have started the run, and a retry of the same body
    then starts a second, separately charged run. The block cannot tell these cases apart.
+4. **Follow the run** — `TRAINING_RESULT` carries the submit's `snapshot`; poll it with
+   `POLL_WORKFLOW`, or list the app's runs with `QUERY_APP_WORKFLOWS`. Both carry
+   `trainedEpochs: [{ $type, epochNumber }]` for the epochs whose checkpoint is ready,
+   and only once the run's moderation status is `approved`; the field is absent until then.
+5. **Publish** — the block sends the viewer to the training publish wizard,
+   `/models/train/from-orchestrator?workflowId=…&epoch=…`, with an `epochNumber` from
+   `trainedEpochs`. The checkpoint itself never reaches the block. Once the wizard has
+   created the model, `publishedModel: { modelId, modelVersionId, published }` appears on
+   the run (`published` is false while it is a draft).
 
 A confirmed run may cost more than the token's per-call budget, up to
 `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.

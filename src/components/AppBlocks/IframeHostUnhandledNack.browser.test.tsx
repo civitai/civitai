@@ -263,6 +263,32 @@ describe('IframeHost NACKs a page-only REQUEST-style message instead of hanging'
     replies.stop();
   });
 
+  test('PREPARE_TRAINING_DATASET is declared page-only, REQUEST-style, replying TRAINING_DATASET_RESULT', () => {
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.IframeHost).not.toBe('required');
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.PageBlockHost).toBe('required');
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.request).toBe(true);
+    expect(INVENTORY.PREPARE_TRAINING_DATASET.reply).toBe('TRAINING_DATASET_RESULT');
+  });
+
+  test('PREPARE_TRAINING_DATASET gets a TRAINING_DATASET_RESULT error on the model slot, not a hang', async () => {
+    const replies = await mountAndReady();
+    postFromBlock('PREPARE_TRAINING_DATASET', {
+      requestId: 'rq_dataset',
+      items: [{ imageId: 1, caption: '' }],
+    });
+    await vi.waitFor(
+      () => {
+        if (replies.of('TRAINING_DATASET_RESULT').length === 0) throw new Error('no reply yet');
+      },
+      { timeout: 1000, interval: 5 }
+    );
+    expect(replies.of('TRAINING_DATASET_RESULT')[0].payload).toEqual({
+      requestId: 'rq_dataset',
+      error: 'unsupported on this host',
+    });
+    replies.stop();
+  });
+
   test('a message with NO requestId is not answered — there is nothing to correlate to', async () => {
     // 🔴 NOT AN INVARIANT GUARD, despite passing at `origin/main` (where NOTHING
     // is answered). It DISCRIMINATES a real mutation of the new code: remove the
