@@ -625,4 +625,35 @@ describe('free-text actions', () => {
       ],
     });
   });
+
+  it('passes an object-shaped orchestrator error through as text', async () => {
+    const error = { status: 400, detail: 'model not available' };
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: undefined, error } as never);
+    const res = await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect((res._body() as { results: unknown[] }).results[0]).toEqual({
+      key: 'a',
+      ok: false,
+      error: JSON.stringify(error),
+    });
+  });
+
+  it('passes a string orchestrator error through unchanged', async () => {
+    vi.mocked(submitWorkflow).mockResolvedValue({ data: undefined, error: 'quota' } as never);
+    const res = await call({
+      action: 'quoteTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
+      promptOverrides: SCAM_OVERRIDES,
+    });
+    expect((res._body() as { results: unknown[] }).results[0]).toEqual({
+      key: 'a',
+      ok: false,
+      error: 'quota',
+    });
+  });
 });

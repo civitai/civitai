@@ -218,6 +218,12 @@ async function composeStep({ subject, profile, promptOverrides, model, thinking 
   };
 }
 
+// The client types `error` loosely; an object would otherwise reach the moderator as [object Object].
+function workflowErrorText(error: unknown, fallback: string): string {
+  if (error == null) return fallback;
+  return typeof error === 'string' ? error : JSON.stringify(error);
+}
+
 async function scanComposed(input: ComposeInput & { wait: number }) {
   const ctx = await composeStep(input);
   if (!ctx.ok) return ctx;
@@ -227,7 +233,7 @@ async function scanComposed(input: ComposeInput & { wait: number }) {
     query: { wait: input.wait },
     body: { currencies: [], steps: [ctx.step] },
   });
-  if (!data?.id) return { ok: false as const, error: error ?? 'no workflow id' };
+  if (!data?.id) return { ok: false as const, error: workflowErrorText(error, 'no workflow id') };
 
   const step = findChatCompletionStep((data as { steps?: unknown }).steps);
   const parse = parseTextScanStep(step, input.profile.labels);
@@ -255,7 +261,7 @@ async function quoteComposed(input: ComposeInput) {
   });
   const costTotal = data?.cost?.total;
   if (typeof costTotal !== 'number')
-    return { ok: false as const, error: error ?? 'no cost in whatif response' };
+    return { ok: false as const, error: workflowErrorText(error, 'no cost in whatif response') };
   return {
     ok: true as const,
     chars: ctx.composed.system.length + ctx.composed.user.length,
