@@ -80,7 +80,7 @@ describe('text-scan-rescan', () => {
   });
 
   it('rejects an entity type text-scan does not have', async () => {
-    expect((await run({ entityType: 'Collection', entityIds: [1] })).status).toBe(400);
+    expect((await run({ entityType: 'Image', entityIds: [1] })).status).toBe(400);
     expect(getTextScanMode).not.toHaveBeenCalled();
   });
 

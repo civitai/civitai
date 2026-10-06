@@ -57,7 +57,7 @@ const entityType = z
   .transform((value) => value as TextScanEntityType);
 const moderatorId = z.number().int().positive();
 export const HARNESS_BUDGET_SECONDS = 120;
-const waitSeconds = z.number().int().min(1).max(HARNESS_BUDGET_SECONDS).default(90);
+const waitSecondsSchema = z.number().int().min(1).max(HARNESS_BUDGET_SECONDS).default(90);
 
 /**
  * Each wave of `concurrency` items can take up to `wait` seconds. Past the budget the caller (and any
@@ -152,7 +152,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
     promptOverrides,
     model: z.string().min(1).optional(),
     thinking: z.boolean().optional(),
-    wait: waitSeconds,
+    wait: waitSecondsSchema,
   }),
   z
     .object({
@@ -163,7 +163,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
-      wait: waitSeconds,
+      wait: waitSecondsSchema,
     })
     .superRefine(({ entityIds, concurrency, wait }, ctx) =>
       entitiesWithinBudget({ items: entityIds.length, concurrency, wait }, ctx)
@@ -201,7 +201,7 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
       model: z.string().min(1).optional(),
       thinking: z.boolean().optional(),
       concurrency: z.number().int().min(1).max(8).default(3),
-      wait: waitSeconds,
+      wait: waitSecondsSchema,
     })
     .superRefine(({ texts, concurrency, wait }, ctx) =>
       textsWithinBudget({ items: texts.length, concurrency, wait }, ctx)
