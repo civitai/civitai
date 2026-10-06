@@ -3,8 +3,9 @@ import type { Actions, PageServerLoad } from './$types';
 import { getCreatorScore } from '$lib/server/creator-score';
 import { getGetPaidEstimate } from '$lib/server/creator-program';
 import { callMainApp, MAIN_APP_URL } from '$lib/server/main-app';
-import { getFlipt, fliptContext } from '$lib/server/flipt';
+import { modFallbackFlagEnabled } from '$lib/server/main-app-flags';
 
+// 🔴 Must stay the main app's `creatorJourney` fliptKey.
 const CREATOR_JOURNEY_FLAG = 'creator-journey';
 
 // The Studio gates monetization on Creator Program membership (B1), so a CP member has nothing to join here —
@@ -18,7 +19,7 @@ export const load: PageServerLoad = async ({ parent, locals }) => {
     getCreatorScore(user.id),
     // Degrades independently — a ClickHouse/buzz-service hiccup shouldn't blank the whole join page.
     getGetPaidEstimate(user.id).catch(() => null),
-    getFlipt().isEnabled(CREATOR_JOURNEY_FLAG, String(user.id), fliptContext(user)),
+    modFallbackFlagEnabled(CREATOR_JOURNEY_FLAG, user),
   ]);
   // The main app 404s /creators/journey while the flag is off for this user, so the link must not render.
   const creatorJourneyUrl = creatorJourney ? `${MAIN_APP_URL}/creators/journey` : null;
