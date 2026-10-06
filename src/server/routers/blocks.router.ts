@@ -12188,9 +12188,10 @@ function trainingBodyAuditText(body: BlockTrainingBody): string {
  * TRAINING SUBMIT. Post-paid on the pass-through arm's reservation belt, but its
  * ceiling is the viewer-confirmed quote, not the token's per-call budget.
  *
- * Idempotency is keyed on the RUN (`trainingRunKey`), not the quote: a lost-response
- * retry replays the result, and a retry after an ambiguous failure — which needs a
- * fresh quote — dedupes at the orchestrator instead of charging twice. Nothing that
+ * A lost-response retry of this submit replays (claim keyed on the quote). The
+ * orchestrator `externalId` is keyed on the RUN (`trainingRunKey`): a retry after an
+ * ambiguous failure — which needs a fresh quote — dedupes there instead of charging
+ * twice, and a deliberate re-run after a definite submit is a new run. Nothing that
  * costs Buzz happens before the re-quote check.
  */
 async function submitTrainingWorkflow(opts: {
@@ -12208,18 +12209,29 @@ async function submitTrainingWorkflow(opts: {
     });
   }
 
-  const { claimTrainingQuote, hashTrainingBody, resolveBlockTrainingRun, trainingRunKey } =
-    await import('~/server/services/blocks/block-training-quote.service');
-  const runKey = trainingRunKey(claims.appBlockId, body);
+  const {
+    bumpTrainingRunGeneration,
+    claimTrainingQuote,
+    hashTrainingBody,
+    readTrainingRunGeneration,
+    resolveBlockTrainingRun,
+    trainingRunKey,
+  } = await import('~/server/services/blocks/block-training-quote.service');
+  const runKey = trainingRunKey(
+    claims.appBlockId,
+    body,
+    await readTrainingRunGeneration(body.datasetId)
+  );
 
-  // `training:` contains a colon, which no client idempotency key can, so this claim
-  // can never collide with one a block chose.
+  // The replay claim is per QUOTE (a lost-response retry of this submit replays); the
+  // orchestrator id is per RUN (below). The colon is outside the client key charset,
+  // so this claim can never collide with a key a block chose.
   let claim: BlockGenIdempotencyClaim<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>;
   try {
     claim = await claimGenIdempotency<{ snapshot: ReturnType<typeof snapshotFromWorkflow> }>(
       userId,
       claims.appBlockId,
-      `training:${runKey}`
+      `training-quote:${quoteId}`
     );
   } catch {
     throw new TRPCError({
@@ -12466,6 +12478,9 @@ async function submitTrainingWorkflow(opts: {
 
   const genResult = { snapshot };
   await finalizeGenIdempotency(genClaimKey, genResult);
+  // Only a DEFINITE submit advances the run; an ambiguous failure (the throw arm
+  // above) does not, so its retry keeps the same orchestrator id.
+  await bumpTrainingRunGeneration(body.datasetId);
 
   // ── Settle record + persistent output queue, as on the other post-paid arms.
   if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {

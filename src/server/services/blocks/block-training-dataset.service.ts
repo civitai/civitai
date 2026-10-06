@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
+import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import {
   BLOCK_TRAINING_DATASET_ID_REGEX,
   BLOCK_TRAINING_DATASET_MAX_ITEMS,
@@ -43,6 +44,8 @@ export const BLOCK_TRAINING_DATASET_TTL_SECONDS = 24 * 60 * 60;
 export const BLOCK_TRAINING_IMPORT_CONCURRENCY = 4;
 /** Per-image import deadline, so one stuck import cannot hold the request. */
 export const BLOCK_TRAINING_IMPORT_TIMEOUT_MS = 20_000;
+/** Whole-request import budget; images not STARTED by then are reported unavailable. */
+export const BLOCK_TRAINING_IMPORT_BUDGET_MS = 60_000;
 /** Width of the consent-dialog thumbnail stored per item. */
 const THUMBNAIL_WIDTH = 450;
 
@@ -119,19 +122,7 @@ export function admitTrainingImage(
 ): BlockTrainingRejectionReason | null {
   if (!row) return 'unavailable';
   if (row.type !== 'image') return 'unsupported-media';
-  const verdict = classifyGatedImageForViewer(
-    {
-      ingestion: row.ingestion,
-      nsfwLevel: row.nsfwLevel,
-      needsReview: row.needsReview,
-      poi: row.poi,
-      minor: row.minor,
-      tosViolation: row.tosViolation,
-      acceptableMinor: row.acceptableMinor,
-      blockedFor: row.blockedFor,
-    },
-    browsingLevel
-  );
+  const verdict = classifyGatedImageForViewer(row, browsingLevel);
   // `!== 'visible'`, not `=== 'hidden'`: an unrecognised verdict refuses too.
   if (verdict.status === 'pending') return 'pending-scan';
   if (verdict.status !== 'visible') return 'not-eligible';
@@ -177,34 +168,32 @@ async function readOwnImageRows(
   return new Map(rows.map((r) => [r.id, r]));
 }
 
-class ImportTimeout extends Error {}
-
 /** One image import under its own deadline; never throws. */
 async function importTrainingImage(
   row: ImageRow,
   token: string,
   allowMatureContent: boolean | undefined
 ): Promise<{ air: string } | { reason: BlockTrainingRejectionReason }> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
-    const data = await Promise.race([
+    const data = await withTimeoutFallback(
       imageUpload({
         sourceImage: getEdgeUrl(row.url, { original: true }),
         token,
         allowMatureContent,
       }),
-      new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new ImportTimeout()), BLOCK_TRAINING_IMPORT_TIMEOUT_MS);
-      }),
-    ]);
+      BLOCK_TRAINING_IMPORT_TIMEOUT_MS,
+      null
+    );
+    if (!data) return { reason: 'import-unavailable' };
     const air = trainingBlobAirFromImport(data.blob);
     return air ? { air } : { reason: 'import-failed' };
   } catch (e) {
-    const unavailable =
-      e instanceof ImportTimeout || (e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE');
-    return { reason: unavailable ? 'import-unavailable' : 'import-failed' };
-  } finally {
-    clearTimeout(timer);
+    return {
+      reason:
+        e instanceof TRPCError && e.code === 'SERVICE_UNAVAILABLE'
+          ? 'import-unavailable'
+          : 'import-failed',
+    };
   }
 }
 
@@ -281,8 +270,15 @@ export async function prepareBlockTrainingDataset(input: {
   if (captionText.length > 0) await input.auditCaptions(captionText);
 
   const limit = pLimit(BLOCK_TRAINING_IMPORT_CONCURRENCY);
+  const deadline = Date.now() + BLOCK_TRAINING_IMPORT_BUDGET_MS;
   const imported = await Promise.all(
-    admitted.map((a) => limit(() => importTrainingImage(a.row, token, actor.allowMatureContent)))
+    admitted.map((a) =>
+      limit(async () =>
+        Date.now() >= deadline
+          ? { reason: 'import-unavailable' as const }
+          : importTrainingImage(a.row, token, actor.allowMatureContent)
+      )
+    )
   );
 
   const items: BlockTrainingDatasetItem[] = [];

@@ -404,10 +404,9 @@ export type ChargeBlockAuthorFeeResult =
  *     helper returns a total only. Neither has a pre-submit `cost.base` to price
  *     a fee from, so neither reserves one, so neither charges one. The third,
  *     `submitTrainingWorkflow`, prices its step but charges no fee by decision
- *     (the viewer confirms one exact price). They still
- *     call this function with 0 so the population of submit paths that route
- *     their fee through one place stays CLOSED and a future path that gains a
- *     base changes one argument rather than re-deriving the rule.
+ *     (the viewer confirms one exact price). None of the three calls this
+ *     function; the `NO_FEE_PATHS` ledger in `no-divergent-author-fee-base.test.ts`
+ *     keeps the population closed.
  *   * a realized base that moved UP between the whatIf and the submit charges the
  *     RESERVED amount, not the realized one. The viewer is never billed past what
  *     their consent budget was measured against.

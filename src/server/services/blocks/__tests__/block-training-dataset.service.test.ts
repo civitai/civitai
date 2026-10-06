@@ -11,6 +11,7 @@ vi.mock('~/server/services/orchestrator/imageUpload', async (importOriginal) => 
 
 import { TRPCError } from '@trpc/server';
 import {
+  BLOCK_TRAINING_IMPORT_BUDGET_MS,
   BLOCK_TRAINING_IMPORT_TIMEOUT_MS,
   admitTrainingImage,
   assertBlockTrainingDatasetStillEligible,
@@ -350,10 +351,44 @@ describe('import failures are classified, and the timeout is per image', () => {
         token: 'tok',
         auditCaptions: audit,
       });
+      let settled = false;
+      void pending.then(() => (settled = true)).catch(() => (settled = true));
       await vi.advanceTimersByTimeAsync(BLOCK_TRAINING_IMPORT_TIMEOUT_MS + 1);
+      // Settled by the deadline itself — not by the runner's timeout.
+      expect(settled).toBe(true);
       const out = await pending;
       expect(out.count).toBe(1);
       expect(out.rejected).toEqual([{ imageId: 1, reason: 'import-unavailable' }]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('the whole-request import budget', () => {
+  it('images not STARTED before the budget runs out are never imported', async () => {
+    vi.useFakeTimers();
+    try {
+      // 14 hanging imports, 4 at a time, each cut at the per-image deadline: waves
+      // start at 0, 20, 40 s (12 imports); at 60 s the budget is spent, so the last
+      // two are reported without ever being sent.
+      expect(BLOCK_TRAINING_IMPORT_BUDGET_MS / BLOCK_TRAINING_IMPORT_TIMEOUT_MS).toBe(3);
+      const rows = Array.from({ length: 14 }, (_, i) => row({ id: i + 1, url: `k${i + 1}` }));
+      dbMock.dbRead.$queryRaw.mockResolvedValue(rows);
+      mockImageUpload.mockImplementation(() => new Promise(() => undefined));
+      const pending = prepareBlockTrainingDataset({
+        actor: ACTOR,
+        items: rows.map((r) => ({ imageId: r.id, caption: '' })),
+        token: 'tok',
+        auditCaptions: vi.fn(async () => undefined),
+      });
+      const outcome = pending.then(
+        () => 'resolved',
+        (e: Error) => e.message
+      );
+      await vi.advanceTimersByTimeAsync(BLOCK_TRAINING_IMPORT_BUDGET_MS * 2);
+      expect(await outcome).toContain('none of the requested images could be prepared');
+      expect(mockImageUpload).toHaveBeenCalledTimes(12);
     } finally {
       vi.useRealTimers();
     }

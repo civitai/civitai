@@ -470,6 +470,9 @@ owner's own private run is allowed, under the private-run Buzz cap.
    ceiling, moderates the captions, imports the admitted images under the viewer's
    orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
    bound to the viewer, app and install; the image count is always server-derived.
+   Every image is re-checked at estimate and again at submit; a dataset with an image
+   that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator
+   outage) is a retryable rejection; `import-failed` is not.
 2. **Estimate** — `ESTIMATE_WORKFLOW` with a `kind: 'training'` body (no `maxBuzz`)
    returns `snapshot.trainingQuote: { quoteId, total, imageCount, expiresAt }`. The
    price is the orchestrator's quote for that exact step; an unknown or variable price
@@ -483,7 +486,8 @@ owner's own private run is allowed, under the private-run Buzz cap.
 A confirmed run may cost more than the token's per-call budget, up to
 `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.
 A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
-re-price is refused. Training charges no author fee.
+re-price is refused. A retry of the same run after an ambiguous failure reuses the run's
+orchestrator id, so it cannot be charged twice. Training charges no author fee.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 

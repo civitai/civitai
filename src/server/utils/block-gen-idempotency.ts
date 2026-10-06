@@ -55,8 +55,9 @@ const GEN_IDEM_IN_PROGRESS = ' in-progress';
  * Compose the per-(user, app, key) redis key. INJECTIVE because: `userId` is
  * numeric (colon-free), `appBlockId` is a real `apb_<ULID>` or one of the three
  * synthetic pre-approval ids `ephemeral-<slug>` / `page_local_<slug>` /
- * `pubreq_<ULID>` (all colon-free), and `idempotencyKey` is charset-
- * restricted to `^[A-Za-z0-9_-]{1,64}$` at the zod input (colon-free). So no two
+ * `pubreq_<ULID>` (all colon-free), and `idempotencyKey` is either a client key,
+ * charset-restricted to `^[A-Za-z0-9_-]{1,64}$` at the zod input (colon-free), or
+ * the server-built `training-quote:<quoteId>`, whose colon no client key can spell. So no two
  * distinct (user, app, key) triples can ever collide on the delimiter. (A colon
  * IS a safe delimiter here — this is an internal redis key, not the orchestrator
  * `externalId`, whose charset excludes it. See composeBlockExternalId.)

@@ -642,7 +642,7 @@ describe('author fee — the viewer-charge seam', () => {
 
   it('🔴 the NO-FEE paths DECLARE that the sentinel exclusion drops their attribution row', () => {
     // 🔴 WHY A SECOND, PATH-SPECIFIC TEST WHEN THE LOOP ABOVE ALREADY COVERS ALL
-    // FOUR MARKERS. On the two priced paths the exclusion is a FEE argument: one
+    // FIVE MARKERS. On the two priced paths the exclusion is a FEE argument: one
     // shared sentinel id means one shared idempotency key and one UNIQUE accrual
     // row across every viewer. On these paths no fee is charged, so that
     // argument does not apply and the clause's only effect would be that

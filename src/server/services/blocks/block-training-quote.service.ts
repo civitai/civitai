@@ -76,14 +76,46 @@ export function hashTrainingBody(body: BlockTrainingBody): string {
 }
 
 /**
- * The identity of a training RUN — app, dataset and every body field — as a sha256
- * hex digest. Two submits of the same run share it; it keys the run's idempotency
- * claim and orchestrator `externalId`. (The orchestrator dedupes per user.)
+ * The identity of a training RUN — app, dataset, every body field and the dataset's
+ * run generation — as a sha256 hex digest. Retries of one run share it; it keys the
+ * run's idempotency claim and orchestrator `externalId` (which the orchestrator
+ * dedupes per `(userId, externalId)`).
  */
-export function trainingRunKey(appBlockId: string, body: BlockTrainingBody): string {
+export function trainingRunKey(
+  appBlockId: string,
+  body: BlockTrainingBody,
+  generation: number
+): string {
   return createHash('sha256')
-    .update(`${appBlockId}\n${hashTrainingBody(body)}`)
+    .update(`${appBlockId}\n${hashTrainingBody(body)}\n${generation}`)
     .digest('hex');
+}
+
+function runGenerationKey(
+  datasetId: string
+): `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${string}` {
+  return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${datasetId}:runs`;
+}
+
+/**
+ * How many runs of this dataset have been SUBMITTED. Part of the run key, so a
+ * deliberate re-run after a known result is a new run, while a retry after an
+ * ambiguous failure (no bump) still dedupes onto the run that may exist.
+ */
+export async function readTrainingRunGeneration(datasetId: string): Promise<number> {
+  const raw = await sysRedis.get(runGenerationKey(datasetId));
+  const n = Number(raw ?? 0);
+  return Number.isInteger(n) && n >= 0 ? n : 0;
+}
+
+/** Record a submitted run. Best-effort: a lost bump only makes the next re-run dedupe. */
+export async function bumpTrainingRunGeneration(datasetId: string): Promise<void> {
+  try {
+    await sysRedis.incrBy(runGenerationKey(datasetId), 1);
+    await sysRedis.expire(runGenerationKey(datasetId), 2 * 24 * 60 * 60);
+  } catch {
+    // swallowed; see docblock
+  }
 }
 
 /** Training-service status, as `getTrainingServiceStatus` returns it. */

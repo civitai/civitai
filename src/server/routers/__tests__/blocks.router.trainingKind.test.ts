@@ -188,6 +188,10 @@ const counter = (prefix: string) =>
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const VIEWER = 42;
+// sha256 of the fixture run (app `apb_test`, the default `body()`, generation 0),
+// derived independently of the implementation (sorted-key JSON of the body, then
+// `<app>\n<bodyHash>\n<generation>`).
+const RUN_KEY_LITERAL = '74961cae861fd55c80be3ab2c0f22ef6920cb2c608a91b9afe598fc3b0fbbeb0';
 const DATASET_ID = `tds_${'d'.repeat(32)}`;
 
 function claims(over: Record<string, unknown> = {}) {
@@ -594,7 +598,7 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
     ]);
     expect(req.body.externalId).toBe(
       composeTrainingBlockExternalId(
-        trainingRunKey('apb_test', blockTrainingBodySchema.parse(body({ quoteId })))
+        trainingRunKey('apb_test', blockTrainingBodySchema.parse(body({ quoteId })), 0)
       )
     );
 
@@ -958,6 +962,20 @@ describe('training — idempotency is keyed on the RUN, in a server-only namespa
 });
 
 describe('training — consent and preview edges', () => {
+  it('a claim landing BETWEEN consent’s read and write does not resurrect the quote', async () => {
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    const quoteId = snapshot.trainingQuote.quoteId;
+    const key = `system:blocks:training-quote:${quoteId}`;
+    const realGet = redisMock.sysRedis.get.getMockImplementation()!;
+    redisMock.sysRedis.get.mockImplementationOnce(async (k: string) => {
+      const v = await realGet(k);
+      store.delete(key); // a submit's GETDEL wins the race here
+      return v;
+    });
+    await expect(consent(quoteId)).rejects.toThrow('training quote not found or expired');
+    expect(store.has(key)).toBe(false);
+  });
+
   it('a quote already claimed by a submit cannot be confirmed again, and nothing is written', async () => {
     const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
     const quoteId = snapshot.trainingQuote.quoteId;
@@ -1026,5 +1044,83 @@ describe('prepareTrainingDataset — router wiring', () => {
     });
     expect(h.datasetRate).toHaveBeenCalledWith('page_apb_test', VIEWER, 3);
     expect(h.publishRate).not.toHaveBeenCalled();
+  });
+});
+
+describe('training — the run key', () => {
+  async function confirmed(b = body()) {
+    const { snapshot } = (await estimate(b)) as {
+      snapshot: { trainingQuote: { quoteId: string } };
+    };
+    await consent(snapshot.trainingQuote.quoteId);
+    return snapshot.trainingQuote.quoteId;
+  }
+  const externalIds = () =>
+    realSubmits().map((c) => (c[0] as { body: { externalId: string } }).body.externalId);
+
+  it('is pinned to a literal for a fixed run, so its derivation cannot drift silently', () => {
+    expect(trainingRunKey('apb_test', blockTrainingBodySchema.parse(body()), 0)).toBe(
+      RUN_KEY_LITERAL
+    );
+  });
+
+  it('two DIFFERENT runs by the same viewer are two orchestrator runs', async () => {
+    // The first submit fails ambiguously, so the run generation does NOT move —
+    // only the body differs between the two ids.
+    h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+      if (args.query?.whatif) return { cost: { total: 1200 } };
+      throw new Error('socket hang up');
+    });
+    const q1 = await confirmed();
+    await expect(submit(body({ quoteId: q1 }))).rejects.toThrow('socket hang up');
+    const q2 = await confirmed(body({ triggerWord: 'otherchar' }));
+    await expect(submit(body({ quoteId: q2, triggerWord: 'otherchar' }))).rejects.toThrow(
+      'socket hang up'
+    );
+    expect(realSubmits()).toHaveLength(2);
+    expect(new Set(externalIds()).size).toBe(2);
+  });
+
+  it('a deliberate RE-RUN after a definite submit is a new orchestrator run', async () => {
+    const q1 = await confirmed();
+    await submit(body({ quoteId: q1 }));
+    const q2 = await confirmed();
+    await submit(body({ quoteId: q2 }));
+    expect(realSubmits()).toHaveLength(2);
+    expect(new Set(externalIds()).size).toBe(2);
+  });
+
+  it('a lost-response retry of the SAME submit replays, with no second charge', async () => {
+    const q = await confirmed();
+    const first = await submit(body({ quoteId: q }));
+    expect(await submit(body({ quoteId: q }))).toEqual(first);
+    expect(realSubmits()).toHaveLength(1);
+  });
+});
+
+describe('training — remaining controls', () => {
+  it('re-admission applies the token ceiling: an image re-rated above it blocks the run', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      imageRow({ id: 1 }),
+      imageRow({ id: 2, nsfwLevel: 4 }),
+    ]);
+    await expect(estimate()).rejects.toThrow('can no longer be used for training');
+  });
+
+  it('the audit strictness follows the token: an all-levels token audits non-green', async () => {
+    h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
+    await estimate();
+    expect(h.audit).toHaveBeenCalledWith(expect.objectContaining({ isGreen: false }));
+  });
+
+  it('positive control: a viewer budget that fits is RESERVED on the consent leg', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 5000,
+      revokedAt: null,
+    });
+    const { snapshot } = (await estimate()) as { snapshot: { trainingQuote: { quoteId: string } } };
+    await consent(snapshot.trainingQuote.quoteId);
+    await submit(body({ quoteId: snapshot.trainingQuote.quoteId }));
+    expect(counter('system:blocks:consent-budget')).toBe(1200);
   });
 });

@@ -225,7 +225,7 @@ export interface BlockTokenClaims {
  * consolidation. A further submit gate written on that understanding open-codes
  * `claims.buzzBudget`, inherits no editor clamp, and silently gives an editor
  * spend on a taken-down app — the exact failure the "IT IS ONE PLACE BECAUSE
- * FOUR WOULD BE FOUR BUGS" argument below exists to prevent. It survived because
+ * N COPIES WOULD BE N BUGS" argument below exists to prevent. It survived because
  * the belt was added inside a file that ALSO moved on `main`: the paragraph is
  * still verbatim upstream, where it is correct, so a clean `git merge` could not
  * see the contradiction. Semantic conflict, zero textual conflict.
@@ -256,8 +256,8 @@ export interface BlockTokenClaims {
  *
  * 🔴 A RAISED CEILING WAS PROPOSED HERE AND WITHDRAWN. Minting `buzzBudget` ABOVE
  * the declared ceiling so a fee fits underneath it is sound only where the fee is
- * inside the compared value, and it was unsound in two ways at once. On the two
- * fee-free gates the number that clears the gate is the number reserved and
+ * inside the compared value, and it was unsound in two ways at once. On a
+ * fee-free gate the number that clears the gate is the number reserved and
  * billed, so a raised ceiling spends real viewer Buzz above the ceiling the app's
  * manifest declared. And on a fee-pricing gate it is equally unsound whenever the
  * fee prices to zero — which it does for at least one generation type today — so
@@ -311,7 +311,7 @@ export function blockPerCallBudget(
   //
   // Returning 0 rather than throwing: every caller already treats 0 as "no budget was
   // minted" and fails CLOSED on it, so this reuses a refusal path that is proven rather
-  // than introducing a new error shape into four money gates. A refusal also must not
+  // than introducing a new error shape into the money gates. A refusal also must not
   // be distinguishable from an unbudgeted token — an editor learning that their token
   // was deliberately zeroed, versus merely unbudgeted, is a detail the app does not
   // need.
