@@ -2,13 +2,12 @@ import { CosmeticType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
 import { STICKER_TOPUP_MAX_QUANTITY } from '~/shared/utils/sticker-token';
-import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
+import { stickerPlacementRatings } from '~/shared/constants/cosmetic-flags.constants';
 
-export type SetCosmeticFlagInput = z.infer<typeof setCosmeticFlagSchema>;
-export const setCosmeticFlagSchema = z.object({
+export type SetStickerPlacementRatingInput = z.infer<typeof setStickerPlacementRatingSchema>;
+export const setStickerPlacementRatingSchema = z.object({
   id: z.number().int().positive(),
-  flag: z.literal(CosmeticFlag.SfwPlacementsOnly),
-  enabled: z.boolean(),
+  rating: z.enum(stickerPlacementRatings),
 });
 
 export type GetPaginatedCosmeticsInput = z.infer<typeof getPaginatedCosmeticsSchema>;
