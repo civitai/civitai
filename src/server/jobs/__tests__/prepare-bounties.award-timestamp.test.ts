@@ -149,6 +149,22 @@ describe('prepare-bounties auto-award', () => {
     expect(winnerQuery).toContain('AND be."userId" IS NOT NULL');
   });
 
+  it('never picks an entry owned by a benefactor whose unawarded funds are in the pot', async () => {
+    await runPrepareBounties();
+
+    const winnerQuery = mockDbWrite.$queryRaw.mock.calls
+      .map(([strings]) => (strings as TemplateStringsArray).join('?').replace(/\s+/g, ' '))
+      .find((sql) => sql.includes('FROM "BountyEntry" be'));
+
+    expect(winnerQuery).toBeDefined();
+    expect(winnerQuery).toContain(
+      'WHERE be."bountyId" = ? AND be."userId" IS NOT NULL ' +
+        'AND NOT EXISTS ( SELECT 1 FROM "BountyBenefactor" own ' +
+        'WHERE own."bountyId" = ? AND own."userId" = be."userId" ' +
+        'AND own.currency = ?::"Currency" AND own."awardedToId" IS NULL ) GROUP BY'
+    );
+  });
+
   it('refunds instead when no entry has an author to pay', async () => {
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = strings.join('');

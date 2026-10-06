@@ -218,6 +218,10 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         throw throwBadRequestError('Entry has no user.');
       }
 
+      if (entry.userId === userId) {
+        throw throwBadRequestError("You can't award your own entry.");
+      }
+
       // A refund that claimed the bounty first holds this lock until it commits, and
       // then reads complete here.
       const bounty = await lockBountyForPayout(tx, entry.bountyId);
