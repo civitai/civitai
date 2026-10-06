@@ -189,7 +189,7 @@ export async function disableClavataFor(
     await logToAxiom({
       name: 'text-scan-clavata-cutover',
       type: 'warning',
-      message: 'Clavata disabled without an active text-scan',
+      message: 'Chat cut over without an active text-scan check',
       entityType,
     }).catch(() => null);
 

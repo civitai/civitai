@@ -254,12 +254,14 @@ describe('kill switch', () => {
     ['chat', () => sweepChatWindows(NOW), TEXT_SCAN_CHAT_CURSOR_KEY],
     ['new users', () => sweepNewUsers(NOW), TEXT_SCAN_USER_CURSOR_KEY],
   ] as const)(
-    '%s: off reads nothing, scans nothing, and drops the cursor',
+    '%s: off reads no rows, scans nothing, and moves the cursor to the newest row',
     async (_n, run, key) => {
       vi.mocked(isTextScanEnabled).mockResolvedValueOnce(false);
       cursorAt(10);
+      dbMock.dbWrite.chatMessage.findFirst.mockResolvedValue({ id: 500 } as never);
+      dbMock.dbWrite.user.findFirst.mockResolvedValue({ id: 500 } as never);
       expect(await run()).toMatchObject({ disabled: true, scanned: 0 });
-      expect(dbMock.dbWrite.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key } });
+      upserted(key, 500);
       expect(dbMock.dbWrite.chatMessage.findMany).not.toHaveBeenCalled();
       expect(dbMock.dbWrite.user.findMany).not.toHaveBeenCalled();
       expect(scanEntity).not.toHaveBeenCalled();

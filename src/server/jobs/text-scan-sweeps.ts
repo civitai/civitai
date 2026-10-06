@@ -103,9 +103,9 @@ async function sweep<T extends { id: number; createdAt: Date }>({
     clock = Date.now,
   } = options;
   if (!(await isTextScanEnabled())) {
-    // Dropping the cursor makes the first run after the kill switch comes back on start at the newest
-    // row, rather than scanning everything written while it was off.
-    await dbWrite.keyValue.deleteMany({ where: { key: cursorKey } });
+    // Keep pace without reading rows: switched back on, the sweep resumes at most one run behind,
+    // instead of skipping to whatever is newest then.
+    await writeCursor(cursorKey, (await latestId()) ?? 0);
     return { disabled: true, rows: 0, scanned: 0, submitted: 0, caughtUp: true, lagMs: 0 };
   }
   let cursor = await readCursor(cursorKey);
