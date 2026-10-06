@@ -5952,8 +5952,8 @@ export const blocksRouter = router({
       }
       const dataset = await loadBlockTrainingDataset(quote.datasetId, binding);
       // How much more Buzz the viewer needs, across the accounts this submit may
-      // draw from. Fail-open to `null` (unknown) — this only decides whether the
-      // dialog offers a top-up, never whether the run is allowed.
+      // draw from. Fail-open to `null` (unknown) — here it only decides whether the
+      // dialog offers a top-up; the submit runs the same read as its own gate.
       let shortfall: number | null = null;
       try {
         shortfall = Math.max(
@@ -12104,12 +12104,17 @@ async function loadEligibleBlockTrainingDataset(
  * The viewer's Buzz across the accounts a training run charges: the block's allowed
  * set for its maturity (`getBlockAllowedAccountTypes`), the same set
  * `resolveBlockCurrenciesForAccount(isGreen, undefined)` sends with the submit.
- * Throws when the balance cannot be read.
+ * Throws when the balance cannot be read — including a response naming none of
+ * those accounts, which is an unreadable balance, not a zero one.
  */
 async function readBlockTrainingSpendableBuzz(claims: BlockClaims, userId: number) {
   const { isGreen } = resolveBlockMaturity(claims);
   const accounts = (await getUserBuzzAccounts({ userId })) as Record<string, number | null>;
-  return getBlockAllowedAccountTypes(isGreen).reduce((sum, type) => sum + (accounts[type] ?? 0), 0);
+  const types = getBlockAllowedAccountTypes(isGreen);
+  if (!types.some((type) => typeof accounts[type] === 'number')) {
+    throw new Error('balance response names none of the charged accounts');
+  }
+  return types.reduce((sum, type) => sum + (accounts[type] ?? 0), 0);
 }
 
 /**

@@ -788,6 +788,13 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
   });
 
   it('a viewer who cannot pay the re-quoted price is refused BEFORE any reservation or call', async () => {
+    // Every reservation leg armed, so "nothing reserved" covers each of them.
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 5000,
+      revokedAt: null,
+    });
+    h.getActiveDevTunnel.mockImplementation(async () => ({ sessionId: 's1', spendCapBuzz: 5000 }));
+    h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: true, total: 1200 }));
     const quoteId = await confirmedQuote();
     // SFW token: blue + green are what the run charges — 100 + 1099 = 1199 < 1200.
     h.buzzAccounts.mockImplementation(async () => ({ blue: 100, green: 1099, yellow: 50_000 }));
@@ -796,9 +803,11 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
       message: 'Not enough Buzz for this training run.',
     });
     expect(realSubmits()).toHaveLength(0);
-    expect(counter('system:blocks:buzz-cap')).toBe(0);
-    expect(counter('system:blocks:consent-budget')).toBe(0);
+    // No key was ever written — a reserve-then-refund would leave one at 0.
+    expect(keysWith('system:blocks:buzz-cap')).toEqual([]);
+    expect(keysWith('system:blocks:consent-budget')).toEqual([]);
     expect(h.reserveAppSpend).not.toHaveBeenCalled();
+    expect(h.reserveDevSessionBuzz).not.toHaveBeenCalled();
     // The per-quote claim is released.
     expect(keysWith('system:blocks:gen-idem')).toEqual([]);
   });
@@ -827,6 +836,13 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
     h.authorize.mockImplementation(async () => claims({ maxBrowsingLevel: 31 }));
     const quoteId = await confirmedQuote();
     h.buzzAccounts.mockImplementation(async () => ({ blue: 0, green: 0, yellow: 1300 }));
+    await submit(body({ quoteId }));
+    expect(realSubmits()).toHaveLength(1);
+  });
+
+  it('a balance response naming none of the charged accounts is unreadable, not zero', async () => {
+    const quoteId = await confirmedQuote();
+    h.buzzAccounts.mockImplementation(async () => ({}));
     await submit(body({ quoteId }));
     expect(realSubmits()).toHaveLength(1);
   });
