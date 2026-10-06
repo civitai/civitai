@@ -583,6 +583,31 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * THE HARNESS'S OWN EVENT ORDER, pinned structurally rather than in the prose on `abort()`.
+ *
+ * Every case below that distinguishes a mid-body `stalled` from a `response-stalled` one depends
+ * on `abort()` firing `upload.loadend` BEFORE the xhr-level `abort`, because that is the order
+ * production's phase sampling has to be correct against. Measured: delete that one emission and
+ * this file stays green — delete it and restore the sampling bug and it stays green as well. So
+ * the order is asserted directly here, where de-conforming the fake fails loudly instead of
+ * silently vacuuming those assertions.
+ */
+describe('FakeXHR conformance', () => {
+  it('🔴 fires upload.loadend before the xhr-level abort while the body is in flight', () => {
+    // A fresh instance has its upload-complete flag unset, which is what "mid-body" is here.
+    const xhr = new FakeXHR();
+    const order: string[] = [];
+    xhr.upload.addEventListener('loadend', () => order.push('upload.loadend'));
+    xhr.addEventListener('abort', () => order.push('abort'));
+    xhr.addEventListener('loadend', () => order.push('loadend'));
+
+    xhr.abort();
+
+    expect(order).toEqual(['upload.loadend', 'abort', 'loadend']);
+  });
+});
+
 describe('useS3Upload relay fallback', () => {
   it('relays the file through our own origin when a part dies at the network layer', async () => {
     // 🔴 THE DEFECT. Every gate in `shouldRelayOnPartFailure` is satisfied here — image
