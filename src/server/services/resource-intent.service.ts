@@ -59,8 +59,8 @@ import { resourceExceedsCatalogCeiling } from '~/server/utils/block-catalog-matu
  * stage 3 picks `none`), the response carries empty suggestions without being
  * degraded — the model judged the prompt needs no resource.
  *
- * A label-read failure is NOT a degrade: the matcher falls back to the popularity
- * seed order and reports it, and the response carries `insightFallback: true`
+ * A label-read failure is NOT a degrade: the matcher falls back to the seed order
+ * (purpose page, then popularity fill) and reports it, and the response carries `insightFallback: true`
  * alongside its normal suggestions. The only thing that changes here is the cache
  * TTL — see `INSIGHT_FALLBACK_CACHE_TTL_SECONDS`, and
  * `resourceIntentResponseSchema` for why the flag is not `degraded`.

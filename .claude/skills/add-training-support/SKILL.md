@@ -180,7 +180,9 @@ union), a missing spread in the aggregate array, or a `baseModel` string that is
 ## Step 5 — Verify (optional)
 
 With a dev server running (see `dev-server` skill) and the Flipt flag on for your user:
-- Open the training form → Step 1 shows the new base model under its media type.
+- Open the training form (`/models/train`) → Step 1 shows the new base model under its media type.
+  If it lands on `/training-studio`, the Training Studio is your default trainer (`trainingStudioUi`,
+  on by default for moderators) — click **Use the classic trainer** in the banner there first.
 - Selecting it loads the expected default params in Step 3.
 - The `whatif` submit returns a price without a validation error.
 

@@ -11,8 +11,7 @@ export const CIVITAI_MEMBERSHIP_URL = 'https://civitai.com/pricing';
 // Its server guard redirects non-members to /pricing, so only link members here.
 export const CIVITAI_MANAGE_MEMBERSHIP_URL = 'https://civitai.com/user/membership';
 
-// Mirrors the main app's MIN_CREATOR_SCORE (src/shared/constants/creator-program.constants.ts). Keep in sync.
-export const MIN_CREATOR_SCORE = 40000;
+export { CREATOR_PROGRAM_MIN_CREATOR_SCORE as MIN_CREATOR_SCORE } from '@civitai/buzz';
 
 export const CREATOR_PROGRAM_PERKS = [
   {

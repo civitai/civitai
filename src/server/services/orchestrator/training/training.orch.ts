@@ -166,35 +166,55 @@ const createTrainingStep_Run = (
   }
 };
 
-// NEW: Create training step using the new TrainingStep format (for ai-toolkit)
-const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+/**
+ * The dataset an ai-toolkit step trains on: a zip (the training form's upload) or a
+ * list of individually uploaded orchestrator blobs with per-item captions (the
+ * Training Studio's shape, and the App Blocks `kind:'training'` shape).
+ */
+export type AiToolkitTrainingData =
+  | ZipTrainingData
+  | { type: 'blobs'; items: Array<{ air: string; caption: string }> };
+
+export type AiToolkitTrainingStepInput = {
+  model: string;
+  priority: ImageTrainingStepSchema['priority'];
+  triggerWord: string;
+  trainingData: AiToolkitTrainingData;
+  samplePrompts: string[];
+  samplesOverrides?: ImageTrainingStepSchema['samplesOverrides'];
+  params: AiToolkitTrainingParams;
+  /** Step metadata. Omitted from the step entirely when absent. */
+  metadata?: Record<string, unknown>;
+};
+
+/**
+ * Build the ai-toolkit `training` step. PURE: no I/O, no clock, no randomness, so
+ * a whatif quote and the real submit built from the same input describe the same
+ * work. Shared by the training form (zip dataset, via `createTrainingStep_AiToolkit`)
+ * and the App Blocks `kind:'training'` bridge (blob dataset).
+ *
+ * Stamps no `timeout` and no `name`; callers add them.
+ */
+export const buildAiToolkitTrainingStep = (
+  input: AiToolkitTrainingStepInput
+): TrainingStepTemplate => {
   const {
     model,
     priority,
-    loraName,
     triggerWord,
     trainingData,
-    trainingDataImagesCount,
     samplePrompts,
     samplesOverrides,
-    negativePrompt,
-    modelFileId,
-    params,
+    params: aiToolkitParams,
+    metadata,
   } = input;
-
-  // Params are already in AI Toolkit format from the database
-  const aiToolkitParams = params as AiToolkitTrainingParams;
 
   let trainingInput: AiToolkitTrainingInput | YuE2AiToolkitTrainingInput = {
     engine: 'ai-toolkit',
     ecosystem: aiToolkitParams.ecosystem,
 
     ...(aiToolkitParams.modelVariant && { modelVariant: aiToolkitParams.modelVariant }),
-    trainingData: {
-      type: 'zip',
-      sourceUrl: trainingData,
-      count: trainingDataImagesCount,
-    } as ZipTrainingData,
+    trainingData,
     samples: {
       prompts:
         aiToolkitParams.ecosystem === 'yue2'
@@ -273,11 +293,42 @@ const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingS
 
   return {
     $type: 'training',
-    metadata: { modelFileId },
+    ...(metadata ? { metadata } : {}),
     priority,
     retries: constants.maxTrainingRetries,
     input: trainingInput,
   };
+};
+
+// The training form's ai-toolkit step: a zip dataset plus the version's ModelFile id.
+const createTrainingStep_AiToolkit = (input: ImageTrainingStepSchema): TrainingStepTemplate => {
+  const {
+    model,
+    priority,
+    triggerWord,
+    trainingData,
+    trainingDataImagesCount,
+    samplePrompts,
+    samplesOverrides,
+    modelFileId,
+    params,
+  } = input;
+
+  return buildAiToolkitTrainingStep({
+    model,
+    priority,
+    triggerWord,
+    trainingData: {
+      type: 'zip',
+      sourceUrl: trainingData,
+      count: trainingDataImagesCount,
+    },
+    samplePrompts,
+    samplesOverrides,
+    // Params are already in AI Toolkit format from the database
+    params: params as AiToolkitTrainingParams,
+    metadata: { modelFileId },
+  });
 };
 
 // Dispatcher to route to the correct training step creator

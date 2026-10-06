@@ -85,6 +85,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import { getVisibleSystemWildcardSetIdsByVersionId } from '~/server/services/generation/version-generation-state.service';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
 import {
   getBaseModelEngine,
   getBaseModelMediaType,
@@ -747,12 +748,7 @@ export async function resolveTestingAccess(user: {
   id?: number;
   isModerator?: boolean;
 }): Promise<boolean> {
-  if (user.isModerator) return true;
-  if (!user.id) return false;
-  return isFlipt(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, String(user.id), {
-    userId: String(user.id),
-    isModerator: 'false',
-  });
+  return isFliptOnForTesters(FLIPT_FEATURE_FLAGS.GENERATION_TESTING, user);
 }
 
 type EntrySchema<T> = { safeParse(value: unknown): { success: boolean; data?: T } };

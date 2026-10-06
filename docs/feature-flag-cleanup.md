@@ -110,8 +110,8 @@ it against a deleted index with no flag left to switch it off), `challengePlatfo
 kill-switch key), and `vault` (`['user']`).
 
 Condition 3 is load-bearing, and not through its `default: true` half. The registry has exactly six
-toggleable entries: `air`, `assistant` and `chat` are `default: true` and all three already fail
-condition 1 on their availability, and `trainingStudioUi` fails conditions 1 and 2. The other two —
+toggleable entries: `air`, `assistant`, `chat` and `trainingStudioUi` are `default: true` and all four
+already fail condition 1 on their availability (`trainingStudioUi` fails condition 2 as well). The other two —
 `largerGenerationImages` and `nativeVideoControls` — are `['public']` with no `fliptKey`, so
 condition 3 is the only thing excluding them. That is why `largerGenerationImages` sits in the 6
 above: drop condition 3 and the split is 20/5, not 19/6. `nativeVideoControls` was never on the

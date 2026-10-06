@@ -3,6 +3,8 @@ import * as z from 'zod';
 import { CacheTTL } from '~/server/common/constants';
 import type { RateLimit } from '~/server/middleware.trpc';
 
+export const REACTION_RATE_LIMIT_MIN_CREATOR_SCORE = 1000;
+
 export const reactionRateLimits: RateLimit[] = [
   // 1 minute limit - allow rapid interactions but prevent botting (60 reactions/min = 1 per second)
   { limit: 60, period: CacheTTL.xs },
@@ -12,15 +14,26 @@ export const reactionRateLimits: RateLimit[] = [
   { limit: 1000, period: CacheTTL.hour },
   // 24 hour limit - prevent systematic abuse while allowing heavy usage
   { limit: 5000, period: CacheTTL.day },
-  // Higher limits for users with good reputation scores (≥1000 total score)
-  { limit: 100, period: CacheTTL.xs, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
-  { limit: 500, period: CacheTTL.md, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
+  {
+    limit: 100,
+    period: CacheTTL.xs,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= REACTION_RATE_LIMIT_MIN_CREATOR_SCORE,
+  },
+  {
+    limit: 500,
+    period: CacheTTL.md,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= REACTION_RATE_LIMIT_MIN_CREATOR_SCORE,
+  },
   {
     limit: 1500,
     period: CacheTTL.hour,
-    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= REACTION_RATE_LIMIT_MIN_CREATOR_SCORE,
   },
-  { limit: 8000, period: CacheTTL.day, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
+  {
+    limit: 8000,
+    period: CacheTTL.day,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= REACTION_RATE_LIMIT_MIN_CREATOR_SCORE,
+  },
 ];
 
 // `as const` (not `readonly [string, ...string[]]`) so `ReactionEntityType` stays a

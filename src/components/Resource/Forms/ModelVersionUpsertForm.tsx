@@ -28,6 +28,9 @@ import * as z from 'zod';
 
 import { CapUpsell } from '~/components/Buzz/CapUpsell';
 import { PricingSlotHistory } from '~/components/Buzz/PricingSlotHistory';
+import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
+import { EarlyAccessLockedRow } from '~/components/CreatorJourney/EarlyAccessLockedRow';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
@@ -779,6 +782,16 @@ export function ModelVersionUpsertForm({
     !isNonCommercial && // Non-commercial base models can't be monetized.
     paidAccessUsageOk &&
     canConfigurePaidAccess;
+  // Where the score alone keeps the timed window shut, say so instead of leaving no section at all.
+  const showEarlyAccessLocked =
+    !showPaidAccessInput &&
+    !currentUser?.isModerator &&
+    features.earlyAccessModel &&
+    !gateSuppressed &&
+    paidAccessUsageOk &&
+    !isPublished &&
+    !atEarlyAccess &&
+    (maxEarlyAccessModels === 0 || earlyAccessUnlockedDays.length === 0);
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
@@ -1212,6 +1225,7 @@ export function ModelVersionUpsertForm({
             </Stack>
           </Card>
           {(showPaidAccessInput ||
+            showEarlyAccessLocked ||
             showLicensingFeeBlock ||
             requiresRightsAffirmation ||
             removingStoredCharge ||
@@ -1314,15 +1328,16 @@ export function ModelVersionUpsertForm({
                   <Alert
                     color="yellow"
                     icon={<IconAlertTriangle size={18} />}
-                    title="You can't monetize this version yet"
+                    title={`Monetizing a model needs a Creator Score of ${eligibility.required.toLocaleString()}`}
                     mb="sm"
                   >
                     <Text size="sm">
-                      Monetizing a model version needs a creator score of{' '}
-                      {eligibility.required.toLocaleString()}. Yours is{' '}
-                      {eligibility.score.toLocaleString()} —{' '}
-                      {eligibility.shortfall.toLocaleString()} to go. Prices you have already set
-                      are unaffected.
+                      <CreatorScoreGateMessage
+                        score={eligibility.score}
+                        total={creatorScoreFromSession(currentUser)}
+                        required={eligibility.required}
+                      />{' '}
+                      Prices you have already set are unaffected.
                     </Text>
                   </Alert>
                 )}
@@ -1388,6 +1403,9 @@ export function ModelVersionUpsertForm({
                     label={MONETIZATION_RIGHTS_AFFIRMATION_STATEMENT}
                     mt="sm"
                   />
+                )}
+                {showEarlyAccessLocked && (
+                  <EarlyAccessLockedRow score={creatorScoreFromSession(currentUser)} />
                 )}
                 {showChargeSettings && showPaidAccessInput && (
                   <Stack gap={0} mt="md">
@@ -1529,7 +1547,13 @@ export function ModelVersionUpsertForm({
                                       </Popover>
                                     </Group>
                                   }
-                                  description="When the window ends the version becomes free. Up to 30 days at your current Creator Program score."
+                                  description={`When the window ends the version becomes free.${
+                                    earlyAccessUnlockedDays.length > 0
+                                      ? ` You can set up to ${Math.max(
+                                          ...earlyAccessUnlockedDays
+                                        )} days.`
+                                      : ''
+                                  }`}
                                   error={form.formState.errors.paidAccessConfig?.message}
                                 >
                                   <SegmentedControl

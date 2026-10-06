@@ -7,6 +7,7 @@ import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { traceContextHeaders } from '~/server/utils/otel-helpers';
 import { createTtlMemo } from '~/server/utils/ttl-memoize';
+import { encodeFeedCursor, parseFeedCursor } from '~/server/common/feed-cursor';
 import {
   buildFeedRequestRow,
   type CapturableSearchInput,
@@ -119,15 +120,7 @@ const emptied = (v: unknown) => Array.isArray(v) && v.length > 0 && ints(v).leng
 export type FeedQueryMapping = { ok: true; query: string } | { ok: false; reason: string };
 export type FeedQueryMode = 'shadow' | 'primary';
 
-// A feed-served page continues with the feed's own keyset cursor. It carries no `|` on
-// purpose: getAllImagesIndex splits the client cursor on `|` and reads numbers, so a
-// feed cursor handed to the Meilisearch path parses as offset 0, a clean restart.
-const FEED_CURSOR_RE = /^feed:(\d{1,16}):(\d{1,12})$/;
-export const encodeFeedCursor = (next: string) => `feed:${next.replace('|', ':')}`;
-export function parseFeedCursor(cursor: unknown): string | undefined {
-  const m = typeof cursor === 'string' ? FEED_CURSOR_RE.exec(cursor) : null;
-  return m ? `${m[1]}|${m[2]}` : undefined;
-}
+export { encodeFeedCursor, parseFeedCursor };
 
 /** The candidate's query for a search input, or the first reason it cannot be expressed. */
 export function mapSearchInputToFeedQuery(
@@ -155,7 +148,6 @@ export function mapSearchInputToFeedQuery(
     if (newCreators.length > MAX_USER_IDS) return skip(`newCreators>${MAX_USER_IDS}`);
     if (present(input.userId) || input.followed === true) return skip('flag:newCreators:userId');
   }
-
 
   const sort = SORTS[String(input.sort)];
   if (!sort) return skip(`sort:${String(input.sort || 'none')}`);

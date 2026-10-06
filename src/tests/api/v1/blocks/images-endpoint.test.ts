@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { TRPCError } from '@trpc/server';
 
 import {
   sfwBrowsingLevelsFlag,
@@ -332,6 +333,19 @@ describe('/api/v1/blocks/images — authoritative clamp wiring', () => {
     expect(res.statusCode).not.toBe(503);
     const headers = (res as unknown as { headers: Record<string, unknown> }).headers;
     expect(headers['Retry-After']).toBeUndefined();
+  });
+
+  // `runImageSearch` rejects a malformed feed-offset cursor this way; the route must keep the 400.
+  it('[invariant] keeps a BAD_REQUEST from the search (invalid feed cursor) as a 400', async () => {
+    claimsBox.claims = fakeClaims({ maxBrowsingLevel: sfwBrowsingLevelsFlag });
+    mockRunImageSearch.mockRejectedValueOnce(
+      new TRPCError({ code: 'BAD_REQUEST', message: 'Invalid cursor: out of range "-5"' })
+    );
+
+    const res = await invoke({ cursor: '-5' });
+
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toEqual({ error: 'Invalid cursor: out of range "-5"', code: 'BAD_REQUEST' });
   });
 });
 

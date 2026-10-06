@@ -537,8 +537,13 @@ export function containsAirReference(value: unknown, depth = 0): boolean {
 // The extraction primitives live in the leaf module `./output` (see its header
 // for why). Re-exported here so `~/server/services/blocks/steps` stays the one
 // import site for consumers that aren't registry entries.
-export type { StepOutputMedia } from './output';
-export { mediaFromBlobs, splitPassThroughStepOutput } from './output';
+export type { StepOutputMedia, TrainedEpoch, TrainingStepType } from './output';
+export {
+  isTrainingStepType,
+  mediaFromBlobs,
+  splitPassThroughStep,
+  splitPassThroughStepOutput,
+} from './output';
 
 /**
  * The `$type` values `workflow.service`'s two extractors handle NATIVELY, with

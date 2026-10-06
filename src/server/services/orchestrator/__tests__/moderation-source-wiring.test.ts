@@ -165,6 +165,14 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
     siteNote: "the block host's pre-check on the submitted workflow prompt",
     arg: { kind: 'absent' },
   },
+  // The `kind:'training'` text audit — dataset captions and a body's trigger word + sample
+  // prompts. A training run is not a generation submission, so it is not `generate`.
+  'src/server/routers/blocks.router.ts::auditBlockTrainingText': {
+    sites: 1,
+    siteNote:
+      "the training arm's one audit: dataset captions, and the body's trigger word + sample prompts",
+    arg: { kind: 'absent' },
+  },
   'src/server/routers/blocks.router.ts::submitCustomComfyWorkflow': {
     sites: 1,
     siteNote: "the block host's pre-check on the custom-comfy prompt",

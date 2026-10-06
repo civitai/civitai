@@ -173,7 +173,7 @@ beforeEach(() => {
     customers: { retrieve: mockCustomersRetrieve, update: vi.fn() },
     prices: { retrieve: mockPricesRetrieve, list: mockPricesList },
     paymentMethods: { list: vi.fn().mockResolvedValue({ data: [] }) },
-    coupons: { create: vi.fn() },
+    coupons: { create: vi.fn(), del: vi.fn().mockResolvedValue({}) },
   });
   mockRefreshSession.mockResolvedValue(undefined);
 
@@ -404,5 +404,51 @@ describe('createSubscribeSession — the two cases with no single right answer',
 
     expect(mockCheckoutSessionsCreate).not.toHaveBeenCalled();
     expect(mockSubscriptionsUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe('createSubscribeSession — a gifted month armed for the plan being left', () => {
+  const ARMED_GIFT = { id: 'gift_fixture', armedCouponId: 'gift_coupon_fixture' };
+  const changePlan = () => {
+    stubStripe({ customerCurrency: 'usd', withActiveBronzeSubscription: true });
+    return subscribe();
+  };
+
+  it('is cleared in the same call that changes the plan, so it cannot land on that invoice', async () => {
+    dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue(ARMED_GIFT);
+
+    await changePlan();
+
+    const params = mockSubscriptionsUpdate.mock.calls[0][1];
+    expect(params.coupon).toBe('');
+    expect(params).not.toHaveProperty('discounts');
+    expect(dbMock.dbWrite.membershipGift.update).toHaveBeenCalledWith({
+      where: { id: 'gift_fixture' },
+      data: { armedCouponId: null, armedAt: null },
+    });
+  });
+
+  it('is pointed at again when the plan change fails, because the discount is still there', async () => {
+    dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue(ARMED_GIFT);
+    mockSubscriptionsUpdate.mockRejectedValue(new Error('card_declined'));
+
+    await expect(changePlan()).rejects.toThrow('card_declined');
+
+    const lastUpdate = dbMock.dbWrite.membershipGift.update.mock.calls.at(-1)?.[0];
+    expect(lastUpdate).toMatchObject({
+      where: { id: 'gift_fixture' },
+      data: { armedCouponId: 'gift_coupon_fixture' },
+    });
+  });
+
+  it('leaves the call as it was for a member with no month armed', async () => {
+    dbMock.dbWrite.membershipGift.findFirst.mockResolvedValue(null);
+
+    await changePlan();
+
+    const params = mockSubscriptionsUpdate.mock.calls[0][1];
+    expect(params).not.toHaveProperty('coupon');
+    expect(params.discounts).toEqual([]);
+    expect(dbMock.dbWrite.membershipGift.update).not.toHaveBeenCalled();
   });
 });

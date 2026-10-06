@@ -71,8 +71,8 @@ import { Availability } from '~/shared/utils/prisma/enums';
  * 🔴 `queued N` COUNTS ANNOUNCEMENTS ISSUED, NOT ANNOUNCEMENTS LANDED, and the
  * difference is not pedantry: `addToQueue` fails open on a degraded sysRedis —
  * it parks the ids in Postgres for `search-index-queue-drain` and returns
- * `false` — and neither `SearchIndexUpdate.queueUpdate` nor
- * `modelsSearchIndex.queueUpdate` propagates that boolean (stated at
+ * `false` — and `modelsSearchIndex.queueUpdate` does not propagate that
+ * boolean (stated at
  * src/pages/api/admin/temp/queue-paid-models-reindex.ts). So the counter is
  * identical on a healthy run and on a run whose every enqueue was parked.
  *

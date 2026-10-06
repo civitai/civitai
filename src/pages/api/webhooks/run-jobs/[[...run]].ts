@@ -30,6 +30,7 @@ import { collectionGameProcessing } from '~/server/jobs/collection-game-processi
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
+import { giftMembershipArming } from '~/server/jobs/gift-membership-arming';
 import { confirmPendingBlockAttributions } from '~/server/jobs/confirm-pending-block-attributions';
 import { purgeReviewSnapshotsJob } from '~/server/jobs/purge-review-snapshots';
 import { reapDevTunnelsJob } from '~/server/jobs/reap-dev-tunnels';
@@ -119,6 +120,7 @@ import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-recon
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
+import { userScoreHealthCheckJob } from '~/server/jobs/user-score-health-check';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
 import { removeReplacedImages } from '~/server/jobs/remove-replaced-images';
@@ -204,6 +206,7 @@ export const jobs: Job[] = [
   processingEngingEarlyAccess,
   syncGeneratorLoadedResources,
   updateUserScore,
+  userScoreHealthCheckJob,
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
   updateCreatorResourceCompensation,
@@ -212,6 +215,7 @@ export const jobs: Job[] = [
   botAccountDetection,
   relabelBuildBatchJob,
   reactionWithdrawalDetection,
+  giftMembershipArming,
   confirmPendingBlockAttributions,
   reapDevTunnelsJob,
   sweepStaleAgentReviewsJob,

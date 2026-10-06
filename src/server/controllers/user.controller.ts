@@ -14,6 +14,7 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
+import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
 import { getFollowsViewer } from '~/server/services/follows-viewer.service';
 import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
@@ -1527,13 +1528,13 @@ export const toggleUserFeatureFlagHandler = async ({
     // written. Only the toggled flag is sent, merged into `settings.features` by the
     // database, so a concurrent write to any other setting — or to another flag —
     // survives instead of being reverted to its read-time value.
-    const value = isDefined(features[input.feature])
-      ? input.value ?? !features[input.feature]
-      : input.value ?? !defaultToggleableFeatures[input.feature];
+    const current = features[input.feature] ?? defaultToggleableFeatures[input.feature];
+    const value = input.value ?? !current;
 
     const settings = await patchUserSettings(id, {
       mergeInto: { features: { [input.feature]: value } },
     });
+    if (value !== current) recordUserFeatureToggle(input.feature, value);
 
     return (settings.features ?? { [input.feature]: value }) as Partial<FeatureAccess>;
   } catch (error) {

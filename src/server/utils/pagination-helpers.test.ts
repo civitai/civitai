@@ -1,5 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { describe, expect, it } from 'vitest';
+import { INT4_MAX, keysetCursorSchema } from '~/server/schema/base.schema';
 import { getCursor, getCursorClauses, getPagingData } from '~/server/utils/pagination-helpers';
 
 // `parseCursor` is not exported; it is exercised here through `getCursor`, the
@@ -122,9 +123,15 @@ describe('parseCursor (via getCursor) — scalar cursor on a multi-field sort', 
  *
  * The scalar guard above closes only the bare-number/bigint/Date shape. A
  * hand-built COMPOSITE cursor has the right token COUNT, and `parseCursor`
- * decides date-vs-numeric per token by whether the token contains `-`, so a
- * numeric head token on a date-headed sort is still bound to the TIMESTAMP
- * column and Postgres still throws `date/time field value out of range`.
+ * classifies each token by its own SPELLING rather than by the column it will be
+ * compared against, so a numeric head token on a date-headed sort is still bound
+ * to the TIMESTAMP column and Postgres still throws
+ * `date/time field value out of range`.
+ *
+ * This residual is UNAFFECTED by the numeric-first discriminator fix pinned
+ * further down this file: `'165997'` was spelled as an integer before and after,
+ * so it took the numeric branch both ways. Making the split numeric-first closed
+ * the NEGATIVE-token case only; it closed nothing here.
  *
  * Closing it needs per-field TYPE information that the sort string does not
  * carry — the fix is to thread the sort fields' types through
@@ -218,24 +225,196 @@ describe('parseCursor (via getCursor) — int4 range guard on a numeric STRING t
     expect(values).toContain(2147483647);
   });
 
-  // 🔴 EXPECTED TO FAIL once the date/numeric discriminator is fixed — that is the
-  // point, not a regression. Update this test as part of that change.
-  it('KNOWN GAP, pinning TODAY’S WRONG BEHAVIOUR: a negative token is parsed as a DATE, not range-checked', () => {
-    // The split is `value.includes('-')`, true of every negative integer, so `'-5'`
-    // takes the date branch and `dayjs.utc('-5')` reports VALID. The resulting Date
-    // binds to an `int` column — a different 500 from the overflow guarded above,
-    // and one no range check here can reach. Not fixed in range: correcting the
-    // discriminator retypes every token for every caller.
-    //
-    // The instant is TIMEZONE-DEPENDENT, so nothing below asserts it literally —
-    // assert only what holds everywhere: a Date came out, and the number did not.
-    const { where } = getCursor('id DESC', '-5');
+  it('CONTROL: accepts zero, matching the cursor schema’s `CURSOR_MIN` floor', () => {
+    // The lower bound of the range guard below. `0` is issuable as a nextCursor
+    // (see the `limit:0` note in keyset-cursor-bounds.test.ts), so the floor has
+    // to be `< CURSOR_MIN`, not `<= CURSOR_MIN`.
+    const { where } = getCursor('id DESC', '0');
+    expect(where).toBeDefined();
+    const values = (where as unknown as { values: unknown[] }).values;
+    expect(values).toContain(0);
+  });
+});
+
+/**
+ * REGRESSION — GAP NOW CLOSED. This block replaces a test that pinned the
+ * opposite behaviour as a documented gap.
+ *
+ * `parseCursor` chose date-vs-numeric per token by whether the token contained
+ * `-`. Every negative integer does, so `'-5'` took the DATE branch,
+ * `dayjs.utc('-5')` reported VALID, and the resulting Date was bound into a
+ * comparison against an `int` sort column — Postgres threw and the client got a
+ * raw 500 for a malformed input. A REST query param is ALWAYS a string, so the
+ * magnitude bound on `keysetCursorSchema`'s numeric members could not see it.
+ *
+ * Confirmed live on the paths that actually reach this helper: with a `modelId`
+ * (which routes `/api/v1/images` to its legacy branch) `?cursor=-5` returned 500
+ * while `?cursor=999999999999` returned 400 from the ceiling guard below — same
+ * endpoint, same request shape, so the 500 is attributable to this branch and
+ * not to the endpoint in general.
+ *
+ * 🔴 TWO LIMITS, so nobody reads this block as closing the class. (1) A bare
+ * `?cursor=-5` with no legacy-triggering param does NOT reach `parseCursor` — it
+ * goes to `getImagesFromFeedSearch`, which parses the cursor as its own search
+ * offset; that 500 has a different cause and is untouched here. (2) Only the
+ * NUMERIC spelling is closed: a token that is hyphenated but not fully numeric
+ * still reaches `dayjs`, whose loose parse accepts `'0-'`, `'5-'` and `'1-2'` as
+ * valid dates, so those still bind a Date to an int column. That residual is
+ * pinned below.
+ *
+ * The discriminator is now numeric-FIRST: a fully-numeric token is range-checked
+ * instead of date-parsed, so a negative one is rejected as a 400 — consistent
+ * with `keysetCursorSchema` flooring its numeric members at `.gte(0)`. ISO
+ * timestamps contain `-` but are not fully numeric, so they still take the date
+ * branch; the controls at the end of this block pin that.
+ */
+describe('parseCursor (via getCursor) — negative numeric STRING token', () => {
+  it('rejects a negative numeric token in the TAIL of a composite cursor → 400', () => {
+    expectBadRequest(() => getCursor('createdAt DESC, id DESC', '2024-01-15|-5'));
+  });
+
+  it('rejects a negative token below int4 min via the RANGE guard, not the date guard', () => {
+    // Pre-fix this value was already a 400 — but from the Invalid-Date guard, not
+    // from any range check. Asserting only BAD_REQUEST here would have been a
+    // test that passed for the wrong reason before and after; the message is what
+    // makes it real coverage.
+    let thrown: unknown;
+    try {
+      getCursor('id DESC', '-2147483649');
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as TRPCError).message).toBe(
+      'Invalid cursor: numeric value out of range "-2147483649"'
+    );
+  });
+
+  it('attributes the rejection to the range guard, not some other guard', () => {
+    // Message identity matters here: the mutation control for this guard is
+    // "break it and watch a test fail with THIS guard's own error". A test that
+    // only asserted BAD_REQUEST would still pass if a different guard fired.
+    let thrown: unknown;
+    try {
+      getCursor('id DESC', '-5');
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as TRPCError).message).toBe('Invalid cursor: numeric value out of range "-5"');
+  });
+
+  it('CONTROL: a full ISO timestamp token still parses as a Date, not a number', () => {
+    // Contains `-` and is NOT fully numeric, so it must still take the date
+    // branch. This is the control that proves the discriminator change is scoped
+    // to negative integers.
+    const { where } = getCursor('createdAt DESC, id DESC', '2024-01-15T12:00:00.000Z|2686725');
     expect(where).toBeDefined();
     const values = (where as unknown as { values: unknown[] }).values;
     const dates = values.filter((v): v is Date => v instanceof Date);
-    expect(dates).toHaveLength(1);
-    expect(Number.isNaN(dates[0].getTime())).toBe(false);
-    expect(values).not.toContain(-5);
+    // A composite predicate is `(a > x) OR (a = x AND b > y)`, so the head token
+    // is bound more than once — assert every binding, not a count.
+    expect(dates.length).toBeGreaterThan(0);
+    expect(dates.every((d) => d.toISOString() === '2024-01-15T12:00:00.000Z')).toBe(true);
+    expect(values).toContain(2686725);
+  });
+
+  it('CONTROL: a normal positive id still parses as a number', () => {
+    const { where } = getCursor('i."id" DESC', '2686725');
+    expect(where).toBeDefined();
+    const values = (where as unknown as { values: unknown[] }).values;
+    expect(values).toContain(2686725);
+    expect(values.some((v) => v instanceof Date)).toBe(false);
+  });
+
+  it('CONTROL: a hyphenated non-numeric token is still Invalid-Date rejected, not NaN rejected', () => {
+    // `'not-a-date'` has a `-` and is not fully numeric, so it keeps taking the
+    // date branch — the message proves the branch, where a bare BAD_REQUEST
+    // assertion would not.
+    let thrown: unknown;
+    try {
+      getCursor('createdAt DESC, id DESC', 'not-a-date|123');
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as TRPCError).message).toBe(
+      'Invalid cursor: unparseable date value "not-a-date"'
+    );
+  });
+
+  // SEAM. The defect was never the floor's VALUE — it was that the two spellings
+  // of one cursor DISAGREED: the number `-5` was a 400 and the string `'-5'` was
+  // a 500, because `keysetCursorSchema` bounds the numeric members and
+  // `parseCursor` bounds the string tokens, in different files.
+  //
+  // So this pins the RELATIONSHIP, not either side. Both sides can stay
+  // internally consistent and still drift apart; re-inlining a literal floor at
+  // one site, or widening one bound without the other, fails here while every
+  // single-sided test above still passes. It was red at the merge base for the
+  // negative rows, so it is regression coverage and not only a guard.
+  it.each([
+    ['-5', -5],
+    ['-1', -1],
+    ['0', 0],
+    ['1', 1],
+    ['2686725', 2686725],
+    ['2147483647', INT4_MAX],
+    ['2147483648', INT4_MAX + 1],
+    ['999999999999', 999999999999],
+  ])('accepts/rejects %s identically as a string token and as a number', (asString, asNumber) => {
+    const schemaAccepts = keysetCursorSchema.safeParse(asNumber).success;
+    let parseCursorAccepts = true;
+    try {
+      getCursor('id DESC', asString);
+    } catch {
+      parseCursorAccepts = false;
+    }
+    expect(parseCursorAccepts).toBe(schemaAccepts);
+  });
+
+  // 🔴 DOCUMENTED OPEN RESIDUAL — these pin a KNOWN FAULT, not correct behaviour.
+  //
+  // The numeric-first discriminator closes the NUMERIC spelling of the
+  // bind-a-Date-to-an-int-column fault. It does not close the class. A token that
+  // contains `-` but is not fully numeric still reaches `dayjs.utc`, whose loose
+  // parse treats all of these as valid dates, so each still binds a Date into a
+  // comparison against an `int` sort column and still produces the same raw 500.
+  // Confirmed live: `/api/v1/images?cursor=0-&modelId=<id>` returns 500 today.
+  //
+  // Closing it needs the DATE branch to require a date SHAPE (e.g. a strict
+  // `dayjs(value, <formats>, true)` — `CustomParseFormat` is already loaded) and
+  // to send everything else numeric. That was deliberately NOT done here: it
+  // changes which tokens every caller's date branch accepts, and the formats a
+  // real `CONCAT(timestamp, '|', id)` emits were not observed against a database,
+  // so getting the format list wrong would turn a 500 into broken pagination —
+  // a worse failure than the one being fixed.
+  //
+  // When that lands, these will fail. That is the point: replace them with
+  // `expectBadRequest(...)` rather than deleting them.
+  it.each([['0-'], ['5-'], ['1-2'], ['--5']])(
+    'KNOWN GAP, pinning TODAY’S WRONG BEHAVIOUR: %s is still parsed as a DATE, not rejected',
+    (token) => {
+      // The instant is timezone- and format-dependent, so nothing here asserts it
+      // literally — only what holds everywhere: a Date came out, and no number did.
+      const { where } = getCursor('id DESC', token);
+      expect(where).toBeDefined();
+      const values = (where as unknown as { values: unknown[] }).values;
+      const dates = values.filter((v): v is Date => v instanceof Date);
+      expect(dates).toHaveLength(1);
+      expect(Number.isNaN(dates[0].getTime())).toBe(false);
+    }
+  );
+
+  it('CONTROL: an empty token still fails as an unparseable NUMERIC token', () => {
+    // The NULL-collapse shape `'|<id>'`. It has no `-`, so it took the numeric
+    // branch before and must still take it — a numeric-first discriminator that
+    // routed non-numeric tokens to the date branch would silently change this
+    // error's class.
+    let thrown: unknown;
+    try {
+      getCursor('createdAt DESC, id DESC', '|2686725');
+    } catch (e) {
+      thrown = e;
+    }
+    expect((thrown as TRPCError).message).toBe('Invalid cursor: unparseable numeric value ""');
   });
 });
 

@@ -2,12 +2,20 @@ import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
-import { INT4_MAX } from '~/server/schema/base.schema';
+import { CURSOR_MIN, INT4_MAX } from '~/server/schema/base.schema';
 import type { PaginationInput } from '~/server/schema/base.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
 
 export const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * A cursor token that is entirely an integer, sign included. Used by
+ * `parseCursor` to pick the numeric branch BEFORE the `-`-means-a-date test, so
+ * a negative integer is range-checked rather than handed to `dayjs`. Anchored
+ * and unflagged — `.test` on it is stateless.
+ */
+const NUMERIC_CURSOR_TOKEN = /^-?\d+$/;
 
 export function getPagination(limit: number, page: number | undefined) {
   const take = limit > 0 ? limit : undefined;
@@ -170,7 +178,31 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // unattributable INTERNAL_SERVER_ERROR (500). Reject the malformed cursor as a
     // 400 instead. (Well-formed cursors carry real DB values, so this only fires on a
     // genuinely unparseable token — never on a legitimate cursor.)
-    if (value.includes('-')) {
+    //
+    // The date-vs-numeric split is NUMERIC-FIRST: a fully-numeric token takes the
+    // numeric branch even when it contains `-`. It used to be a bare
+    // `value.includes('-')`, which is true of every negative integer, so `'-5'`
+    // took the date branch, `dayjs.utc('-5')` reported VALID, and the resulting
+    // Date was bound into a comparison against an `int` sort column — Postgres
+    // threw and the caller got a raw 500 for a malformed input. A REST query
+    // param is ALWAYS a string, so no bound on `keysetCursorSchema`'s numeric
+    // members could see it.
+    //
+    // Deliberately narrow: an ISO timestamp contains `-` but is not fully
+    // numeric, so it still takes the date branch, and a token with no `-` already
+    // took the numeric branch. The non-numeric fallback keeps `includes('-')`, so
+    // an empty or garbage token keeps the exact branch (and error) it had — the
+    // only tokens whose classification changes are fully-numeric ones containing
+    // `-`, i.e. negative integers.
+    //
+    // 🔴 This closes ONE SPELLING, not the class, and the test file pins the rest
+    // as an open gap. The date branch below still accepts `'0-'`, `'5-'`, `'1-2'`
+    // and `'--5'` as valid dates and still binds a Date to an `int` column. A
+    // structural fix requires the date branch to demand a date SHAPE and route
+    // everything else numeric; that needs the formats a real
+    // `CONCAT(timestamp, '|', id)` actually emits, which has not been observed
+    // against a database — guessing them would turn a 500 into broken pagination.
+    if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
       const parsed = dayjs.utc(value);
       if (!parsed.isValid())
         throwBadRequestError(`Invalid cursor: unparseable date value "${value}"`);
@@ -188,7 +220,28 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
       // `ct."sortKey"` caps at 1e9 and only pairs with a sort that bypasses this;
       // timestamps take the date branch. If a wider sort column is ever made
       // cursor-reachable, this guard must move with it.
-      if (parsed > INT4_MAX)
+      //
+      // The floor is `CURSOR_MIN`, the SAME constant `keysetCursorSchema` floors
+      // its numeric members at — so the same value is rejected as `-5` and as
+      // `'-5'`, rather than 400ing in one spelling and 500ing in the other, which
+      // is the defect this guard was widened for. Shared rather than restated
+      // because `base.schema.ts` records that the floor's VALUE is not settled;
+      // if it moves it must move in both spellings at once.
+      //
+      // 🔴 This floor does NOT establish that a negative cursor is impossible,
+      // and nothing here should be tightened on the strength of it — read the
+      // "WHAT IS STILL NOT ESTABLISHED" paragraph in `base.schema.ts`, which
+      // notes that `addPostImageSchema.index` is a bare `z.number()`, so a
+      // negative `i."index"` is writable and would be issuable as a nextCursor.
+      // No database was checked here either. What IS established is narrower and
+      // is all this guard rests on: a negative STRING token never had a working
+      // path — before this change it took the date branch and 500'd (or already
+      // 400'd as an Invalid Date), so rejecting it cannot regress a cursor that
+      // used to paginate. It also makes the open question observable: such a
+      // cursor now produces an attributable 400 instead of an unattributable 500,
+      // which is the trigger `base.schema.ts` names for moving the floor to the
+      // int4 minimum.
+      if (parsed < CURSOR_MIN || parsed > INT4_MAX)
         throwBadRequestError(`Invalid cursor: numeric value out of range "${value}"`);
       result[fields[i].field] = parsed;
     }

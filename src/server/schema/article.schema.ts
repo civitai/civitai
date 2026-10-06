@@ -24,6 +24,13 @@ const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
   ...ArticleUnpublishReason[]
 ];
 
+/** Keyed on the articles category score, not the Creator Score total. */
+export const dailyArticleTiers = [
+  { minArticlesScore: 1000, limit: 5 },
+  { minArticlesScore: 5000, limit: 10 },
+  { minArticlesScore: 10000, limit: 20 },
+];
+
 export const articleRateLimits: RateLimit[] = [
   {
     limit: 0,
@@ -36,21 +43,13 @@ export const articleRateLimits: RateLimit[] = [
     limit: 3,
     period: CacheTTL.day,
   },
-  {
-    limit: 5,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 1000,
-  },
-  {
-    limit: 10,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 5000,
-  },
-  {
-    limit: 20,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 10000,
-  },
+  ...dailyArticleTiers.map(
+    ({ minArticlesScore, limit }): RateLimit => ({
+      limit,
+      period: CacheTTL.day,
+      userReq: (user) => (user.meta?.scores?.articles ?? 0) >= minArticlesScore,
+    })
+  ),
 ];
 
 export const userPreferencesForArticlesSchema = z.object({

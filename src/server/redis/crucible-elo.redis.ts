@@ -86,6 +86,9 @@ export class CrucibleEloRedisClient {
    *
    * `stored` is each entry's last synced score and vote count, used for a field Redis no longer has:
    * after a wipe, starting again from the default would let the next sync overwrite Postgres.
+   *
+   * `frozen` names a side that stays as it is, rating and count: an entry the judge has already
+   * voted on as often as allowed, served only to place the other one.
    */
   async processVoteAtomic(
     crucibleId: number,
@@ -95,7 +98,8 @@ export class CrucibleEloRedisClient {
     stored: { winner: StoredEntryRating; loser: StoredEntryRating } = {
       winner: UNRATED,
       loser: UNRATED,
-    }
+    },
+    frozen?: 'winner' | 'loser'
   ): Promise<{
     winnerElo: number;
     loserElo: number;
@@ -116,6 +120,7 @@ export class CrucibleEloRedisClient {
       local winnerStoredVotes = tonumber(ARGV[7])
       local loserStoredElo = tonumber(ARGV[8])
       local loserStoredVotes = tonumber(ARGV[9])
+      local frozen = ARGV[10]
 
       local winnerVotes = tonumber(redis.call('HGET', votesKey, winnerField)) or winnerStoredVotes
       local loserVotes = tonumber(redis.call('HGET', votesKey, loserField)) or loserStoredVotes
@@ -132,14 +137,20 @@ export class CrucibleEloRedisClient {
       local expectedWinner = 1 / (1 + math.pow(10, (loserElo - winnerElo) / 400))
       local winnerChange = math.floor(winnerK * (1 - expectedWinner) + 0.5)
       local loserChange = -math.floor(loserK * (1 - expectedWinner) + 0.5)
+      if frozen == 'winner' then winnerChange = 0 end
+      if frozen == 'loser' then loserChange = 0 end
 
       local newWinnerElo = winnerElo + winnerChange
       local newLoserElo = loserElo + loserChange
 
-      redis.call('HSET', eloKey, winnerField, newWinnerElo)
-      redis.call('HSET', eloKey, loserField, newLoserElo)
-      redis.call('HSET', votesKey, winnerField, winnerVotes + 1)
-      redis.call('HSET', votesKey, loserField, loserVotes + 1)
+      if frozen ~= 'winner' then
+        redis.call('HSET', eloKey, winnerField, newWinnerElo)
+        redis.call('HSET', votesKey, winnerField, winnerVotes + 1)
+      end
+      if frozen ~= 'loser' then
+        redis.call('HSET', eloKey, loserField, newLoserElo)
+        redis.call('HSET', votesKey, loserField, loserVotes + 1)
+      end
 
       return {winnerElo, loserElo, newWinnerElo, newLoserElo, winnerChange, loserChange}
     `;
@@ -156,6 +167,7 @@ export class CrucibleEloRedisClient {
         stored.winner.voteCount.toString(),
         stored.loser.score.toString(),
         stored.loser.voteCount.toString(),
+        frozen ?? '',
       ],
     })) as number[];
 
