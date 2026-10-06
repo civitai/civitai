@@ -39,6 +39,8 @@ const PRESENT = new Set([
   'img2vid:ref2vid/prompt',
   'txt2img/model',
   'txt2img/prompt',
+  'txt2img:draft/model',
+  'txt2img:draft/prompt',
   'txt2img:face-fix/model',
   'txt2img:face-fix/prompt',
   'txt2img:hires-fix/model',
