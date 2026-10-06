@@ -158,6 +158,7 @@ describe('FirstPublishCard', () => {
   it('asks the server for the owner of a recently published model', () => {
     render();
     expect(askedServer()).toBe(true);
+    expect(mocks.useFeatureNotice.mock.lastCall?.[1]).toEqual({ enabled: true });
   });
 
   // `undefined === undefined` is true, so an uncoerced owner check would send a protected request
@@ -179,6 +180,7 @@ describe('FirstPublishCard', () => {
     render(props);
     expect(askedServer()).toBe(false);
     expect(askedLadder()).toBe(false);
+    expect(mocks.useFeatureNotice.mock.lastCall?.[1]).toEqual({ enabled: false });
   });
 
   it('still asks on the last day of the window', () => {

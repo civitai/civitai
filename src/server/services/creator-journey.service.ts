@@ -138,7 +138,13 @@ export async function getFirstPublishCard({
     // and a scheduled model is not earlier until it goes live. Models soft-delete, so a deleted earlier
     // one still counts; articles hard-delete and cannot.
     const earlier = await dbWrite.model.findFirst({
-      where: { userId, id: { not: id }, publishedAt: { lt: model.publishedAt } },
+      where: {
+        userId,
+        id: { not: id },
+        publishedAt: { lt: model.publishedAt },
+        // A Scheduled row the job will never publish (cannotPublish) keeps a past publishedAt.
+        status: { not: ModelStatus.Scheduled },
+      },
       select: { id: true },
     });
     return { show: !earlier };

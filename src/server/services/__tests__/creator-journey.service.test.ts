@@ -133,6 +133,14 @@ describe('getFirstPublishCard', () => {
   const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
   type Row = { id: number; userId: number; status: string; publishedAt: Date | null };
 
+  type FirstWhere = {
+    userId: number;
+    id: { not: number };
+    publishedAt: { lt: Date };
+    status?: { not: string };
+  };
+  const UNDERSTOOD_KEYS = ['userId', 'id', 'publishedAt', 'status'];
+
   // A tiny in-memory table that honours the where clauses the service sends, so a case reads as data.
   // The exact clause is pinned separately below; this fake only interprets it.
   function seed(entity: 'model' | 'article', rows: Row[]) {
@@ -141,20 +149,21 @@ describe('getFirstPublishCard', () => {
       (async ({ where }: { where: { id: number } }) =>
         rows.find((r) => r.id === where.id) ?? null) as never
     );
-    client.findFirst.mockImplementation(
-      (async ({
-        where,
-      }: {
-        where: { userId: number; id: { not: number }; publishedAt: { lt: Date } };
-      }) =>
+    client.findFirst.mockImplementation((async ({ where }: { where: FirstWhere }) => {
+      // Refuse a clause it does not understand, so it cannot agree with an added filter.
+      const unknown = Object.keys(where).filter((k) => !UNDERSTOOD_KEYS.includes(k));
+      if (unknown.length) throw new Error(`seed() cannot interpret where.${unknown.join(', ')}`);
+      return (
         rows.find(
           (r) =>
             r.userId === where.userId &&
             r.id !== where.id.not &&
             r.publishedAt != null &&
-            r.publishedAt < where.publishedAt.lt
-        ) ?? null) as never
-    );
+            r.publishedAt < where.publishedAt.lt &&
+            (where.status == null || r.status !== where.status.not)
+        ) ?? null
+      );
+    }) as never);
   }
   const row = (overrides: Partial<Row> = {}): Row => ({
     id: 1,
@@ -225,10 +234,20 @@ describe('getFirstPublishCard', () => {
       expect(dbMock.dbRead[entity].findFirst).not.toHaveBeenCalled();
       expect(dbMock.dbWrite[entity].findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: { userId: owner, id: { not: 1 }, publishedAt: { lt: publishedAt } },
+          where: {
+            userId: owner,
+            id: { not: 1 },
+            publishedAt: { lt: publishedAt },
+            ...(entity === 'model' ? { status: { not: 'Scheduled' } } : {}),
+          },
         })
       );
     });
+  });
+
+  it('is not blocked by a model still Scheduled past its slot, which never went live', async () => {
+    seed('model', [row({ id: 1 }), row({ id: 2, status: 'Scheduled', publishedAt: daysAgo(3) })]);
+    await expect(card('model', 1)).resolves.toEqual({ show: true });
   });
 
   // Models soft-delete and keep publishedAt, so an earlier deleted model still makes this not the first.
