@@ -8,6 +8,10 @@ import {
   previewMilestoneCosmetics,
   previewScoreTierBackfill,
 } from '~/server/services/creator-milestone-grant.service';
+import {
+  CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
+  isCreatorJourneyPublic,
+} from '~/server/services/creator-journey-flag.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { booleanString } from '~/utils/zod-helpers';
 
@@ -17,7 +21,8 @@ import { booleanString } from '~/utils/zod-helpers';
  * Actions (`?action=`):
  *   tiers      (default) Grant every score tier a user's stored total has reached. Rows are stamped
  *              seen and nothing is notified. Safe to re-run; it also reconciles anyone a failed
- *              nightly grant missed.
+ *              nightly grant missed. Refuses to write while the creator-journey flag is not public
+ *              (see CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG); the dry run always works.
  *   cosmetics  After a cosmetic is attached to a milestone definition, grant it to that milestone's
  *              existing holders. Optional `&milestoneKey=score:flame` limits it to one definition.
  *
@@ -27,6 +32,8 @@ import { booleanString } from '~/utils/zod-helpers';
  *              rows are never split across two, so a batch writes at most 9 x batchSize rows.
  *   start      resume after this userId (the `lastUserId` a previous run returned). Default 0.
  *   end        stop at this userId, inclusive.
+ *
+ * Order: tiers, then ANALYZE "UserCreatorMilestone" and EXPLAIN the cosmetics batch, then cosmetics.
  *
  *   GET /api/admin/temp/backfill-creator-milestones?token=$WEBHOOK_TOKEN&dryRun=false
  *   GET /api/admin/temp/backfill-creator-milestones?token=$WEBHOOK_TOKEN&action=cosmetics&dryRun=false
@@ -47,6 +54,16 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (params.dryRun) {
     const wouldGrant = await previewBackfill(params);
     return res.status(200).json({ ...params, wouldGrant });
+  }
+
+  if (
+    params.action === 'tiers' &&
+    CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG &&
+    !(await isCreatorJourneyPublic())
+  ) {
+    return res
+      .status(409)
+      .json({ error: 'Tier grants wait for the creator-journey flag to be public' });
   }
 
   const runBatch = (afterUserId: number): Promise<MilestoneBatchResult> =>

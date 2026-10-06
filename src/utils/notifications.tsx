@@ -17,7 +17,7 @@ export function showErrorNotification({
   autoClose = 3000,
 }: {
   error: Error | { message: string } | { message: string }[];
-  reason?: string;
+  reason?: React.ReactNode;
   title?: string;
   autoClose?: number | false;
 }) {

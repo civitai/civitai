@@ -7,6 +7,7 @@ import { UploadType } from '~/server/common/enums';
 import { withRetries } from '~/utils/errorHandling';
 import type { PartFailureReason, UploadPartError } from '~/utils/upload-retry';
 import {
+  createPartStallWatchdog,
   describePartFailure,
   getPartRetryDelay,
   isTerminalCompleteStatus,
@@ -20,6 +21,15 @@ import type { ClientDeclarableRelayFallbackOutcome } from '~/utils/relay-fallbac
 
 const FILE_CHUNK_SIZE = 25 * 1024 * 1024; // 25 MB
 const CONCURRENT_PARTS = 4;
+// The VISIBLE-silence window once the body is fully sent, and wider than the body's because a
+// server legitimately takes its time producing an ETag while no `upload.progress` re-arms it.
+//
+// 🔴 NOT a cap on the wait — sizing it from a total-wait budget sizes the wrong quantity.
+// `createPartStallWatchdog` re-arms across a hidden tab, so a backgrounded response legitimately
+// takes multiples of this (17 minutes, in the hidden-across case in `useS3Upload.test.ts`). And
+// the MAGNITUDE has no rationale: it is derived from no measured ETag latency, and no sentence
+// here should be read as one.
+const PART_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 
 // Abort-aware sleep so cancelling during a long Retry-After window
 // short-circuits the backoff instead of waiting it out.
@@ -217,7 +227,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       // effect closes over the `files` from its first render with `[]` deps, so it
       // always iterates an empty array and aborts nothing.
       //
-      // Neither live caller can reach the relay — `FileInputUpload` uploads
+      // Neither cancel-capable caller can reach the relay — `FileInputUpload` uploads
       // model/training files and `MultiFileInputUpload` uploads `type: 'default'`, while
       // the relay is image-only. So on the one path that CAN relay, nothing cancels an
       // upload today: the `userAborted` gate below is correct and tested, but it is not
@@ -331,17 +341,66 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           const part = i === partsCount ? file.slice(start) : file.slice(start, end);
           const xhr = new XMLHttpRequest();
           activeXhrs.add(xhr);
+          // 🔴 Lets the `abort` handler tell THIS abort from the person's, so it can reject with
+          // `aborted: false`. `shouldRelayOnPartFailure` refuses on `err.aborted`, so collapsing
+          // the two shapes makes the watchdog fire into a gate it cannot pass: the upload still
+          // fails and the relay still never runs.
+          const stalledRef = { value: false, responsePhase: false };
+          let bodySent = false;
+          const rejectStalled = () =>
+            reject({
+              status: null,
+              networkError: true,
+              aborted: false,
+              stalled: true,
+              // One failure class, two populations: a transfer that died mid-body, and a host
+              // that took every byte and never answered. They call for different fixes.
+              responsePhase: stalledRef.responsePhase,
+              partNumber: i,
+            } as UploadPartError);
+          const watchdog = createPartStallWatchdog(() => {
+            stalledRef.value = true;
+            // 🔴 SAMPLED HERE, not when the rejection is built: `xhr.abort()` runs XHR's
+            // request-error steps, which fire `upload.loadend` before the xhr-level `abort` while
+            // the body is in flight, so reading it any later reports every mid-body stall as a
+            // response-phase one.
+            stalledRef.responsePhase = bodySent;
+            xhr.abort();
+          });
           xhr.upload.addEventListener('progress', ({ loaded }) => {
+            watchdog.arm();
             partProgress.set(i, loaded);
             updateProgress();
           });
           xhr.upload.addEventListener('loadend', ({ loaded }) => {
+            // The window WIDENS here rather than ending: on the ordinary path what remains is a
+            // wait for a tiny ETag reply, not a transfer, so the body's window would kill a
+            // slow-but-healthy server while no window at all lets a connection that goes
+            // half-open AFTER the body hold a `useMediaUpload` worker slot for the life of the
+            // page.
+            //
+            // 🔴 REACHING HERE DOES NOT MEAN THE BODY GOT THROUGH: XHR's request-error steps fire
+            // `upload.loadend` on `abort` and on `error` too. `bodySent`'s one reader is the
+            // watchdog callback below, which samples it BEFORE `xhr.abort()` for that reason.
+            //
+            // 🔴 RE-ARM, NEVER `xhr.timeout` — a browser timer counts wall clock while the tab
+            // is hidden, so bounding this phase with one costs a needlessly re-sent part.
+            bodySent = true;
+            watchdog.arm(PART_RESPONSE_TIMEOUT_MS);
             partProgress.set(i, loaded);
           });
           xhr.addEventListener('load', () => {
             eTag = xhr.getResponseHeader('ETag') ?? '';
           });
           xhr.addEventListener('loadend', () => {
+            // Fires after load, error AND abort, so this is the one clear that covers every
+            // terminal outcome THAT DISPATCHES AN EVENT, and the only place the listener is
+            // unregistered — the `upload.loadend` handler above re-arms rather than clears.
+            //
+            // ⚠ Not exhaustive over REJECTIONS: a synchronous throw from `xhr.open`/`send` below
+            // rejects with no event, leaking this listener and (for `send`) an armed timer.
+            // Pre-existing and left alone — no production-reachable trigger was constructed.
+            watchdog.clear();
             activeXhrs.delete(xhr);
             if (xhr.readyState !== 4) return;
             if (xhr.status === 200) {
@@ -362,10 +421,12 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
           });
           xhr.addEventListener('abort', () => {
             activeXhrs.delete(xhr);
+            if (stalledRef.value) return rejectStalled();
             reject({ status: null, aborted: true, partNumber: i } as UploadPartError);
           });
           xhr.open('PUT', url);
           xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+          watchdog.arm();
           xhr.send(part);
         });
 

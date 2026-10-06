@@ -237,6 +237,64 @@ describe('trainedEpochs', () => {
   });
 });
 
+// The AppWorkflow LIST row (`useAppWorkflows`) carries the same field, so a block
+// listing its runs can hand an approved one to the publish wizard without
+// polling each workflow.
+describe('trainedEpochs on AppWorkflow rows', () => {
+  it('lists the ready epochs of an approved `training` run', () => {
+    expect(projectAppWorkflow(workflow('training', trainingOutput())).trainedEpochs).toEqual([
+      { $type: 'training', epochNumber: 1 },
+      { $type: 'training', epochNumber: 2 },
+    ]);
+  });
+
+  it('lists the ready epochs of an approved `imageResourceTraining` run', () => {
+    expect(
+      projectAppWorkflow(workflow('imageResourceTraining', imageResourceTrainingOutput()))
+        .trainedEpochs
+    ).toEqual([{ $type: 'imageResourceTraining', epochNumber: 5 }]);
+  });
+
+  it('accumulates across two training steps rather than keeping the last', () => {
+    const wf = workflow('training', trainingOutput());
+    (wf.steps as unknown[]).push({
+      $type: 'imageResourceTraining',
+      name: BLOCK_STEP_NAME,
+      output: imageResourceTrainingOutput(),
+    });
+    expect(projectAppWorkflow(wf).trainedEpochs).toEqual([
+      { $type: 'training', epochNumber: 1 },
+      { $type: 'training', epochNumber: 2 },
+      { $type: 'imageResourceTraining', epochNumber: 5 },
+    ]);
+  });
+
+  it.each(['evaluating', 'underReview', 'rejected', undefined])(
+    'is OMITTED when the run moderationStatus is %s',
+    (moderationStatus) => {
+      const projected = projectAppWorkflow(
+        workflow('training', { ...trainingOutput(), moderationStatus })
+      );
+      expect(projected).not.toHaveProperty('trainedEpochs');
+      expect(projected.images.map((i) => i.url)).toEqual([SAMPLE_1A, SAMPLE_1B, SAMPLE_2A]);
+    }
+  );
+
+  it('is OMITTED for a training step this bridge did not submit', () => {
+    expect(
+      projectAppWorkflow(workflow('training', trainingOutput(), { name: 'other' }))
+    ).not.toHaveProperty('trainedEpochs');
+  });
+
+  // Same output shape, non-training `$type`: the row keeps exactly its prior keys.
+  it('is OMITTED for a non-training row, which keeps exactly its prior keys', () => {
+    const projected = projectAppWorkflow(workflow('imageBackgroundRemoval', trainingOutput()));
+    expect(Object.keys(projected).sort()).toEqual(
+      ['cost', 'createdAt', 'images', 'status', 'workflowId'].sort()
+    );
+  });
+});
+
 describe('publishedModel', () => {
   const stamped = { modelId: 501, modelVersionId: 9001 };
 

@@ -16,6 +16,13 @@ export function creatorScoreFromMeta(meta: unknown): number {
   return typeof score === 'number' && Number.isFinite(score) ? score : 0;
 }
 
+/** The session's Creator Score, or undefined when the session carries no scores at all (not zero). */
+export function creatorScoreFromSession(user: { meta?: unknown } | null | undefined) {
+  return (user?.meta as UserMetaScores | null | undefined)?.scores
+    ? creatorScoreFromMeta(user?.meta)
+    : undefined;
+}
+
 const AGGREGATE_CATEGORIES = [
   'models',
   'articles',
