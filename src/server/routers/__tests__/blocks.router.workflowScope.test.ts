@@ -29,6 +29,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * all, and four cover `publishGenerationOutputs`, whose two guards already existed there and had
  * no behavioural test anywhere. Counting any of the ten as proof of this change would be wrong.
  * Re-run both halves if the base moves again — the numbers are pinned to that sha, not to "main".
+ *
+ * LATER ADDITION — the publish session binding (`blocks.publishGenerationOutputs — bound to the
+ * signed-in session`). Measured against `6594d3f8e7`'s router: 4 failed / 30 passed; with the
+ * binding: 34 passed. The four refusal cases there are its regression coverage; the success case
+ * is an INVARIANT GUARD. The four older publish cases now pass the viewer's session.
  */
 
 const {
@@ -841,7 +846,7 @@ describe('blocks.publishGenerationOutputs — bound to the signed-in session', (
       caller({ id: STRANGER }).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
     ).rejects.toMatchObject({
       code: 'FORBIDDEN',
-      message: 'block token does not belong to the signed-in user',
+      message: 'this app session belongs to a different account; reload the page to continue',
     });
     // Refused before the flag read, not by a later gate.
     expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
@@ -858,7 +863,7 @@ describe('blocks.publishGenerationOutputs — bound to the signed-in session', (
       caller(viewerSession).publishGenerationOutputs({ blockToken: 'tok', workflowId: OWN_ID })
     ).rejects.toMatchObject({
       code: 'FORBIDDEN',
-      message: 'block token does not belong to the signed-in user',
+      message: 'this app session belongs to a different account; reload the page to continue',
     });
     expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
     expectNothingPublished();
@@ -876,6 +881,7 @@ describe('blocks.publishGenerationOutputs — bound to the signed-in session', (
   });
 
   it('PUBLISHES when the session user is the token subject', async () => {
+    // INVARIANT GUARD (passes at base too): the legitimate path must not become collateral.
     const result = await caller(viewerSession).publishGenerationOutputs({
       blockToken: 'tok',
       workflowId: OWN_ID,

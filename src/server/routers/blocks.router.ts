@@ -1845,7 +1845,7 @@ function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: n
   if (subjectUserId !== sessionUserId) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'block token does not belong to the signed-in user',
+      message: 'this app session belongs to a different account; reload the page to continue',
     });
   }
 }
