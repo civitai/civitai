@@ -63,10 +63,10 @@ A verdict that arrives after the mode has left `active` is not written to the li
   `scanTexts`, `quoteTexts`); every other action, including any added
   later, refuses it. That endpoint also attributes prompt and config writes to the signed-in
   moderator.
-- The moderator app's text-scan lab (`/text-scan/check`, `/text-scan/test-sets`, `/text-scan/prompts`
-  labelled Versions with drafts and publish; `/text-scan/playground` redirects to Check) drives those
-  actions. Its tables live in the moderator database and are applied by hand; see
-  `apps/moderator/text-scan-lab/README.md`. Publishing a prompt needs the `textScan.prompt.publish`
-  permission and editing test sets needs `textScan.testSet.edit`. Neither is held by anyone until
-  granted on `/admin`, and the pages themselves are unreachable until granted there too.
+- The moderator app's text-scan lab drives those actions: Check (`/text-scan/check`) judges links, ids
+  or text with the current prompts and, side by side, with a moderator's edits, which are kept only in
+  that moderator's browser; Versions (`/text-scan/prompts`) shows each prompt's history. It stores
+  nothing in the moderator database. Publishing edits needs the `textScan.prompt.publish` permission,
+  held by no one until granted on `/admin`; the pages are likewise unreachable until granted there.
+  `/text-scan` and `/text-scan/playground` redirect to Check.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.
