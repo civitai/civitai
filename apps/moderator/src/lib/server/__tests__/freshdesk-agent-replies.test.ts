@@ -184,8 +184,11 @@ describe('getFreshdeskContact', () => {
     );
   });
 
-  it('is unavailable, not none, on a body that is not an object', async () => {
-    fetchMock.mockResolvedValueOnce(page(null));
+  it.each([
+    ['null', null],
+    ['an array', []],
+  ])('is unavailable, not none, on a body that is %s', async (_label, body) => {
+    fetchMock.mockResolvedValueOnce(page(body));
     expect(await getFreshdeskContact('rv@example.test')).toEqual({
       status: 'unavailable',
       reason: 'Freshdesk returned an unexpected response.',

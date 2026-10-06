@@ -61,7 +61,7 @@
       {:else if result?.status === 'none'}
         <p class="text-dark-2 text-sm">No public agent reply on this ticket.</p>
       {:else if result?.status === 'unavailable'}
-        <p class="text-sm text-red-300" role="alert">Could not ask Freshdesk: {result.reason}</p>
+        <p class="text-sm text-red-300" role="alert">Replies unavailable — {result.reason}</p>
       {/if}
     {:catch e}
       <p class="text-sm text-red-300" role="alert">

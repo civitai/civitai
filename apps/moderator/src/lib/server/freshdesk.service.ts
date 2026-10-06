@@ -173,7 +173,7 @@ export async function getFreshdeskContact(email: string | null): Promise<Freshde
   const query = encodeURIComponent(`"email:'${email.replace(/'/g, '')}'"`);
   const res = await freshdeskGet(`/search/contacts?query=${query}`, 'search');
   if (res.status !== 'ok') return res;
-  if (typeof res.body !== 'object' || res.body === null) {
+  if (typeof res.body !== 'object' || res.body === null || Array.isArray(res.body)) {
     console.error('[freshdesk] search: unexpected body');
     return unavailable('Freshdesk returned an unexpected response.');
   }
