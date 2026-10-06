@@ -58,7 +58,8 @@ async function goneIds(main: Kysely<MainDB>, source: Source, ids: number[]): Pro
 }
 
 /** Wipes the text of entity cases whose source entity or author account was deleted, keeping the
- *  expectation, hash and note. Free text and synthetic cases are never touched. Idempotent. */
+ *  expectation, hash and note, and drops every stored output of a wiped case. Free text (no entity
+ *  id) is never touched. Idempotent. */
 export async function purgeDeletedSources(
   { moderator, main }: PurgeDbs,
   setId?: number
@@ -67,8 +68,7 @@ export async function purgeDeletedSources(
     .selectFrom('text_scan_test_case')
     .select(['entity_type', 'entity_id'])
     .where('entity_id', 'is not', null)
-    .where('fields', 'is not', null)
-    .where('synthetic', '=', false);
+    .where('fields', 'is not', null);
   if (setId !== undefined) q = q.where('set_id', '=', String(setId));
   const cases = await q.execute();
 
@@ -93,20 +93,24 @@ export async function purgeDeletedSources(
           .set({ fields: null, source_deleted_at: sql`now()`, updated_at: sql`now()` })
           .where('entity_type', '=', type)
           .where('entity_id', 'in', gone)
-          .where('fields', 'is not', null)
-          .where('synthetic', '=', false);
+          .where('fields', 'is not', null);
         if (setId !== undefined) wipe = wipe.where('set_id', '=', String(setId));
-        const caseIds = (await wipe.returning('id').execute()).map((r) => r.id);
-        // A stored output's `reason` can quote the text.
-        if (caseIds.length)
-          await trx
-            .updateTable('text_scan_test_result')
-            .set({ output: null })
-            .where('case_id', 'in', caseIds)
-            .execute();
-        return caseIds.length;
+        return (await wipe.returning('id').execute()).length;
       });
     }
   }
+  // A stored output's `reason` can quote the text. Swept for every wiped case, not only those wiped
+  // now, so a result a run wrote while its case was being wiped is caught on the next purge.
+  let wipedResults = moderator
+    .selectFrom('text_scan_test_case')
+    .select('id')
+    .where('source_deleted_at', 'is not', null);
+  if (setId !== undefined) wipedResults = wipedResults.where('set_id', '=', String(setId));
+  await moderator
+    .updateTable('text_scan_test_result')
+    .set({ output: null })
+    .where('output', 'is not', null)
+    .where('case_id', 'in', wipedResults)
+    .execute();
   return { checked, wiped };
 }

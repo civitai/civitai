@@ -153,6 +153,12 @@ describe('parseSeedFile', () => {
     ]);
   });
 
+  it('rejects a synthetic case that names an entity', () => {
+    expect(errorsOf({ cases: [entityCase({ synthetic: true })] })).toEqual([
+      expect.stringMatching(/^case 1 .*synthetic case has no entityId/),
+    ]);
+  });
+
   it('rejects a non-boolean synthetic, a non-string note and one over the column limit', () => {
     expect(
       errorsOf({

@@ -86,6 +86,8 @@ function parseCase(raw: unknown): SeedCase | string {
     typeof v === 'number' && Number.isInteger(v) && v >= 1 && v <= MAX_INT4;
   if (raw.entityId !== undefined) {
     if (!isId(raw.entityId)) return `entityId ${String(raw.entityId)} is not an id.`;
+    // A real entity's text is wiped when its source is deleted; synthetic marks text no source owns.
+    if (raw.synthetic === true) return 'a synthetic case has no entityId.';
     const authorId = raw.authorId ?? null;
     if (authorId !== null && !isId(authorId)) return `authorId ${String(authorId)} is not an id.`;
     if (authorId !== null && !fields) return 'authorId goes with a pre-composed fields snapshot.';
