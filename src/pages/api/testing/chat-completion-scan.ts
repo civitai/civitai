@@ -59,20 +59,31 @@
  *     "promptOverrides"?: { "<key>": "..." }, "model"?, "thinking"?, "wait"? }
  *     Dry-runs the production composition for one entity synchronously: no
  *     callback, no EntityModeration write. Overridden keys report prompt id 0.
+ *     A missing or blank prompt key comes back as the item's error, unsubmitted.
  *
  *   { "action": "batchEntities", "entityType": "...", "entityIds": [1, 2], ... }
  *     `scanEntity` over up to 50 ids, with outcome counts, refusal rate and
- *     per-label firing counts. Text below the profile's minChars is not sent.
- *
- *   { "action": "sampleShadow", "entityType": "Post", "label": "nsfw", "verdict"?: "triggered",
- *     "n"?: 100, "sinceDays"?: 14, "seed"?: "shadow", "promptScope"?: "active" | "any",
- *     "format"?: "json" | "csv" }
- *     A reproducible random sample of SHADOW verdicts (`<Entity>:shadow` rows) for moderator
- *     grading, with the entity's current text. Only verdicts made with the active prompts
- *     unless `promptScope` is "any". `textChangedSinceScan` marks rows edited after the scan.
+ *     per-label firing counts. Text below the profile's minChars is not sent, and an
+ *     item whose prompt key is missing counts as `missing_prompt`. Refused when
+ *     ceil(ids / concurrency) * wait exceeds the harness budget, as for scanTexts over its texts.
  *
  *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
  *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
+ *
+ *   composeEntities and sampleShadow are refused here (403): they read any entity's text and
+ *     author, private messages included, so only the attributed, audited /api/mod/text-scan
+ *     serves them.
+ *
+ *   { "action": "scanTexts", "entityType": "Comment",
+ *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
+ *     "promptOverrides"?, "model"?, "thinking"?, "concurrency"?, "wait"? }
+ *     `batchEntities` over up to 50 free texts, composed and labelled as that entity type.
+ *     Free text declares nothing, so the outcome is what would fire on an entity that
+ *     declares nothing. A missing prompt key comes back as that item's error.
+ *
+ *   { "action": "quoteTexts", "entityType": "Comment", "texts": [...], "promptOverrides"?,
+ *     "model"?, "thinking"? }
+ *     `whatif`-prices the `scanTexts` composition. Submits nothing.
  *
  * Label definitions and policy text are INPUTS, never defaults in this file.
  * `labels` are bare names; pass any definitions via `labelDefinitions` or
@@ -370,7 +381,13 @@ async function runOne(input: Omit<ScanInput, 'action'> & { text: string }) {
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  if (isTextScanHarnessAction((req.body as { action?: unknown } | undefined)?.action)) {
+  const action = (req.body as { action?: unknown } | undefined)?.action;
+  // Both return entity text and author ids: only the attributed, audited endpoint serves them.
+  if (action === 'composeEntities' || action === 'sampleShadow')
+    return res.status(403).json({
+      error: `${action} is only served by /api/mod/text-scan, which records who read what.`,
+    });
+  if (isTextScanHarnessAction(action)) {
     try {
       const harnessInput = textScanHarnessSchema.safeParse(req.body);
       if (!harnessInput.success)

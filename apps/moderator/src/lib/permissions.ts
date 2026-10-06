@@ -74,6 +74,7 @@ export const PERMISSIONS = [
   // instead of a rename, and a rename orphans stored grant rows.
   { id: 'feedback.status.set', label: 'Set feedback status' },
   { id: 'feedback.bug.promote', label: 'Promote feedback to a Known Issue' },
+  { id: 'textScan.prompt.publish', label: 'Publish text-scan prompt versions (production)' },
 ] as const satisfies readonly { id: string; label: string }[];
 
 export type Permission = (typeof PERMISSIONS)[number];

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { isNavLinkActive, navHref } from '$lib/nav-links';
-import { applyGrants, canAccess, navForUser, pageAccessState } from '$lib/server/access';
+import {
+  applyGrants,
+  canAccess,
+  NAVIGATION,
+  navForUser,
+  pageAccessState,
+  PERMISSIONS,
+} from '$lib/server/access';
 
 const page = { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' };
 const appeals = { path: page.path, query: 'tab=appeals', label: 'Model Flag Appeals' };
@@ -56,5 +63,18 @@ describe('a view link in NAVIGATION', () => {
   it('is not offered as a separate grant on /admin', () => {
     const models = pageAccessState().tree.find((n) => n.key === '/models');
     expect(models?.children.map((c) => c.label)).toEqual(['Minor Hash Matches']);
+  });
+});
+
+describe('the text-scan lab', () => {
+  it('declares the text-scan lab permissions and pages', () => {
+    const ids = PERMISSIONS.map((p) => p.id);
+    expect(ids).toContain('textScan.prompt.publish');
+    expect(ids.filter((id) => id.startsWith('textScan.'))).toEqual(['textScan.prompt.publish']);
+    const group = NAVIGATION.find((n) => n.path === '/text-scan');
+    expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
+      ['/text-scan/check', 'Check'],
+      ['/text-scan/prompts', 'Versions'],
+    ]);
   });
 });

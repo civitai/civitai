@@ -188,6 +188,7 @@ export type ModEndpoint =
   | 'review/delete'
   | 'review/set-exclude'
   | 'strike/create'
+  | 'text-scan'
   | 'training-data/resolve'
   | 'user/delete'
   | 'user/toggle-moderator'

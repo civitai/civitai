@@ -83,6 +83,18 @@ describe('composeTextScanMessages', () => {
       ]);
     }
   });
+
+  it('treats a whitespace-only prompt row as missing', () => {
+    const compose = () =>
+      composeTextScanMessages({
+        prompts: { ...prompts, 'label:nsfw': { id: 11, key: 'label:nsfw', content: ' \n ' } },
+        labels: ['nsfw'],
+        subject,
+        maxInputChars: 1000,
+      });
+    expect(compose).toThrow(MissingTextScanPromptError);
+    expect(compose).toThrow('label:nsfw');
+  });
 });
 
 describe('composeUserMessage', () => {

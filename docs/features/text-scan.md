@@ -51,8 +51,22 @@ A verdict that arrives after the mode has left `active` is not written to the li
 ## Testing and operations
 
 - `src/server/services/text-scan/harness.ts` composes the production prompt for a real entity and
-  scans it synchronously without recording it, prices it (`whatif`), or samples shadow verdicts for
-  grading. Locally it is reached through `/api/testing/chat-completion-scan`; on deployed builds
-  through the moderator endpoint `/api/mod/text-scan`, which attributes prompt and config writes to
-  the signed-in moderator.
+  scans it synchronously without recording it (`scanEntity`, `batchEntities`), does the same for free
+  text (`scanTexts`), prices either without running (`quoteEntities`, `quoteTexts`, `whatif`),
+  returns the composed text only (`composeEntities`), or samples shadow verdicts for grading
+  (`sampleShadow`). `scanEntity`, `batchEntities` and `scanTexts` refuse a request whose worst case,
+  `ceil(items / concurrency) * wait`, exceeds 120 seconds (`HARNESS_BUDGET_SECONDS`). Locally, the
+  scan and quote actions are reached through `/api/testing/chat-completion-scan`. `composeEntities`
+  and `sampleShadow` read any entity's text and author, so they are refused there (403) and only the
+  attributed, audited moderator endpoint `/api/mod/text-scan` serves them. There, an API key that is
+  not full-scope reaches only the read and caller-text scan actions (`getPrompts`, `quoteEntities`,
+  `scanTexts`, `quoteTexts`); every other action, including any added
+  later, refuses it. That endpoint also attributes prompt and config writes to the signed-in
+  moderator.
+- The moderator app's text-scan lab drives those actions: Check (`/text-scan/check`) judges links, ids
+  or text with the current prompts and, side by side, with a moderator's edits, which are kept only in
+  that moderator's browser; Versions (`/text-scan/prompts`) shows each prompt's history. It stores
+  nothing in the moderator database. Publishing edits needs the `textScan.prompt.publish` permission,
+  held by no one until granted on `/admin`; the pages are likewise unreachable until granted there.
+  `/text-scan` and `/text-scan/playground` redirect to Check.
 - Errors are logged to Axiom under `name: 'text-scan'`; every submit also logs a `submitted` event.

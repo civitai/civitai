@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as ClickhouseModule from '~/server/clickhouse/client';
 import type * as HarnessModule from '~/server/services/text-scan/harness';
+import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const { session, mockAudit } = vi.hoisted(() => ({
   session: { current: null as null | { user: Record<string, unknown> } },
@@ -24,11 +25,16 @@ vi.mock('~/server/services/text-scan/harness', async (importOriginal) => ({
   runTextScanHarnessAction: vi.fn(async () => ({ kind: 'json', body: { ok: true } })),
 }));
 
-const handler = (await import('~/pages/api/mod/text-scan')).default;
+const { default: handler, config, needsFullScope } = await import('~/pages/api/mod/text-scan');
 const { runTextScanHarnessAction } = await import('~/server/services/text-scan/harness');
+const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token');
 
-function call(body: unknown, query: Record<string, string> = {}) {
-  const req = { method: 'POST', headers: {}, query, body } as never;
+function call(
+  body: unknown,
+  query: Record<string, string> = {},
+  headers: Record<string, string> = {}
+) {
+  const req = { method: 'POST', headers, query, body } as never;
   let statusCode = 200;
   let payload: unknown;
   const res = {
@@ -62,6 +68,10 @@ beforeEach(() => {
 });
 
 describe('mod/text-scan', () => {
+  it('raises the body limit above a full request of texts', () => {
+    expect(config.api.bodyParser.sizeLimit).toBe('4mb');
+  });
+
   it('refuses a caller with no session, and a signed-in non-moderator, without reaching the harness', async () => {
     session.current = null;
     expect((await call({ action: 'getPrompts' })).status).toBe(401);
@@ -118,6 +128,19 @@ describe('mod/text-scan', () => {
     expect(JSON.stringify(second)).not.toContain('CANDIDATE PROMPT');
   });
 
+  it('keeps free text out of the audit row', async () => {
+    await call({
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'USER TEXT' }] }],
+      promptOverrides: { base: 'CANDIDATE PROMPT' },
+    });
+    const payload = mockAudit.mock.calls[0][0].payload as Record<string, unknown>;
+    expect(payload).toMatchObject({ action: 'scanTexts', entityType: 'Comment' });
+    expect(JSON.stringify(payload)).not.toContain('USER TEXT');
+    expect(JSON.stringify(payload)).not.toContain('CANDIDATE PROMPT');
+  });
+
   it.each(['scan', 'batch', 'whatif', 'fetch', 'constructor', undefined])(
     'refuses %s with a 400',
     async (action) => {
@@ -132,5 +155,58 @@ describe('mod/text-scan', () => {
       (await call({ action: 'sampleShadow', entityType: 'Post', label: 'nsfw', format: 'csv' }))
         .body
     ).toEqual({ csv: '"a","b"' });
+  });
+
+  describe('actions that need full scope', () => {
+    const MOD_USER = { id: MOD, isModerator: true, bannedAt: null, permissions: [] };
+    const asApiKey = (tokenScope: number) => {
+      vi.mocked(getSessionFromBearerToken).mockResolvedValueOnce({
+        user: MOD_USER,
+        tokenScope,
+      } as never);
+      return { authorization: 'Bearer key' };
+    };
+    const textActions = [
+      { action: 'composeEntities', entityType: 'Post', entityIds: [1] },
+      { action: 'sampleShadow', entityType: 'Post', label: 'nsfw' },
+      { action: 'scanEntity', entityType: 'Post', entityId: 1 },
+      { action: 'batchEntities', entityType: 'Post', entityIds: [1], wait: 30 },
+      { action: 'putPrompt', key: 'base', content: 'BASE PROMPT', note: 'n' },
+      { action: 'putConfig', config: { thinking: true } },
+    ];
+
+    it.each(textActions)('$action refuses a narrowly-scoped API key', async (body) => {
+      const res = await call(body, {}, asApiKey(TokenScope.UserRead | TokenScope.ModelsRead));
+      expect(res.status).toBe(403);
+      expect(runTextScanHarnessAction).not.toHaveBeenCalled();
+    });
+
+    it.each(textActions)('$action serves a full-scope API key', async (body) => {
+      expect((await call(body, {}, asApiKey(TokenScope.Full))).status).toBe(200);
+      expect(runTextScanHarnessAction).toHaveBeenCalledTimes(1);
+    });
+
+    it.each(textActions)('$action serves a session', async (body) => {
+      expect((await call(body)).status).toBe(200);
+    });
+
+    it.each([
+      { action: 'getPrompts' },
+      { action: 'quoteEntities', entityType: 'Post', entityIds: [1] },
+      {
+        action: 'scanTexts',
+        entityType: 'Comment',
+        texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
+      },
+    ])('$action serves a narrowly-scoped API key', async (body) => {
+      expect((await call(body, {}, asApiKey(TokenScope.UserRead))).status).toBe(200);
+    });
+
+    it('fails closed: an action not on the narrow-scope list, such as a new one, needs full scope', () => {
+      expect(needsFullScope('someNewAction')).toBe(true);
+      expect(needsFullScope('composeEntities')).toBe(true);
+      expect(needsFullScope('putPrompt')).toBe(true);
+      expect(needsFullScope('scanTexts')).toBe(false);
+    });
   });
 });
