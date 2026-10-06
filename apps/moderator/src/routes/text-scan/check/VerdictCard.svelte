@@ -1,11 +1,11 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import { cn } from '@civitai/ui/utils.js';
-  import { compare } from '$lib/text-scan-lab/compare';
   import {
     LABEL_NAMES,
     checkExpected,
     describeVerdict,
+    verdictsDiffer,
     type VerdictTone,
   } from '$lib/text-scan-lab/labels';
   import type { Expected, LabLabel, LabScanResult } from '$lib/text-scan-lab/types';
@@ -31,7 +31,7 @@
   };
 
   const differs = $derived(
-    columns.length === 2 && compare(columns[0].result, columns[1].result, [label])[0].differs
+    columns.length === 2 && verdictsDiffer(label, columns[0].result, columns[1].result)
   );
 </script>
 

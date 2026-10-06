@@ -13,11 +13,11 @@
 
   function versionLabel(run: TestRun) {
     if (run.version === 'active') return 'Active';
-    const draft = data.drafts.find((d) => d.id === Number(run.version));
+    const draft = data.runDrafts.find((d) => d.id === run.draftId);
     if (!draft) return `Draft #${run.version} (deleted)`;
     const edited =
       run.draftUpdatedAt && draft.updatedAt.getTime() !== run.draftUpdatedAt.getTime();
-    return `Draft · ${draft.name}${edited ? ' (edited since)' : ''}`;
+    return `${draft.label}${edited ? ' (edited since)' : ''}`;
   }
 </script>
 

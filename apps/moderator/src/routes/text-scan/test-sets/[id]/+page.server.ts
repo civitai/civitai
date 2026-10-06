@@ -5,19 +5,19 @@ import { requiresGrant } from '$lib/server/access';
 import { dbRead } from '$lib/server/db';
 import { getModeratorDb } from '$lib/server/moderator-db';
 import { jsonField, parseForm, parseQuery } from '$lib/server/query';
-import { listDrafts } from '$lib/server/text-scan-lab/drafts.service';
+import { confirmRequest, type PlannedRun } from '$lib/server/text-scan-lab/confirm';
+import { getDraftsByIds, listDrafts } from '$lib/server/text-scan-lab/drafts.service';
 import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
 import { refused } from '$lib/server/text-scan-lab/errors';
 import { purgeDeletedSources } from '$lib/server/text-scan-lab/purge.service';
-import { confirmedOrQuote, type Billable } from '$lib/server/text-scan-lab/quote';
 import {
   MAX_RUN_CASES,
   RunError,
+  casesPerSecond,
   compareRuns,
   listRuns,
   prepareRerun,
   prepareRun,
-  type Quote,
   type RunComparison,
   type TestRun,
 } from '$lib/server/text-scan-lab/runs.service';
@@ -31,7 +31,8 @@ import {
   removeCase,
   updateExpected,
 } from '$lib/server/text-scan-lab/test-sets.service';
-import { MAX_INT4 } from '$lib/server/users.service';
+import { MAX_INT4, usersByIds } from '$lib/server/users.service';
+import { estimateSeconds } from '$lib/text-scan-lab/estimate';
 import { LAB_ENTITY_TYPES } from '$lib/text-scan-lab/types';
 
 const setIdOf = (raw: string) => {
@@ -47,6 +48,23 @@ const runIdParam = z.coerce
   .optional()
   .catch(undefined);
 const compareSchema = z.object({ a: runIdParam, b: runIdParam });
+
+/** What each run ran, by draft id. A working copy is named for its owner; its prompts stay private. */
+async function runDraftNames(runs: TestRun[]) {
+  const ids = [...new Set(runs.filter((r) => r.draftId !== null).map((r) => r.draftId!))];
+  const drafts = await getDraftsByIds(ids);
+  const owners = await usersByIds(
+    drafts.filter((d) => d.kind === 'working').map((d) => d.createdBy)
+  );
+  return drafts.map((d) => ({
+    id: d.id,
+    label:
+      d.kind === 'working'
+        ? `My changes (${owners.get(d.createdBy)?.username ?? `user ${d.createdBy}`})`
+        : `Draft · ${d.name}`,
+    updatedAt: d.updatedAt,
+  }));
+}
 
 export const load: PageServerLoad = async ({ params, url }) => {
   const id = setIdOf(params.id);
@@ -73,6 +91,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     set,
     cases,
     runs,
+    runDrafts: await runDraftNames(runs),
     drafts: drafts.map((d) => ({
       id: d.id,
       name: d.name,
@@ -131,10 +150,10 @@ const versionField = z.union([
     .refine((v) => v > 0 && v <= Number.MAX_SAFE_INTEGER, 'Choose a version to run.'),
 ]);
 
-const billedAction =
+const confirmedAction =
   <S extends z.ZodType>(
     schema: S,
-    prepare: (setId: number, input: z.infer<S>) => Promise<Billable<Quote, TestRun>>
+    prepare: (setId: number, input: z.infer<S>, userId: number) => Promise<PlannedRun<TestRun>>
   ): Action =>
   async ({ request, params, locals }) => {
     const setId = setIdOf(params.id ?? '');
@@ -143,10 +162,12 @@ const billedAction =
     const input = parseForm(schema, form);
     if (typeof input === 'string') return fail(400, { error: input });
     try {
-      const batch = await prepare(setId, input);
-      const quote = await confirmedOrQuote(form, batch);
-      if (quote) return quote;
-      const result = await batch.execute(locals.user.id);
+      const planned = await prepare(setId, input, locals.user.id);
+      const ask = await confirmRequest(form, planned, async () =>
+        estimateSeconds(planned.count, await casesPerSecond(setId))
+      );
+      if (ask) return ask;
+      const result = await planned.execute(locals.user.id);
       return { ran: true as const, runId: result.id, status: result.status };
     } catch (e) {
       return refused(e);
@@ -154,11 +175,11 @@ const billedAction =
   };
 
 export const actions: Actions = {
-  run: billedAction(z.object({ version: versionField }), (setId, input) =>
-    prepareRun({ setId, version: input.version })
+  run: confirmedAction(z.object({ version: versionField }), (setId, input, userId) =>
+    prepareRun({ setId, version: input.version }, userId)
   ),
 
-  rerunErrors: billedAction(
+  rerunErrors: confirmedAction(
     z.object({ runId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
     (setId, input) => prepareRerun(setId, input.runId)
   ),

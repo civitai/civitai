@@ -5,11 +5,11 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import * as Table from '@civitai/ui/components/ui/table/index.js';
-  import QuoteDialog from '$lib/components/text-scan-lab/QuoteDialog.svelte';
+  import ConfirmRunDialog from '$lib/components/text-scan-lab/ConfirmRunDialog.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
   import type { RunListItem, TestRun } from '$lib/server/text-scan-lab/runs.service';
-  import { QUOTE_ABOVE } from '$lib/text-scan-lab/limits';
+  import { CONFIRM_ABOVE } from '$lib/text-scan-lab/limits';
   import { scoreChips } from '$lib/text-scan-lab/score';
 
   let {
@@ -28,16 +28,16 @@
     versionLabel: (run: TestRun) => string;
   } = $props();
 
-  type Quote = {
+  type ConfirmRequest = {
     count: number;
     skipped: number;
-    cost: number | null;
+    seconds: number;
     stamp: string;
     changed: boolean;
   };
 
   let version = $state('active');
-  let pending = $state<{ formId: string; quote: Quote } | null>(null);
+  let pending = $state<{ formId: string; request: ConfirmRequest } | null>(null);
   let compareA = $derived(String(compared?.a ?? runs[1]?.id ?? ''));
   let compareB = $derived(String(compared?.b ?? runs[0]?.id ?? ''));
 
@@ -55,14 +55,14 @@
   }
 
   let submittedFormId = $state('');
-  const billed = () =>
+  const confirmed = () =>
     new FormState({
       reload: true,
       reset: false,
       onSubmit: ({ formElement }) => (submittedFormId = formElement.id),
       onSuccess: (result) => {
         pending = result?.needsConfirm
-          ? { formId: submittedFormId, quote: result as unknown as Quote }
+          ? { formId: submittedFormId, request: result as unknown as ConfirmRequest }
           : null;
       },
       // The refusal renders under the form, which the open dialog would cover.
@@ -70,8 +70,8 @@
         if (result.type !== 'success') pending = null;
       },
     });
-  const runForm = billed();
-  const rerunForm = billed();
+  const runForm = confirmed();
+  const rerunForm = confirmed();
   const submitting = $derived(runForm.submitting || rerunForm.submitting);
 </script>
 
@@ -119,8 +119,8 @@
         {runForm.submitting && !pending ? 'Running…' : 'Run'}
       </Button>
       <p class="pb-2 text-xs text-dark-2">
-        One billed scan per case with text, up to {num(maxRunCases)}. Over {QUOTE_ABOVE} you confirm
-        a quote first. The page waits until the run finishes.
+        One scan per case with text, up to {num(maxRunCases)}. Over {CONFIRM_ABOVE} you confirm
+        first. The page waits until the run finishes.
       </p>
     </form>
     {#if runForm.error}<p class="mt-2 whitespace-pre-wrap text-sm text-red-300">{runForm.error}</p>{/if}
@@ -224,17 +224,9 @@
   {/if}
 </section>
 
-<QuoteDialog
-  quote={pending?.quote ?? null}
-  formId={pending?.formId ?? ''}
-  title={(q) => `Scan ${plural(q.count, 'case')}?`}
+<ConfirmRunDialog
+  request={pending?.request ?? null}
+  formId={pending?.formId ?? null}
   {submitting}
   onclose={() => (pending = null)}
->
-  {#snippet children(q)}
-    {q.count} billed scans.
-    {#if q.skipped}
-      {plural(q.skipped, 'case')} without text will be skipped.
-    {/if}
-  {/snippet}
-</QuoteDialog>
+/>

@@ -5,6 +5,7 @@ import {
   describeExpected,
   describeVerdict,
   promptKeyName,
+  verdictsDiffer,
 } from './labels';
 import { LAB_ENTITY_TYPES, PROMPT_KEYS } from './types';
 
@@ -125,5 +126,28 @@ describe('checkExpected', () => {
     expect(checkExpected(expected, 'poi', ok({ poi: { detected: true } }))).toBeNull();
     expect(checkExpected(expected, 'nsfw', { ok: false, error: 'x' })).toBeNull();
     expect(checkExpected(expected, 'nsfw', ok({ nsfw: { level: 'weird' } }))).toBeNull();
+  });
+});
+
+describe('verdictsDiffer', () => {
+  it('compares the rating, never the reason', () => {
+    const a = ok({ nsfw: { level: 'r', reason: 'one' } });
+    expect(verdictsDiffer('nsfw', a, ok({ nsfw: { level: 'pg13', reason: 'one' } }))).toBe(true);
+    expect(verdictsDiffer('nsfw', a, ok({ nsfw: { level: 'r', reason: 'two' } }))).toBe(false);
+  });
+
+  it("compares a flag's yes or no, never poi's names", () => {
+    const named = (names: string[]) => ok({ poi: { detected: true, names } });
+    expect(verdictsDiffer('poi', named(['Someone']), named(['Other']))).toBe(false);
+    expect(
+      verdictsDiffer('minor', ok({ minor: { detected: false } }), ok({ minor: { detected: true } }))
+    ).toBe(true);
+  });
+
+  it('counts a failure against a verdict as a difference, but not two failures', () => {
+    const failed = (error: string) => ({ ok: false as const, error });
+    expect(verdictsDiffer('scam', failed('no'), ok({ scam: { detected: false } }))).toBe(true);
+    expect(verdictsDiffer('nsfw', failed('a'), failed('b'))).toBe(false);
+    expect(verdictsDiffer('scam', { ok: true, output: null, parseError: 'x' }, ok({}))).toBe(false);
   });
 });

@@ -99,6 +99,17 @@ export function describeVerdict(
   return { headline: `${phrase.yes}${names}`, tone: 'flagged', reason };
 }
 
+/** Whether two results give a different verdict on `label`: the rating, or the yes or no — never the
+ *  reason or poi's names. Two results without a verdict do not differ. */
+export function verdictsDiffer(label: LabLabel, a: VerdictSource, b: VerdictSource): boolean {
+  const verdictOf = (source: VerdictSource) => {
+    const v = describeVerdict(label, source);
+    if (v.tone === 'unknown') return null;
+    return label === 'nsfw' ? v.headline : v.tone;
+  };
+  return verdictOf(a) !== verdictOf(b);
+}
+
 function describeRange({ min, max }: NonNullable<Expected['nsfw']>): string {
   if (min === max) return RATING_NAMES[min];
   if (min === 'none' && max === 'xxx') return 'Any rating';

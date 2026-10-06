@@ -100,6 +100,17 @@ export async function listDrafts({ includeWorking = false } = {}): Promise<Promp
   return rows.map(toDraft);
 }
 
+/** Working copies included: for naming the runs that ran them, never for showing their prompts. */
+export async function getDraftsByIds(ids: number[]): Promise<PromptDraft[]> {
+  if (!ids.length) return [];
+  const rows = await getModeratorDb()
+    .selectFrom('text_scan_prompt_draft')
+    .selectAll()
+    .where('id', 'in', ids.map(String))
+    .execute();
+  return rows.map(toDraft);
+}
+
 export async function getDraft(id: number): Promise<PromptDraft | null> {
   const row = await getModeratorDb()
     .selectFrom('text_scan_prompt_draft')

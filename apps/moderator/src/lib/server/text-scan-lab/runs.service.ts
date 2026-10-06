@@ -3,18 +3,24 @@ import { dbRead } from '../db';
 import { getModeratorDb } from '../moderator-db';
 import type { text_scan_test_run } from '../moderator-db/types';
 import { LabError } from './errors';
-import { DraftError, getDraft, validateDraftPrompts, type DraftPrompts } from './drafts.service';
-import { LabHarnessError, getPrompts, quoteTexts, scanTexts } from './harness-client';
+import {
+  DraftError,
+  getVisibleDraft,
+  validateDraftPrompts,
+  type DraftPrompts,
+} from './drafts.service';
+import { LabHarnessError, getPrompts, scanTexts } from './harness-client';
 import { purgeDeletedSources } from './purge.service';
 import { chunk } from '$lib/text-scan-lab/chunk';
-import { quoteStamp, type Billable } from './quote';
+import { confirmStamp, type PlannedRun } from './confirm';
 import { getSet, listCases, type TestCase } from './test-sets.service';
 import { caseCorrect, diffRuns, totals, type LabelTotals } from '$lib/text-scan-lab/score';
+import type { RunRow } from '$lib/text-scan-lab/run-summary';
 import type { Expected, LabEntityType, LabField, LabScanResult } from '$lib/text-scan-lab/types';
 
-/** The most cases one run scans: each is a billed workflow, and the run executes inside one request. */
+/** The most cases one run scans: the run executes inside one request. */
 export const MAX_RUN_CASES = 500;
-/** Results are written after each chunk, so a run cut short keeps what it was billed for. */
+/** Results are written after each chunk, so a run cut short keeps what it already scanned. */
 const RUN_CHUNK = 50;
 
 export class RunError extends LabError {}
@@ -37,7 +43,6 @@ export type TestRun = {
   startedAt: Date;
   finishedAt: Date | null;
 };
-export type Quote = { count: number; skipped: number; cost: number | null };
 
 // Deliberately leaves out `prompts`: the overrides are only ever read back to re-run them.
 const toRun = (r: Selectable<text_scan_test_run>): TestRun => ({
@@ -95,7 +100,8 @@ function validOverrides(prompts: Record<string, unknown>, name: string): DraftPr
   return overrides;
 }
 
-async function planRun(setId: number, version: RunVersion): Promise<Plan> {
+/** `userId` runs the set: another moderator's working copy is invisible to them, so never runnable. */
+async function planRun(setId: number, version: RunVersion, userId: number): Promise<Plan> {
   const set = await getSet(setId);
   if (!set) throw new RunError(`Test set ${setId} not found.`, 404);
   if (set.archivedAt) throw new RunError(`Test set "${set.name}" is archived.`, 409);
@@ -103,13 +109,13 @@ async function planRun(setId: number, version: RunVersion): Promise<Plan> {
   let draft: Plan['draft'] = null;
   let overrides: DraftPrompts | undefined;
   if (version !== 'active') {
-    const found = await getDraft(version);
+    const found = await getVisibleDraft(version, userId);
     if (!found) throw new RunError(`Draft ${version} not found.`, 404);
     overrides = validOverrides(found.prompts, found.name);
     draft = { id: found.id, updatedAt: found.updatedAt };
   }
 
-  // Before reading the cases, so text whose source was deleted since is never quoted or sent.
+  // Before reading the cases, so text whose source was deleted since is never sent.
   await purgeDeletedSources({ moderator: getModeratorDb(), main: dbRead }, setId);
   const { runnable, skipped } = splitCases(await listCases(setId));
   if (!runnable.length) throw new RunError('No case in this set has text to scan.', 400);
@@ -129,32 +135,18 @@ function byEntityType(cases: RunCase[]): Map<LabEntityType, RunCase[]> {
 
 const toTexts = (cases: RunCase[]) => cases.map((c) => ({ key: String(c.id), fields: c.fields }));
 
-async function quoteCases(
-  cases: RunCase[],
-  skipped: number,
-  overrides: DraftPrompts | undefined
-): Promise<Quote> {
-  let cost: number | null = 0;
-  for (const [entityType, group] of byEntityType(cases)) {
-    const q = await quoteTexts(entityType, toTexts(group), overrides);
-    // An unquoted group is an unknown cost, not a free one.
-    cost = q.meanCostTotal === null || cost === null ? null : cost + q.meanCostTotal * group.length;
-  }
-  return { count: cases.length, skipped, cost };
-}
-
-/** A planned run: quote it, or start it. The stamp binds a confirmation to this case count and draft
- *  version, so a set or draft edited after the quote is quoted again rather than run. */
-export async function prepareRun(input: {
-  setId: number;
-  version: RunVersion;
-}): Promise<Billable<Quote, TestRun>> {
-  const plan = await planRun(input.setId, input.version);
+/** A planned run, to confirm or start. The stamp binds a confirmation to this case count and draft
+ *  version, so a set or draft edited after the confirmation is asked about again rather than run. */
+export async function prepareRun(
+  input: { setId: number; version: RunVersion },
+  userId: number
+): Promise<PlannedRun<TestRun>> {
+  const plan = await planRun(input.setId, input.version, userId);
   return {
     count: plan.runnable.length,
-    stamp: quoteStamp(plan.runnable.length, plan.draft?.updatedAt),
-    quote: () => quoteCases(plan.runnable, plan.skipped.length, plan.overrides),
-    execute: (userId) => startPlanned(plan, userId),
+    skipped: plan.skipped.length,
+    stamp: confirmStamp(plan.runnable.length, plan.draft?.updatedAt),
+    execute: (runBy) => startPlanned(plan, runBy),
   };
 }
 
@@ -367,7 +359,7 @@ export async function startRun(
   input: { setId: number; version: RunVersion },
   userId: number
 ): Promise<TestRun> {
-  return startPlanned(await planRun(input.setId, input.version), userId);
+  return startPlanned(await planRun(input.setId, input.version, userId), userId);
 }
 
 async function startPlanned(plan: Plan, userId: number): Promise<TestRun> {
@@ -462,15 +454,12 @@ async function changedSinceRun(run: Selectable<text_scan_test_run>): Promise<str
 }
 
 /** A planned re-run of a run's errors; its stamp binds a confirmation to the error count. */
-export async function prepareRerun(
-  setId: number,
-  runId: number
-): Promise<Billable<Quote, TestRun>> {
+export async function prepareRerun(setId: number, runId: number): Promise<PlannedRun<TestRun>> {
   const plan = await planRerun(setId, runId);
   return {
     count: plan.runnable.length,
-    stamp: quoteStamp(plan.runnable.length),
-    quote: () => quoteCases(plan.runnable, plan.skipped.length, plan.overrides),
+    skipped: plan.skipped.length,
+    stamp: confirmStamp(plan.runnable.length),
     execute: () => rerunPlanned(runId, plan),
   };
 }
@@ -639,4 +628,64 @@ export async function latestRunTotalsForSets(
 
 export async function latestRunTotals(setId: number): Promise<SetLatestRuns> {
   return (await latestRunTotalsForSets([setId])).get(setId)!;
+}
+
+/** How fast the set's last finished run scanned, or null without one to measure. */
+export async function casesPerSecond(setId: number): Promise<number | null> {
+  const db = getModeratorDb();
+  const run = await db
+    .selectFrom('text_scan_test_run as r')
+    .select((eb) => [
+      sql<number>`extract(epoch from r.finished_at - r.started_at)`.as('seconds'),
+      eb
+        .selectFrom('text_scan_test_result as x')
+        .whereRef('x.run_id', '=', 'r.id')
+        .where('x.status', '<>', 'skipped')
+        .select(eb.fn.countAll<string>().as('n'))
+        .as('scanned'),
+    ])
+    .where('r.set_id', '=', String(setId))
+    .where('r.status', '=', 'done')
+    .orderBy('r.finished_at', 'desc')
+    .limit(1)
+    .executeTakeFirst();
+  const seconds = Number(run?.seconds);
+  const scanned = Number(run?.scanned);
+  return seconds > 0 && scanned > 0 ? scanned / seconds : null;
+}
+
+export type RunOutcome = {
+  run: TestRun;
+  rows: RunRow[];
+  /** Verbatim, for cases whose text is still there to re-run. */
+  errors: { caseId: number; error: string }[];
+};
+
+/** A run's results with each case's current expectation, for the Check page's set summary. */
+export async function getRunOutcome(setId: number, runId: number): Promise<RunOutcome> {
+  const run = await getRunRow(setId, runId);
+  const rows = await getModeratorDb()
+    .selectFrom('text_scan_test_result as r')
+    .innerJoin('text_scan_test_case as c', 'c.id', 'r.case_id')
+    .select(['r.case_id', 'r.status', 'r.output', 'c.expected', 'c.source_deleted_at'])
+    .where('r.run_id', '=', String(runId))
+    .orderBy('r.case_id')
+    .execute();
+  const outcome = rows.map((r) => ({
+    caseId: Number(r.case_id),
+    expected: (r.expected ?? {}) as Expected,
+    status: r.status,
+    output: r.output,
+    wiped: r.source_deleted_at !== null,
+  }));
+  return {
+    run: toRun(run),
+    rows: outcome,
+    errors: outcome
+      .filter((r) => r.status === 'error' && !r.wiped)
+      .map((r) => {
+        const error = (r.output as { error?: unknown } | null)?.error;
+        return { caseId: r.caseId, error: typeof error === 'string' ? error : 'Unknown error' };
+      }),
+  };
 }

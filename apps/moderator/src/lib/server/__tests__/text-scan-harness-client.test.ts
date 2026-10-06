@@ -5,7 +5,7 @@ vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 
 const { callModEndpoint } = await import('../user-actions.service');
 const { restErrorReason } = await import('../rest-error-reason');
-const { LabHarnessError, composeEntities, getPrompts, quoteTexts, scanTexts } = await import(
+const { LabHarnessError, composeEntities, getPrompts, scanTexts } = await import(
   '../text-scan-lab/harness-client'
 );
 
@@ -257,38 +257,6 @@ describe('harness limits', () => {
       ok: false,
       error: 'Invalid request: case t9.fields: Too big',
     });
-  });
-
-  it('quotes only the texts that fit', async () => {
-    call.mockResolvedValue({ ok: true, body: { count: 1, quoted: 1, meanCostTotal: 1 } });
-    await quoteTexts('Model', [huge('big'), ...texts(1)]);
-    expect(
-      call.mock.calls.map(([, body]) => (body.texts as Array<{ key: string }>).map((t) => t.key))
-    ).toEqual([['t0']]);
-  });
-});
-
-describe('quoteTexts', () => {
-  it('weights each chunk mean by how many texts it quoted', async () => {
-    call
-      .mockResolvedValueOnce({ ok: true, body: { count: 50, quoted: 50, meanCostTotal: 2 } })
-      .mockResolvedValueOnce({ ok: true, body: { count: 10, quoted: 10, meanCostTotal: 8 } });
-
-    const quote = await quoteTexts('Article', texts(60));
-
-    expect(call.mock.calls.map(([, body]) => body.action)).toEqual(['quoteTexts', 'quoteTexts']);
-    expect(quote).toEqual({ count: 60, meanCostTotal: 3 });
-  });
-
-  it('sends 51 texts as 50 then 1', async () => {
-    call.mockResolvedValue({ ok: true, body: { count: 1, quoted: 1, meanCostTotal: 1 } });
-    await quoteTexts('Article', texts(51));
-    expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([50, 1]);
-  });
-
-  it('reports a null mean when nothing could be quoted', async () => {
-    call.mockResolvedValue({ ok: true, body: { count: 2, quoted: 0, meanCostTotal: null } });
-    expect(await quoteTexts('Article', texts(2))).toEqual({ count: 2, meanCostTotal: null });
   });
 });
 

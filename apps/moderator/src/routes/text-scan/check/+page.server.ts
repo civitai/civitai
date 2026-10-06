@@ -31,10 +31,21 @@ import {
   publishSchema,
   WORKING_CONFLICT,
 } from '$lib/server/text-scan-lab/publish';
-import { listSets } from '$lib/server/text-scan-lab/test-sets.service';
+import { confirmRequest } from '$lib/server/text-scan-lab/confirm';
+import {
+  casesPerSecond,
+  getRunOutcome,
+  prepareRerun,
+  prepareRun,
+  type TestRun,
+} from '$lib/server/text-scan-lab/runs.service';
+import { getCase, listSets } from '$lib/server/text-scan-lab/test-sets.service';
 import { userIdByUsername } from '$lib/server/users.service';
+import { casePreview } from '$lib/text-scan-lab/case-view';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
+import { estimateSeconds } from '$lib/text-scan-lab/estimate';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
+import { summariseRuns, type RunSummary } from '$lib/text-scan-lab/run-summary';
 import {
   ENTITY_TYPE_NAMES,
   blankPromptKeys,
@@ -45,12 +56,16 @@ import {
   LAB_ENTITY_TYPES,
   LAB_LABELS,
   PROMPT_KEYS,
+  type Expected,
   type LabEntityType,
+  type LabLabel,
   type LabField,
   type LabScanResult,
   type LabText,
   type PromptKey,
 } from '$lib/text-scan-lab/types';
+
+const TEST_SETS_PATH = '/text-scan/test-sets';
 
 const querySchema = z.object({
   draft: z.coerce.number().int().positive().optional().catch(undefined),
@@ -71,11 +86,9 @@ type ActivePrompts =
 export const load: PageServerLoad = async ({ url, locals }) => {
   const q = parseQuery(url, querySchema);
   const me = locals.user.id;
-  // Saving posts to the set page's action, which the page grant gates as well.
-  const canSave =
-    locals.grants['textScan.testSet.edit'] && canAccess(locals.user, '/text-scan/test-sets');
+  const canUseSets = canAccess(locals.user, TEST_SETS_PATH);
   const [sets, active, mine, viewed] = await Promise.all([
-    canSave ? listSets() : [],
+    canUseSets ? listSets() : [],
     getPrompts().then(
       (p): ActivePrompts => ({
         ok: true,
@@ -104,14 +117,14 @@ export const load: PageServerLoad = async ({ url, locals }) => {
       : { kind: 'mine', draft: mine };
   const draftNotice = q.draft && !viewed ? `Draft ${q.draft} not found.` : null;
   const runTotals =
-    changes.draft &&
-    locals.grants['textScan.prompt.publish'] &&
-    canAccess(locals.user, '/text-scan/test-sets')
+    changes.draft && locals.grants['textScan.prompt.publish'] && canUseSets
       ? await draftRunTotals(changes.draft.id)
       : [];
 
   return {
-    testSets: sets.map((s) => ({ id: s.id, name: s.name })),
+    testSets: sets.map((s) => ({ id: s.id, name: s.name, caseCount: s.caseCount })),
+    // Saving posts to the set page's action, which its page grant gates as well.
+    canSaveCase: canUseSets && !!locals.grants['textScan.testSet.edit'],
     active,
     changes,
     workingCopy: mine,
@@ -146,10 +159,24 @@ type Plan = {
   notice: string | null;
 };
 
-/** `changed` is the same text scanned with the moderator's changes, when there are any. */
+/**
+ * `changed` is the same text scanned with the moderator's changes, when there are any. `fromCase` is
+ * set when the text is a test case's snapshot, whose expectation the verdicts are checked against.
+ */
 export type CheckItemResult = CheckSubject & {
   current: LabScanResult;
   changed: LabScanResult | null;
+  fromCase: { setId: number; caseId: number; expected: Expected } | null;
+};
+
+/** What `check` and `checkCase` answer with. */
+export type CheckResult = {
+  checked: true;
+  entityType: LabEntityType;
+  labels: readonly LabLabel[];
+  notice: string | null;
+  items: CheckItemResult[];
+  skipped: Skipped[];
 };
 
 const textPlan = (
@@ -222,21 +249,153 @@ const missing = (key: string): LabScanResult => ({
   error: 'No result returned for this item.',
 });
 
-const nullableExpected = z.literal('').transform(() => null).or(expectedUpdatedAtField);
+/** Scans with the current prompts and, when there are changes, with them too, side by side. */
+async function scanSubjects(
+  entityType: LabEntityType,
+  subjects: CheckSubject[],
+  overrides: DraftPrompts
+): Promise<CheckItemResult[]> {
+  const texts: LabText[] = subjects.map(({ key, fields }) => ({ key, fields }));
+  const withChanges = Object.keys(overrides).length > 0;
+  const [current, changed] = await Promise.allSettled([
+    scanTexts(entityType, texts),
+    withChanges
+      ? scanTexts(entityType, texts, overrides as Record<string, string>)
+      : Promise.resolve(null),
+  ]);
+  if (current.status === 'rejected') throw current.reason;
+  // A refused changed run (say, an override the harness will not take) still leaves the current
+  // verdicts worth showing; each item carries the refusal instead.
+  let changedByKey: Map<string, LabScanResult> | null = null;
+  let changedRefusal: string | null = null;
+  if (changed.status === 'rejected') {
+    if (!(changed.reason instanceof LabError)) throw changed.reason;
+    changedRefusal = changed.reason.message;
+  } else if (changed.value) {
+    changedByKey = new Map(changed.value.map((r) => [r.key, r] as const));
+  }
+  const currentByKey = new Map(current.value.map((r) => [r.key, r] as const));
+
+  return subjects.map((s) => ({
+    ...s,
+    current: currentByKey.get(s.key) ?? missing(s.key),
+    changed: !withChanges
+      ? null
+      : changedRefusal !== null
+      ? { key: s.key, ok: false, error: changedRefusal }
+      : changedByKey?.get(s.key) ?? missing(s.key),
+    fromCase: null,
+  }));
+}
+
+/** The overrides a check tests, or the refusal to show: a blank key is named before anything runs. */
+function checkOverrides(raw: Record<string, unknown>): DraftPrompts | ReturnType<typeof fail> {
+  const blank = blankPromptKeys(raw as Partial<Record<PromptKey, unknown>>);
+  if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
+  try {
+    return validateDraftPrompts(raw);
+  } catch (e) {
+    return refused(e);
+  }
+}
+
+const isFailure = (v: unknown): v is ReturnType<typeof fail> =>
+  typeof v === 'object' && v !== null && 'status' in v && 'data' in v;
+
+export type SetRunSide = {
+  runId: number;
+  status: TestRun['status'];
+  errors: { caseId: number; error: string }[];
+};
+
+/** A set run as the Check page shows it: both runs' scores per label and what the changes moved. */
+export type SetRunView = {
+  setRun: true;
+  setId: number;
+  current: SetRunSide;
+  changed: SetRunSide | null;
+  /** Why the run with changes did not finish, when the current one did. */
+  changedError: string | null;
+  summary: RunSummary;
+  /** Preview and source of every case the summary lists. */
+  cases: Record<
+    number,
+    { entityType: LabEntityType; entityId: number | null; preview: string | null }
+  >;
+};
+
+async function setRunView(
+  setId: number,
+  currentRunId: number,
+  changedRunId: number | null,
+  changedError: string | null = null
+): Promise<SetRunView> {
+  const [current, changed] = await Promise.all([
+    getRunOutcome(setId, currentRunId),
+    changedRunId === null ? null : getRunOutcome(setId, changedRunId),
+  ]);
+  const summary = summariseRuns(current.rows, changed?.rows ?? null);
+  const listed = new Set(
+    [...summary.fixed, ...summary.broke, ...current.errors, ...(changed?.errors ?? [])].map(
+      (c) => c.caseId
+    )
+  );
+  const cases: SetRunView['cases'] = {};
+  for (const c of await listCasesById(setId, listed)) cases[c.id] = c;
+  const side = (o: typeof current): SetRunSide => ({
+    runId: o.run.id,
+    status: o.run.status,
+    errors: o.errors,
+  });
+  return {
+    setRun: true,
+    setId,
+    current: side(current),
+    changed: changed ? side(changed) : null,
+    changedError,
+    summary,
+    cases,
+  };
+}
+
+async function listCasesById(setId: number, ids: Set<number>) {
+  if (!ids.size) return [];
+  const cases = await Promise.all([...ids].map((id) => getCase(setId, id)));
+  return cases.flatMap((c) =>
+    c
+      ? [
+          {
+            id: c.id,
+            entityType: c.entityType,
+            entityId: c.entityId,
+            preview: casePreview(c.fields),
+          },
+        ]
+      : []
+  );
+}
+
+const setIdField = z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER);
+const optionalRunId = z
+  .string()
+  .optional()
+  .transform((v) => (v ? Number(v) : null))
+  .refine((v) => v === null || (Number.isSafeInteger(v) && v > 0), 'Invalid run.');
+
+const noSetAccess = () => fail(403, { error: 'You do not have access to test sets.' });
+
+const nullableExpected = z
+  .literal('')
+  .transform(() => null)
+  .or(expectedUpdatedAtField);
 
 export const actions: Actions = {
   check: async ({ request }) => {
     const input = parseForm(checkSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
 
-    const blank = blankPromptKeys(input.overrides);
-    if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
-    let overrides: DraftPrompts;
-    try {
-      overrides = validateDraftPrompts(input.overrides);
-    } catch (e) {
-      return refused(e);
-    }
+    const overrides = checkOverrides(input.overrides);
+    if (isFailure(overrides)) return overrides;
 
     let planned: Plan | string;
     try {
@@ -251,44 +410,141 @@ export const actions: Actions = {
         error: `Nothing to check: ${skipped.map((s) => `${s.entityId} (${s.error})`).join(', ')}.`,
       });
 
-    const texts: LabText[] = subjects.map(({ key, fields }) => ({ key, fields }));
-    const withChanges = Object.keys(overrides).length > 0;
-    const [current, changed] = await Promise.allSettled([
-      scanTexts(entityType, texts),
-      withChanges
-        ? scanTexts(entityType, texts, overrides as Record<string, string>)
-        : Promise.resolve(null),
-    ]);
-    if (current.status === 'rejected') return refused(current.reason);
-    // A refused changed run (say, an override the harness will not take) still leaves the current
-    // verdicts worth showing; each item carries the refusal instead.
-    let changedByKey: Map<string, LabScanResult> | null = null;
-    let changedRefusal: string | null = null;
-    if (changed.status === 'rejected') {
-      if (!(changed.reason instanceof LabError)) throw changed.reason;
-      changedRefusal = changed.reason.message;
-    } else if (changed.value) {
-      changedByKey = new Map(changed.value.map((r) => [r.key, r] as const));
+    let items: CheckItemResult[];
+    try {
+      items = await scanSubjects(entityType, subjects, overrides);
+    } catch (e) {
+      return refused(e);
     }
-    const currentByKey = new Map(current.value.map((r) => [r.key, r] as const));
-
-    const items: CheckItemResult[] = subjects.map((s) => ({
-      ...s,
-      current: currentByKey.get(s.key) ?? missing(s.key),
-      changed: !withChanges
-        ? null
-        : changedRefusal !== null
-        ? { key: s.key, ok: false, error: changedRefusal }
-        : changedByKey?.get(s.key) ?? missing(s.key),
-    }));
     return {
-      checked: true as const,
+      checked: true,
       entityType,
       labels: LAB_LABELS[entityType],
       notice,
       items,
       skipped,
+    } satisfies CheckResult;
+  },
+
+  /** Loads one test case: its snapshot text is checked like any other, against its expectation. */
+  checkCase: async ({ request, locals }) => {
+    if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
+    const input = parseForm(
+      z.object({
+        setId: setIdField,
+        caseId: setIdField,
+        overrides: draftPromptsField.optional().default({}),
+      }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    const overrides = checkOverrides(input.overrides);
+    if (isFailure(overrides)) return overrides;
+
+    const found = await getCase(input.setId, input.caseId);
+    if (!found) return fail(404, { error: `Test case ${input.caseId} is not in this set.` });
+    if (!found.fields || found.sourceDeletedAt)
+      return fail(400, { error: "This case's text was removed when its source was deleted." });
+    const name = ENTITY_TYPE_NAMES[found.entityType];
+    const subject: CheckSubject = {
+      key: `case-${found.id}`,
+      title:
+        found.entityId === null
+          ? `Test case ${found.id} · ${name} text`
+          : `Test case ${found.id} · ${name} ${found.entityId}`,
+      fields: found.fields,
+      entityId: found.entityId,
+      authorId: found.authorId,
     };
+    try {
+      const [item] = await scanSubjects(found.entityType, [subject], overrides);
+      return {
+        checked: true,
+        entityType: found.entityType,
+        labels: LAB_LABELS[found.entityType],
+        notice: null,
+        items: [
+          { ...item, fromCase: { setId: input.setId, caseId: found.id, expected: found.expected } },
+        ],
+        skipped: [],
+      } satisfies CheckResult;
+    } catch (e) {
+      return refused(e);
+    }
+  },
+
+  /**
+   * Runs a whole set with the current prompts and, given `draftId` (my saved changes, or the draft
+   * being viewed), with those too. Both are ordinary runs, listed on the set's page.
+   */
+  runSet: async ({ request, locals }) => {
+    if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
+    const form = await request.formData();
+    const input = parseForm(
+      z.object({ setId: setIdField, draftId: draftIdField.optional() }),
+      form
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    const me = locals.user.id;
+    try {
+      const current = await prepareRun({ setId: input.setId, version: 'active' }, me);
+      const changed =
+        input.draftId === undefined
+          ? null
+          : await prepareRun({ setId: input.setId, version: input.draftId }, me);
+      const runs = changed ? 2 : 1;
+      const ask = await confirmRequest(
+        form,
+        { ...current, stamp: [current.stamp, changed?.stamp].join('|') },
+        async () => estimateSeconds(current.count * runs, await casesPerSecond(input.setId))
+      );
+      if (ask) return ask;
+
+      const [a, b] = await Promise.allSettled([current.execute(me), changed?.execute(me) ?? null]);
+      if (a.status === 'rejected') throw a.reason;
+      let changedError: string | null = null;
+      if (b.status === 'rejected') {
+        if (!(b.reason instanceof LabError)) throw b.reason;
+        changedError = b.reason.message;
+      }
+      return await setRunView(
+        input.setId,
+        a.value.id,
+        b.status === 'fulfilled' ? b.value?.id ?? null : null,
+        changedError
+      );
+    } catch (e) {
+      return refused(e);
+    }
+  },
+
+  /** Re-runs one of a set run's two runs' errors, then shows the pair again. */
+  rerunSetErrors: async ({ request, locals }) => {
+    if (!canAccess(locals.user, TEST_SETS_PATH)) return noSetAccess();
+    const form = await request.formData();
+    const input = parseForm(
+      z.object({
+        setId: setIdField,
+        runId: setIdField,
+        currentRunId: setIdField,
+        changedRunId: optionalRunId,
+      }),
+      form
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    if (input.runId !== input.currentRunId && input.runId !== input.changedRunId)
+      return fail(400, { error: 'That run is not part of this set run.' });
+    try {
+      const planned = await prepareRerun(input.setId, input.runId);
+      const ask = await confirmRequest(form, planned, async () =>
+        estimateSeconds(planned.count, await casesPerSecond(input.setId))
+      );
+      if (ask) return ask;
+      await planned.execute(locals.user.id);
+      return await setRunView(input.setId, input.currentRunId, input.changedRunId);
+    } catch (e) {
+      return refused(e);
+    }
   },
 
   /**

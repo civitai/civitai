@@ -36,7 +36,6 @@ vi.mock('../moderator-db', async () => {
 
 const harness = vi.hoisted(() => ({
   scanTexts: vi.fn(),
-  quoteTexts: vi.fn(),
   getPrompts: vi.fn(),
 }));
 vi.mock('../text-scan-lab/harness-client', async (importOriginal) => ({
@@ -49,11 +48,15 @@ const purge = vi.hoisted(() => ({ purgeDeletedSources: vi.fn() }));
 vi.mock('../text-scan-lab/purge.service', () => purge);
 
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
-const { createDraft, updateDraft } = await import('../text-scan-lab/drafts.service');
+const { createDraft, saveWorkingCopy, updateDraft } = await import(
+  '../text-scan-lab/drafts.service'
+);
 const { addCase, createSet, updateExpected } = await import('../text-scan-lab/test-sets.service');
 const {
   RunError,
+  casesPerSecond,
   compareRuns,
+  getRunOutcome,
   latestRunTotals,
   listRuns,
   prepareRerun,
@@ -378,17 +381,12 @@ describe('purging deleted sources first', () => {
     expect((await results(run.id)).map((r) => r.status)).toEqual(['skipped', 'ok']);
   });
 
-  it('purges before quoting, so a wiped case is not counted', async () => {
-    harness.quoteTexts.mockImplementation(async (_t: string, texts: LabText[]) => ({
-      meanCostTotal: 1,
-      count: texts.length,
-    }));
+  it('purges before planning, so a wiped case is not counted', async () => {
     const { setId, caseIds } = await setWithCases(12);
     wipeFirst(caseIds[0]);
-    expect(await (await prepareRun({ setId, version: 'active' })).quote()).toEqual({
+    expect(await prepareRun({ setId, version: 'active' }, MOD)).toMatchObject({
       count: 11,
       skipped: 1,
-      cost: 11,
     });
   });
 
@@ -403,11 +401,7 @@ describe('purging deleted sources first', () => {
 });
 
 describe('prepareRun', () => {
-  it('quotes every case with text, grouped by entity type', async () => {
-    harness.quoteTexts.mockImplementation(async (_t: string, texts: LabText[]) => ({
-      meanCostTotal: 2,
-      count: texts.length,
-    }));
+  it('counts every case with text, whatever its entity type, and starts nothing', async () => {
     const { setId } = await setWithCases(10);
     await addCase(
       {
@@ -422,19 +416,43 @@ describe('prepareRun', () => {
       },
       MOD
     );
-    const prepared = await prepareRun({ setId, version: 'active' });
-    expect(prepared.count).toBe(11);
-    expect(await prepared.quote()).toEqual({ count: 11, skipped: 0, cost: 22 });
-    expect(harness.quoteTexts.mock.calls.map((c) => [c[0], c[1].length])).toEqual([
-      ['Model', 10],
-      ['Comment', 1],
-    ]);
+    const prepared = await prepareRun({ setId, version: 'active' }, MOD);
+    expect(prepared).toMatchObject({ count: 11, skipped: 0 });
+    expect(harness.scanTexts).not.toHaveBeenCalled();
+    const { rows } = await holder.pg!.query('SELECT 1 FROM text_scan_test_run');
+    expect(rows).toHaveLength(0);
+  });
+
+  it("runs the moderator's own working copy, recording its prompts", async () => {
+    const { setId } = await setWithCases(1);
+    const mine = (await saveWorkingCopy(MOD, { 'label:nsfw': 'MY NSFW' }, null))!;
+    harness.scanTexts.mockImplementation(allOk());
+
+    const run = await (await prepareRun({ setId, version: mine.id }, MOD)).execute(MOD);
+
+    expect(harness.scanTexts.mock.calls[0][2]).toEqual({ 'label:nsfw': 'MY NSFW' });
+    expect(run).toMatchObject({ version: String(mine.id), draftId: mine.id });
+    expect((await runRow(run.id)).prompts).toEqual({ 'label:nsfw': 'MY NSFW' });
+  });
+
+  it("refuses another moderator's working copy as if it did not exist", async () => {
+    const { setId } = await setWithCases(1);
+    const theirs = (await saveWorkingCopy(MOD + 1, { 'label:nsfw': 'THEIR NSFW' }, null))!;
+
+    for (const attempt of [
+      prepareRun({ setId, version: theirs.id }, MOD),
+      startRun({ setId, version: theirs.id }, MOD),
+    ]) {
+      await expect(attempt).rejects.toBeInstanceOf(RunError);
+      await expect(attempt).rejects.toThrow(`Draft ${theirs.id} not found.`);
+    }
+    expect(harness.scanTexts).not.toHaveBeenCalled();
   });
 
   it("stamps the case count and the draft's version, so either changing voids a confirmation", async () => {
     const { setId } = await setWithCases(2);
     const draft = await createDraft({ name: 'd', prompts: { 'label:nsfw': 'A' }, note: null }, MOD);
-    const before = (await prepareRun({ setId, version: draft.id })).stamp;
+    const before = (await prepareRun({ setId, version: draft.id }, MOD)).stamp;
     expect(before).toBe(`2:${draft.updatedAt.toISOString()}`);
     await new Promise((resolve) => setTimeout(resolve, 5));
     await updateDraft(
@@ -442,8 +460,8 @@ describe('prepareRun', () => {
       { prompts: { 'label:nsfw': 'B' }, note: null, expectedUpdatedAt: draft.updatedAt },
       MOD
     );
-    expect((await prepareRun({ setId, version: draft.id })).stamp).not.toBe(before);
-    expect((await prepareRun({ setId, version: 'active' })).stamp).toBe('2:');
+    expect((await prepareRun({ setId, version: draft.id }, MOD)).stamp).not.toBe(before);
+    expect((await prepareRun({ setId, version: 'active' }, MOD)).stamp).toBe('2:');
   });
 });
 
@@ -455,7 +473,7 @@ describe('prepareRerun', () => {
     );
     const run = await startRun({ setId, version: 'active' }, MOD);
     const prepared = await prepareRerun(setId, run.id);
-    expect(prepared).toMatchObject({ count: 3, stamp: '3:' });
+    expect(prepared).toMatchObject({ count: 3, skipped: 0, stamp: '3:' });
   });
 });
 
@@ -678,5 +696,67 @@ describe('latestRunTotals', () => {
     expect(latest.active!.totals.nsfw.correct).toBe(1);
     expect(latest.drafts[String(draft.id)]).toMatchObject({ runId: draftRun.id });
     expect(Object.keys(latest.drafts)).toEqual([String(draft.id)]);
+  });
+});
+
+describe('casesPerSecond', () => {
+  it("measures the set's last finished run, skipped cases left out", async () => {
+    const { setId, caseIds } = await setWithCases(3);
+    harness.scanTexts.mockImplementation(allOk());
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    await holder.pg!.query(
+      `UPDATE text_scan_test_run SET started_at = now() - interval '2 seconds', finished_at = now() WHERE id = $1`,
+      [run.id]
+    );
+    await holder.pg!.query(
+      `UPDATE text_scan_test_result SET status = 'skipped' WHERE run_id = $1 AND case_id = $2`,
+      [run.id, caseIds[0]]
+    );
+    expect(await casesPerSecond(setId)).toBeCloseTo(1, 1);
+  });
+
+  it('is null for a set that never finished a run', async () => {
+    const { setId } = await setWithCases(1);
+    expect(await casesPerSecond(setId)).toBeNull();
+  });
+});
+
+describe('getRunOutcome', () => {
+  it('returns each result with its case expectation, and errors of unwiped cases verbatim', async () => {
+    const { setId, caseIds } = await setWithCases(3);
+    harness.scanTexts.mockImplementation(async (_t: string, texts: LabText[]) => [
+      okResult(texts[0].key, 'x'),
+      { key: texts[1].key, ok: false, error: 'Orchestrator said no' },
+      { key: texts[2].key, ok: false, error: 'Wiped later' },
+    ]);
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    await holder.pg!.query(
+      'UPDATE text_scan_test_case SET fields = NULL, source_deleted_at = now() WHERE id = $1',
+      [caseIds[2]]
+    );
+
+    const outcome = await getRunOutcome(setId, run.id);
+
+    expect(outcome.run.id).toBe(run.id);
+    expect(outcome.rows).toEqual([
+      {
+        caseId: caseIds[0],
+        expected: { nsfw: { min: 'r', max: 'x' } },
+        status: 'ok',
+        output: { nsfw: { level: 'x', reason: 'fake' } },
+        wiped: false,
+      },
+      expect.objectContaining({ caseId: caseIds[1], status: 'error', wiped: false }),
+      expect.objectContaining({ caseId: caseIds[2], status: 'error', wiped: true }),
+    ]);
+    expect(outcome.errors).toEqual([{ caseId: caseIds[1], error: 'Orchestrator said no' }]);
+  });
+
+  it('refuses a run from another set', async () => {
+    const { setId } = await setWithCases(1);
+    const other = await createSet({ name: 'other', description: null }, MOD);
+    harness.scanTexts.mockImplementation(allOk());
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    await expect(getRunOutcome(other.id, run.id)).rejects.toThrow('not found in this set');
   });
 });

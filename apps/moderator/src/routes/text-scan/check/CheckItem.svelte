@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { describeExpected } from '$lib/text-scan-lab/labels';
   import type { LabEntityType, LabLabel, PromptKey } from '$lib/text-scan-lab/types';
   import type { CheckItemResult } from './+page.server';
   import SaveCaseForm from './SaveCaseForm.svelte';
@@ -17,6 +18,7 @@
     item: CheckItemResult;
     entityType: LabEntityType;
     labels: readonly LabLabel[];
+    /** Sets a case can be saved to; none hides saving. */
     testSets: { id: number; name: string }[];
     /** Heading of the second column, when the item was also scanned with changes. */
     changedTitle: string;
@@ -24,6 +26,16 @@
   } = $props();
 
   const labelKey = (label: LabLabel): PromptKey => `label:${label}`;
+
+  const expected = $derived(item.fromCase?.expected ?? null);
+  const expectedText = $derived(
+    expected
+      ? labels
+          .map((l) => describeExpected(expected)[l])
+          .filter(Boolean)
+          .join(' · ') || 'nothing scored'
+      : null
+  );
 
   const columns = $derived(
     item.changed
@@ -37,10 +49,13 @@
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
   <h3 class="text-sm font-semibold text-white">{item.title}</h3>
+  {#if expectedText}
+    <p class="mt-1 text-xs text-dark-2">Expected: <span class="text-dark-0">{expectedText}</span></p>
+  {/if}
 
   <div class="mt-3 grid gap-3 lg:grid-cols-2">
     {#each labels as label (label)}
-      <VerdictCard {label} {columns}>
+      <VerdictCard {label} {columns} {expected}>
         {#snippet actions()}
           <Button size="xs" variant="ghost" onclick={() => onedit(labelKey(label))}>
             Edit definition
@@ -69,7 +84,7 @@
     </div>
   </details>
 
-  {#if testSets.length}
+  {#if testSets.length && !item.fromCase}
     <SaveCaseForm {item} {entityType} {labels} {testSets} />
   {/if}
 </section>

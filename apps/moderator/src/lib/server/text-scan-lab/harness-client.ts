@@ -152,27 +152,6 @@ export async function scanTexts(
   });
 }
 
-export async function quoteTexts(
-  entityType: LabEntityType,
-  texts: LabText[],
-  promptOverrides?: Record<string, string>
-): Promise<{ meanCostTotal: number | null; count: number }> {
-  let quoted = 0;
-  let costSum = 0;
-  // An oversize text would refuse the whole request; it is left unquoted, as it will not run.
-  for (const batch of chunkTexts(splitOversize(texts).fitting, HARNESS_LIMITS.textsPerRequest)) {
-    const body = await callHarness<{ quoted: number; meanCostTotal: number | null }>(
-      'quoteTexts',
-      { entityType, texts: batch, promptOverrides },
-      'Text-scan quote'
-    );
-    if (body.meanCostTotal === null) continue;
-    quoted += body.quoted;
-    costSum += body.meanCostTotal * body.quoted;
-  }
-  return { meanCostTotal: quoted ? costSum / quoted : null, count: texts.length };
-}
-
 export type LabComposedEntity =
   | { entityId: number; ok: true; fields: LabField[]; text: string; userId: number | null }
   | { entityId: number; ok: false; error: string };

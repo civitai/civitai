@@ -3,18 +3,17 @@
   import { beforeNavigate, goto } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import type { ActionData } from './$types';
-  import type { ChangesSource } from './+page.server';
+  import type { ChangesSource, CheckResult } from './+page.server';
   import type { ChangesInit } from './changes';
   import { createChanges } from './changes.svelte';
   import ChangesBar from './ChangesBar.svelte';
   import CheckForm from './CheckForm.svelte';
   import CheckItem from './CheckItem.svelte';
   import PromptEditor from './PromptEditor.svelte';
+  import TestSetPanel from './TestSetPanel.svelte';
 
   let { data } = $props();
 
-  type CheckData = Extract<NonNullable<ActionData>, { checked: true }>;
 
   const changesInit = (source: ChangesSource): ChangesInit => ({
     prompts: source.draft?.prompts ?? {},
@@ -61,7 +60,7 @@
   // Outlives the bar, which a discard removes along with the changes it reports on.
   let barError = $state<string | null>(null);
 
-  let result = $state<CheckData | null>(null);
+  let result = $state<CheckResult | null>(null);
   // What was tested in the shown result, to say when the changes moved on since.
   let checkedWith = $state<string | null>(null);
   let editing = $state<PromptKey | null>(null);
@@ -70,6 +69,12 @@
   const viewing = $derived(data.changes.kind === 'draft');
   const showBar = $derived(viewing || changes.keys.length > 0 || changes.dirty);
   const changedTitle = $derived(viewing ? 'With this draft' : 'With my changes');
+  const saveSets = $derived(data.canSaveCase ? data.testSets : []);
+
+  function startCheck() {
+    result = null;
+    checkedWith = changes.json;
+  }
 </script>
 
 <svelte:head><title>Check · Text scan</title></svelte:head>
@@ -103,15 +108,24 @@
 <CheckForm
   overrides={changes.json}
   overridesError={changes.blankError}
-  onstart={() => {
-    result = null;
-    checkedWith = changes.json;
-  }}
-  onchecked={(r) => (result = r as CheckData)}
+  onstart={startCheck}
+  onchecked={(r) => (result = r as CheckResult)}
 />
 
+{#if data.testSets.length}
+  <TestSetPanel
+    testSets={data.testSets}
+    {changes}
+    {changedTitle}
+    changesName={viewing ? 'This draft' : 'Your changes'}
+    civitaiUrl={data.civitaiUrl}
+    onstart={startCheck}
+    onchecked={(r) => (result = r)}
+  />
+{/if}
+
 {#if result}
-  <div class="mt-6 space-y-4">
+  <div id="check-results" class="mt-6 scroll-mt-4 space-y-4">
     {#if result.notice}
       <p class="text-sm text-amber-300">{result.notice}</p>
     {/if}
@@ -132,7 +146,7 @@
           {item}
           entityType={result.entityType}
           labels={result.labels}
-          testSets={data.testSets}
+          testSets={saveSets}
           {changedTitle}
           onedit={(key) => (editing = key)}
         />

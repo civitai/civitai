@@ -17,7 +17,6 @@ vi.mock('$lib/server/users.service', async (importOriginal) => ({
 
 const harness = vi.hoisted(() => ({
   scanTexts: vi.fn(),
-  quoteTexts: vi.fn(),
   composeEntities: vi.fn(),
 }));
 vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
@@ -131,13 +130,12 @@ describe('check — what gets scanned', () => {
     expect(harness.composeEntities).toHaveBeenCalledWith('Post', [9]);
   });
 
-  it('checks 50 ids at once without asking for confirmation or a quote', async () => {
+  it('checks 50 ids at once without asking for confirmation', async () => {
     composeAll();
     harness.scanTexts.mockImplementation(echoScan);
     const ids = Array.from({ length: 50 }, (_, i) => i + 1).join('\n');
     const res = await check({ input: ids });
     expect((res as { items: unknown[] }).items).toHaveLength(50);
-    expect(harness.quoteTexts).not.toHaveBeenCalled();
   });
 
   it('resolves a profile link to its account and scans the chosen profile type', async () => {
