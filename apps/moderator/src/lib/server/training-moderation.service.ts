@@ -19,7 +19,7 @@ import { getClickhouse } from './clickhouse';
 import { TRAINING_STEP_TYPES } from './training-orchestration.service';
 import { usersByIds } from './users.service';
 import { mapBounded } from './bounded';
-import { datasetPreviewable } from '$lib/training-workflow';
+import { hasViewableItem } from '$lib/training-workflow';
 
 export const TRAINING_DATA_FILE_TYPE = 'Training Data';
 const ANNOUNCEMENT_KEY = 'training-announcement';
@@ -1071,7 +1071,7 @@ export async function moderateTrainingWorkflow(
     /** The moderator confirmed reviewing a dataset this app cannot preview. Required to approve one. */
     reviewedElsewhere?: boolean;
   },
-  options: { recheckDelaysMs?: number[] } = {}
+  options: { recheckDelaysMs?: number[]; probeBudgetMs?: number } = {}
 ): Promise<{ ok: true; moderationStatus: string } | { ok: false; error: string }> {
   const { workflowId, approve, moderatorId } = input;
   // A malformed id is refused inside the load, before anything is asked of the orchestrator.
@@ -1094,12 +1094,18 @@ export async function moderateTrainingWorkflow(
     };
 
   // Approving what nobody here could look at needs the moderator to say they looked at it elsewhere.
-  // Checked on the server: the checkbox is only how the page asks.
-  if (approve && !datasetPreviewable(before.dataset) && !input.reviewedElsewhere)
+  // Decided from this call's own probe of the items: the checkbox is only how the page asks.
+  if (
+    approve &&
+    !input.reviewedElsewhere &&
+    !hasViewableItem(
+      await getDatasetItemStates(before.dataset, { budgetMs: options.probeBudgetMs })
+    )
+  )
     return {
       ok: false,
       error:
-        "This run's dataset cannot be previewed here. Approve only after reviewing it another way, and tick that you did. Nothing was changed.",
+        "No item of this run's dataset can be viewed here. Approve only after reviewing it another way, and tick that you did. Nothing was changed.",
     };
 
   const message = approve
@@ -1428,7 +1434,14 @@ export async function getDatasetItemStates(
     async (item): Promise<DatasetItemState> => {
       try {
         const probe = await probeOrchestratorBlob(item.blobKey!);
-        return probe.kind === 'content' ? 'viewable' : probe.kind;
+        if (probe.kind === 'content') return 'viewable';
+        // Busy or failing (or not configured) is no answer about the item: shown, unchecked.
+        if (
+          probe.kind === 'unavailable' &&
+          (probe.status === 0 || probe.status === 429 || probe.status >= 500)
+        )
+          return 'unchecked';
+        return probe.kind;
       } catch {
         return 'unchecked';
       }

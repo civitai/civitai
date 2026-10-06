@@ -23,8 +23,11 @@ export const bounded = async <T>(run: () => Promise<T>, ms = 3_000): Promise<T |
 
 /**
  * `fn` over `items`, at most `concurrency` at a time, for at most `budgetMs` in total. A slot whose item
- * did not finish in time is `undefined` — the caller decides what an unfinished item means, and must not
- * read it as an answer.
+ * did not finish in time — or whose call rejected — is `undefined`: the caller decides what an unanswered
+ * item means, and must not read it as an answer. Nothing new starts after the deadline.
+ *
+ * A rejection is held to its own slot rather than failing the whole map: letting it reject would end
+ * this call (and clear the deadline) while the other workers kept starting calls with no deadline left.
  *
  * Like `bounded`, abandoning a call does not cancel it: an in-flight request runs to its own timeout.
  */
@@ -42,7 +45,11 @@ export async function mapBounded<T, R>(
   const worker = async () => {
     while (next < items.length) {
       const i = next++;
-      const outcome = await Promise.race([fn(items[i]).then((value) => ({ value })), deadline]);
+      const call = fn(items[i]).then(
+        (value) => ({ value }),
+        () => ({ value: undefined })
+      );
+      const outcome = await Promise.race([call, deadline]);
       if (outcome === 'expired') return;
       results[i] = outcome.value;
     }

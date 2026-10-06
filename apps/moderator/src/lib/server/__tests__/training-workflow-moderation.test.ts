@@ -123,13 +123,17 @@ const json = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
 
 /** Serve successive manager reads of WF from `reads`, holding the last one. */
+/** Serve successive manager reads of WF from `reads`, holding the last one. Dataset items probe as
+ *  viewable unless `blob` says otherwise. */
 function orchestrator(
   reads: unknown[],
-  gate: () => Response = () => new Response(null, { status: 204 })
+  gate: () => Response = () => new Response(null, { status: 204 }),
+  blob: (key: string) => Response | Promise<Response> = () => redirectTo(`${CONTENT}x`)
 ) {
   let i = 0;
   route = (url, init) => {
     if (url.pathname.endsWith('/moderation-gate') && init?.method === 'POST') return gate();
+    if (url.pathname.startsWith('/v2/consumer/blobs/')) return blob(byIdOf(url));
     if (url.pathname === `/v1/manager/workflows/${WF}`) {
       const body = reads[Math.min(i++, reads.length - 1)];
       return body instanceof Response ? body.clone() : json(body);
@@ -861,6 +865,17 @@ describe('getDatasetItemStates', () => {
     ],
   };
 
+  it('counts a busy or failing orchestrator as no answer (unchecked), not as a missing item', async () => {
+    for (const status of [429, 500, 503]) {
+      route = () => new Response(null, { status });
+      expect(await getDatasetItemStates(dataset)).toEqual({
+        0: 'unchecked',
+        1: 'unchecked',
+        3: 'unchecked',
+      });
+    }
+  });
+
   it('labels each stored item viewable, blocked or unavailable, skipping non-blobs', async () => {
     route = (url) => {
       const key = byIdOf(url);
@@ -905,7 +920,7 @@ describe('approving a dataset that cannot be previewed', () => {
   it('is refused without the moderator confirming they reviewed it another way', async () => {
     orchestrator([archive()]);
     const result = await rule(true);
-    expect(!result.ok && result.error).toContain('cannot be previewed here');
+    expect(!result.ok && result.error).toContain('No item of this run');
     expect(gateCalls()).toHaveLength(0);
   });
 
@@ -924,8 +939,36 @@ describe('approving a dataset that cannot be previewed', () => {
   it('a blob dataset with no stored item counts as unpreviewable too', async () => {
     orchestrator([workflow({ items: [{ air: 'https://elsewhere.example/x.png' }] })]);
     const result = await rule(true);
-    expect(!result.ok && result.error).toContain('cannot be previewed here');
+    expect(!result.ok && result.error).toContain('No item of this run');
     expect(gateCalls()).toHaveLength(0);
+  });
+
+  it("is refused when every stored item is blocked or unserved, judged by the server's own probe", async () => {
+    orchestrator([workflow()], undefined, (key) =>
+      key === KEY_A ? redirectTo(`${BLOCKED}a`) : new Response(null, { status: 404 })
+    );
+    const result = await rule(true);
+    expect(!result.ok && result.error).toContain('No item of this run');
+    expect(gateCalls()).toHaveLength(0);
+    // The server probed the items itself.
+    expect(callsTo(`/v2/consumer/blobs/${KEY_A}`)).toHaveLength(1);
+  });
+
+  it('is refused when the probe cannot answer in time (fail safe)', async () => {
+    orchestrator([workflow()], undefined, () => new Promise<Response>(() => {}));
+    const result = await moderateTrainingWorkflow(
+      { workflowId: WF, approve: true, moderatorId: 7 },
+      { recheckDelaysMs: [0], probeBudgetMs: 30 }
+    );
+    expect(!result.ok && result.error).toContain('No item of this run');
+    expect(gateCalls()).toHaveLength(0);
+  });
+
+  it('one viewable item is enough, even beside blocked ones', async () => {
+    orchestrator([workflow(), workflow({ moderationStatus: 'Approved' })], undefined, (key) =>
+      key === KEY_A ? redirectTo(`${BLOCKED}a`) : redirectTo(`${CONTENT}b`)
+    );
+    expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
   });
 
   it('a previewable dataset needs no confirmation', async () => {
@@ -1004,6 +1047,35 @@ describe('the pending queue is bounded and shared', () => {
 });
 
 describe('mapBounded', () => {
+  it('starts nothing after the deadline', async () => {
+    const started: number[] = [];
+    await mapBounded(
+      [0, 1, 2, 3],
+      (n) => {
+        started.push(n);
+        return n === 0 ? new Promise<number>(() => {}) : Promise.resolve(n);
+      },
+      { concurrency: 1, budgetMs: 20 }
+    );
+    expect(started).toEqual([0]);
+  });
+
+  it('holds a rejection to its own slot and keeps the deadline for the rest', async () => {
+    const started: number[] = [];
+    const result = await mapBounded(
+      [0, 1, 2, 3],
+      (n) => {
+        started.push(n);
+        if (n === 0) return Promise.reject(new Error('boom'));
+        if (n === 2) return new Promise<number>(() => {});
+        return Promise.resolve(n * 10);
+      },
+      { concurrency: 1, budgetMs: 30 }
+    );
+    expect(result).toEqual([undefined, 10, undefined, undefined]);
+    expect(started).toEqual([0, 1, 2]);
+  });
+
   it('keeps order, respects concurrency, and leaves unfinished slots undefined', async () => {
     let running = 0;
     let peak = 0;

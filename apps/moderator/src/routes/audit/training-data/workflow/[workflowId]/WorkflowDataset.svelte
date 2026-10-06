@@ -98,10 +98,9 @@
   {/if}
   {#if unchecked.length}
     <p class="mb-3 text-sm text-amber-200">
-      {plural(unchecked.length, 'item')} did not answer in time and {unchecked.length === 1
-        ? 'is'
-        : 'are'} shown unchecked — a broken tile may be a blocked item, which weighs toward Deny. Reload
-      to check again.
+      {plural(unchecked.length, 'item')} could not be checked (no answer in time, or the orchestrator
+      was busy) and {unchecked.length === 1 ? 'is' : 'are'} shown unchecked — a broken tile may be a
+      blocked item, which weighs toward Deny. Reload to check again.
     </p>
   {/if}
 

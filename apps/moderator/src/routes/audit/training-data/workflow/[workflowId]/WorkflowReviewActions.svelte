@@ -11,13 +11,14 @@
   let {
     expiresAt,
     expiringSoon,
-    requiresAck,
+    viewable,
   }: {
     expiresAt: string;
     expiringSoon: boolean;
-    /** The dataset cannot be previewed here, so Approve asks the moderator to confirm reviewing it
-     *  another way. The server refuses an approval without it; this is only how the page asks. */
-    requiresAck: boolean;
+    /** Whether any dataset item probed viewable. Unless it did, Approve asks the moderator to confirm
+     *  reviewing the dataset another way — asked until the probe answers. The server re-probes and
+     *  refuses an approval without it; this is only how the page asks. */
+    viewable: Promise<boolean>;
   } = $props();
 
   const VERDICTS: Record<string, string> = {
@@ -40,6 +41,17 @@
   });
 </script>
 
+<!-- Uncontrolled, like the other checkbox groups in this app: nothing reads the tick but the server,
+     through the primitive's hidden input. -->
+{#snippet ack()}
+  <div class="flex items-center gap-1.5" data-touch-target>
+    <Checkbox id="reviewed-elsewhere" name="reviewedElsewhere" value="yes" />
+    <Label for="reviewed-elsewhere" class="text-xs leading-snug font-normal text-dark-2">
+      I reviewed this dataset another way
+    </Label>
+  </div>
+{/snippet}
+
 {#if expiringSoon}
   <p class="mb-3 text-sm text-amber-200">
     The gate expires {relativeTime(expiresAt)}. If it expires the run is cancelled and refunded.
@@ -47,16 +59,15 @@
 {/if}
 <div class="mb-2 flex flex-wrap items-start gap-4">
   <form method="POST" action="?/approve" use:enhance={form.enhance} class="flex flex-col gap-2">
-    {#if requiresAck}
-      <!-- Uncontrolled, like the other checkbox groups in this app: nothing reads the tick but the
-           server, through the primitive's hidden input. -->
-      <div class="flex items-center gap-1.5" data-touch-target>
-        <Checkbox id="reviewed-elsewhere" name="reviewedElsewhere" value="yes" />
-        <Label for="reviewed-elsewhere" class="text-xs leading-snug font-normal text-dark-2">
-          I reviewed this dataset another way
-        </Label>
-      </div>
-    {/if}
+    <!-- Awaited here, not around this component, so the probe answering does not wipe a reason the
+         moderator is already typing. -->
+    {#await viewable}
+      {@render ack()}
+    {:then canSee}
+      {#if !canSee}{@render ack()}{/if}
+    {:catch}
+      {@render ack()}
+    {/await}
     <Button type="submit" size="sm" disabled={form.submitting} class="self-start">Approve</Button>
   </form>
   <form method="POST" action="?/deny" use:enhance={form.enhance} class="flex flex-col gap-2">

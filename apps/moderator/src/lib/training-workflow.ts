@@ -1,4 +1,4 @@
-import type { WorkflowDataset, WorkflowOrigin } from '$lib/server/training-moderation.service';
+import type { DatasetItemState, WorkflowOrigin } from '$lib/server/training-moderation.service';
 
 /** Shared by the queue and the review page so a run is described the same way on both. The tags this
  *  reads are written by the submitter, so it is a label, never a decision. */
@@ -16,8 +16,10 @@ export const gateExpiresSoon = (expiresAt: string | null, now = Date.now()): boo
   !!expiresAt && Date.parse(expiresAt) - now < EXPIRY_WARNING_MS;
 
 /**
- * Whether this app can show any of the dataset. Decides whether Approve needs an explicit "reviewed it
- * another way" — read by the page to ask and by the server to refuse, so the two cannot disagree.
+ * Whether a moderator can actually see at least one item of the dataset, judged by what the items
+ * PROBED as — not by their shape: a dataset of stored items that are all blocked or unserved shows
+ * nothing. Decides whether Approve needs an explicit "reviewed it another way". The page asks from its
+ * probe; the server refuses from its own probe at approve time, never from anything the page posts.
  */
-export const datasetPreviewable = (dataset: WorkflowDataset): boolean =>
-  dataset.kind === 'blobs' && dataset.items.some((item) => item.blobKey);
+export const hasViewableItem = (states: Record<number, DatasetItemState>): boolean =>
+  Object.values(states).includes('viewable');

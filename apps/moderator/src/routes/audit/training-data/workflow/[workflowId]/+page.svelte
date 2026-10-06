@@ -1,7 +1,7 @@
 <script lang="ts">
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
-  import { datasetPreviewable, gateExpiresSoon, workflowOriginLabel } from '$lib/training-workflow';
+  import { gateExpiresSoon, hasViewableItem, workflowOriginLabel } from '$lib/training-workflow';
   import WorkflowDataset from './WorkflowDataset.svelte';
   import WorkflowReviewActions from './WorkflowReviewActions.svelte';
   import type { PageData } from './$types';
@@ -11,9 +11,8 @@
   const detail = $derived(data.detail);
   const expiringSoon = $derived(gateExpiresSoon(detail.expiresAt));
   const reviewable = $derived(detail.underReview && detail.modelVersionId === null);
+  const viewable = $derived(data.itemStates.then(hasViewableItem));
 
-  // Approve needs an explicit "reviewed it another way" when nothing here can show the dataset.
-  const previewable = $derived(datasetPreviewable(detail.dataset));
 </script>
 
 <header class="page-header">
@@ -80,7 +79,7 @@
     <WorkflowReviewActions
       expiresAt={detail.expiresAt}
       {expiringSoon}
-      requiresAck={!previewable}
+      {viewable}
     />
   {/key}
 {/if}
