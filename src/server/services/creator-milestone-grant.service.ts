@@ -23,7 +23,8 @@ type CancelHook = (cancel: () => Promise<void>) => void;
 
 /**
  * SQL selecting one grant candidate per row: "userId" int, "milestoneKey" text, "achievedAt" timestamp
- * (NULL for now) and "silent" boolean. A silent grant is stamped seen, so it is never announced.
+ * (NULL for now) and "silent" boolean. A silent grant is stamped seen, so it is never announced; a
+ * NULL "silent" counts as silent.
  */
 export type MilestoneCandidates = { sql: string; params: unknown[] };
 
@@ -42,7 +43,7 @@ export type MilestoneGrant = {
 export function insertMilestoneGrantsSql(candidates: string) {
   return `INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey", "achievedAt", "seenAt")
       SELECT c."userId", c."milestoneKey", COALESCE(c."achievedAt", CURRENT_TIMESTAMP),
-        CASE WHEN c.silent THEN now() END
+        CASE WHEN COALESCE(c.silent, true) THEN now() END
       FROM ${candidates} c
       ${joinMilestoneGrantableUserSql('u', 'c."userId"')}
       ON CONFLICT DO NOTHING
