@@ -77,17 +77,6 @@ const featureFlags = createFeatureFlags({
   // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
   // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
   trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
-  // Feed-page CLS fix. Reserves vertical space for the above-feed announcements
-  // banner during the pre-hydration window so the isClient-gated / dynamically
-  // imported carousel mount doesn't shove the (very tall) masonry feed down — the
-  // shift production RUM attributes to `MasonryContainer .queries`, which is the
-  // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
-  // only = the Flipt-DOWN fallback); ramp a % of ALL
-  // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
-  // all-user route metric, so a mod cohort can't move the aggregate. Purely
-  // cosmetic space reservation (worst case = a little dead space, never a
-  // functional break), so flipping the flag off is an instant, safe rollback.
-  feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
