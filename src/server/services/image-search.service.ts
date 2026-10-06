@@ -64,7 +64,7 @@ export type RunImageSearchInput = {
    * the same thing.
    */
   postOrder?: boolean;
-  /** @ai: Detail responses must distinguish a failed query from an empty gallery. */
+  /** @ai: Detail endpoints must not cache a failed image query as an empty gallery. */
   throwOnStatementTimeout?: boolean;
   /**
    * Let the feed service answer feed-search requests behind its flag, and accept the `feed:`

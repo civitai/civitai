@@ -52,7 +52,7 @@ export default MixedAuthEndpoint(async function handler(
 
   let releaseSlot: (() => void) | undefined;
   try {
-    // @ai: Anonymous reads keep caller-specific data out of the public cache.
+    // @ai: Read as an anonymous visitor so cached data does not depend on who requested it.
     const post = await getPostDetail({ id });
 
     const restricted = isRegionRestricted(getRegion(req));
@@ -61,7 +61,7 @@ export default MixedAuthEndpoint(async function handler(
     const browsable = restricted
       ? !!post.nsfwLevel && Flags.hasFlag(sfwBrowsingLevelsFlag, post.nsfwLevel)
       : Flags.intersects(post.nsfwLevel, allBrowsingLevelsFlag);
-    // @ai: getPostDetail's collection-judge path can return unpublished or unscanned posts.
+    // @ai: getPostDetail also serves collection judges, who can see unpublished or unscanned posts.
     if (!published || !browsable || !servedAvailability.has(post.availability)) return notFound();
 
     try {

@@ -2484,7 +2484,7 @@ const getAllImagesUncaptured = async (
     );
   } catch (e) {
     if (isStatementTimeout(e)) {
-      // @ai: Feeds can accept an empty page; detail responses opt in to retryable failures.
+      // @ai: Feeds can accept an empty page after a timeout; detail endpoints need an error to retry.
       imageFeedStatementTimeoutCounter.inc({ dbTarget });
       logToAxiom({
         name: 'getInfiniteImages:statement_timeout',
