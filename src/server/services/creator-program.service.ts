@@ -49,6 +49,7 @@ import {
   getWithdrawalFee,
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
+import { withDistributedLock } from '~/server/utils/distributed-lock';
 import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandling';
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
@@ -113,13 +114,8 @@ const createUserCapCache = () => {
           END DESC;
       `);
 
-      // Generation `compensation` (which also carries generation tips) stays paid but no longer
-      // raises a cap, matching the bankable-amount rule in creator-program-bankable.ts. A
-      // system-minted `tip` row is a manual support credit (remediation, goodwill refund, delivery
-      // fix), not an earning, so it must not raise a cap either. Only this cap query counts
-      // licenseFee; the pool/earnings estimates that share this predicate shape (getPoolForecast
-      // below; earnedCache and getPoolForecast in buzz.service.ts) still exclude it, and nothing pins
-      // the three together.
+      // A system-minted `tip` is a support credit, not an earning, so it must not raise a cap.
+      // Generation `compensation` is excluded to match BANKABLE_EARNING_PREDICATE_SQL.
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
@@ -178,7 +174,7 @@ export function getMonthAccount(month?: Date) {
   return Number(dayjs(month).format('YYYYMM'));
 }
 
-export async function getBanked(userId: number) {
+export async function getBankedBalance(userId: number) {
   const monthAccount = getMonthAccount();
   const bankAccountType = getBankAccountType();
 
@@ -206,17 +202,24 @@ export async function getBanked(userId: number) {
   );
 
   const total = Object.values(perType).reduce((sum, v) => sum + v, 0);
-  const [capData, bankable] = await Promise.all([
-    getBankCap(userId).then((caps) => caps[userId]),
-    getBankableAmount(userId, total),
-  ]);
+  const capData = (await getBankCap(userId))[userId];
 
   return {
     perType,
     total,
     cap: capData,
-    bankable,
   };
+}
+
+/** For display. `bankBuzz` reads the bankable amount itself so a ClickHouse failure blocks it. */
+export async function getBanked(userId: number) {
+  const balance = await getBankedBalance(userId);
+  const bankable = await getBankableAmount(userId, balance.total).catch((error: Error) => {
+    handleLogError(error, 'creator-program:bankable-amount');
+    return null;
+  });
+
+  return { ...balance, bankable };
 }
 export async function flushBankedCache() {
   await clearCacheByPattern(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:*`);
@@ -496,33 +499,42 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (isBankingClosed(phases)) throw new Error('Banking phase is closed');
 
-  // Adjust to not exceed cap (unified cap across all buzz types) or the bankable amount
-  const banked = await getBanked(userId);
-  if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
-  if (banked.bankable) {
-    if (banked.bankable.remaining <= 0)
-      throw throwBadRequestError(
-        'You have no bankable Buzz left. Generation compensation no longer counts toward banking.'
-      );
-    amount = Math.min(amount, banked.bankable.remaining);
-  }
-  if (amount <= 0) throw new Error('Amount exceeds cap');
+  // The limits are read and spent in one critical section: two deposits racing past the same
+  // check would bank twice the remaining amount.
+  const deposited = await withDistributedLock(
+    { key: `creator-program:bank:${userId}`, ttl: 30, autoRenew: true, maxRetries: 0 },
+    async () => {
+      const banked = await getBankedBalance(userId);
+      if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
+      const bankable = await getBankableAmount(userId, banked.total);
+      if (bankable) {
+        if (bankable.remaining <= 0)
+          throw throwBadRequestError(
+            'You have no bankable Buzz left. Generation compensation no longer counts toward banking.'
+          );
+        amount = Math.min(amount, bankable.remaining);
+      }
+      if (amount <= 0) throw new Error('Amount exceeds cap');
 
-  // Create buzz transaction to bank
-  const monthAccount = getMonthAccount();
-  const bankAccountType = getBankAccountType(buzzType);
-  await createBuzzTransaction({
-    amount,
-    fromAccountId: userId,
-    fromAccountType: buzzType,
-    toAccountId: monthAccount,
-    toAccountType: bankAccountType,
-    type: TransactionType.Bank,
-    description: 'Banked for Creator Program',
-  });
+      const monthAccount = getMonthAccount();
+      const bankAccountType = getBankAccountType(buzzType);
+      await createBuzzTransaction({
+        amount,
+        fromAccountId: userId,
+        fromAccountType: buzzType,
+        toAccountId: monthAccount,
+        toAccountType: bankAccountType,
+        type: TransactionType.Bank,
+        description: 'Banked for Creator Program',
+      });
 
-  // Bust affected caches
-  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+      await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+      return true;
+    }
+  );
+  if (!deposited)
+    throw throwBadRequestError('Another deposit is already in progress. Try again in a moment.');
+
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
   const compensationPool = await getCompensationPool();
@@ -549,7 +561,7 @@ export async function extractBuzz(userId: number) {
   else if (new Date() > phases.extraction[1]) throw new Error('Extraction phase is closed');
 
   // Get banked amounts across all types
-  const banked = await getBanked(userId);
+  const banked = await getBankedBalance(userId);
   if (banked.total <= 0) return;
 
   // Calculate extraction fee on combined total

@@ -473,6 +473,21 @@ describe('bankBuzz', () => {
       );
     });
 
+    it('refuses a deposit while another one for the same user holds the lock', async () => {
+      mockBankableLedger({ snapshot: 30000, earned: 10000 });
+      redisMock.redis.set.mockResolvedValueOnce(null);
+
+      await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow(/already in progress/);
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+    });
+
+    it('refuses to bank when the bankable amount cannot be read', async () => {
+      mockClickhouse.$query.mockRejectedValue(new Error('clickhouse down'));
+
+      await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow('clickhouse down');
+      expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+    });
+
     it('rejects with a clear message when nothing bankable is left', async () => {
       mockBankableLedger({ snapshot: 0, earned: 0 });
 
@@ -539,6 +554,42 @@ describe('bankBuzz', () => {
 });
 
 // ─── extractBuzz ───────────────────────────────────────────────────────────────
+describe('after the bankable-amount cutover, with ClickHouse failing', () => {
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-12-15T12:00:00Z'));
+    mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
+    mockCapCache();
+    mockGetUserBuzzAccount.mockResolvedValue([{ balance: 100000 }]);
+    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
+      if (parts.join('').includes('AS consumed')) throw new Error('clickhouse down');
+      return [{ balance: 35000 }];
+    });
+  });
+  afterEach(() => {
+    vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+  });
+
+  it('getBanked falls back to no bankable amount', async () => {
+    mockBankedAmounts(0, 5000);
+
+    const result = await getBanked(userId);
+
+    expect(result.total).toBe(5000);
+    expect(result.bankable).toBeNull();
+  });
+
+  it('extraction still works', async () => {
+    mockSysRedis.get.mockResolvedValue('true');
+    mockBankedAmounts(0, 50000);
+
+    await extractBuzz(userId);
+
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ type: TransactionType.Extract, amount: 50000 })
+    );
+  });
+});
+
 describe('extractBuzz', () => {
   beforeEach(() => {
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());

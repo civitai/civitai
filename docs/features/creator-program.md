@@ -90,7 +90,7 @@ bankBuzz(userId, amount, buzzType: 'yellow' | 'green')
 ```
 
 1. Validates: not banned, has active membership, in banking phase
-2. Clamps the deposit to the lower of the unified cap (sum of all banked types vs cap) and, from the cutover, the remaining bankable amount
+2. Under a per-user lock, clamps the deposit to the lower of the unified cap (sum of all banked types vs cap) and, from the cutover, the remaining bankable amount. A ClickHouse failure blocks banking but not extraction
 3. Creates `TransactionType.Bank` from user's buzz account to `creatorProgramBank`
 4. Busts caches, signals pool update
 

@@ -21,8 +21,8 @@ const placementEarningDescriptionsSql = Object.values(PLACEMENT_LEDGER_TEXT)
   .join(', ');
 
 /**
- * The transactions that raise a creator's bankable amount. Generation compensation (which also
- * carries generation tips), purchased Buzz and system credits are deliberately absent.
+ * Transactions that raise a creator's bankable amount. Excludes generation `compensation` (which
+ * also carries generation tips), purchased Buzz, and system-minted tips.
  */
 export const BANKABLE_EARNING_PREDICATE_SQL = `(
   type IN ('licenseFee', 'donation', 'sell', 'bounty')
@@ -35,7 +35,7 @@ export type BankableAmount = {
   snapshot: number;
   /** Bankable earnings since the cutover. */
   earned: number;
-  /** Banked and kept in closed months since the cutover, plus their extraction fees. */
+  /** Closed months since the cutover: banked, minus extracted, plus extraction fees. */
   consumed: number;
   /** What may still be banked this month, before the tier cap. Never negative. */
   remaining: number;
@@ -75,8 +75,8 @@ async function getCutoverSnapshot(userId: number, now: Date) {
 }
 
 /**
- * The most a creator may have banked this month under the bankable-amount rule, or `null` before
- * the cutover, when only the tier cap applies.
+ * The creator's bankable amount, or `null` before the cutover or without ClickHouse (only the
+ * tier cap applies then).
  *
  * `bankedThisMonth` comes from the Buzz service rather than ClickHouse so a deposit made seconds
  * ago is already counted; closed months are read from ClickHouse, which has caught up by then.
