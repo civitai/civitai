@@ -6,7 +6,7 @@
   import * as Table from '@civitai/ui/components/ui/table/index.js';
   import ConfirmSubmit from '$lib/components/ConfirmSubmit.svelte';
   import ExpectedEditor from '$lib/components/text-scan-lab/ExpectedEditor.svelte';
-  import { entityUrl } from '$lib/entity-url';
+  import { commentV2Url, entityUrl, userLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime } from '$lib/format';
   import type { TestCase } from '$lib/server/text-scan-lab/test-sets.service';
@@ -22,7 +22,15 @@
 
   const PREVIEW_CHARS = 200;
   const text = $derived(testCase.fields ? composeUserMessage(testCase.fields) : null);
-  const href = $derived(entityUrl(civitaiUrl, testCase.entityType, testCase.entityId));
+  const href = $derived.by(() => {
+    const id = testCase.entityId;
+    if (id === null) return null;
+    if (testCase.entityType === 'CommentV2') return commentV2Url(civitaiUrl, id);
+    // A UserProfile's id is its user's id.
+    if (testCase.entityType === 'User' || testCase.entityType === 'UserProfile')
+      return userLookupUrl(id);
+    return entityUrl(civitaiUrl, testCase.entityType, id);
+  });
   const chips = $derived(describeExpected(testCase.expected));
 
   let editing = $state(false);

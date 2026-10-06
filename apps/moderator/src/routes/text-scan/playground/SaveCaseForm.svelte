@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { SubmitFunction } from '@sveltejs/kit';
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
@@ -39,6 +40,25 @@
       open = false;
     },
   });
+  // The action lives on the test-set route: applying its unexpected error would render that route's
+  // error page over the playground, so it is shown as this form's refusal instead.
+  const enhanceSave: SubmitFunction = async (input) => {
+    const settle = await save.enhance(input);
+    if (!settle) return;
+    return (opts) => {
+      if (opts.result.type !== 'error') return settle(opts);
+      const message = (opts.result.error as { message?: string } | undefined)?.message;
+      return settle({
+        ...opts,
+        result: {
+          type: 'failure',
+          status: opts.result.status ?? 500,
+          data: { error: message || 'Something went wrong.' },
+        },
+        update: async () => {},
+      });
+    };
+  };
 </script>
 
 {#if !open}
@@ -55,7 +75,7 @@
   <form
     method="POST"
     action="/text-scan/test-sets/{setId}?/addCase"
-    use:enhance={save.enhance}
+    use:enhance={enhanceSave}
     class="mt-3 space-y-3 rounded-lg border border-dark-4 bg-dark-7 p-4"
   >
     <input type="hidden" name="entityType" value={entityType} />
