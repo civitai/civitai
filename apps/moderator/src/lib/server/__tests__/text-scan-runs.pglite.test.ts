@@ -46,10 +46,9 @@ vi.mock('../text-scan-lab/harness-client', async (importOriginal) => ({
 
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
 const { createDraft, updateDraft } = await import('../text-scan-lab/drafts.service');
-const { addCase, createSet } = await import('../text-scan-lab/test-sets.service');
-const { RunError, latestRunTotals, quoteRun, rerunErrors, startRun } = await import(
-  '../text-scan-lab/runs.service'
-);
+const { addCase, createSet, updateExpected } = await import('../text-scan-lab/test-sets.service');
+const { RunError, compareRuns, latestRunTotals, listRuns, quoteRun, rerunErrors, startRun } =
+  await import('../text-scan-lab/runs.service');
 
 const MOD = 990001;
 const PROMPT_IDS = { base: 1, nsfw: 2 };
@@ -105,8 +104,8 @@ async function setWithCases(n: number) {
 
 const results = async (runId: number) =>
   (
-    await holder.pg!.query<{ case_id: string; status: string; output: any; correct: any }>(
-      'SELECT case_id, status, output, correct FROM text_scan_test_result WHERE run_id = $1 ORDER BY case_id',
+    await holder.pg!.query<{ case_id: string; status: string; output: any }>(
+      'SELECT case_id, status, output FROM text_scan_test_result WHERE run_id = $1 ORDER BY case_id',
       [runId]
     )
   ).rows;
@@ -131,9 +130,9 @@ describe('startRun', () => {
       ],
       undefined
     );
-    expect((await results(run.id)).map((r) => [r.status, r.correct])).toEqual([
-      ['ok', { nsfw: true }],
-      ['ok', { nsfw: false }],
+    expect((await results(run.id)).map((r) => [r.status, r.output.nsfw.level])).toEqual([
+      ['ok', 'x'],
+      ['ok', 'pg13'],
     ]);
     const row = await runRow(run.id);
     expect(row).toMatchObject({
@@ -195,6 +194,33 @@ describe('startRun', () => {
     const rows = await results(run.id);
     expect(rows).toHaveLength(60);
     expect(rows.every((r) => r.status === 'error' && r.output.error === 'Not allowed')).toBe(true);
+  });
+
+  it("keeps scanning another entity type after one type's first request is refused", async () => {
+    const { setId } = await setWithCases(1);
+    await addCase(
+      {
+        setId,
+        entityType: 'Comment',
+        entityId: 5,
+        authorId: null,
+        fields: [{ heading: 'Comment', text: 'buy now' }],
+        expected: {},
+        synthetic: false,
+        note: null,
+      },
+      MOD
+    );
+    harness.scanTexts.mockImplementation(async (type: string, texts: LabText[]) => {
+      if (type === 'Model') throw new LabHarnessError('Model refused');
+      return texts.map((t) => okResult(t.key));
+    });
+
+    const run = await startRun({ setId, version: 'active' }, MOD);
+
+    expect(harness.scanTexts.mock.calls.map((c) => c[0])).toEqual(['Model', 'Comment']);
+    expect((await results(run.id)).map((r) => r.status)).toEqual(['error', 'ok']);
+    expect(run.status).toBe('done');
   });
 
   it('stores an unparsed reply as an error', async () => {
@@ -363,6 +389,39 @@ describe('rerunErrors', () => {
 
     await expect(rerunErrors(setId, run.id)).rejects.toThrow(/label:nsfw/);
     expect(harness.scanTexts).not.toHaveBeenCalled();
+  });
+});
+
+describe('scoring against current expectations', () => {
+  it('rescores every run when a case is relabelled, so a comparison shows no flip', async () => {
+    const { setId, caseIds } = await setWithCases(1); // expects nsfw r–x
+    harness.scanTexts.mockImplementation(allOk('pg13'));
+    const first = await startRun({ setId, version: 'active' }, MOD);
+    expect(first.totals!.nsfw.correct).toBe(0);
+
+    await updateExpected(setId, caseIds[0], { nsfw: { min: 'pg13', max: 'pg13' } }, null);
+    const second = await startRun({ setId, version: 'active' }, MOD);
+
+    const comparison = await compareRuns(setId, first.id, second.id);
+    expect(comparison.newlyRight).toEqual([]);
+    expect(comparison.newlyWrong).toEqual([]);
+    expect(comparison.a.totals!.nsfw).toMatchObject({ scored: 1, correct: 1 });
+    expect(comparison.b.totals!.nsfw).toMatchObject({ scored: 1, correct: 1 });
+    const listed = await listRuns(setId);
+    expect(listed.map((r) => r.totals!.nsfw.correct)).toEqual([1, 1]);
+    expect((await latestRunTotals(setId)).active!.totals.nsfw.correct).toBe(1);
+  });
+
+  it('flips a case only when its output changed', async () => {
+    const { setId } = await setWithCases(1);
+    harness.scanTexts.mockImplementation(allOk('pg13'));
+    const a = await startRun({ setId, version: 'active' }, MOD);
+    harness.scanTexts.mockImplementation(allOk('x'));
+    const b = await startRun({ setId, version: 'active' }, MOD);
+    const comparison = await compareRuns(setId, a.id, b.id);
+    expect(comparison.newlyRight).toMatchObject([
+      { label: 'nsfw', outputB: { nsfw: { level: 'x' } } },
+    ]);
   });
 });
 

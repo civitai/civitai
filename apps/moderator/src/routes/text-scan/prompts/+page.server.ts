@@ -20,7 +20,7 @@ import {
   putPrompt,
   type LabPrompts,
 } from '$lib/server/text-scan-lab/harness-client';
-import { latestRunTotals, type LatestRun } from '$lib/server/text-scan-lab/runs.service';
+import { latestRunTotalsForSets, type LatestRun } from '$lib/server/text-scan-lab/runs.service';
 import { listSets } from '$lib/server/text-scan-lab/test-sets.service';
 import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
 
@@ -39,17 +39,13 @@ export type SetRunTotals = {
 /** Per open test set, the draft's and active's latest finished run — shown beside publish, never gating it. */
 async function draftRunTotals(draftId: number): Promise<SetRunTotals[]> {
   const sets = await listSets();
-  const rows = await Promise.all(
-    sets.map(async (s) => {
-      const latest = await latestRunTotals(s.id);
-      return {
-        setId: s.id,
-        setName: s.name,
-        active: latest.active,
-        draft: latest.drafts[String(draftId)] ?? null,
-      };
-    })
-  );
+  const latest = await latestRunTotalsForSets(sets.map((s) => s.id));
+  const rows = sets.map((s) => ({
+    setId: s.id,
+    setName: s.name,
+    active: latest.get(s.id)!.active,
+    draft: latest.get(s.id)!.drafts[String(draftId)] ?? null,
+  }));
   return rows.filter((r) => r.active || r.draft);
 }
 

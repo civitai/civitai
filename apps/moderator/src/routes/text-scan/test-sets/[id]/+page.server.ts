@@ -183,7 +183,7 @@ export const actions: Actions = {
   ),
 
   rerunErrors: billedAction(
-    z.object({ runId: z.coerce.number().int().positive() }),
+    z.object({ runId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
     (setId, input) => quoteRerun(setId, input.runId),
     (setId, input) => rerunErrors(setId, input.runId)
   ),

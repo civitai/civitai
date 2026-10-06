@@ -63,6 +63,8 @@ CREATE TABLE IF NOT EXISTS text_scan_test_run (
   prompt_ids  jsonb,
   model       text,
   status      text NOT NULL CHECK (status IN ('running', 'done', 'failed')),
+  -- Per-label totals as of finishing. Pages rescore from the results against each case's current
+  -- expectation, so this goes stale when a case is relabelled.
   totals      jsonb,
   run_by      integer NOT NULL,
   started_at  timestamptz NOT NULL DEFAULT now(),
@@ -77,7 +79,8 @@ CREATE TABLE IF NOT EXISTS text_scan_test_result (
   -- parse.output on ok; { error } otherwise.
   output      jsonb,
   workflow_id text,
-  -- { "nsfw": true, "poi": false, ... } per scored label.
+  -- Unwritten: correctness is scored on read against the case's current expectation, so a relabel
+  -- never shows up as a prompt's change between two runs.
   correct     jsonb,
   PRIMARY KEY (run_id, case_id)
 );

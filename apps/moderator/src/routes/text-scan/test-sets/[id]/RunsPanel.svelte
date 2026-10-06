@@ -159,7 +159,7 @@
             <Table.Cell class="align-top text-xs text-dark-2">{duration(run)}</Table.Cell>
             <Table.Cell class="whitespace-normal align-top text-xs text-dark-2">
               {num(run.counts.ok)} ok
-              {#if run.counts.skipped}· {num(run.counts.skipped)} skipped{/if}
+              {#if run.counts.skipped}· {num(run.counts.skipped)} skipped · source deleted{/if}
               {#if run.errors.length}
                 <details class="mt-1">
                   <summary class="cursor-pointer text-red-300">{plural(run.errors.length, 'error')}</summary>

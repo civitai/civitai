@@ -154,7 +154,6 @@ type ResultRow = {
   status: 'ok' | 'error' | 'skipped';
   output: unknown;
   workflow_id: string | null;
-  correct: Record<string, boolean> | null;
 };
 
 function toResultRow(c: RunCase, r: LabScanResult | undefined): ResultRow {
@@ -163,7 +162,6 @@ function toResultRow(c: RunCase, r: LabScanResult | undefined): ResultRow {
     status: 'error',
     output: { error: message },
     workflow_id: workflowId,
-    correct: null,
   });
   if (!r) return error('No result returned for this case.');
   if (!r.ok) return error(r.error);
@@ -173,7 +171,6 @@ function toResultRow(c: RunCase, r: LabScanResult | undefined): ResultRow {
     status: 'ok',
     output: r.output,
     workflow_id: r.workflowId,
-    correct: caseCorrect(c.expected, r.output),
   };
 }
 
@@ -202,7 +199,6 @@ async function writeResults(runId: number, rows: ResultRow[]) {
       status: r.status,
       output: r.output === null ? null : JSON.stringify(r.output),
       workflow_id: r.workflow_id,
-      correct: r.correct === null ? null : JSON.stringify(r.correct),
     }));
   if (!values.length) return;
   await db
@@ -213,7 +209,6 @@ async function writeResults(runId: number, rows: ResultRow[]) {
         status: eb.ref('excluded.status'),
         output: eb.ref('excluded.output'),
         workflow_id: eb.ref('excluded.workflow_id'),
-        correct: eb.ref('excluded.correct'),
       }))
     )
     .execute();
@@ -225,7 +220,6 @@ const skippedRows = (caseIds: number[]): ResultRow[] =>
     status: 'skipped',
     output: null,
     workflow_id: null,
-    correct: null,
   }));
 
 /** Scans in chunks, writing each chunk's results as it lands. Returns the prompt ids the harness reported. */
@@ -235,8 +229,11 @@ async function scanCases(
   overrides: DraftPrompts | undefined
 ): Promise<Record<string, number> | null> {
   let promptIds: Record<string, number> | null = null;
-  let refusal: string | null = null;
   for (const [entityType, group] of byEntityType(cases)) {
+    // Set when this type's first request is refused before anything of it scanned: its later chunks
+    // would be refused the same way. Another type's texts can still go through.
+    let refusal: string | null = null;
+    let scannedAny = false;
     for (let i = 0; i < group.length; i += RUN_CHUNK) {
       const chunk = group.slice(i, i + RUN_CHUNK);
       if (refusal !== null) {
@@ -254,12 +251,15 @@ async function scanCases(
           e instanceof LabHarnessError ? e.message : 'The scan request failed unexpectedly.';
         if (!(e instanceof LabHarnessError))
           console.error('text-scan run: scan request failed', (e as Error)?.message);
-        // Refused before anything was scanned: every later chunk would be refused the same way.
-        if (promptIds === null && e instanceof LabHarnessError) refusal = message;
+        if (!scannedAny && e instanceof LabHarnessError) refusal = message;
         results = chunk.map((c) => ({ key: String(c.id), ok: false as const, error: message }));
       }
       const byKey = new Map(results.map((r) => [r.key, r]));
-      for (const r of results) if (r.ok) promptIds = { ...r.promptIds, ...(promptIds ?? {}) };
+      for (const r of results) {
+        if (!r.ok) continue;
+        scannedAny = true;
+        promptIds = { ...r.promptIds, ...(promptIds ?? {}) };
+      }
       await writeResults(
         runId,
         chunk.map((c) => toResultRow(c, byKey.get(String(c.id))))
@@ -269,30 +269,71 @@ async function scanCases(
   return promptIds;
 }
 
-/** Recomputes the run's totals from its stored results and closes it. */
+type ScoredRun = {
+  correct: Map<number, Record<string, boolean>>;
+  outputs: Map<number, unknown>;
+  totals: RunTotals;
+};
+
+/** Scores runs' ok results against each case's CURRENT expectation, so relabelling a case moves every
+ *  view of every run at once and two runs are always compared on the same labels. */
+async function scoreRuns(runIds: Array<string | number>): Promise<Map<string, ScoredRun>> {
+  const scored = new Map<string, ScoredRun>(
+    runIds.map((id) => [String(id), { correct: new Map(), outputs: new Map(), totals: {} }])
+  );
+  if (!runIds.length) return scored;
+  const rows = await getModeratorDb()
+    .selectFrom('text_scan_test_result as r')
+    .innerJoin('text_scan_test_case as c', 'c.id', 'r.case_id')
+    .select(['r.run_id', 'r.case_id', 'r.output', 'c.expected'])
+    .where(
+      'r.run_id',
+      'in',
+      runIds.map((id) => String(id))
+    )
+    .where('r.status', '=', 'ok')
+    .execute();
+  const byRun = new Map<string, typeof rows>();
+  for (const r of rows) byRun.set(String(r.run_id), [...(byRun.get(String(r.run_id)) ?? []), r]);
+  for (const [runId, runRows] of byRun) {
+    const run = scored.get(runId)!;
+    const inputs = runRows.map((r) => ({
+      status: 'ok',
+      expected: (r.expected ?? {}) as Expected,
+      output: r.output as Record<string, unknown> | null,
+    }));
+    run.totals = totals(inputs);
+    runRows.forEach((r, i) => {
+      run.outputs.set(Number(r.case_id), r.output);
+      if (inputs[i].output)
+        run.correct.set(Number(r.case_id), caseCorrect(inputs[i].expected, inputs[i].output!));
+    });
+  }
+  return scored;
+}
+
+/** Closes the run: `failed` when every scanned case errored. */
 async function finishRun(
   runId: number,
   promptIds: Record<string, number> | null,
   { failed = false } = {}
 ): Promise<TestRun> {
   const db = getModeratorDb();
-  const rows = await db
-    .selectFrom('text_scan_test_result as r')
-    .innerJoin('text_scan_test_case as c', 'c.id', 'r.case_id')
-    .select(['r.status', 'r.output', 'c.expected'])
-    .where('r.run_id', '=', String(runId))
-    .execute();
-  const scored = rows.map((r) => ({
-    status: r.status,
-    output: r.output as Record<string, unknown> | null,
-    expected: (r.expected ?? {}) as Expected,
-  }));
-  const allErrored = !rows.some((r) => r.status === 'ok') && rows.some((r) => r.status === 'error');
+  const statuses = (
+    await db
+      .selectFrom('text_scan_test_result')
+      .select('status')
+      .distinct()
+      .where('run_id', '=', String(runId))
+      .execute()
+  ).map((r) => r.status);
+  const allErrored = !statuses.includes('ok') && statuses.includes('error');
+  const scored = (await scoreRuns([runId])).get(String(runId))!;
   const run = await db
     .updateTable('text_scan_test_run')
     .set({
       status: failed || allErrored ? 'failed' : 'done',
-      totals: JSON.stringify(totals(scored)),
+      totals: JSON.stringify(scored.totals),
       finished_at: sql`now()`,
       prompt_ids: promptIds
         ? sql`coalesce(prompt_ids, ${JSON.stringify(promptIds)}::jsonb)`
@@ -454,7 +495,7 @@ export async function listRuns(setId: number, limit = 20): Promise<RunListItem[]
     .execute();
   if (!runs.length) return [];
   const ids = runs.map((r) => r.id);
-  const [counts, errors] = await Promise.all([
+  const [counts, errors, scored] = await Promise.all([
     db
       .selectFrom('text_scan_test_result')
       .select(['run_id', 'status', db.fn.countAll<string>().as('n')])
@@ -468,6 +509,7 @@ export async function listRuns(setId: number, limit = 20): Promise<RunListItem[]
       .where('status', '=', 'error')
       .orderBy('case_id')
       .execute(),
+    scoreRuns(ids),
   ]);
   return runs.map((r) => {
     const c: RunCounts = { ok: 0, error: 0, skipped: 0 };
@@ -475,6 +517,7 @@ export async function listRuns(setId: number, limit = 20): Promise<RunListItem[]
       if (row.run_id === r.id) c[row.status as keyof RunCounts] = Number(row.n);
     return {
       ...toRun(r),
+      totals: scored.get(String(r.id))!.totals,
       counts: c,
       errors: errors
         .filter((e) => e.run_id === r.id)
@@ -499,34 +542,19 @@ export type RunComparison = {
 /** Labels scored in both runs whose correctness flipped from `a` to `b`, with both outputs. */
 export async function compareRuns(setId: number, aId: number, bId: number): Promise<RunComparison> {
   const [a, b] = await Promise.all([getRunRow(setId, aId), getRunRow(setId, bId)]);
-  const rows = await getModeratorDb()
-    .selectFrom('text_scan_test_result')
-    .select(['run_id', 'case_id', 'output', 'correct'])
-    .where('run_id', 'in', [a.id, b.id])
-    .where('status', '=', 'ok')
-    .execute();
-  const side = (runId: string) =>
-    new Map(
-      rows
-        .filter((r) => r.run_id === runId)
-        .map((r) => [
-          Number(r.case_id),
-          { output: r.output, correct: r.correct as Record<string, boolean> },
-        ])
-    );
-  const sideA = side(a.id);
-  const sideB = side(b.id);
-  const correctOf = (s: typeof sideA) => new Map([...s].map(([id, v]) => [id, v.correct ?? {}]));
-  const { newlyWrong, newlyRight } = diffRuns(correctOf(sideA), correctOf(sideB));
+  const scored = await scoreRuns([a.id, b.id]);
+  const sideA = scored.get(String(a.id))!;
+  const sideB = scored.get(String(b.id))!;
+  const { newlyWrong, newlyRight } = diffRuns(sideA.correct, sideB.correct);
   const withOutputs = (flips: { caseId: number; label: string }[]) =>
     flips.map((f) => ({
       ...f,
-      outputA: sideA.get(f.caseId)?.output ?? null,
-      outputB: sideB.get(f.caseId)?.output ?? null,
+      outputA: sideA.outputs.get(f.caseId) ?? null,
+      outputB: sideB.outputs.get(f.caseId) ?? null,
     }));
   return {
-    a: toRun(a),
-    b: toRun(b),
+    a: { ...toRun(a), totals: sideA.totals },
+    b: { ...toRun(b), totals: sideB.totals },
     newlyWrong: withOutputs(newlyWrong),
     newlyRight: withOutputs(newlyRight),
   };
@@ -539,30 +567,42 @@ export type LatestRun = {
   totals: RunTotals;
 };
 
-/** Each version's latest finished run on the set: what the publish panel shows beside a draft. */
-export async function latestRunTotals(
-  setId: number
-): Promise<{ active: LatestRun | null; drafts: Record<string, LatestRun> }> {
+export type SetLatestRuns = { active: LatestRun | null; drafts: Record<string, LatestRun> };
+
+/** Per set, each version's latest finished run: what the publish panel shows beside a draft. */
+export async function latestRunTotalsForSets(
+  setIds: number[]
+): Promise<Map<number, SetLatestRuns>> {
+  const out = new Map<number, SetLatestRuns>(
+    setIds.map((id) => [id, { active: null, drafts: {} }])
+  );
+  if (!setIds.length) return out;
   const rows = await getModeratorDb()
     .selectFrom('text_scan_test_run')
-    .distinctOn('version')
-    .select(['id', 'version', 'started_at', 'draft_updated_at', 'totals'])
-    .where('set_id', '=', String(setId))
+    .distinctOn(['set_id', 'version'])
+    .select(['id', 'set_id', 'version', 'started_at', 'draft_updated_at'])
+    .where('set_id', 'in', setIds.map(String))
     .where('status', '=', 'done')
+    .orderBy('set_id')
     .orderBy('version')
     .orderBy('started_at', 'desc')
+    .orderBy('id', 'desc')
     .execute();
-  let active: LatestRun | null = null;
-  const drafts: Record<string, LatestRun> = {};
+  const scored = await scoreRuns(rows.map((r) => r.id));
   for (const r of rows) {
     const latest: LatestRun = {
       runId: Number(r.id),
       startedAt: new Date(r.started_at),
       draftUpdatedAt: r.draft_updated_at ? new Date(r.draft_updated_at) : null,
-      totals: (r.totals ?? {}) as RunTotals,
+      totals: scored.get(String(r.id))!.totals,
     };
-    if (r.version === 'active') active = latest;
-    else drafts[r.version] = latest;
+    const set = out.get(Number(r.set_id))!;
+    if (r.version === 'active') set.active = latest;
+    else set.drafts[r.version] = latest;
   }
-  return { active, drafts };
+  return out;
+}
+
+export async function latestRunTotals(setId: number): Promise<SetLatestRuns> {
+  return (await latestRunTotalsForSets([setId])).get(setId)!;
 }
