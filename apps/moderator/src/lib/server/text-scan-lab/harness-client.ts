@@ -1,14 +1,17 @@
 import { callModEndpoint } from '../user-actions.service';
+import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import type { LabEntityType, LabField, LabScanResult, LabText } from '$lib/text-scan-lab/types';
 
 // The main app's text-scan harness (`/api/mod/text-scan`). Every scan is a billed workflow.
 
 /** The harness refuses more than this many texts or ids in one request. */
 const HARNESS_BATCH_LIMIT = 50;
-// Small scan requests at high concurrency finish in about two workflow waits (90s each), inside
-// the timeout; a timed-out request still bills every workflow it submitted.
-const SCAN_CHUNK_SIZE = 10;
-const SCAN_CONCURRENCY = 5;
+// One chunk is one wave (chunk size = concurrency), so a request takes at most one workflow wait, well
+// inside the timeout and the harness's 120s budget; a timed-out request still bills every workflow it
+// submitted.
+const SCAN_CONCURRENCY = 8;
+const SCAN_CHUNK_SIZE = SCAN_CONCURRENCY;
+const SCAN_WAIT_SECONDS = 60;
 const HARNESS_TIMEOUT_MS = 150_000;
 
 export class LabHarnessError extends Error {
@@ -99,7 +102,13 @@ export async function scanTexts(
   for (const batch of chunk(texts, SCAN_CHUNK_SIZE)) {
     const result = await postHarness(
       'scanTexts',
-      { entityType, texts: batch, promptOverrides, concurrency: SCAN_CONCURRENCY },
+      {
+        entityType,
+        texts: batch,
+        promptOverrides,
+        concurrency: SCAN_CONCURRENCY,
+        wait: SCAN_WAIT_SECONDS,
+      },
       'Text-scan scan'
     );
     if (result.ok) {
@@ -141,18 +150,37 @@ export type LabComposedEntity =
   | { entityId: number; ok: true; fields: LabField[]; text: string; userId: number | null }
   | { entityId: number; ok: false; error: string };
 
+type HarnessComposedEntity =
+  | {
+      entityId: number;
+      ok: true;
+      fields: { heading: string; text: string | null }[];
+      text: string;
+      userId: number | null;
+    }
+  | { entityId: number; ok: false; error: string };
+
+function toLabComposed(r: HarnessComposedEntity): LabComposedEntity {
+  if (!r.ok) return r;
+  const fields = normaliseLabFields(r.fields);
+  if (typeof fields === 'string') return { entityId: r.entityId, ok: false, error: fields };
+  if (!fields.length) return { entityId: r.entityId, ok: false, error: 'too-short' };
+  return { ...r, fields };
+}
+
+/** Fields come back normalised (no null or blank text), so every consumer can store or scan them as is. */
 export async function composeEntities(
   entityType: LabEntityType,
   ids: number[]
 ): Promise<LabComposedEntity[]> {
   const results: LabComposedEntity[] = [];
   for (const entityIds of chunk(ids)) {
-    const body = await callHarness<{ results: LabComposedEntity[] }>(
+    const body = await callHarness<{ results: HarnessComposedEntity[] }>(
       'composeEntities',
       { entityType, entityIds },
       'Load entity text'
     );
-    results.push(...body.results);
+    results.push(...body.results.map(toLabComposed));
   }
   return results;
 }

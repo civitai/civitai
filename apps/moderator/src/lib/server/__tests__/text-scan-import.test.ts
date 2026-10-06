@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { MISSING_HEADING, normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { parseSeedFile, SeedFileError } from '../text-scan-lab/seed-file';
 
 const entityCase = (over: Record<string, unknown> = {}) => ({
@@ -177,6 +178,24 @@ describe('parseSeedFile', () => {
           textCase({ fields: [] }),
         ],
       })
-    ).toHaveLength(2);
+    ).toEqual([expect.stringMatching(/^case 1 /), expect.stringMatching(/^case 3 /)]);
+  });
+});
+
+describe('normaliseLabFields', () => {
+  it('drops null, missing and blank text and trims headings, keeping text as given', () => {
+    expect(
+      normaliseLabFields([
+        { heading: ' Name ', text: ' FAKE MODEL ' },
+        { heading: 'Description', text: null },
+        { heading: 'Trained words' },
+        { heading: 'Version', text: '  ' },
+      ])
+    ).toEqual([{ heading: 'Name', text: ' FAKE MODEL ' }]);
+  });
+
+  it('refuses text without a heading, and ignores a headingless field with no text', () => {
+    expect(normaliseLabFields([{ heading: ' ', text: 'FAKE' }])).toBe(MISSING_HEADING);
+    expect(normaliseLabFields([{ heading: '', text: null }])).toEqual([]);
   });
 });

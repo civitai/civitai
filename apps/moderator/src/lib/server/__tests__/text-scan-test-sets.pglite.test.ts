@@ -226,6 +226,28 @@ describe('addEntities', () => {
     });
   });
 
+  it('stores a composed entity whose optional field came back with null text', async () => {
+    const set = await newSet();
+    harness.composeEntities.mockResolvedValue([
+      {
+        entityId: 5,
+        ok: true,
+        fields: [
+          { heading: 'Name', text: 'FAKE MODEL' },
+          { heading: 'Description', text: null },
+        ],
+        text: '',
+        userId: 11,
+      },
+    ]);
+    expect(await addEntities(set.id, 'Model', [5], MOD)).toMatchObject({ added: 1 });
+    const [c] = await listCases(set.id);
+    expect(c).toMatchObject({
+      fields: [{ heading: 'Name', text: 'FAKE MODEL' }],
+      textHash: sha256('## Name\nFAKE MODEL'),
+    });
+  });
+
   it('does not compose for a missing set', async () => {
     await expect(addEntities(999, 'Model', [1], MOD)).rejects.toThrow(TestSetError);
     expect(harness.composeEntities).not.toHaveBeenCalled();

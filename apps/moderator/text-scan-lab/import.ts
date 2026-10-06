@@ -11,8 +11,8 @@
  * every case are written in one transaction, so a failed import leaves nothing behind.
  *
  * Env: MODERATOR_DATABASE_URL, CIVITAI_APP_URL, and (only to compose entity cases without fields)
- * CIVITAI_API_KEY — the running moderator's own API key. `/api/mod/*` takes a moderator's key for scripts; the spoke's forwarded-session path needs a
- * browser request, which a script does not have.
+ * CIVITAI_API_KEY — the running moderator's own API key. `/api/mod/*` takes a moderator's key for
+ * scripts; the spoke's forwarded-session path needs a browser request, which a script does not have.
  */
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -23,8 +23,8 @@ import {
   SeedFileError,
   type SeedCase,
 } from '../src/lib/server/text-scan-lab/seed-file';
-import { composeUserMessage } from '../src/lib/text-scan-lab/compose';
-import type { LabEntityType, LabField } from '../src/lib/text-scan-lab/types';
+import { composeUserMessage, normaliseLabFields } from '../src/lib/text-scan-lab/compose';
+import type { LabEntityType } from '../src/lib/text-scan-lab/types';
 
 // @civitai/db has no `"type": "module"`, so tsx loads it as CommonJS and its exports arrive on `default`.
 const { createKyselyClients } = (
@@ -38,7 +38,12 @@ const INSERT_BATCH = 200;
 class ImportError extends Error {}
 
 type Composed =
-  | { entityId: number; ok: true; fields: LabField[]; userId: number | null }
+  | {
+      entityId: number;
+      ok: true;
+      fields: { heading: string; text: string | null }[];
+      userId: number | null;
+    }
   | { entityId: number; ok: false; error: string };
 
 type CaseRow = {
@@ -105,17 +110,17 @@ async function composeEntities(
   return results;
 }
 
-/** Same normalisation and hash as the lab's own `addCase`, so an imported case matches one added by hand. */
+/** Same normalisation and hash as the lab's own `addCase`, so an imported case matches one added by
+ *  hand. Returns the skip reason when nothing can be stored. */
 function toRow(
   c: SeedCase,
-  fields: LabField[],
+  fields: { heading: string; text: string | null }[],
   entityId: number | null,
   authorId: number | null
-): CaseRow | null {
-  const kept = fields
-    .map((f) => ({ heading: f.heading.trim(), text: f.text }))
-    .filter((f) => f.text.trim() && f.heading);
-  if (!kept.length) return null;
+): CaseRow | string {
+  const kept = normaliseLabFields(fields);
+  if (typeof kept === 'string') return kept;
+  if (!kept.length) return 'no text';
   return {
     entity_type: c.entityType,
     entity_id: entityId,
@@ -137,14 +142,14 @@ async function buildRows(cases: SeedCase[], appUrl: string, apiKey: string | und
   for (const c of cases) {
     if (c.kind === 'text') {
       const row = toRow(c, c.fields, null, null);
-      if (row) rows.push(row);
-      else skip('no text');
+      if (typeof row === 'string') skip(row);
+      else rows.push(row);
       continue;
     }
     if (c.fields) {
       const row = toRow(c, c.fields, c.entityId, c.authorId ?? null);
-      if (row) rows.push(row);
-      else skip('no text');
+      if (typeof row === 'string') skip(row);
+      else rows.push(row);
       continue;
     }
     if (!byType.has(c.entityType)) byType.set(c.entityType, new Map());
@@ -161,8 +166,8 @@ async function buildRows(cases: SeedCase[], appUrl: string, apiKey: string | und
         continue;
       }
       const row = toRow(c, r.fields, r.entityId, r.userId);
-      if (row) rows.push(row);
-      else skip('no text');
+      if (typeof row === 'string') skip(row);
+      else rows.push(row);
     }
   }
   return { rows, skipped };
@@ -173,13 +178,18 @@ async function main() {
   const cases = parseSeedFile(JSON.parse(readFileSync(args.file, 'utf8')));
   const appUrl = (process.env.CIVITAI_APP_URL || 'https://civitai.com').replace(/\/$/, '');
   const dbUrl = requireEnv('MODERATOR_DATABASE_URL');
+  // Before any request, so a wrong target is visible even when composing fails.
+  console.log(
+    JSON.stringify(
+      { app: appUrl, moderatorDb: describeDb(dbUrl), set: args.set, dryRun: args.dryRun },
+      null,
+      2
+    )
+  );
 
   const { rows, skipped } = await buildRows(cases, appUrl, process.env.CIVITAI_API_KEY);
   const entityRows = rows.filter((r) => r.entity_id !== null).length;
   const summary = {
-    app: appUrl,
-    moderatorDb: describeDb(dbUrl),
-    set: args.set,
     cases: cases.length,
     entityCases: cases.filter((c) => c.kind === 'entity').length,
     freeTextCases: cases.filter((c) => c.kind === 'text').length,

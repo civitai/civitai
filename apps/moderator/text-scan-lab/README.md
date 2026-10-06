@@ -68,5 +68,6 @@ CIVITAI_API_KEY=<your own API key> pnpm --filter @civitai/moderator-app exec \
 - The whole file is validated first, and the set and its cases are written in one transaction.
   An existing set name is refused.
 - It reads `MODERATOR_DATABASE_URL` and `CIVITAI_APP_URL` from `.env` and prints both targets before
-  writing. Entity cases without `fields` call `/api/mod/text-scan` with `CIVITAI_API_KEY`, the
+  it calls or writes anything. Always run it with `--dry-run` first and check that `moderatorDb` is
+  the database you mean. Entity cases without `fields` call `/api/mod/text-scan` with `CIVITAI_API_KEY`, the
   running moderator's own key; composing text bills nothing. It prints counts only.

@@ -1,4 +1,5 @@
 // Relative imports only: `text-scan-lab/import.ts` loads this under plain tsx, where `$lib` does not resolve.
+import { normaliseLabFields } from '../../text-scan-lab/compose';
 import { InvalidExpectedError, parseExpected } from '../../text-scan-lab/expected';
 import {
   LAB_ENTITY_TYPES,
@@ -36,17 +37,16 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
 
 function parseFields(raw: unknown): LabField[] | string {
   if (!Array.isArray(raw)) return 'fields must be an array of { heading, text }.';
-  const fields: LabField[] = [];
   for (const f of raw) {
-    if (!isObject(f) || typeof f.heading !== 'string')
+    if (
+      !isObject(f) ||
+      typeof f.heading !== 'string' ||
+      (f.text != null && typeof f.text !== 'string')
+    )
       return 'fields must be an array of { heading, text }.';
-    // The main app composes an absent optional field (e.g. a model without a description) as null text.
-    if (f.text === null || f.text === undefined) continue;
-    if (typeof f.text !== 'string') return 'fields must be an array of { heading, text }.';
-    if (!f.text.trim()) continue;
-    if (!f.heading.trim()) return 'every field with text needs a heading.';
-    fields.push({ heading: f.heading.trim(), text: f.text });
   }
+  const fields = normaliseLabFields(raw as { heading: string; text?: string | null }[]);
+  if (typeof fields === 'string') return fields;
   return fields.length ? fields : 'fields have no text.';
 }
 

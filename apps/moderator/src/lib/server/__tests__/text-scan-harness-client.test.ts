@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 vi.mock('../user-actions.service', () => ({ callModEndpoint: vi.fn() }));
 
 const { callModEndpoint } = await import('../user-actions.service');
+const { restErrorReason } = await import('../rest-error-reason');
 const { LabHarnessError, composeEntities, getPrompts, quoteTexts, scanTexts } = await import(
   '../text-scan-lab/harness-client'
 );
@@ -32,7 +33,7 @@ beforeEach(() => {
 });
 
 describe('scanTexts', () => {
-  it('splits 25 texts into calls of 10, 10 and 5 at concurrency 5', async () => {
+  it('splits 20 texts into single-wave calls of 8, 8 and 4 at concurrency 8, wait 60', async () => {
     call.mockImplementation(async (_path, body) => ({
       ok: true,
       body: {
@@ -40,18 +41,21 @@ describe('scanTexts', () => {
       },
     }));
 
-    const results = await scanTexts('Model', texts(25));
+    const results = await scanTexts('Model', texts(20));
 
     expect(call).toHaveBeenCalledTimes(3);
-    expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([
-      10, 10, 5,
-    ]);
+    expect(call.mock.calls.map(([, body]) => (body.texts as unknown[]).length)).toEqual([8, 8, 4]);
     for (const [path, body, , timeout] of call.mock.calls) {
       expect(path).toBe('text-scan');
-      expect(body).toMatchObject({ action: 'scanTexts', entityType: 'Model', concurrency: 5 });
+      expect(body).toMatchObject({
+        action: 'scanTexts',
+        entityType: 'Model',
+        concurrency: 8,
+        wait: 60,
+      });
       expect(timeout).toBe(150_000);
     }
-    expect(results.map((r) => r.key)).toEqual(texts(25).map((t) => t.key));
+    expect(results.map((r) => r.key)).toEqual(texts(20).map((t) => t.key));
   });
 
   it('starts the next chunk only after the previous one returned', async () => {
@@ -143,35 +147,35 @@ describe('scanTexts', () => {
       },
     });
     call
-      .mockResolvedValueOnce(ok(10, 0))
+      .mockResolvedValueOnce(ok(8, 0))
       .mockResolvedValueOnce({ ok: false, error: 'Text-scan scan returned 502.', status: 502 })
-      .mockResolvedValueOnce(ok(5, 20));
+      .mockResolvedValueOnce(ok(4, 16));
 
-    const results = await scanTexts('Model', texts(25));
+    const results = await scanTexts('Model', texts(20));
 
     expect(call).toHaveBeenCalledTimes(3);
-    expect(results.map((r) => r.key)).toEqual(texts(25).map((t) => t.key));
-    expect(results.slice(0, 10).every((r) => r.ok)).toBe(true);
-    expect(results.slice(10, 20)).toEqual(
-      texts(20)
-        .slice(10)
+    expect(results.map((r) => r.key)).toEqual(texts(20).map((t) => t.key));
+    expect(results.slice(0, 8).every((r) => r.ok)).toBe(true);
+    expect(results.slice(8, 16)).toEqual(
+      texts(16)
+        .slice(8)
         .map(({ key }) => ({ key, ok: false, error: 'Text-scan scan returned 502.' }))
     );
-    expect(results.slice(20).every((r) => r.ok)).toBe(true);
+    expect(results.slice(16).every((r) => r.ok)).toBe(true);
   });
 
   it('keeps collected results when a later request is refused', async () => {
     call
       .mockResolvedValueOnce({
         ok: true,
-        body: { results: texts(10).map((t) => scannedOk(t.key)) },
+        body: { results: texts(8).map((t) => scannedOk(t.key)) },
       })
       .mockResolvedValueOnce({ ok: false, status: 401, error: 'Text-scan scan: sign in again' });
 
-    const results = await scanTexts('Model', texts(20));
+    const results = await scanTexts('Model', texts(16));
 
-    expect(results.filter((r) => r.ok)).toHaveLength(10);
-    expect(results[10]).toEqual({ key: 't10', ok: false, error: 'Text-scan scan: sign in again' });
+    expect(results.filter((r) => r.ok)).toHaveLength(8);
+    expect(results[8]).toEqual({ key: 't8', ok: false, error: 'Text-scan scan: sign in again' });
   });
 });
 
@@ -243,5 +247,71 @@ describe('getPrompts / composeEntities', () => {
       entityType: 'Model',
       entityIds: [1, 2],
     });
+  });
+
+  it('drops null and blank text from composed fields, and skips an entity left with none', async () => {
+    call.mockResolvedValue({
+      ok: true,
+      body: {
+        results: [
+          {
+            entityId: 1,
+            ok: true,
+            fields: [
+              { heading: 'Name', text: 'x' },
+              { heading: 'Description', text: null },
+            ],
+            text: '## Name\nx',
+            userId: 9,
+          },
+          {
+            entityId: 2,
+            ok: true,
+            fields: [{ heading: 'Description', text: null }],
+            text: '',
+            userId: 9,
+          },
+          { entityId: 3, ok: true, fields: [{ heading: ' ', text: 'y' }], text: 'y', userId: 9 },
+        ],
+      },
+    });
+
+    expect(await composeEntities('Model', [1, 2, 3])).toEqual([
+      {
+        entityId: 1,
+        ok: true,
+        fields: [{ heading: 'Name', text: 'x' }],
+        text: '## Name\nx',
+        userId: 9,
+      },
+      { entityId: 2, ok: false, error: 'too-short' },
+      { entityId: 3, ok: false, error: 'Every field with text needs a heading.' },
+    ]);
+  });
+});
+
+describe('restErrorReason', () => {
+  it("appends the endpoint's validation issues to its message", () => {
+    expect(
+      restErrorReason(
+        {
+          error: 'Invalid request',
+          issues: [
+            { path: ['texts', 0, 'fields', 1, 'text'], message: 'expected string, received null' },
+            { path: [], message: 'top-level problem' },
+          ],
+        },
+        400
+      )
+    ).toBe(
+      'Invalid request: texts.0.fields.1.text: expected string, received null; top-level problem'
+    );
+  });
+
+  it('caps a long issue list', () => {
+    const issues = Array.from({ length: 7 }, (_, i) => ({ path: ['f', i], message: 'bad' }));
+    expect(restErrorReason({ error: 'Invalid request', issues }, 400)).toBe(
+      'Invalid request: f.0: bad; f.1: bad; f.2: bad; f.3: bad; f.4: bad (+2 more)'
+    );
   });
 });

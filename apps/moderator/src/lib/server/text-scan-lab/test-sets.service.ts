@@ -3,7 +3,7 @@ import { sql, type Selectable } from 'kysely';
 import { getModeratorDb } from '../moderator-db';
 import type { text_scan_test_case } from '../moderator-db/types';
 import { composeEntities } from './harness-client';
-import { composeUserMessage } from '$lib/text-scan-lab/compose';
+import { composeUserMessage, normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { InvalidExpectedError, parseExpected } from '$lib/text-scan-lab/expected';
 import {
   LAB_ENTITY_TYPES,
@@ -230,12 +230,9 @@ async function insertCase(
 ): Promise<{ case: TestCase; created: boolean }> {
   if (!(LAB_ENTITY_TYPES as readonly string[]).includes(input.entityType))
     throw new TestSetError(`Unknown entity type ${input.entityType}.`, 400);
-  const fields = input.fields
-    .map((f) => ({ heading: f.heading.trim(), text: f.text }))
-    .filter((f) => f.text.trim());
+  const fields = normaliseLabFields(input.fields);
+  if (typeof fields === 'string') throw new TestSetError(fields, 400);
   if (!fields.length) throw new TestSetError('A test case needs some text.', 400);
-  if (fields.some((f) => !f.heading))
-    throw new TestSetError('Every field with text needs a heading.', 400);
   const expected = validExpected(input.expected, input.entityType);
   const textHash = createHash('sha256').update(composeUserMessage(fields)).digest('hex');
 

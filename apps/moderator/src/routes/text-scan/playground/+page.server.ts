@@ -19,6 +19,7 @@ import {
   scanTexts,
 } from '$lib/server/text-scan-lab/harness-client';
 import { listSets } from '$lib/server/text-scan-lab/test-sets.service';
+import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import {
   LAB_ENTITY_TYPES,
   LAB_LABELS,
@@ -108,11 +109,9 @@ async function buildItems(
   input: z.infer<typeof runSchema>
 ): Promise<{ items: RunItem[]; skipped: Skipped[] } | string> {
   if (input.mode === 'text') {
-    const fields = (input.fields ?? [])
-      .map((f) => ({ heading: f.heading.trim(), text: f.text }))
-      .filter((f) => f.text.trim());
+    const fields = normaliseLabFields(input.fields ?? []);
+    if (typeof fields === 'string') return fields;
     if (!fields.length) return 'Enter some text to scan.';
-    if (fields.some((f) => !f.heading)) return 'Every field with text needs a heading.';
     return {
       items: [{ key: 'text', title: 'Free text', fields, entityId: null, authorId: null }],
       skipped: [],
