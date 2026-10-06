@@ -154,6 +154,9 @@ describe('isTextScanRaised', () => {
     expect(textScanRaisedMinLevel('Crucible')).toBe(4);
     expect(isTextScanRaised(ts(2, 'Crucible'))).toBe(false);
     expect(isTextScanRaised(ts(4, 'Crucible'))).toBe(true);
+    expect(textScanRaisedMinLevel('Challenge')).toBe(4);
+    expect(isTextScanRaised(ts(2, 'Challenge'))).toBe(false);
+    expect(isTextScanRaised(ts(4, 'Challenge'))).toBe(true);
     expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: 8, result: { labels: [] } })).toBe(
       false
     );
