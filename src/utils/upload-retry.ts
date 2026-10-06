@@ -10,7 +10,12 @@ export type UploadPartError = {
    * `stalled` only refines the reason.
    */
   stalled?: boolean;
-  /** Whether a `stalled` part had already sent its whole body, i.e. the ETag reply never came. */
+  /**
+   * Whether a `stalled` part had already sent its whole body, i.e. the ETag reply never came.
+   * 🔴 Sample it when the watchdog DECIDES, never infer it from an `upload.loadend` handler having
+   * run: XHR's request-error steps fire that event on `abort` and on `error` too — the watchdog's
+   * own `xhr.abort()` included, which is how every mid-body stall once arrived here with it set.
+   */
   responsePhase?: boolean;
   partNumber?: number;
 };

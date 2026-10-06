@@ -148,6 +148,7 @@ class FakeXHR {
   private headers: Record<string, string> = {};
   private listeners: Record<string, ((e: unknown) => void)[]> = {};
   private settled = false;
+  private uploadComplete = false;
 
   upload = {
     listeners: {} as Record<string, ((e: { loaded: number }) => void)[]>,
@@ -168,11 +169,25 @@ class FakeXHR {
   getResponseHeader(name: string) {
     return this.headers[name] ?? null;
   }
+  /**
+   * 🔴 `abort()` runs XHR's REQUEST-ERROR STEPS, the same ones the transport-failure path below
+   * runs — so while the upload-complete flag is unset it fires `upload.loadend` FIRST, and only
+   * then the xhr-level `abort`. Emitting just the xhr-level pair (which this fake did) hides a
+   * whole defect class, because production's own watchdog aborts mid-body: its `upload.loadend`
+   * handler then runs before the `abort` handler, and anything that handler writes is read by
+   * the rejection as if the body had got through. One kind of stall reported as the other, with
+   * four cases green either way.
+   *
+   * The guard is the spec's: those upload events fire only while the body is still in flight, so
+   * an abort DURING the response phase emits no second `upload.loadend`. The `upload`-level
+   * `abort`/`error` events themselves are not modelled — neither upload client listens for them.
+   */
   abort() {
     if (this.settled) return;
     this.settled = true;
     this.readyState = 4;
     this.status = 0;
+    this.emitUploadLoadend(0);
     this.emit('abort');
     this.emit('loadend');
   }
@@ -180,10 +195,16 @@ class FakeXHR {
   emitProgress(loaded: number) {
     this.upload.listeners['progress']?.forEach((cb) => cb({ loaded }));
   }
+  /** `upload.loadend`, fired at most once per request — the spec's upload-complete flag. */
+  private emitUploadLoadend(loaded: number) {
+    if (this.uploadComplete) return;
+    this.uploadComplete = true;
+    this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded }));
+  }
   /** Finish a hand-driven part: body fully sent, then the response. */
   finishOk(loaded: number) {
     if (this.settled) return;
-    this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded }));
+    this.emitUploadLoadend(loaded);
     this.respondOk();
   }
   /** Answer a part whose body this fake has already finished sending. */
@@ -233,7 +254,7 @@ class FakeXHR {
         // watchdog still reaches `abort()` and emits its events, the way a real one does.
         if (hangAfterBodySent) {
           this.upload.listeners['progress']?.forEach((cb) => cb({ loaded: body.size }));
-          this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
+          this.emitUploadLoadend(body.size);
           // Read AFTER the handler, like the `bodySent` helper below: a response-phase
           // `xhr.timeout` is assigned there, so arming first would make that bound untestable.
           this.armTimeout(sentAt);
@@ -271,7 +292,7 @@ class FakeXHR {
         // `xhr.upload.addEventListener('loadend', …)` handler unexercised on the failure
         // path. Then `error` before the xhr-level `loadend`, which is what lets the
         // `error` rejection win the race against `loadend`'s status-0.
-        this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: 0 }));
+        this.emitUploadLoadend(0);
         this.emit('error');
         this.emit('loadend');
         return;
@@ -290,7 +311,7 @@ class FakeXHR {
         this.emit('loadend');
       };
       const bodySent = () => {
-        this.upload.listeners['loadend']?.forEach((cb) => cb({ loaded: body.size }));
+        this.emitUploadLoadend(body.size);
         // Read AFTER the handler, since `upload.loadend` is where the hook assigns it.
         this.armTimeout(sentAt);
         if (responseDelayMs > 0) setTimeout(respond, responseDelayMs);
