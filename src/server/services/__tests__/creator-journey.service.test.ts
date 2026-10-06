@@ -129,86 +129,117 @@ describe('getCreatorScoreLadder', () => {
 
 describe('getFirstPublishCard', () => {
   const owner = 7;
-  const daysAgo = (days: number) => new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-  const published = (overrides: Record<string, unknown> = {}) => ({
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
+  type Row = { id: number; userId: number; status: string; publishedAt: Date | null };
+
+  // A tiny in-memory table that honours the where clauses the service sends, so a case reads as data.
+  // The exact clause is pinned separately below; this fake only interprets it.
+  function seed(entity: 'model' | 'article', rows: Row[]) {
+    const client = dbMock.dbWrite[entity];
+    client.findUnique.mockImplementation(
+      (async ({ where }: { where: { id: number } }) =>
+        rows.find((r) => r.id === where.id) ?? null) as never
+    );
+    client.findFirst.mockImplementation(
+      (async ({
+        where,
+      }: {
+        where: { userId: number; id: { not: number }; publishedAt: { lt: Date } };
+      }) =>
+        rows.find(
+          (r) =>
+            r.userId === where.userId &&
+            r.id !== where.id.not &&
+            r.publishedAt != null &&
+            r.publishedAt < where.publishedAt.lt
+        ) ?? null) as never
+    );
+  }
+  const row = (overrides: Partial<Row> = {}): Row => ({
+    id: 1,
     userId: owner,
     status: 'Published',
     publishedAt: daysAgo(1),
     ...overrides,
   });
+  const card = (entityType: 'model' | 'article', id: number) =>
+    getFirstPublishCard({ userId: owner, entityType, id });
 
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => vi.resetAllMocks());
 
-  it("shows on the owner's only published model", async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue(published() as never);
-    dbMock.dbWrite.model.findFirst.mockResolvedValue(null as never);
+  describe.each(['model', 'article'] as const)('%s', (entity) => {
+    it("shows on the owner's only published one", async () => {
+      seed(entity, [row()]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+    });
 
-    await expect(
-      getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 })
-    ).resolves.toEqual({ show: true });
-    expect(dbMock.dbWrite.model.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: owner, id: { not: 1 }, publishedAt: { not: null } },
-      })
-    );
+    it('shows on the earlier of two published the same week, and not on the later', async () => {
+      seed(entity, [
+        row({ id: 1, publishedAt: daysAgo(5) }),
+        row({ id: 2, publishedAt: daysAgo(2) }),
+      ]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+      await expect(card(entity, 2)).resolves.toEqual({ show: false });
+    });
+
+    it('is not blocked by one scheduled to go live later', async () => {
+      seed(entity, [
+        row({ id: 1 }),
+        row({ id: 2, status: 'Scheduled', publishedAt: new Date(Date.now() + DAY_MS) }),
+      ]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+    });
+
+    it('is blocked by an earlier one in any status', async () => {
+      seed(entity, [
+        row({ id: 1 }),
+        row({ id: 2, status: 'Unpublished', publishedAt: daysAgo(30) }),
+      ]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: false });
+    });
+
+    it('still shows on the last day of the window', async () => {
+      seed(entity, [row({ publishedAt: daysAgo(FIRST_PUBLISH_CARD_DAYS - 0.5) })]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+    });
+
+    it.each([
+      ['someone else', { userId: owner + 1 }],
+      ['an unpublished one', { status: 'Unpublished' }],
+      ['a draft', { publishedAt: null }],
+      ['one past the window', { publishedAt: daysAgo(FIRST_PUBLISH_CARD_DAYS + 0.5) }],
+    ])('refuses %s before looking for earlier ones', async (_label, overrides) => {
+      seed(entity, [row(overrides)]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: false });
+      expect(dbMock.dbWrite[entity].findFirst).not.toHaveBeenCalled();
+    });
+
+    // A replica can still show it unpublished right after publish, and the client keeps the first
+    // answer for the session, so a lagged "no" would hide the card for good.
+    it('reads the primary, never a replica, with the earlier-than clause', async () => {
+      const publishedAt = daysAgo(1);
+      seed(entity, [row({ publishedAt })]);
+      await card(entity, 1);
+      expect(dbMock.dbRead[entity].findUnique).not.toHaveBeenCalled();
+      expect(dbMock.dbRead[entity].findFirst).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite[entity].findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { userId: owner, id: { not: 1 }, publishedAt: { lt: publishedAt } },
+        })
+      );
+    });
   });
 
-  // A replica can still show the model unpublished right after publish, and the client keeps the
-  // first answer for the session, so a lagged "no" would hide the card for good.
-  it('reads the primary, never a replica', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue(published() as never);
-    dbMock.dbWrite.model.findFirst.mockResolvedValue(null as never);
-
-    await getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 });
-    expect(dbMock.dbRead.model.findUnique).not.toHaveBeenCalled();
-    expect(dbMock.dbRead.model.findFirst).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.model.findUnique).toHaveBeenCalledTimes(1);
+  // Models soft-delete and keep publishedAt, so an earlier deleted model still makes this not the first.
+  it('is blocked by an earlier model that was deleted', async () => {
+    seed('model', [row({ id: 1 }), row({ id: 2, status: 'Deleted', publishedAt: daysAgo(40) })]);
+    await expect(card('model', 1)).resolves.toEqual({ show: false });
   });
 
-  it('does not show once any other model was published, in any status', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue(published() as never);
-    dbMock.dbWrite.model.findFirst.mockResolvedValue({ id: 2 } as never);
-
-    await expect(
-      getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 })
-    ).resolves.toEqual({ show: false });
-  });
-
-  it.each([
-    ['someone else', { userId: owner + 1 }],
-    ['an unpublished model', { status: 'Unpublished' }],
-    ['a draft', { publishedAt: null }],
-    ['a model past the window', { publishedAt: daysAgo(FIRST_PUBLISH_CARD_DAYS + 1) }],
-  ])('refuses %s before looking for earlier models', async (_label, overrides) => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue(published(overrides) as never);
-
-    await expect(
-      getFirstPublishCard({ userId: owner, entityType: 'model', id: 1 })
-    ).resolves.toEqual({ show: false });
-    expect(dbMock.dbWrite.model.findFirst).not.toHaveBeenCalled();
-  });
-
-  it("shows on the owner's only published article, and checks articles, not models", async () => {
-    dbMock.dbWrite.article.findUnique.mockResolvedValue(published() as never);
-    dbMock.dbWrite.article.findFirst.mockResolvedValue(null as never);
-
-    await expect(
-      getFirstPublishCard({ userId: owner, entityType: 'article', id: 3 })
-    ).resolves.toEqual({ show: true });
-    expect(dbMock.dbWrite.article.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { userId: owner, id: { not: 3 }, publishedAt: { not: null } },
-      })
-    );
+  it('checks the table for its own entity type', async () => {
+    seed('article', [row()]);
+    await card('article', 1);
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
-  });
-
-  it('does not show an article to someone who does not own it', async () => {
-    dbMock.dbWrite.article.findUnique.mockResolvedValue(published({ userId: owner + 1 }) as never);
-
-    await expect(
-      getFirstPublishCard({ userId: owner, entityType: 'article', id: 3 })
-    ).resolves.toEqual({ show: false });
-    expect(dbMock.dbWrite.article.findFirst).not.toHaveBeenCalled();
   });
 });

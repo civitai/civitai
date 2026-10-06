@@ -7,6 +7,7 @@ import { MantineProvider } from '@mantine/core';
 import type * as Trpc from '~/utils/trpc';
 import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as FeatureNotice from '~/components/Alerts/useFeatureNotice';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import {
   FirstPublishCard,
   FirstPublishCardView,
@@ -26,7 +27,8 @@ const mocks = vi.hoisted(() => ({
   getFirstPublishCard: vi.fn(),
   getLadder: vi.fn(),
   currentUser: undefined as { id: number; meta?: unknown } | undefined,
-  notice: { isDismissed: false, hasSettings: true },
+  notice: { isDismissed: false, hasSettings: true, isInAudience: true },
+  useFeatureNotice: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -46,7 +48,7 @@ vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
 }));
 vi.mock('~/components/Alerts/useFeatureNotice', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureNotice>()),
-  useFeatureNotice: () => ({ ...mocks.notice, dismiss: vi.fn() }),
+  useFeatureNotice: mocks.useFeatureNotice,
 }));
 
 const act = (React as unknown as { act: typeof actType }).act;
@@ -133,7 +135,10 @@ describe('FirstPublishCard', () => {
     mocks.getFirstPublishCard.mockReset().mockReturnValue({ data: undefined });
     mocks.getLadder.mockReset().mockReturnValue({ data: undefined });
     mocks.currentUser = { id: 7 };
-    mocks.notice = { isDismissed: false, hasSettings: true };
+    mocks.notice = { isDismissed: false, hasSettings: true, isInAudience: true };
+    mocks.useFeatureNotice
+      .mockReset()
+      .mockImplementation(() => ({ ...mocks.notice, dismiss: vi.fn() }));
   });
 
   const render = (props: Partial<React.ComponentProps<typeof FirstPublishCard>> = {}) =>
@@ -148,6 +153,7 @@ describe('FirstPublishCard', () => {
     );
 
   const askedServer = () => mocks.getFirstPublishCard.mock.lastCall?.[1]?.enabled;
+  const askedLadder = () => mocks.getLadder.mock.lastCall?.[1]?.enabled;
 
   it('asks the server for the owner of a recently published model', () => {
     render();
@@ -172,15 +178,36 @@ describe('FirstPublishCard', () => {
   ])('never asks %s', (_label, props) => {
     render(props);
     expect(askedServer()).toBe(false);
+    expect(askedLadder()).toBe(false);
+  });
+
+  it('still asks on the last day of the window', () => {
+    render({ publishedAt: new Date(Date.now() - (FIRST_PUBLISH_CARD_DAYS - 0.5) * DAY_MS) });
+    expect(askedServer()).toBe(true);
+  });
+
+  it('never asks outside the notice audience', () => {
+    mocks.notice = { isDismissed: false, hasSettings: true, isInAudience: false };
+    render();
+    expect(askedServer()).toBe(false);
+  });
+
+  // One card, two notices: closing the model card must not hide the article card, or the reverse.
+  it.each([
+    ['model', FEATURE_NOTICES.firstModelPublished],
+    ['article', FEATURE_NOTICES.firstArticlePublished],
+  ] as const)('reads its own notice for a %s', (entityType, notice) => {
+    render({ entityType });
+    expect(mocks.useFeatureNotice.mock.lastCall?.[0]).toBe(notice);
   });
 
   it('never asks once dismissed, or before settings resolve', () => {
-    mocks.notice = { isDismissed: true, hasSettings: true };
+    mocks.notice = { isDismissed: true, hasSettings: true, isInAudience: true };
     render();
     expect(askedServer()).toBe(false);
     unmount();
 
-    mocks.notice = { isDismissed: false, hasSettings: false };
+    mocks.notice = { isDismissed: false, hasSettings: false, isInAudience: true };
     render();
     expect(askedServer()).toBe(false);
   });
@@ -189,6 +216,7 @@ describe('FirstPublishCard', () => {
     mocks.getLadder.mockReturnValue({ data: ladder });
     mocks.getFirstPublishCard.mockReturnValue({ data: { show: false } });
     expect(render().textContent).not.toMatch(/first model is live/);
+    expect(askedLadder()).toBe(false);
     unmount();
 
     mocks.getFirstPublishCard.mockReturnValue({ data: { show: true } });

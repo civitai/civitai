@@ -134,9 +134,11 @@ export async function getFirstPublishCard({
       model.publishedAt < cutoff
     )
       return { show: false };
-    // Any status: an earlier model that was published and later deleted still makes this one not the first.
+    // Earlier, not other: a creator who publishes two in their first week still gets it on the first,
+    // and a scheduled model is not earlier until it goes live. Models soft-delete, so a deleted earlier
+    // one still counts; articles hard-delete and cannot.
     const earlier = await dbWrite.model.findFirst({
-      where: { userId, id: { not: id }, publishedAt: { not: null } },
+      where: { userId, id: { not: id }, publishedAt: { lt: model.publishedAt } },
       select: { id: true },
     });
     return { show: !earlier };
@@ -154,7 +156,7 @@ export async function getFirstPublishCard({
   )
     return { show: false };
   const earlier = await dbWrite.article.findFirst({
-    where: { userId, id: { not: id }, publishedAt: { not: null } },
+    where: { userId, id: { not: id }, publishedAt: { lt: article.publishedAt } },
     select: { id: true },
   });
   return { show: !earlier };

@@ -52,14 +52,17 @@ export function FirstPublishCard({
   publishedAt: Date | string | null | undefined;
 }) {
   const currentUser = useCurrentUser();
-  const { isDismissed, hasSettings, dismiss } = useFeatureNotice(notices[entityType]);
   const isOwner = !!currentUser && ownerId != null && currentUser.id === ownerId;
   // Without the window the card is never dismissed for anyone it never shows to, so the query would
   // run on every owner view of every page they own.
   const isRecent =
     !!publishedAt &&
     Date.now() - new Date(publishedAt).getTime() < FIRST_PUBLISH_CARD_DAYS * DAY_MS;
-  const enabled = isOwner && isRecent && hasSettings && !isDismissed;
+  const { isDismissed, hasSettings, isInAudience, dismiss } = useFeatureNotice(
+    notices[entityType],
+    { enabled: isOwner && isRecent }
+  );
+  const enabled = isOwner && isRecent && hasSettings && !isDismissed && isInAudience;
 
   const { data } = trpc.creatorJourney.getFirstPublishCard.useQuery(
     { entityType, id: entityId },
