@@ -6,7 +6,8 @@ import { getLoginLink } from '~/utils/login-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, ctx }) => {
+  resolver: async ({ session, ctx, features }) => {
+    if (!features?.creatorJourney) return { notFound: true };
     if (!session?.user)
       return {
         redirect: {

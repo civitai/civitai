@@ -25,7 +25,7 @@ vi.mock('~/components/CreatorJourney/CreatorScoreGateMessage', async (importOrig
   return {
     ...original,
     CreatorScoreGateMessage: (props: { score: number | null | undefined; required: number }) =>
-      createElement(original.CreatorScoreGateMessageView, { ...props, ladder }),
+      createElement(original.CreatorScoreGateMessageView, { ...props, ladder, journey: true }),
   };
 });
 

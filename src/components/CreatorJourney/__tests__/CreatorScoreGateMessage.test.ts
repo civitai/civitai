@@ -29,7 +29,10 @@ const ladder = {
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function render(props: React.ComponentProps<typeof CreatorScoreGateMessageView>) {
+type ViewProps = React.ComponentProps<typeof CreatorScoreGateMessageView>;
+
+function render({ journey = true, ...rest }: Omit<ViewProps, 'journey'> & { journey?: boolean }) {
+  const props: ViewProps = { ...rest, journey };
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -55,6 +58,25 @@ afterEach(() => {
 });
 
 const required = CHALLENGE_MIN_CREATOR_SCORE;
+
+describe('CreatorScoreGateMessageView with Creator Journey flagged off', () => {
+  it('names no tier and links no journey below the gate, even with the ladder loaded', () => {
+    const { text, hrefs } = render({ score: 1, required, ladder, journey: false });
+    expect(text).not.toContain('Spark');
+    expect(text).toContain(`to go`);
+    expect(hrefs).toEqual([CREATOR_SCORE_EXPLAINER_HREF]);
+  });
+
+  it('points someone who meets the gate at the explainer, not the journey', () => {
+    const { hrefs } = render({ score: required, required, ladder, journey: false });
+    expect(hrefs).toEqual([CREATOR_SCORE_EXPLAINER_HREF]);
+  });
+
+  it('points someone whose score is unknown at the explainer, not the journey', () => {
+    const { hrefs } = render({ score: undefined, required, ladder, journey: false });
+    expect(hrefs).toEqual([CREATOR_SCORE_EXPLAINER_HREF]);
+  });
+});
 
 describe('CreatorScoreGateMessageView', () => {
   it('points someone far below the gate at the nearest rung and the journey', () => {
