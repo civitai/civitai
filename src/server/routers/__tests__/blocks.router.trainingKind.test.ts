@@ -148,6 +148,7 @@ import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/w
 import { composeTrainingBlockExternalId } from '~/server/utils/block-gen-idempotency';
 import {
   hashTrainingBody,
+  TRAINING_RUN_GENERATION_TTL_SECONDS,
   trainingRunKey,
 } from '~/server/services/blocks/block-training-quote.service';
 import { blockTrainingBodySchema } from '~/server/schema/blocks/workflow.schema';
@@ -188,9 +189,7 @@ const counter = (prefix: string) =>
 
 // ── Fixtures ────────────────────────────────────────────────────────────────
 const VIEWER = 42;
-// sha256 of the fixture run (app `apb_test`, the default `body()`, generation 0),
-// derived independently of the implementation (sorted-key JSON of the body, then
-// `<app>\n<bodyHash>\n<generation>`).
+// sha256 for app `apb_test`, the default `body()`, generation 0.
 const RUN_KEY_LITERAL = '74961cae861fd55c80be3ab2c0f22ef6920cb2c608a91b9afe598fc3b0fbbeb0';
 const DATASET_ID = `tds_${'d'.repeat(32)}`;
 
@@ -967,12 +966,17 @@ describe('training — consent and preview edges', () => {
     const quoteId = snapshot.trainingQuote.quoteId;
     const key = `system:blocks:training-quote:${quoteId}`;
     const realGet = redisMock.sysRedis.get.getMockImplementation()!;
-    redisMock.sysRedis.get.mockImplementationOnce(async (k: string) => {
+    let raced = false;
+    redisMock.sysRedis.get.mockImplementation(async (k: string) => {
       const v = await realGet(k);
-      store.delete(key); // a submit's GETDEL wins the race here
+      if (k === key && !raced) {
+        raced = true;
+        store.delete(key); // a submit's GETDEL wins the race here
+      }
       return v;
     });
     await expect(consent(quoteId)).rejects.toThrow('training quote not found or expired');
+    expect(raced).toBe(true);
     expect(store.has(key)).toBe(false);
   });
 
@@ -1122,5 +1126,66 @@ describe('training — remaining controls', () => {
     await consent(snapshot.trainingQuote.quoteId);
     await submit(body({ quoteId: snapshot.trainingQuote.quoteId }));
     expect(counter('system:blocks:consent-budget')).toBe(1200);
+  });
+});
+
+describe('training — the run generation is per BODY', () => {
+  async function confirmed(b = body()) {
+    const { snapshot } = (await estimate(b)) as {
+      snapshot: { trainingQuote: { quoteId: string } };
+    };
+    await consent(snapshot.trainingQuote.quoteId);
+    return snapshot.trainingQuote.quoteId;
+  }
+  const externalIds = () =>
+    realSubmits().map((c) => (c[0] as { body: { externalId: string } }).body.externalId);
+
+  it('a definite submit of ANOTHER body does not change a pending retry’s orchestrator id', async () => {
+    let fail = true;
+    h.submitWorkflow.mockImplementation(
+      async (args: { body: { steps: unknown[] }; query?: { whatif?: boolean } }) => {
+        if (args.query?.whatif) return { cost: { total: 1200 } };
+        if (fail) throw new Error('socket hang up');
+        return {
+          id: workflowId,
+          status: 'scheduled',
+          cost: { total: 1200, base: 1200 },
+          transactions: { list: [] },
+          steps: args.body.steps,
+        };
+      }
+    );
+    const qa = await confirmed();
+    await expect(submit(body({ quoteId: qa }))).rejects.toThrow('socket hang up'); // A, ambiguous
+    fail = false;
+    const qb = await confirmed(body({ triggerWord: 'otherchar' }));
+    await submit(body({ quoteId: qb, triggerWord: 'otherchar' })); // B lands definitely
+    const qa2 = await confirmed();
+    await submit(body({ quoteId: qa2 })); // retry of A
+    const [a1, b1, a2] = externalIds();
+    expect(a2).toBe(a1);
+    expect(b1).not.toBe(a1);
+  });
+
+  it('a lost generation bump never breaks a paid submit, and the bump carries a TTL', async () => {
+    const q = await confirmed();
+    const realIncr = redisMock.sysRedis.incrBy.getMockImplementation()!;
+    redisMock.sysRedis.incrBy.mockImplementation(async (k: string, n: number) => {
+      if (k.includes(':runs:')) throw new Error('redis down');
+      return realIncr(k, n);
+    });
+    const out = (await submit(body({ quoteId: q }))) as { snapshot: { workflowId: string } };
+    expect(out.snapshot.workflowId).toBe(workflowId);
+    expect(h.persistSettle).toHaveBeenCalled();
+
+    redisMock.sysRedis.incrBy.mockImplementation(realIncr);
+    redisMock.sysRedis.expire.mockClear();
+    const q2 = await confirmed(body({ triggerWord: 'x2' }));
+    await submit(body({ quoteId: q2, triggerWord: 'x2' }));
+    const runsExpire = redisMock.sysRedis.expire.mock.calls.find((c) =>
+      String(c[0]).includes(':runs:')
+    );
+    expect(runsExpire?.[1]).toBe(TRAINING_RUN_GENERATION_TTL_SECONDS);
+    expect(TRAINING_RUN_GENERATION_TTL_SECONDS).toBe(172_800);
   });
 });

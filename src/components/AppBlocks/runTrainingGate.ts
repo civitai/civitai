@@ -157,3 +157,13 @@ export function buildTrainingConsentCopy({
     confirmLabel: `Train for ${preview.total.toLocaleString('en-US')} Buzz`,
   };
 }
+
+/**
+ * True when a training submit failed in TRANSPORT — no tRPC error code came back,
+ * so the host cannot tell whether the server ran it. A server refusal carries a
+ * code and is never retried.
+ */
+export function isTrainingSubmitTransportError(err: unknown): boolean {
+  const code = (err as { data?: { code?: unknown } } | null | undefined)?.data?.code;
+  return typeof code !== 'string';
+}

@@ -12217,11 +12217,7 @@ async function submitTrainingWorkflow(opts: {
     resolveBlockTrainingRun,
     trainingRunKey,
   } = await import('~/server/services/blocks/block-training-quote.service');
-  const runKey = trainingRunKey(
-    claims.appBlockId,
-    body,
-    await readTrainingRunGeneration(body.datasetId)
-  );
+  const runKey = trainingRunKey(claims.appBlockId, body, await readTrainingRunGeneration(body));
 
   // The replay claim is per QUOTE (a lost-response retry of this submit replays); the
   // orchestrator id is per RUN (below). The colon is outside the client key charset,
@@ -12480,7 +12476,7 @@ async function submitTrainingWorkflow(opts: {
   await finalizeGenIdempotency(genClaimKey, genResult);
   // Only a DEFINITE submit advances the run; an ambiguous failure (the throw arm
   // above) does not, so its retry keeps the same orchestrator id.
-  await bumpTrainingRunGeneration(body.datasetId);
+  await bumpTrainingRunGeneration(body);
 
   // ── Settle record + persistent output queue, as on the other post-paid arms.
   if (snapshot.workflowId && snapshot.workflowId !== 'failed' && snapshot.workflowId !== 'whatif') {

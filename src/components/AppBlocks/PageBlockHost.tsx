@@ -54,6 +54,7 @@ import {
 import { CreatePostConsentBody } from './CreatePostConsentBody';
 import {
   buildTrainingConsentCopy,
+  isTrainingSubmitTransportError,
   resolveRunTrainingRequest,
   type TrainingQuotePreview,
 } from './runTrainingGate';
@@ -4537,11 +4538,20 @@ export function PageBlockHost({
                   blockToken: token,
                   quoteId,
                 });
-                const { snapshot } = await submitWorkflowMutation.mutateAsync({
-                  blockToken: token,
-                  // Schema-validated server-side and checked against the quote's
-                  // body hash; the host never renders or trusts it.
-                  body: body as never,
+                const submit = () =>
+                  submitWorkflowMutation.mutateAsync({
+                    blockToken: token,
+                    // Schema-validated server-side and checked against the quote's
+                    // body hash; the host never renders or trusts it.
+                    body: body as never,
+                  });
+                // The quote is spent once the server sees this call, so a lost
+                // RESPONSE cannot be retried from the block (it would need a fresh
+                // quote = a second run). Resend the SAME call once on a transport
+                // failure: the server's per-quote claim replays a finished submit.
+                const { snapshot } = await submit().catch((err) => {
+                  if (isTrainingSubmitTransportError(err)) return submit();
+                  throw err;
                 });
                 settlement.reply({ snapshot });
               } catch (err) {

@@ -382,12 +382,15 @@ describe('the whole-request import budget', () => {
         token: 'tok',
         auditCaptions: vi.fn(async () => undefined),
       });
-      const outcome = pending.then(
-        () => 'resolved',
-        (e: Error) => e.message
+      let message: string | null = null;
+      void pending.then(
+        () => (message = 'resolved'),
+        (e: Error) => (message = e.message)
       );
       await vi.advanceTimersByTimeAsync(BLOCK_TRAINING_IMPORT_BUDGET_MS * 2);
-      expect(await outcome).toContain('none of the requested images could be prepared');
+      // Settled by the deadlines themselves — not by the runner's timeout.
+      expect(message).not.toBeNull();
+      expect(message).toContain('none of the requested images could be prepared');
       expect(mockImageUpload).toHaveBeenCalledTimes(12);
     } finally {
       vi.useRealTimers();

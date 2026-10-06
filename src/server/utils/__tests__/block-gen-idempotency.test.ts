@@ -272,6 +272,8 @@ describe('composeTrainingBlockExternalId', () => {
   it.each([
     ['not hex', 'z'.repeat(64)],
     ['too short', 'a'.repeat(63)],
+    ['too long', 'a'.repeat(65)],
+    ['prefixed', `-${'a'.repeat(64)}`],
     ['upper-case', 'A'.repeat(64)],
   ])('refuses a run key that is %s', (_l, key) => {
     expect(() => composeTrainingBlockExternalId(key)).toThrow('sha256 hex digest');

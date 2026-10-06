@@ -55,9 +55,9 @@ const GEN_IDEM_IN_PROGRESS = ' in-progress';
  * Compose the per-(user, app, key) redis key. INJECTIVE because: `userId` is
  * numeric (colon-free), `appBlockId` is a real `apb_<ULID>` or one of the three
  * synthetic pre-approval ids `ephemeral-<slug>` / `page_local_<slug>` /
- * `pubreq_<ULID>` (all colon-free), and `idempotencyKey` is either a client key,
- * charset-restricted to `^[A-Za-z0-9_-]{1,64}$` at the zod input (colon-free), or
- * the server-built `training-quote:<quoteId>`, whose colon no client key can spell. So no two
+ * `pubreq_<ULID>` (all colon-free), and `idempotencyKey` is LAST, so only it may carry
+ * a colon: client keys are `^[A-Za-z0-9_-]{1,64}$` at the zod input, and the
+ * server-built `training-quote:<quoteId>` carries a colon no client key can spell. So no two
  * distinct (user, app, key) triples can ever collide on the delimiter. (A colon
  * IS a safe delimiter here — this is an internal redis key, not the orchestrator
  * `externalId`, whose charset excludes it. See composeBlockExternalId.)
@@ -218,7 +218,7 @@ export function mintServerBlockExternalId(): string {
 
 /**
  * The orchestrator `externalId` for an App Blocks `kind:'training'` run, derived from
- * the RUN's identity (`runKey`, a sha256 hex digest of app + dataset + body) rather
+ * the RUN's identity (`runKey`, a sha256 hex digest — see `trainingRunKey`) rather
  * than from any one request. A retry after an ambiguous submit failure — which needs
  * a fresh quote, and so a fresh request — therefore dedupes onto the run the
  * orchestrator may already have created, instead of charging a second one. The

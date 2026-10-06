@@ -11,6 +11,7 @@ import {
   claimTrainingQuote,
   hashTrainingBody,
   readTrainingQuote,
+  readTrainingRunGeneration,
   recordTrainingQuoteConsent,
   resolveBlockTrainingRun,
   storeTrainingQuote,
@@ -280,5 +281,18 @@ describe('the quote record', () => {
     redisMock.sysRedis.getDel.mockClear();
     expect(await claimTrainingQuote('tq_nope')).toBeNull();
     expect(redisMock.sysRedis.getDel).not.toHaveBeenCalled();
+  });
+});
+
+describe('readTrainingRunGeneration', () => {
+  it.each([
+    [null, 0],
+    ['3', 3],
+    ['-2', 0],
+    ['1.5', 0],
+    ['junk', 0],
+  ])('reads %s as %s', async (raw, expected) => {
+    redisMock.sysRedis.get.mockResolvedValueOnce(raw);
+    expect(await readTrainingRunGeneration(body())).toBe(expected);
   });
 });

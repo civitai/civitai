@@ -322,4 +322,51 @@ describe('PageBlockHost RUN_TRAINING (consent-gated training run)', () => {
     expect(previewMutate).not.toHaveBeenCalled();
     replies.stop();
   });
+
+  test('a lost submit RESPONSE is resent once (the server replays it), never re-quoted', async () => {
+    submitMutate
+      .mockRejectedValueOnce(new Error('Failed to fetch'))
+      .mockResolvedValueOnce({ snapshot: SNAPSHOT });
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_9', body: BODY });
+    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
+    await expect.element(confirmBtn).toBeInTheDocument();
+    await confirmBtn.click();
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_9', snapshot: SNAPSHOT });
+    });
+    expect(submitMutate).toHaveBeenCalledTimes(2);
+    expect(submitMutate.mock.calls[1]).toEqual(submitMutate.mock.calls[0]);
+    expect(consentMutate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
+
+  test('a server REFUSAL of the submit is not resent', async () => {
+    submitMutate.mockRejectedValueOnce(
+      Object.assign(new Error('this training run has not been confirmed'), {
+        data: { code: 'FORBIDDEN' },
+      })
+    );
+    await mount();
+    await driveToReady();
+    const replies = listenForReply();
+    postFromBlock('RUN_TRAINING', { requestId: 'rq_10', body: BODY });
+    const confirmBtn = page.getByRole('button', { name: 'Train for 1,234 Buzz' });
+    await expect.element(confirmBtn).toBeInTheDocument();
+    await confirmBtn.click();
+    await vi.waitFor(() => {
+      const r = replies.last('TRAINING_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({
+        requestId: 'rq_10',
+        error: 'this training run has not been confirmed',
+      });
+    });
+    expect(submitMutate).toHaveBeenCalledTimes(1);
+    replies.stop();
+  });
 });

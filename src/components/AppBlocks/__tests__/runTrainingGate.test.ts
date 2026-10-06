@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildTrainingConsentCopy,
+  isTrainingSubmitTransportError,
   resolveRunTrainingRequest,
   type TrainingQuotePreview,
 } from '~/components/AppBlocks/runTrainingGate';
@@ -81,5 +82,18 @@ describe('buildTrainingConsentCopy', () => {
     expect(buildTrainingConsentCopy({ appName: '\u200B', preview: PREVIEW }).intro).toMatch(
       /^This app wants/
     );
+  });
+});
+
+describe('isTrainingSubmitTransportError', () => {
+  it('is true only when no tRPC error code came back', () => {
+    expect(isTrainingSubmitTransportError(new Error('Failed to fetch'))).toBe(true);
+    expect(isTrainingSubmitTransportError(undefined)).toBe(true);
+    expect(
+      isTrainingSubmitTransportError(Object.assign(new Error('x'), { data: { code: 'FORBIDDEN' } }))
+    ).toBe(false);
+    expect(
+      isTrainingSubmitTransportError(Object.assign(new Error('x'), { data: { code: 'CONFLICT' } }))
+    ).toBe(false);
   });
 });

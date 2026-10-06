@@ -91,30 +91,36 @@ export function trainingRunKey(
     .digest('hex');
 }
 
+// Per (dataset, body): a definite submit of one body must not change the run key of
+// another body's pending retry. `bodyHash` covers the dataset id too.
 function runGenerationKey(
-  datasetId: string
+  body: BlockTrainingBody
 ): `${typeof REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${string}` {
-  return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${datasetId}:runs`;
+  return `${REDIS_SYS_KEYS.BLOCKS.TRAINING_DATASET}:${body.datasetId}:runs:${hashTrainingBody(
+    body
+  )}`;
 }
 
 /**
- * How many runs of this dataset have been SUBMITTED. Part of the run key, so a
+ * How many runs of this body on this dataset have been SUBMITTED. Part of the run key, so a
  * deliberate re-run after a known result is a new run, while a retry after an
  * ambiguous failure (no bump) still dedupes onto the run that may exist.
  */
-export async function readTrainingRunGeneration(datasetId: string): Promise<number> {
-  const raw = await sysRedis.get(runGenerationKey(datasetId));
+export async function readTrainingRunGeneration(body: BlockTrainingBody): Promise<number> {
+  const raw = await sysRedis.get(runGenerationKey(body));
   const n = Number(raw ?? 0);
   return Number.isInteger(n) && n >= 0 ? n : 0;
 }
 
+export const TRAINING_RUN_GENERATION_TTL_SECONDS = 2 * 24 * 60 * 60;
+
 /** Record a submitted run. Best-effort: a lost bump only makes the next re-run dedupe. */
-export async function bumpTrainingRunGeneration(datasetId: string): Promise<void> {
+export async function bumpTrainingRunGeneration(body: BlockTrainingBody): Promise<void> {
   try {
-    await sysRedis.incrBy(runGenerationKey(datasetId), 1);
-    await sysRedis.expire(runGenerationKey(datasetId), 2 * 24 * 60 * 60);
+    await sysRedis.incrBy(runGenerationKey(body), 1);
+    await sysRedis.expire(runGenerationKey(body), TRAINING_RUN_GENERATION_TTL_SECONDS);
   } catch {
-    // swallowed; see docblock
+    // best-effort
   }
 }
 
