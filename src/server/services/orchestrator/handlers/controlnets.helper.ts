@@ -48,6 +48,9 @@ export interface BuildControlNetStepsResult {
   controlNets: ImageJobControlNet[];
 }
 
+// SDPose only replaces the keypoint extractor; its guide image feeds the existing pose ControlNet.
+const toJobPreprocessor = (key: string) => (key === 'sdpose' ? 'dwpose' : key) as ImageTransformer;
+
 /**
  * Build the orchestrator's `ImageJobControlNet[]` plus any `preprocessImage`
  * steps required by `auto`-mode entries.
@@ -70,10 +73,7 @@ export function buildControlNetSteps(
 
   for (const entry of controlNets) {
     const base: Omit<ImageJobControlNet, 'image'> = {
-      // SDPose extracts the guide image, then uses the existing pose ControlNet.
-      preprocessor: (entry.preprocessor === 'sdpose'
-        ? 'dwpose'
-        : entry.preprocessor) as ImageTransformer,
+      preprocessor: toJobPreprocessor(entry.preprocessor),
       weight: entry.weight,
       startStep: entry.startStep,
       endStep: entry.endStep,
@@ -116,9 +116,7 @@ export function mapControlNetsToJobInput(
 ): ImageJobControlNet[] | undefined {
   if (!controlNets?.length) return undefined;
   return controlNets.map((entry) => ({
-    preprocessor: (entry.preprocessor === 'sdpose'
-      ? 'dwpose'
-      : entry.preprocessor) as ImageTransformer,
+    preprocessor: toJobPreprocessor(entry.preprocessor),
     weight: entry.weight,
     startStep: entry.startStep,
     endStep: entry.endStep,
