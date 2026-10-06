@@ -14,7 +14,7 @@
 
 <h1 class="mb-4 text-xl font-semibold text-white">Check</h1>
 
-<CheckForm onchecked={(r) => (result = r as CheckData)} />
+<CheckForm onstart={() => (result = null)} onchecked={(r) => (result = r as CheckData)} />
 
 {#if result}
   <div class="mt-6 space-y-4">

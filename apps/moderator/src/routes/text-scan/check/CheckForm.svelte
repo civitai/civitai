@@ -9,7 +9,10 @@
   import { ENTITY_TYPE_NAMES, LABEL_NAMES } from '$lib/text-scan-lab/labels';
   import { LAB_ENTITY_TYPES, LAB_LABELS, type LabEntityType } from '$lib/text-scan-lab/types';
 
-  let { onchecked }: { onchecked: (result: Record<string, unknown>) => void } = $props();
+  let {
+    onstart,
+    onchecked,
+  }: { onstart: () => void; onchecked: (result: Record<string, unknown>) => void } = $props();
 
   let raw = $state('');
   let lookupAs = $state<LabEntityType>('Model');
@@ -52,7 +55,13 @@
     }
   };
 
-  const form = new FormState({ reset: false, onSuccess: (r) => r && onchecked(r) });
+  const detectedText = $derived(detected(parsed));
+
+  const form = new FormState({
+    reset: false,
+    onSubmit: () => onstart(),
+    onSuccess: (r) => r && onchecked(r),
+  });
 </script>
 
 {#snippet typeSelect(
@@ -96,15 +105,33 @@
   />
 
   <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
-    {#if detected(parsed)}
-      <p class="text-xs text-dark-2">{detected(parsed)}</p>
+    {#if detectedText}
+      <p class="text-xs text-dark-2">{detectedText}</p>
     {/if}
     {#if parsed.kind === 'ids'}
-      {@render typeSelect('lookup-as', 'Look up as', lookupAs, (v) => (lookupAs = v as LabEntityType), LAB_ENTITY_TYPES)}
+      {@render typeSelect(
+        'lookup-as',
+        'Look up as',
+        lookupAs,
+        (v) => (lookupAs = v as LabEntityType),
+        LAB_ENTITY_TYPES
+      )}
     {:else if parsed.kind === 'user'}
-      {@render typeSelect('profile-as', 'Look up as', profileAs, (v) => (profileAs = v as 'UserProfile' | 'User'), ['UserProfile', 'User'])}
+      {@render typeSelect(
+        'profile-as',
+        'Look up as',
+        profileAs,
+        (v) => (profileAs = v as 'UserProfile' | 'User'),
+        ['UserProfile', 'User']
+      )}
     {:else if parsed.kind === 'text' || parsed.kind === 'unknown-url'}
-      {@render typeSelect('judge-as', 'Judge as', judgeAs, (v) => (judgeAs = v as LabEntityType), LAB_ENTITY_TYPES)}
+      {@render typeSelect(
+        'judge-as',
+        'Judge as',
+        judgeAs,
+        (v) => (judgeAs = v as LabEntityType),
+        LAB_ENTITY_TYPES
+      )}
     {/if}
     {#if judgedType}
       <p class="text-xs text-dark-2">

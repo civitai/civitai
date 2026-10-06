@@ -89,12 +89,12 @@
       Draft · {draft.name}
       {#if readOnly}<span class="text-xs font-normal text-green-300">published</span>{/if}
     </h2>
-    <Button href="/text-scan/playground?draft={draft.id}" size="sm" variant="outline">
-      Run in playground
+    <Button href="/text-scan/check?draft={draft.id}" size="sm" variant="outline">
+      Open in Check
     </Button>
   </div>
   {#if dirty}
-    <p class="mt-1 text-xs text-amber-300">Unsaved changes — the playground runs the saved draft.</p>
+    <p class="mt-1 text-xs text-amber-300">Unsaved changes — Check runs the saved draft.</p>
   {/if}
 
   <p class="mt-3 text-xs text-dark-2">
