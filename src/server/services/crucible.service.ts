@@ -49,6 +49,9 @@ import type {
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import {
   clipLengthAllowed,
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  CRUCIBLE_ENTRY_CUTOFF_PERCENT,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
   CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
@@ -97,6 +100,7 @@ import { createPost, afterPostPublish, afterPostsPublish } from '~/server/servic
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
+  areCrucibleEntriesClosed,
   getCrucibleMinVotes,
   baseModelMakesMediaType,
   getAverageFinishTopPercent,
@@ -330,6 +334,8 @@ export const createCrucible = async ({
   entryLimit,
   freeEntriesPerUser = 0,
   maxTotalEntries,
+  entryWarningPercent = CRUCIBLE_ENTRY_WARNING_PERCENT.default,
+  entryCutoffPercent = CRUCIBLE_ENTRY_CUTOFF_PERCENT.default,
   prizePositions,
   allowedResources,
   allowedBaseModels = [],
@@ -396,6 +402,8 @@ export const createCrucible = async ({
       entryLimit,
       freeEntriesPerUser,
       maxTotalEntries: maxTotalEntries ?? null,
+      entryWarningPercent,
+      entryCutoffPercent,
       minViewSeconds: isVideoCrucible ? minViewSeconds ?? null : null,
       maxClipSeconds: isVideoCrucible ? maxClipSeconds ?? null : null,
       prizePositions: prizePositions as Prisma.JsonObject,
@@ -676,6 +684,8 @@ export const updateCrucible = async ({
       entryLimit: true,
       freeEntriesPerUser: true,
       maxTotalEntries: true,
+      entryWarningPercent: true,
+      entryCutoffPercent: true,
       minViewSeconds: true,
       maxClipSeconds: true,
       prizePositions: true,
@@ -725,6 +735,8 @@ export const updateCrucible = async ({
     entryLimit: crucible.entryLimit,
     freeEntriesPerUser: crucible.freeEntriesPerUser,
     maxTotalEntries: crucible.maxTotalEntries ?? undefined,
+    entryWarningPercent: crucible.entryWarningPercent,
+    entryCutoffPercent: crucible.entryCutoffPercent,
     minViewSeconds: crucible.minViewSeconds,
     maxClipSeconds: crucible.maxClipSeconds,
     prizePositions: currentPositions,
@@ -821,6 +833,8 @@ export const updateCrucible = async ({
       entryLimit: next.entryLimit,
       freeEntriesPerUser: next.freeEntriesPerUser,
       maxTotalEntries: next.maxTotalEntries ?? null,
+      entryWarningPercent: next.entryWarningPercent,
+      entryCutoffPercent: next.entryCutoffPercent,
       minViewSeconds: isVideo ? next.minViewSeconds ?? null : null,
       maxClipSeconds: isVideo ? next.maxClipSeconds ?? null : null,
       prizePositions: next.prizePositions as Prisma.JsonObject,
@@ -1483,7 +1497,9 @@ export const createCrucibleEntryPost = async ({
     select: {
       name: true,
       status: true,
+      startAt: true,
       endAt: true,
+      entryCutoffPercent: true,
       userId: true,
       nsfwLevel: true,
       ingestion: true,
@@ -1501,6 +1517,8 @@ export const createCrucibleEntryPost = async ({
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && new Date() > crucible.endAt))
     throw throwBadRequestError('This crucible is not accepting entries');
+  if (areCrucibleEntriesClosed(crucible))
+    throw throwBadRequestError(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
   if (crucible.userId === userId) throw throwBadRequestError(CANNOT_ENTER_OWN_CRUCIBLE);
 
   const post = await createPost({
@@ -1720,6 +1738,7 @@ export const submitEntry = async ({
         entryLimit: true,
         freeEntriesPerUser: true,
         maxTotalEntries: true,
+        entryCutoffPercent: true,
         maxClipSeconds: true,
         allowedResources: true,
         allowedBaseModels: true,
@@ -1762,6 +1781,10 @@ export const submitEntry = async ({
     // Validate crucible hasn't ended
     if (crucible.endAt && new Date() > crucible.endAt) {
       return throwBadRequestError('This crucible has ended');
+    }
+
+    if (areCrucibleEntriesClosed(crucible)) {
+      return throwBadRequestError(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
     }
 
     // Validate max total entries hasn't been reached
@@ -1932,14 +1955,24 @@ export const submitEntry = async ({
       const entry = await dbWrite.$transaction(async (tx) => {
         // Holding the crucible row makes a cancel's or finalize's claim wait for this insert, so
         // they read the entry; once they've claimed, the status check here refuses it instead.
+        // The last clause is the SQL twin of getCrucibleEntriesCloseAt: change one, change both.
         const open = await tx.$executeRaw`
           UPDATE "Crucible"
           SET "prizePool" = "prizePool" + ${buzzTransactionId ? crucible.entryFee : 0}
           WHERE id = ${crucibleId}
             AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
             AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+            AND (
+              "startAt" IS NULL OR "endAt" IS NULL
+              OR statement_timestamp() < "endAt" - ("endAt" - "startAt") * ("entryCutoffPercent" / 100.0)
+            )
         `;
-        if (!open) throw throwBadRequestError('This crucible is not accepting entries');
+        if (!open)
+          throw throwBadRequestError(
+            areCrucibleEntriesClosed(crucible)
+              ? CRUCIBLE_ENTRIES_CLOSED_MESSAGE
+              : 'This crucible is not accepting entries'
+          );
         if (draftPostId) {
           // Scheduled for the end so the entry stays off the entrant's profile, feeds and search while
           // judging is blind. The UPDATE above refused an ended crucible, so endAt is still ahead.

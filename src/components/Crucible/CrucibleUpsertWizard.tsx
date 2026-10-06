@@ -84,6 +84,9 @@ import {
   CRUCIBLE_MAX_ALLOWED_BASE_MODELS,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRIES,
+  CRUCIBLE_ENTRY_CUTOFF_PERCENT,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
   CRUCIBLE_MAX_TOTAL_ENTRIES,
@@ -160,6 +163,9 @@ const toTotalEntriesCap = (maxTotalEntries: number | undefined) => maxTotalEntri
 
 const countLabel = (count: number, singular: string, plural: string) =>
   `${count.toLocaleString()} ${count === 1 ? singular : plural}`;
+/** A share of a run in hours, e.g. 10% of 24h is "2.4h". */
+const hoursOf = (durationHours: number, percent: number) =>
+  `${Number(((durationHours * percent) / 100).toFixed(1))}h`;
 const entriesLabel = (count: number) => countLabel(count, 'entry', 'entries');
 const placesLabel = (count: number) => countLabel(count, 'place', 'places');
 
@@ -171,6 +177,8 @@ const stepFields: Record<number, (keyof CrucibleCreateFormValues)[]> = {
     'entryLimit',
     'freeEntriesPerUser',
     'maxTotalEntries',
+    'entryWarningPercent',
+    'entryCutoffPercent',
     'minViewSeconds',
     'maxClipSeconds',
   ],
@@ -249,6 +257,10 @@ export function CrucibleUpsertWizard(props: Props) {
     freeEntriesPerUser > values.entryLimit
       ? 'Free entries cannot exceed the entry limit per user'
       : null;
+  const entryWindowError =
+    values.entryCutoffPercent >= values.entryWarningPercent
+      ? CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE
+      : null;
   const freeEntriesLabel = getFreeEntriesLabel({
     freeEntriesPerUser,
     entryLimit: values.entryLimit,
@@ -290,6 +302,7 @@ export function CrucibleUpsertWizard(props: Props) {
         values.entryLimit <= CRUCIBLE_MAX_ENTRIES &&
         !entryLimitError &&
         !freeEntriesError &&
+        !entryWindowError &&
         !videoSettingsError));
 
   const totalPrizePercentage = getPrizeDistributionTotal(values.prizePositions);
@@ -671,6 +684,51 @@ export function CrucibleUpsertWizard(props: Props) {
           </Text>
         </Group>
       </div>
+
+      <Input.Wrapper
+        label="Late Entries"
+        description={`A late entry has less time to be judged and may not get enough votes to place. Shares are of the crucible's ${values.duration}h run, counted back from the end.`}
+      >
+        <Stack gap="md" mt={8}>
+          <InputNumber
+            name="entryWarningPercent"
+            label="Warn entrants"
+            description={`Entrants are warned their entry may not place in the last ${hoursOf(
+              values.duration,
+              values.entryWarningPercent
+            )} (${CRUCIBLE_ENTRY_WARNING_PERCENT.min}–${CRUCIBLE_ENTRY_WARNING_PERCENT.max}%)`}
+            suffix="%"
+            min={CRUCIBLE_ENTRY_WARNING_PERCENT.min}
+            max={CRUCIBLE_ENTRY_WARNING_PERCENT.max}
+            clampToMax
+            allowNegative={false}
+            allowDecimal={false}
+            clampBehavior="blur"
+            disabled={rulesLocked}
+          />
+          <InputNumber
+            name="entryCutoffPercent"
+            label="Close entries"
+            description={
+              values.entryCutoffPercent
+                ? `No new entries in the last ${hoursOf(
+                    values.duration,
+                    values.entryCutoffPercent
+                  )} (0–${CRUCIBLE_ENTRY_CUTOFF_PERCENT.max}%)`
+                : `0% takes entries until the very end (0–${CRUCIBLE_ENTRY_CUTOFF_PERCENT.max}%)`
+            }
+            suffix="%"
+            min={CRUCIBLE_ENTRY_CUTOFF_PERCENT.min}
+            max={CRUCIBLE_ENTRY_CUTOFF_PERCENT.max}
+            clampToMax
+            allowNegative={false}
+            allowDecimal={false}
+            clampBehavior="blur"
+            error={entryWindowError}
+            disabled={rulesLocked}
+          />
+        </Stack>
+      </Input.Wrapper>
 
       {values.contentType === MediaType.video && (
         <Input.Wrapper
@@ -1064,6 +1122,16 @@ export function CrucibleUpsertWizard(props: Props) {
             <Text c="dimmed">Max Total Entries</Text>
             <Text fw={500}>
               {values.maxTotalEntries ? numberWithCommas(values.maxTotalEntries) : 'Unlimited'}
+            </Text>
+          </Group>
+          <Group justify="space-between">
+            <Text c="dimmed">Entries Close</Text>
+            <Text fw={500}>
+              {values.entryCutoffPercent
+                ? `Last ${hoursOf(values.duration, values.entryCutoffPercent)} (${
+                    values.entryCutoffPercent
+                  }%)`
+                : 'At the end'}
             </Text>
           </Group>
           <Group justify="space-between">

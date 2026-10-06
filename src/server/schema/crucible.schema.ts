@@ -9,6 +9,9 @@ import {
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
+  CRUCIBLE_ENTRY_CUTOFF_PERCENT,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+  CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_PRIZE_POSITIONS,
@@ -141,6 +144,18 @@ export const createCrucibleInputBaseSchema = z.object({
     .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
     .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
     .optional(),
+  entryWarningPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_WARNING_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_WARNING_PERCENT.max)
+    .default(CRUCIBLE_ENTRY_WARNING_PERCENT.default),
+  entryCutoffPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_CUTOFF_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_CUTOFF_PERCENT.max)
+    .default(CRUCIBLE_ENTRY_CUTOFF_PERCENT.default),
   prizePositions: prizePositionsSchema,
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
   allowedBaseModels: allowedBaseModelsSchema.optional(),
@@ -176,6 +191,8 @@ type CrucibleSettings = {
   entryLimit: number;
   freeEntriesPerUser?: number;
   maxTotalEntries?: number | null;
+  entryWarningPercent?: number;
+  entryCutoffPercent?: number;
   prizePositions: Record<string, number>;
 };
 
@@ -202,6 +219,15 @@ export function checkCrucibleSettings(settings: CrucibleSettings) {
     return {
       message: 'Entries per user cannot exceed the maximum total entries',
       path: 'entryLimit',
+    };
+  if (
+    settings.entryWarningPercent != null &&
+    settings.entryCutoffPercent != null &&
+    settings.entryCutoffPercent >= settings.entryWarningPercent
+  )
+    return {
+      message: CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE,
+      path: 'entryCutoffPercent',
     };
   if (maxTotalEntries != null && Object.keys(settings.prizePositions).length > maxTotalEntries)
     return {
@@ -313,6 +339,18 @@ export const updateCrucibleSchema = z.object({
     .min(CRUCIBLE_MIN_TOTAL_ENTRIES)
     .max(CRUCIBLE_MAX_TOTAL_ENTRIES)
     .nullish(),
+  entryWarningPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_WARNING_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_WARNING_PERCENT.max)
+    .optional(),
+  entryCutoffPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_CUTOFF_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_CUTOFF_PERCENT.max)
+    .optional(),
   prizePositions: prizePositionsSchema.optional(),
   allowedResources: z.array(z.number().int()).max(CRUCIBLE_MAX_ALLOWED_RESOURCES).optional(),
   allowedBaseModels: allowedBaseModelsSchema.optional(),

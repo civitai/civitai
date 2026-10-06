@@ -41,7 +41,11 @@ import {
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
-import { clipLengthAllowed } from '~/shared/constants/crucible.constants';
+import {
+  clipLengthAllowed,
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
+} from '~/shared/constants/crucible.constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import { formatDuration, numberWithCommas } from '~/utils/number-helpers';
 import { Currency, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
@@ -54,12 +58,15 @@ import {
   getCrucibleEntriesCost,
   getCrucibleRatingLabel,
   getFreeEntriesLabel,
+  areCrucibleEntriesClosed,
+  getCrucibleEntriesCloseAt,
   isCrucibleFinalStretch,
 } from '~/utils/crucible-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils/flags';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import clsx from 'clsx';
+import { formatDate } from '~/utils/date-helpers';
 
 /**
  * Props for the CrucibleSubmitEntryModal
@@ -83,6 +90,10 @@ export interface CrucibleSubmitEntryModalProps {
   allowedBaseModels?: string[];
   startAt?: Date | null;
   endAt?: Date | null;
+  /** Share of the run, counted back from the end, in which entrants are warned. */
+  entryWarningPercent?: number;
+  /** Share of the run, counted back from the end, in which entries are closed. */
+  entryCutoffPercent?: number;
   /** Optional array of allowed resource names to display in requirements */
   allowedResourceNames?: string[];
   onSuccess?: () => void;
@@ -340,6 +351,8 @@ export default function CrucibleSubmitEntryModal({
   allowedResourceNames,
   startAt = null,
   endAt = null,
+  entryWarningPercent = CRUCIBLE_ENTRY_WARNING_PERCENT.default,
+  entryCutoffPercent = 0,
   onSuccess,
 }: CrucibleSubmitEntryModalProps) {
   const dialog = useDialogContext();
@@ -511,7 +524,11 @@ export default function CrucibleSubmitEntryModal({
     }
   );
 
-  const inFinalStretch = isCrucibleFinalStretch({ startAt, endAt });
+  const entryWindow = { startAt, endAt, entryCutoffPercent };
+  const entriesClosed = areCrucibleEntriesClosed(entryWindow);
+  const entriesCloseAt = entryCutoffPercent ? getCrucibleEntriesCloseAt(entryWindow) : null;
+  const inFinalStretch =
+    !entriesClosed && isCrucibleFinalStretch({ startAt, endAt, percent: entryWarningPercent });
   const { data: minVotesToPlace } = trpc.crucible.getMinVotesToPlace.useQuery(
     { id: crucibleId },
     { enabled: !!currentUser && inFinalStretch }
@@ -546,7 +563,7 @@ export default function CrucibleSubmitEntryModal({
 
   // Calculate how many more entries the user can submit
   const remainingEntries = entryLimit - currentEntryCount;
-  const canSubmitMore = remainingEntries > 0;
+  const canSubmitMore = remainingEntries > 0 && !entriesClosed;
 
   // Validate image and check if it's selectable
   // Returns detailed validation criteria for hover card display
@@ -959,11 +976,19 @@ export default function CrucibleSubmitEntryModal({
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto px-5 pb-5">
+          {entriesClosed && (
+            <Alert color="red" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
+              {CRUCIBLE_ENTRIES_CLOSED_MESSAGE}
+            </Alert>
+          )}
           {minVotes > 0 && (
             <Alert color="yellow" radius="md" mb="md" icon={<IconAlertCircle size={16} />}>
               This crucible is close to ending. An entry needs about {numberWithCommas(minVotes)}{' '}
               {minVotes === 1 ? 'vote' : 'votes'} to place and win a prize, and a new one may not
               get there in time.
+              {entriesCloseAt && (
+                <> Entries close {formatDate(entriesCloseAt, 'MMM D [at] h:mm A')}.</>
+              )}
             </Alert>
           )}
           <Tabs value={activeTab} onChange={setActiveTab} classNames={{ panel: 'pt-4' }}>
