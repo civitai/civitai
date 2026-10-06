@@ -153,6 +153,11 @@ describe('getFirstPublishCard', () => {
       // Refuse a clause it does not understand, so it cannot agree with an added filter.
       const unknown = Object.keys(where).filter((k) => !UNDERSTOOD_KEYS.includes(k));
       if (unknown.length) throw new Error(`seed() cannot interpret where.${unknown.join(', ')}`);
+      const shapeOf = (value: unknown) => Object.keys(value ?? {}).join(',');
+      if (shapeOf(where.id) !== 'not' || shapeOf(where.publishedAt) !== 'lt')
+        throw new Error('seed() reads only id.not and publishedAt.lt');
+      if (where.status != null && shapeOf(where.status) !== 'not')
+        throw new Error('seed() reads only status.not');
       return (
         rows.find(
           (r) =>
