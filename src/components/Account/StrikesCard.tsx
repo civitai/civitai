@@ -1,6 +1,7 @@
 import { Badge, Card, Divider, Group, Loader, Paper, Stack, Text, Title } from '@mantine/core';
 import { IconCheck } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { accountStandingFromPoints, strikeStatusColorScheme } from '~/server/schema/strike.schema';
 import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -28,6 +29,7 @@ const scrollToCreatorScore = scrollIfHashed(`#${CREATOR_SCORE_ANCHOR}`);
 
 export function StrikesCard({ flat }: { flat?: boolean } = {}) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
   const scores = currentUser?.meta?.scores;
   const { data: summary, isLoading: summaryLoading } = trpc.strike.getMyStrikeSummary.useQuery();
   const { data: strikesData, isLoading: strikesLoading } = trpc.strike.getMyStrikes.useQuery({
@@ -133,7 +135,7 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
           <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
             <Stack gap="lg">
               <UserScoreDisplay scores={scores} flat abbreviate={false} />
-              <CreatorJourneyCardLink meta={currentUser?.meta} />
+              {features.creatorJourney && <CreatorJourneyCardLink meta={currentUser?.meta} />}
               <CreatorScoreExplainer />
             </Stack>
           </div>
@@ -166,7 +168,7 @@ export function StrikesCard({ flat }: { flat?: boolean } = {}) {
         <div id={CREATOR_SCORE_ANCHOR} ref={scrollToCreatorScore}>
           <Stack gap="lg">
             <UserScoreDisplay scores={scores} />
-            <CreatorJourneyCardLink meta={currentUser?.meta} />
+            {features.creatorJourney && <CreatorJourneyCardLink meta={currentUser?.meta} />}
             <CreatorScoreExplainer />
           </Stack>
         </div>

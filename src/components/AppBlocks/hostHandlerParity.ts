@@ -678,6 +678,28 @@ export const INVENTORY = {
     PageBlockHost: 'required',
     InlineHost: INLINE_STUB,
   },
+  // Start a confirmed `kind:'training'` run — see `runTrainingGate.ts`. REQUEST-style;
+  // ahead of the published SDK dist union (the SDK pair lands in the SDK repo).
+  RUN_TRAINING: {
+    request: true,
+    reply: 'TRAINING_RESULT',
+    IframeHost:
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
+  // Prepare the dataset a `kind:'training'` body names — see
+  // `prepareTrainingDatasetGate.ts`. The host calls `blocks.prepareTrainingDataset`
+  // with the page token, which the block's own origin cannot reach. REQUEST-style;
+  // ahead of the published SDK dist union (the SDK pair lands in the SDK repo).
+  PREPARE_TRAINING_DATASET: {
+    request: true,
+    reply: 'TRAINING_DATASET_RESULT',
+    IframeHost:
+      'training is page-only on the server; the shared dispatcher NACKs it with a TRAINING_DATASET_RESULT error',
+    PageBlockHost: 'required',
+    InlineHost: INLINE_STUB,
+  },
 } satisfies Record<string, MessageSpec>;
 
 /**

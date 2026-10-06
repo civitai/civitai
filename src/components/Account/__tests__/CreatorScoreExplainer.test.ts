@@ -5,6 +5,7 @@ import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as Trpc from '~/utils/trpc';
+import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 
 const strikesQuery: { data: undefined; isLoading: boolean } = { data: undefined, isLoading: false };
@@ -14,6 +15,10 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
     'strike.getMyStrikeSummary': { useQuery: () => strikesQuery },
     'strike.getMyStrikes': { useQuery: () => strikesQuery },
   }),
+}));
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsProvider>()),
+  useFeatureFlags: () => ({}),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
   useCurrentUser: () => ({ meta: { scores: { total: 20, models: 10, users: 10 } } }),

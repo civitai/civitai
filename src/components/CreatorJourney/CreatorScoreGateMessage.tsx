@@ -1,4 +1,5 @@
 import { Anchor } from '@mantine/core';
+import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { NextLink } from '~/components/NextLink/NextLink';
 import {
   CREATOR_JOURNEY_HREF,
@@ -9,6 +10,7 @@ import {
   creatorScoreGateState,
   describeCreatorScoreUnlocks,
 } from '~/shared/utils/creator-score-unlocks';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -26,10 +28,12 @@ type GateMessageProps = {
  * they can take.
  */
 export function CreatorScoreGateMessage(props: GateMessageProps) {
+  const journey = !!useFeatureFlags().creatorJourney;
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery(undefined, {
     staleTime: Infinity,
+    enabled: journey && props.score != null && props.score < props.required,
   });
-  return <CreatorScoreGateMessageView {...props} ladder={ladder} />;
+  return <CreatorScoreGateMessageView {...props} ladder={ladder} journey={journey} />;
 }
 
 export function CreatorScoreGateMessageView({
@@ -37,8 +41,11 @@ export function CreatorScoreGateMessageView({
   total,
   required,
   ladder,
+  journey,
 }: GateMessageProps & {
   ladder: { unlocks: CreatorScoreUnlock[]; tiers: CreatorScoreTier[] } | undefined;
+  /** Off while Creator Journey is flagged off for the viewer: no tier names and no journey link. */
+  journey: boolean;
 }) {
   const state = creatorScoreGateState({
     score,
@@ -47,10 +54,17 @@ export function CreatorScoreGateMessageView({
     unlocks: ladder?.unlocks ?? [],
     tiers: ladder?.tiers ?? [],
   });
-  const journeyLink = (
+  const explainerLink = (label: string) => (
+    <Anchor component={NextLink} href={CREATOR_SCORE_EXPLAINER_HREF} inherit>
+      {label}
+    </Anchor>
+  );
+  const journeyLink = journey ? (
     <Anchor component={NextLink} href={CREATOR_JOURNEY_HREF} inherit>
       See your journey
     </Anchor>
+  ) : (
+    explainerLink('See how Creator Score works')
   );
 
   if (state.kind === 'met')
@@ -63,19 +77,25 @@ export function CreatorScoreGateMessageView({
   if (state.kind === 'unknown')
     return (
       <>
-        Your Creator Score grows when people react to, comment on or download what you share, and it
-        updates once a day. {journeyLink}
+        Your Creator Score grows when {creatorScoreGrowsWhen}, and it updates once a day.{' '}
+        {journeyLink}
       </>
     );
 
   if (state.kind === 'noScore')
     return (
       <>
-        You don&apos;t have a Creator Score yet. It starts when people react to, comment on or
-        download what you share, and it updates once a day.{' '}
-        <Anchor component={NextLink} href={CREATOR_SCORE_EXPLAINER_HREF} inherit>
-          See how Creator Score works
-        </Anchor>
+        You don&apos;t have a Creator Score yet. It starts when {creatorScoreGrowsWhen}, and it
+        updates once a day. {explainerLink('See how Creator Score works')}
+      </>
+    );
+
+  if (!journey)
+    return (
+      <>
+        You&apos;re at {numberWithCommas(Math.floor(state.score))},{' '}
+        {numberWithCommas(Math.ceil(required - state.score))} to go. Scores update once a day.{' '}
+        {explainerLink('See what moves your score')}
       </>
     );
 
@@ -91,9 +111,7 @@ export function CreatorScoreGateMessageView({
       <>
         You&apos;re at {numberWithCommas(Math.floor(state.score))},{' '}
         {numberWithCommas(Math.ceil(state.gap))} to go. Scores update once a day.{' '}
-        <Anchor component={NextLink} href={CREATOR_SCORE_EXPLAINER_HREF} inherit>
-          See what moves your score
-        </Anchor>
+        {explainerLink('See what moves your score')}
       </>
     );
 

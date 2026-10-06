@@ -1,4 +1,7 @@
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import type { FirstPublishCardInput } from '~/server/schema/creator-journey.schema';
+import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
+import { ArticleStatus, ModelStatus } from '~/shared/utils/prisma/enums';
 import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.service';
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
@@ -105,4 +108,62 @@ export async function getCreatorJourney(userId: number) {
       achievedAt,
     })),
   };
+}
+
+/**
+ * Whether this is the owner's first-ever published model or article, published recently. Reads the
+ * primary: the first call lands right after publish, when a replica can still show it unpublished, and
+ * the client holds the answer for the session.
+ */
+export async function getFirstPublishCard({
+  userId,
+  entityType,
+  id,
+}: FirstPublishCardInput & { userId: number }) {
+  const cutoff = new Date(Date.now() - FIRST_PUBLISH_CARD_DAYS * 24 * 60 * 60 * 1000);
+
+  if (entityType === 'model') {
+    const model = await dbWrite.model.findUnique({
+      where: { id },
+      select: { userId: true, status: true, publishedAt: true },
+    });
+    if (
+      model?.userId !== userId ||
+      model.status !== ModelStatus.Published ||
+      !model.publishedAt ||
+      model.publishedAt < cutoff
+    )
+      return { show: false };
+    // Earlier, not other: a creator who publishes two in their first week still gets it on the first,
+    // and a scheduled model is not earlier until it goes live. Models soft-delete, so a deleted earlier
+    // one still counts; articles hard-delete and cannot.
+    const earlier = await dbWrite.model.findFirst({
+      where: {
+        userId,
+        id: { not: id },
+        publishedAt: { lt: model.publishedAt },
+        // A Scheduled row the job will never publish (cannotPublish) keeps a past publishedAt.
+        status: { not: ModelStatus.Scheduled },
+      },
+      select: { id: true },
+    });
+    return { show: !earlier };
+  }
+
+  const article = await dbWrite.article.findUnique({
+    where: { id },
+    select: { userId: true, status: true, publishedAt: true },
+  });
+  if (
+    article?.userId !== userId ||
+    article.status !== ArticleStatus.Published ||
+    !article.publishedAt ||
+    article.publishedAt < cutoff
+  )
+    return { show: false };
+  const earlier = await dbWrite.article.findFirst({
+    where: { userId, id: { not: id }, publishedAt: { lt: article.publishedAt } },
+    select: { id: true },
+  });
+  return { show: !earlier };
 }

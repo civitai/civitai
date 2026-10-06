@@ -7,7 +7,12 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
-import { getAllImages, getImagesFromFeedSearch } from '~/server/services/image.service';
+import {
+  getAllImages,
+  getImagesFromFeedSearch,
+  getImagesFromFeedServiceForRest,
+} from '~/server/services/image.service';
+import { parseFeedCursor } from '~/server/common/feed-cursor';
 import { imageMetaCache, thumbnailCache } from '~/server/redis/caches';
 import type { PublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
 import { getPublicVideoThumbnail } from '~/server/utils/public-video-thumbnail';
@@ -59,6 +64,11 @@ export type RunImageSearchInput = {
    * the same thing.
    */
   postOrder?: boolean;
+  /**
+   * Let the feed service answer feed-search requests behind its flag, and accept the `feed:`
+   * cursors it hands out. Only the public endpoint opts in.
+   */
+  feedService?: boolean;
   /** The remaining `...data` fields off the parsed schema (postId/modelId/username/etc). */
   data: Record<string, unknown>;
 };
@@ -109,9 +119,10 @@ export type ShapedImage = {
 // (event-engine-common/feeds/base.ts), so anything else silently restarts at page one.
 const FEED_OFFSET_CURSOR = /^(-?\d+)(?:\|[^|]*)?$/;
 
-function assertFeedOffsetCursor(cursor: RunImageSearchInput['cursor']) {
+function assertFeedOffsetCursor(cursor: RunImageSearchInput['cursor'], allowFeedCursor: boolean) {
   if (cursor === undefined || cursor === '') return;
   const value = cursor instanceof Date ? cursor.toISOString() : String(cursor);
+  if (allowFeedCursor && parseFeedCursor(value)) return;
   const match = FEED_OFFSET_CURSOR.exec(value);
   if (!match) return throwBadRequestError(`Invalid cursor: not a feed offset "${value}"`);
   const offset = Number(match[1]);
@@ -130,7 +141,8 @@ export async function runImageSearch(
   ctx: RunImageSearchContext
 ): Promise<{ items: ShapedImage[]; nextCursor?: string }> {
   const { browsingLevel, user, req } = ctx;
-  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, postOrder, data } = input;
+  const { limit, skip, cursor, type, withMeta, flatMeta, withTags, postOrder, feedService, data } =
+    input;
 
   const features = getFeatureFlags({ user, req });
 
@@ -182,7 +194,7 @@ export async function runImageSearch(
       : !!(data as { modelId?: unknown }).modelId &&
         !(data as { modelVersionId?: unknown }).modelVersionId;
 
-  if (!useLegacyMethod) assertFeedOffsetCursor(cursor);
+  if (!useLegacyMethod) assertFeedOffsetCursor(cursor, !!feedService);
 
   // ATTRIBUTION surface: this feeds the anonymous search-actor hash, whose only
   // job is to keep distinct callers in distinct actor labels. The fail-closed
@@ -234,42 +246,53 @@ export async function runImageSearch(
   // are always present in `data` since the destructure only pulls out
   // limit/page/cursor/maturity/type/meta flags. The image service reads them at
   // runtime, so this is byte-equivalent to the original inline call.
+  const include = ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])];
+  const dbQuery = {
+    ...data,
+    types: type ? [type] : undefined,
+    limit,
+    skip,
+    cursor,
+    // Only fetch tagIds and profilePictures here; metaSelect is fetched
+    // on-demand in the controller below to avoid query filtering.
+    include,
+    periodMode: 'published',
+    headers: { src: '/api/v1/images' },
+    browsingLevel,
+    withMeta: false,
+    user,
+    disableMinor: true,
+    disablePoi: true,
+    includeBaseModel: true,
+    dbTarget: features.datapacketRead ? 'datapacket' : 'read',
+  } as unknown as Parameters<typeof getAllImages>[0];
+  const searchQuery = {
+    ...data,
+    types: type ? [type] : undefined,
+    limit,
+    skip,
+    cursor,
+    include,
+    periodMode: 'published',
+    browsingLevel,
+    withMeta: false,
+    currentUserId: user?.id,
+    isModerator: user?.isModerator,
+    disableMinor: true,
+    disablePoi: true,
+    actor,
+  } as unknown as Parameters<typeof getImagesFromFeedSearch>[0];
+
+  const fromFeedService =
+    feedService && !useLegacyMethod
+      ? await getImagesFromFeedServiceForRest(
+          { ...searchQuery, headers: { src: '/api/v1/images' } },
+          dbQuery
+        )
+      : undefined;
   const { items, nextCursor } = useLegacyMethod
-    ? await getAllImages({
-        ...data,
-        types: type ? [type] : undefined,
-        limit,
-        skip,
-        cursor,
-        // Only fetch tagIds and profilePictures here; metaSelect is fetched
-        // on-demand in the controller below to avoid query filtering.
-        include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
-        periodMode: 'published',
-        headers: { src: '/api/v1/images' },
-        browsingLevel,
-        withMeta: false,
-        user,
-        disableMinor: true,
-        disablePoi: true,
-        includeBaseModel: true,
-        dbTarget: features.datapacketRead ? 'datapacket' : 'read',
-      } as unknown as Parameters<typeof getAllImages>[0])
-    : await getImagesFromFeedSearch({
-        ...data,
-        types: type ? [type] : undefined,
-        limit,
-        skip,
-        cursor,
-        include: ['tagIds', 'profilePictures', ...(withTags ? ['tags' as const] : [])],
-        periodMode: 'published',
-        browsingLevel,
-        withMeta: false,
-        currentUserId: user?.id,
-        isModerator: user?.isModerator,
-        disableMinor: true,
-        disablePoi: true,
-        actor,
-      } as unknown as Parameters<typeof getImagesFromFeedSearch>[0]);
+    ? await getAllImages(dbQuery)
+    : fromFeedService ?? (await getImagesFromFeedSearch(searchQuery));
 
   let imageMetas: Record<number, { id: number; meta?: any }> = {};
   if (withMeta && items.length > 0) {

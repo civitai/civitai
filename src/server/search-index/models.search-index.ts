@@ -339,7 +339,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // role came from one version and whose base model came from another.
       //
       // 🔴 AND THAT MISMATCH IS NOT OPT-IN — A LIVE, MANDATORY CLAUSE ON THE SINGULAR
-      // `version.baseModel` ALREADY SHIPS ON THE ONE PAGE A PURPOSE FILTER WOULD LIVE ON.
+      // `version.baseModel` ALREADY SHIPS ON `/search/models`, A PAGE A PURPOSE FILTER WOULD LIVE ON.
       // ⚠️ An earlier version of this paragraph claimed the opposite — "today's only consumer
       // filters on the ARRAY form `versions.baseModel` rather than `version.baseModel`, so
       // nothing currently ANDs the two" — and that was FALSE. `src/pages/search/models.tsx`
@@ -352,8 +352,11 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // refinement widget, which is where the array form in the retracted claim came from —
       // the two coexist, and reading only the widget is how the singular one was missed.
       //
-      // So the two are un-ANDed today for one reason only: nothing reads `insight.*` at all
-      // yet. That is the half about to change. The FIRST `insight.*` filter added to that page
+      // So the two are un-ANDed on that page today for one reason only: the page reads no
+      // `insight.*` yet. (The resource-intent matcher's purpose seed does filter
+      // `insight.role`, but beside the array form `versions.baseModel IN [...]` when a base
+      // model is requested, so it has the any-version analogue, not this predicate.) The
+      // FIRST `insight.*` filter added to that page
       // inherits a cross-version `version.*` predicate whether its author asks for one or not,
       // and the disagreement probability rises with a model's version count — which correlates
       // with maturity, i.e. with whatever outcome such a filter is being judged on.

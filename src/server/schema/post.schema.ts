@@ -3,7 +3,9 @@ import { CacheTTL, constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
+import { toStringList } from '~/utils/array-helpers';
 import { isBetweenToday } from '~/utils/date-helpers';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { imageMetaSchema, imageSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
@@ -31,8 +33,42 @@ export const dailyPostTiers = [
 ];
 export const MEMBER_DAILY_POST_MULTIPLIER = 2;
 
-const dailyPostLimitMessage =
-  "You've reached your daily limit for new posts. Please try again tomorrow.";
+const multiplierWords: Record<number, string> = { 2: 'double', 3: 'triple' };
+
+/** What the daily rule refusing this caller says: their own limit, and only the rises still ahead. */
+function dailyPostLimitMessage({
+  minScore,
+  limit,
+  member,
+}: {
+  minScore: number;
+  limit: number;
+  member: boolean;
+}) {
+  const higher = dailyPostTiers
+    .filter((tier) => tier.minScore > minScore)
+    .map((tier) => numberWithCommas(tier.minScore));
+  const rise = higher.length
+    ? `Limits rise at ${
+        higher.length === 1 ? 'a Creator Score' : 'Creator Scores'
+      } of ${toStringList(higher)}`
+    : undefined;
+  const memberShare = member
+    ? undefined
+    : `members get ${
+        multiplierWords[MEMBER_DAILY_POST_MULTIPLIER] ??
+        `${MEMBER_DAILY_POST_MULTIPLIER} times as many`
+      }`;
+  const ahead = [rise, memberShare].filter(isDefined).join(', and ');
+
+  return [
+    `You've reached today's limit of ${numberWithCommas(limit)} posts.`,
+    ahead && `${ahead.charAt(0).toUpperCase()}${ahead.slice(1)}.`,
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 const hasReputation = (user: SessionUser, minScore: number) =>
   (user.meta?.scores?.total ?? 0) >= minScore;
 const isPaidMember = (user: SessionUser) => !!user.tier && user.tier !== 'free';
@@ -54,16 +90,26 @@ export const postRateLimits: RateLimit[] = [
       limit,
       period: CacheTTL.day,
       userReq: minScore > 0 ? (user) => hasReputation(user, minScore) : undefined,
-      errorMessage: dailyPostLimitMessage,
+      errorMessage: dailyPostLimitMessage({ minScore, limit, member: false }),
     },
     {
       limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
       period: CacheTTL.day,
       userReq: (user) => isPaidMember(user) && hasReputation(user, minScore),
-      errorMessage: dailyPostLimitMessage,
+      errorMessage: dailyPostLimitMessage({
+        minScore,
+        limit: limit * MEMBER_DAILY_POST_MULTIPLIER,
+        member: true,
+      }),
     },
   ]),
 ];
+
+export function isDailyPostLimitMessage(message: string) {
+  return postRateLimits.some(
+    (rule) => rule.period === CacheTTL.day && rule.errorMessage === message
+  );
+}
 
 export type PostsFilterInput = z.infer<typeof postsFilterSchema>;
 export const postsFilterSchema = z.object({

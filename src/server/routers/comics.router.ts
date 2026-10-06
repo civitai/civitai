@@ -23,9 +23,12 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import {
+  chapterEarlyAccessCapMessage,
+  chapterEarlyAccessLockedMessage,
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
+import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import {
   Availability,
   ComicReferenceStatus,
@@ -658,9 +661,7 @@ async function assertCanGrantEarlyAccess({
     features: ctx.features,
   });
   if (maxDays === 0) {
-    throw throwBadRequestError(
-      'Your creator score is not high enough to put a chapter in early access yet.'
-    );
+    throw throwBadRequestError(chapterEarlyAccessLockedMessage(creatorScoreFromSession(ctx.user)));
   }
   if (timeframe > maxDays) {
     throw throwBadRequestError(
@@ -677,9 +678,11 @@ async function assertCanGrantEarlyAccess({
   const otherActive = excludeChapterId ? active.filter((c) => c.id !== excludeChapterId) : active;
   if (otherActive.length >= maxActive) {
     throw throwBadRequestError(
-      `You already have ${otherActive.length} chapter${
-        otherActive.length === 1 ? '' : 's'
-      } in early access — that's the cap for your current creator score.`
+      chapterEarlyAccessCapMessage({
+        active: otherActive.length,
+        limit: maxActive,
+        score: creatorScoreFromSession(ctx.user),
+      })
     );
   }
 }

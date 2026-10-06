@@ -43,6 +43,7 @@ import {
   withSpan,
 } from '~/server/utils/otel-helpers';
 import { refreshableBlobId } from '~/shared/orchestrator/blob-url';
+import { annotateOrchestratorSubmitFailure } from '~/server/services/orchestrator/submit-failure';
 import {
   isUpstreamNetworkError,
   isUpstreamServerOrNetworkError,
@@ -399,7 +400,16 @@ export async function submitWorkflow({
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
     }
-    throwOrchestratorFailure({ error, response, message });
+    try {
+      throwOrchestratorFailure({ error, response, message });
+    } catch (e) {
+      // Additive: record which attempt received this response and its status, as a
+      // non-enumerable property (see `submit-failure.ts`). The thrown error is
+      // otherwise unchanged.
+      if (typeof response?.status === 'number')
+        annotateOrchestratorSubmitFailure(e, { attempt: result.attempts, status: response.status });
+      throw e;
+    }
   }
 
   return result.data;

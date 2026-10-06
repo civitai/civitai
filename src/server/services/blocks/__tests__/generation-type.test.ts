@@ -4,6 +4,7 @@ import {
   blockPassThroughStepBodySchema,
   PASS_THROUGH_TYPE_MAX_CHARS,
 } from '~/server/schema/blocks/workflow.schema';
+import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 import {
   BLOCK_AUTHOR_FEE_PLATFORM_CONFIG,
   resolveBlockAuthorFeeParams,
@@ -15,6 +16,7 @@ import {
   BLOCK_IMAGE_GENERATION_SUBTYPES,
   BLOCK_PASS_THROUGH_COARSE_TYPE,
   BLOCK_PASS_THROUGH_SUBTYPE_MAX_CHARS,
+  BLOCK_TRAINING_ECOSYSTEMS,
   BLOCK_WORKFLOW_KIND_GENERATION_TYPES,
   blockGenerationCoarseType,
   composeBlockGenerationType,
@@ -87,7 +89,7 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
   // parameters through `blockGenerationCoarseType` and labels its counters with the
   // result.
 
-  it('the coarse key is exactly these five', () => {
+  it('the coarse key is exactly these six', () => {
     // Literal, not derived. Widening this set is a wire-contract decision and a
     // fee-table decision; it must not happen by accident.
     //
@@ -96,8 +98,12 @@ describe('the value grammar — <coarse>:<subtype>, coarse before the FIRST colo
     // hand: every `kind:'step'` submit carrying a bare `$type` rather than a
     // registry id groups under it, and it exists so that such a submit can never
     // group under `textToImage` (which is also a real orchestrator `$type`).
+    //
+    // `training` IS THE SIXTH, ADDED WITH `kind:'training'`: its own fee group, so a
+    // training run is priced by the zero-fee `training` override and never as a
+    // pass-through `step`.
     expect([...BLOCK_GENERATION_COARSE_TYPES].sort()).toEqual(
-      ['chat-completion', 'convert-image', 'customComfy', 'step', 'textToImage'].sort()
+      ['chat-completion', 'convert-image', 'customComfy', 'step', 'textToImage', 'training'].sort()
     );
   });
 
@@ -1158,6 +1164,10 @@ describe('the accepted sets stay DERIVED from the registries', () => {
         // The pass-through COARSE key. Its `step:<$type>` values are NOT here —
         // see the next test, which pins that exclusion as a decision.
         'step',
+        // The training coarse key and one value per ai-toolkit ecosystem, read off
+        // the TRAINING FORM'S schema — not off the literal under test.
+        'training',
+        ...schemaTrainingEcosystems().map((e) => `training:${e}`),
       ].sort()
     );
     for (const value of BLOCK_GENERATION_TYPES) {
@@ -1316,5 +1326,53 @@ describe('the author fee groups a pass-through row under `step`, never under a k
       expect(resolved.coarseType).toBeNull();
       expect(resolved.source).toBe('default');
     }
+  });
+});
+
+/** The `ecosystem` discriminator values of the training form's ai-toolkit schema. */
+function schemaTrainingEcosystems(): string[] {
+  const options = (
+    aiToolkitTrainingParamsSchema as unknown as {
+      options: Array<{ shape: { ecosystem: { value: string } } }>;
+    }
+  ).options;
+  return options.map((o) => o.shape.ecosystem.value);
+}
+
+describe("resolveBlockGenerationType — kind:'training' records training:<ecosystem>", () => {
+  it('the instrument reads the schema (positive control)', () => {
+    // A reader that silently returned [] would make the seam test below compare
+    // an empty set to an empty set.
+    expect(schemaTrainingEcosystems().length).toBeGreaterThan(20);
+    expect(schemaTrainingEcosystems()).toContain('sdxl');
+  });
+
+  it('BLOCK_TRAINING_ECOSYSTEMS equals the training schema ecosystem set, in BOTH directions', () => {
+    // SEAM: the literal exists to keep this module import-light; a new ecosystem on
+    // the training form must not silently record a bare `training`.
+    expect([...BLOCK_TRAINING_ECOSYSTEMS].sort()).toEqual(schemaTrainingEcosystems().sort());
+  });
+
+  it('records the ecosystem the body trains', () => {
+    expect(resolveBlockGenerationType({ kind: 'training', params: { ecosystem: 'sdxl' } })).toBe(
+      'training:sdxl'
+    );
+    expect(
+      resolveBlockGenerationType({ kind: 'training', params: { ecosystem: 'ace_step_15_xl' } })
+    ).toBe('training:ace_step_15_xl');
+  });
+
+  it('an unknown, missing or non-string ecosystem degrades to the bare coarse key', () => {
+    for (const params of [{ ecosystem: 'not-an-ecosystem' }, {}, { ecosystem: 7 }, undefined]) {
+      expect(resolveBlockGenerationType({ kind: 'training', params })).toBe('training');
+    }
+  });
+
+  it('the bound refuses a training subtype outside the closed set', () => {
+    expect(isBlockGenerationType('training:sdxl')).toBe(true);
+    expect(isBlockGenerationType('training')).toBe(true);
+    expect(isBlockGenerationType('training:imageGen')).toBe(false);
+    expect(isBlockGenerationType('training:sdxl:x')).toBe(false);
+    expect(blockGenerationCoarseType('training:flux1')).toBe('training');
   });
 });
