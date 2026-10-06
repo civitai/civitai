@@ -7,6 +7,7 @@ import { MantineProvider } from '@mantine/core';
 import type * as GateMessage from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import { CrucibleJudgeScoreRequired } from '~/components/Crucible/CrucibleJudgeScoreRequired';
 import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 
 vi.mock('~/components/CreatorJourney/CreatorScoreGateMessage', async (importOriginal) => {
   const original = await importOriginal<typeof GateMessage>();
@@ -65,7 +66,7 @@ describe('CrucibleJudgeScoreRequired', () => {
 
     expect(el.textContent).toContain('Judging needs a Creator Score of 500');
     expect(el.textContent).not.toContain("You're at");
-    expect(el.textContent).toMatch(/grows when people react to, comment on or download/);
+    expect(el.textContent).toContain(`grows when ${creatorScoreGrowsWhen}`);
     const hrefs = [...el.querySelectorAll('a')].map((a) => a.getAttribute('href'));
     expect(hrefs).toEqual([CREATOR_JOURNEY_HREF, '/crucibles/1/test']);
   });

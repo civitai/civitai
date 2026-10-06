@@ -4,6 +4,7 @@ import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
@@ -19,7 +20,6 @@ import {
   useOrchestratorUrlStore,
 } from '~/store/post-image-transmitter.store';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { showErrorNotification } from '~/utils/notifications';
 import { downloadGeneratorImages } from '~/utils/generator-import';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -42,6 +42,7 @@ export function PostImageDropzone({
   ]);
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
+  const showCreatePostError = useShowCreatePostError();
   const { src, modelVersionId, model3dId, tag, collectionId } = params;
   // #endregion
 
@@ -139,10 +140,7 @@ export function PostImageDropzone({
             upload(fileData, { postId: data.id });
           },
           onError(error) {
-            showErrorNotification({
-              title: 'Failed to create post',
-              error: new Error(error.message),
-            });
+            showCreatePostError(error.message);
           },
         }
       );

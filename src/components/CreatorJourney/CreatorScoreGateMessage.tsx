@@ -1,4 +1,5 @@
 import { Anchor } from '@mantine/core';
+import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { NextLink } from '~/components/NextLink/NextLink';
 import {
   CREATOR_JOURNEY_HREF,
@@ -30,7 +31,7 @@ export function CreatorScoreGateMessage(props: GateMessageProps) {
   const journey = !!useFeatureFlags().creatorJourney;
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery(undefined, {
     staleTime: Infinity,
-    enabled: journey,
+    enabled: journey && props.score != null && props.score < props.required,
   });
   return <CreatorScoreGateMessageView {...props} ladder={ladder} journey={journey} />;
 }
@@ -76,17 +77,16 @@ export function CreatorScoreGateMessageView({
   if (state.kind === 'unknown')
     return (
       <>
-        Your Creator Score grows when people react to, comment on or download what you share, and it
-        updates once a day. {journeyLink}
+        Your Creator Score grows when {creatorScoreGrowsWhen}, and it updates once a day.{' '}
+        {journeyLink}
       </>
     );
 
   if (state.kind === 'noScore')
     return (
       <>
-        You don&apos;t have a Creator Score yet. It starts when people react to, comment on or
-        download what you share, and it updates once a day.{' '}
-        {explainerLink('See how Creator Score works')}
+        You don&apos;t have a Creator Score yet. It starts when {creatorScoreGrowsWhen}, and it
+        updates once a day. {explainerLink('See how Creator Score works')}
       </>
     );
 

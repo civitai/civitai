@@ -4,6 +4,7 @@ import * as React from 'react';
 import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
+import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { CreatorScoreGateMessageView } from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import {
   buildCreatorScoreUnlocks,
@@ -101,6 +102,7 @@ describe('CreatorScoreGateMessageView', () => {
     const { text, hrefs } = render({ score: 0, required, ladder });
 
     expect(text).toMatch(/^You don't have a Creator Score yet\./);
+    expect(text).toContain(`It starts when ${creatorScoreGrowsWhen}, and it updates once a day.`);
     expect(hrefs).toEqual([CREATOR_SCORE_EXPLAINER_HREF]);
   });
 
@@ -109,6 +111,7 @@ describe('CreatorScoreGateMessageView', () => {
 
     expect(text).not.toMatch(/don't have a Creator Score/);
     expect(text).not.toMatch(/You're at/);
+    expect(text).toContain(`grows when ${creatorScoreGrowsWhen}, and it updates once a day.`);
     expect(hrefs).toEqual([CREATOR_JOURNEY_HREF]);
   });
 
