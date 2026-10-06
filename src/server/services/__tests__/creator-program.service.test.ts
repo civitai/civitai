@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { OnboardingSteps } from '~/server/common/enums';
-import { MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
+import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ function mockCapCache() {
   mockCachedObject.fetch.mockResolvedValue({ [userId]: defaultCap });
 }
 
-/** Mock getBanked counterparty responses for green then yellow (buzzBankTypes order) */
+/** Mock getBankedBalance counterparty responses for green then yellow (buzzBankTypes order) */
 function mockBankedAmounts(green: number, yellow: number) {
   mockGetCounterPartyBuzzTransactions
     .mockResolvedValueOnce({ counterPartyAccountType: 'green', totalBalance: green })
@@ -200,14 +200,26 @@ describe('userCapCache peak-earning query', () => {
   it('counts license fees and early-access purchases', async () => {
     const { sql } = await runLookup([userId]);
 
-    expect(sql).toMatch(/\(type = 'licenseFee'\)/);
+    expect(sql).toMatch(/'licenseFee'/);
     expect(sql).toMatch(/type = 'purchase' AND fromAccountId != 0/);
   });
 
-  it('no longer counts generation compensation', async () => {
+  it('still counts generation compensation before the bankable-amount cutover', async () => {
     const { sql } = await runLookup([userId]);
 
-    expect(sql).not.toContain('compensation');
+    expect(sql).toMatch(/\(type IN \('compensation', 'licenseFee'\)\)/);
+  });
+
+  it('stops counting generation compensation from the cutover', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    try {
+      const { sql } = await runLookup([userId]);
+
+      expect(sql).toMatch(/\(type IN \('licenseFee'\)\)/);
+      expect(sql).not.toContain('compensation');
+    } finally {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    }
   });
 
   // This clause decides which Buzz counts toward Peak Earning Month, and so toward a creator's Cap,

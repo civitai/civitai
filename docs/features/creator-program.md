@@ -103,7 +103,7 @@ extractBuzz(userId)
 All-or-nothing across all buzz types:
 
 1. Validates: not banned, in extraction phase
-2. Gets banked amounts per type via `getBanked(userId)`
+2. Gets banked amounts per type via `getBankedBalance(userId)`
 3. Extracts each type back to its original account (green -> green, yellow -> yellow)
 4. Calculates fee on combined total, distributes proportionally across types
 5. Fee uses `Math.floor` for all but last type (last gets remainder to avoid rounding errors)
@@ -111,10 +111,12 @@ All-or-nothing across all buzz types:
 #### Getting Banked Amounts
 
 ```
-getBanked(userId) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem, bankable: BankableAmount | null }
+getBankedBalance(userId) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem }
+getBanked(userId)        → { ...getBankedBalance, bankable: BankableAmount | null }
 ```
 
-- Queries `getCounterPartyBuzzTransactions` for each buzz type against `creatorProgramBank`
+- `getBankedBalance` queries `getCounterPartyBuzzTransactions` for each buzz type against `creatorProgramBank`; `bankBuzz`, `extractBuzz` and `/api/mod/reset-bank` use it
+- `getBanked` is for display (the `creatorProgram.getBanked` query). Its `bankable` is `null` before the cutover, without ClickHouse, or when the lookup fails
 - The counterparty filter preserves type separation even with a unified bank account
 - Cap is unified across all types based on highest membership tier
 
@@ -130,7 +132,7 @@ getBanked(userId) → { perType: { yellow: number, green: number }, total: numbe
 | Gold | No fixed limit | 1.5x |
 
 - Minimum cap: 100,000 for all tiers
-- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees and paid/early access; generation compensation stopped counting at the bankable-amount cutover
+- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees and paid/early access. Until `BANKABLE_CUTOVER` they also count generation compensation; from it, compensation is excluded for every month in the window
 - The highest tier across all active subscriptions is used
 
 **Relevant code:** `createUserCapCache()` in the service queries `CustomerSubscription` joined with `Product.metadata.tier`.
@@ -150,7 +152,7 @@ bankable = yellow+green balance at the cutover
 
 - Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
 - The cutover balance is computed from ClickHouse the first time it is needed and stored in the `REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT` hash, keyed by user id. It is not stored during the first hour after the cutover, while late ledger rows can still land.
-- Closed months come from ClickHouse; the current month's deposits come from the bank account via `getBanked`, so a deposit made seconds earlier already counts.
+- Closed months come from ClickHouse; the current month's deposits come from the bank account via `getBankedBalance`, so a deposit made seconds earlier already counts.
 
 ### Extraction Fees
 
@@ -320,13 +322,13 @@ Bitwise flags on `User.onboarding`:
 
 ## Testing
 
-Test file: `src/server/services/__tests__/creator-program.service.test.ts`
+Test files: `src/server/services/__tests__/creator-program.service.test.ts`, `src/server/services/__tests__/creator-program-bankable.test.ts`
 
-Covers: `getCreatorRequirements`, `joinCreatorsProgram`, `getBanked`, `bankBuzz`, `extractBuzz`, `getCompensationPool`, `withdrawCash`, unified pool invariants.
+Covers: `getCreatorRequirements`, `joinCreatorsProgram`, `getBanked`/`getBankedBalance`, `bankBuzz`, `extractBuzz`, `getCompensationPool`, `withdrawCash`, unified pool invariants, the bankable amount.
 
 Run tests:
 ```bash
-pnpm run test:unit -- src/server/services/__tests__/creator-program.service.test.ts
+pnpm exec vitest run --project 'unit*' src/server/services/__tests__/creator-program.service.test.ts src/server/services/__tests__/creator-program-bankable.test.ts
 ```
 
 Shared utility tests: `src/shared/utils/__tests__/creator-program.utils.test.ts` (cap calculations).

@@ -54,6 +54,7 @@ import { handleLogError, throwBadRequestError } from '~/server/utils/errorHandli
 import { refreshSession } from '~/server/auth/session-invalidation';
 import type { CapDefinition } from '~/shared/constants/creator-program.constants';
 import {
+  BANKABLE_CUTOVER,
   CAP_DEFINITIONS,
   EXTRACTION_FEE_DESCRIPTION,
   MIN_CREATOR_SCORE,
@@ -115,7 +116,10 @@ const createUserCapCache = () => {
       `);
 
       // A system-minted `tip` is a support credit, not an earning, so it must not raise a cap.
-      // Generation `compensation` is excluded to match BANKABLE_EARNING_PREDICATE_SQL.
+      // From the cutover, generation `compensation` is excluded to match
+      // BANKABLE_EARNING_PREDICATE_SQL; before it, caps must not drop ahead of the announced date.
+      const peakEarningTypes =
+        new Date() < BANKABLE_CUTOVER ? `'compensation', 'licenseFee'` : `'licenseFee'`;
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
@@ -123,7 +127,7 @@ const createUserCapCache = () => {
           SUM(amount) as earned
         FROM buzzTransactions
         WHERE (
-          (type = 'licenseFee')
+          (type IN (${peakEarningTypes}))
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
         AND toAccountType IN (${buzzBankTypesSql})

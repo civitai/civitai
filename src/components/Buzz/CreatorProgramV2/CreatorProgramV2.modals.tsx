@@ -6,6 +6,7 @@ import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
+  BANKABLE_CUTOVER,
   CAP_DEFINITIONS,
   EXTRACTION_FEES,
   MIN_CAP,
@@ -365,9 +366,10 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
       <div className="flex flex-col gap-2">
         <p className="font-bold">How your Peak Earning Month is picked</p>
         <p>
-          We take your best month of generation compensation and Buzz other people spent on your
-          work, in the last {PEAK_EARNING_WINDOW} <span className="font-bold">completed</span>{' '}
-          months. Tips and rewards can still be Banked, but they do not set your peak.
+          We take your best month of licensing fees and Buzz other people spent on your work, in the
+          last {PEAK_EARNING_WINDOW} <span className="font-bold">completed</span> months. Until{' '}
+          {formatDate(BANKABLE_CUTOVER, 'MMMM D, YYYY', true)} it also counts generation
+          compensation. Tips and rewards do not set your peak.
         </p>
         <ul className="list-disc pl-4">
           <li>
