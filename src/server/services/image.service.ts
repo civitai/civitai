@@ -1708,6 +1708,8 @@ function applyHideChallengesExclusion(input: {
 const getAllImagesUncaptured = async (
   input: GetAllImagesInput & {
     userId?: number;
+    /** Rethrow a statement timeout instead of answering it with an empty page. */
+    throwOnStatementTimeout?: boolean;
   }
 ) => {
   // Fail loud rather than serve unfiltered. This path has no way to express a
@@ -2519,6 +2521,7 @@ const getAllImagesUncaptured = async (
         },
       }).catch(() => undefined);
       noteEmptyIdsPage(input, 'statement-timeout', { dbTarget });
+      if (input.throwOnStatementTimeout) throw e;
       return { items: [], nextCursor: undefined };
     }
     throw e;
@@ -2933,12 +2936,8 @@ export async function getImagesFromFeedServiceForRest(
       nextCursor: served.page.nextCursor,
     };
   if (feedCursor) {
-    // Either a hydrate statement timeout or a page whose every row the hydrate filtered out; the
-    // two look the same here. Stepping past loses the first; a 503 would repeat the second forever.
-    if (served.reason === 'hydrate:empty') {
-      if (served.nextCursor) return { items: [], nextCursor: served.nextCursor };
-      throw throwBadRequestError('This feed has no further pages for these filters');
-    }
+    // The hydrate filtered out every row of that page; the scroll steps past it, or ends.
+    if (served.reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
     if (isTransientFeedReason(served.reason))
       throw new TRPCError({
         code: 'SERVICE_UNAVAILABLE',

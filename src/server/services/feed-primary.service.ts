@@ -104,6 +104,7 @@ export function feedHydrateQuery<
   ids: number[];
   limit: number;
   period: 'AllTime';
+  throwOnStatementTimeout: true;
 } {
   const {
     cursor: _cursor,
@@ -117,7 +118,9 @@ export function feedHydrateQuery<
     modelVersionId: _modelVersionId,
     ...rest
   } = input;
-  return { ...rest, ids, limit: ids.length, period: 'AllTime' };
+  // getAllImages would answer a statement timeout with an empty page, which here would read as
+  // a page the hydrate filtered out; as an error it is a hydrate:error instead.
+  return { ...rest, ids, limit: ids.length, period: 'AllTime', throwOnStatementTimeout: true };
 }
 
 /** Truthful subset of the request-path Flipt context (feature-flags.service.ts) built
@@ -183,8 +186,8 @@ export async function serveFromFeed<T extends { id: number }>(
   } finally {
     endHydrate();
   }
-  // getAllImages answers its own statement timeout with an empty page; ids that hydrate to
-  // nothing are that, not the end of the feed.
+  // Every id was filtered out by the hydrate's own checks (its statement timeout is thrown, see
+  // feedHydrateQuery). That is not the end of the feed, so the feed's cursor travels with it.
   if (!rows.length) {
     count('error', 'hydrate:empty');
     return { ok: false, reason: 'hydrate:empty', nextCursor };

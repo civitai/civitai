@@ -125,6 +125,7 @@ describe('feedHydrateQuery', () => {
       tags: [7],
       ids: [9, 5, 2],
       limit: 3,
+      throwOnStatementTimeout: true,
     });
     for (const k of ['cursor', 'skip', 'offset', 'entry']) expect(k in q).toBe(false);
   });

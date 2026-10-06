@@ -12,6 +12,7 @@ import type * as Auth from '~/server/auth/get-server-auth-session';
 import type * as FeatureFlags from '~/server/services/feature-flags.service';
 import type * as Region from '~/server/utils/region-blocking';
 import type * as Meili from '~/server/meilisearch/client';
+import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as PromClient from '~/server/prom/client';
 
 const h = vi.hoisted(() => ({
@@ -28,6 +29,14 @@ const h = vi.hoisted(() => ({
   enforce: vi.fn(),
   hydrateQuery: vi.fn(),
   hydrateObserved: new Error('hydrate query observed'),
+  // When set, the production hydrate runs through getAllImagesUncaptured to the raw query.
+  realHydrate: false,
+  rawQuery: vi.fn(),
+}));
+
+vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof DbHelpers>()),
+  queryWithTimeout: (...args: unknown[]) => h.rawQuery(...args),
 }));
 
 vi.mock('~/env/server', () => ({
@@ -89,7 +98,9 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
     fetchFeedPrimary: (...args: unknown[]) => h.fetchFeedPrimary(...args),
     // Records the exact query getAllImagesUncaptured would receive, then stops before Postgres.
     feedHydrateQuery: ((input, ids) => {
-      h.hydrateQuery(actual.feedHydrateQuery(input, ids));
+      const query = actual.feedHydrateQuery(input, ids);
+      h.hydrateQuery(query);
+      if (h.realHydrate) return query;
       throw h.hydrateObserved;
     }) as typeof actual.feedHydrateQuery,
     // The real paging, mapping and counting. The production hydrate closure runs up to the
@@ -98,6 +109,7 @@ vi.mock('~/server/services/feed-primary.service', async (importOriginal) => {
       actual.serveFromFeed(input, {
         ...deps,
         hydrate: async (ids: number[]) => {
+          if (h.realHydrate) return deps.hydrate(ids);
           await deps.hydrate(ids).catch((e: unknown) => {
             if (e !== h.hydrateObserved) throw e;
           });
@@ -243,6 +255,7 @@ describe('/api/v1/images served by the feed service', () => {
     h.hydrate.mockImplementation(async (ids: number[]) => ids.map(row));
     h.meiliSearch.mockResolvedValue(MEILI_PAGE);
     h.enforce.mockImplementation(async () => ({ emptyResult: false }));
+    h.realHydrate = false;
     dbMock.dbRead.user.findUnique.mockResolvedValue(null);
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
     h.counted.length = 0;
@@ -481,13 +494,30 @@ describe('/api/v1/images served by the feed service', () => {
       expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
-    it('is a 400 when that filtered-out page was the last one', async () => {
+    it('ends the scroll with an empty 200 when that filtered-out page was the last one', async () => {
       h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5] });
       h.hydrate.mockResolvedValue([]);
       const res = await get({ cursor: 'feed:17:5' });
-      expect(res.statusCode).toBe(400);
-      expect(res.body.message).toBe('This feed has no further pages for these filters');
+      expect(res.statusCode).toBe(200);
+      expect(res.body.items).toEqual([]);
+      expect(res.body.metadata.nextCursor).toBeUndefined();
+      expect(res.body.metadata.nextPage).toBeUndefined();
       expect(h.meiliSearch).not.toHaveBeenCalled();
+    });
+
+    it('is a retryable 503, never a skipped page, when the hydrate query hits the statement timeout', async () => {
+      h.realHydrate = true;
+      h.rawQuery.mockRejectedValue(
+        Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
+      );
+      const res = await get({ cursor: 'feed:17:5' });
+      expect(h.rawQuery).toHaveBeenCalledTimes(1);
+      expect(res.statusCode).toBe(503);
+      expect(res.headers['retry-after']).toBe('2');
+      expect(h.meiliSearch).not.toHaveBeenCalled();
+      expect(await counted()).toEqual([
+        { outcome: 'error', reason: 'hydrate:error', route: 'rest', value: 1 },
+      ]);
     });
 
     it('is a 400 when the request changed to a shape the feed cannot serve [pre-change code 400d every feed: cursor]', async () => {
