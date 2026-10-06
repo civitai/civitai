@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
@@ -10,23 +11,13 @@
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import type { ChangesState } from './changes';
 
-  let {
-    changes,
-    activeIds,
-  }: {
-    changes: ChangesState;
-    activeIds: Partial<Record<PromptKey, number>>;
-  } = $props();
+  let { changes, disabled }: { changes: ChangesState; disabled: boolean } = $props();
 
   let open = $state(false);
 
   const names = (keys: readonly string[]) =>
     keys.map((k) => promptKeyName(k as PromptKey)).join(', ');
 
-  // Sent with the changes, so the server can refuse when someone published since this page loaded.
-  const loadedIds = $derived(
-    JSON.stringify(Object.fromEntries(changes.keys.map((k) => [k, activeIds[k] ?? null])))
-  );
 
   const publish = new FormState({
     reload: true,
@@ -36,10 +27,18 @@
       changes.discard();
       toast.success(`Published ${names((data?.published as string[] | undefined) ?? [])}`);
     },
+    // What went live before a failure is no longer a change; its new version is the current one.
+    onSettled: (result) => {
+      const published = result.type === 'failure' && (result.data?.published as PromptKey[]);
+      if (published && published.length) {
+        changes.drop(published);
+        void invalidateAll();
+      }
+    },
   });
 </script>
 
-<Button size="sm" onclick={() => (open = true)}>Publish…</Button>
+<Button size="sm" {disabled} onclick={() => (open = true)}>Publish…</Button>
 
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-xl">
@@ -52,7 +51,7 @@
     </Dialog.Header>
     <form method="POST" action="?/publish" use:enhance={publish.enhance} class="space-y-3">
       <input type="hidden" name="prompts" value={changes.json} />
-      <input type="hidden" name="activeIds" value={loadedIds} />
+      <input type="hidden" name="activeIds" value={JSON.stringify(changes.baseIds)} />
       <div>
         <Label for="publish-note" class="text-xs text-dark-2">
           Publish note (recorded on each version)
@@ -64,7 +63,7 @@
       {/if}
       <Dialog.Footer>
         <Button type="button" variant="ghost" onclick={() => (open = false)}>Cancel</Button>
-        <Button type="submit" variant="destructive" disabled={publish.submitting}>
+        <Button type="submit" variant="destructive" disabled={disabled || publish.submitting}>
           {publish.submitting ? 'Publishing…' : 'Publish'}
         </Button>
       </Dialog.Footer>

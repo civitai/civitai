@@ -9,6 +9,6 @@ function browserStorage(): Storage | null {
 }
 
 export function createChanges(moderatorId: number): ChangesState {
-  const fields = $state<ChangesFields>({ prompts: {} });
+  const fields = $state<ChangesFields>({ changes: {}, current: null });
   return new ChangesState(fields, browserStorage(), changesStorageKey(moderatorId));
 }

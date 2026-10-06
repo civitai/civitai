@@ -31,7 +31,7 @@ export const promptChangesField = jsonField(
 export const publishSchema = z.object({
   prompts: promptChangesField,
   note: z.string().trim().min(1, 'A publish note is required.').max(2000),
-  /** The current version's id per changed key as the page loaded it; null where there was none. */
+  /** Per changed key, the version the change was written against; null where there was none. */
   activeIds: jsonField(
     z.record(z.string(), z.number().int().nullable(), { error: 'Malformed versions.' }),
     'Malformed versions.'
@@ -71,7 +71,7 @@ export async function publishChanges(input: z.infer<typeof publishSchema>) {
     return fail(409, {
       error: `Someone published a newer version of ${names(
         moved
-      )} since you loaded this page — reload to see it, then publish again.`,
+      )} after your change was written. Review the newer version first: open the change on Check, compare it, then keep your text or discard it.`,
     });
 
   const published: PromptKey[] = [];
@@ -86,7 +86,7 @@ export async function publishChanges(input: z.infer<typeof publishSchema>) {
           `Publishing ${promptKeyName(key)} failed (${why}); it may or may not have gone live — ` +
           'check Versions. ' +
           (published.length
-            ? `Already published: ${names(published)}. Reload before publishing the rest.`
+            ? `Already published: ${names(published)}; the rest stay in your changes.`
             : 'Nothing was published.'),
         published,
       });

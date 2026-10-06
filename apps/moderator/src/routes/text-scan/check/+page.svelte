@@ -3,6 +3,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import type { CheckResult } from './+page.server';
+  import { changesStorageKey } from './changes';
   import { createChanges } from './changes.svelte';
   import ChangesBar from './ChangesBar.svelte';
   import CheckForm from './CheckForm.svelte';
@@ -13,7 +14,24 @@
 
   const current = $derived(data.active.ok ? data.active.content : {});
   const changes = createChanges(untrack(() => data.user?.id ?? 0));
-  onMount(() => changes.restore(current));
+  const currentPrompts = () =>
+    data.active.ok ? { content: data.active.content, ids: data.active.ids } : null;
+
+  let mounted = $state(false);
+  onMount(() => {
+    changes.restore(currentPrompts());
+    mounted = true;
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === null || e.key === changesStorageKey(data.user?.id ?? 0)) changes.reload();
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  });
+  // After a publish reloads the page data: what went live stops being a change.
+  $effect(() => {
+    const next = currentPrompts();
+    if (mounted) untrack(() => changes.setCurrent(next));
+  });
 
   let result = $state<CheckResult | null>(null);
   let checkedWith = $state<string | null>(null);
@@ -37,8 +55,7 @@
 {#if changes.keys.length}
   <ChangesBar
     {changes}
-    activeIds={data.active.ok ? data.active.ids : null}
-    canPublish={!!data.grants['textScan.prompt.publish']}
+    canPublish={!!data.grants['textScan.prompt.publish'] && data.active.ok}
     onedit={(key) => (editing = key)}
   />
 {/if}

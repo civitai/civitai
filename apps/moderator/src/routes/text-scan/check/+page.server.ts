@@ -5,6 +5,7 @@ import { requiresGrant } from '$lib/server/access';
 import { parseForm } from '$lib/server/query';
 import { LabError, refused } from '$lib/server/text-scan-lab/errors';
 import {
+  FREE_TEXT_KEY,
   LabHarnessError,
   composeEntities,
   getPrompts,
@@ -112,7 +113,7 @@ const textPlan = (
   if (typeof fields === 'string') return fields;
   return {
     entityType,
-    subjects: [{ key: 'text', title: 'Your text', fields, entityId: null, authorId: null }],
+    subjects: [{ key: FREE_TEXT_KEY, title: 'Your text', fields, entityId: null, authorId: null }],
     skipped: [],
     notice,
   };

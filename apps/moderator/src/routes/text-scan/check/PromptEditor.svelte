@@ -32,6 +32,7 @@
   const currentText = $derived(key ? current[key] : undefined);
   const changed = $derived(key !== null && key in changes.prompts);
   const mine = $derived(key ? changes.prompts[key] ?? currentText : undefined);
+  const stale = $derived(key !== null && changes.stale.includes(key));
 </script>
 
 <Sheet.Root
@@ -51,6 +52,23 @@
           Your version is kept in this browser. Nobody else sees it until you publish it.
         </Sheet.Description>
       </Sheet.Header>
+
+      {#if stale && key}
+        <div class="rounded-md border border-amber-500/40 p-3 text-sm text-amber-300">
+          <p>
+            Written against an older version — someone has published since. Review the differences
+            from the current version, then keep your text or discard it.
+          </p>
+          <div class="mt-2 flex gap-2">
+            <Button size="xs" variant="outline" onclick={() => key && changes.keepMine(key)}>
+              Keep my text
+            </Button>
+            <Button size="xs" variant="ghost" onclick={() => key && changes.drop([key])}>
+              Discard
+            </Button>
+          </div>
+        </div>
+      {/if}
 
       <details>
         <summary class="text-xs text-dark-2">Current version</summary>
@@ -74,7 +92,7 @@
               </Button>
             {/if}
             {#if changed}
-              <Button size="xs" variant="ghost" onclick={() => key && changes.resetKey(key)}>
+              <Button size="xs" variant="ghost" onclick={() => key && changes.drop([key])}>
                 Reset to current
               </Button>
             {/if}
@@ -94,7 +112,7 @@
           <Textarea
             id="prompt-editor"
             class="mt-2 min-h-96 font-mono text-xs"
-            bind:value={() => mine ?? '', (v) => key && changes.set(key, v, currentText)}
+            bind:value={() => mine ?? '', (v) => key && changes.set(key, v)}
           />
         {/if}
       </div>

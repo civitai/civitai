@@ -78,6 +78,11 @@ describe('publish', () => {
     expect((res as { data: { error: string } }).data.error).toMatch(
       /^Someone published a newer version of Scam \/ phishing definition/
     );
+    // A reload alone would publish over the newer version, so the copy must not suggest one.
+    expect((res as { data: { error: string } }).data.error).toContain(
+      'Review the newer version first'
+    );
+    expect((res as { data: { error: string } }).data.error).not.toMatch(/reload/i);
     expect(harness.putPrompt).not.toHaveBeenCalled();
   });
 
@@ -112,7 +117,9 @@ describe('publish', () => {
     expect(res).toMatchObject({ status: 502, data: { published: ['base'] } });
     const { error } = (res as { data: { error: string } }).data;
     expect(error).toContain('Publishing Scam / phishing definition failed (harness down)');
-    expect(error).toContain('Already published: General instructions.');
+    expect(error).toContain(
+      'Already published: General instructions; the rest stay in your changes.'
+    );
   });
 
   it('says plainly when the current prompts cannot be loaded', async () => {
