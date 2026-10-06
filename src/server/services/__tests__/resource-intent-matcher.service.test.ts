@@ -690,7 +690,8 @@ describe('findResourceIntentCandidates — the labels change the response', () =
     searchWithSignal.mockResolvedValue({ hits: wide, estimatedTotalHits: 600 });
     await findResourceIntentCandidates(criteria, { ...opts, cap: 50 });
     expect(pooledIds()).toHaveLength(100);
-    // And the page is one document per targeted version — no multiplier.
+    // And each seed page's limit is one document per targeted version — no multiplier
+    // (this reads the first page; both are pinned in ./resource-intent-matcher.seed.test.ts).
     expect(meiliArgsOf().limit).toBe(100);
 
     searchWithSignal.mockReset();

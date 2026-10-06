@@ -97,9 +97,8 @@ vi.mock('~/server/search-index/base.search-index', async (importOriginal) => ({
 
 /**
  * `insight.role` / `insight.styleFamily` are the two MEANING axes — filterable, not
- * sortable — and the resource-intent pool's purpose page FILTERS on `insight.role` and
- * SORTS on `insight.qualityScore`; `insight.styleFamily` is read by nothing.
- * `insight.modelVersionId` is the id of the version all three were taken from, projected but
+ * sortable; the resource-intent seed filters on the role and sorts on
+ * `insight.qualityScore`. `insight.modelVersionId` is the id of the version all three were taken from, projected but
  * declared in NO attribute list, so no search path can return it at all (argued at the
  * projection site in ../models.search-index.ts; the four absences are pinned below). This
  * file pins the wiring that puts all four on a document.

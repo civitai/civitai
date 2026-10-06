@@ -1,3 +1,4 @@
+import { uniqBy } from 'lodash-es';
 import type { SearchParams } from 'meilisearch';
 
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
@@ -54,14 +55,12 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  *     pre-insight seed, which fills whatever the purpose page leaves empty.
  * Duplicates (a purpose hit that is also popular) keep their purpose-page position.
  *
- * Why not one sort. The previous seed was a single TWO-TIER sort, quality first and
- * thumbs second, with no role filter. It ordered labeled models by quality REGARDLESS
- * of what they are for, and in a busy type x baseModel cell there are more labeled
- * models than the pool is wide — one LoRA cell holds ~1,265 `character` labels against
- * ~131 `clothing` — so the pool was 100% labeled-by-quality and a `clothing` request got
- * a handful of clothing LoRAs among ~100 for other purposes. The re-rank cannot recover
- * from that: it permutes the pool it is handed, and the pool held almost nothing that
- * agreed.
+ * Why not one sort. The previous seed was a single sort, quality first and thumbs
+ * second, with no role filter, so it ordered labeled models by quality REGARDLESS of
+ * what they are for. In a busy type x baseModel cell the labeled models of other
+ * purposes outnumber the pool width, so that seed returned almost none for the
+ * requested purpose (measured figures: docs/resource-intent-primitive.md), and the
+ * re-rank cannot recover from it — it only permutes the pool it is handed.
  *
  * Inside the purpose page every hit carries a quality score — `role` and `qualityScore`
  * are projected together from one label row, or are both null — so there
@@ -107,12 +106,12 @@ export type ResourceIntentShortlistEntry = {
  * the work bound as well as the lookahead) but it means the widening is a
  * property of the DEFAULT cap of 50, not of every request.
  *
- * `clampResourceIntentCap` is therefore the ONE bound on both the pool and the
- * search page below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
- * also raises this re-rank's work bound. A second ceiling here was deleted for
- * being unreachable while that constant stays under it; if it is ever raised past
- * Meilisearch's own `maxTotalHits`, the page silently truncates and the ceiling has
- * to come back.
+ * `clampResourceIntentCap` is therefore the ONE bound on the pool and on each seed
+ * page's `limit` below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
+ * also raises this re-rank's work bound, and doubles into the fetch since there are
+ * two pages. A second ceiling here was deleted for being unreachable while that
+ * constant stays under it; if it is ever raised past Meilisearch's own
+ * `maxTotalHits`, a page silently truncates and the ceiling has to come back.
  */
 const RERANK_POOL_MULTIPLIER = 2;
 
@@ -334,8 +333,8 @@ export function applyInsightRanking(
  * testable without a search backend. See this module's header for why there are two.
  *
  * 🔴 `insight.role` is FILTERED here and never sorted: it is filterable-only by design
- * (`~/server/search-index/filterable-attributes.ts`). Both pages share `limit`, and the
- * merge — not either page — decides the pool width.
+ * (`~/server/search-index/filterable-attributes.ts`). Both pages share `limit`; the
+ * merge truncates their union to the same width.
  */
 export function buildResourceIntentSeedQueries({
   filter,
@@ -376,15 +375,8 @@ export function mergeSeedHits(
   popularity: readonly ModelSearchIndexRecord[],
   poolCap: number
 ): ModelSearchIndexRecord[] {
-  const merged: ModelSearchIndexRecord[] = [];
-  const seen = new Set<number>();
-  for (const hit of [...purpose, ...popularity]) {
-    if (merged.length >= poolCap) break;
-    if (seen.has(hit.id)) continue;
-    seen.add(hit.id);
-    merged.push(hit);
-  }
-  return merged;
+  // `uniqBy` keeps the FIRST occurrence, which is what gives the purpose page precedence.
+  return uniqBy([...purpose, ...popularity], 'id').slice(0, poolCap);
 }
 
 async function searchShortlistModels(
@@ -420,13 +412,20 @@ async function searchShortlistModels(
   // 128-255, and never wider. 🔴 That bounds the POOL, not the FETCH: two pages are
   // requested, so up to 2 x poolCap documents cross the wire and are parsed. When the
   // purpose page comes back full the popularity page contributes nothing to the pool
-  // and is pure cost — the same shape as the 2x page an earlier revision removed, which
+  // and is pure cost — and that is the USUAL case, not an edge: the busy type x baseModel
+  // cells, where a role's labeled models outnumber the pool, are the ones most requests
+  // land in. Same shape as the 2x page an earlier revision removed, which
   // measured at 1.6-2.6x the payload and its blocking JSON.parse plus roughly double the
   // index's processing time on a Meilisearch shared with the resource picker. That
   // figure was measured for one double-width page, not for two parallel pages, so treat
-  // it as the order of magnitude and not as this design's measured cost. The parallel
-  // fetch is a latency choice over a sequential fill-only-if-short second request.
+  // it as the order of magnitude and not as this design's measured cost. Because the
+  // pages are fetched in parallel, the popularity page is paid for whether or not the
+  // merge uses it.
   const { purpose, popularity } = buildResourceIntentSeedQueries({ filter, role, poolCap });
+  // One controller for both pages, so a failure on one cancels the other instead of
+  // leaving it holding a resource-select limiter slot (shared with the generation
+  // picker) until its own timeout, for a result nobody will read.
+  const sibling = new AbortController();
   const search = (request: SearchParams) =>
     withMeiliResourceSelect(
       (searchSignal) =>
@@ -436,19 +435,21 @@ async function searchShortlistModels(
           request,
           searchSignal
         ),
-      {}
+      { signal: sibling.signal }
     );
   try {
     // Two calls, each under its own resource-select limiter slot and timeout, rather
     // than one multi-search: nothing in this repo wraps `multiSearch` with the
     // undelivered-body guard `searchWithSignal` carries. Either failing fails the seed,
-    // exactly as the single page did.
+    // exactly as the single page did — there is deliberately no popularity-only
+    // fallback, so an index that cannot answer the purpose page fails loudly.
     const [purposeResults, popularityResults] = await Promise.all([
       search(purpose),
       search(popularity),
     ]);
     return mergeSeedHits(purposeResults.hits, popularityResults.hits, poolCap);
   } catch (err) {
+    sibling.abort();
     if (isTransientMeiliError(err)) {
       throw new Error(`Resource-intent model search temporarily unavailable: ${String(err)}`);
     }

@@ -87,7 +87,7 @@ matches yields a short purpose page and the popularity page fills the rest.
 Why two pages rather than one sort: a single quality-first sort with no role filter
 ranked labeled models by quality regardless of purpose, and a busy type × baseModel cell
 holds more labeled models than the pool is wide — one LoRA cell held ~1,265 `character`
-labels against ~131 `clothing` — so a `clothing` request was seeded with a handful of
+labels against ~131 `clothing` (a facet over the production index, 2026-10-06) — so a `clothing` request was seeded with a handful of
 clothing LoRAs among ~100 for other purposes, and the ordering below can only permute
 what it is handed.
 
@@ -139,8 +139,9 @@ full-corpus pass before running one.** What is verified in code:
 - That `update()` runs with `db: dbWrite` / `pg: pgDbWrite`, so each drained
   model is a full nested `modelSearchIndexSelect` pull **off the primary** — not
   the replica. `reset()` is the one that uses `dbRead`/`pgDbRead`.
-- The documents rebuilt are byte-identical until an insight field is projected
-  into `models_v9`.
+- The rebuilt documents carry the projected insight fields (`insight.qualityScore`,
+  `insight.role`, `insight.styleFamily`), so a drained model is a real
+  re-projection, not a no-op.
 - The index holds **~700k ungated documents** — the figure is
   `src/pages/api/admin/temp/queue-paid-models-reindex.ts`'s own, in a comment
   that declines to rewrite them because "rewriting them would be waste".
@@ -202,7 +203,7 @@ reset instead" plan does not avoid the incremental cost — most of it is alread
 paid by the time the pass ends. If that cost needs avoiding, it needs a flag on
 this script plus pausing the drain, neither of which exists in this repo today.
 `search-index-sync-models-reset` is still the cheap way to make the whole corpus
-consistent once an insight field IS projected: it is a manual-trigger job that
+consistent now that the insight fields are projected: it is a manual-trigger job that
 builds off the replica, swaps, then clears the queue.
 
 Apart from the versions-per-model distribution cited above — which bounds the
@@ -447,7 +448,7 @@ which neither this evaluator nor this change provides.
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.
   ⚠️ **The volume half is NOT affected, and the clause above is the reason:** the shadow write is unconditional, so rows/day tracks calls/day and is invariant to the miss rate. A volume reading stays trustworthy under this fault — do not discount it.
-  ⚠️ **And the 60s signature is absent for two response classes, so its absence does not prove the migration is applied.** A `role: 'none'` answer short-circuits before the matcher runs, and an empty pool skips the label read entirely (it returns before touching the database — this branch's own test pins that as "NOT a fallback: the read did not fail, it never happened"). Both keep the 1h TTL with `insightFallback: false`. A fresh environment is at least as likely to have an unseeded search index as an unapplied migration, and in that state every response takes the hour.
+  ⚠️ **And the 60s signature is absent for two response classes, so its absence does not prove the migration is applied.** A `role: 'none'` answer short-circuits before the matcher runs, and an empty pool skips the label read entirely (it returns before touching the database — this branch's own test pins that as "NOT a fallback: the read did not fail, it never happened"). Both keep the 1h TTL with `insightFallback: false`. A fresh environment is at least as likely to have an unseeded search index as an unapplied migration, and the two unseeded states differ: an index whose SETTINGS lack `insight.role` (filterable) or `insight.qualityScore` (sortable) fails the seed outright, so the response degrades and takes the 60s degraded TTL; settings applied but documents not yet rewritten leaves the purpose page empty, the popularity page fills the pool, and every response takes the hour.
 - **M5 (auto-attach)** — NOT implemented, and never before BOTH: the threshold study shows per-slice precision ≥0.9 at the chosen operating point AND ≥2 weeks of live shadow agreement ≥80%.
 
 ## Verification

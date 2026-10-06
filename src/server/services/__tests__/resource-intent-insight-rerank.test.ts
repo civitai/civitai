@@ -177,7 +177,7 @@ describe('resource-intent — a label changes the served response', () => {
   // seed, so a mutant that ignores the labels and reverses the tiebreak passes it.
   // This is what fails. It covers BOTH tiebreaks, because the flat stage-3
   // distribution leaves `reorderShortlistByDistribution` ordering on index too.
-  it('with no labels at all the response keeps the popularity order — kills a reversed tiebreak', async () => {
+  it('with no labels at all the response keeps the seed order — kills a reversed tiebreak', async () => {
     const result = await getResourceIntent(INPUT, CTX);
 
     expect(result.degraded).toBe(false);

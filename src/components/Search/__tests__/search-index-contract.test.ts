@@ -137,8 +137,8 @@ describe('the models index sort contract', () => {
   // 400s.
   //
   // Today exactly one client sorts on it — `searchShortlistModels` in
-  // ~/server/services/resource-intent-matcher.service.ts, whose purpose page also FILTERS on
-  // `insight.role` and so needs that attribute in the index's filterable list as well — and it
+  // ~/server/services/resource-intent-matcher.service.ts, whose role filter also needs
+  // `insight.role` in the index's filterable list — and it
   // is unreachable in production while the resource-intent Flipt flag is off. That flag is the
   // ONLY thing closing this window.
   // 🔴 So: do not enable that flag until the reset has shipped. Flipping it first turns every
