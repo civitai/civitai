@@ -40,6 +40,7 @@ vi.mock('$lib/server/text-scan-lab/harness-client', async (importOriginal) => ({
 }));
 
 const { actions } = await import('../+page.server');
+const { LabHarnessError } = await import('$lib/server/text-scan-lab/harness-client');
 const { createDraft, getDraft, getWorkingCopy, saveWorkingCopy } = await import(
   '$lib/server/text-scan-lab/drafts.service'
 );
@@ -104,7 +105,9 @@ describe('saveChanges (autosave)', () => {
   it('refuses a blank key by name', async () => {
     const res = await save({ base: 'BASE PROMPT', 'label:scam': ' ' }, null);
     expect(res).toMatchObject({ status: 400 });
-    expect(errorOf(res)).toContain('label:scam');
+    expect(errorOf(res)).toBe(
+      'Scam / phishing definition is empty — write it, or reset it to current.'
+    );
     expect(await getWorkingCopy(MOD)).toBeNull();
   });
 
@@ -217,6 +220,41 @@ describe('publish from Check', () => {
       publishedPromptIds: { base: 61 },
     });
     expect(await getWorkingCopy(MOD)).toBeNull();
+  });
+
+  it('reports a partial publish of my changes by friendly name', async () => {
+    const saved = await save({ base: 'BASE PROMPT', 'label:scam': 'SCAM DEF' }, null);
+    harness.putPrompt
+      .mockResolvedValueOnce({ id: 61, key: 'base' })
+      .mockRejectedValueOnce(new LabHarnessError('harness down'));
+    const res = await run(
+      'publish',
+      {
+        draftId: String(saved.draftId),
+        note: 'ship',
+        expectedUpdatedAt: saved.updatedAt as string,
+      },
+      { grants: PUBLISH }
+    );
+    expect(res).toMatchObject({ status: 502, data: { published: ['base'] } });
+    const error = errorOf(res);
+    expect(error).toContain('Publishing Scam / phishing definition failed (harness down)');
+    expect(error).toContain('Already published: General instructions.');
+    expect(error).toContain('Your changes stay unpublished');
+    expect(error).not.toMatch(/label:|draft/);
+  });
+
+  it('refuses a stale publish of my changes in my-changes wording', async () => {
+    const seen = await save({ base: 'SEEN' }, null);
+    await save({ base: 'OTHER TAB' }, seen.updatedAt as string);
+    const res = await run(
+      'publish',
+      { draftId: String(seen.draftId), note: 'ship', expectedUpdatedAt: seen.updatedAt as string },
+      { grants: PUBLISH }
+    );
+    expect(res).toMatchObject({ status: 409 });
+    expect(errorOf(res)).toMatch(/^Your changes were changed in another tab/);
+    expect(harness.putPrompt).not.toHaveBeenCalled();
   });
 
   it("refuses another moderator's working copy as not found, before touching the harness", async () => {

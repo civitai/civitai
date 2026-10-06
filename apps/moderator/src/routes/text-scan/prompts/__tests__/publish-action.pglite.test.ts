@@ -120,8 +120,9 @@ describe('publish', () => {
 
     expect(result).toMatchObject({ status: 502, data: { published: ['base'] } });
     const error = (result as { data: { error: string } }).data.error;
-    expect(error).toContain('label:scam failed');
-    expect(error).toContain('Already published: base.');
+    expect(error).toContain('Scam / phishing definition failed');
+    expect(error).toContain('Already published: General instructions.');
+    expect(error).toContain('The draft stays unpublished');
     expect((await getDraft(draft.id))?.publishedAt).toBeNull();
   });
 

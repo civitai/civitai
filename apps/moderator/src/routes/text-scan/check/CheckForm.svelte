@@ -11,11 +11,14 @@
 
   let {
     overrides,
+    overridesError,
     onstart,
     onchecked,
   }: {
     /** The prompt changes to test beside the current prompts, as JSON; `{}` for none. */
     overrides: string;
+    /** Why the changes cannot be tested as they stand; blocks the check. */
+    overridesError: string | null;
     onstart: () => void;
     onchecked: (result: Record<string, unknown>) => void;
   } = $props();
@@ -27,7 +30,10 @@
 
   const parsed = $derived(parseCheckInput(raw));
   const blocked = $derived(
-    parsed.kind === 'empty' || parsed.kind === 'too-many-ids' || parsed.kind === 'refused'
+    parsed.kind === 'empty' ||
+      parsed.kind === 'too-many-ids' ||
+      parsed.kind === 'refused' ||
+      overridesError !== null
   );
   const judgedType = $derived.by((): LabEntityType | null => {
     switch (parsed.kind) {
@@ -160,6 +166,9 @@
       {form.submitting ? 'Checking…' : 'Check'}
     </Button>
   </div>
+  {#if overridesError}
+    <p class="mt-3 text-sm text-red-300">{overridesError}</p>
+  {/if}
   {#if form.error}
     <p class="mt-3 whitespace-pre-wrap text-sm text-red-300">{form.error}</p>
   {/if}

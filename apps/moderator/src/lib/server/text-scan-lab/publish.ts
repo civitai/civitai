@@ -11,7 +11,8 @@ import {
 import { LabHarnessError, getPrompts, putPrompt, type LabPrompts } from './harness-client';
 import { latestRunTotalsForSets, type LatestRun } from './runs.service';
 import { listSets } from './test-sets.service';
-import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
+import { blankPromptKeys, describeBlankPrompts, promptKeyName } from '$lib/text-scan-lab/labels';
+import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 
 export const draftIdField = z.coerce.number().int().positive();
 export const draftPromptsField = jsonField(
@@ -35,6 +36,11 @@ export function publishedName(note: string, at: Date): string {
   return line.length > 100 ? `${line.slice(0, 99)}…` : line;
 }
 
+/** Shown for a working copy saved again since the moderator loaded it. */
+export const WORKING_CONFLICT = 'Your changes were changed in another tab — reload to see the latest.';
+
+const names = (keys: readonly string[]) => keys.map((k) => promptKeyName(k as PromptKey)).join(', ');
+
 const loadFailure = (e: unknown) =>
   `Could not load prompts: ${e instanceof LabHarnessError ? e.message : 'unexpected error'}`;
 
@@ -46,9 +52,15 @@ const loadFailure = (e: unknown) =>
 export async function publishDraft(input: z.infer<typeof publishSchema>, userId: number) {
   const draft = await getVisibleDraft(input.draftId, userId);
   if (!draft) return fail(404, { error: `Draft ${input.draftId} not found.` });
+  const mine = draft.kind === 'working';
+  const subject = mine ? 'Your changes' : 'The draft';
   if (draft.publishedAt) return fail(409, { error: 'This draft is already published.' });
   if (draft.updatedAt.getTime() !== input.expectedUpdatedAt.getTime())
-    return fail(409, { error: new DraftConflictError().message });
+    return fail(409, {
+      error: mine ? WORKING_CONFLICT : new DraftConflictError().message,
+    });
+  const blank = blankPromptKeys(draft.prompts);
+  if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
   try {
     validateDraftPrompts(draft.prompts);
   } catch (e) {
@@ -57,7 +69,11 @@ export async function publishDraft(input: z.infer<typeof publishSchema>, userId:
   }
   const keys = PROMPT_KEYS.filter((k) => k in draft.prompts);
   if (!keys.length)
-    return fail(400, { error: 'This draft overrides no prompt — add a key first.' });
+    return fail(400, {
+      error: mine
+        ? 'There are no changes to publish.'
+        : 'This draft changes no prompt — nothing to publish.',
+    });
 
   let active: LabPrompts['active'];
   try {
@@ -84,11 +100,12 @@ export async function publishDraft(input: z.infer<typeof publishSchema>, userId:
       const why = e instanceof LabHarnessError ? e.message : 'unexpected error';
       return fail(502, {
         error:
-          `Publishing ${key} failed (${why}); it may or may not have gone live — check its history. ` +
+          `Publishing ${promptKeyName(key)} failed (${why}); it may or may not have gone live — check ` +
+          'Versions. ' +
           (published.length
-            ? `Already published: ${published.join(', ')}.`
-            : 'No earlier key was published.') +
-          ' The draft stays unpublished; publishing again skips keys already live.',
+            ? `Already published: ${names(published)}.`
+            : 'Nothing before it was published.') +
+          ` ${mine ? 'Your changes stay' : 'The draft stays'} unpublished; publishing again skips what is already live.`,
         published,
       });
     }
@@ -102,9 +119,9 @@ export async function publishDraft(input: z.infer<typeof publishSchema>, userId:
   } catch (e) {
     if (!(e instanceof DraftError)) throw e;
     return fail(e.status, {
-      error: `Published ${
-        published.join(', ') || 'nothing new'
-      }, but the draft could not be marked published: ${e.message}`,
+      error: `Published ${names(published) || 'nothing new'}, but ${subject.toLowerCase()} could not be marked published: ${
+        e instanceof DraftConflictError && mine ? WORKING_CONFLICT : e.message
+      }`,
       published,
     });
   }

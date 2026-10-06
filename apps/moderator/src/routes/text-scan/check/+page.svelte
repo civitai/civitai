@@ -1,11 +1,12 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { beforeNavigate } from '$app/navigation';
+  import { beforeNavigate, goto } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import type { ActionData } from './$types';
   import type { ChangesSource } from './+page.server';
-  import { ChangesState, type ChangesInit } from './changes.svelte';
+  import type { ChangesInit } from './changes';
+  import { createChanges } from './changes.svelte';
   import ChangesBar from './ChangesBar.svelte';
   import CheckForm from './CheckForm.svelte';
   import CheckItem from './CheckItem.svelte';
@@ -23,18 +24,42 @@
     editable: source.kind === 'mine' || source.editable,
   });
 
-  const changes = new ChangesState(untrack(() => changesInit(data.changes)));
+  const changes = createChanges(untrack(() => changesInit(data.changes)));
   // A reload (after propose, publish, discard, or a conflict) or another ?draft= replaces what is tested.
   $effect(() => {
     const next = changesInit(data.changes);
     untrack(() => changes.reset(next));
   });
 
+  // Set while this page itself re-issues a navigation it held back to save first.
+  let resuming = false;
   beforeNavigate((nav) => {
-    if (!changes.dirty) return;
-    void changes.flush();
-    if (nav.type === 'leave') nav.cancel();
+    if (resuming || !changes.dirty) return;
+    if (nav.type === 'leave') {
+      // Unsaveable as they stand: let the browser ask. Otherwise the save outlives the page.
+      if (changes.blankError || changes.conflict) nav.cancel();
+      else void changes.flush({ keepalive: true });
+      return;
+    }
+    const to = nav.to?.url;
+    if (nav.type !== 'link' || !to) {
+      void changes.flush();
+      return;
+    }
+    nav.cancel();
+    void changes.flush().then(async (saved) => {
+      if (!saved && !confirm('Your changes are not saved. Leave anyway?')) return;
+      resuming = true;
+      try {
+        await goto(to);
+      } finally {
+        resuming = false;
+      }
+    });
   });
+
+  // Outlives the bar, which a discard removes along with the changes it reports on.
+  let barError = $state<string | null>(null);
 
   let result = $state<CheckData | null>(null);
   // What was tested in the shown result, to say when the changes moved on since.
@@ -68,11 +93,16 @@
     canPublish={!!data.grants['textScan.prompt.publish']}
     runTotals={data.runTotals}
     onedit={(key) => (editing = key)}
+    onerror={(error) => (barError = error)}
   />
+{/if}
+{#if barError}
+  <p class="mb-4 text-sm text-red-300">{barError}</p>
 {/if}
 
 <CheckForm
   overrides={changes.json}
+  overridesError={changes.blankError}
   onstart={() => {
     result = null;
     checkedWith = changes.json;

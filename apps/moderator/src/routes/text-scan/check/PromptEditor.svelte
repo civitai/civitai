@@ -7,7 +7,7 @@
   import DiffView from '$lib/components/text-scan-lab/DiffView.svelte';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import type { ChangesState } from './changes.svelte';
+  import type { ChangesState } from './changes';
   import SaveStatus from './SaveStatus.svelte';
 
   let {
@@ -29,8 +29,10 @@
   let showDiff = $state(false);
 
   // Kept through the close animation, which would otherwise render an empty drawer.
-  let last: PromptKey | null = null;
-  const key = $derived(promptKey ? (last = promptKey) : last);
+  let key = $state<PromptKey | null>(null);
+  $effect.pre(() => {
+    if (promptKey) key = promptKey;
+  });
   const currentText = $derived(key ? current[key] : undefined);
   const changed = $derived(key !== null && key in changes.prompts);
   const mine = $derived(key ? changes.prompts[key] ?? currentText : undefined);
@@ -78,7 +80,7 @@
               </Button>
             {/if}
             {#if changed && changes.editable}
-              <Button size="xs" variant="ghost" onclick={() => changes.resetKey(key)}>
+              <Button size="xs" variant="ghost" onclick={() => key && changes.resetKey(key)}>
                 Reset to current
               </Button>
             {/if}
@@ -102,7 +104,7 @@
               !changes.editable && 'cursor-default bg-dark-7 text-dark-1'
             )}
             readonly={!changes.editable}
-            bind:value={() => mine ?? '', (v) => changes.set(key, v, currentText)}
+            bind:value={() => mine ?? '', (v) => key && changes.set(key, v, currentText)}
           />
         {/if}
       </div>

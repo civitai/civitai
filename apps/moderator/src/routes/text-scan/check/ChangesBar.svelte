@@ -7,7 +7,8 @@
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
   import type { ChangesSource } from './+page.server';
-  import { actionError, postAction, type ChangesState } from './changes.svelte';
+  import { actionError, type ChangesState } from './changes';
+  import { postAction } from './post-action';
   import ProposeDialog from './ProposeDialog.svelte';
   import PublishDialog from './PublishDialog.svelte';
   import SaveStatus from './SaveStatus.svelte';
@@ -19,6 +20,7 @@
     canPublish,
     runTotals,
     onedit,
+    onerror,
   }: {
     changes: ChangesState;
     source: ChangesSource;
@@ -27,10 +29,11 @@
     canPublish: boolean;
     runTotals: SetRunTotals[];
     onedit: (key: PromptKey) => void;
+    /** Reports a refused discard or copy (null clears it). */
+    onerror: (error: string | null) => void;
   } = $props();
 
   let busy = $state(false);
-  let error = $state<string | null>(null);
 
   const viewed = $derived(source.kind === 'draft' ? source.draft : null);
   const publishable = $derived(canPublish && changes.keys.length > 0 && !viewed?.publishedAt);
@@ -39,7 +42,7 @@
     if (!confirm('Discard all your changes? This cannot be undone.')) return;
     busy = true;
     await changes.settle();
-    error = actionError(await postAction('discardChanges', {}));
+    onerror(actionError(await postAction('discardChanges', {})));
     await invalidateAll();
     busy = false;
   }
@@ -52,7 +55,8 @@
       prompts: JSON.stringify(viewed.prompts),
       expectedUpdatedAt: workingCopy?.updatedAt.toISOString() ?? '',
     });
-    error = actionError(result);
+    const error = actionError(result);
+    onerror(error);
     if (!error) await goto('/text-scan/check', { invalidateAll: true });
     busy = false;
   }
@@ -107,8 +111,5 @@
   {/if}
   {#if changes.editable}
     <div class="mt-1"><SaveStatus {changes} /></div>
-  {/if}
-  {#if error}
-    <p class="mt-1 text-sm text-red-300">{error}</p>
   {/if}
 </div>

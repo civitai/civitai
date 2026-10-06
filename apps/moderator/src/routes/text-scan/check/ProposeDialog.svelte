@@ -7,7 +7,7 @@
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { FormState } from '$lib/form-state.svelte';
-  import { submitSaved, type ChangesState } from './changes.svelte';
+  import { submitSaved, type ChangesState } from './changes';
 
   let { changes }: { changes: ChangesState } = $props();
 

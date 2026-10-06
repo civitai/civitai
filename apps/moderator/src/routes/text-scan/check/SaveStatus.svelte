@@ -1,7 +1,7 @@
 <script lang="ts">
   import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import type { ChangesState } from './changes.svelte';
+  import type { ChangesState } from './changes';
 
   let { changes }: { changes: ChangesState } = $props();
 </script>

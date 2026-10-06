@@ -29,12 +29,17 @@ import {
   expectedUpdatedAtField,
   publishDraft,
   publishSchema,
+  WORKING_CONFLICT,
 } from '$lib/server/text-scan-lab/publish';
 import { listSets } from '$lib/server/text-scan-lab/test-sets.service';
 import { userIdByUsername } from '$lib/server/users.service';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
-import { ENTITY_TYPE_NAMES } from '$lib/text-scan-lab/labels';
+import {
+  ENTITY_TYPE_NAMES,
+  blankPromptKeys,
+  describeBlankPrompts,
+} from '$lib/text-scan-lab/labels';
 import {
   DEFAULT_HEADING,
   LAB_ENTITY_TYPES,
@@ -217,8 +222,6 @@ const missing = (key: string): LabScanResult => ({
   error: 'No result returned for this item.',
 });
 
-const CONFLICT = 'Your changes were changed in another tab — reload to see the latest.';
-
 const nullableExpected = z.literal('').transform(() => null).or(expectedUpdatedAtField);
 
 export const actions: Actions = {
@@ -226,6 +229,8 @@ export const actions: Actions = {
     const input = parseForm(checkSchema, await request.formData());
     if (typeof input === 'string') return fail(400, { error: input });
 
+    const blank = blankPromptKeys(input.overrides);
+    if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
     let overrides: DraftPrompts;
     try {
       overrides = validateDraftPrompts(input.overrides);
@@ -300,6 +305,8 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
+    const blank = blankPromptKeys(input.prompts);
+    if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
     const me = locals.user.id;
     try {
       let saved: PromptDraft | null;
@@ -323,7 +330,8 @@ export const actions: Actions = {
         updatedAt: saved?.updatedAt.toISOString() ?? null,
       };
     } catch (e) {
-      if (e instanceof DraftConflictError) return fail(409, { error: CONFLICT });
+      if (e instanceof DraftConflictError)
+        return fail(409, { error: input.draftId === undefined ? WORKING_CONFLICT : e.message });
       return refused(e);
     }
   },
@@ -352,7 +360,7 @@ export const actions: Actions = {
       );
       return { draftId: draft.id, name: draft.name };
     } catch (e) {
-      if (e instanceof DraftConflictError) return fail(409, { error: CONFLICT });
+      if (e instanceof DraftConflictError) return fail(409, { error: WORKING_CONFLICT });
       return refused(e);
     }
   },

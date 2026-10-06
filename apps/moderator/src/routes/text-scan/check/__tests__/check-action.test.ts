@@ -233,7 +233,9 @@ describe('check — with my changes', () => {
   it('refuses a blank override by name before any scan', async () => {
     const res = await check({ input: 'buy now', overrides: overrides({ 'label:scam': '  ' }) });
     expect(res).toMatchObject({ status: 400 });
-    expect((res as { data: { error: string } }).data.error).toContain('label:scam');
+    expect((res as { data: { error: string } }).data.error).toBe(
+      'Scam / phishing definition is empty — write it, or reset it to current.'
+    );
     nothingCalled();
   });
 

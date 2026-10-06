@@ -12,6 +12,18 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
 export const promptKeyName = (key: PromptKey): string =>
   key === 'base' ? 'General instructions' : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
 
+/** Keys of a set of prompt changes left empty, which would publish an empty prompt. */
+export const blankPromptKeys = (prompts: Partial<Record<PromptKey, unknown>>): PromptKey[] =>
+  (Object.keys(prompts) as PromptKey[]).filter((k) => {
+    const v = prompts[k];
+    return typeof v !== 'string' || !v.trim();
+  });
+
+export const describeBlankPrompts = (keys: readonly PromptKey[]): string =>
+  `${keys.map(promptKeyName).join(', ')} ${
+    keys.length === 1 ? 'is' : 'are'
+  } empty — write it, or reset it to current.`;
+
 export const ENTITY_TYPE_NAMES: Record<LabEntityType, string> = {
   Model: 'Model',
   Article: 'Article',

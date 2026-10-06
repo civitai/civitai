@@ -11,7 +11,7 @@
   import type { SetRunTotals } from '$lib/server/text-scan-lab/publish';
   import { promptKeyName } from '$lib/text-scan-lab/labels';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import { submitSaved, type ChangesState } from './changes.svelte';
+  import { submitSaved, type ChangesState } from './changes';
 
   let {
     changes,
