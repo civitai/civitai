@@ -2154,8 +2154,8 @@ export function PageBlockHost({
   const publishGenerationOutputsMutation = trpc.blocks.publishGenerationOutputs.useMutation();
   const getImagesByIdsMutation = trpc.blocks.getImagesByIds.useMutation();
   // CREATE_POST_FROM_APP is TWO calls: a read-only preview that resolves the
-  // consent payload server-side, then the write. Both take the block token; the
-  // write also requires the viewer's signed-in session.
+  // consent payload server-side, then the write. Both take the block token and
+  // both require the viewer's signed-in session.
   const previewPostFromAppMutation = trpc.blocks.previewPostFromApp.useMutation();
   const createPostFromAppMutation = trpc.blocks.createPostFromApp.useMutation();
 

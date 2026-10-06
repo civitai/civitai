@@ -236,75 +236,85 @@ beforeEach(() => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-describe('createPostFromApp — bound to the signed-in session', () => {
-  it('REFUSES a valid block token with NO session, before any token work, and writes nothing', async () => {
-    await expect(caller(ctx(null)).createPostFromApp(INPUT)).rejects.toMatchObject({
-      code: 'UNAUTHORIZED',
-    });
+const MISMATCH_MESSAGE =
+  'this app session belongs to a different account; reload the page to continue';
+
+/**
+ * BOTH halves of the bridge are bound to the signed-in session, through the one
+ * shared preamble. Each case runs against each procedure, and every refusal also
+ * asserts that the procedure's own downstream work never started — the write
+ * service for the write, the preview resolver and its catalog bucket for the
+ * preview — so a refusal cannot be credited to a later gate.
+ */
+describe.each([
+  {
+    proc: 'createPostFromApp' as const,
+    downstream: () => [
+      mockCheckPostRate,
+      mockResolveBlockPostSources,
+      mockWriteBlockPost,
+      mockApplyEffects,
+    ],
+    succeeded: () => {
+      expect(mockWriteBlockPost).toHaveBeenCalledTimes(1);
+      expect(mockWriteBlockPost).toHaveBeenCalledWith(
+        expect.objectContaining({ actor: expect.objectContaining({ userId: VIEWER_ID }) })
+      );
+    },
+  },
+  {
+    proc: 'previewPostFromApp' as const,
+    downstream: () => [mockCheckCatalogRate, mockPreviewBlockPost],
+    succeeded: () => {
+      expect(mockPreviewBlockPost).toHaveBeenCalledTimes(1);
+      expect(mockPreviewBlockPost).toHaveBeenCalledWith(
+        expect.objectContaining({ actor: expect.objectContaining({ userId: VIEWER_ID }) })
+      );
+    },
+  },
+])('$proc — bound to the signed-in session', ({ proc, downstream, succeeded }) => {
+  const call = (c = ctx()) => caller(c)[proc](INPUT);
+  const expectNothingDownstream = () => {
+    for (const m of downstream()) expect(m).not.toHaveBeenCalled();
+  };
+
+  it('REFUSES a valid block token with NO session, before any token work', async () => {
+    await expect(call(ctx(null))).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
     expect(mockAuthorizeBlockBridgeToken).not.toHaveBeenCalled();
-    expect(mockCheckPostRate).not.toHaveBeenCalled();
-    expect(mockResolveBlockPostSources).not.toHaveBeenCalled();
-    expect(mockWriteBlockPost).not.toHaveBeenCalled();
-    expect(mockApplyEffects).not.toHaveBeenCalled();
+    expectNothingDownstream();
   });
 
-  it('REFUSES when the session user is not the token subject, and writes nothing', async () => {
+  it('REFUSES when the session user is not the token subject', async () => {
     // The token names VIEWER_ID (42); the session is OTHER_USER_ID (7).
-    await expect(caller(ctx({ id: OTHER_USER_ID })).createPostFromApp(INPUT)).rejects.toMatchObject(
-      {
-        code: 'FORBIDDEN',
-        message: 'block token does not belong to the signed-in user',
-      }
-    );
+    await expect(call(ctx({ id: OTHER_USER_ID }))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: MISMATCH_MESSAGE,
+    });
     // Refused before the flag and hydration reads, not by a later gate.
     expect(mockIsAppBlocksEnabled).not.toHaveBeenCalled();
     expect(mockGetSessionUser).not.toHaveBeenCalled();
-    expect(mockCheckPostRate).not.toHaveBeenCalled();
-    expect(mockWriteBlockPost).not.toHaveBeenCalled();
-    expect(mockApplyEffects).not.toHaveBeenCalled();
+    expectNothingDownstream();
   });
 
   it('REFUSES the mismatch in the other direction too (token names someone else)', async () => {
     mockAuthorizeBlockBridgeToken.mockResolvedValue(claims({ sub: `user:${OTHER_USER_ID}` }));
 
-    await expect(caller().createPostFromApp(INPUT)).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: 'block token does not belong to the signed-in user',
-    });
-    expect(mockWriteBlockPost).not.toHaveBeenCalled();
-  });
-
-  it('SUCCEEDS when the session user is the token subject', async () => {
-    await expect(caller(ctx({ id: VIEWER_ID })).createPostFromApp(INPUT)).resolves.toMatchObject({
-      postId: 5150,
-    });
-    expect(mockWriteBlockPost).toHaveBeenCalledTimes(1);
-    expect(mockWriteBlockPost).toHaveBeenCalledWith(
-      expect.objectContaining({ actor: expect.objectContaining({ userId: VIEWER_ID }) })
-    );
+    await expect(call()).rejects.toMatchObject({ code: 'FORBIDDEN', message: MISMATCH_MESSAGE });
+    expectNothingDownstream();
   });
 
   it('REFUSES an API-key / OAuth-token request even for the same user, before any token work', async () => {
-    await expect(caller(ctx({ id: VIEWER_ID }, 99)).createPostFromApp(INPUT)).rejects.toMatchObject(
-      {
-        code: 'FORBIDDEN',
-        message: 'This action cannot be performed via API key or OAuth token.',
-      }
-    );
+    await expect(call(ctx({ id: VIEWER_ID }, 99))).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'This action cannot be performed via API key or OAuth token.',
+    });
     expect(mockAuthorizeBlockBridgeToken).not.toHaveBeenCalled();
-    expect(mockWriteBlockPost).not.toHaveBeenCalled();
+    expectNothingDownstream();
   });
 
-  it('leaves the read-only PREVIEW callable without a session (it writes nothing)', async () => {
-    await expect(caller(ctx(null)).previewPostFromApp(INPUT)).resolves.toBeDefined();
-    expect(mockPreviewBlockPost).toHaveBeenCalledTimes(1);
-  });
-
-  it('leaves the PREVIEW unbound when a DIFFERENT user is signed in', async () => {
-    await expect(
-      caller(ctx({ id: OTHER_USER_ID })).previewPostFromApp(INPUT)
-    ).resolves.toBeDefined();
-    expect(mockPreviewBlockPost).toHaveBeenCalledTimes(1);
+  it('SUCCEEDS when the session user is the token subject', async () => {
+    await expect(call(ctx({ id: VIEWER_ID }))).resolves.toBeDefined();
+    succeeded();
   });
 });
 
@@ -360,16 +370,18 @@ describe('the shared preamble — createPostFromApp', () => {
       expect(mockWriteBlockPost).not.toHaveBeenCalled();
     });
 
-    it('is evaluated with the TOKEN SUBJECT, never a session user (observed via the preview)', async () => {
-      // On the write the session must equal the subject, so the difference is only
-      // observable on the preview, which carries no session binding: sign in as
-      // someone else and check the flag still sees the token subject.
+    it('is evaluated with the HYDRATED token subject, not the session object', async () => {
+      // The session must now be the subject, so the ids are equal; what still
+      // differs is the OBJECT. The flag must see the user hydrated from the token
+      // subject, never the request's `ctx.user`.
       const subject = trustedUser();
       mockGetSessionUser.mockResolvedValue(subject);
-      await caller(ctx({ id: OTHER_USER_ID })).previewPostFromApp(INPUT);
+      const c = ctx({ id: VIEWER_ID });
+      await caller(c).createPostFromApp(INPUT);
       expect(mockGetSessionUser).toHaveBeenCalledWith(VIEWER_ID);
-      expect(mockGetSessionUser).not.toHaveBeenCalledWith(OTHER_USER_ID);
-      expect(mockIsAppBlocksPostCreationEnabled.mock.calls[0][0].user).toBe(subject);
+      const flagUser = mockIsAppBlocksPostCreationEnabled.mock.calls[0][0].user;
+      expect(flagUser).toBe(subject);
+      expect(flagUser).not.toBe(c.user);
     });
 
     it('gates the read-only PREVIEW too — a dark capability must not leak a resolver', async () => {

@@ -237,6 +237,7 @@ import {
 import {
   recordBlockPostSubjectRefusal,
   recordStepPriceCheck,
+  type AppBlockPostSurface,
 } from '~/server/metrics/app-block-runtime.metrics';
 // Post-paid SETTLE-TO-ACTUAL for customComfy (plan §5.3). `persist*` is awaited in
 // submit (after reserving the ceiling); `settle*` is a best-effort call on the
@@ -487,11 +488,10 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  * ⚠️ IT IS NOT A CLAIM THAT THE TWO PROCEDURES HAVE THE SAME GATE SET, AND
  * READING IT THAT WAY WOULD BE WRONG. The write deliberately carries gates the
  * preview does not — `assertSharedWriteTrust` (#6 in the `createPostFromApp`
- * enumeration) and the two post rate buckets are WRITE-ONLY, as is the session
- * binding inside (3), which this helper applies to the `create` arm only. They are
- * write-only because a read that renders a dialog is not the act those gates exist
- * to bound, and charging a rate bucket for a preview would let a dialog the viewer
- * never confirmed consume the budget. The resulting asymmetry — a resolvable
+ * enumeration) and the two post rate buckets are WRITE-ONLY. They are write-only
+ * because a read that renders a dialog is not the act those gates exist to bound,
+ * and charging a rate bucket for a preview would let a dialog the viewer never
+ * confirmed consume the budget. The resulting asymmetry — a resolvable
  * preview for a subject who would be refused the post — is the accepted position
  * and is asserted by a test, not an oversight. What this helper guarantees is
  * narrower and exact: NEITHER procedure can be reached without all five of the
@@ -510,8 +510,9 @@ const confirmedImageCountInput = z.number().int().positive().max(100);
  *      it is the ONLY place the bridge resolves claims.
  *   2. scope — cheap, and refusing an unscoped app before hydrating a session
  *      keeps the unauthorized path off the auth hub.
- *   3. non-anon subject — and, for the write only, that subject IS the
- *      signed-in user the request arrived with.
+ *   3. non-anon subject — and that subject IS the signed-in user the request
+ *      arrived with. Both procedures are `protectedProcedure`s and pass that
+ *      user's id; the helper takes it as a required argument.
  *   4. the App-Blocks RUNTIME flag, evaluated on the token SUBJECT.
  *   5. the SUBJECT HYDRATES. Refused on its own terms, with its own message, and
  *      NOT folded into (6) — see the docblock on the refusal itself.
@@ -528,16 +529,6 @@ type BlockPostRequestAuth = {
   // `SessionUser | null` is how the conflated verdict comes back.
   subjectUser: SessionUser;
 };
-
-/**
- * Which half of the bridge is asking. The write must name the signed-in user it
- * arrived with, and the type makes that impossible to omit: `create` without a
- * `sessionUserId` does not compile. The preview is read-only and stays callable
- * without a session, so it carries none.
- */
-type BlockPostRequestSurface =
-  | { surface: 'preview' }
-  | { surface: 'create'; sessionUserId: number };
 
 /**
  * ⚠️ THE RETURN TYPE IS A NAMED ALIAS ON PURPOSE, AND IT IS NOT STYLE.
@@ -558,9 +549,9 @@ type BlockPostRequestSurface =
  */
 async function authorizeBlockPostRequest(
   blockToken: string,
-  request: BlockPostRequestSurface
+  surface: AppBlockPostSurface,
+  sessionUserId: number
 ): Promise<BlockPostRequestAuth> {
-  const { surface } = request;
   const claims = await authorizeBlockBridgeToken(blockToken);
   // NOT `ai:write:budgeted`. An app authorised to spend the viewer's Buzz on a
   // generation has NOT thereby been authorised to publish under their name — the
@@ -576,14 +567,13 @@ async function authorizeBlockPostRequest(
       message: 'posting requires an authenticated viewer',
     });
   }
-  // The write is bound to the signed-in viewer: the token's subject must be the
-  // session the request arrived with. Checked before any flag or hydration read,
-  // so a mismatched request does no further work. The read-only preview carries
-  // no such binding — see `BlockPostRequestSurface`.
-  if (request.surface === 'create' && request.sessionUserId !== userId) {
+  // Both halves are bound to the signed-in viewer: the token's subject must be
+  // the session the request arrived with. Checked before any flag or hydration
+  // read, so a mismatched request does no further work.
+  if (sessionUserId !== userId) {
     throw new TRPCError({
       code: 'FORBIDDEN',
-      message: 'block token does not belong to the signed-in user',
+      message: 'this app session belongs to a different account; reload the page to continue',
     });
   }
   await assertAppBlocksEnabledForTokenUser(userId);
@@ -5316,15 +5306,22 @@ export const blocksRouter = router({
    * a caller that skips the preview gets the identical refusals and a
    * preview/commit divergence is a UX bug, never an authorization hole.
    *
+   * Bound the same way as the write: a signed-in browser session whose user is
+   * the token subject (API-key and OAuth-token requests refused), so the preview
+   * and the write cannot disagree about who is asking.
+   *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows), despite
    * being a pure read.
    */
-  previewPostFromApp: publicProcedure
+  previewPostFromApp: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(z.object({ blockToken: z.string().min(1), ...blockPostPayloadShape }))
     .mutation(async ({ ctx, input }) => {
-      const { claims, userId } = await authorizeBlockPostRequest(input.blockToken, {
-        surface: 'preview',
-      });
+      const { claims, userId } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'preview',
+        ctx.user.id
+      );
       // NOTE: the CATALOG bucket, not the post bucket. The preview writes
       // nothing, so charging it against the 3-posts/hour ceiling would let a
       // block exhaust its own posting budget by rendering dialogs — and the
@@ -5429,10 +5426,11 @@ export const blocksRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
-      const { claims, userId, subjectUser } = await authorizeBlockPostRequest(input.blockToken, {
-        surface: 'create',
-        sessionUserId: ctx.user.id,
-      });
+      const { claims, userId, subjectUser } = await authorizeBlockPostRequest(
+        input.blockToken,
+        'create',
+        ctx.user.id
+      );
 
       // WRITE TRUST. Reused from the shared-storage path. "Verified email" is
       // satisfied by emailVerified OR a linked OAuth account; only query for the
