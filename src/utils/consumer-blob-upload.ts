@@ -19,9 +19,9 @@ const SUPPORTED_CONTENT_TYPES = [
   'video/webm',
 ] as const;
 const PRESIGN_TIMEOUT_MS = 15_000;
-// Silence allowed after the body is sent. Short for images because a browser can report a small body
-// as sent before it leaves the device, so on a dead link this is the window the user waits out.
-// Video keeps a long window: the reply to a large body may legitimately take longer.
+// Silence allowed after the body is sent. Type stands in for size: a browser can report a small
+// body as sent before it leaves the device, so images get a short window on a dead link, while
+// the reply to a large video may legitimately take longer.
 const IMAGE_RESPONSE_TIMEOUT_MS = 60_000;
 const VIDEO_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const MAX_ATTEMPTS = 2;

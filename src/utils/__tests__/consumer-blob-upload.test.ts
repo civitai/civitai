@@ -74,7 +74,7 @@ class FakeXHR {
   }
 }
 
-let presignMode: 'ok' | 'hang' | 'throttle-once' | 'forbidden';
+let presignMode: 'ok' | 'hang' | 'unavailable-once' | 'throttle-once' | 'forbidden';
 let presignCount: number;
 const fetchMock = vi.fn((url: string, init?: RequestInit) => {
   if (url === PRESIGN_PATH) {
@@ -85,6 +85,8 @@ const fetchMock = vi.fn((url: string, init?: RequestInit) => {
           reject(new DOMException('Aborted', 'AbortError'))
         )
       );
+    if (presignMode === 'unavailable-once' && presignCount === 1)
+      return Promise.resolve({ ok: false, status: 503, headers: new Headers() });
     if (presignMode === 'throttle-once' && presignCount === 1)
       return Promise.resolve({
         ok: false,
@@ -247,6 +249,17 @@ describe('uploadConsumerBlob', () => {
     expect(FakeXHR.instances).toHaveLength(1);
     expect(presignCount).toBe(1);
     expect(kinds()).toEqual(['consumer blob upload failed: http-422']);
+  });
+
+  it('retries a presign 5xx', async () => {
+    presignMode = 'unavailable-once';
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+    FakeXHR.instances[0].respond(200, JSON.stringify({ id: 'b1' }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(result.value).toEqual({ id: 'b1' });
+    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-503']);
   });
 
   it('retries a throttled presign after its Retry-After', async () => {
