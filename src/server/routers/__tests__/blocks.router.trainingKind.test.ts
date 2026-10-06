@@ -45,6 +45,7 @@ const h = vi.hoisted(() => ({
   buzzAccounts: vi.fn(async () => ({ blue: 100, green: 200, yellow: 0 })),
   getActiveDevTunnel: vi.fn(async (): Promise<unknown> => null),
   reserveDevSessionBuzz: vi.fn(),
+  refundDevSessionBuzz: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/services/blocks/block-bridge-auth.service', async (importOriginal) => ({
@@ -93,7 +94,7 @@ vi.mock('~/server/services/blocks/app-spend-cap.service', () => ({
 vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
   getActiveDevTunnel: (...a: unknown[]) => h.getActiveDevTunnel(...(a as [])),
   reserveDevSessionBuzz: (...a: unknown[]) => h.reserveDevSessionBuzz(...(a as [])),
-  refundDevSessionBuzz: vi.fn(),
+  refundDevSessionBuzz: (...a: unknown[]) => h.refundDevSessionBuzz(...(a as [])),
   chargeDevSessionOverage: vi.fn(),
 }));
 vi.mock('~/server/services/blocks/block-workflows.service', () => ({
@@ -405,7 +406,7 @@ beforeEach(() => {
   h.reserveAppSpend.mockImplementation(async () => ({ allowed: true, dailyKey: 'app-daily' }));
   dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue(null);
   dbMock.dbRead.$queryRaw.mockClear();
-  // The dataset images, re-read on the PRIMARY before every quote and charge.
+  // The dataset images, re-read on the PRIMARY before every charge.
   dbMock.dbWrite.$queryRaw.mockReset();
   dbMock.dbWrite.$queryRaw.mockResolvedValue([imageRow({ id: 1 }), imageRow({ id: 2 })]);
   h.getActiveDevTunnel.mockImplementation(async () => null);
@@ -764,7 +765,25 @@ describe('training SUBMIT — charged only against a confirmed, re-quoted, singl
     }
   );
 
-  it('control: a refusal BEFORE the orchestrator call stays a plain error and refunds', async () => {
+  it('the unconfirmed arm also keeps the consent-budget and dev-session reservations', async () => {
+    dbMock.dbWrite.appUserScopeGrant.findUnique.mockResolvedValue({
+      buzzBudgetPerDay: 5000,
+      revokedAt: null,
+    });
+    h.getActiveDevTunnel.mockImplementation(async () => ({ sessionId: 's1', spendCapBuzz: 5000 }));
+    h.reserveDevSessionBuzz.mockImplementation(async () => ({ allowed: true, total: 1200 }));
+    const quoteId = await confirmedQuote();
+    h.submitWorkflow.mockImplementation(async (args: { query?: { whatif?: boolean } }) => {
+      if (args.query?.whatif) return { cost: { total: 1200 } };
+      throw new Error('socket hang up');
+    });
+    await expectUnconfirmed(submit(body({ quoteId })));
+    expect(h.reserveDevSessionBuzz).toHaveBeenCalledWith('s1', 1200, 5000);
+    expect(counter('system:blocks:consent-budget')).toBe(1200);
+    expect(h.refundDevSessionBuzz).not.toHaveBeenCalled();
+  });
+
+  it('control: a refusal BEFORE the orchestrator call refunds and is not marked unconfirmed', async () => {
     const quoteId = await confirmedQuote();
     h.reserveAppSpend.mockResolvedValueOnce({ allowed: false, reason: 'daily' });
     const r = (await submit(body({ quoteId }))) as {

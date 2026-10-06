@@ -485,7 +485,9 @@ owner's own private run is allowed, under the private-run Buzz cap.
    dropped, or the server attempted the run but could not confirm it — the host replies
    `error: 'submission-unconfirmed'`: the run may be running and charged, so check the viewer's
    trainings before offering a retry. When the server could not confirm the run, a retry of the
-   same body (new estimate, new confirmation) reuses that run's orchestrator id.
+   same body (new estimate, new confirmation) reuses that run's orchestrator id; but after a
+   dropped connection the server may already have started the run, and a retry of the same body
+   then starts a second, separately charged run. The block cannot tell these cases apart.
 
 A confirmed run may cost more than the token's per-call budget, up to
 `BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.

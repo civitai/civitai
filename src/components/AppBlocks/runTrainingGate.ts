@@ -191,8 +191,8 @@ export function trainingSubmitReplyFromResult(result: {
 /**
  * The `TRAINING_RESULT` payload for a submit that THREW. A transport failure means the
  * server may have run it — `submission-unconfirmed`, never resent (the quote is spent
- * once; a retry of the same body after a fresh estimate reuses the run's orchestrator
- * id). A coded error is a server refusal and is passed on.
+ * once). If the server DID start it, a later retry of the same body is a second run.
+ * A coded error is a server refusal and is passed on.
  */
 export function trainingSubmitReplyFromError(err: unknown): TrainingSubmitReply {
   if (isTrainingSubmitTransportError(err)) return { error: 'submission-unconfirmed' };

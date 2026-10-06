@@ -302,7 +302,11 @@ export async function finalizeGenIdempotency(key: string, result: unknown): Prom
  * Release the idempotency claim for a NON-committed outcome (a pre-reservation
  * rejection, a cap/velocity reject that already refunded, or a throw before a
  * resolved submit) so a genuine retry with the same key can execute. Safe because
- * NO money moved and NO reservation stands. Best-effort; never throws.
+ * NO money moved and NO reservation stands — with one exception: the training
+ * submit's unconfirmed arm releases its per-quote claim while its reservations stand
+ * and a run may exist. That is safe for a different reason: the quote was spent
+ * (GETDEL) before the call, so a retry under that claim key can never run again.
+ * Best-effort; never throws.
  */
 export async function releaseGenIdempotency(key: string): Promise<void> {
   await sysRedis.del(key as never).catch(() => {
