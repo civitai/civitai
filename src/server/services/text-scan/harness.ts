@@ -49,7 +49,10 @@ export const isTextScanHarnessAction = (action: unknown) =>
   typeof action === 'string' && (TEXT_SCAN_HARNESS_ACTIONS as readonly string[]).includes(action);
 
 const promptOverrides = z
-  .record(z.string().regex(TEXT_SCAN_PROMPT_KEY), z.string().min(1))
+  .record(
+    z.string().regex(TEXT_SCAN_PROMPT_KEY),
+    z.string().refine((s) => s.trim().length > 0, 'empty prompt')
+  )
   .optional();
 const entityType = z
   .string()

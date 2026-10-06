@@ -537,6 +537,22 @@ describe('free-text actions', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
+  it.each(['  ', '\n', ''])(
+    'refuses a blank prompt override %j before submitting',
+    async (blank) => {
+      const res = await call({
+        action: 'scanTexts',
+        entityType: 'Comment',
+        texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'x' }] }],
+        promptOverrides: { base: 'B', 'label:scam': blank },
+      });
+      expect(res._status()).toBe(400);
+      const issues = (res._body() as { issues: Array<{ path: unknown[] }> }).issues;
+      expect(issues.map((i) => i.path)).toContainEqual(['promptOverrides', 'label:scam']);
+      expect(submitWorkflow).not.toHaveBeenCalled();
+    }
+  );
+
   it('scanTexts rejects more than 50 texts and an empty field list', async () => {
     const text = { key: 'k', fields: [{ heading: 'Comment', text: 'x' }] };
     expect(
