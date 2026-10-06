@@ -1,12 +1,9 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
-  import { goto } from '$app/navigation';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { cn } from '@civitai/ui/utils.js';
-  import { FormState } from '$lib/form-state.svelte';
+  import { LINK_CLASS } from '$lib/format';
   import type { PromptDraft } from '$lib/server/text-scan-lab/drafts.service';
-  import type { PromptKey } from '$lib/text-scan-lab/types';
+  import { promptKeyName } from '$lib/text-scan-lab/labels';
+  import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 
   let {
     drafts,
@@ -14,58 +11,42 @@
     promptKey,
   }: { drafts: PromptDraft[]; selectedId: number | null; promptKey: PromptKey } = $props();
 
-  const create = new FormState({
-    reload: true,
-    onSuccess: (data) => {
-      if (typeof data?.draftId === 'number') goto(`?draft=${data.draftId}&key=${promptKey}`);
-    },
-  });
+  const changed = (draft: PromptDraft) =>
+    PROMPT_KEYS.filter((k) => k in draft.prompts)
+      .map(promptKeyName)
+      .join(', ') || 'no changes';
 </script>
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
-  <h2 class="text-sm font-semibold text-white">Drafts</h2>
+  <h2 class="text-sm font-semibold text-white">Proposed drafts</h2>
 
-  <form
-    method="POST"
-    action="?/createDraft"
-    use:enhance={create.enhance}
-    class="mt-3 flex flex-wrap items-center gap-2"
-  >
-    <Input name="name" placeholder="New draft name" maxlength={100} required class="w-56" />
-    <Input name="note" placeholder="Note (optional)" maxlength={2000} class="min-w-40 flex-1" />
-    <Button type="submit" size="sm" disabled={create.submitting}>Create</Button>
-  </form>
-  {#if create.error}
-    <p class="mt-2 text-sm text-red-300">{create.error}</p>
-  {/if}
+  <p class="mt-1 text-xs text-dark-2">
+    Drafts are proposed from Check. Open one there to test it, or here to review and publish it.
+  </p>
 
   {#if drafts.length}
     <ul class="mt-3 space-y-1">
       {#each drafts as draft (draft.id)}
-        <li>
-          <a
-            href="?draft={draft.id}&key={promptKey}"
-            class={cn(
-              'flex items-baseline justify-between gap-2 rounded-md px-2 py-1 text-sm hover:bg-dark-5',
-              draft.id === selectedId && 'bg-dark-5'
-            )}
-          >
-            <span class="text-dark-0">
-              {draft.name}
-              <span class="text-xs text-dark-2">
-                · {Object.keys(draft.prompts).join(', ') || 'no overrides'}
-              </span>
-            </span>
-            <span class="shrink-0 text-xs text-dark-2">
-              {draft.publishedAt
-                ? `published ${draft.publishedAt.toLocaleDateString()}`
-                : `edited ${draft.updatedAt.toLocaleString()}`}
-            </span>
+        <li
+          class={cn(
+            'flex items-baseline justify-between gap-2 rounded-md px-2 py-1 text-sm hover:bg-dark-5',
+            draft.id === selectedId && 'bg-dark-5'
+          )}
+        >
+          <a href="?draft={draft.id}&key={promptKey}" class="min-w-0 text-dark-0">
+            {draft.name}
+            <span class="text-xs text-dark-2">· {changed(draft)}</span>
           </a>
+          <span class="flex shrink-0 items-baseline gap-2 text-xs text-dark-2">
+            {draft.publishedAt
+              ? `published ${draft.publishedAt.toLocaleDateString()}`
+              : `edited ${draft.updatedAt.toLocaleString()}`}
+            <a href="/text-scan/check?draft={draft.id}" class={LINK_CLASS}>Open in Check</a>
+          </span>
         </li>
       {/each}
     </ul>
   {:else}
-    <p class="mt-3 text-sm text-dark-2">No drafts yet.</p>
+    <p class="mt-3 text-sm text-dark-2">No proposed drafts yet.</p>
   {/if}
 </section>

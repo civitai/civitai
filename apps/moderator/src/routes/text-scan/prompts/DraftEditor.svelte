@@ -11,6 +11,7 @@
   import { LINK_CLASS } from '$lib/format';
   import type { DraftPrompts, PromptDraft } from '$lib/server/text-scan-lab/drafts.service';
   import type { LabPrompt } from '$lib/server/text-scan-lab/harness-client';
+  import { promptKeyName } from '$lib/text-scan-lab/labels';
   import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
   import DiffView from '$lib/components/text-scan-lab/DiffView.svelte';
 
@@ -98,18 +99,18 @@
   {/if}
 
   <p class="mt-3 text-xs text-dark-2">
-    Overrides:
+    Changes:
     {#each PROMPT_KEYS.filter((k) => k in prompts) as key (key)}
-      <a href="?draft={draft.id}&key={key}" class="ml-1 {LINK_CLASS}">{key}</a>
+      <a href="?draft={draft.id}&key={key}" class="ml-1 {LINK_CLASS}">{promptKeyName(key)}</a>
     {:else}
-      none — every key runs active.
+      none — everything runs as current.
     {/each}
   </p>
 
   <div class="mt-4">
     {#if overridden}
       <div class="flex items-center justify-between gap-2">
-        <Label for="draft-prompt" class="text-xs text-dark-2">{promptKey}</Label>
+        <Label for="draft-prompt" class="text-xs text-dark-2">{promptKeyName(promptKey)}</Label>
         <div class="flex gap-2">
           {#if active}
             <Button size="xs" variant="ghost" onclick={() => (comparing = !comparing)}>
@@ -118,7 +119,7 @@
           {/if}
           {#if !readOnly}
             <Button size="xs" variant="ghost" onclick={() => removeKey(promptKey)}>
-              Remove override
+              Remove change
             </Button>
           {/if}
         </div>
@@ -140,7 +141,7 @@
         }
       />
     {:else}
-      <p class="text-sm text-dark-2">This draft runs the active {promptKey}.</p>
+      <p class="text-sm text-dark-2">This draft keeps the current {promptKeyName(promptKey)}.</p>
       {#if !readOnly && activeLoaded}
         <Button
           class="mt-2"
@@ -148,11 +149,11 @@
           variant="outline"
           onclick={() => setPrompts({ ...prompts, [promptKey]: active?.content ?? '' })}
         >
-          Override {promptKey}
+          Change {promptKeyName(promptKey)}
         </Button>
       {:else if !readOnly}
         <p class="mt-2 text-xs text-amber-300">
-          The active prompts did not load, so an override cannot start from them — reload to try again.
+          The active prompts did not load, so a change cannot start from them — reload to try again.
         </p>
       {/if}
     {/if}

@@ -8,6 +8,7 @@
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import type { PromptDraft } from '$lib/server/text-scan-lab/drafts.service';
+  import { promptKeyName } from '$lib/text-scan-lab/labels';
   import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
 
   let {
@@ -64,10 +65,10 @@
     {#if dirty}
       <p class="mt-2 text-xs text-amber-300">Save your changes before publishing.</p>
     {:else if !keys.length}
-      <p class="mt-2 text-xs text-dark-2">This draft overrides no key.</p>
+      <p class="mt-2 text-xs text-dark-2">This draft changes nothing.</p>
     {:else if confirming}
       <p class="mt-2 text-sm text-dark-0">
-        Publish {keys.join(', ')} as new active versions? Every scan uses them immediately.
+        Publish {keys.map(promptKeyName).join(', ')} as the current versions? Every scan uses them immediately.
       </p>
       <div class="mt-2 flex gap-2">
         <Button type="submit" size="sm" variant="destructive" disabled={publish.submitting}>

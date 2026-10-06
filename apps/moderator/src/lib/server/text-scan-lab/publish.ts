@@ -11,7 +11,7 @@ import {
 import { LabHarnessError, getPrompts, putPrompt, type LabPrompts } from './harness-client';
 import { latestRunTotalsForSets, type LatestRun } from './runs.service';
 import { listSets } from './test-sets.service';
-import { blankPromptKeys, describeBlankPrompts, promptKeyName } from '$lib/text-scan-lab/labels';
+import { promptKeyName } from '$lib/text-scan-lab/labels';
 import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 
 export const draftIdField = z.coerce.number().int().positive();
@@ -37,9 +37,11 @@ export function publishedName(note: string, at: Date): string {
 }
 
 /** Shown for a working copy saved again since the moderator loaded it. */
-export const WORKING_CONFLICT = 'Your changes were changed in another tab — reload to see the latest.';
+export const WORKING_CONFLICT =
+  'Your changes were changed in another tab — reload to see the latest.';
 
-const names = (keys: readonly string[]) => keys.map((k) => promptKeyName(k as PromptKey)).join(', ');
+const names = (keys: readonly string[]) =>
+  keys.map((k) => promptKeyName(k as PromptKey)).join(', ');
 
 const loadFailure = (e: unknown) =>
   `Could not load prompts: ${e instanceof LabHarnessError ? e.message : 'unexpected error'}`;
@@ -59,8 +61,6 @@ export async function publishDraft(input: z.infer<typeof publishSchema>, userId:
     return fail(409, {
       error: mine ? WORKING_CONFLICT : new DraftConflictError().message,
     });
-  const blank = blankPromptKeys(draft.prompts);
-  if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
   try {
     validateDraftPrompts(draft.prompts);
   } catch (e) {
@@ -100,12 +100,16 @@ export async function publishDraft(input: z.infer<typeof publishSchema>, userId:
       const why = e instanceof LabHarnessError ? e.message : 'unexpected error';
       return fail(502, {
         error:
-          `Publishing ${promptKeyName(key)} failed (${why}); it may or may not have gone live — check ` +
+          `Publishing ${promptKeyName(
+            key
+          )} failed (${why}); it may or may not have gone live — check ` +
           'Versions. ' +
           (published.length
             ? `Already published: ${names(published)}.`
             : 'Nothing before it was published.') +
-          ` ${mine ? 'Your changes stay' : 'The draft stays'} unpublished; publishing again skips what is already live.`,
+          ` ${
+            mine ? 'Your changes stay' : 'The draft stays'
+          } unpublished; publishing again skips what is already live.`,
         published,
       });
     }
@@ -119,7 +123,9 @@ export async function publishDraft(input: z.infer<typeof publishSchema>, userId:
   } catch (e) {
     if (!(e instanceof DraftError)) throw e;
     return fail(e.status, {
-      error: `Published ${names(published) || 'nothing new'}, but ${subject.toLowerCase()} could not be marked published: ${
+      error: `Published ${
+        names(published) || 'nothing new'
+      }, but ${subject.toLowerCase()} could not be marked published: ${
         e instanceof DraftConflictError && mine ? WORKING_CONFLICT : e.message
       }`,
       published,

@@ -89,7 +89,7 @@ describe('createDraft', () => {
         { name: 'x', prompts: { base: 'BASE PROMPT', 'label:poi': '  \n ' }, note: null },
         MOD
       )
-    ).rejects.toThrow(/label:poi/);
+    ).rejects.toThrow('Real person definition is empty');
   });
 });
 
@@ -164,9 +164,9 @@ describe('markPublished', () => {
       { prompts: { base: 'EDITED' }, note: null, expectedUpdatedAt: draft.updatedAt },
       OTHER_MOD
     );
-    await expect(markPublished(draft.id, { 'label:scam': 41 }, draft.updatedAt, AS_MOD)).rejects.toThrow(
-      DraftConflictError
-    );
+    await expect(
+      markPublished(draft.id, { 'label:scam': 41 }, draft.updatedAt, AS_MOD)
+    ).rejects.toThrow(DraftConflictError);
   });
 
   it("keeps a proposed draft's name, whatever the publish note", async () => {
@@ -181,9 +181,9 @@ describe('markPublished', () => {
   it('refuses to publish twice', async () => {
     const draft = await newDraft();
     await markPublished(draft.id, { 'label:scam': 41 }, draft.updatedAt, AS_MOD);
-    await expect(markPublished(draft.id, { 'label:scam': 42 }, draft.updatedAt, AS_MOD)).rejects.toThrow(
-      DraftPublishedError
-    );
+    await expect(
+      markPublished(draft.id, { 'label:scam': 42 }, draft.updatedAt, AS_MOD)
+    ).rejects.toThrow(DraftPublishedError);
   });
 });
 
@@ -247,7 +247,7 @@ describe('working copy', () => {
     const loaded = await save(MOD, { base: 'BASE PROMPT' }, null);
     await expect(
       save(MOD, { base: 'BASE PROMPT', 'label:scam': ' ' }, loaded!.updatedAt)
-    ).rejects.toThrow(/label:scam/);
+    ).rejects.toThrow('Scam / phishing definition is empty');
     expect(await getWorkingCopy(MOD)).toEqual(loaded);
   });
 
@@ -329,9 +329,9 @@ describe('proposeWorkingCopy', () => {
     await expect(proposeWorkingCopy(MOD, '  ', null, working!.updatedAt)).rejects.toThrow(
       DraftValidationError
     );
-    await expect(proposeWorkingCopy(MOD, 'n'.repeat(101), null, working!.updatedAt)).rejects.toThrow(
-      DraftValidationError
-    );
+    await expect(
+      proposeWorkingCopy(MOD, 'n'.repeat(101), null, working!.updatedAt)
+    ).rejects.toThrow(DraftValidationError);
     expect((await getWorkingCopy(MOD))?.kind).toBe('working');
   });
 });

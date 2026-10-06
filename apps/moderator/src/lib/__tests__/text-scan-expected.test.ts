@@ -1,11 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { composeUserMessage } from '../text-scan-lab/compose';
-import {
-  InvalidExpectedError,
-  expectedChips,
-  expectedFromOutput,
-  parseExpected,
-} from '../text-scan-lab/expected';
+import { InvalidExpectedError, expectedFromOutput, parseExpected } from '../text-scan-lab/expected';
 
 describe('expectedFromOutput', () => {
   it('turns the nsfw level into a one-level range and each flag into its detected verdict', () => {
@@ -75,18 +70,5 @@ describe('composeUserMessage', () => {
         { heading: 'Version', text: 'v1 notes' },
       ])
     ).toBe('## Name\nMy LoRA\n\n## Version\nv1 notes');
-  });
-});
-
-describe('expectedChips', () => {
-  it('gives one chip per scored label', () => {
-    expect(expectedChips({ nsfw: { min: 'pg13', max: 'r' }, poi: false })).toEqual([
-      'nsfw pg13–r',
-      'poi no',
-    ]);
-    expect(expectedChips({ nsfw: { min: 'x', max: 'x' }, scam: true })).toEqual([
-      'nsfw x',
-      'scam yes',
-    ]);
   });
 });

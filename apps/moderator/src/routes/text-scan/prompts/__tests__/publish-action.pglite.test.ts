@@ -177,7 +177,9 @@ describe('saveDraft', () => {
       }
     );
     expect(result).toMatchObject({ status: 400 });
-    expect((result as { data: { error: string } }).data.error).toContain('label:scam');
+    expect((result as { data: { error: string } }).data.error).toBe(
+      'Scam / phishing definition is empty — write it, or reset it to current.'
+    );
     expect(await getDraft(draft.id)).toEqual(draft);
   });
 

@@ -3,6 +3,7 @@
   import { LINK_CLASS, plural } from '$lib/format';
   import type { CaseFlip, RunComparison, TestRun } from '$lib/server/text-scan-lab/runs.service';
   import type { TestCase } from '$lib/server/text-scan-lab/test-sets.service';
+  import { ENTITY_TYPE_NAMES, labelName } from '$lib/text-scan-lab/labels';
   import { percent, type LabelTotals } from '$lib/text-scan-lab/score';
 
   let {
@@ -28,7 +29,9 @@
   const caseName = (id: number) => {
     const c = caseById.get(id);
     if (!c) return `case #${id} (removed)`;
-    return `case #${id} · ${c.entityType} ${c.entityId === null ? 'free text' : `#${c.entityId}`}`;
+    return `case #${id} · ${ENTITY_TYPE_NAMES[c.entityType]} ${
+      c.entityId === null ? 'free text' : `#${c.entityId}`
+    }`;
   };
   const json = (v: unknown) => JSON.stringify(v, null, 2);
 </script>
@@ -39,7 +42,8 @@
     {#each list as flip (`${flip.caseId}:${flip.label}`)}
       <details class="mb-1 rounded-md border border-dark-4 bg-dark-7 px-3 py-2">
         <summary class="cursor-pointer text-sm text-dark-0">
-          <a href="#case-{flip.caseId}" class={LINK_CLASS}>{caseName(flip.caseId)}</a> · {flip.label}
+          <a href="#case-{flip.caseId}" class={LINK_CLASS}>{caseName(flip.caseId)}</a> ·
+          {labelName(flip.label)}
         </summary>
         <div class="mt-2 grid gap-2 md:grid-cols-2">
           {#each [{ side: 'A', output: flip.outputA }, { side: 'B', output: flip.outputB }] as o (o.side)}
@@ -74,7 +78,7 @@
       <Table.Body>
         {#each labels as label (label)}
           <Table.Row>
-            <Table.Cell class="text-dark-0">{label}</Table.Cell>
+            <Table.Cell class="text-dark-0">{labelName(label)}</Table.Cell>
             <Table.Cell class="text-dark-0">{cell(a.totals?.[label])}</Table.Cell>
             <Table.Cell class="text-dark-0">{cell(b.totals?.[label])}</Table.Cell>
           </Table.Row>
@@ -85,7 +89,7 @@
     <p class="text-sm text-dark-2">Neither run scored anything.</p>
   {/if}
   <p class="mt-2 text-xs text-dark-2">
-    Precision and recall count nsfw R or higher as positive. Errors and skipped cases are not scored;
+    Precision and recall count a rating of R or higher as positive. Errors and skipped cases are not scored;
     a case scored in only one run is not compared. {plural(
       comparison.newlyWrong.length + comparison.newlyRight.length,
       'label'

@@ -3,13 +3,13 @@
 Prompt drafts, test sets and test runs for the text-scan prompt lab, in the **moderator** database.
 Nothing here changes a live prompt until a draft is published.
 
-| table | holds |
-| --- | --- |
-| `text_scan_prompt_draft` | a draft's changed prompts only; unchanged keys run the active prompt |
-| `text_scan_test_set` | a named set of test cases |
-| `text_scan_test_case` | a text snapshot and what each label is expected to return |
-| `text_scan_test_run` | one run of a set against active or a draft, and exactly which prompts ran |
-| `text_scan_test_result` | one case's output in one run; scored on read against the case's current expectation |
+| table                    | holds                                                                               |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| `text_scan_prompt_draft` | a draft's changed prompts only; unchanged keys run the active prompt                |
+| `text_scan_test_set`     | a named set of test cases                                                           |
+| `text_scan_test_case`    | a text snapshot and what each label is expected to return                           |
+| `text_scan_test_run`     | one run of a set against active or a draft, and exactly which prompts ran           |
+| `text_scan_test_result`  | one case's output in one run; scored on read against the case's current expectation |
 
 ## Apply order
 
@@ -57,10 +57,22 @@ CIVITAI_API_KEY=<your own API key> pnpm --filter @civitai/moderator-app exec \
 ```
 
 ```json
-{ "cases": [
-  { "entityType": "Model", "entityId": 123, "expected": { "nsfw": { "min": "none", "max": "pg13" }, "poi": false } },
-  { "entityType": "Comment", "fields": [{ "heading": "Comment", "text": "..." }], "expected": { "scam": true }, "synthetic": true, "note": "..." }
-] }
+{
+  "cases": [
+    {
+      "entityType": "Model",
+      "entityId": 123,
+      "expected": { "nsfw": { "min": "none", "max": "pg13" }, "poi": false }
+    },
+    {
+      "entityType": "Comment",
+      "fields": [{ "heading": "Comment", "text": "..." }],
+      "expected": { "scam": true },
+      "synthetic": true,
+      "note": "..."
+    }
+  ]
+}
 ```
 
 - An entity case without `fields` snapshots the text the main app composes for it now; ids it

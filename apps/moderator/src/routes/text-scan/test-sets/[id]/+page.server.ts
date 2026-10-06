@@ -193,9 +193,7 @@ export const actions: Actions = {
       entityType: z.enum(LAB_ENTITY_TYPES),
       entityId: optionalId,
       authorId: optionalId,
-      sourceIds: jsonField(
-        z.array(z.number().int().positive().max(MAX_INT4)).max(1000)
-      ).optional(),
+      sourceIds: jsonField(z.array(z.number().int().positive().max(MAX_INT4)).max(1000)).optional(),
       fields: fieldsField,
       expected: expectedField,
       note: noteField,

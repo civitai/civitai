@@ -2,6 +2,7 @@ import { sql, type Selectable } from 'kysely';
 import { getModeratorDb } from '../moderator-db';
 import type { text_scan_prompt_draft } from '../moderator-db/types';
 import { LabError } from './errors';
+import { blankPromptKeys, describeBlankPrompts } from '$lib/text-scan-lab/labels';
 import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 
 export type DraftPrompts = Partial<Record<PromptKey, string>>;
@@ -47,22 +48,16 @@ export class DraftPublishedError extends DraftError {
 const isPromptKey = (key: string): key is PromptKey =>
   (PROMPT_KEYS as readonly string[]).includes(key);
 
-/** A key in a draft is an override, so an empty one would publish an empty prompt: refused, never dropped. */
+/** A key in a draft is an override, so an empty one would publish an empty prompt: refused, never dropped.
+ *  Unknown keys are refused first, so a blank one is never named as a prompt it is not. */
 export function validateDraftPrompts(prompts: Record<string, unknown>): DraftPrompts {
   const unknownKeys = Object.keys(prompts).filter((k) => !isPromptKey(k));
   if (unknownKeys.length)
     throw new DraftValidationError(
       `Unknown prompt key ${unknownKeys.join(', ')} — allowed: ${PROMPT_KEYS.join(', ')}.`
     );
-  const blank = Object.entries(prompts)
-    .filter(([, v]) => typeof v !== 'string' || !v.trim())
-    .map(([k]) => k);
-  if (blank.length)
-    throw new DraftValidationError(
-      `${blank.join(', ')} ${
-        blank.length === 1 ? 'is' : 'are'
-      } empty — write the prompt or remove the key from the draft.`
-    );
+  const blank = blankPromptKeys(prompts);
+  if (blank.length) throw new DraftValidationError(describeBlankPrompts(blank));
   return prompts as DraftPrompts;
 }
 

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { cn } from '@civitai/ui/utils.js';
   import RunTotals from '$lib/components/text-scan-lab/RunTotals.svelte';
+  import { promptKeyName } from '$lib/text-scan-lab/labels';
   import { PROMPT_KEYS } from '$lib/text-scan-lab/types';
   import ActivePromptPanel from './ActivePromptPanel.svelte';
   import DraftEditor from './DraftEditor.svelte';
@@ -22,10 +23,10 @@
   {/if}
 {/snippet}
 
-<svelte:head><title>Text-scan prompts</title></svelte:head>
+<svelte:head><title>Versions · Text scan</title></svelte:head>
 
 <div class="mb-4 flex flex-wrap items-baseline justify-between gap-2">
-  <h1 class="text-xl font-semibold text-white">Text-scan prompts</h1>
+  <h1 class="text-xl font-semibold text-white">Versions</h1>
   {#if config}
     <p class="text-xs text-dark-2">
       Model {config.model} · max input {config.maxInputChars.toLocaleString()} chars · thinking
@@ -43,7 +44,7 @@
         key === data.key ? 'bg-dark-5 text-white' : 'text-dark-2 hover:bg-dark-6'
       )}
     >
-      {key}
+      {promptKeyName(key)}
     </a>
   {/each}
 </nav>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { caseCorrect, diffRuns, percent, scoreChips, totals } from './score';
+import { caseCorrect, diffRuns, percent, totals } from './score';
 import type { Expected } from './types';
 
 const nsfw = (level: string) => ({ nsfw: { level, reason: 'r' } });
@@ -145,14 +145,12 @@ describe('diffRuns', () => {
   });
 });
 
-describe('scoreChips and percent', () => {
-  it('summarises each scored label and renders an undefined ratio as a dash', () => {
+describe('percent', () => {
+  it('renders an undefined ratio as a dash', () => {
     const t = totals([
       { expected: { scam: true }, output: flag('scam', false), status: 'ok' },
       { expected: { scam: false }, output: flag('scam', false), status: 'ok' },
     ]);
-    expect(scoreChips(t)).toEqual(['scam 1/2']);
-    expect(scoreChips(null)).toEqual([]);
     expect(percent(t.scam.precision)).toBe('—');
     expect(percent(2 / 3)).toBe('67%');
   });

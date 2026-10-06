@@ -5,6 +5,8 @@ import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
 import type { PostAction } from './post-action';
 
 export const AUTOSAVE_MS = 800;
+/** Browsers refuse a keepalive request whose body (with every other one in flight) is over 64KiB. */
+export const KEEPALIVE_MAX_BYTES = 60 * 1024;
 
 export const actionError = (result: ActionResult) =>
   result.type === 'failure'
@@ -138,10 +140,27 @@ export class ChangesState {
   }
 
   /** Saves now; resolves true once what is on screen is saved. */
-  flush({ keepalive = false } = {}): Promise<boolean> {
+  flush(): Promise<boolean> {
     clearTimeout(this.#timer);
-    this.#chain = this.#chain.then(() => this.#save(keepalive));
+    this.#chain = this.#chain.then(() => this.#save());
     return this.#chain;
+  }
+
+  /**
+   * As the page unloads: sends the save at once as a keepalive request, which outlives the page, and
+   * says whether that covers the changes. False means the browser should ask before leaving: a save in
+   * flight would turn this one into a conflict, and an oversize body would never be sent.
+   */
+  saveOnLeave(): boolean {
+    const f = this.#f;
+    if (!this.dirty) return true;
+    if (!f.editable || f.conflict || f.saving || this.blankError) return false;
+    const fields = this.#saveFields();
+    const bytes = new Blob(Object.entries(fields).flat()).size;
+    if (bytes > KEEPALIVE_MAX_BYTES) return false;
+    clearTimeout(this.#timer);
+    void this.#post('saveChanges', fields, { keepalive: true });
+    return true;
   }
 
   /** Stops autosave and waits out a save in flight, so nothing recreates the copy afterwards. */
@@ -157,7 +176,15 @@ export class ChangesState {
   }
 
   // Loops until what is on screen is saved, so a flush during an edit made mid-save still covers it.
-  async #save(keepalive: boolean): Promise<boolean> {
+  #saveFields(): Record<string, string> {
+    return {
+      prompts: this.json,
+      expectedUpdatedAt: this.#f.token ?? '',
+      ...(this.#target !== null ? { draftId: String(this.#target) } : {}),
+    };
+  }
+
+  async #save(): Promise<boolean> {
     const f = this.#f;
     for (;;) {
       if (!f.editable || f.conflict) return !this.dirty;
@@ -171,15 +198,7 @@ export class ChangesState {
 
       const generation = this.#generation;
       f.saving = true;
-      const result = await this.#post(
-        'saveChanges',
-        {
-          prompts: json,
-          expectedUpdatedAt: f.token ?? '',
-          ...(this.#target !== null ? { draftId: String(this.#target) } : {}),
-        },
-        { keepalive }
-      );
+      const result = await this.#post('saveChanges', this.#saveFields());
       if (generation !== this.#generation) return false;
       f.saving = false;
       if (result.type !== 'success') {

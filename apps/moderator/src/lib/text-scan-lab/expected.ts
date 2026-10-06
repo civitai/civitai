@@ -65,14 +65,3 @@ export function parseExpected(json: unknown, labels: readonly LabLabel[] = ALL_L
   }
   return expected;
 }
-
-export function expectedChips(expected: Expected): string[] {
-  const chips: string[] = [];
-  if (expected.nsfw) {
-    const { min, max } = expected.nsfw;
-    chips.push(`nsfw ${min === max ? min : `${min}–${max}`}`);
-  }
-  for (const label of FLAG_LABELS)
-    if (expected[label] !== undefined) chips.push(`${label} ${expected[label] ? 'yes' : 'no'}`);
-  return chips;
-}

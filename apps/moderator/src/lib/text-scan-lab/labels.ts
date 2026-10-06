@@ -1,5 +1,5 @@
 import { levelRank } from './expected';
-import { caseCorrect } from './score';
+import { caseCorrect, type LabelTotals } from './score';
 import type { Expected, LabEntityType, LabLabel, NsfwLevelName, PromptKey } from './types';
 
 export const LABEL_NAMES: Record<LabLabel, string> = {
@@ -9,8 +9,17 @@ export const LABEL_NAMES: Record<LabLabel, string> = {
   scam: 'Scam / phishing',
 };
 
+/** A label's friendly name; a key the lab does not know (an old run's totals) as it is. */
+export const labelName = (label: string): string => LABEL_NAMES[label as LabLabel] ?? label;
+
+/** One "Rating 3/4" per label a run scored. */
+export const scoreChips = (t: Record<string, LabelTotals> | null): string[] =>
+  Object.entries(t ?? {}).map(([label, v]) => `${labelName(label)} ${v.correct}/${v.scored}`);
+
 export const promptKeyName = (key: PromptKey): string =>
-  key === 'base' ? 'General instructions' : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
+  key === 'base'
+    ? 'General instructions'
+    : `${LABEL_NAMES[key.replace(/^label:/, '') as LabLabel]} definition`;
 
 /** Keys of a set of prompt changes left empty, which would publish an empty prompt. */
 export const blankPromptKeys = (prompts: Partial<Record<PromptKey, unknown>>): PromptKey[] =>
@@ -129,6 +138,12 @@ export function describeExpected(expected: Expected): Partial<Record<LabLabel, s
   }
   return out;
 }
+
+/** One chip per scored label: "Rating PG-13 or lower", "Not a scam". */
+export const expectedChips = (expected: Expected): string[] =>
+  Object.entries(describeExpected(expected)).map(([label, text]) =>
+    label === 'nsfw' && !text.startsWith('Any') ? `Rating ${text}` : text
+  );
 
 /** Whether a verdict met a test case's expectation, or null when the label is unscored or there is no
  *  verdict to check. */

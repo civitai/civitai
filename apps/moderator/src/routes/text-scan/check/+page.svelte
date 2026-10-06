@@ -22,11 +22,17 @@
     editable: source.kind === 'mine' || source.editable,
   });
 
+  // Outlives the bar, which a discard removes along with the changes it reports on.
+  let barError = $state<string | null>(null);
   const changes = createChanges(untrack(() => changesInit(data.changes)));
-  // A reload (after propose, publish, discard, or a conflict) or another ?draft= replaces what is tested.
+  // A reload (after propose, publish, discard, or a conflict) or another ?draft= replaces what is tested,
+  // and with it any error the bar reported about the old changes.
   $effect(() => {
     const next = changesInit(data.changes);
-    untrack(() => changes.reset(next));
+    untrack(() => {
+      changes.reset(next);
+      barError = null;
+    });
   });
 
   // Set while this page itself re-issues a navigation it held back to save first.
@@ -34,9 +40,7 @@
   beforeNavigate((nav) => {
     if (resuming || !changes.dirty) return;
     if (nav.type === 'leave') {
-      // Unsaveable as they stand: let the browser ask. Otherwise the save outlives the page.
-      if (changes.blankError || changes.conflict) nav.cancel();
-      else void changes.flush({ keepalive: true });
+      if (!changes.saveOnLeave()) nav.cancel();
       return;
     }
     const to = nav.to?.url;
@@ -55,9 +59,6 @@
       }
     });
   });
-
-  // Outlives the bar, which a discard removes along with the changes it reports on.
-  let barError = $state<string | null>(null);
 
   let result = $state<CheckResult | null>(null);
   // What was tested in the shown result, to say when the changes moved on since.
@@ -118,6 +119,7 @@
     {changedTitle}
     changesName={viewing ? 'This draft' : 'Your changes'}
     civitaiUrl={data.civitaiUrl}
+    openCase={data.openCase}
     onstart={startCheck}
     onchecked={(r) => (result = r)}
   />

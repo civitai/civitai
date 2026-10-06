@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   AUTOSAVE_MS,
   ChangesState,
+  KEEPALIVE_MAX_BYTES,
   emptyChangesFields,
   submitSaved,
   type ChangesInit,
@@ -155,13 +156,47 @@ describe('autosave', () => {
     await vi.advanceTimersByTimeAsync(AUTOSAVE_MS * 2);
     expect(post).not.toHaveBeenCalled();
   });
+});
 
-  it('passes keepalive through for a save started as the page unloads', async () => {
+describe('saveOnLeave', () => {
+  it('sends the save at once as keepalive, without waiting for the autosave timer', () => {
     post.mockResolvedValue(saved(7, 'T1'));
+    const changes = make(mine({ prompts: { base: 'A' }, draftId: 7, token: 'T0' }));
+    changes.set('base', 'B', undefined);
+    expect(changes.saveOnLeave()).toBe(true);
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(post.mock.calls[0]).toEqual([
+      'saveChanges',
+      { prompts: '{"base":"B"}', expectedUpdatedAt: 'T0' },
+      { keepalive: true },
+    ]);
+  });
+
+  it('has nothing to send when everything is saved', () => {
+    expect(make().saveOnLeave()).toBe(true);
+    expect(post).not.toHaveBeenCalled();
+  });
+
+  it('asks instead while a save is in flight, which would make this one a conflict', async () => {
+    const first = deferred();
+    post.mockReturnValueOnce(first.promise);
     const changes = make();
     changes.set('base', 'B', undefined);
-    await changes.flush({ keepalive: true });
-    expect(post.mock.calls[0][2]).toEqual({ keepalive: true });
+    void changes.flush();
+    await vi.advanceTimersByTimeAsync(0);
+    changes.set('base', 'BC', undefined);
+    expect(changes.saveOnLeave()).toBe(false);
+    expect(post).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks instead when the body is over the keepalive limit, or a key is blank', () => {
+    const big = make();
+    big.set('base', 'x'.repeat(KEEPALIVE_MAX_BYTES), undefined);
+    expect(big.saveOnLeave()).toBe(false);
+    const blank = make();
+    blank.set('base', ' ', undefined);
+    expect(blank.saveOnLeave()).toBe(false);
+    expect(post).not.toHaveBeenCalled();
   });
 });
 

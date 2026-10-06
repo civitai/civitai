@@ -10,9 +10,9 @@
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
   import type { RunListItem, TestRun } from '$lib/server/text-scan-lab/runs.service';
+  import { scoreChips } from '$lib/text-scan-lab/labels';
   import { CONFIRM_ABOVE } from '$lib/text-scan-lab/limits';
   import { fetchRunProgress, pollRuns, progressText } from '$lib/text-scan-lab/run-poll';
-  import { scoreChips } from '$lib/text-scan-lab/score';
 
   let {
     runs,
@@ -52,7 +52,9 @@
 
   function duration(run: TestRun) {
     if (!run.finishedAt) return '—';
-    const s = Math.round((run.finishedAt.getTime() - run.startedAt.getTime()) / 1000);
+    const s = Math.round(
+      run.scanSeconds ?? (run.finishedAt.getTime() - run.startedAt.getTime()) / 1000
+    );
     return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`;
   }
 

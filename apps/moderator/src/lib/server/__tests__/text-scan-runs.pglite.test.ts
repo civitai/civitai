@@ -338,7 +338,7 @@ describe('startRun', () => {
     );
 
     await expect(startRun({ setId, version: Number(id) }, MOD)).rejects.toThrow(
-      /label:poi is empty/
+      'Real person definition is empty'
     );
     expect(harness.scanTexts).not.toHaveBeenCalled();
     expect((await holder.pg!.query('SELECT 1 FROM text_scan_test_run')).rows).toHaveLength(0);
@@ -703,20 +703,52 @@ describe('latestRunTotals', () => {
   });
 });
 
+describe('scan time', () => {
+  it('sums the scanning of a run and its re-run, never the gap between them', async () => {
+    const { setId } = await setWithCases(2);
+    harness.scanTexts.mockImplementationOnce(async (_t: string, texts: LabText[]) => [
+      okResult(texts[0].key),
+      { key: texts[1].key, ok: false, error: 'orchestrator down' },
+    ]);
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    expect(run.scanSeconds).toBeGreaterThanOrEqual(0);
+    await holder.pg!.query(
+      `UPDATE text_scan_test_run
+         SET scan_seconds = 3, started_at = now() - interval '1 hour', finished_at = now() - interval '50 minutes'
+       WHERE id = $1`,
+      [run.id]
+    );
+    harness.scanTexts.mockImplementation(allOk());
+    const rerun = await rerunErrors(setId, run.id, MOD);
+    expect(rerun.scanSeconds).toBeGreaterThanOrEqual(3);
+    expect(rerun.scanSeconds).toBeLessThan(10);
+  });
+});
+
 describe('casesPerSecond', () => {
   it("measures the set's last finished run, skipped cases left out", async () => {
     const { setId, caseIds } = await setWithCases(3);
     harness.scanTexts.mockImplementation(allOk());
     const run = await startRun({ setId, version: 'active' }, MOD);
-    await holder.pg!.query(
-      `UPDATE text_scan_test_run SET started_at = now() - interval '2 seconds', finished_at = now() WHERE id = $1`,
-      [run.id]
-    );
+    await holder.pg!.query(`UPDATE text_scan_test_run SET scan_seconds = 2 WHERE id = $1`, [
+      run.id,
+    ]);
     await holder.pg!.query(
       `UPDATE text_scan_test_result SET status = 'skipped' WHERE run_id = $1 AND case_id = $2`,
       [run.id, caseIds[0]]
     );
     expect(await casesPerSecond(setId)).toBeCloseTo(1, 1);
+  });
+
+  it('falls back to the wall-clock span for a run from before scan time was recorded', async () => {
+    const { setId } = await setWithCases(2);
+    harness.scanTexts.mockImplementation(allOk());
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    await holder.pg!.query(
+      `UPDATE text_scan_test_run SET scan_seconds = NULL, started_at = now() - interval '4 seconds', finished_at = now() WHERE id = $1`,
+      [run.id]
+    );
+    expect(await casesPerSecond(setId)).toBeCloseTo(0.5, 1);
   });
 
   it('is null for a set that never finished a run', async () => {

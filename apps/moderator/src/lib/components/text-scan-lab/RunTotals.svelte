@@ -1,7 +1,7 @@
 <script lang="ts">
   import { LINK_CLASS } from '$lib/format';
   import type { SetRunTotals } from '$lib/server/text-scan-lab/publish';
-  import { scoreChips } from '$lib/text-scan-lab/score';
+  import { scoreChips } from '$lib/text-scan-lab/labels';
 
   let {
     rows,

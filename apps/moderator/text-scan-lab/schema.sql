@@ -82,12 +82,15 @@ CREATE TABLE IF NOT EXISTS text_scan_test_run (
   -- run whose progress_at goes stale was interrupted.
   scan_total  integer,
   scan_done   integer NOT NULL DEFAULT 0,
-  progress_at timestamptz
+  progress_at timestamptz,
+  -- Seconds spent scanning, summed over the run and its re-runs, so the gaps between them never count.
+  scan_seconds real
 );
 ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS thinking boolean;
 ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS scan_total integer;
 ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS scan_done integer NOT NULL DEFAULT 0;
 ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS progress_at timestamptz;
+ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS scan_seconds real;
 CREATE INDEX IF NOT EXISTS text_scan_test_run_set_idx ON text_scan_test_run (set_id, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS text_scan_test_result (

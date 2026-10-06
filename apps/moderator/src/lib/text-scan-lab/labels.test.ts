@@ -4,7 +4,9 @@ import {
   checkExpected,
   describeExpected,
   describeVerdict,
+  expectedChips,
   promptKeyName,
+  scoreChips,
   verdictsDiffer,
 } from './labels';
 import { LAB_ENTITY_TYPES, PROMPT_KEYS } from './types';
@@ -82,6 +84,28 @@ describe('describeVerdict', () => {
     expect(describeVerdict('nsfw', ok({ nsfw: { level: 'weird' } })).tone).toBe('unknown');
     expect(describeVerdict('nsfw', ok({ nsfw: { level: 'constructor' } })).tone).toBe('unknown');
     expect(describeVerdict('scam', ok({ scam: { reason: 'no detected' } })).tone).toBe('unknown');
+  });
+});
+
+describe('chips', () => {
+  it('names each expected label in plain words, the rating prefixed', () => {
+    expect(expectedChips({ nsfw: { min: 'none', max: 'pg13' }, poi: false, scam: true })).toEqual([
+      'Rating PG-13 or lower',
+      'No real person',
+      'Scam',
+    ]);
+    expect(expectedChips({ nsfw: { min: 'none', max: 'xxx' } })).toEqual(['Any rating']);
+    expect(expectedChips({})).toEqual([]);
+  });
+
+  it("names each label a run scored, keeping an unknown label's key", () => {
+    const t = (correct: number, scored: number) => ({ correct, scored } as never);
+    expect(scoreChips({ nsfw: t(3, 4), scam: t(1, 2), retired: t(0, 1) })).toEqual([
+      'Rating 3/4',
+      'Scam / phishing 1/2',
+      'retired 0/1',
+    ]);
+    expect(scoreChips(null)).toEqual([]);
   });
 });
 

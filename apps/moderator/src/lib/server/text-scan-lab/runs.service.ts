@@ -49,6 +49,8 @@ export type TestRun = {
   /** The scan in flight, or the last one: cases it scans and cases scanned so far. */
   scanTotal: number | null;
   scanDone: number;
+  /** Null on runs from before it was recorded. */
+  scanSeconds: number | null;
 };
 
 /** A run whose scan was started and goes on after the request: `finished` settles when it ends. */
@@ -73,6 +75,7 @@ const toRun = (r: Selectable<text_scan_test_run>): TestRun => ({
   finishedAt: r.finished_at ? new Date(r.finished_at) : null,
   scanTotal: r.scan_total,
   scanDone: r.scan_done,
+  scanSeconds: r.scan_seconds,
 });
 
 type RunCase = { id: number; entityType: LabEntityType; fields: LabField[]; expected: Expected };
@@ -234,7 +237,13 @@ async function writeResults(runId: number, rows: ResultRow[]) {
 async function recordProgress(runId: number, scanned: number) {
   await getModeratorDb()
     .updateTable('text_scan_test_run')
-    .set((eb) => ({ scan_done: eb('scan_done', '+', scanned), progress_at: sql`now()` }))
+    .set((eb) => ({
+      scan_done: eb('scan_done', '+', scanned),
+      // progress_at is stamped when a pass starts and after each chunk: summing these spans counts
+      // only scanning, not the time between a run and its re-runs.
+      scan_seconds: sql`coalesce(scan_seconds, 0) + extract(epoch from now() - coalesce(progress_at, started_at))`,
+      progress_at: sql`now()`,
+    }))
     .where('id', '=', String(runId))
     .execute();
 }
@@ -740,7 +749,9 @@ export async function casesPerSecond(setId: number): Promise<number | null> {
   const run = await db
     .selectFrom('text_scan_test_run as r')
     .select((eb) => [
-      sql<number>`extract(epoch from r.finished_at - r.started_at)`.as('seconds'),
+      sql<number>`coalesce(r.scan_seconds, extract(epoch from r.finished_at - r.started_at))`.as(
+        'seconds'
+      ),
       eb
         .selectFrom('text_scan_test_result as x')
         .whereRef('x.run_id', '=', 'r.id')

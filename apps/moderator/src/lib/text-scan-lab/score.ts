@@ -100,7 +100,4 @@ export function diffRuns(
   return { newlyWrong, newlyRight };
 }
 
-export const scoreChips = (t: Record<string, LabelTotals> | null): string[] =>
-  Object.entries(t ?? {}).map(([label, v]) => `${label} ${v.correct}/${v.scored}`);
-
 export const percent = (v: number | null) => (v === null ? '—' : `${Math.round(v * 100)}%`);

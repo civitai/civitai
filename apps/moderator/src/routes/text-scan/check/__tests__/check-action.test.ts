@@ -237,6 +237,18 @@ describe('check — with my changes', () => {
     nothingCalled();
   });
 
+  it('refuses an unknown key as unknown, even when it is blank', async () => {
+    const res = await check({
+      input: 'buy now',
+      overrides: overrides({ 'label:retired': '', 'label:scam': '' }),
+    });
+    expect(res).toMatchObject({ status: 400 });
+    const { error } = (res as { data: { error: string } }).data;
+    expect(error).toMatch(/^Unknown prompt key label:retired/);
+    expect(error).not.toContain('undefined');
+    nothingCalled();
+  });
+
   it('keeps the current verdicts when only the changed run is refused', async () => {
     harness.scanTexts.mockImplementation(
       (_type: string, texts: { key: string }[], promptOverrides?: Record<string, string>) =>

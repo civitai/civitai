@@ -4,14 +4,17 @@ import type { Actions, PageServerLoad } from './$types';
 import { canAccess, requiresGrant } from '$lib/server/access';
 import { parseForm, parseQuery } from '$lib/server/query';
 import {
-  createDraft,
   getVisibleDraft,
   listDrafts,
   updateDraft,
   type PromptDraft,
 } from '$lib/server/text-scan-lab/drafts.service';
 import { refused } from '$lib/server/text-scan-lab/errors';
-import { LabHarnessError, getPrompts, type LabPrompts } from '$lib/server/text-scan-lab/harness-client';
+import {
+  LabHarnessError,
+  getPrompts,
+  type LabPrompts,
+} from '$lib/server/text-scan-lab/harness-client';
 import {
   draftIdField,
   draftPromptsField,
@@ -58,27 +61,6 @@ const noteField = z
   .transform((v) => v || null);
 
 export const actions: Actions = {
-  createDraft: async ({ request, locals }) => {
-    const input = parseForm(
-      z.object({
-        name: z
-          .string()
-          .trim()
-          .min(1, 'Name the draft.')
-          .max(100, 'Name is at most 100 characters.'),
-        note: noteField.optional().default(null),
-      }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return fail400(input);
-    try {
-      const draft = await createDraft({ ...input, prompts: {} }, locals.user.id);
-      return { success: true, draftId: draft.id };
-    } catch (e) {
-      return refused(e);
-    }
-  },
-
   saveDraft: async ({ request, locals }) => {
     const input = parseForm(
       z.object({

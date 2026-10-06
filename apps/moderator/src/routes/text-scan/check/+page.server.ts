@@ -46,11 +46,7 @@ import { normaliseLabFields } from '$lib/text-scan-lab/compose';
 import { estimateSeconds } from '$lib/text-scan-lab/estimate';
 import { parseCheckInput } from '$lib/text-scan-lab/input';
 import { summariseRuns, type RunSummary } from '$lib/text-scan-lab/run-summary';
-import {
-  ENTITY_TYPE_NAMES,
-  blankPromptKeys,
-  describeBlankPrompts,
-} from '$lib/text-scan-lab/labels';
+import { ENTITY_TYPE_NAMES } from '$lib/text-scan-lab/labels';
 import {
   DEFAULT_HEADING,
   LAB_ENTITY_TYPES,
@@ -69,6 +65,9 @@ const TEST_SETS_PATH = '/text-scan/test-sets';
 
 const querySchema = z.object({
   draft: z.coerce.number().int().positive().optional().catch(undefined),
+  // "Open in Check" on a test set's case.
+  set: z.coerce.number().int().positive().optional().catch(undefined),
+  case: z.coerce.number().int().positive().optional().catch(undefined),
 });
 
 /**
@@ -130,6 +129,7 @@ export const load: PageServerLoad = async ({ url, locals }) => {
     workingCopy: mine,
     draftNotice,
     runTotals,
+    openCase: q.set && q.case && canUseSets ? { setId: q.set, caseId: q.case } : null,
     wide: true,
   };
 };
@@ -293,8 +293,6 @@ async function scanSubjects(
 
 /** The overrides a check tests, or the refusal to show: a blank key is named before anything runs. */
 function checkOverrides(raw: Record<string, unknown>): DraftPrompts | ReturnType<typeof fail> {
-  const blank = blankPromptKeys(raw as Partial<Record<PromptKey, unknown>>);
-  if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
   try {
     return validateDraftPrompts(raw);
   } catch (e) {
@@ -587,8 +585,6 @@ export const actions: Actions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
-    const blank = blankPromptKeys(input.prompts);
-    if (blank.length) return fail(400, { error: describeBlankPrompts(blank) });
     const me = locals.user.id;
     try {
       let saved: PromptDraft | null;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { browser } from '$app/environment';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -21,6 +21,7 @@
     changedTitle,
     changesName,
     civitaiUrl,
+    openCase,
     onstart,
     onchecked,
   }: {
@@ -29,6 +30,7 @@
     changedTitle: string;
     changesName: string;
     civitaiUrl: string;
+    openCase: { setId: number; caseId: number } | null;
     onstart: () => void;
     onchecked: (result: CheckResult) => void;
   } = $props();
@@ -85,6 +87,12 @@
       document.getElementById('check-results')?.scrollIntoView({ behavior: 'smooth' });
     } else caseError = actionError(result);
   }
+
+  onMount(() => {
+    if (!openCase || !testSets.some((s) => s.id === openCase.setId)) return;
+    setId = String(openCase.setId);
+    void loadCase(openCase.caseId);
+  });
 
   type ConfirmAsk = {
     needsConfirm: true;

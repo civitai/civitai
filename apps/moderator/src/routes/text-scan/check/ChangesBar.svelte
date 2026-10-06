@@ -42,8 +42,10 @@
     if (!confirm('Discard all your changes? This cannot be undone.')) return;
     busy = true;
     await changes.settle();
-    onerror(actionError(await postAction('discardChanges', {})));
+    const error = actionError(await postAction('discardChanges', {}));
+    // After the reload, which clears the page's error along with the old changes.
     await invalidateAll();
+    onerror(error);
     busy = false;
   }
 

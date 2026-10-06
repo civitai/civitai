@@ -11,7 +11,7 @@
   import type { TestCase } from '$lib/server/text-scan-lab/test-sets.service';
   import { caseSourceHref } from '$lib/text-scan-lab/case-view';
   import { composeUserMessage } from '$lib/text-scan-lab/compose';
-  import { expectedChips } from '$lib/text-scan-lab/expected';
+  import { ENTITY_TYPE_NAMES, expectedChips } from '$lib/text-scan-lab/labels';
   import { LAB_LABELS, type Expected } from '$lib/text-scan-lab/types';
 
   let {
@@ -40,7 +40,7 @@
 
 <Table.Row id="case-{testCase.id}" class="target:bg-dark-5">
   <Table.Cell class="align-top">
-    <p class="text-xs text-dark-2">{testCase.entityType}</p>
+    <p class="text-xs text-dark-2">{ENTITY_TYPE_NAMES[testCase.entityType]}</p>
     {#if testCase.entityId === null}
       <p class="text-dark-0">Free text</p>
     {:else if href}
@@ -69,6 +69,12 @@
       </details>
     {/if}
     {#if testCase.note}<p class="mt-1 text-xs text-dark-2">Note: {testCase.note}</p>{/if}
+    {#if text !== null}
+      <a
+        href="/text-scan/check?set={testCase.setId}&case={testCase.id}"
+        class="mt-1 inline-block text-xs {LINK_CLASS}">Open in Check</a
+      >
+    {/if}
   </Table.Cell>
   <Table.Cell class="align-top">
     <div class="flex flex-wrap gap-1">
