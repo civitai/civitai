@@ -9,6 +9,7 @@ import {
   SOURCE_IMAGE_URL_MAX,
 } from '~/server/schema/blocks/civitai-image-url';
 import type { ModelSubstitutionReason } from '~/shared/data-graph/generation/model-substitution';
+import { aiToolkitTrainingParamsSchema } from '~/server/schema/orchestrator/training.schema';
 
 // The spendable buzz account types a viewer may pick for a (money) page block.
 // Reuse the authoritative `buzzSpendTypes` (blue/green/yellow — `red` is
@@ -635,6 +636,74 @@ export const blockPassThroughStepBodySchema = z
     message: `step input exceeds the ${PASS_THROUGH_INPUT_BYTES_MAX}-byte limit`,
   });
 
+// ── App Blocks TRAINING kind (`kind:'training'`) ───────────────────────────────
+//
+// Trains a LoRA with the ai-toolkit engine on a dataset the server prepared
+// (`blocks.prepareTrainingDataset`) from the viewer's own images. The body names
+// that dataset by an opaque handle; the images, their blob references and the
+// image COUNT never come from the block.
+//
+// 🔴 THERE IS NO `maxBuzz` AND NO TIMEOUT KNOB, ON PURPOSE. The price is the
+// orchestrator's own quote for exactly this step, taken by the estimate and stored
+// server-side; the submit names that quote (`quoteId`), runs only once the viewer
+// has confirmed it from a signed-in session, and re-quotes before charging. An
+// app-supplied number is never the ceiling and never a step timeout.
+//
+// `.strict()` everywhere a key could be smuggled: an unknown top-level key is
+// rejected. `params` is the training form's own ai-toolkit schema
+// (`aiToolkitTrainingParamsSchema`), so the two cannot drift.
+
+/** Opaque handle to a server-prepared training dataset. */
+export const BLOCK_TRAINING_DATASET_ID_REGEX = /^tds_[a-f0-9]{32}$/;
+/** Opaque handle to a server-stored training quote. */
+export const BLOCK_TRAINING_QUOTE_ID_REGEX = /^tq_[a-f0-9]{32}$/;
+/** Max sample prompts on a training run. */
+export const BLOCK_TRAINING_SAMPLE_PROMPTS_MAX = 6;
+/** Max characters of one sample prompt. */
+export const BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS = 1000;
+/** Max characters of the trigger word. */
+export const BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS = 64;
+/** Max characters of a base-model key (`trainingModelInfo` key). */
+export const BLOCK_TRAINING_MODEL_KEY_MAX_CHARS = 64;
+/** Max images in one prepared training dataset (`blocks.prepareTrainingDataset`). */
+export const BLOCK_TRAINING_DATASET_MAX_ITEMS = 50;
+/** Max characters of one training caption. */
+export const BLOCK_TRAINING_CAPTION_MAX_CHARS = 1000;
+
+/** `blocks.prepareTrainingDataset` items: the viewer's image ids and their captions. */
+export const blockTrainingDatasetItemsSchema = z
+  .array(
+    z
+      .object({
+        imageId: z.number().int().positive(),
+        caption: z.string().max(BLOCK_TRAINING_CAPTION_MAX_CHARS),
+      })
+      .strict()
+  )
+  .min(1)
+  .max(BLOCK_TRAINING_DATASET_MAX_ITEMS);
+
+export const blockTrainingBodySchema = z
+  .object({
+    kind: z.literal('training'),
+    datasetId: z.string().regex(BLOCK_TRAINING_DATASET_ID_REGEX),
+    engine: z.literal('ai-toolkit'),
+    // A base-model key from the training form's catalog (`trainingModelInfo`);
+    // resolved and gated server-side. Custom AIRs are not accepted in v1.
+    model: z.string().min(1).max(BLOCK_TRAINING_MODEL_KEY_MAX_CHARS),
+    params: aiToolkitTrainingParamsSchema,
+    triggerWord: z.string().max(BLOCK_TRAINING_TRIGGER_WORD_MAX_CHARS),
+    samplePrompts: z
+      .array(z.string().max(BLOCK_TRAINING_SAMPLE_PROMPT_MAX_CHARS))
+      .max(BLOCK_TRAINING_SAMPLE_PROMPTS_MAX),
+    // Present on SUBMIT only — the confirmed quote this run is charged against.
+    // Excluded from the body hash that binds a quote to its body.
+    quoteId: z.string().regex(BLOCK_TRAINING_QUOTE_ID_REGEX).optional(),
+  })
+  .strict();
+
+export type BlockTrainingBody = z.infer<typeof blockTrainingBodySchema>;
+
 export type BlockWorkflowBody = z.infer<typeof blockWorkflowBodySchema>;
 
 // 🔴 THE `customComfy` MEMBER IS A NESTED DISCRIMINATED UNION ON `mode`, AND THE
@@ -734,6 +803,7 @@ export const blockWorkflowBodySchema = z.discriminatedUnion('kind', [
   blockTextToImageBodySchemaChecked,
   blockCustomComfyMemberSchema,
   blockStepMemberSchema,
+  blockTrainingBodySchema,
 ]);
 
 // Mirrors BlockWorkflowSnapshot in @civitai/app-sdk's blocks/types.ts.
@@ -1077,6 +1147,21 @@ export type BlockWorkflowSnapshot = {
    * 🔴 WIRE CONTRACT: name and shape are mirrored by `@civitai/app-sdk`.
    */
   publishedModel?: BlockPublishedModel;
+  /**
+   * The server-stored quote a `kind:'training'` ESTIMATE produced. The block passes
+   * `quoteId` back on `RUN_TRAINING`; the host shows the viewer this price (read
+   * back from the server, never from the block) and the submit charges against it.
+   * `expiresAt` is ISO-8601. Present only on a training estimate reply.
+   * 🔴 WIRE CONTRACT: additive; mirrored by `@civitai/app-sdk` in its own repo.
+   */
+  trainingQuote?: BlockTrainingQuote;
+};
+
+export type BlockTrainingQuote = {
+  quoteId: string;
+  total: number;
+  imageCount: number;
+  expiresAt: string;
 };
 
 export type BlockPublishedModel = { modelId: number; modelVersionId: number; published: boolean };

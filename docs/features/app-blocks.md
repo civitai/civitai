@@ -379,7 +379,8 @@ read that file. As of this writing the families are:
   surface and both stay (see "Direction" under Routes). Page host only today.
 - **Workflows** (REQUEST-style, host-brokered via `blocks.submitWorkflow` /
   `estimateWorkflow` / `pollWorkflow`): `SUBMIT_WORKFLOW`, `ESTIMATE_WORKFLOW`,
-  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`.
+  `POLL_WORKFLOW`, `CANCEL_WORKFLOW`, and `RUN_TRAINING` (→ `TRAINING_RESULT`, page
+  host only — see "Training runs").
 - **Buzz**: `OPEN_BUZZ_PURCHASE` (host-mediated purchase) and `GET_BUZZ_BALANCE`
   (per-account balance read — see below).
 - **Resource pickers** (host chrome so the iframe only learns the one resource the
@@ -456,6 +457,43 @@ cost up to 150, your limit for this app is 500`. Unlike the platform per-app cap
 - **Post-paid jobs reserve the CEILING and settle to actual**, on this counter exactly
   as on the platform one — so a job that reserves 5,000 and bills 200 gives back 4,800
   when it reaches a terminal state.
+
+### Training runs (`kind: 'training'`)
+
+A page app can train a LoRA (ai-toolkit engine) on the viewer's own images. Behind its
+own fail-closed flag, `app-blocks-training-kind`. Page tokens only: dev, dev-tunnel and
+review-sandbox tokens are refused, and so is an editor's read-only private run. The app
+owner's own private run is allowed, under the private-run Buzz cap.
+
+1. **Dataset** — `blocks.prepareTrainingDataset({ items: [{ imageId, caption }] })`
+   admits only the viewer's own scanned, unflagged images within the token's maturity
+   ceiling, moderates the captions, imports the admitted images under the viewer's
+   orchestrator token, and returns `{ datasetId, count, rejected }`. The handle is
+   bound to the viewer, app and install; the image count is always server-derived.
+   Every image is re-checked at submit, before anything is charged; a dataset with an
+   image that no longer qualifies is refused. `import-unavailable` (timeout or orchestrator
+   outage) is a retryable rejection; `import-failed` is not.
+2. **Estimate** — `ESTIMATE_WORKFLOW` with a `kind: 'training'` body (no `maxBuzz`)
+   returns `snapshot.trainingQuote: { quoteId, total, imageCount, expiresAt }`. The
+   price is the orchestrator's quote for that exact step; an unknown or variable price
+   is refused.
+3. **Run** — `RUN_TRAINING { body: { …, quoteId } }`. The host shows the server's copy
+   of the quote, and on the viewer's confirm records it through
+   `blocks.consentTrainingQuote` (signed-in session only) and then submits. A submit
+   whose quote the viewer did not confirm is refused, so calling `SUBMIT_WORKFLOW`
+   directly cannot start a run. If the outcome of the submit is unknown — the connection
+   dropped, or the server attempted the run but could not confirm it — the host replies
+   `error: 'submission-unconfirmed'`: the run may be running and charged, so check the viewer's
+   trainings before offering a retry. When the server could not confirm the run, a retry of the
+   same body (new estimate, new confirmation) reuses that run's orchestrator id; but after a
+   dropped connection the server may already have started the run, and a retry of the same body
+   then starts a second, separately charged run. The block cannot tell these cases apart.
+
+A confirmed run may cost more than the token's per-call budget, up to
+`BLOCK_TRAINING_MAX_BUZZ_PER_RUN` (5,000 Buzz). Every other ceiling above still applies.
+A quote is single-use, expires after 15 minutes, and is re-priced at submit; a higher
+re-price is refused, and so is a run the viewer's Buzz cannot cover (checked before anything is
+reserved, when the balance can be read). Training charges no author fee.
 
 ## Publish / review / deploy lifecycle (no trust on push)
 
