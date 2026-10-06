@@ -10,6 +10,7 @@ import '~/server/services/text-scan/profiles/index';
 import { textScanTextHash } from '~/server/services/text-scan/prompt';
 import { recordTextScanFailure, recordTextScanSuccess } from '~/server/services/text-scan/record';
 import type { PromptIds, TextScanLabel } from '~/server/services/text-scan/types';
+import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 const failureStatus = {
@@ -135,6 +136,24 @@ export async function handleTextScanCallback(event: { workflowId: string; status
     meta: metadata.subjectMeta ?? subject.meta,
   });
   if (!recorded) return log('warning', 'stale callback ignored', ctx);
+
+  void logScanVerdict({
+    system: 'text-scan',
+    entityType,
+    entityId,
+    userId: subject.userId,
+    mode,
+    workflowId,
+    flagged: outcome.triggeredLabels.length > 0,
+    acted: submittedActive && outcome.triggeredLabels.length > 0,
+    nsfwLevel: outcome.nsfw?.detectedLevel,
+    declaredNsfwLevel: outcome.nsfw?.declaredLevel,
+    poi: outcome.poi?.detected,
+    minor: outcome.minor?.detected,
+    scam: outcome.scam?.detected,
+    tags: outcome.triggeredLabels,
+    textHash: metadata.textHash,
+  });
 
   try {
     await adapter?.applyTextScan?.({

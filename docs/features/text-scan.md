@@ -32,7 +32,11 @@ reviews go through the existing moderator queues; text scan adds no queue of its
 
 ## Modes
 
-Each entity type has its own Flipt variant flag (`text-scan-<entity>`), evaluated per entity id:
+Each entity type has a rollout in the sysRedis hash `system:text-scan:modes`: field = entity type,
+value = `{ "shadow": 0-100, "active": 0-100 }`, the percentage of entity ids in each mode. An id
+falls in a fixed bucket (0–99), so raising a percentage only adds ids; `active` is checked first. A
+missing field is off. It is set with the harness action `putModes`, which refuses any `active` share
+without `allowActive: true` and logs who changed it; pods pick a change up within 15 seconds.
 
 - **off** — nothing is submitted.
 - **shadow** — scans run and verdicts are written to a separate `<Entity>:shadow` row that nothing
@@ -41,12 +45,21 @@ Each entity type has its own Flipt variant flag (`text-scan-<entity>`), evaluate
 
 A verdict that arrives after the mode has left `active` is not written to the live row.
 
+## Comparing with the existing systems
+
+Every finished verdict is logged to Axiom as `name: 'scan-verdict'`, with `system` = `text-scan`
+(shadow and active), `xguard` (its result callback) or `clavata` (the entity-moderation job, clean
+results included). Each event carries the entity type and id, `flagged`, `acted`, and the
+system's labels; no user text is logged. The profanity filter's verdict is stored on the entity
+(`profanityEvaluation` on `Model.meta` and `Bounty.details`). Clavata scans chat as `Chat` windows
+and has no CommentV2 queue, so those don't pair one to one with text scan's entities.
+
 ## Adding an entity or a label
 
 1. A profile file under `profiles/`, imported by the barrel.
 2. A prompt row for any new label, inserted through the harness's `putPrompt` (never in a migration).
 3. An adapter with `applyTextScan`, registered in `moderation-adapters.ts`.
-4. A flag, rolled out `off → shadow → active`.
+4. A rollout through `putModes`, `off → shadow → active`.
 
 ## Testing and operations
 

@@ -24,10 +24,12 @@ export const needsFullScope = (action: string) => !NARROW_SCOPE_ACTIONS.has(acti
 export const config = { api: { bodyParser: { sizeLimit: '4mb' } } };
 
 export default defineModeratorEndpoint('textScan.harness', {
-  summary: 'Text-scan operator actions: prompts, config, dry-run scans, shadow samples, quotes.',
+  summary:
+    'Text-scan operator actions: prompts, config, rollout modes, dry-run scans, shadow samples, quotes.',
   returns: "the action's JSON; a CSV sample as { csv }",
   notes: [
-    'putPrompt/putConfig are attributed to the signed-in moderator; ids in the body are ignored.',
+    'putPrompt/putConfig/putModes are attributed to the signed-in moderator; ids in the body are ignored.',
+    'putModes sets the rollout of one entity type { shadow, active } (percent of entity ids; null = off); any active share needs allowActive: true.',
     'scanEntity/batchEntities/scanTexts submit real orchestrator workflows (billed; no EntityModeration write, no action). quoteEntities/quoteTexts price without running; composeEntities returns the composed text only.',
     'Only getPrompts, quoteEntities, scanTexts and quoteTexts serve a delegated token that is not full-scope; every other action refuses it. A cookie session carries no scope and is unaffected.',
   ],

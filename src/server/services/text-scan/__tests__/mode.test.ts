@@ -1,62 +1,96 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as FliptClient from '~/server/flipt/client';
-
-vi.mock('~/server/flipt/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof FliptClient>()),
-  getFliptVariant: vi.fn(),
-}));
+import { beforeEach, describe, expect, it } from 'vitest';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const {
   getTextScanMode,
-  TEXT_SCAN_FLAG_KEY,
-  textScanFlag,
+  modeForBucket,
+  parseTextScanRollout,
+  readTextScanRollouts,
+  resetTextScanRolloutCache,
+  TEXT_SCAN_ENTITY_TYPES,
+  textScanBucket,
   textScanEmEntityType,
   parseTextScanEmEntityType,
 } = await import('~/server/services/text-scan/mode');
-const { getFliptVariant } = await import('~/server/flipt/client');
 const { isTextScanEntityType } = await import('~/server/services/text-scan/profiles');
 
+const hash = (fields: Record<string, string>) =>
+  redisMock.sysRedis.hGetAll.mockResolvedValue(fields as never);
+
 describe('getTextScanMode', () => {
-  beforeEach(() => vi.clearAllMocks());
-
-  it.each([
-    ['shadow', 'shadow'],
-    ['active', 'active'],
-    ['off', 'off'],
-    [null, 'off'],
-    ['ACTIVE', 'off'],
-    ['', 'off'],
-  ])('variant %s -> %s', async (variant, mode) => {
-    vi.mocked(getFliptVariant).mockResolvedValue(variant as string | null);
-    expect(await getTextScanMode('Post', 42)).toBe(mode);
+  beforeEach(() => {
+    redisMock.sysRedis.hGetAll.mockReset();
+    resetTextScanRolloutCache();
   });
 
-  it('evaluates the entity flag keyed on the entity id', async () => {
-    vi.mocked(getFliptVariant).mockResolvedValue('shadow');
-    await getTextScanMode('ChatMessage', 99);
-    expect(getFliptVariant).toHaveBeenCalledWith('text-scan-chat', '99');
+  it('is off when the entity type has no field', async () => {
+    hash({});
+    expect(await getTextScanMode('Post', 42)).toBe('off');
   });
 
-  it('reads off when Flipt throws', async () => {
-    vi.mocked(getFliptVariant).mockRejectedValue(new Error('down'));
+  it('reads the modes hash through the sysRedis read deadline', async () => {
+    hash({ Post: '{"shadow":100}' });
+    expect(await getTextScanMode('Post', 42)).toBe('shadow');
+    expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledWith('system:text-scan:modes');
+    expect(redisMock.withSysReadDeadline).toHaveBeenCalled();
+  });
+
+  it('is active for every id at active 100, whatever shadow says', async () => {
+    hash({ Model: '{"shadow":0,"active":100}' });
+    for (const id of [1, 2, 3, 99, 1000]) expect(await getTextScanMode('Model', id)).toBe('active');
+  });
+
+  it('reads off when sysRedis throws or a field is not json', async () => {
+    redisMock.sysRedis.hGetAll.mockRejectedValueOnce(new Error('down'));
+    expect(await getTextScanMode('Model', 1)).toBe('off');
+    resetTextScanRolloutCache();
+    hash({ Model: '{not json' });
     expect(await getTextScanMode('Model', 1)).toBe('off');
   });
 
-  it('has a distinct flag per entity type', () => {
-    const entityTypes = Object.keys(TEXT_SCAN_FLAG_KEY) as (keyof typeof TEXT_SCAN_FLAG_KEY)[];
-    const flags = entityTypes.map(textScanFlag);
-    expect(flags.every((flag) => flag?.startsWith('text-scan-'))).toBe(true);
-    expect(new Set(flags).size).toBe(flags.length);
-    expect(flags).toHaveLength(14);
+  it('caches the hash between calls', async () => {
+    hash({ Post: '{"shadow":100}' });
+    await getTextScanMode('Post', 1);
+    await getTextScanMode('Post', 2);
+    expect(redisMock.sysRedis.hGetAll).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('rollout percentages', () => {
+  it('splits ids by a fixed bucket, active first', () => {
+    const rollout = { shadow: 100, active: 10 };
+    expect(modeForBucket(rollout, 0)).toBe('active');
+    expect(modeForBucket(rollout, 9)).toBe('active');
+    expect(modeForBucket(rollout, 10)).toBe('shadow');
+    expect(modeForBucket(rollout, 99)).toBe('shadow');
+    expect(modeForBucket({ shadow: 50, active: 0 }, 50)).toBe('off');
+    expect(modeForBucket(undefined, 0)).toBe('off');
   });
 
-  it('maps Crucible and Collection to their own flags', () => {
-    expect(textScanFlag('Crucible')).toBe('text-scan-crucible');
-    expect(textScanFlag('Collection')).toBe('text-scan-collection');
+  it('gives an id the same bucket every time, and spreads ids across buckets', () => {
+    expect(textScanBucket('Model', 123)).toBe(textScanBucket('Model', 123));
+    const buckets = new Set(Array.from({ length: 1000 }, (_, i) => textScanBucket('Comment', i)));
+    expect(buckets.size).toBeGreaterThan(90);
+    for (const b of buckets) expect(b >= 0 && b < 100).toBe(true);
+  });
+
+  it('clamps and defaults percentages, and rejects anything that is not an object', () => {
+    expect(parseTextScanRollout('{"shadow":150,"active":-3}')).toEqual({ shadow: 100, active: 0 });
+    expect(parseTextScanRollout('{"shadow":"100"}')).toEqual({ shadow: 0, active: 0 });
+    expect(parseTextScanRollout('null')).toBeUndefined();
+    expect(parseTextScanRollout('')).toBeUndefined();
+    expect(parseTextScanRollout(undefined)).toBeUndefined();
+  });
+
+  it('readTextScanRollouts ignores fields that are not text-scan entity types', async () => {
+    hash({ Model: '{"shadow":100}', Tag: '{"shadow":100}' });
+    expect(await readTextScanRollouts()).toEqual({ Model: { shadow: 100, active: 0 } });
   });
 });
 
 describe('isTextScanEntityType', () => {
+  it('covers 14 entity types', () => expect(TEXT_SCAN_ENTITY_TYPES).toHaveLength(14));
+
   it.each([
     ['Post', true],
     ['UserProfile', true],

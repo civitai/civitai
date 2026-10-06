@@ -2,7 +2,18 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
-import type { PromptIds, TextScanLabel, TextScanSubject } from '~/server/services/text-scan/types';
+import {
+  parseTextScanRollout,
+  readTextScanRollouts,
+  resetTextScanRolloutCache,
+  type TextScanRollout,
+} from '~/server/services/text-scan/mode';
+import type {
+  PromptIds,
+  TextScanEntityType,
+  TextScanLabel,
+  TextScanSubject,
+} from '~/server/services/text-scan/types';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwAuthorizationError, throwBadRequestError } from '~/server/utils/errorHandling';
 
@@ -65,6 +76,37 @@ export async function setTextScanConfig(
     config: next,
   });
   return next;
+}
+
+/**
+ * `null` removes the entity type's field, which is off. Any `active` share needs `allowActive`:
+ * shadow is the default step, and going live is a separate, deliberate call. Other pods pick the
+ * change up within the 15s rollout cache.
+ */
+export async function setTextScanRollout(
+  entityType: TextScanEntityType,
+  rollout: TextScanRollout | null,
+  { moderatorId, allowActive = false }: { moderatorId: number; allowActive?: boolean }
+) {
+  await assertActiveModerator(moderatorId);
+  if (rollout && rollout.active > 0 && !allowActive)
+    throw throwBadRequestError(`${entityType}: an active share needs allowActive`);
+  if (rollout) {
+    const value = parseTextScanRollout(JSON.stringify(rollout));
+    await sysRedis.hSet(REDIS_SYS_KEYS.TEXT_SCAN.MODES, entityType, JSON.stringify(value));
+  } else {
+    await sysRedis.hDel(REDIS_SYS_KEYS.TEXT_SCAN.MODES, entityType);
+  }
+  resetTextScanRolloutCache();
+  await logToAxiom({
+    name: 'text-scan',
+    type: 'info',
+    message: 'rollout updated',
+    moderatorId,
+    entityType,
+    rollout,
+  });
+  return readTextScanRollouts();
 }
 
 export type ActiveTextScanPrompt = { id: number; key: string; content: string };

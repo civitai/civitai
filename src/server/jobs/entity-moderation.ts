@@ -13,6 +13,7 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
+import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
 import type { EntityType } from '~/shared/utils/prisma/enums';
@@ -345,7 +346,19 @@ const runClavata = async ({
         const onlyNSFW = item.matches?.length === 1 && item.matches[0] === 'NSFW';
         const allowedNSFWTypes: AllModKeys[] = ['Bounty', 'Model'];
 
-        if (item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type))) {
+        const skipped = item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type));
+        // Clean results too: they are the only record that Clavata passed this text.
+        void logScanVerdict({
+          system: 'clavata',
+          entityType: type,
+          entityId: metadata.id,
+          userId: metadata.userId > 0 ? metadata.userId : undefined,
+          flagged: item.result !== 'FALSE',
+          acted: !skipped,
+          tags: item.matches ?? [],
+        });
+
+        if (skipped) {
           if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }

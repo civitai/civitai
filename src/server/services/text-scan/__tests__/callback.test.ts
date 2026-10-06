@@ -222,6 +222,42 @@ describe('handleTextScanCallback', () => {
       workflowId: { in: ['wf-1', shadowMetadata.externalId] },
     });
     expect(adapter.applyTextScan).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'scan-verdict',
+        system: 'text-scan',
+        entityType: 'Post',
+        entityId: 7,
+        mode: 'shadow',
+        flagged: true,
+        acted: false,
+        nsfwLevel: 8,
+        tags: 'nsfw',
+      })
+    );
+  });
+
+  it('logs a clean verdict too, and an active flagged one as acted', async () => {
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'none', reason: 'r' } }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-1', status: 'succeeded' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'scan-verdict',
+        mode: 'active',
+        flagged: false,
+        acted: false,
+      })
+    );
+    vi.mocked(loggingMock.logToAxiom).mockClear();
+    vi.mocked(getWorkflow).mockResolvedValue(
+      workflow({ nsfw: { level: 'x', reason: 'r' } }) as any
+    );
+    await handleTextScanCallback({ workflowId: 'wf-2', status: 'succeeded' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'scan-verdict', mode: 'active', flagged: true, acted: true })
+    );
   });
 
   it('writes a failed shadow scan to the shadow row without calling applyFailure', async () => {

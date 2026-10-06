@@ -35,6 +35,7 @@ import {
 } from '~/server/services/entity-moderation.service';
 import { getModerationAdapter } from '~/server/services/moderation-adapters';
 import { recordXGuardScanFromWorkflow } from '~/server/services/scanner-audit.service';
+import { logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -86,6 +87,17 @@ async function handleCallback(event: WorkflowEvent): Promise<void> {
       }
 
       const adapter = getModerationAdapter(entityType);
+      const flagged = blocked || triggeredLabels.length > 0;
+      void logScanVerdict({
+        system: 'xguard',
+        entityType,
+        entityId,
+        workflowId: event.workflowId,
+        flagged,
+        acted: flagged && !!adapter?.applyResult,
+        blocked,
+        tags: triggeredLabels,
+      });
       if (adapter?.applyResult) {
         await adapter.applyResult({
           entityId,

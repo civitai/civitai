@@ -16,6 +16,7 @@ const {
   subjectTextLength,
   getTextScanConfig,
   setTextScanConfig,
+  setTextScanRollout,
   insertTextScanPrompt,
   MissingTextScanPromptError,
   DEFAULT_TEXT_SCAN_MODEL,
@@ -203,6 +204,51 @@ describe('setTextScanConfig', () => {
     redisMock.sysRedis.get.mockResolvedValueOnce('{not json');
     await expect(setTextScanConfig({ thinking: true }, { moderatorId: 5 })).rejects.toThrow();
     expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
+  });
+});
+
+describe('setTextScanRollout', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('refuses a user who is not an active moderator', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue(null);
+    await expect(
+      setTextScanRollout('Model', { shadow: 100, active: 0 }, { moderatorId: 9 })
+    ).rejects.toThrow();
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+  });
+
+  it('refuses an active share unless allowActive is set', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await expect(
+      setTextScanRollout('Model', { shadow: 100, active: 1 }, { moderatorId: 5 })
+    ).rejects.toThrow('allowActive');
+    expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+    await setTextScanRollout(
+      'Model',
+      { shadow: 100, active: 1 },
+      { moderatorId: 5, allowActive: true }
+    );
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:modes',
+      'Model',
+      '{"shadow":100,"active":1}'
+    );
+  });
+
+  it('writes a shadow rollout, logs who, and removes the field for null', async () => {
+    dbMock.dbRead.user.findFirst.mockResolvedValue({ id: 5 });
+    await setTextScanRollout('Comment', { shadow: 100, active: 0 }, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
+      'system:text-scan:modes',
+      'Comment',
+      '{"shadow":100,"active":0}'
+    );
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'rollout updated', moderatorId: 5, entityType: 'Comment' })
+    );
+    await setTextScanRollout('Comment', null, { moderatorId: 5 });
+    expect(redisMock.sysRedis.hDel).toHaveBeenCalledWith('system:text-scan:modes', 'Comment');
   });
 });
 
