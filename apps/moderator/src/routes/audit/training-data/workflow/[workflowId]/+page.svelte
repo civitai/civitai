@@ -85,8 +85,8 @@
   </p>
 {:else if detail.versionClaimUnconfirmed}
   <p class="mb-4 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-    This run carries a model-version tag, but it is not the run that version's review acts on, so it
-    is treated as a workflow-only run.
+    This run carries a model-version tag that is unreadable, or names a version whose review would
+    not release this run, so it is treated as a workflow-only run.
   </p>
 {/if}
 {#if detail.modelVersionId === null && !detail.underReview}

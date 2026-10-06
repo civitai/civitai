@@ -1160,7 +1160,8 @@ export type PendingWorkflowGate = {
   expiresAt: string | null;
   /** False when the run could not be fully checked (orchestrator or database), so it is listed as is. */
   verified: boolean;
-  /** Carries a `modelVersion:` tag, but is not the run that version's review would release. */
+  /** Carries a `modelVersion:` tag that is unreadable, or names a version whose review would not
+   *  release this run. */
   versionClaimUnconfirmed: boolean;
 };
 

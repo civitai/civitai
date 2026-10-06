@@ -52,7 +52,7 @@
                   {item.username ?? `#${item.ownerId}`} — {workflowOriginLabel(item.origin)}
                   {#if !item.verified}<span class="text-amber-200"> · unchecked</span>{/if}
                   {#if item.versionClaimUnconfirmed}
-                    <span class="text-amber-200"> · model-version tag, not that version's gated run</span>
+                    <span class="text-amber-200"> · unconfirmed model-version tag</span>
                   {/if}
                 </p>
                 <p class="text-xs text-dark-2">Submitted {dateTime(item.submittedAt)}</p>
