@@ -5,10 +5,17 @@ import type { act as actType } from 'react-dom/test-utils';
 import { createRoot, type Root } from 'react-dom/client';
 import { MantineProvider } from '@mantine/core';
 import type * as Trpc from '~/utils/trpc';
+import type * as FeatureFlagsProvider from '~/providers/FeatureFlagsProvider';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import { CRUCIBLE_JUDGE_MIN_CREATOR_SCORE } from '~/shared/constants/crucible.constants';
 
 const getLadder = vi.hoisted(() => vi.fn());
+const features = vi.hoisted(() => ({ creatorJourney: true }));
+
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsProvider>()),
+  useFeatureFlags: () => features,
+}));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const original = await importOriginal<typeof Trpc>();
@@ -30,7 +37,42 @@ afterEach(() => {
   container?.remove();
 });
 
+function renderGate() {
+  container = document.createElement('div');
+  document.body.appendChild(container);
+  root = createRoot(container);
+  act(() => {
+    root?.render(
+      React.createElement(
+        MantineProvider,
+        null,
+        React.createElement(
+          'p',
+          null,
+          React.createElement(CreatorScoreGateMessage, { score: 4_000, total: 1, required: 40_000 })
+        )
+      )
+    );
+  });
+  return container.querySelector('p');
+}
+
 describe('CreatorScoreGateMessage', () => {
+  it('does not fetch the ladder or name a tier while Creator Journey is off', () => {
+    features.creatorJourney = false;
+    getLadder.mockReturnValue({ data: undefined });
+    const p = renderGate();
+    expect(getLadder).toHaveBeenLastCalledWith(
+      undefined,
+      expect.objectContaining({ enabled: false })
+    );
+    expect(p?.textContent).toMatch(/^You're at 4,000, 36,000 to go\./);
+    expect([...(p?.querySelectorAll('a') ?? [])].map((a) => a.getAttribute('href'))).not.toContain(
+      '/creators/journey'
+    );
+    features.creatorJourney = true;
+  });
+
   it('reads the live ladder and climbs it from the total it is handed', async () => {
     const registry = await import('~/server/services/creator-score-unlocks.service');
     getLadder.mockReturnValue({

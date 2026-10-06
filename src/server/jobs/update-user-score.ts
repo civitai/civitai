@@ -22,6 +22,10 @@ import {
   grantScoreTierMilestones,
   notifyScoreTierCrossings,
 } from '~/server/services/creator-milestone-grant.service';
+import {
+  CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
+  creatorJourneyAudience,
+} from '~/server/services/creator-journey-flag.service';
 import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
@@ -379,15 +383,26 @@ export async function persistScoreBatch(
   // Scores are already committed, so a failed grant must not fail the batch. The next run that
   // touches these users grants silently, and the backfill endpoint reconciles everyone else.
   let crossings: ScoreTierCrossing[];
+  let audience: Set<number>;
   try {
-    crossings = await grantScoreTierMilestones(ctx.pg, transitions, onCancel);
+    audience = await creatorJourneyAudience(
+      ctx.pg,
+      transitions.map((t) => t.userId)
+    );
+    const grantable = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG
+      ? transitions.filter((t) => audience.has(t.userId))
+      : transitions;
+    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel);
   } catch (e) {
     log('tier grant failed for batch', e);
     ctx.tierGrantErrors.push(e);
     return;
   }
   // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
-  await notifyScoreTierCrossings(crossings, ctx.tierUnlocks);
+  await notifyScoreTierCrossings(
+    crossings.filter((crossing) => audience.has(crossing.userId)),
+    ctx.tierUnlocks
+  );
 }
 
 // Persist per-category scores and recompute `total` for a batch of users in one

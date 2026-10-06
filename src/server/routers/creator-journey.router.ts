@@ -1,5 +1,3 @@
-import { CacheTTL } from '~/server/common/constants';
-import { edgeCacheIt } from '~/server/middleware.trpc';
 import {
   getCreatorJourney,
   getCreatorScoreLadder,
@@ -9,9 +7,10 @@ import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 export const creatorJourneyRouter = router({
   getLadder: publicProcedure
-    .use(edgeCacheIt({ ttl: CacheTTL.sm }))
+    .use(isFlagProtected('creatorJourney'))
     .query(() => getCreatorScoreLadder()),
   getMine: protectedProcedure
     .meta({ requiredScope: TokenScope.UserRead })
+    .use(isFlagProtected('creatorJourney'))
     .query(({ ctx }) => getCreatorJourney(ctx.user.id)),
 });
