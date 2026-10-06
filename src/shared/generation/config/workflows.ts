@@ -26,6 +26,7 @@ import {
   grokVersionIds,
   happyHorseVersionIds,
   klingVersionIds,
+  minimaxVersionIds,
   viduVersionIds,
 } from '~/shared/generation/version-ids';
 import {
@@ -323,7 +324,13 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.MiniMaxH3,
       ECO.Flux3Video,
     ],
-    excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
+    excludeModelVersionIds: [
+      klingVersionIds.v1_6,
+      klingVersionIds.v2,
+      klingVersionIds.v2_5_turbo,
+      // HeyGen takes a first frame only
+      minimaxVersionIds.heygen,
+    ],
     variantOf: 'img2vid',
   },
 

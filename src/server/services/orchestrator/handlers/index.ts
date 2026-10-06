@@ -10,6 +10,7 @@ import type {
   VideoInterpolationStepTemplate,
 } from '@civitai/client';
 import type {
+  ImageGenStepTemplate as OrchestrationImageGenStepTemplate,
   PreprocessVideoStepTemplate,
   SoniloAudioGenStepTemplate,
   YuE2StepTemplate,
@@ -29,7 +30,9 @@ export type StepInput =
   | PreprocessImageStepTemplate
   // Sourced from @civitai/orchestration-client: the pinned @civitai/client
   // predates preprocessVideo and has no equivalent type.
-  | PreprocessVideoStepTemplate;
+  | PreprocessVideoStepTemplate
+  // Ming and Qwen build theirs from orchestration-client, whose Priority adds 'idle'
+  | OrchestrationImageGenStepTemplate;
 
 export type { GenerationHandlerCtx } from '../orchestration-new.service';
 export { defineHandler } from './handler-factory';
