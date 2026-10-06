@@ -13,7 +13,7 @@ describe('tosReasonUserMessage', () => {
 
   it('words a minor-with-violence removal without the mature-context accusation', () => {
     // The fused "Minor in Mature Context" labels read to the owner as a CSAM accusation; this reason
-    // exists so a weapon near a young-looking character is not filed or worded that way.
+    // exists so violence involving a young-looking character is not filed or worded that way.
     const message = tosReasonUserMessage(ViolationType.MinorViolence);
     expect(message).toBe(
       'Violence against, or implied harm to, characters who appear young is not allowed'
