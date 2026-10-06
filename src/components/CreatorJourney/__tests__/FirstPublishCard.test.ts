@@ -268,7 +268,7 @@ describe('FirstPublishCard', () => {
       id: 7,
       meta: { scores: { total: MIN_CREATOR_SCORE - 1, models: MIN_CREATOR_SCORE } },
     };
-    const text = render().textContent;
+    const text = paragraphs(render());
     expect(text).toContain('Your next goal is Supernova');
     expect(text).not.toContain('join the Creator Program');
   });
