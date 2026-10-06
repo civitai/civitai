@@ -21,7 +21,13 @@ import {
 } from '~/server/schema/resource-intent.schema';
 import { projectSafeGenerationResource } from '~/server/schema/blocks/generation-resource-projection';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { askJev, JEV_TIMEOUT_MS, JevError, type JevChoiceQuestion } from '~/server/services/ai/jev';
+import {
+  askJev,
+  JEV_TIMEOUT_MS,
+  JevError,
+  type JevAnswer,
+  type JevChoiceQuestion,
+} from '~/server/services/ai/jev';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import {
   findResourceIntentCandidates,
@@ -187,7 +193,57 @@ export function resourceIntentCacheKey(input: {
   return `${REDIS_KEYS.CACHES.JEV_RESOURCE_INTENT}:${hash}` as const;
 }
 
-function compileCriteria(
+/**
+ * Stage 1's Jev request, exactly as the endpoint sends it. Exported, together with
+ * `parseResourceIntentStage1Answers` and `compileCriteria`, so the offline M3 study
+ * (`scripts/eval-resource-intent-goldset.ts`) runs stage 1 through this code instead
+ * of keeping a copy that can drift from it.
+ */
+export function buildResourceIntentStage1Request(prompt: string, baseModel: string | null) {
+  return {
+    state: { prompt, ...(baseModel ? { baseModel } : {}) },
+    questions: RESOURCE_INTENT_QUESTIONS.map((question) => ({ ...question })),
+  };
+}
+
+/**
+ * Stage 1's answers → the typed intent. Returns `null` when an answer is missing or
+ * of the wrong kind for its question (the endpoint degrades that as
+ * `jev_stage1_shape`), and THROWS when the answers are well-formed but no longer
+ * match the current question spec (option sets, score range) — so a desync between
+ * the Jev client and the spec degrades instead of shipping.
+ */
+export function parseResourceIntentStage1Answers(
+  answers: readonly JevAnswer[]
+): ResourceIntentAnswer | null {
+  const answersById = new Map(answers.map((answer) => [answer.id, answer]));
+  const needsResource = answersById.get('needsResource');
+  const role = answersById.get('role');
+  const styleFamily = answersById.get('styleFamily');
+  const contentType = answersById.get('contentType');
+  const specificity = answersById.get('specificity');
+  const injectionPresent = answersById.get('injectionPresent');
+  if (
+    needsResource?.type !== 'noul' ||
+    role?.type !== 'choice' ||
+    styleFamily?.type !== 'choice' ||
+    contentType?.type !== 'choice' ||
+    specificity?.type !== 'score' ||
+    injectionPresent?.type !== 'noul'
+  ) {
+    return null;
+  }
+  return resourceIntentAnswerSchema.parse({
+    needsResource: needsResource.value,
+    role: { value: role.value, distribution: role.distribution },
+    styleFamily: { value: styleFamily.value, distribution: styleFamily.distribution },
+    contentType: { value: contentType.value, distribution: contentType.distribution },
+    specificity: specificity.value,
+    injectionPresent: injectionPresent.value,
+  });
+}
+
+export function compileCriteria(
   answer: ResourceIntentAnswer,
   baseModel: string | null
 ): ResourceIntentCriteria {
@@ -382,46 +438,19 @@ export async function getResourceIntent(
     // Resolved only on a cache miss — the matcher is the sole consumer.
     const coverage = ctx.coverage ?? (await coverageAudience(undefined));
     try {
-      const stage1 = await askJev(
-        {
-          state: { prompt: input.prompt, ...(baseModel ? { baseModel } : {}) },
-          questions: RESOURCE_INTENT_QUESTIONS.map((question) => ({ ...question })),
-        },
-        { timeoutMs: JEV_TIMEOUT_MS }
-      );
+      const stage1 = await askJev(buildResourceIntentStage1Request(input.prompt, baseModel), {
+        timeoutMs: JEV_TIMEOUT_MS,
+      });
       stage1Model = stage1.model;
 
-      const answersById = new Map(stage1.answers.map((answer) => [answer.id, answer]));
-      const needsResource = answersById.get('needsResource');
-      const role = answersById.get('role');
-      const styleFamily = answersById.get('styleFamily');
-      const contentType = answersById.get('contentType');
-      const specificity = answersById.get('specificity');
-      const injectionPresent = answersById.get('injectionPresent');
-      if (
-        needsResource?.type !== 'noul' ||
-        role?.type !== 'choice' ||
-        styleFamily?.type !== 'choice' ||
-        contentType?.type !== 'choice' ||
-        specificity?.type !== 'score' ||
-        injectionPresent?.type !== 'noul'
-      ) {
+      // Fail-closed twice: a missing or wrong-kind answer returns null here, and an
+      // answer that no longer matches the current question spec throws from the
+      // parse inside — both degrade instead of shipping.
+      const intent = parseResourceIntentStage1Answers(stage1.answers);
+      if (!intent) {
         degradedReason = 'jev_stage1_shape';
         throw new Error('stage-1 answers did not match the question spec');
       }
-
-      // Fail-closed against the v1 spec itself: the Jev client proved each
-      // answer well-formed for the question it was asked; THIS parse proves
-      // the answers still match the current question spec (option sets, score
-      // range), so a desync between the two degrades instead of shipping.
-      const intent = resourceIntentAnswerSchema.parse({
-        needsResource: needsResource.value,
-        role: { value: role.value, distribution: role.distribution },
-        styleFamily: { value: styleFamily.value, distribution: styleFamily.distribution },
-        contentType: { value: contentType.value, distribution: contentType.distribution },
-        specificity: specificity.value,
-        injectionPresent: injectionPresent.value,
-      });
       const criteria = compileCriteria(intent, baseModel);
 
       let suggestions: ResourceIntentSuggestion[] = [];

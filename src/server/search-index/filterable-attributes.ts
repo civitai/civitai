@@ -156,12 +156,15 @@ export const modelsFilterableAttributes = [
   // PER-BATCH, so a partial fault still leaves thousands of labeled documents and passes any
   // loose threshold.
   //
-  // 🔴 NO COMMITTED RUNNER IMPLEMENTS THESE ARMS. `scripts/eval-resource-intent-goldset.ts`
-  // measures stage-1 label agreement and contains no reference to `insight`, `qualityScore`,
-  // Meilisearch or any index filter; `docs/resource-intent-primitive.md` records that the
-  // retrieval comparison is provided by neither that evaluator nor this change. So the control
-  // above belongs to whatever retrieval comparison gets BUILT — do not go looking for these
-  // arms in the gold-set evaluator, because they are not there.
+  // 🔴 NO COMMITTED RUNNER IMPLEMENTS THESE ARMS — the labeled-vs-unlabeled split by
+  // `IS NOT NULL` / `IS NULL` above. The M3 study DOES now carry a retrieval comparison
+  // (`scripts/eval-resource-intent-retrieval.ts`), but its arms are different ones: the
+  // shipped purpose-first matcher against the popularity seed alone, both over the same gate
+  // filter, neither filtering on this attribute's nullness. It performs its own version of
+  // the control above — a count of documents whose `insight.role` is a real role, with a
+  // floor that, like this one, catches only a TOTAL fault. So the `IS NOT NULL` control still
+  // belongs to whatever labeled-vs-unlabeled comparison gets built; do not go looking for
+  // these arms in the gold-set evaluator, because they are not there.
   //
   // Measured on v1.15.0 over a mixed fixture (labeled / written-null / key-absent): EXISTS
   // returned 5 of 7 including every written null, NOT EXISTS returned only the 2 whose key

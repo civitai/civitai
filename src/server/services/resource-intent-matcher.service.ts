@@ -383,13 +383,45 @@ export function mergeSeedHits(
   return uniqBy([...purpose, ...popularity], 'id').slice(0, poolCap);
 }
 
+/**
+ * One seed page against the models index: the request as built by
+ * `buildResourceIntentSeedQueries`, through the same timeout wrapper and the same
+ * transient-error rewrap the endpoint uses. No search client (dev/build) ⇒ no hits.
+ *
+ * Exported for the M3 study's POPULARITY arm (`scripts/eval-resource-intent-retrieval.ts`),
+ * which issues the popularity page ALONE — so it reaches the index through exactly this
+ * code rather than a copy of it.
+ */
+export async function searchResourceIntentSeedPage(
+  request: SearchParams
+): Promise<ModelSearchIndexRecord[]> {
+  const client = searchClient;
+  if (!client) return [];
+  try {
+    const results = await withMeiliResourceSelect(
+      (searchSignal) =>
+        searchWithSignal<ModelSearchIndexRecord>(
+          client.index(MODELS_SEARCH_INDEX),
+          '',
+          request,
+          searchSignal
+        ),
+      {}
+    );
+    return results.hits;
+  } catch (err) {
+    if (isTransientMeiliError(err)) {
+      throw new Error(`Resource-intent model search temporarily unavailable: ${String(err)}`);
+    }
+    throw err;
+  }
+}
+
 async function searchShortlistModels(
   filter: string | null,
   role: ResourceIntentRole,
   poolCap: number
 ): Promise<ModelSearchIndexRecord[]> {
-  const client = searchClient;
-  if (!client) return [];
   // 🔴 Each page asks for `poolCap` documents — one per targeted version, no multiplier.
   // A document USUALLY expands to at least one matching version, but not always: the
   // coverage and baseModel filters are nested-array matches, so a document can match on
@@ -400,36 +432,40 @@ async function searchShortlistModels(
   // 2 x MEILI_RESOURCE_SELECT_TIMEOUT_MS (20s at the 10s default). Whether this width still fills the pool under the purpose-first
   // order has not been re-swept.
   const { purpose, popularity } = buildResourceIntentSeedQueries({ filter, role, poolCap });
-  const search = (request: SearchParams) =>
-    withMeiliResourceSelect(
-      (searchSignal) =>
-        searchWithSignal<ModelSearchIndexRecord>(
-          client.index(MODELS_SEARCH_INDEX),
-          '',
-          request,
-          searchSignal
-        ),
-      {}
-    );
-  try {
-    // One call per page rather than a multi-search: nothing in this repo wraps
-    // `multiSearch` with the undelivered-body guard `searchWithSignal` carries. Either
-    // page failing fails the seed — there is deliberately no popularity-only fallback, so
-    // an index that cannot answer the purpose page fails loudly.
-    const purposeResults = await search(purpose);
-    // The fill is requested at the full width, not `poolCap - purpose.length`: the merge
-    // drops popularity hits already on the purpose page, so a narrower page could underfill.
-    if (purposeResults.hits.length >= poolCap) {
-      return mergeSeedHits(purposeResults.hits, [], poolCap);
-    }
-    const popularityResults = await search(popularity);
-    return mergeSeedHits(purposeResults.hits, popularityResults.hits, poolCap);
-  } catch (err) {
-    if (isTransientMeiliError(err)) {
-      throw new Error(`Resource-intent model search temporarily unavailable: ${String(err)}`);
-    }
-    throw err;
+  // One call per page rather than a multi-search: nothing in this repo wraps
+  // `multiSearch` with the undelivered-body guard `searchWithSignal` carries. Either
+  // page failing fails the seed — there is deliberately no popularity-only fallback, so
+  // an index that cannot answer the purpose page fails loudly.
+  const purposeHits = await searchResourceIntentSeedPage(purpose);
+  // The fill is requested at the full width, not `poolCap - purpose.length`: the merge
+  // drops popularity hits already on the purpose page, so a narrower page could underfill.
+  if (purposeHits.length >= poolCap) {
+    return mergeSeedHits(purposeHits, [], poolCap);
   }
+  const popularityHits = await searchResourceIntentSeedPage(popularity);
+  return mergeSeedHits(purposeHits, popularityHits, poolCap);
+}
+
+/**
+ * What `findResourceIntentCandidates` derives from the criteria before it searches:
+ * the response cap, the pool width, the baseModel list and the gate filter. Exported
+ * so the M3 study's POPULARITY arm derives them through this one function and can
+ * never drift from the endpoint on any of the four.
+ */
+export function resolveResourceIntentSeedPlan(
+  criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
+  opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
+): { cap: number; poolCap: number; baseModels: string[] | null; filter: string | null } {
+  const cap = clampResourceIntentCap(opts.cap);
+  const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
+  const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
+  const filter = buildResourceIntentFilter({
+    modelTypes: criteria.modelTypes,
+    baseModels,
+    browsingLevel: opts.browsingLevel,
+    coverage: opts.coverage,
+  });
+  return { cap, poolCap, baseModels, filter };
 }
 
 /**
@@ -471,15 +507,7 @@ export async function findResourceIntentCandidates(
   }
 ): Promise<ResourceIntentMatchResult> {
   if (criteria.role === 'none') return { entries: [], insightFallback: false };
-  const cap = clampResourceIntentCap(opts.cap);
-  const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
-  const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
-  const filter = buildResourceIntentFilter({
-    modelTypes: criteria.modelTypes,
-    baseModels,
-    browsingLevel: opts.browsingLevel,
-    coverage: opts.coverage,
-  });
+  const { cap, poolCap, baseModels, filter } = resolveResourceIntentSeedPlan(criteria, opts);
   const hits = await searchShortlistModels(filter, criteria.role, poolCap);
   const pool = expandShortlist(hits, {
     baseModels,
