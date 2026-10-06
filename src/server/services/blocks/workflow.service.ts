@@ -351,6 +351,9 @@ export function appBlockTag(appId: string): string {
  *   cost:   the workflow's realized/estimated buzz total, or null when absent.
  *   status: the block-contract status (see ORCH_STATUS_MAP) — the orchestrator's
  *           unassigned/preparing/scheduled all collapse to `pending`.
+ *   trainedEpochs: OPTIONAL, same value and rule as the snapshot field — see
+ *           `BlockWorkflowSnapshot.trainedEpochs`. Absent unless an approved
+ *           pass-through training run has a ready checkpoint.
  *   publishedModel: OPTIONAL, same value and rule as the snapshot field — see
  *           `BlockWorkflowSnapshot.publishedModel`. Absent on every other item.
  */
@@ -366,6 +369,7 @@ export type AppWorkflow = {
   images: AppWorkflowImage[];
   cost: number | null;
   createdAt: string;
+  trainedEpochs?: TrainedEpoch[];
   publishedModel?: BlockPublishedModel;
 };
 
@@ -376,6 +380,7 @@ export type AppWorkflow = {
 export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
   const status = ORCH_STATUS_MAP[workflow.status] ?? 'pending';
   const images: AppWorkflowImage[] = [];
+  const trainedEpochs: TrainedEpoch[] = [];
   for (const step of workflow.steps ?? []) {
     // A `customComfy` step surfaces its outputs as `output.blobs`
     // (CustomComfyOutput) — no width/height, `nsfwLevel` is the same string
@@ -441,15 +446,19 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
       //
       // The non-media half is deliberately DROPPED, not forwarded: `AppWorkflow`
       // is the cross-surface queue contract and exists to hand a block nothing
-      // but images, cost and status.
+      // but images, cost and status. The one addition is `trainedEpochs`, taken
+      // from the same split the snapshot uses, so a block listing its runs can
+      // offer an approved one to the publish wizard.
       //
       // Same `BLOCK_STEP_NAME` gate as `snapshotFromWorkflow` — see the note
       // there for why "unrecognised `$type`" is the wrong set.
       if (step.name !== BLOCK_STEP_NAME) continue;
-      for (const m of splitPassThroughStep(
+      const split = splitPassThroughStep(
         step.$type,
         (step as unknown as { output?: unknown }).output
-      ).media) {
+      );
+      trainedEpochs.push(...split.trainedEpochs);
+      for (const m of split.media) {
         images.push({
           url: m.url,
           width: m.width,
@@ -501,6 +510,7 @@ export function projectAppWorkflow(workflow: Workflow): AppWorkflow {
     images,
     cost: typeof total === 'number' ? total : null,
     createdAt: workflow.createdAt,
+    ...(trainedEpochs.length > 0 ? { trainedEpochs } : {}),
     ...(publishedModel ? { publishedModel } : {}),
   };
 }
