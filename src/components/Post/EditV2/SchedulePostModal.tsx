@@ -1,10 +1,19 @@
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { Button, Group, Modal, Stack, Text } from '@mantine/core';
+import { ActionIcon, Button, Group, Input, Modal, SimpleGrid, Stack, Text } from '@mantine/core';
+import { DatePickerInput, TimeInput } from '@mantine/dates';
+import { IconCalendar, IconClock } from '@tabler/icons-react';
+import { useRef, useState } from 'react';
+import { useController } from 'react-hook-form';
 import * as z from 'zod';
-import { Form, InputDateTimePicker, useForm } from '~/libs/form';
+import { Form, useForm } from '~/libs/form';
 import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { increaseDate } from '~/utils/date-helpers';
-import { getDefaultScheduleDate } from './schedule-post.utils';
+import {
+  formatScheduleTime,
+  getDefaultScheduleDate,
+  withScheduleDay,
+  withScheduleTime,
+} from './schedule-post.utils';
 
 const schema = z.object({
   date: z
@@ -75,16 +84,7 @@ export function SchedulePostModal({
         <Form form={form} onSubmit={handleSubmit}>
           <Stack gap="xl">
             <Stack gap={4}>
-              <InputDateTimePicker
-                name="date"
-                label="Publish Date"
-                placeholder="Select a date and time"
-                valueFormat="lll"
-                minDate={minDate}
-                maxDate={maxDate}
-                popoverProps={{ withinPortal: true }}
-                withAsterisk
-              />
+              <PublishDateTimeInput minDate={minDate} maxDate={maxDate} />
               <Text size="xs" c="dimmed">
                 The date and time are in your local timezone.
               </Text>
@@ -99,5 +99,59 @@ export function SchedulePostModal({
         </Form>
       </Stack>
     </Modal>
+  );
+}
+
+// A native time input in the modal itself rather than DateTimePicker's, which sits in a
+// focus-trapped popover and on Android Chrome opened neither a keyboard nor a clock picker.
+function PublishDateTimeInput({ minDate, maxDate }: { minDate: Date; maxDate: Date }) {
+  const { field, fieldState } = useController<z.input<typeof schema>, 'date'>({ name: 'date' });
+  const timeInputRef = useRef<HTMLInputElement>(null);
+  // Local text so a segment cleared mid-edit isn't snapped back to the stored time.
+  const [timeText, setTimeText] = useState(() => formatScheduleTime(field.value));
+
+  return (
+    <Stack gap={4}>
+      <SimpleGrid cols={2} spacing="sm">
+        <DatePickerInput
+          label="Publish Date"
+          leftSection={<IconCalendar size={16} />}
+          valueFormat="ll"
+          value={field.value}
+          onChange={(day) => day && field.onChange(withScheduleDay(field.value, day))}
+          minDate={minDate}
+          maxDate={maxDate}
+          popoverProps={{ withinPortal: true }}
+          error={!!fieldState.error}
+          withAsterisk
+        />
+        <TimeInput
+          ref={timeInputRef}
+          label="Time"
+          value={timeText}
+          onChange={(event) => {
+            setTimeText(event.currentTarget.value);
+            field.onChange(withScheduleTime(field.value, event.currentTarget.value));
+          }}
+          onBlur={() => {
+            setTimeText(formatScheduleTime(field.value));
+            field.onBlur();
+          }}
+          rightSection={
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              aria-label="Pick a time"
+              onClick={() => timeInputRef.current?.showPicker?.()}
+            >
+              <IconClock size={16} />
+            </ActionIcon>
+          }
+          error={!!fieldState.error}
+          withAsterisk
+        />
+      </SimpleGrid>
+      {fieldState.error?.message && <Input.Error>{fieldState.error.message}</Input.Error>}
+    </Stack>
   );
 }
