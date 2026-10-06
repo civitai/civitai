@@ -16,7 +16,7 @@ describe('tosReasonUserMessage', () => {
     // exists so a weapon near a young-looking character is not filed or worded that way.
     const message = tosReasonUserMessage(ViolationType.MinorViolence);
     expect(message).toBe(
-      'Violence, weapons or threats involving characters who appear young, or in settings associated with minors such as schools, are not allowed'
+      'Violence against, or implied harm to, characters who appear young is not allowed'
     );
   });
 
