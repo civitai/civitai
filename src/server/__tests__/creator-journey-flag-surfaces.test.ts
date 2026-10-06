@@ -12,9 +12,19 @@ import { describe, expect, it } from 'vitest';
 const read = (path: string) => readFileSync(join(process.cwd(), path), 'utf8');
 
 describe('Creator Journey flag gates', () => {
-  it('refuses both journey procedures without the flag', () => {
-    const router = read('src/server/routers/creator-journey.router.ts');
-    expect(router.match(/\.use\(isFlagProtected\('creatorJourney'\)\)/g)).toHaveLength(2);
+  it('refuses every journey procedure without the flag', () => {
+    const router = read('src/server/routers/creator-journey.router.ts').replace(
+      /\/\*[\s\S]*?\*\/|\/\/.*$/gm,
+      ''
+    );
+    // One chunk per procedure, whatever kind of procedure it is or how it is written.
+    const procedures = router.split(/^ {2}(?=\w+: \w+Procedure(?!\w))/m).slice(1);
+    expect(procedures).toHaveLength(3);
+    for (const procedure of procedures) {
+      expect(procedure, procedure.split(':')[0]).toContain(
+        ".use(isFlagProtected('creatorJourney'))"
+      );
+    }
   });
 
   it('keeps getLadder out of the edge cache, which would serve it past the flag', () => {

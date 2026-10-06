@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   getCreatorJourney,
   getCreatorScoreLadder,
+  getFirstPublishCard,
   maskUnearnedMilestone,
 } from '~/server/services/creator-journey.service';
+import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
 
 const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[0]> = {}) => ({
   key: 'hidden:remix',
@@ -122,5 +124,146 @@ describe('getCreatorScoreLadder', () => {
     expect((await getCreatorScoreLadder()).tiers).toEqual([
       { key: 'hidden:777', name: '???', threshold: 777, hint: 'Someone builds on your work' },
     ]);
+  });
+});
+
+describe('getFirstPublishCard', () => {
+  const owner = 7;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const daysAgo = (days: number) => new Date(Date.now() - days * DAY_MS);
+  type Row = { id: number; userId: number; status: string; publishedAt: Date | null };
+
+  type FirstWhere = {
+    userId: number;
+    id: { not: number };
+    publishedAt: { lt: Date };
+    status?: { not: string };
+  };
+  const UNDERSTOOD_KEYS = ['userId', 'id', 'publishedAt', 'status'];
+
+  // A tiny in-memory table that honours the where clauses the service sends, so a case reads as data.
+  // The exact clause is pinned separately below; this fake only interprets it.
+  function seed(entity: 'model' | 'article', rows: Row[]) {
+    const client = dbMock.dbWrite[entity];
+    client.findUnique.mockImplementation(
+      (async ({ where }: { where: { id: number } }) =>
+        rows.find((r) => r.id === where.id) ?? null) as never
+    );
+    client.findFirst.mockImplementation((async ({ where }: { where: FirstWhere }) => {
+      // Refuse a clause it does not understand, so it cannot agree with an added filter.
+      const unknown = Object.keys(where).filter((k) => !UNDERSTOOD_KEYS.includes(k));
+      if (unknown.length) throw new Error(`seed() cannot interpret where.${unknown.join(', ')}`);
+      const shapeOf = (value: unknown) => Object.keys(value ?? {}).join(',');
+      if (shapeOf(where.id) !== 'not' || shapeOf(where.publishedAt) !== 'lt')
+        throw new Error('seed() reads only id.not and publishedAt.lt');
+      if (where.status != null && shapeOf(where.status) !== 'not')
+        throw new Error('seed() reads only status.not');
+      return (
+        rows.find(
+          (r) =>
+            r.userId === where.userId &&
+            r.id !== where.id.not &&
+            r.publishedAt != null &&
+            r.publishedAt < where.publishedAt.lt &&
+            (where.status == null || r.status !== where.status.not)
+        ) ?? null
+      );
+    }) as never);
+  }
+  const row = (overrides: Partial<Row> = {}): Row => ({
+    id: 1,
+    userId: owner,
+    status: 'Published',
+    publishedAt: daysAgo(1),
+    ...overrides,
+  });
+  const card = (entityType: 'model' | 'article', id: number) =>
+    getFirstPublishCard({ userId: owner, entityType, id });
+
+  beforeEach(() => vi.resetAllMocks());
+
+  describe.each(['model', 'article'] as const)('%s', (entity) => {
+    it("shows on the owner's only published one", async () => {
+      seed(entity, [row()]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+    });
+
+    it('shows on the earlier of two published the same week, and not on the later', async () => {
+      seed(entity, [
+        row({ id: 1, publishedAt: daysAgo(5) }),
+        row({ id: 2, publishedAt: daysAgo(2) }),
+      ]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+      await expect(card(entity, 2)).resolves.toEqual({ show: false });
+    });
+
+    it('is not blocked by one scheduled to go live later', async () => {
+      seed(entity, [
+        row({ id: 1 }),
+        row({ id: 2, status: 'Scheduled', publishedAt: new Date(Date.now() + DAY_MS) }),
+      ]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+    });
+
+    it('is blocked by an earlier one in any status', async () => {
+      seed(entity, [
+        row({ id: 1 }),
+        row({ id: 2, status: 'Unpublished', publishedAt: daysAgo(30) }),
+      ]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: false });
+    });
+
+    it('still shows on the last day of the window', async () => {
+      seed(entity, [row({ publishedAt: daysAgo(FIRST_PUBLISH_CARD_DAYS - 0.5) })]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: true });
+    });
+
+    it.each([
+      ['someone else', { userId: owner + 1 }],
+      ['an unpublished one', { status: 'Unpublished' }],
+      ['a draft', { publishedAt: null }],
+      ['one past the window', { publishedAt: daysAgo(FIRST_PUBLISH_CARD_DAYS + 0.5) }],
+    ])('refuses %s before looking for earlier ones', async (_label, overrides) => {
+      seed(entity, [row(overrides)]);
+      await expect(card(entity, 1)).resolves.toEqual({ show: false });
+      expect(dbMock.dbWrite[entity].findFirst).not.toHaveBeenCalled();
+    });
+
+    // A replica can still show it unpublished right after publish, and the client keeps the first
+    // answer for the session, so a lagged "no" would hide the card for good.
+    it('reads the primary, never a replica, with the earlier-than clause', async () => {
+      const publishedAt = daysAgo(1);
+      seed(entity, [row({ publishedAt })]);
+      await card(entity, 1);
+      expect(dbMock.dbRead[entity].findUnique).not.toHaveBeenCalled();
+      expect(dbMock.dbRead[entity].findFirst).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite[entity].findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            userId: owner,
+            id: { not: 1 },
+            publishedAt: { lt: publishedAt },
+            ...(entity === 'model' ? { status: { not: 'Scheduled' } } : {}),
+          },
+        })
+      );
+    });
+  });
+
+  it('is not blocked by a model still Scheduled past its slot, which never went live', async () => {
+    seed('model', [row({ id: 1 }), row({ id: 2, status: 'Scheduled', publishedAt: daysAgo(3) })]);
+    await expect(card('model', 1)).resolves.toEqual({ show: true });
+  });
+
+  // Models soft-delete and keep publishedAt, so an earlier deleted model still makes this not the first.
+  it('is blocked by an earlier model that was deleted', async () => {
+    seed('model', [row({ id: 1 }), row({ id: 2, status: 'Deleted', publishedAt: daysAgo(40) })]);
+    await expect(card('model', 1)).resolves.toEqual({ show: false });
+  });
+
+  it('checks the table for its own entity type', async () => {
+    seed('article', [row()]);
+    await card('article', 1);
+    expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
   });
 });
