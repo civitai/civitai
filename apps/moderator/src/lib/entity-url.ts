@@ -60,9 +60,9 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
   return section ? `${base}/${section}` : base;
 }
 
-/** The main site's account-level CSAM report for a user. */
-export const csamReportUrl = (civitaiUrl: string, userId: number) =>
-  `${civitaiUrl}/moderator/csam/${userId}`;
+/** The main site's external CSAM report: free-text details plus moderator-uploaded evidence. */
+export const csamExternalReportUrl = (civitaiUrl: string) =>
+  `${civitaiUrl}/moderator/csam/external`;
 
 /** A workflow-only training run's review page. */
 export const trainingWorkflowReviewUrl = (workflowId: string) =>

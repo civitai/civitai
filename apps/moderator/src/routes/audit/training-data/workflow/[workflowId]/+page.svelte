@@ -1,7 +1,8 @@
 <script lang="ts">
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
-  import { csamReportUrl, userLookupUrl } from '$lib/entity-url';
+  import { userLookupUrl } from '$lib/entity-url';
   import { gateExpiresSoon, hasViewableItem, workflowOriginLabel } from '$lib/training-workflow';
+  import WorkflowCsamGuidance from './WorkflowCsamGuidance.svelte';
   import WorkflowDataset from './WorkflowDataset.svelte';
   import WorkflowReviewActions from './WorkflowReviewActions.svelte';
   import type { PageData } from './$types';
@@ -84,22 +85,11 @@
 {/if}
 
 {#if detail.modelVersionId === null && (reviewable || detail.moderationStatus === 'rejected')}
-  <!-- There is no workflow-keyed CSAM report: the existing one files against a model version. The
-       account-level report on the main site is the path for these runs; deny first so the run cannot
-       proceed while the report is filed. -->
-  <p class="mb-5 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200">
-    CSAM in this dataset: <strong>deny</strong> the run, then file an account report on the main site
-    —
-    <a
-      href={csamReportUrl(data.civitaiUrl, detail.ownerId)}
-      target="_blank"
-      rel="noreferrer"
-      class={LINK_CLASS}
-    >
-      report user #{detail.ownerId} ↗
-    </a>. That report covers the account; it does not attach these dataset items, so note the
-    workflow id ({detail.workflowId}) in it.
-  </p>
+  <WorkflowCsamGuidance
+    civitaiUrl={data.civitaiUrl}
+    ownerId={detail.ownerId}
+    workflowId={detail.workflowId}
+  />
 {/if}
 
 <h2 class="mb-2 text-lg font-semibold text-white">Dataset</h2>
