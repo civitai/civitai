@@ -228,13 +228,21 @@ describe('run — entities and the quote', () => {
     expect(await entityRun(ids(11))).toMatchObject({ needsConfirm: true, cost: null });
   });
 
-  it('scans a confirmed run over 10 items without quoting again', async () => {
+  it('scans a run confirmed with its quote stamp without quoting again', async () => {
     composeAll();
     harness.scanTexts.mockImplementation(echoScan(false));
-    const res = await entityRun(ids(11), { confirmed: '1' });
+    const res = await entityRun(ids(11), { confirmed: '11:' });
     expect(harness.quoteTexts).not.toHaveBeenCalled();
     expect(res).toMatchObject({ ran: true });
     expect((res as { items: unknown[] }).items).toHaveLength(11);
+  });
+
+  it('re-quotes instead of scanning when the confirmed count no longer matches', async () => {
+    composeAll();
+    harness.quoteTexts.mockResolvedValue({ meanCostTotal: 1, count: 12 });
+    const res = await entityRun(ids(12), { confirmed: '11:' });
+    expect(res).toMatchObject({ needsConfirm: true, count: 12, stamp: '12:', changed: true });
+    expect(harness.scanTexts).not.toHaveBeenCalled();
   });
 
   it('does not quote 10 items', async () => {

@@ -51,8 +51,16 @@ vi.mock('../text-scan-lab/purge.service', () => purge);
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
 const { createDraft, updateDraft } = await import('../text-scan-lab/drafts.service');
 const { addCase, createSet, updateExpected } = await import('../text-scan-lab/test-sets.service');
-const { RunError, compareRuns, latestRunTotals, listRuns, quoteRun, rerunErrors, startRun } =
-  await import('../text-scan-lab/runs.service');
+const {
+  RunError,
+  compareRuns,
+  latestRunTotals,
+  listRuns,
+  prepareRerun,
+  prepareRun,
+  rerunErrors,
+  startRun,
+} = await import('../text-scan-lab/runs.service');
 
 const MOD = 990001;
 const PROMPT_IDS = { base: 1, nsfw: 2 };
@@ -377,7 +385,7 @@ describe('purging deleted sources first', () => {
     }));
     const { setId, caseIds } = await setWithCases(12);
     wipeFirst(caseIds[0]);
-    expect(await quoteRun({ setId, version: 'active' })).toEqual({
+    expect(await (await prepareRun({ setId, version: 'active' })).quote()).toEqual({
       count: 11,
       skipped: 1,
       cost: 11,
@@ -394,19 +402,16 @@ describe('purging deleted sources first', () => {
   });
 });
 
-describe('quoteRun', () => {
-  it('asks for confirmation only above ten cases', async () => {
+describe('prepareRun', () => {
+  it('quotes every case with text, grouped by entity type', async () => {
     harness.quoteTexts.mockImplementation(async (_t: string, texts: LabText[]) => ({
       meanCostTotal: 2,
       count: texts.length,
     }));
-    const small = await setWithCases(10);
-    expect(await quoteRun({ setId: small.setId, version: 'active' })).toBeNull();
-    expect(harness.quoteTexts).not.toHaveBeenCalled();
-
+    const { setId } = await setWithCases(10);
     await addCase(
       {
-        setId: small.setId,
+        setId,
         entityType: 'Comment',
         entityId: 99,
         authorId: null,
@@ -417,15 +422,40 @@ describe('quoteRun', () => {
       },
       MOD
     );
-    expect(await quoteRun({ setId: small.setId, version: 'active' })).toEqual({
-      count: 11,
-      skipped: 0,
-      cost: 22,
-    });
+    const prepared = await prepareRun({ setId, version: 'active' });
+    expect(prepared.count).toBe(11);
+    expect(await prepared.quote()).toEqual({ count: 11, skipped: 0, cost: 22 });
     expect(harness.quoteTexts.mock.calls.map((c) => [c[0], c[1].length])).toEqual([
       ['Model', 10],
       ['Comment', 1],
     ]);
+  });
+
+  it("stamps the case count and the draft's version, so either changing voids a confirmation", async () => {
+    const { setId } = await setWithCases(2);
+    const draft = await createDraft({ name: 'd', prompts: { 'label:nsfw': 'A' }, note: null }, MOD);
+    const before = (await prepareRun({ setId, version: draft.id })).stamp;
+    expect(before).toBe(`2:${draft.updatedAt.toISOString()}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    await updateDraft(
+      draft.id,
+      { prompts: { 'label:nsfw': 'B' }, note: null, expectedUpdatedAt: draft.updatedAt },
+      MOD
+    );
+    expect((await prepareRun({ setId, version: draft.id })).stamp).not.toBe(before);
+    expect((await prepareRun({ setId, version: 'active' })).stamp).toBe('2:');
+  });
+});
+
+describe('prepareRerun', () => {
+  it("stamps the run's error count", async () => {
+    const { setId } = await setWithCases(3);
+    harness.scanTexts.mockImplementation(async (_t: string, texts: LabText[]) =>
+      texts.map((t) => ({ key: t.key, ok: false, error: 'x' }))
+    );
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    const prepared = await prepareRerun(setId, run.id);
+    expect(prepared).toMatchObject({ count: 3, stamp: '3:' });
   });
 });
 

@@ -41,7 +41,6 @@
   drafts={data.drafts}
   canRun={!data.set.archivedAt && data.cases.length > 0}
   maxRunCases={data.maxRunCases}
-  quoteAbove={data.quoteAbove}
   compared={data.comparison ? { a: data.comparison.a.id, b: data.comparison.b.id } : null}
   {versionLabel}
 />

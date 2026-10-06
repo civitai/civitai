@@ -1,15 +1,16 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { enhance } from '$app/forms';
-  import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Tabs, TabsList, TabsTrigger } from '@civitai/ui/components/ui/tabs/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
+  import QuoteDialog from '$lib/components/text-scan-lab/QuoteDialog.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { num } from '$lib/format';
+  import { QUOTE_ABOVE } from '$lib/text-scan-lab/limits';
   import {
     DEFAULT_HEADING,
     LAB_ENTITY_TYPES,
@@ -215,7 +216,8 @@
       {runForm.submitting ? 'Running…' : 'Run A and B'}
     </Button>
     <p class="text-xs text-dark-2">
-      Each item is two billed scans, one per version. Over 10 items you confirm a quote first.
+      Each item is two billed scans, one per version. Over {QUOTE_ABOVE} items you confirm a quote
+      first.
     </p>
   </div>
   {#if runForm.error}
@@ -223,37 +225,18 @@
   {/if}
 </form>
 
-<AlertDialog.Root
-  open={pendingQuote !== null}
-  onOpenChange={(open) => {
-    if (!open && !runForm.submitting) pendingQuote = null;
-  }}
+<QuoteDialog
+  quote={pendingQuote}
+  formId="playground-run"
+  title="Run {pendingQuote?.count} items?"
+  submitting={runForm.submitting}
+  onclose={() => (pendingQuote = null)}
 >
-  <AlertDialog.Content>
-    <AlertDialog.Header>
-      <AlertDialog.Title>Run {pendingQuote?.count} items?</AlertDialog.Title>
-      <AlertDialog.Description>
-        {(pendingQuote?.count ?? 0) * 2} billed scans (A and B per item), quoted at
-        {pendingQuote?.cost == null ? 'an unknown cost' : `≈ ${num(Math.ceil(pendingQuote.cost))} Buzz`}.
-        {#if pendingQuote?.skipped.length}
-          Skipped: {pendingQuote.skipped.map((s) => `${s.entityId} (${s.error})`).join(', ')}.
-        {/if}
-      </AlertDialog.Description>
-    </AlertDialog.Header>
-    <AlertDialog.Footer>
-      <AlertDialog.Cancel disabled={runForm.submitting}>Cancel</AlertDialog.Cancel>
-      <Button
-        type="submit"
-        form="playground-run"
-        name="confirmed"
-        value="1"
-        disabled={runForm.submitting}
-      >
-        {runForm.submitting ? 'Running…' : 'Run'}
-      </Button>
-    </AlertDialog.Footer>
-  </AlertDialog.Content>
-</AlertDialog.Root>
+  {(pendingQuote?.count ?? 0) * 2} billed scans (A and B per item).
+  {#if pendingQuote?.skipped.length}
+    Skipped: {pendingQuote.skipped.map((s) => `${s.entityId} (${s.error})`).join(', ')}.
+  {/if}
+</QuoteDialog>
 
 {#if lastRun}
   {@const run = lastRun.run}

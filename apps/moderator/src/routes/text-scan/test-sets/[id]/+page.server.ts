@@ -9,17 +9,17 @@ import { listDrafts } from '$lib/server/text-scan-lab/drafts.service';
 import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
 import { LabHarnessError } from '$lib/server/text-scan-lab/harness-client';
 import { purgeDeletedSources } from '$lib/server/text-scan-lab/purge.service';
+import { confirmedOrQuote, type Billable } from '$lib/server/text-scan-lab/quote';
 import {
   MAX_RUN_CASES,
-  QUOTE_ABOVE,
   RunError,
   compareRuns,
   listRuns,
-  quoteRerun,
-  quoteRun,
-  rerunErrors,
-  startRun,
+  prepareRerun,
+  prepareRun,
+  type Quote,
   type RunComparison,
+  type TestRun,
 } from '$lib/server/text-scan-lab/runs.service';
 import {
   MAX_ADD_ENTITIES,
@@ -83,7 +83,6 @@ export const load: PageServerLoad = async ({ params, url }) => {
     compareError,
     maxAddEntities: MAX_ADD_ENTITIES,
     maxRunCases: MAX_RUN_CASES,
-    quoteAbove: QUOTE_ABOVE,
     wide: true,
   };
 };
@@ -148,16 +147,12 @@ const versionField = z.union([
     .refine((v) => v > 0 && v <= Number.MAX_SAFE_INTEGER, 'Choose a version to run.'),
 ]);
 
-/** A billed batch: quoted and returned for confirmation first when it is over the quote threshold. */
+/** A billed batch: quoted and returned for confirmation first when it is over the quote threshold,
+ *  and run only when the confirmation matches what would run now. */
 const billedAction =
   <S extends z.ZodType>(
     schema: S,
-    quote: (setId: number, input: z.infer<S>) => Promise<Record<string, unknown> | null>,
-    run: (
-      setId: number,
-      input: z.infer<S>,
-      userId: number
-    ) => Promise<{ id: number; status: string }>
+    prepare: (setId: number, input: z.infer<S>) => Promise<Billable<Quote, TestRun>>
   ): Action =>
   async ({ request, params, locals }) => {
     const setId = setIdOf(params.id ?? '');
@@ -166,11 +161,10 @@ const billedAction =
     const input = parseForm(schema, form);
     if (typeof input === 'string') return fail(400, { error: input });
     try {
-      if (form.get('confirmed') !== '1') {
-        const q = await quote(setId, input);
-        if (q) return { needsConfirm: true as const, ...q };
-      }
-      const result = await run(setId, input, locals.user.id);
+      const batch = await prepare(setId, input);
+      const quote = await confirmedOrQuote(form, batch);
+      if (quote) return quote;
+      const result = await batch.execute(locals.user.id);
       return { ran: true as const, runId: result.id, status: result.status };
     } catch (e) {
       return refused(e);
@@ -180,16 +174,13 @@ const billedAction =
 export const actions: Actions = {
   // Runs inside the request: a set is at most MAX_RUN_CASES scans, written chunk by chunk, so a
   // request cut short leaves the run 'running' with whatever was scanned.
-  run: billedAction(
-    z.object({ version: versionField }),
-    (setId, input) => quoteRun({ setId, version: input.version }),
-    (setId, input, userId) => startRun({ setId, version: input.version }, userId)
+  run: billedAction(z.object({ version: versionField }), (setId, input) =>
+    prepareRun({ setId, version: input.version })
   ),
 
   rerunErrors: billedAction(
     z.object({ runId: z.coerce.number().int().positive().max(Number.MAX_SAFE_INTEGER) }),
-    (setId, input) => quoteRerun(setId, input.runId),
-    (setId, input) => rerunErrors(setId, input.runId)
+    (setId, input) => prepareRerun(setId, input.runId)
   ),
 
   // Also the playground's "Save as test case". An entity case is keyed by its id, so saving one that

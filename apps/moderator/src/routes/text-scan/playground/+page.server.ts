@@ -2,7 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
 import { canAccess } from '$lib/server/access';
-import { checkboxField, parseForm, parseQuery } from '$lib/server/query';
+import { parseForm, parseQuery } from '$lib/server/query';
 import {
   DraftError,
   getDraft,
@@ -19,7 +19,9 @@ import {
   scanTexts,
 } from '$lib/server/text-scan-lab/harness-client';
 import { listSets } from '$lib/server/text-scan-lab/test-sets.service';
+import { confirmedOrQuote, quoteStamp } from '$lib/server/text-scan-lab/quote';
 import { normaliseLabFields } from '$lib/text-scan-lab/compose';
+import { HARNESS_LIMITS } from '$lib/text-scan-lab/limits';
 import {
   LAB_ENTITY_TYPES,
   LAB_LABELS,
@@ -30,10 +32,8 @@ import {
   type LabText,
 } from '$lib/text-scan-lab/types';
 
-/** The harness's per-request limit; one run is one request's worth of items. */
-const MAX_ITEMS = 50;
-/** Above this many items a run is quoted and has to be confirmed first. */
-const QUOTE_ABOVE = 10;
+/** One run is one harness request's worth of items. */
+const MAX_ITEMS = HARNESS_LIMITS.textsPerRequest;
 
 const querySchema = z.object({
   draft: z.coerce.number().int().positive().optional().catch(undefined),
@@ -91,7 +91,6 @@ const runSchema = z.object({
     .optional()
     .transform((v) => (v ? Number(v) : undefined)),
   overrides: jsonField(z.record(z.string(), z.unknown())).optional(),
-  confirmed: checkboxField,
 });
 
 type RunItem = {
@@ -140,13 +139,16 @@ async function buildItems(
  *  absent key, so a blanked key dropped here would silently compare active against active. */
 async function versionB(
   input: z.infer<typeof runSchema>
-): Promise<{ overrides: DraftPrompts; name: string } | { status: number; error: string }> {
+): Promise<
+  | { overrides: DraftPrompts; name: string; draftUpdatedAt: Date | null }
+  | { status: number; error: string }
+> {
   try {
     if (input.version === 'inline') {
       const overrides = validateDraftPrompts(input.overrides ?? {});
       if (!Object.keys(overrides).length)
         return { status: 400, error: 'Add at least one prompt key to override.' };
-      return { overrides, name: 'Inline overrides' };
+      return { overrides, name: 'Inline overrides', draftUpdatedAt: null };
     }
     if (!input.draftId) return { status: 400, error: 'Choose a draft for version B.' };
     const draft = await getDraft(input.draftId);
@@ -157,7 +159,7 @@ async function versionB(
         status: 400,
         error: `Draft "${draft.name}" overrides no prompt — it would run active.`,
       };
-    return { overrides, name: `Draft · ${draft.name}` };
+    return { overrides, name: `Draft · ${draft.name}`, draftUpdatedAt: draft.updatedAt };
   } catch (e) {
     if (e instanceof DraftError) return { status: e.status, error: e.message };
     throw e;
@@ -168,7 +170,8 @@ export type RunItemResult = RunItem & { a: LabScanResult; b: LabScanResult };
 
 export const actions: Actions = {
   run: async ({ request }) => {
-    const input = parseForm(runSchema, await request.formData());
+    const form = await request.formData();
+    const input = parseForm(runSchema, form);
     if (typeof input === 'string') return fail(400, { error: input });
     const { entityType } = input;
 
@@ -191,18 +194,23 @@ export const actions: Actions = {
 
     const texts: LabText[] = items.map(({ key, fields }) => ({ key, fields }));
     try {
-      if (items.length > QUOTE_ABOVE && !input.confirmed) {
-        const [qa, qb] = await Promise.all([
-          quoteTexts(entityType, texts),
-          quoteTexts(entityType, texts, b.overrides),
-        ]);
-        // An unquoted side is an unknown cost, not a free one.
-        const cost =
-          qa.meanCostTotal === null || qb.meanCostTotal === null
-            ? null
-            : (qa.meanCostTotal + qb.meanCostTotal) * texts.length;
-        return { needsConfirm: true as const, cost, count: texts.length, skipped };
-      }
+      const quote = await confirmedOrQuote(form, {
+        count: texts.length,
+        stamp: quoteStamp(texts.length, b.draftUpdatedAt),
+        quote: async () => {
+          const [qa, qb] = await Promise.all([
+            quoteTexts(entityType, texts),
+            quoteTexts(entityType, texts, b.overrides),
+          ]);
+          // An unquoted side is an unknown cost, not a free one.
+          const cost =
+            qa.meanCostTotal === null || qb.meanCostTotal === null
+              ? null
+              : (qa.meanCostTotal + qb.meanCostTotal) * texts.length;
+          return { cost, skipped };
+        },
+      });
+      if (quote) return quote;
 
       // Settled, not all: a side that succeeded was billed, so its results are shown even when the
       // other side's request failed outright.

@@ -12,6 +12,9 @@ export const HARNESS_LIMITS = {
   charsPerRequest: 1_000_000,
 } as const;
 
+/** Above this many billed scans, a batch is quoted and has to be confirmed first. */
+export const QUOTE_ABOVE = 10;
+
 export const textChars = (fields: readonly LabField[]) =>
   fields.reduce((sum, field) => sum + field.text.length, 0);
 

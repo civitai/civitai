@@ -1,14 +1,15 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import * as AlertDialog from '@civitai/ui/components/ui/alert-dialog/index.js';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import * as Table from '@civitai/ui/components/ui/table/index.js';
+  import QuoteDialog from '$lib/components/text-scan-lab/QuoteDialog.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import { LINK_CLASS, dateTime, num, plural } from '$lib/format';
   import type { RunListItem, TestRun } from '$lib/server/text-scan-lab/runs.service';
+  import { QUOTE_ABOVE } from '$lib/text-scan-lab/limits';
   import { scoreChips } from '$lib/text-scan-lab/score';
 
   let {
@@ -16,7 +17,6 @@
     drafts,
     canRun,
     maxRunCases,
-    quoteAbove,
     compared,
     versionLabel,
   }: {
@@ -24,12 +24,17 @@
     drafts: { id: number; name: string; published: boolean }[];
     canRun: boolean;
     maxRunCases: number;
-    quoteAbove: number;
     compared: { a: number; b: number } | null;
     versionLabel: (run: TestRun) => string;
   } = $props();
 
-  type Quote = { count: number; skipped: number; cost: number | null };
+  type Quote = {
+    count: number;
+    skipped: number;
+    cost: number | null;
+    stamp: string;
+    changed: boolean;
+  };
 
   let version = $state('active');
   let pending = $state<{ formId: string; quote: Quote } | null>(null);
@@ -117,7 +122,7 @@
         {runForm.submitting && !pending ? 'Running…' : 'Run'}
       </Button>
       <p class="pb-2 text-xs text-dark-2">
-        One billed scan per case with text, up to {num(maxRunCases)}. Over {quoteAbove} you confirm
+        One billed scan per case with text, up to {num(maxRunCases)}. Over {QUOTE_ABOVE} you confirm
         a quote first. The page waits until the run finishes.
       </p>
     </form>
@@ -222,28 +227,15 @@
   {/if}
 </section>
 
-<AlertDialog.Root
-  open={pending !== null}
-  onOpenChange={(open) => {
-    if (!open && !submitting) pending = null;
-  }}
+<QuoteDialog
+  quote={pending?.quote ?? null}
+  formId={pending?.formId ?? ''}
+  title="Scan {pending ? plural(pending.quote.count, 'case') : ''}?"
+  {submitting}
+  onclose={() => (pending = null)}
 >
-  <AlertDialog.Content>
-    <AlertDialog.Header>
-      <AlertDialog.Title>Scan {pending ? plural(pending.quote.count, 'case') : ''}?</AlertDialog.Title>
-      <AlertDialog.Description>
-        {pending?.quote.count} billed scans, quoted at
-        {pending?.quote.cost == null ? 'an unknown cost' : `≈ ${num(Math.ceil(pending.quote.cost))} Buzz`}.
-        {#if pending?.quote.skipped}
-          {plural(pending.quote.skipped, 'case')} without text will be skipped.
-        {/if}
-      </AlertDialog.Description>
-    </AlertDialog.Header>
-    <AlertDialog.Footer>
-      <AlertDialog.Cancel disabled={submitting}>Cancel</AlertDialog.Cancel>
-      <Button type="submit" form={pending?.formId} name="confirmed" value="1" disabled={submitting}>
-        {submitting ? 'Running…' : 'Run'}
-      </Button>
-    </AlertDialog.Footer>
-  </AlertDialog.Content>
-</AlertDialog.Root>
+  {pending?.quote.count} billed scans.
+  {#if pending?.quote.skipped}
+    {plural(pending.quote.skipped, 'case')} without text will be skipped.
+  {/if}
+</QuoteDialog>

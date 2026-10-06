@@ -5,14 +5,13 @@ import type { text_scan_test_run } from '../moderator-db/types';
 import { DraftError, getDraft, validateDraftPrompts, type DraftPrompts } from './drafts.service';
 import { LabHarnessError, getPrompts, quoteTexts, scanTexts } from './harness-client';
 import { purgeDeletedSources } from './purge.service';
+import { quoteStamp, type Billable } from './quote';
 import { getSet, listCases, type TestCase } from './test-sets.service';
 import { caseCorrect, diffRuns, totals, type LabelTotals } from '$lib/text-scan-lab/score';
 import type { Expected, LabEntityType, LabField, LabScanResult } from '$lib/text-scan-lab/types';
 
 /** The most cases one run scans: each is a billed workflow, and the run executes inside one request. */
 export const MAX_RUN_CASES = 500;
-/** Above this many scans a run is quoted and has to be confirmed first. */
-export const QUOTE_ABOVE = 10;
 /** Results are written after each chunk, so a run cut short keeps what it was billed for. */
 const RUN_CHUNK = 50;
 
@@ -61,6 +60,7 @@ const toRun = (r: Selectable<text_scan_test_run>): TestRun => ({
 
 type RunCase = { id: number; entityType: LabEntityType; fields: LabField[]; expected: Expected };
 type Plan = {
+  setId: number;
   runnable: RunCase[];
   skipped: number[];
   overrides: DraftPrompts | undefined;
@@ -121,7 +121,7 @@ async function planRun(setId: number, version: RunVersion): Promise<Plan> {
       `${runnable.length} cases exceeds the limit of ${MAX_RUN_CASES} per run — split the set.`,
       400
     );
-  return { runnable, skipped, overrides, draft };
+  return { setId, runnable, skipped, overrides, draft };
 }
 
 function byEntityType(cases: RunCase[]): Map<LabEntityType, RunCase[]> {
@@ -136,8 +136,7 @@ async function quoteCases(
   cases: RunCase[],
   skipped: number,
   overrides: DraftPrompts | undefined
-): Promise<Quote | null> {
-  if (cases.length <= QUOTE_ABOVE) return null;
+): Promise<Quote> {
   let cost: number | null = 0;
   for (const [entityType, group] of byEntityType(cases)) {
     const q = await quoteTexts(entityType, toTexts(group), overrides);
@@ -147,10 +146,19 @@ async function quoteCases(
   return { count: cases.length, skipped, cost };
 }
 
-/** Null when the run is small enough to start without confirming. */
-export async function quoteRun(input: { setId: number; version: RunVersion }) {
+/** A planned run: quote it, or start it. The stamp binds a confirmation to this case count and draft
+ *  version, so a set or draft edited after the quote is quoted again rather than run. */
+export async function prepareRun(input: {
+  setId: number;
+  version: RunVersion;
+}): Promise<Billable<Quote, TestRun>> {
   const plan = await planRun(input.setId, input.version);
-  return quoteCases(plan.runnable, plan.skipped.length, plan.overrides);
+  return {
+    count: plan.runnable.length,
+    stamp: quoteStamp(plan.runnable.length, plan.draft?.updatedAt),
+    quote: () => quoteCases(plan.runnable, plan.skipped.length, plan.overrides),
+    execute: (userId) => startPlanned(plan, userId),
+  };
 }
 
 type ResultRow = {
@@ -366,7 +374,10 @@ export async function startRun(
   input: { setId: number; version: RunVersion },
   userId: number
 ): Promise<TestRun> {
-  const plan = await planRun(input.setId, input.version);
+  return startPlanned(await planRun(input.setId, input.version), userId);
+}
+
+async function startPlanned(plan: Plan, userId: number): Promise<TestRun> {
   const config = await getPrompts().then(
     (p) => p.config,
     () => null
@@ -374,7 +385,7 @@ export async function startRun(
   const run = await getModeratorDb()
     .insertInto('text_scan_test_run')
     .values({
-      set_id: String(input.setId),
+      set_id: String(plan.setId),
       version: plan.draft ? String(plan.draft.id) : 'active',
       draft_id: plan.draft ? String(plan.draft.id) : null,
       draft_updated_at: plan.draft?.updatedAt ?? null,
@@ -459,15 +470,30 @@ async function changedSinceRun(run: Selectable<text_scan_test_run>): Promise<str
   return changed;
 }
 
-export async function quoteRerun(setId: number, runId: number) {
-  const { runnable, skipped, overrides } = await planRerun(setId, runId);
-  return quoteCases(runnable, skipped.length, overrides);
+/** A planned re-run of a run's errors; its stamp binds a confirmation to the error count. */
+export async function prepareRerun(
+  setId: number,
+  runId: number
+): Promise<Billable<Quote, TestRun>> {
+  const plan = await planRerun(setId, runId);
+  return {
+    count: plan.runnable.length,
+    stamp: quoteStamp(plan.runnable.length),
+    quote: () => quoteCases(plan.runnable, plan.skipped.length, plan.overrides),
+    execute: () => rerunPlanned(runId, plan),
+  };
 }
 
 /** Re-scans only the run's error rows, with the prompts the run recorded — never the draft's current
  *  text — and recomputes its totals. */
 export async function rerunErrors(setId: number, runId: number): Promise<TestRun> {
-  const { run, overrides, runnable, skipped } = await planRerun(setId, runId);
+  return rerunPlanned(runId, await planRerun(setId, runId));
+}
+
+async function rerunPlanned(
+  runId: number,
+  { run, overrides, runnable, skipped }: Awaited<ReturnType<typeof planRerun>>
+): Promise<TestRun> {
   const changed = await changedSinceRun(run);
   if (changed.length) {
     const what = changed.join(', ');
