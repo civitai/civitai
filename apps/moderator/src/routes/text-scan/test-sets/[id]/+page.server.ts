@@ -1,0 +1,125 @@
+import { error, fail } from '@sveltejs/kit';
+import { z } from 'zod';
+import type { Actions, PageServerLoad } from './$types';
+import { requiresGrant } from '$lib/server/access';
+import { parseForm } from '$lib/server/query';
+import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
+import { LabHarnessError } from '$lib/server/text-scan-lab/harness-client';
+import {
+  MAX_ADD_ENTITIES,
+  TestSetError,
+  addCase,
+  addEntities,
+  getSet,
+  listCases,
+  removeCase,
+  updateExpected,
+} from '$lib/server/text-scan-lab/test-sets.service';
+import { MAX_INT4 } from '$lib/server/users.service';
+import { LAB_ENTITY_TYPES } from '$lib/text-scan-lab/types';
+
+const setIdOf = (raw: string) => {
+  const id = Number(raw);
+  return Number.isInteger(id) && id > 0 && id <= Number.MAX_SAFE_INTEGER ? id : null;
+};
+
+export const load: PageServerLoad = async ({ params }) => {
+  const id = setIdOf(params.id);
+  const set = id ? await getSet(id) : null;
+  if (!set) error(404, 'No such test set.');
+  return { set, cases: await listCases(set.id), maxAddEntities: MAX_ADD_ENTITIES, wide: true };
+};
+
+const refused = (e: unknown) => {
+  if (e instanceof TestSetError) return fail(e.status, { error: e.message });
+  if (e instanceof LabHarnessError) return fail(502, { error: e.message });
+  throw e;
+};
+
+const jsonField = z.string().transform((raw, ctx): unknown => {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    ctx.addIssue({ code: 'custom', message: 'Malformed form data.' });
+    return z.NEVER;
+  }
+});
+const optionalId = z
+  .string()
+  .regex(/^\d*$/, 'Invalid id.')
+  .optional()
+  .transform((v) => (v ? Number(v) : null))
+  .refine((v) => v === null || (v > 0 && v <= MAX_INT4), 'Invalid id.');
+const noteField = z
+  .string()
+  .trim()
+  .max(1000, 'Note is at most 1000 characters.')
+  .transform((v) => v || null)
+  .optional()
+  .default(null);
+const caseIdField = z.coerce.number().int().positive();
+const fieldsField = jsonField.pipe(
+  z.array(z.object({ heading: z.string(), text: z.string() }), { error: 'Malformed fields.' })
+);
+
+/** Wraps a test-set action: the edit permission, the set id from the path, and service refusals as
+ *  form failures. */
+const setAction = <S extends z.ZodType>(
+  schema: S,
+  run: (setId: number, input: z.infer<S>, userId: number) => Promise<Record<string, unknown>>
+) =>
+  requiresGrant('textScan.testSet.edit', async ({ request, params, locals }) => {
+    const setId = setIdOf(params.id ?? '');
+    if (!setId) return fail(404, { error: 'No such test set.' });
+    const input = parseForm(schema, await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+    try {
+      return { success: true, ...(await run(setId, input, locals.user.id)) };
+    } catch (e) {
+      return refused(e);
+    }
+  });
+
+export const actions: Actions = {
+  // Also the playground's "Save as test case". An entity case is keyed by its id, so saving one that
+  // is already in the set replaces it; free text (no entityId) is always new, and counts as synthetic.
+  addCase: setAction(
+    z.object({
+      entityType: z.enum(LAB_ENTITY_TYPES),
+      entityId: optionalId,
+      authorId: optionalId,
+      fields: fieldsField,
+      expected: jsonField,
+      note: noteField,
+    }),
+    async (setId, input, userId) => {
+      const { case: saved, created } = await addCase(
+        { setId, ...input, synthetic: input.entityId === null },
+        userId
+      );
+      return { caseId: saved.id, created };
+    }
+  ),
+
+  updateExpected: setAction(
+    z.object({ caseId: caseIdField, expected: jsonField, note: noteField }),
+    async (setId, input) => {
+      await updateExpected(setId, input.caseId, input.expected, input.note);
+      return {};
+    }
+  ),
+
+  removeCase: setAction(z.object({ caseId: caseIdField }), async (setId, input) => {
+    await removeCase(setId, input.caseId);
+    return {};
+  }),
+
+  addEntities: setAction(
+    z.object({ entityType: z.enum(LAB_ENTITY_TYPES), ids: z.string() }),
+    async (setId, input, userId) => {
+      const ids = parseEntityIds(input.ids, MAX_ADD_ENTITIES);
+      if (typeof ids === 'string') throw new TestSetError(ids, 400);
+      return addEntities(setId, input.entityType, ids, userId);
+    }
+  ),
+};

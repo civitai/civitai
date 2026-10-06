@@ -124,8 +124,10 @@
         {#each fields as field, i (field.id)}
           <div>
             <div class="flex items-center gap-2">
+              <!-- Enter here would implicitly submit a billed run. -->
               <Input
                 aria-label="Field heading"
+                onkeydown={(e) => e.key === 'Enter' && e.preventDefault()}
                 class="h-8 w-64 text-xs"
                 bind:value={() => field.heading, (v) => (fields[i].heading = v)}
               />
@@ -234,8 +236,7 @@
         {(pendingQuote?.count ?? 0) * 2} billed scans (A and B per item), quoted at
         {pendingQuote?.cost == null ? 'an unknown cost' : `≈ ${num(Math.ceil(pendingQuote.cost))} Buzz`}.
         {#if pendingQuote?.skipped.length}
-          {pendingQuote.skipped.length} id{pendingQuote.skipped.length === 1 ? '' : 's'} will be
-          skipped (not found or too short).
+          Skipped: {pendingQuote.skipped.map((s) => `${s.entityId} (${s.error})`).join(', ')}.
         {/if}
       </AlertDialog.Description>
     </AlertDialog.Header>
@@ -269,8 +270,25 @@
         {run.skipped.map((s) => `${s.entityId} (${s.error})`).join(', ')}
       </p>
     {/if}
-    {#each run.items as item (item.key)}
-      <ItemResult {item} labels={run.labels} versionB={run.versionB.name} />
-    {/each}
+    {#if run.errors.a}
+      <p class="whitespace-pre-wrap text-sm text-red-300">A · Active failed: {run.errors.a}</p>
+    {/if}
+    {#if run.errors.b}
+      <p class="whitespace-pre-wrap text-sm text-red-300">
+        B · {run.versionB.name} failed: {run.errors.b}
+      </p>
+    {/if}
+    <!-- A new run starts every item's save form afresh, even where an item key repeats. -->
+    {#key lastRun}
+      {#each run.items as item (item.key)}
+        <ItemResult
+          {item}
+          entityType={run.entityType}
+          labels={run.labels}
+          versionB={run.versionB.name}
+          testSets={data.testSets}
+        />
+      {/each}
+    {/key}
   </div>
 {/if}

@@ -136,6 +136,23 @@ describe('run — failures', () => {
     });
   });
 
+  it("keeps the billed side's results when the other side's request fails", async () => {
+    harness.scanTexts
+      .mockResolvedValueOnce([ok('text', true)])
+      .mockRejectedValueOnce(new LabHarnessError('harness timed out'));
+    const res = await textRun();
+    expect(res).toMatchObject({
+      ran: true,
+      errors: { a: null, b: 'harness timed out' },
+      items: [
+        {
+          a: { ok: true, output: { scam: { detected: true } } },
+          b: { ok: false, error: 'harness timed out' },
+        },
+      ],
+    });
+  });
+
   it('returns a whole-request refusal as 502 with its message', async () => {
     harness.scanTexts.mockRejectedValue(new LabHarnessError('Not signed in to the main app'));
     const res = await textRun();
@@ -174,7 +191,7 @@ describe('run — entities and the quote', () => {
 
   it('scans only composed entities and reports the rest', async () => {
     harness.composeEntities.mockResolvedValue([
-      { entityId: 7, ok: true, fields: [{ heading: 'Name', text: 'x' }], text: '', userId: null },
+      { entityId: 7, ok: true, fields: [{ heading: 'Name', text: 'x' }], text: '', userId: 70 },
       { entityId: 8, ok: false, error: 'entity not found' },
       { entityId: 9, ok: false, error: 'too-short' },
     ]);
@@ -185,6 +202,7 @@ describe('run — entities and the quote', () => {
       { key: '7', fields: [{ heading: 'Name', text: 'x' }] },
     ]);
     expect(res).toMatchObject({
+      items: [{ key: '7', entityId: 7, authorId: 70 }],
       skipped: [
         { entityId: 8, error: 'entity not found' },
         { entityId: 9, error: 'too-short' },
@@ -200,6 +218,14 @@ describe('run — entities and the quote', () => {
     const res = await entityRun(ids(11));
     expect(res).toMatchObject({ needsConfirm: true, cost: 55, count: 11 });
     expect(harness.scanTexts).not.toHaveBeenCalled();
+  });
+
+  it('reports an unknown cost when either side could not be quoted', async () => {
+    composeAll();
+    harness.quoteTexts
+      .mockResolvedValueOnce({ meanCostTotal: 2, count: 11 })
+      .mockResolvedValueOnce({ meanCostTotal: null, count: 11 });
+    expect(await entityRun(ids(11))).toMatchObject({ needsConfirm: true, cost: null });
   });
 
   it('scans a confirmed run over 10 items without quoting again', async () => {

@@ -57,7 +57,9 @@ export const DEFAULT_HEADING: Record<LabEntityType, string> = {
 export type LabField = { heading: string; text: string };
 export type LabText = { key: string; fields: LabField[] };
 
-export type NsfwLevelName = 'none' | 'pg13' | 'r' | 'x' | 'xxx';
+/** Ordered least to most explicit, as the main app's text-scan `NSFW_LEVEL_NAMES`. */
+export const NSFW_LEVEL_NAMES = ['none', 'pg13', 'r', 'x', 'xxx'] as const;
+export type NsfwLevelName = (typeof NSFW_LEVEL_NAMES)[number];
 
 export type Expected = {
   nsfw?: { min: NsfwLevelName; max: NsfwLevelName };
@@ -81,5 +83,11 @@ export type LabScanResult =
   | { key: string; ok: false; error: string };
 
 /** The prompt keys a draft may override; the main app's prompt store keys. */
-export const PROMPT_KEYS = ['base', 'label:nsfw', 'label:poi', 'label:minor', 'label:scam'] as const;
+export const PROMPT_KEYS = [
+  'base',
+  'label:nsfw',
+  'label:poi',
+  'label:minor',
+  'label:scam',
+] as const;
 export type PromptKey = (typeof PROMPT_KEYS)[number];

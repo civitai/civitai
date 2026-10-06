@@ -1,15 +1,25 @@
 <script lang="ts">
   import { cn } from '@civitai/ui/utils.js';
   import { compare } from '$lib/text-scan-lab/compare';
-  import type { LabLabel } from '$lib/text-scan-lab/types';
+  import type { LabEntityType, LabLabel } from '$lib/text-scan-lab/types';
   import type { RunItemResult } from './+page.server';
   import ResultPanel from './ResultPanel.svelte';
+  import SaveCaseForm from './SaveCaseForm.svelte';
 
   let {
     item,
+    entityType,
     labels,
     versionB,
-  }: { item: RunItemResult; labels: readonly LabLabel[]; versionB: string } = $props();
+    testSets,
+  }: {
+    item: RunItemResult;
+    entityType: LabEntityType;
+    labels: readonly LabLabel[];
+    versionB: string;
+    /** Sets a case can be saved to; empty for a moderator who cannot edit test sets. */
+    testSets: { id: number; name: string }[];
+  } = $props();
 
   const rows = $derived(compare(item.a, item.b, labels));
 </script>
@@ -54,4 +64,8 @@
     <ResultPanel title="A · Active" result={item.a} {labels} />
     <ResultPanel title="B · {versionB}" result={item.b} {labels} />
   </div>
+
+  {#if testSets.length}
+    <SaveCaseForm {item} {entityType} {labels} {testSets} />
+  {/if}
 </section>

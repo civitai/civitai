@@ -1,8 +1,8 @@
 import { fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Actions, PageServerLoad } from './$types';
+import { canAccess } from '$lib/server/access';
 import { checkboxField, parseForm, parseQuery } from '$lib/server/query';
-import { MAX_INT4 } from '$lib/server/users.service';
 import {
   DraftError,
   getDraft,
@@ -10,6 +10,7 @@ import {
   validateDraftPrompts,
   type DraftPrompts,
 } from '$lib/server/text-scan-lab/drafts.service';
+import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
 import {
   LabHarnessError,
   composeEntities,
@@ -17,6 +18,7 @@ import {
   quoteTexts,
   scanTexts,
 } from '$lib/server/text-scan-lab/harness-client';
+import { listSets } from '$lib/server/text-scan-lab/test-sets.service';
 import {
   LAB_ENTITY_TYPES,
   LAB_LABELS,
@@ -36,10 +38,14 @@ const querySchema = z.object({
   draft: z.coerce.number().int().positive().optional().catch(undefined),
 });
 
-export const load: PageServerLoad = async ({ url }) => {
+export const load: PageServerLoad = async ({ url, locals }) => {
   const q = parseQuery(url, querySchema);
-  const [drafts, active] = await Promise.all([
+  const [drafts, sets, active] = await Promise.all([
     listDrafts(),
+    // Saving posts to the set page's action, which the page grant gates as well.
+    locals.grants['textScan.testSet.edit'] && canAccess(locals.user, '/text-scan/test-sets')
+      ? listSets()
+      : [],
     // Only pre-fills an inline override; the page works without it.
     getPrompts().then(
       (p) => Object.fromEntries(Object.entries(p.active).map(([k, v]) => [k, v.content])),
@@ -53,6 +59,7 @@ export const load: PageServerLoad = async ({ url }) => {
       keys: PROMPT_KEYS.filter((k) => k in d.prompts),
       published: d.publishedAt !== null,
     })),
+    testSets: sets.map((s) => ({ id: s.id, name: s.name })),
     selectedDraftId: drafts.some((d) => d.id === q.draft) ? q.draft ?? null : null,
     activePrompts: active as Record<string, string> | null,
     wide: true,
@@ -86,21 +93,14 @@ const runSchema = z.object({
   confirmed: checkboxField,
 });
 
-/** Every token must be an id: a typo silently dropped would scan fewer items than were asked for. */
-function parseEntityIds(raw: string): number[] | string {
-  const tokens = raw.split(/[\s,]+/).filter(Boolean);
-  const bad = tokens.filter((t) => {
-    const n = Number(t);
-    return !/^\d+$/.test(t) || n < 1 || n > MAX_INT4;
-  });
-  if (bad.length) return `Not an id: ${bad.slice(0, 5).join(', ')}.`;
-  const ids = [...new Set(tokens.map(Number))];
-  if (!ids.length) return 'Enter at least one id.';
-  if (ids.length > MAX_ITEMS) return `${ids.length} ids exceeds the limit of ${MAX_ITEMS} per run.`;
-  return ids;
-}
-
-type RunItem = { key: string; title: string; fields: LabField[] };
+type RunItem = {
+  key: string;
+  title: string;
+  fields: LabField[];
+  /** Null for free text. */
+  entityId: number | null;
+  authorId: number | null;
+};
 type Skipped = { entityId: number; error: string };
 
 async function buildItems(
@@ -113,9 +113,12 @@ async function buildItems(
       .filter((f) => f.text.trim());
     if (!fields.length) return 'Enter some text to scan.';
     if (fields.some((f) => !f.heading)) return 'Every field with text needs a heading.';
-    return { items: [{ key: 'text', title: 'Free text', fields }], skipped: [] };
+    return {
+      items: [{ key: 'text', title: 'Free text', fields, entityId: null, authorId: null }],
+      skipped: [],
+    };
   }
-  const ids = parseEntityIds(input.ids ?? '');
+  const ids = parseEntityIds(input.ids ?? '', MAX_ITEMS);
   if (typeof ids === 'string') return ids;
   const composed = await composeEntities(entityType, ids);
   const items: RunItem[] = [];
@@ -126,6 +129,8 @@ async function buildItems(
         key: String(c.entityId),
         title: `${entityType} ${c.entityId}`,
         fields: c.fields,
+        entityId: c.entityId,
+        authorId: c.userId,
       });
     else skipped.push({ entityId: c.entityId, error: c.error });
   }
@@ -192,29 +197,42 @@ export const actions: Actions = {
           quoteTexts(entityType, texts),
           quoteTexts(entityType, texts, b.overrides),
         ]);
+        // An unquoted side is an unknown cost, not a free one.
         const cost =
-          qa.meanCostTotal === null && qb.meanCostTotal === null
+          qa.meanCostTotal === null || qb.meanCostTotal === null
             ? null
-            : ((qa.meanCostTotal ?? 0) + (qb.meanCostTotal ?? 0)) * texts.length;
+            : (qa.meanCostTotal + qb.meanCostTotal) * texts.length;
         return { needsConfirm: true as const, cost, count: texts.length, skipped };
       }
 
-      const [ra, rb] = await Promise.all([
+      // Settled, not all: a side that succeeded was billed, so its results are shown even when the
+      // other side's request failed outright.
+      const [sa, sb] = await Promise.allSettled([
         scanTexts(entityType, texts),
         scanTexts(entityType, texts, b.overrides),
       ]);
-      const missing = (key: string): LabScanResult => ({
+      if (sa.status === 'rejected' && sb.status === 'rejected') throw sa.reason;
+      const sideError = (s: PromiseSettledResult<LabScanResult[]>) => {
+        if (s.status === 'fulfilled') return null;
+        if (s.reason instanceof LabHarnessError) return s.reason.message;
+        console.error('text-scan playground: scan side failed', s.reason);
+        return 'The scan request failed unexpectedly.';
+      };
+      const errorA = sideError(sa);
+      const errorB = sideError(sb);
+      const missing = (key: string, sideFailure: string | null): LabScanResult => ({
         key,
         ok: false,
-        error: 'No result returned for this item.',
+        error: sideFailure ?? 'No result returned for this item.',
       });
-      const byKey = (rs: LabScanResult[]) => new Map(rs.map((r) => [r.key, r]));
-      const aByKey = byKey(ra);
-      const bByKey = byKey(rb);
+      const byKey = (s: PromiseSettledResult<LabScanResult[]>) =>
+        new Map(s.status === 'fulfilled' ? s.value.map((r) => [r.key, r]) : []);
+      const aByKey = byKey(sa);
+      const bByKey = byKey(sb);
       const results: RunItemResult[] = items.map((item) => ({
         ...item,
-        a: aByKey.get(item.key) ?? missing(item.key),
-        b: bByKey.get(item.key) ?? missing(item.key),
+        a: aByKey.get(item.key) ?? missing(item.key, errorA),
+        b: bByKey.get(item.key) ?? missing(item.key, errorB),
       }));
       return {
         ran: true as const,
@@ -223,6 +241,7 @@ export const actions: Actions = {
         versionB: { name: b.name, keys: PROMPT_KEYS.filter((k) => k in b.overrides) },
         items: results,
         skipped,
+        errors: { a: errorA, b: errorB },
       };
     } catch (e) {
       if (e instanceof LabHarnessError) return fail(502, { error: e.message });
