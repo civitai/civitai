@@ -1,6 +1,7 @@
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
+import { isTextScanEnabled } from '~/server/services/text-scan/mode';
 import { scamEligibleAuthors } from '~/server/services/text-scan/profiles/scam-text';
 import { scanEntity } from '~/server/services/text-scan/submit';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
@@ -23,6 +24,7 @@ export type SweepOptions = {
 };
 export type SweepResult = {
   initialised?: true;
+  disabled?: true;
   rows: number;
   scanned: number;
   submitted: number;
@@ -100,6 +102,12 @@ async function sweep<T extends { id: number; createdAt: Date }>({
     budgetMs = TIME_BUDGET_MS,
     clock = Date.now,
   } = options;
+  if (!(await isTextScanEnabled())) {
+    // Dropping the cursor makes the first run after the kill switch comes back on start at the newest
+    // row, rather than scanning everything written while it was off.
+    await dbWrite.keyValue.deleteMany({ where: { key: cursorKey } });
+    return { disabled: true, rows: 0, scanned: 0, submitted: 0, caughtUp: true, lagMs: 0 };
+  }
   let cursor = await readCursor(cursorKey);
   if (cursor === null) {
     await writeCursor(cursorKey, (await latestId()) ?? 0);

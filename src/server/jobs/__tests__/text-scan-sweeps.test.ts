@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as Mode from '~/server/services/text-scan/mode';
 import type * as Submit from '~/server/services/text-scan/submit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -8,6 +9,11 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof Submit>()),
   scanEntity: vi.fn(async () => ({ status: 'submitted', workflowId: 'wf' })),
+}));
+
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof Mode>()),
+  isTextScanEnabled: vi.fn(async () => true),
 }));
 
 const {
@@ -19,6 +25,7 @@ const {
   textScanNewUsersJob,
 } = await import('~/server/jobs/text-scan-sweeps');
 const { scanEntity } = await import('~/server/services/text-scan/submit');
+const { isTextScanEnabled } = await import('~/server/services/text-scan/mode');
 
 const NOW = new Date('2026-09-24T12:00:00Z');
 const SETTLED = new Date('2026-09-24T11:50:00Z');
@@ -240,6 +247,24 @@ describe('sweepNewUsers', () => {
     upserted(TEXT_SCAN_USER_CURSOR_KEY, 900);
     expect(scanEntity).not.toHaveBeenCalled();
   });
+});
+
+describe('kill switch', () => {
+  it.each([
+    ['chat', () => sweepChatWindows(NOW), TEXT_SCAN_CHAT_CURSOR_KEY],
+    ['new users', () => sweepNewUsers(NOW), TEXT_SCAN_USER_CURSOR_KEY],
+  ] as const)(
+    '%s: off reads nothing, scans nothing, and drops the cursor',
+    async (_n, run, key) => {
+      vi.mocked(isTextScanEnabled).mockResolvedValueOnce(false);
+      cursorAt(10);
+      expect(await run()).toMatchObject({ disabled: true, scanned: 0 });
+      expect(dbMock.dbWrite.keyValue.deleteMany).toHaveBeenCalledWith({ where: { key } });
+      expect(dbMock.dbWrite.chatMessage.findMany).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.user.findMany).not.toHaveBeenCalled();
+      expect(scanEntity).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('scheduling', () => {

@@ -38,7 +38,13 @@ beforeEach(() => {
   vi.mocked(dbMock.dbRead.post.findMany).mockResolvedValue([{ id: 3 }, { id: 2 }] as never);
   vi.mocked(dbMock.dbRead.chatMessage.findMany).mockResolvedValue([{ id: 7 }] as never);
   vi.mocked(redisMock.sysRedis.hGet).mockResolvedValue(JSON.stringify({ Comment: false }) as never);
-  vi.mocked(readTextScanRollouts).mockResolvedValue({});
+  vi.mocked(isTextScanEnabled).mockResolvedValue(true);
+  const full = { shadow: 0, active: 100 };
+  vi.mocked(readTextScanRollouts).mockResolvedValue({
+    Post: full,
+    ChatMessage: full,
+    Collection: full,
+  });
 });
 
 describe('CLAVATA_TARGETS', () => {
@@ -95,6 +101,20 @@ describe('CLAVATA_TARGETS', () => {
 });
 
 describe('disableClavataFor', () => {
+  it.each([
+    ['the kill switch is off', false, { Post: { shadow: 0, active: 100 } }],
+    ['the entity type is below 100% active', true, { Post: { shadow: 100, active: 90 } }],
+    ['the entity type has no rollout', true, {}],
+  ])('refuses before probing or draining when %s', async (_why, on, rollouts) => {
+    vi.mocked(isTextScanEnabled).mockResolvedValue(on);
+    vi.mocked(readTextScanRollouts).mockResolvedValue(rollouts);
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    await expect(disableClavataFor('Post')).rejects.toMatchObject({ reason: 'not-fully-active' });
+    expect(getTextScanMode).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.sAdd).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
+  });
+
   it('refuses unless every probed id is active', async () => {
     vi.mocked(getTextScanMode).mockImplementation(async (_t, id) =>
       id === 2 ? 'shadow' : 'active'

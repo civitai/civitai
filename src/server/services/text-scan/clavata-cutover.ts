@@ -21,7 +21,11 @@ type ClavataTarget = {
 };
 
 export type DrainResult = { deleted: number; complete: boolean };
-export type CutoverRefusal = 'not-active' | 'nothing-to-probe' | 'override-not-allowed';
+export type CutoverRefusal =
+  | 'not-fully-active'
+  | 'not-active'
+  | 'nothing-to-probe'
+  | 'override-not-allowed';
 
 const PROBE = 20;
 export const DRAIN_BATCH = 5000;
@@ -157,6 +161,11 @@ export async function drainModerationQueue(entityType: EntityType): Promise<Drai
 }
 
 async function assertActiveEverywhere(entityType: CutoverEntityType, target: ClavataTarget) {
+  // The same rule the Clavata job uses to step aside: below it, the drain would delete queued rows
+  // for ids that text scan only shadows.
+  const [textScanOn, rollouts] = await Promise.all([isTextScanEnabled(), readTextScanRollouts()]);
+  if (!textScanOn || rollouts[entityType]?.active !== 100)
+    throw new ClavataCutoverRefused(entityType, 'not-fully-active');
   const probeIds = await target.recentIds();
   if (!probeIds.length) throw new ClavataCutoverRefused(entityType, 'nothing-to-probe');
   const modes = await Promise.all(probeIds.map((id) => getTextScanMode(entityType, id)));
