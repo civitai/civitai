@@ -132,10 +132,25 @@ describe('createCrucibleInputSchema', () => {
     expect(createCrucibleInputSchema.safeParse(validCreateInput).success).toBe(true);
   });
 
-  it.each([0, -1, 1.5])('rejects content level %s', (nsfwLevel) => {
+  it.each([0, -1, 1.5, 32, 33, 64])('rejects content level %s', (nsfwLevel) => {
     expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
       false
     );
+  });
+
+  it.each([1, 7, 31])('accepts content mask %s', (nsfwLevel) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
+      true
+    );
+  });
+
+  it.each([
+    [7, true],
+    [31, true],
+    [32, false],
+    [39, false],
+  ])('bounds an update mask of %s (valid: %s)', (nsfwLevel, valid) => {
+    expect(updateCrucibleSchema.safeParse({ id: 1, nsfwLevel }).success).toBe(valid);
   });
 
   it('rejects an empty name', () => {

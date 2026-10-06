@@ -81,10 +81,12 @@ describe('loadRatingReviewSubject', () => {
     };
     for (const flag of ['poi', 'minor'] as const) {
       dbMock.dbRead.model.findUnique.mockResolvedValueOnce({ ...row, [flag]: true });
-      expect((await loadRatingReviewSubject('Model', 1))?.flagRestricted).toBe(true);
+      expect((await loadRatingReviewSubject('Model', 1))?.disputeRestriction).toMatch(
+        /while the flag stands/
+      );
     }
     dbMock.dbRead.model.findUnique.mockResolvedValueOnce({ ...row, sfwOnly: true });
-    expect((await loadRatingReviewSubject('Model', 1))?.flagRestricted).toBe(false);
+    expect((await loadRatingReviewSubject('Model', 1))?.disputeRestriction).toBeUndefined();
   });
 
   it('gives a system challenge no owner and a user challenge its creator', async () => {
@@ -100,6 +102,57 @@ describe('loadRatingReviewSubject', () => {
     expect((await loadRatingReviewSubject('Challenge', 1))?.ownerId).toBeNull();
     dbMock.dbRead.challenge.findUnique.mockResolvedValueOnce({ ...row, source: 'User' });
     expect((await loadRatingReviewSubject('Challenge', 1))?.ownerId).toBe(9);
+  });
+
+  it('Crucible subject: owner, highest rated bit, override pair', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      userId: 9,
+      nsfwLevel: 1 | 4,
+      updatedAt: new Date(0),
+      name: 'C',
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    });
+    expect(await loadRatingReviewSubject('Crucible', 1)).toMatchObject({
+      ownerId: 9,
+      currentLevel: 4,
+      title: 'C',
+    });
+  });
+
+  it('Collection subject: bucket read as PG or R', async () => {
+    const row = {
+      userId: 9,
+      nsfwLevel: 29,
+      updatedAt: new Date(0),
+      name: 'L',
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    };
+    dbMock.dbRead.collection.findUnique.mockResolvedValueOnce(row);
+    expect(await loadRatingReviewSubject('Collection', 1)).toMatchObject({ currentLevel: 4 });
+    dbMock.dbRead.collection.findUnique.mockResolvedValueOnce({ ...row, nsfwLevel: 1 });
+    expect(await loadRatingReviewSubject('Collection', 1)).toMatchObject({ currentLevel: 1 });
+  });
+
+  it('restricts disputes on a collection with a forced level', async () => {
+    const row = {
+      userId: 9,
+      nsfwLevel: 1,
+      updatedAt: new Date(0),
+      name: 'L',
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    };
+    dbMock.dbRead.collection.findUnique.mockResolvedValueOnce({
+      ...row,
+      metadata: { forcedBrowsingLevel: 3 },
+    });
+    expect((await loadRatingReviewSubject('Collection', 1))?.disputeRestriction).toMatch(
+      /can't be disputed/
+    );
+    dbMock.dbRead.collection.findUnique.mockResolvedValueOnce({ ...row, metadata: {} });
+    expect((await loadRatingReviewSubject('Collection', 1))?.disputeRestriction).toBeUndefined();
   });
 
   it('carries the bounty id of an entry', async () => {

@@ -21,6 +21,7 @@ const {
   drainModerationQueue,
   enableClavataFor,
   getClavataCutoverStatus,
+  UNMODERATED_OVERRIDE,
 } = await import('~/server/services/text-scan/clavata-cutover');
 const { getTextScanMode } = await import('~/server/services/text-scan/mode');
 
@@ -44,7 +45,7 @@ describe('CLAVATA_TARGETS', () => {
     });
   });
 
-  it('names every other trigger after its Clavata key, and has no probe for Collection', () => {
+  it('names every other trigger after its Clavata key', () => {
     for (const [entityType, t] of Object.entries(CLAVATA_TARGETS)) {
       if (entityType === 'ChatMessage') continue;
       expect(t.clavataKey).toBe(entityType);
@@ -56,7 +57,10 @@ describe('CLAVATA_TARGETS', () => {
     }
     expect(Object.keys(CLAVATA_TARGETS)).toHaveLength(12);
     expect(Object.hasOwn(CLAVATA_TARGETS, 'Challenge')).toBe(false);
-    expect(CLAVATA_TARGETS.Collection.recentIds).toBeNull();
+  });
+
+  it('Collection is a normal cutover entity: no unmoderated override', () => {
+    expect(UNMODERATED_OVERRIDE.has('Collection')).toBe(false);
   });
 
   // The drops run by hand at each entity's cutover. As migrations, an "apply every pending
@@ -105,7 +109,7 @@ describe('disableClavataFor', () => {
     expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
   });
 
-  it('refuses the override outside ChatMessage and Collection', async () => {
+  it('refuses the override outside ChatMessage', async () => {
     await expect(disableClavataFor('Post', { allowUnmoderated: true })).rejects.toBeInstanceOf(
       ClavataCutoverRefused
     );
@@ -116,11 +120,23 @@ describe('disableClavataFor', () => {
     expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
   });
 
-  it('refuses Collection without the override', async () => {
-    await expect(disableClavataFor('Collection')).rejects.toMatchObject({
-      reason: 'override-required',
-    });
+  it('refuses the override for Collection', async () => {
+    await expect(disableClavataFor('Collection', { allowUnmoderated: true })).rejects.toMatchObject(
+      { reason: 'override-not-allowed' }
+    );
     expect(redisMock.sysRedis.hSet).not.toHaveBeenCalled();
+  });
+
+  it('probes only public collections readable as Public or Unlisted', async () => {
+    vi.mocked(dbMock.dbRead.collection.findMany).mockResolvedValue([{ id: 9 }] as never);
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    await disableClavataFor('Collection');
+    expect(dbMock.dbRead.collection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { availability: 'Public', read: { in: ['Public', 'Unlisted'] } },
+      })
+    );
+    expect(getTextScanMode).toHaveBeenCalledWith('Collection', 9);
   });
 
   it('disables the key, keeps other overrides, and drains the lane', async () => {
@@ -166,9 +182,11 @@ describe('disableClavataFor', () => {
     );
   });
 
-  it('retires Collection with the override and drains its lane', async () => {
+  it('retires Collection once its probe is active and drains its lane', async () => {
+    vi.mocked(dbMock.dbRead.collection.findMany).mockResolvedValue([{ id: 9 }] as never);
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
     vi.mocked(dbMock.dbWrite.$executeRaw).mockResolvedValueOnce(3 as never);
-    const result = await disableClavataFor('Collection', { allowUnmoderated: true });
+    const result = await disableClavataFor('Collection');
     expect(redisMock.sysRedis.hSet).toHaveBeenCalledWith(
       BASE,
       ENTITIES,

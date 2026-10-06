@@ -112,6 +112,8 @@ export enum FLIPT_FEATURE_FLAGS {
   TEXT_SCAN_RESOURCE_REVIEW = 'text-scan-resource-review',
   TEXT_SCAN_USER = 'text-scan-user',
   TEXT_SCAN_USER_PROFILE = 'text-scan-user-profile',
+  TEXT_SCAN_CRUCIBLE = 'text-scan-crucible',
+  TEXT_SCAN_COLLECTION = 'text-scan-collection',
   // Arms the reaction reconciliation audit's repair path to WRITE compensating
   // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
   // or an unreachable Flipt, and for a path that mutates production metrics that

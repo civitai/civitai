@@ -119,6 +119,46 @@ describe('submitTextModerationOrScan', () => {
     await submitTextModerationOrScan({ entityType: 'Challenge', entityId: 3, force: true, xguard });
     expect(scanEntity).toHaveBeenCalledWith({ entityType: 'Challenge', entityId: 3, force: true });
   });
+  // The retry cron bumps the Pending row before resubmitting, so the in-flight dedupe would
+  // otherwise skip it and nothing would settle the row.
+  it('a retry submit on a bumped Pending row is submitted, not skipped as in-flight', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('active');
+    vi.mocked(scanEntity).mockImplementation(async ({ fromRetry }) =>
+      fromRetry
+        ? { status: 'submitted', workflowId: 'wf-retry' }
+        : { status: 'skipped', reason: 'in-flight' }
+    );
+    expect(
+      await submitTextModerationOrScan({
+        entityType: 'Crucible',
+        entityId: 4,
+        fromRetry: true,
+        xguard,
+        onActiveSkip,
+      })
+    ).toEqual({ id: 'wf-retry' });
+    expect(scanEntity).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'Crucible', entityId: 4, fromRetry: true })
+    );
+    expect(onActiveSkip).not.toHaveBeenCalled();
+    expect(xguard).not.toHaveBeenCalled();
+  });
+
+  it('shadow: a retry does not carry fromRetry into the shadow scan', async () => {
+    vi.mocked(getTextScanMode).mockResolvedValue('shadow');
+    await submitTextModerationOrScan({
+      entityType: 'Crucible',
+      entityId: 4,
+      fromRetry: true,
+      xguard,
+    });
+    expect(scanEntityInBackground).toHaveBeenCalledWith({
+      entityType: 'Crucible',
+      entityId: 4,
+      force: undefined,
+    });
+    expect(vi.mocked(scanEntityInBackground).mock.calls[0][0]).not.toHaveProperty('fromRetry');
+  });
 });
 
 describe('legacyProfanityAutoNsfwApplies', () => {

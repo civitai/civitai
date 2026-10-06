@@ -359,6 +359,231 @@ describe('resolveRatingReview', () => {
     expect((await review(stale)).status).toBe('Pending');
   });
 
+  const crucible = async (id: number) =>
+    (
+      await rows<{
+        nsfwLevel: number;
+        textNsfw: boolean;
+        moderatorNsfwLevel: number | null;
+        moderatorNsfwLevelBasis: number | null;
+      }>(
+        db,
+        `SELECT "nsfwLevel", "textNsfw", "moderatorNsfwLevel", "moderatorNsfwLevelBasis" FROM "Crucible" WHERE "id" = $1`,
+        [id]
+      )
+    )[0];
+
+  it('resolving a Crucible dispute lowers its mask and clears textNsfw', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    const res = await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 1,
+      moderatorId: mod,
+    });
+
+    expect(res).toMatchObject({ status: 'Actioned', entityMissing: false, title: 'cr' });
+    expect(await crucible(crucibleId)).toEqual({
+      nsfwLevel: 1,
+      textNsfw: false,
+      moderatorNsfwLevel: 1,
+      moderatorNsfwLevelBasis: 1,
+    });
+    expect(await countRows(db, 'JobQueue')).toBe(0);
+  });
+
+  it('keeps textNsfw on a crucible lowered to a level that is still R or above', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4 | 8,
+      textNsfw: true,
+    });
+    const id = await fileReview('Crucible', crucibleId, 8, 4);
+
+    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+
+    expect(await crucible(crucibleId)).toEqual({
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      moderatorNsfwLevel: 4,
+      moderatorNsfwLevelBasis: 4,
+    });
+  });
+
+  it("refuses to raise a crucible, judged against its live level rather than the review's snapshot", async () => {
+    // Filed at R, lowered to PG-13 since: R would now be a raise.
+    const lowered = await seedEntity(db, 'Crucible', { userId: owner, nsfwLevel: 1 | 2 });
+    const stale = await fileReview('Crucible', lowered, 4, 1);
+    await expect(
+      service.resolveRatingReview({ reviewId: stale, appliedLevel: 4, moderatorId: mod })
+    ).rejects.toThrow(/cannot be applied/);
+    expect(await crucible(lowered)).toEqual({
+      nsfwLevel: 1 | 2,
+      textNsfw: false,
+      moderatorNsfwLevel: null,
+      moderatorNsfwLevelBasis: null,
+    });
+    expect((await review(stale)).status).toBe('Pending');
+  });
+
+  it('refuses to change the mask of a crucible that has started, and writes nothing', async () => {
+    const active = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      status: 'Active',
+    });
+    // Still Pending, but its start time has passed: the activation job can lag.
+    const lagging = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      startAt: '2020-01-01T00:00:00.000Z',
+    });
+    for (const crucibleId of [active, lagging]) {
+      const id = await fileReview('Crucible', crucibleId, 4, 1);
+      await expect(
+        service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+      ).rejects.toThrow("This crucible has started; its allowed levels can't change.");
+      expect((await review(id)).status).toBe('Pending');
+      expect(await crucible(crucibleId)).toEqual({
+        nsfwLevel: 1 | 4,
+        textNsfw: true,
+        moderatorNsfwLevel: null,
+        moderatorNsfwLevelBasis: null,
+      });
+    }
+  });
+
+  it('still lets a started crucible dispute be declined at its current level', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      status: 'Active',
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4);
+  });
+
+  it('offers and accepts the live level of a crucible widened before it started', async () => {
+    const all = 1 | 2 | 4 | 8 | 16;
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: all,
+      textNsfw: true,
+      status: 'Active',
+    });
+    // Filed while the mask still topped out at R.
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4, 8, 16]);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 16, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(all);
+  });
+
+  it('reads a crucible mask carrying the Blocked bit by its rating bits only', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4 | 32,
+      textNsfw: true,
+      status: 'Active',
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4]);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 8, moderatorId: mod })
+    ).rejects.toThrow(/cannot be applied/);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+    ).rejects.toThrow(/has started/);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4 | 32);
+  });
+
+  it('lowers the mask of a crucible scheduled to start later', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4,
+      textNsfw: true,
+      startAt: '2099-01-01T00:00:00.000Z',
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Actioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(1);
+  });
+
+  it('closes a Collection review whose collection is gone without writing an override', async () => {
+    const id = await fileReview('Collection', 999, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+    ).resolves.toMatchObject({ entityMissing: true, status: 'Unactioned' });
+    expect((await review(id)).appliedLevel).toBeNull();
+    expect(await countRows(db, 'JobQueue')).toBe(0);
+  });
+
+  it('refuses a Collection level that is not SFW or NSFW', async () => {
+    const collectionId = await seedEntity(db, 'Collection', { userId: owner, nsfwLevel: 28 });
+    const id = await fileReview('Collection', collectionId, 4, 1);
+
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 2, moderatorId: mod })
+    ).rejects.toThrow(/cannot be applied/);
+    expect((await review(id)).status).toBe('Pending');
+    const [c] = await rows<{ moderatorNsfwLevel: number | null }>(
+      db,
+      `SELECT "moderatorNsfwLevel" FROM "Collection" WHERE "id" = $1`,
+      [collectionId]
+    );
+    expect(c.moderatorNsfwLevel).toBeNull();
+    expect(await countRows(db, 'JobQueue')).toBe(0);
+  });
+
+  it('resolving a Collection dispute sets the override and queues a recompute', async () => {
+    const collectionId = await seedEntity(db, 'Collection', { userId: owner, nsfwLevel: 28 });
+    const id = await fileReview('Collection', collectionId, 4, 1);
+
+    const res = await service.resolveRatingReview({
+      reviewId: id,
+      appliedLevel: 1,
+      moderatorId: mod,
+    });
+
+    expect(res).toMatchObject({ status: 'Actioned', entityMissing: false, title: 'col' });
+    const [c] = await rows<{
+      nsfwLevel: number;
+      moderatorNsfwLevel: number;
+      moderatorNsfwLevelBasis: number;
+    }>(
+      db,
+      `SELECT "nsfwLevel", "moderatorNsfwLevel", "moderatorNsfwLevelBasis" FROM "Collection" WHERE "id" = $1`,
+      [collectionId]
+    );
+    // The bucket itself is the recompute job's to write.
+    expect(c).toEqual({ nsfwLevel: 28, moderatorNsfwLevel: 1, moderatorNsfwLevelBasis: 1 });
+    expect(await jobs()).toEqual([{ entityType: 'Collection', entityId: collectionId }]);
+  });
+
   it('keeps the Article behaviour: userNsfwLevel lock, floor-aware basis, text hash, no JobQueue row', async () => {
     const articleId = await seedEntity(db, 'Article', {
       userId: owner,
@@ -415,6 +640,33 @@ describe('resolveRatingReview', () => {
 });
 
 describe('getRatingReviews', () => {
+  it('summarises a crucible by its mask level and a collection by its SFW/NSFW bucket', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', { userId: owner, nsfwLevel: 1 | 4 });
+    const collectionId = await seedEntity(db, 'Collection', {
+      userId: owner,
+      nsfwLevel: 28,
+      moderatorNsfwLevel: 4,
+    });
+    await fileReview('Crucible', crucibleId);
+    await fileReview('Collection', collectionId);
+
+    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    const byType = Object.fromEntries(items.map((i) => [i.entityType, i]));
+
+    expect(byType.Crucible.entity).toMatchObject({
+      title: 'cr',
+      path: `/crucibles/${crucibleId}`,
+      nsfwLevel: 1 | 4,
+      override: null,
+    });
+    expect(byType.Collection.entity).toMatchObject({
+      title: 'col',
+      path: `/collections/${collectionId}`,
+      nsfwLevel: 4,
+      override: 4,
+    });
+  });
+
   it('joins each entity, shows only a text-scan raise, and filters by type', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4, title: 'hello' });
     const entryId = await seedEntity(db, 'BountyEntry', {

@@ -12,6 +12,7 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 
 const throwOnBlockedUserContent = vi.fn();
 const resolveCoverImageId = vi.fn();
@@ -23,6 +24,11 @@ const submitTextModeration = vi.fn();
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TextModerationService>()),
   submitTextModeration,
+}));
+
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
 }));
 
 vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
@@ -552,6 +558,17 @@ describe('updateCrucible — content and images', () => {
   it('keeps a green crucible SFW', async () => {
     findUnique.mockResolvedValue(upcoming({ buzzType: 'green' }));
     await expect(edit({ nsfwLevel: 1 | 4 })).rejects.toThrow(/green Buzz crucible/);
+  });
+
+  it('lets a green crucible whose stored mask carries R still edit its description', async () => {
+    findUnique.mockResolvedValue(crucible({ buzzType: 'green', nsfwLevel: 7 }));
+    await edit({ description: 'Fresh description' });
+    expect(written()).toMatchObject({ description: 'Fresh description' });
+  });
+
+  it('still refuses a green crucible update that sets the mask to include R', async () => {
+    findUnique.mockResolvedValue(upcoming({ buzzType: 'green', nsfwLevel: 7 }));
+    await expect(edit({ nsfwLevel: 7 })).rejects.toThrow(/green Buzz crucible/);
   });
 
   it('runs the blocked-content guard on the text it will store', async () => {

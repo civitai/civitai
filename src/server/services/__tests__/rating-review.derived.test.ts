@@ -91,14 +91,16 @@ describe('getStaleOverrideSignal', () => {
     ).toBe(false);
   });
 
-  it('never flags a challenge, whose basis is the allowed mask its own resolve narrows', async () => {
+  it.each([
+    ['Challenge', 2],
+    ['Crucible', 2],
+    ['Collection', 1],
+  ] as const)('never flags a %s, which only a moderator resolves', async (entityType, override) => {
     derived(1);
-    expect(await getStaleOverrideSignal('Challenge', 1, { override: 2, overrideBasis: 4 })).toEqual(
-      {
-        derivedLevel: null,
-        derivedRatingDroppedBelowOverride: false,
-      }
-    );
+    expect(await getStaleOverrideSignal(entityType, 1, { override, overrideBasis: 4 })).toEqual({
+      derivedLevel: null,
+      derivedRatingDroppedBelowOverride: false,
+    });
     expect(computeRatedEntityDerivedNsfwLevel).not.toHaveBeenCalled();
   });
 });
@@ -126,7 +128,8 @@ describe('evaluateOverrideAutoApprove', () => {
       reason: 'override-blocked',
     });
     expect(await run({ suggestedLevel: 8 })).toMatchObject({ reason: 'not-down-direction' });
-    expect(await run({ entityType: 'Challenge' })).toMatchObject({ reason: 'challenge-manual' });
+    for (const entityType of ['Challenge', 'Crucible', 'Collection'] as const)
+      expect(await run({ entityType })).toMatchObject({ reason: 'moderator-only' });
     expect(await run({ scan: scan({ pending: true }) })).toMatchObject({
       reason: 'text-scan-pending',
     });

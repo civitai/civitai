@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { NsfwLevel } from '../browsing-levels';
 import {
   articleModerationFloorText,
   challengeDerivedNsfwLevel,
+  collectionTextFloorBucketText,
   isTextScanRaised,
   overrideBasisDropped,
   raiseNsfwLevelText,
@@ -35,8 +37,19 @@ describe('scanFloorText', () => {
   });
 
   it('refuses anything that is not a known entity or a plain identifier', () => {
-    expect(() => scanFloorText('Collection' as never, 'c.id')).toThrow();
+    expect(() => scanFloorText('Model' as never, 'm.id')).toThrow();
     expect(() => scanFloorText('Post', 'p.id; DROP TABLE x')).toThrow();
+  });
+});
+
+describe('collectionTextFloorBucketText', () => {
+  it('collection text floor: override first, then the scan floor, at R', () => {
+    const sql = collectionTextFloorBucketText('c', 28);
+    expect(sql).toContain(
+      `COALESCE(c."moderatorNsfwLevel", ${scanFloorText('Collection', 'c.id')})`
+    );
+    expect(sql).toContain(`>= ${NsfwLevel.R} THEN 28 ELSE 0 END`);
+    expect(() => collectionTextFloorBucketText('c; drop', 28)).toThrow();
   });
 });
 
@@ -135,6 +148,15 @@ describe('isTextScanRaised', () => {
     expect(isTextScanRaised(ts(1))).toBe(false);
     expect(isTextScanRaised(ts(2, 'Model'))).toBe(false);
     expect(isTextScanRaised(ts(4, 'Model'))).toBe(true);
+    expect(textScanRaisedMinLevel('Collection')).toBe(4);
+    expect(isTextScanRaised(ts(2, 'Collection'))).toBe(false);
+    expect(isTextScanRaised(ts(4, 'Collection'))).toBe(true);
+    expect(textScanRaisedMinLevel('Crucible')).toBe(4);
+    expect(isTextScanRaised(ts(2, 'Crucible'))).toBe(false);
+    expect(isTextScanRaised(ts(4, 'Crucible'))).toBe(true);
+    expect(textScanRaisedMinLevel('Challenge')).toBe(4);
+    expect(isTextScanRaised(ts(2, 'Challenge'))).toBe(false);
+    expect(isTextScanRaised(ts(4, 'Challenge'))).toBe(true);
     expect(isTextScanRaised({ entityType: 'Post', nsfwLevel: 8, result: { labels: [] } })).toBe(
       false
     );

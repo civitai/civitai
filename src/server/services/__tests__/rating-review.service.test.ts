@@ -173,9 +173,17 @@ describe('createRatingReview', () => {
   });
 
   it('refuses a flag-restricted model even though the scan raised it, and inserts nothing', async () => {
-    loadSubject.mockResolvedValue(subject({ flagRestricted: true }));
-    await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toThrow(
-      /while the flag stands/
+    loadSubject.mockResolvedValue(subject({ disputeRestriction: 'flag stands' }));
+    await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toThrow('flag stands');
+    expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
+  });
+
+  it('refuses a collection with a forced level with the restriction message', async () => {
+    loadSubject.mockResolvedValue(
+      subject({ currentLevel: 4, disputeRestriction: "the level is fixed, can't be disputed" })
+    );
+    await expect(file({ entityType: 'Collection', suggestedLevel: 1 })).rejects.toThrow(
+      /can't be disputed/
     );
     expect(dbMock.dbWrite.ratingReview.create).not.toHaveBeenCalled();
   });
@@ -323,15 +331,24 @@ describe('createRatingReview', () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
-  it('sends a challenge dispute to a moderator without asking the gate', async () => {
-    loadSubject.mockResolvedValue(subject({ currentLevel: 8, override: 8, overrideBasis: 8 }));
-    overrideGate.mockResolvedValue({ eligible: true, derivedLevel: 2 });
-    await expect(file({ entityType: 'Challenge', suggestedLevel: 2 })).resolves.toMatchObject({
-      status: 'Pending',
-    });
-    expect(overrideGate).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
-  });
+  it.each([
+    ['Challenge', 8, 2],
+    ['Crucible', 8, 2],
+    ['Collection', 4, 1],
+  ] as const)(
+    'sends a %s dispute to a moderator without asking the gate',
+    async (entityType, currentLevel, suggestedLevel) => {
+      loadSubject.mockResolvedValue(
+        subject({ currentLevel, override: currentLevel, overrideBasis: currentLevel })
+      );
+      overrideGate.mockResolvedValue({ eligible: true, derivedLevel: 1 });
+      await expect(file({ entityType, suggestedLevel })).resolves.toMatchObject({
+        status: 'Pending',
+      });
+      expect(overrideGate).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('maybeAutoResolveRatingDisputeAfterScan', () => {
@@ -373,11 +390,16 @@ describe('maybeAutoResolveRatingDisputeAfterScan', () => {
     expect(getScan).toHaveBeenCalledWith('Post', 7, dbMock.dbWrite);
   });
 
-  it('leaves a challenge dispute for a moderator without reading anything', async () => {
-    await maybeAutoResolveRatingDisputeAfterScan('Challenge', 7);
-    expect(dbMock.dbRead.ratingReview.findFirst).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
-  });
+  it.each(['Challenge', 'Crucible', 'Collection'] as const)(
+    'leaves a %s dispute Pending for a moderator, even after a raising scan',
+    async (entityType) => {
+      getScan.mockResolvedValue(scan({ raised: true }));
+      await maybeAutoResolveRatingDisputeAfterScan(entityType, 7);
+      expect(dbMock.dbRead.ratingReview.findFirst).not.toHaveBeenCalled();
+      expect(overrideGate).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.ratingReview.updateMany).not.toHaveBeenCalled();
+    }
+  );
 
   it('does nothing without a pending dispute, with the flag off for the owner, or when the gate refuses', async () => {
     dbMock.dbRead.ratingReview.findFirst.mockResolvedValueOnce(null);
@@ -439,7 +461,7 @@ describe('getRatingReviewForOwner', () => {
   });
 
   it('offers no dispute on a flag-restricted model, though the scan raised its rating', async () => {
-    loadSubject.mockResolvedValue(subject({ currentLevel: 1, flagRestricted: true }));
+    loadSubject.mockResolvedValue(subject({ currentLevel: 1, disputeRestriction: 'flag stands' }));
     const res = await getRatingReviewForOwner({ entityType: 'Model', entityId: 7, userId: OWNER });
     expect(res.canDispute).toBe(false);
   });

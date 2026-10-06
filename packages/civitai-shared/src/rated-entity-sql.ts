@@ -1,9 +1,15 @@
 import { getHighestBrowsingLevelBit, NsfwLevel, nsfwBrowsingLevelsFlag } from './browsing-levels';
 
-export type ScanFloorEntityType = 'Article' | 'Post' | 'Bounty' | 'BountyEntry';
+export type ScanFloorEntityType = 'Article' | 'Post' | 'Bounty' | 'BountyEntry' | 'Collection';
 export type DerivedNsfwEntityType = 'Post' | 'Bounty' | 'BountyEntry';
 
-const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = ['Article', 'Post', 'Bounty', 'BountyEntry'];
+const SCAN_FLOOR_ENTITY_TYPES: readonly string[] = [
+  'Article',
+  'Post',
+  'Bounty',
+  'BountyEntry',
+  'Collection',
+];
 const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$/;
 const INTERNAL_ALIASES = new Set(['i', 'ic', 'em', 'd', 'ar', 'r']);
 
@@ -43,6 +49,15 @@ export function articleModerationFloorText(idColumn: string) {
   } ELSE 0 END, ${scanFloorText('Article', id)})`;
 }
 
+export function collectionTextFloorBucketText(alias: string, bucket: number) {
+  if (!Number.isInteger(bucket)) throw new Error(`Not an integer bucket: ${bucket}`);
+  const a = identifier(alias);
+  return `(CASE WHEN COALESCE(${a}."moderatorNsfwLevel", ${scanFloorText(
+    'Collection',
+    `${a}.id`
+  )}) >= ${NsfwLevel.R} THEN ${bucket} ELSE 0 END)`;
+}
+
 const imageLevelText: Record<DerivedNsfwEntityType, (alias: string) => string> = {
   Post: (a) => `(SELECT bit_or(i."nsfwLevel") FROM "Image" i WHERE i."postId" = ${a}.id)`,
   Bounty: (a) =>
@@ -70,8 +85,11 @@ export function ratedEntityDerivedNsfwLevelText(entityType: DerivedNsfwEntityTyp
     : content;
 }
 
+// A model's flag, a collection's bucket and a crucible's or challenge's escalation only move at R,
+// so a PG-13 verdict raises none of them.
+const RAISED_AT_R: readonly string[] = ['Model', 'Collection', 'Crucible', 'Challenge'];
 export function textScanRaisedMinLevel(entityType: string) {
-  return entityType === 'Model' ? NsfwLevel.R : NsfwLevel.PG13;
+  return RAISED_AT_R.includes(entityType) ? NsfwLevel.R : NsfwLevel.PG13;
 }
 
 export function isTextScanRaised(row: {

@@ -1,5 +1,6 @@
 import { allBrowsingLevelsFlag, getHighestBrowsingLevelBit } from '@civitai/shared';
 import {
+  collectionRatingLevel,
   modelRatingLevel,
   textScanNsfwReason,
   textScanResultTextHash,
@@ -18,9 +19,16 @@ export type RatingReviewSubject = {
   parentId: number | null;
   override: number | null;
   overrideBasis: number | null;
-  // A POI/minor flag forces the model SFW, so a rating dispute cannot move it while the flag stands.
-  flagRestricted?: boolean;
+  // Set when something other than the rating decides the level, so a dispute could not move it.
+  disputeRestriction?: string;
 };
+
+// A POI/minor flag forces the model SFW, so a rating dispute cannot move it while the flag stands.
+export const FLAG_RESTRICTED_MESSAGE =
+  'A model flagged as depicting a real person or a minor cannot have its rating disputed while the flag stands.';
+// A forced level wins over a moderator rating, so resolving a dispute would change nothing.
+export const FORCED_LEVEL_MESSAGE =
+  "This collection's rating is fixed by Civitai, so it can't be disputed.";
 
 // Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.
 const ratedLevel = (mask: number) => getHighestBrowsingLevelBit(mask & allBrowsingLevelsFlag);
@@ -76,7 +84,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       parentId: null,
       override: null,
       overrideBasis: null,
-      flagRestricted: m.poi || m.minor,
+      disputeRestriction: m.poi || m.minor ? FLAG_RESTRICTED_MESSAGE : undefined,
     };
   },
   Post: async (id, db) => {
@@ -147,6 +155,47 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
         title: c.title,
         parentId: null,
         ...overridePair(c),
+      }
+    );
+  },
+  Crucible: async (id, db) => {
+    const c = await db.crucible.findUnique({
+      where: { id },
+      select: { userId: true, nsfwLevel: true, updatedAt: true, name: true, ...overrideSelect },
+    });
+    return (
+      c && {
+        ownerId: c.userId,
+        currentLevel: ratedLevel(c.nsfwLevel),
+        updatedAt: c.updatedAt,
+        title: c.name,
+        parentId: null,
+        ...overridePair(c),
+      }
+    );
+  },
+  Collection: async (id, db) => {
+    const c = await db.collection.findUnique({
+      where: { id },
+      select: {
+        userId: true,
+        nsfwLevel: true,
+        updatedAt: true,
+        name: true,
+        metadata: true,
+        ...overrideSelect,
+      },
+    });
+    const forced = (c?.metadata as { forcedBrowsingLevel?: unknown } | null)?.forcedBrowsingLevel;
+    return (
+      c && {
+        ownerId: c.userId,
+        currentLevel: collectionRatingLevel(c.nsfwLevel),
+        updatedAt: c.updatedAt,
+        title: c.name,
+        parentId: null,
+        ...overridePair(c),
+        disputeRestriction: forced ? FORCED_LEVEL_MESSAGE : undefined,
       }
     );
   },

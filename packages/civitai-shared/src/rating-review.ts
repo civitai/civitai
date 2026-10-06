@@ -1,4 +1,9 @@
-import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from './browsing-levels';
+import {
+  browsingLevels,
+  getBrowsingLevelLabel,
+  NsfwLevel,
+  nsfwBrowsingLevelsFlag,
+} from './browsing-levels';
 
 export const RATING_REVIEW_ENTITY_TYPES = [
   'Article',
@@ -7,6 +12,8 @@ export const RATING_REVIEW_ENTITY_TYPES = [
   'Bounty',
   'BountyEntry',
   'Challenge',
+  'Crucible',
+  'Collection',
 ] as const;
 export type RatingReviewEntityType = (typeof RATING_REVIEW_ENTITY_TYPES)[number];
 
@@ -21,22 +28,35 @@ export const ratingReviewEntityLabels: Record<RatingReviewEntityType, string> = 
   Bounty: 'Bounty',
   BountyEntry: 'Bounty entry',
   Challenge: 'Challenge',
+  Crucible: 'Crucible',
+  Collection: 'Collection',
 };
 
 // A Model's rating override is its `nsfw` flag, not a level, so it is represented as PG (off) / R (on).
 export const modelRatingLevel = (nsfw: boolean): number => (nsfw ? NsfwLevel.R : NsfwLevel.PG);
 
+// Any NSFW bit in a collection's bucket reads as R.
+export const collectionRatingLevel = (nsfwLevel: number): number =>
+  nsfwLevel & nsfwBrowsingLevelsFlag ? NsfwLevel.R : NsfwLevel.PG;
+
+// A collection's nsfwLevel is a bucket (SFW or every NSFW bit), so it has no level finer than PG/R.
 export function ratingReviewLevels(entityType: RatingReviewEntityType): number[] {
-  return entityType === 'Model' ? [NsfwLevel.PG, NsfwLevel.R] : [...browsingLevels];
+  return entityType === 'Model' || entityType === 'Collection'
+    ? [NsfwLevel.PG, NsfwLevel.R]
+    : [...browsingLevels];
 }
 
-// Raising a challenge runs the void/refund escalation, which only the main app can do.
+// A challenge's or crucible's level is an allowed-entry mask; raising one runs guarded side effects
+// (entry voids, content checks, refunds) that only the main app can, so a dispute may only lower it.
+const lowerOnly = (entityType: RatingReviewEntityType) =>
+  entityType === 'Challenge' || entityType === 'Crucible';
+
 export function ratingReviewOwnerLevels(
   entityType: RatingReviewEntityType,
   currentLevel: number
 ): number[] {
   const levels = ratingReviewLevels(entityType);
-  return entityType === 'Challenge' ? levels.filter((l) => l < currentLevel) : levels;
+  return lowerOnly(entityType) ? levels.filter((l) => l < currentLevel) : levels;
 }
 
 export function ratingReviewModeratorLevels(
@@ -44,14 +64,15 @@ export function ratingReviewModeratorLevels(
   currentLevel: number
 ): number[] {
   const levels = ratingReviewLevels(entityType);
-  return entityType === 'Challenge' ? levels.filter((l) => l <= currentLevel) : levels;
+  return lowerOnly(entityType) ? levels.filter((l) => l <= currentLevel) : levels;
 }
 
 export function ratingReviewLevelLabel(
   entityType: RatingReviewEntityType,
   level: number | null | undefined
 ): string {
-  if (entityType === 'Model' && level) return level >= NsfwLevel.R ? 'NSFW' : 'SFW';
+  if ((entityType === 'Model' || entityType === 'Collection') && level)
+    return level >= NsfwLevel.R ? 'NSFW' : 'SFW';
   return getBrowsingLevelLabel(level);
 }
 
@@ -73,6 +94,10 @@ export function ratingReviewEntityPath(
       return parentId ? `/bounties/${parentId}/entries/${entityId}` : null;
     case 'Challenge':
       return `/challenges/${entityId}`;
+    case 'Crucible':
+      return `/crucibles/${entityId}`;
+    case 'Collection':
+      return `/collections/${entityId}`;
   }
 }
 

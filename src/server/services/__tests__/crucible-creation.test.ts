@@ -16,6 +16,7 @@ import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as CrucibleEligibilityService from '~/server/services/crucible-eligibility.service';
 import type * as CoverImageService from '~/server/services/cover-image.service';
 import type * as TextModerationService from '~/server/services/text-moderation.service';
+import type * as ModeModule from '~/server/services/text-scan/mode';
 import { dbMock, loggingMock } from '~/__tests__/mocks';
 import { CrucibleSort } from '~/server/common/enums';
 
@@ -38,6 +39,11 @@ const submitTextModeration = vi.fn();
 vi.mock('~/server/services/text-moderation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof TextModerationService>()),
   submitTextModeration,
+}));
+
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
 }));
 
 vi.mock('~/server/services/buzz.service', async (importOriginal) => ({

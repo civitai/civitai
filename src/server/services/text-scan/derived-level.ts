@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { getHighestBrowsingLevelBit, NsfwLevel } from '@civitai/shared';
+import { collectionRatingLevel } from '@civitai/shared/rating-review';
 import {
   challengeDerivedNsfwLevel,
   type DerivedNsfwEntityType,
@@ -13,9 +15,23 @@ const table: Record<DerivedNsfwEntityType, Prisma.Sql> = {
 };
 
 export async function computeRatedEntityDerivedNsfwLevel(
-  entityType: DerivedNsfwEntityType | 'Challenge',
+  entityType: DerivedNsfwEntityType | 'Challenge' | 'Crucible' | 'Collection',
   entityId: number
 ): Promise<number | null> {
+  if (entityType === 'Crucible') {
+    const row = await dbWrite.crucible.findUnique({
+      where: { id: entityId },
+      select: { nsfwLevel: true },
+    });
+    return row ? getHighestBrowsingLevelBit(row.nsfwLevel) || NsfwLevel.PG : null;
+  }
+  if (entityType === 'Collection') {
+    const row = await dbWrite.collection.findUnique({
+      where: { id: entityId },
+      select: { nsfwLevel: true },
+    });
+    return row ? collectionRatingLevel(row.nsfwLevel) : null;
+  }
   if (entityType === 'Challenge') {
     const row = await dbWrite.challenge.findUnique({
       where: { id: entityId },

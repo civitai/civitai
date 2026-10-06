@@ -98,6 +98,7 @@ describe('settleSkippedChallengeScan', () => {
   it('settles text too short to scan as clean', async () => {
     await settleSkippedChallengeScan(3, 'too-short');
     expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({ entityId: 3, isNsfw: false });
+    expect(recordChallengeScanResult).toHaveBeenCalledTimes(1);
   });
 
   it('does nothing for a deleted challenge', async () => {
@@ -112,7 +113,12 @@ describe('settleSkippedChallengeScan', () => {
       await settleSkippedChallengeScan(3, reason);
       expect(applyChallengeNsfwEscalation).not.toHaveBeenCalled();
       expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'text-scan', challengeId: 3, reason })
+        expect.objectContaining({
+          name: 'text-scan',
+          message: 'challenge scan skipped; ingestion left Pending',
+          challengeId: 3,
+          reason,
+        })
       );
     }
   );

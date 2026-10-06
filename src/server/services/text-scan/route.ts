@@ -13,18 +13,21 @@ export async function submitTextModerationOrScan({
   entityType,
   entityId,
   force,
+  fromRetry,
   xguard,
   onActiveSkip,
 }: {
   entityType: TextScanEntityType;
   entityId: number;
   force?: boolean;
+  // The retry cron bumped the Pending row it resubmits; without this the in-flight dedupe skips it.
+  fromRetry?: boolean;
   xguard: () => Promise<SubmittedWorkflow>;
   onActiveSkip?: (reason: SkipReason) => Promise<void>;
 }): Promise<SubmittedWorkflow> {
   const mode = await getTextScanMode(entityType, entityId);
   if (mode === 'active') {
-    const result = await scanEntity({ entityType, entityId, force });
+    const result = await scanEntity({ entityType, entityId, force, fromRetry });
     if (result.status === 'submitted') return { id: result.workflowId };
     // The flag turned off between the two reads: XGuard owns the entity again.
     if (result.status === 'skipped' && result.reason === 'off') return xguard();

@@ -2146,6 +2146,8 @@ export type Collection = {
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
 };
 export type CollectionContributor = {
@@ -2483,6 +2485,8 @@ export type Crucible = {
   heroImageId: number | null;
   buzzType: Generated<string>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: Generated<MediaType>;
   entryFee: Generated<number>;
   seededPrizePool: Generated<number>;

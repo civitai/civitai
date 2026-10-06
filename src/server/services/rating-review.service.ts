@@ -21,7 +21,9 @@ import { createNotification } from '~/server/services/notification.service';
 import {
   evaluateOverrideAutoApprove,
   getStaleOverrideSignal,
+  isModeratorOnlyEntityType,
   isOverrideEntityType,
+  type ModeratorOnlyEntityType,
   type OverrideEntityType,
 } from '~/server/services/rating-review.derived';
 import {
@@ -61,8 +63,6 @@ export type RatingReviewRow = {
 };
 
 const PENDING_MESSAGE = 'A dispute is already pending for this item';
-const FLAG_RESTRICTED_MESSAGE =
-  'A model flagged as depicting a real person or a minor cannot have its rating disputed while the flag stands.';
 
 export function textChangedSinceResolution(
   last: { resolvedAt: Date | null; resolvedTextHash: string | null } | null,
@@ -99,12 +99,10 @@ function assertOwner(ownerId: number | null, userId: number) {
     throw new TRPCError({ code: 'FORBIDDEN', message: 'Only the owner can dispute this rating' });
 }
 
-type AutoApprovableEntityType = Exclude<OverrideEntityType, 'Challenge'>;
+type AutoApprovableEntityType = Exclude<OverrideEntityType, ModeratorOnlyEntityType>;
 
-// Lowering a challenge also narrows its allowed mask and collection gate, which only the spoke's
-// resolve writes, so a challenge dispute always goes to a moderator.
 const isAutoApprovable = (t: string): t is AutoApprovableEntityType =>
-  isOverrideEntityType(t) && t !== 'Challenge';
+  isOverrideEntityType(t) && !isModeratorOnlyEntityType(t);
 
 const OVERRIDE_TABLE: Record<AutoApprovableEntityType, Prisma.Sql> = {
   Post: Prisma.raw('"Post"'),
@@ -325,7 +323,7 @@ export async function createRatingReview({
   if (!subject) throw throwNotFoundError(`No ${entityType} with id ${entityId}`);
   assertOwner(subject.ownerId, userId);
 
-  if (subject.flagRestricted) throw throwBadRequestError(FLAG_RESTRICTED_MESSAGE);
+  if (subject.disputeRestriction) throw throwBadRequestError(subject.disputeRestriction);
   if (entityType !== 'Article' && !scan?.raised && !lastResolved)
     throw throwBadRequestError('Only a rating raised by our text scan can be disputed.');
   if (entityType !== 'Article' && !subject.currentLevel)
@@ -454,7 +452,8 @@ export async function getRatingReviewForOwner({
   return {
     review: latest ? (review as Omit<NonNullable<typeof latest>, 'resolvedTextHash'>) : null,
     canResubmit,
-    canDispute: !subject.flagRestricted && (entityType === 'Article' || !!scan?.raised || !!latest),
+    canDispute:
+      !subject.disputeRestriction && (entityType === 'Article' || !!scan?.raised || !!latest),
     currentLevel: subject.currentLevel,
     scanReason: scan?.reason ?? null,
     scanLevel: scan?.level ?? null,

@@ -2,26 +2,22 @@ import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { VISIBLE_COLLECTION_WHERE } from '~/server/services/text-scan/collection-visibility';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import type { TextScanEntityType } from '~/server/services/text-scan/types';
 import { EntityType } from '~/shared/utils/prisma/enums';
 
-export type CutoverEntityType = Exclude<TextScanEntityType, 'Challenge'> | 'Collection';
-type ProbedEntityType = Exclude<CutoverEntityType, 'Collection'>;
+export type CutoverEntityType = Exclude<TextScanEntityType, 'Challenge' | 'Crucible'>;
 
 type ClavataTarget = {
   clavataKey: string;
   jobQueueEntityType: EntityType | null;
   trigger: { name: string; table: string } | null;
-  recentIds: (() => Promise<number[]>) | null;
+  recentIds: () => Promise<number[]>;
 };
 
 export type DrainResult = { deleted: number; complete: boolean };
-export type CutoverRefusal =
-  | 'not-active'
-  | 'nothing-to-probe'
-  | 'override-required'
-  | 'override-not-allowed';
+export type CutoverRefusal = 'not-active' | 'nothing-to-probe' | 'override-not-allowed';
 
 const PROBE = 20;
 export const DRAIN_BATCH = 5000;
@@ -70,13 +66,17 @@ export const CLAVATA_TARGETS: Readonly<Record<CutoverEntityType, ClavataTarget>>
     trigger: null,
     recentIds: async () => ids(await dbRead.chatMessage.findMany(recent)),
   },
-  Collection: standard('Collection', null),
+  Collection: standard('Collection', async () =>
+    ids(
+      await dbRead.collection.findMany({
+        ...recent,
+        where: VISIBLE_COLLECTION_WHERE,
+      })
+    )
+  ),
 };
 
-export const UNMODERATED_OVERRIDE: ReadonlySet<CutoverEntityType> = new Set([
-  'ChatMessage',
-  'Collection',
-]);
+export const UNMODERATED_OVERRIDE: ReadonlySet<CutoverEntityType> = new Set(['ChatMessage']);
 
 export function isCutoverEntityType(value: string): value is CutoverEntityType {
   return Object.hasOwn(CLAVATA_TARGETS, value);
@@ -130,12 +130,9 @@ export async function drainModerationQueue(entityType: EntityType): Promise<Drai
 }
 
 async function assertActiveEverywhere(entityType: CutoverEntityType, target: ClavataTarget) {
-  if (!target.recentIds) throw new ClavataCutoverRefused(entityType, 'override-required');
   const probeIds = await target.recentIds();
   if (!probeIds.length) throw new ClavataCutoverRefused(entityType, 'nothing-to-probe');
-  const modes = await Promise.all(
-    probeIds.map((id) => getTextScanMode(entityType as ProbedEntityType, id))
-  );
+  const modes = await Promise.all(probeIds.map((id) => getTextScanMode(entityType, id)));
   const notActive = probeIds.filter((_, i) => modes[i] !== 'active');
   if (notActive.length) throw new ClavataCutoverRefused(entityType, 'not-active', notActive);
   return probeIds.length;

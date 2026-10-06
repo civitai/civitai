@@ -8,6 +8,7 @@ const entityNoun: Record<string, string> = {
   Post: 'post',
   Bounty: 'bounty',
   BountyEntry: 'bounty entry',
+  Collection: 'collection',
 };
 
 export const textScanNotifications = createNotificationProcessor({

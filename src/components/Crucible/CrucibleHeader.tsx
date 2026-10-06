@@ -15,6 +15,8 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CrucibleContentLevelBadges } from '~/components/Crucible/CrucibleContentLevelBadges';
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getCrucibleStatusBadge, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
@@ -76,6 +78,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, paidEntryCount, seededPrizePool });
   const browsingLevel = useBrowsingLevelDebounced();
+  const currentUser = useCurrentUser();
   // Drawn without an ImageGuard, so it only shows once scanned and inside the viewer's level.
   const backgroundImage =
     [heroImage, image].find(
@@ -200,6 +203,14 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
               )}
             </div>
           </CrucibleUserLink>
+
+          <div className="mt-4">
+            <OwnerRatingControls
+              entityType="Crucible"
+              entityId={crucible.id}
+              isOwner={currentUser?.id === user.id}
+            />
+          </div>
 
           <div className="mt-5 flex flex-wrap items-center gap-x-6 gap-y-2 border-t border-white/10 pt-4">
             <div className="flex items-center gap-2">

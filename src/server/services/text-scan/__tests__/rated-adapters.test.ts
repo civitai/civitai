@@ -9,9 +9,15 @@ vi.mock('~/server/services/text-scan/actions/bounty-nsfw', () => ({
   applyBountyNsfwTextScan: vi.fn(async () => ({ deferredRatingNotice: null })),
 }));
 
+// Hand-listed: the real action reaches nsfwLevels.service, whose search-index graph builds clients at load.
+vi.mock('~/server/services/text-scan/actions/collection', () => ({
+  applyCollectionTextScan: vi.fn(async () => undefined),
+}));
+
 const { getModerationAdapter } = await import('~/server/services/moderation-adapters');
 const { applyRatingFloor } = await import('~/server/services/text-scan/rated-entities');
 const { applyBountyNsfwTextScan } = await import('~/server/services/text-scan/actions/bounty-nsfw');
+const { applyCollectionTextScan } = await import('~/server/services/text-scan/actions/collection');
 
 const args = {
   entityId: 1,
@@ -34,7 +40,8 @@ describe('rated-entity text-scan adapters', () => {
     expect(applyBountyNsfwTextScan).toHaveBeenCalledWith(args);
   });
 
-  it('Collection has no adapter', () => {
-    expect(getModerationAdapter('Collection')).toBeUndefined();
+  it('Collection is registered and runs the collection action', async () => {
+    await getModerationAdapter('Collection')!.applyTextScan!(args as never);
+    expect(applyCollectionTextScan).toHaveBeenCalledWith(args);
   });
 });

@@ -3,6 +3,8 @@ import { NsfwLevel } from '../browsing-levels';
 import {
   buildRatingReviewNotification,
   isRatingReviewEntityType,
+  ratingReviewEntityLabels,
+  collectionRatingLevel,
   modelRatingLevel,
   ratingReviewEntityPath,
   ratingReviewLevelLabel,
@@ -14,11 +16,29 @@ import {
 } from '../rating-review';
 
 describe('rating-review constants', () => {
-  it('recognises exactly the six entity types, case-sensitively, and not Collection', () => {
+  it('recognises the entity types case-sensitively', () => {
     expect(isRatingReviewEntityType('BountyEntry')).toBe(true);
     expect(isRatingReviewEntityType('bountyEntry')).toBe(false);
     expect(isRatingReviewEntityType('Image')).toBe(false);
-    expect(isRatingReviewEntityType('Collection')).toBe(false);
+  });
+
+  it('Crucible and Collection are disputable; Collection is binary', () => {
+    expect(isRatingReviewEntityType('Crucible')).toBe(true);
+    expect(isRatingReviewEntityType('Collection')).toBe(true);
+    expect(ratingReviewLevels('Collection')).toEqual([NsfwLevel.PG, NsfwLevel.R]);
+    expect(ratingReviewLevels('Crucible')).toEqual([1, 2, 4, 8, 16]);
+    expect(ratingReviewEntityLabels.Crucible).toBe('Crucible');
+  });
+
+  it('lets a crucible be disputed and resolved only downward', () => {
+    expect(ratingReviewOwnerLevels('Crucible', NsfwLevel.R)).toEqual([1, 2]);
+    expect(ratingReviewModeratorLevels('Crucible', NsfwLevel.R)).toEqual([1, 2, 4]);
+    expect(ratingReviewOwnerLevels('Collection', NsfwLevel.PG)).toEqual([1, 4]);
+  });
+
+  it('labels a collection SFW/NSFW, like a model', () => {
+    expect(ratingReviewLevelLabel('Collection', NsfwLevel.R)).toBe('NSFW');
+    expect(ratingReviewLevelLabel('Collection', NsfwLevel.PG)).toBe('SFW');
   });
 
   it('gives Model a binary SFW/NSFW choice and everyone else the five browsing levels', () => {
@@ -26,6 +46,10 @@ describe('rating-review constants', () => {
     expect(ratingReviewLevels('Post')).toEqual([1, 2, 4, 8, 16]);
     expect(modelRatingLevel(true)).toBe(NsfwLevel.R);
     expect(modelRatingLevel(false)).toBe(NsfwLevel.PG);
+    expect(collectionRatingLevel(NsfwLevel.PG | NsfwLevel.PG13)).toBe(NsfwLevel.PG);
+    expect(collectionRatingLevel(NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX)).toBe(NsfwLevel.R);
+    expect(collectionRatingLevel(NsfwLevel.XXX)).toBe(NsfwLevel.R);
+    expect(collectionRatingLevel(0)).toBe(NsfwLevel.PG);
     expect(ratingReviewLevelLabel('Model', NsfwLevel.R)).toBe('NSFW');
     expect(ratingReviewLevelLabel('Model', NsfwLevel.PG)).toBe('SFW');
     expect(ratingReviewLevelLabel('Post', NsfwLevel.PG13)).toBe('PG-13');

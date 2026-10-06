@@ -16,12 +16,41 @@ const load = async (entityType: string, id = 1) => {
 beforeEach(() => vi.clearAllMocks());
 
 describe('rated-entity profiles', () => {
-  it('registers all six with the spec labels, and no Collection', () => {
+  it('registers all six with the spec labels', () => {
     expect(getTextScanProfile('Model')?.labels).toEqual(['nsfw', 'poi', 'minor']);
     expect(getTextScanProfile('Bounty')?.labels).toEqual(['nsfw', 'poi']);
     for (const t of ['Article', 'Post', 'BountyEntry', 'Challenge'])
       expect(getTextScanProfile(t)?.labels).toEqual(['nsfw']);
-    expect(getTextScanProfile('Collection')).toBeUndefined();
+  });
+
+  it('registers Crucible and Collection with nsfw only', () => {
+    expect(getTextScanProfile('Crucible')?.labels).toEqual(['nsfw']);
+    expect(getTextScanProfile('Collection')?.labels).toEqual(['nsfw']);
+    expect(getTextScanProfile('Crucible')?.minChars).toBeUndefined();
+    expect(getTextScanProfile('Collection')?.minChars).toBeUndefined();
+  });
+
+  it('Crucible: name and description, tags stripped, declared at its stored level', async () => {
+    dbMock.dbWrite.crucible.findMany.mockResolvedValue([
+      { id: 1, userId: 9, name: 'Neon', description: '<p>City at night</p>', nsfwLevel: 3 },
+    ]);
+    const s = await load('Crucible');
+    expect(s.userId).toBe(9);
+    expect(s.declared).toEqual({ nsfwLevel: 3 });
+    expect(s.text).toEqual({ Name: 'Neon', Description: 'City at night' });
+  });
+
+  it('Collection: only public-visible collections load, tags stripped', async () => {
+    dbMock.dbWrite.collection.findMany.mockResolvedValue([
+      { id: 1, userId: 9, name: 'Faves', description: '<p>best</p>', nsfwLevel: 1 },
+    ]);
+    const s = await load('Collection');
+    expect(s.text).toEqual({ Name: 'Faves', Description: 'best' });
+    expect(dbMock.dbWrite.collection.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: { in: [1] }, availability: 'Public', read: { in: ['Public', 'Unlisted'] } },
+      })
+    );
   });
 
   it('Model: every version, tags stripped, boolean nsfw declared as a level', async () => {

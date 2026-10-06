@@ -7,6 +7,7 @@ import {
   ratedEntityContentNsfwLevelText,
   type DerivedNsfwEntityType,
 } from '@civitai/shared/rated-entity-sql';
+import { collectionRatingLevel } from '@civitai/shared/rating-review';
 
 export async function computeArticleDerivedNsfwLevel(
   db: Kysely<DB> | Transaction<DB>,
@@ -49,10 +50,26 @@ export async function computeArticleDerivedNsfwLevel(
 
 export async function computeRatedEntityDerivedNsfwLevel(
   db: Kysely<DB> | Transaction<DB>,
-  entityType: DerivedNsfwEntityType | 'Article' | 'Challenge',
+  entityType: DerivedNsfwEntityType | 'Article' | 'Challenge' | 'Crucible' | 'Collection',
   entityId: number
 ): Promise<number | null> {
   if (entityType === 'Article') return computeArticleDerivedNsfwLevel(db, entityId);
+  if (entityType === 'Crucible') {
+    const row = await db
+      .selectFrom('Crucible')
+      .select('nsfwLevel')
+      .where('id', '=', entityId)
+      .executeTakeFirst();
+    return row ? challengeDerivedNsfwLevel(row.nsfwLevel) : null;
+  }
+  if (entityType === 'Collection') {
+    const row = await db
+      .selectFrom('Collection')
+      .select('nsfwLevel')
+      .where('id', '=', entityId)
+      .executeTakeFirst();
+    return row ? collectionRatingLevel(row.nsfwLevel) : null;
+  }
   if (entityType === 'Challenge') {
     const row = await db
       .selectFrom('Challenge')

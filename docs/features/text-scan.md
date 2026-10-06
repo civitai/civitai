@@ -6,16 +6,25 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 
 ## Pieces
 
-| piece | where |
-|---|---|
-| Scan profiles (which fields, which labels, the entity's declared state) | `src/server/services/text-scan/profiles/` |
-| Prompt storage (append-only table, cached; content is never in the repo) | `TextScanPrompt`, `text-scan/prompt.ts` |
-| Model and input-size config | sysRedis `system:text-scan:config` |
-| Submit, dedup (`contentHash`), external id | `text-scan/submit.ts` |
-| Callback | `/api/webhooks/text-scan-result` |
-| Retry of failed scans | the `retry-failed-text-moderation` job (shared with XGuard) |
-| Row retention | the `text-scan-retention` job |
-| Actions per label | `text-scan/actions/` and each entity's moderation adapter |
+| piece                                                                    | where                                                       |
+| ------------------------------------------------------------------------ | ----------------------------------------------------------- |
+| Scan profiles (which fields, which labels, the entity's declared state)  | `src/server/services/text-scan/profiles/`                   |
+| Prompt storage (append-only table, cached; content is never in the repo) | `TextScanPrompt`, `text-scan/prompt.ts`                     |
+| Model and input-size config                                              | sysRedis `system:text-scan:config`                          |
+| Submit, dedup (`contentHash`), external id                               | `text-scan/submit.ts`                                       |
+| Callback                                                                 | `/api/webhooks/text-scan-result`                            |
+| Retry of failed scans                                                    | the `retry-failed-text-moderation` job (shared with XGuard) |
+| Row retention                                                            | the `text-scan-retention` job                               |
+| Actions per label                                                        | `text-scan/actions/` and each entity's moderation adapter   |
+
+## Entities
+
+The scanned entities, and the fields and labels each scans, are the profiles in
+`src/server/services/text-scan/profiles/`. Crucible's scan (name, description → `nsfw`) replaces
+XGuard. Collection's (name, description of Public collections readable as Public or Unlisted →
+`nsfw`, a floor on the collection's rating) replaces Clavata.
+
+## Actions
 
 A label's action is one of: raise the content rating (the owner can dispute it), restrict the entity
 (the owner can appeal), or mute the account pending moderator review. Disputes, appeals and mute
