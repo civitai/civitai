@@ -14,19 +14,19 @@ type DetectorParams = {
 
 export type MilestoneDetector = keyof DetectorParams;
 
-export type MilestoneDefinition = {
+export type MilestoneRegistryEntry = {
   [D in MilestoneDetector]: { detector: D; params: DetectorParams[D]; launchedAt: Date };
 }[MilestoneDetector];
 
 const SCORE_TIERS_LAUNCHED_AT = new Date('2026-10-06T00:00:00Z');
 
-const scoreTier = (): MilestoneDefinition => ({
+const scoreTier = (): MilestoneRegistryEntry => ({
   detector: 'scoreSnapshot',
   params: {},
   launchedAt: SCORE_TIERS_LAUNCHED_AT,
 });
 
-export const creatorMilestoneRegistry: Record<string, MilestoneDefinition> = {
+export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = {
   'score:spark': scoreTier(),
   'score:kindle': scoreTier(),
   'score:flame': scoreTier(),
@@ -48,7 +48,7 @@ export function milestoneKeysFor(detector: MilestoneDetector) {
 export function isMilestoneAnnounced(
   milestoneKey: string,
   achievedAt: Date,
-  registry: Record<string, MilestoneDefinition> = creatorMilestoneRegistry
+  registry: Record<string, MilestoneRegistryEntry> = creatorMilestoneRegistry
 ) {
   const definition = registry[milestoneKey];
   return !!definition && achievedAt >= definition.launchedAt;

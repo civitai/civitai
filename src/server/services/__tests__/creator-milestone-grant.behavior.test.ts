@@ -11,6 +11,7 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
 
 import type * as NotificationService from '~/server/services/notification.service';
 import { applyUserScoreUpdates, persistScoreBatch } from '~/server/jobs/update-user-score';
+import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import {
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
@@ -258,8 +259,9 @@ describe('cosmetics for existing holders', () => {
 });
 
 describe('nightly grant before a definition launches', () => {
-  const BEFORE_LAUNCH = new Date('2026-10-01T00:00:00Z');
-  const AFTER_LAUNCH = new Date('2026-10-07T00:00:00Z');
+  const { launchedAt } = creatorMilestoneRegistry['score:spark'];
+  const BEFORE_LAUNCH = new Date(launchedAt.getTime() - 1);
+  const AFTER_LAUNCH = launchedAt;
 
   beforeAll(async () => {
     await q(
@@ -288,9 +290,16 @@ describe('nightly grant before a definition launches', () => {
   const notifiedKeys = () =>
     mocks.createNotification.mock.calls.map(([n]) => (n as { key: string }).key);
 
-  it('grants a crossing seen and announces nothing', async () => {
+  it('grants a crossing seen and announces nothing, leaving other unseen rows alone', async () => {
+    await q(
+      `INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey") VALUES ($1, 'score:kindle')`,
+      [ELIGIBLE]
+    );
     await runBatch(BEFORE_LAUNCH);
-    expect(await held(ELIGIBLE)).toEqual([{ milestoneKey: 'score:spark', seen: true }]);
+    expect(await held(ELIGIBLE)).toEqual([
+      { milestoneKey: 'score:kindle', seen: false },
+      { milestoneKey: 'score:spark', seen: true },
+    ]);
     expect(notifiedKeys()).toEqual([]);
   });
 

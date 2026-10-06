@@ -16,9 +16,14 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as FliptClient from '~/server/flipt/client';
 import { persistScoreBatch, settleTierGrants } from '~/server/jobs/update-user-score';
+import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 
 const updatedRow = { userId: 7, oldTotal: '400', newTotal: '600' };
 const crossing = { userId: 7, milestoneKey: 'score:spark', name: 'Spark', threshold: 500 };
+// After every registered launchedAt, so these cases depend on neither the clock nor the launch date.
+const afterLaunch = new Date(
+  Math.max(...Object.values(creatorMilestoneRegistry).map((entry) => entry.launchedAt.getTime()))
+);
 
 /** Answers each statement the batch runs by what it is, so a reordering cannot hand one another's rows. */
 function batchCtx({
@@ -64,7 +69,7 @@ beforeEach(() => {
 describe('persistScoreBatch', () => {
   it('hands the persisted old and new totals to the grant', async () => {
     const { ctx, grantCalls } = batchCtx();
-    await persistScoreBatch(ctx, [['7', { models: 600 }]]);
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(grantCalls()).toHaveLength(1);
     expect(JSON.parse(grantCalls()[0].params?.[0] as string)).toEqual([
       { userId: 7, oldTotal: 400, newTotal: 600 },
@@ -73,7 +78,7 @@ describe('persistScoreBatch', () => {
 
   it('notifies a crossing as soon as its batch commits', async () => {
     const { ctx } = batchCtx({ grant: async () => [crossing] });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]]);
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
     expect(mocks.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'creator-score-tier-reached:7:score:spark', userId: 7 })
@@ -88,7 +93,9 @@ describe('persistScoreBatch', () => {
         throw failure;
       },
     });
-    await expect(persistScoreBatch(ctx, [['7', { models: 600 }]])).resolves.toBeUndefined();
+    await expect(
+      persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch })
+    ).resolves.toBeUndefined();
     expect(ctx.tierGrantErrors).toEqual([failure]);
     expect(mocks.createNotification).not.toHaveBeenCalled();
   });
@@ -98,7 +105,7 @@ describe('persistScoreBatch while Creator Journey is flagged', () => {
   it('grants and notifies nothing for a user the flag is off for', async () => {
     mocks.isFlipt.mockResolvedValue(false);
     const { ctx, grantCalls } = batchCtx({ grant: async () => [crossing] });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]]);
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(mocks.isFlipt).toHaveBeenCalledWith('creator-journey', '7', {
       userId: '7',
       isModerator: 'false',
@@ -113,7 +120,7 @@ describe('persistScoreBatch while Creator Journey is flagged', () => {
       grant: async () => [crossing],
       owed: [{ id: 7, isModerator: true }],
     });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]]);
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(mocks.isFlipt).not.toHaveBeenCalled();
     expect(grantCalls()).toHaveLength(1);
     expect(mocks.createNotification).toHaveBeenCalledTimes(1);
@@ -122,21 +129,23 @@ describe('persistScoreBatch while Creator Journey is flagged', () => {
   it('with grants open to everyone, still notifies only flagged users', async () => {
     mocks.isFlipt.mockResolvedValue(false);
     const { ctx, grantCalls } = batchCtx({ grant: async () => [crossing] });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]], { grantsRequireFlag: false });
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], {
+      grantsRequireFlag: false,
+      now: afterLaunch,
+    });
     expect(grantCalls()).toHaveLength(1);
     expect(mocks.createNotification).not.toHaveBeenCalled();
   });
 
   it('asks Flipt nothing about a user who is owed no tier', async () => {
     const { ctx, grantCalls } = batchCtx({ owed: [] });
-    await persistScoreBatch(ctx, [['7', { models: 600 }]]);
+    await persistScoreBatch(ctx, [['7', { models: 600 }]], { now: afterLaunch });
     expect(mocks.isFlipt).not.toHaveBeenCalled();
     expect(grantCalls()).toEqual([]);
   });
 });
 
 describe('persistScoreBatch before a definition launches', () => {
-  const afterLaunch = new Date('2026-10-07T00:00:00Z');
   const unregistered = { ...crossing, milestoneKey: 'score:unregistered' };
 
   it('marks silenced crossings seen and announces only launched ones', async () => {
