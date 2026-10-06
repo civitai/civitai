@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { isNavLinkActive, navHref } from '$lib/nav-links';
-import { applyGrants, canAccess, navForUser, pageAccessState } from '$lib/server/access';
+import {
+  applyGrants,
+  canAccess,
+  NAVIGATION,
+  navForUser,
+  pageAccessState,
+  PERMISSIONS,
+  type NavLink,
+} from '$lib/server/access';
 
 const page = { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' };
 const appeals = { path: page.path, query: 'tab=appeals', label: 'Model Flag Appeals' };
@@ -56,5 +64,24 @@ describe('a view link in NAVIGATION', () => {
   it('is not offered as a separate grant on /admin', () => {
     const models = pageAccessState().tree.find((n) => n.key === '/models');
     expect(models?.children.map((c) => c.label)).toEqual(['Minor Hash Matches']);
+  });
+});
+
+const flattenNavigation = (links: NavLink[]): NavLink[] =>
+  links.flatMap((l) => [l, ...flattenNavigation(l.children ?? [])]);
+
+describe('the text-scan lab', () => {
+  it('declares the text-scan lab permissions and pages', () => {
+    const ids = PERMISSIONS.map((p) => p.id);
+    expect(ids).toEqual(expect.arrayContaining(['textScan.prompt.publish', 'textScan.testSet.edit']));
+    const paths = flattenNavigation(NAVIGATION).map((n) => n.path);
+    expect(paths).toEqual(
+      expect.arrayContaining([
+        '/text-scan',
+        '/text-scan/playground',
+        '/text-scan/prompts',
+        '/text-scan/test-sets',
+      ])
+    );
   });
 });
