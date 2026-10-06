@@ -169,6 +169,13 @@ const rule = (
     { recheckDelaysMs: extra.delays ?? [0, 0] }
   );
 
+/** A `Training Data` ModelFile row as the claim check reads it. */
+const file = (id: number, modelVersionId: number, workflowId: string, completedAt?: string) => ({
+  id,
+  modelVersionId,
+  metadata: { trainingResults: { workflowId, ...(completedAt ? { completedAt } : {}) } },
+});
+
 const axiomMessages = () => logToAxiom.mock.calls.map(([d]) => d.message);
 
 describe('parseWorkflowId', () => {
@@ -204,7 +211,7 @@ describe('moderateTrainingWorkflow — refusals before the gate', () => {
 
   it('refuses a run its version really owns, and points at the version route', async () => {
     orchestrator([workflow({ tags: ['civitai', 'training', 'modelVersion:123'] })]);
-    fileRows.mockResolvedValue([{ modelVersionId: 123, workflowId: WF }]);
+    fileRows.mockResolvedValue([file(1, 123, WF)]);
     const result = await rule(true);
     expect(result.ok).toBe(false);
     expect(!result.ok && result.error).toContain('/audit/training-data/123');
@@ -218,9 +225,34 @@ describe('moderateTrainingWorkflow — refusals before the gate', () => {
       workflow({ tags: ['training', 'modelVersion:123'] }),
       workflow({ moderationStatus: 'Approved' }),
     ]);
-    fileRows.mockResolvedValue([{ modelVersionId: 123, workflowId: '9-20260101000000000' }]);
+    fileRows.mockResolvedValue([file(1, 123, '9-20260101000000000')]);
     expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
     expect(gateCalls()).toHaveLength(1);
+  });
+
+  it('confirms a claim only against the run the version page would release', async () => {
+    // Version 123 has two pending runs; its review acts on the FIRST, so WF is not its gated run.
+    orchestrator([
+      workflow({ tags: ['training', 'modelVersion:123'] }),
+      workflow({ moderationStatus: 'Approved' }),
+    ]);
+    fileRows.mockResolvedValue([file(1, 123, '9-20260101000000000'), file(2, 123, WF)]);
+    expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
+
+    // Once the first run has completed, the version's gate review acts on WF — so it is the version's.
+    orchestrator([workflow({ tags: ['training', 'modelVersion:123'] })]);
+    fileRows.mockResolvedValue([
+      file(1, 123, '9-20260101000000000', '2026-01-01T00:00:00Z'),
+      file(2, 123, WF),
+    ]);
+    const result = await rule(true);
+    expect(!result.ok && result.error).toContain('/audit/training-data/123');
+  });
+
+  it('accepts a body with no id, but not one naming a different workflow', async () => {
+    const { id: _, ...noId } = workflow();
+    orchestrator([noId, workflow({ moderationStatus: 'Approved' })]);
+    expect(await rule(true)).toEqual({ ok: true, moderationStatus: 'approved' });
   });
 
   it('treats an unreadable model-version tag as unconfirmed, not as a version run', async () => {
@@ -425,10 +457,7 @@ describe('getPendingWorkflowGates', () => {
   it('lists only under-review runs that are not a confirmed version run', async () => {
     ledger();
     route = standardRoute;
-    fileRows.mockResolvedValue([
-      { modelVersionId: 9, workflowId: D },
-      { modelVersionId: 11, workflowId: '1-20250101000000000' },
-    ]);
+    fileRows.mockResolvedValue([file(1, 9, D), file(2, 11, '1-20250101000000000')]);
     usersByIds.mockResolvedValueOnce(
       new Map([
         [1, { username: 'alice' }],

@@ -15,12 +15,14 @@
 
   // Items are served by position through this app, never from a URL the workflow carries.
   const blobItems = $derived(detail.dataset.kind === 'blobs' ? detail.dataset.items : []);
+  const itemUrl = (index: number) =>
+    `/api/training-workflow-blob/${encodeURIComponent(detail.workflowId)}/${index}`;
   const assets = $derived(
     blobItems.flatMap((item): TrainingAsset[] =>
       item.blobKey && item.media
         ? [
             {
-              url: `/api/training-workflow-blob/${encodeURIComponent(detail.workflowId)}/${item.index}`,
+              url: itemUrl(item.index),
               name: `Item ${item.index + 1}`,
               ...item.media,
               caption: item.caption,
@@ -29,7 +31,9 @@
         : []
     )
   );
-  const unserved = $derived(blobItems.length - assets.length);
+  // Stored, but not a type the grid renders: still openable, so nothing in a dataset is unviewable.
+  const otherItems = $derived(blobItems.filter((item) => item.blobKey && !item.media));
+  const unserved = $derived(blobItems.filter((item) => !item.blobKey).length);
 </script>
 
 <header class="page-header">
@@ -120,10 +124,26 @@
 {#if detail.dataset.kind === 'blobs'}
   <p class="mb-3 text-xs text-dark-2">
     {blobItems.length} items{unserved
-      ? `, ${unserved} of which cannot be shown here (not a stored upload, or not a media type)`
+      ? `, ${unserved} of which are not stored uploads and cannot be shown`
       : ''}. An item withheld when it was uploaded may show as a placeholder.
   </p>
-  <TrainingAssetGrid {assets} columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5" />
+  <TrainingAssetGrid
+    {assets}
+    preload="none"
+    columns="grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
+  />
+  {#if otherItems.length}
+    <ul class="mt-3 flex flex-col gap-1 text-sm">
+      {#each otherItems as item (item.index)}
+        <li>
+          <a href={itemUrl(item.index)} target="_blank" rel="noreferrer" class={LINK_CLASS}>
+            Item {item.index + 1} (not previewable — open) ↗
+          </a>
+          <span class="text-dark-2"> — {item.caption ?? '(no caption)'}</span>
+        </li>
+      {/each}
+    </ul>
+  {/if}
 {:else if detail.dataset.kind === 'archive'}
   <p class="text-sm text-dark-2">
     This run's dataset is a packaged archive{detail.dataset.count != null

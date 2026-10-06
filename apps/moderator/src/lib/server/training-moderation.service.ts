@@ -905,7 +905,8 @@ export function readTrainingWorkflow(
     return { ok: false, error: `Workflow ${workflowId} could not be read.` };
   const workflow = raw as RawWorkflow;
   // The read is keyed by the id we asked for; a body naming a different one is not this run.
-  if (workflow.id !== workflowId)
+  // Lenient on an absent id (the field is optional in the generated type), strict on a different one.
+  if (str(workflow.id) && workflow.id !== workflowId)
     return {
       ok: false,
       error: `The orchestrator returned a different workflow for ${workflowId}.`,
@@ -935,8 +936,8 @@ export function readTrainingWorkflow(
 }
 
 /**
- * Which of these runs really belong to the version their tag names: that version's `Training Data`
- * file must carry the workflow id. The tag alone is the submitter's to write, and trusting it would let
+ * Which of these runs really belong to the version their tag names: the training file that version's
+ * gate review acts on (`pickGatedTrainingFile`) must carry the workflow id. The tag alone is the submitter's to write, and trusting it would let
  * any run hide from this queue behind a version that never heard of it.
  *
  * Read through the WRITE connection for the reason `getTrainingVersionDetail` gives: on the replica the
@@ -948,22 +949,33 @@ async function confirmVersionClaims(
 ): Promise<Set<string>> {
   const real = claims.filter((c) => c.versionId > 0);
   if (!real.length) return new Set();
-  const rows = await dbWrite
+  const files = await dbWrite
     .selectFrom('ModelFile')
-    .select([
-      'modelVersionId',
-      sql<string | null>`metadata->'trainingResults'->>'workflowId'`.as('workflowId'),
-    ])
+    .select(['id', 'modelVersionId', 'metadata'])
     .where(
       'modelVersionId',
       'in',
       real.map((c) => c.versionId)
     )
     .where('type', '=', TRAINING_DATA_FILE_TYPE)
+    .orderBy('id', 'asc')
     .execute();
-  const backed = new Set(rows.map((r) => `${r.modelVersionId}:${r.workflowId}`));
+  const byVersion = new Map<number, typeof files>();
+  for (const file of files) {
+    const list = byVersion.get(file.modelVersionId) ?? [];
+    list.push(file);
+    byVersion.set(file.modelVersionId, list);
+  }
+  // The SAME picker the version route releases with. "Any file names this workflow" would hand the
+  // moderator to a version page whose Approve releases a different run of that version.
   return new Set(
-    real.filter((c) => backed.has(`${c.versionId}:${c.workflowId}`)).map((c) => c.workflowId)
+    real
+      .filter((c) => {
+        const gated = pickGatedTrainingFile(byVersion.get(c.versionId) ?? []);
+        const tr = (gated?.metadata as FileMetadata | null)?.trainingResults;
+        return tr?.workflowId === c.workflowId;
+      })
+      .map((c) => c.workflowId)
   );
 }
 
