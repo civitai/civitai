@@ -653,6 +653,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     where: { id },
     select: {
       ...collectionSelect,
+      image: { select: { ...collectionSelect.image.select, tosViolation: true } },
       user: { select: userWithCosmeticsSelect },
     },
   });
