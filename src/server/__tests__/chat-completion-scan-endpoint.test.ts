@@ -742,21 +742,6 @@ describe('free-text actions', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('composeEntities returns the id of every message in a ChatMessage window', async () => {
-    const res = await runTextScanHarnessAction(
-      textScanHarnessSchema.parse({
-        action: 'composeEntities',
-        entityType: 'ChatMessage',
-        entityIds: [30],
-      }),
-      { moderatorId: 1 }
-    );
-    expect(res.body).toMatchObject({
-      entityType: 'ChatMessage',
-      results: [{ entityId: 30, ok: true, sourceIds: [30, 21], userId: 5 }],
-    });
-  });
-
   it('composeEntities drops fields whose text is null or blank', async () => {
     const res = await runTextScanHarnessAction(
       textScanHarnessSchema.parse({

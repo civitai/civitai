@@ -443,13 +443,6 @@ function summarizeQuotes<T extends QuoteResult>(entityType: TextScanEntityType, 
   };
 }
 
-/** Every message a ChatMessage window was composed from: a test case built from it is wiped when any is gone. */
-function sourceIdsOf(subject: TextScanSubject) {
-  const ids = subject.meta?.messageIds;
-  if (!Array.isArray(ids)) return {};
-  return { sourceIds: ids.filter((id): id is number => Number.isInteger(id)) };
-}
-
 async function composeEntities(entityType: TextScanEntityType, entityIds: number[]) {
   const profile = requireProfile(entityType);
   const [subjects, config] = await Promise.all([profile.load(entityIds), getTextScanConfig()]);
@@ -466,7 +459,6 @@ async function composeEntities(entityType: TextScanEntityType, entityIds: number
         typeof text === 'string' && text.trim() ? [{ heading, text }] : []
       ),
       userId: subject.userId ?? null,
-      ...sourceIdsOf(subject),
     };
   });
   return { entityType, results };
