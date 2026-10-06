@@ -62,6 +62,8 @@ CREATE TABLE IF NOT EXISTS text_scan_test_run (
   -- { "base": 12, "nsfw": 0, ... } as the harness reported them; 0 is an override.
   prompt_ids  jsonb,
   model       text,
+  -- The harness config's thinking flag the run scanned with; a re-run refuses once it changes.
+  thinking    boolean,
   status      text NOT NULL CHECK (status IN ('running', 'done', 'failed')),
   -- Per-label totals as of finishing. Pages rescore from the results against each case's current
   -- expectation, so this goes stale when a case is relabelled.
@@ -70,6 +72,7 @@ CREATE TABLE IF NOT EXISTS text_scan_test_run (
   started_at  timestamptz NOT NULL DEFAULT now(),
   finished_at timestamptz
 );
+ALTER TABLE text_scan_test_run ADD COLUMN IF NOT EXISTS thinking boolean;
 CREATE INDEX IF NOT EXISTS text_scan_test_run_set_idx ON text_scan_test_run (set_id, started_at DESC);
 
 CREATE TABLE IF NOT EXISTS text_scan_test_result (

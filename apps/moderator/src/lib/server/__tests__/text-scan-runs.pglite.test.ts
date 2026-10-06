@@ -500,6 +500,29 @@ describe('rerunErrors', () => {
     await expect(rerunErrors(setId, run.id)).rejects.toThrow(/label:nsfw/);
     expect(harness.scanTexts).not.toHaveBeenCalled();
   });
+
+  it.each([
+    { change: { model: 'other-model', thinking: false }, message: /The model changed/ },
+    { change: { model: 'fake-model', thinking: true }, message: /The thinking setting changed/ },
+  ])('refuses when the config changed since the run ($message)', async ({ change, message }) => {
+    const { setId } = await setWithCases(1);
+    harness.scanTexts.mockImplementation(async (_t: string, texts: LabText[]) =>
+      texts.map((t) => ({ key: t.key, ok: false, error: 'x' }))
+    );
+    const run = await startRun({ setId, version: 'active' }, MOD);
+    expect(await runRow(run.id)).toMatchObject({ model: 'fake-model', thinking: false });
+    harness.getPrompts.mockResolvedValue({
+      active: {
+        base: { id: 1, key: 'base', content: 'BASE PROMPT' },
+        'label:nsfw': { id: 2, key: 'label:nsfw', content: 'NSFW DEF' },
+      },
+      config: { maxInputChars: 1000, ...change },
+    });
+    harness.scanTexts.mockClear();
+
+    await expect(rerunErrors(setId, run.id)).rejects.toThrow(message);
+    expect(harness.scanTexts).not.toHaveBeenCalled();
+  });
 });
 
 describe('scoring against current expectations', () => {

@@ -635,6 +635,7 @@ export type text_scan_test_run = {
   prompts: unknown | null;
   prompt_ids: unknown | null;
   model: string | null;
+  thinking: boolean | null;
   status: string;
   totals: unknown | null;
   run_by: number;

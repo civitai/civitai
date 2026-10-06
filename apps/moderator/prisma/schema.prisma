@@ -513,6 +513,7 @@ model text_scan_test_run {
   prompts                Json?
   prompt_ids             Json?
   model                  String?
+  thinking               Boolean?
   status                 String
   totals                 Json?
   run_by                 Int

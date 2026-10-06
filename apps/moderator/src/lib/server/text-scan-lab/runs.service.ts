@@ -367,8 +367,8 @@ export async function startRun(
   userId: number
 ): Promise<TestRun> {
   const plan = await planRun(input.setId, input.version);
-  const model = await getPrompts().then(
-    (p) => p.config.model,
+  const config = await getPrompts().then(
+    (p) => p.config,
     () => null
   );
   const run = await getModeratorDb()
@@ -379,7 +379,8 @@ export async function startRun(
       draft_id: plan.draft ? String(plan.draft.id) : null,
       draft_updated_at: plan.draft?.updatedAt ?? null,
       prompts: plan.overrides ? JSON.stringify(plan.overrides) : null,
-      model,
+      model: config?.model ?? null,
+      thinking: config?.thinking ?? null,
       status: 'running',
       run_by: userId,
     })
@@ -438,19 +439,24 @@ async function planRerun(setId: number, runId: number) {
 /** The harness reports a label's prompt id under the label name; the prompt store keys it `label:<name>`. */
 const promptKeyOf = (idKey: string) => (idKey === 'base' ? idKey : `label:${idKey}`);
 
-/** Keys that ran active (an override reports id 0) and are no longer the active version. */
-async function changedActiveKeys(promptIds: Record<string, number> | null): Promise<string[]> {
-  if (!promptIds) return [];
-  let active: Awaited<ReturnType<typeof getPrompts>>['active'];
+/** What changed since the run that a re-run would mix in: active prompt keys it ran (an override
+ *  reports id 0) that are no longer the active version, and the config's model and thinking. */
+async function changedSinceRun(run: Selectable<text_scan_test_run>): Promise<string[]> {
+  let current: Awaited<ReturnType<typeof getPrompts>>;
   try {
-    active = (await getPrompts()).active;
+    current = await getPrompts();
   } catch (e) {
     if (e instanceof LabHarnessError) throw new RunError(e.message, 502);
     throw e;
   }
-  return Object.entries(promptIds)
-    .filter(([key, id]) => id > 0 && active[promptKeyOf(key)]?.id !== id)
-    .map(([key]) => promptKeyOf(key));
+  const promptIds = (run.prompt_ids as Record<string, number> | null) ?? {};
+  const changed = Object.entries(promptIds)
+    .filter(([key, id]) => id > 0 && current.active[promptKeyOf(key)]?.id !== id)
+    .map(([key]) => `active ${promptKeyOf(key)}`);
+  // An unrecorded setting cannot be shown to match.
+  if (run.model !== current.config.model) changed.push('the model');
+  if (run.thinking !== current.config.thinking) changed.push('the thinking setting');
+  return changed;
 }
 
 export async function quoteRerun(setId: number, runId: number) {
@@ -462,14 +468,16 @@ export async function quoteRerun(setId: number, runId: number) {
  *  text — and recomputes its totals. */
 export async function rerunErrors(setId: number, runId: number): Promise<TestRun> {
   const { run, overrides, runnable, skipped } = await planRerun(setId, runId);
-  const changed = await changedActiveKeys(run.prompt_ids as Record<string, number> | null);
-  if (changed.length)
+  const changed = await changedSinceRun(run);
+  if (changed.length) {
+    const what = changed.join(', ');
     throw new RunError(
-      `Active ${changed.join(
-        ', '
+      `${what[0].toUpperCase()}${what.slice(
+        1
       )} changed since this run, so a re-run would mix versions — start a new run.`,
       409
     );
+  }
 
   // Claimed first so a second click cannot bill the same errors twice.
   const claimed = await getModeratorDb()
