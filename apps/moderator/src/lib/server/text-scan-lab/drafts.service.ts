@@ -129,9 +129,22 @@ export async function createDraft(
   return toDraft(row);
 }
 
-async function refusal(id: number, { workingIsMissing = false } = {}): Promise<DraftError> {
+/** A moderator's working copy is private: to anyone else it does not exist. */
+const hiddenFrom = (draft: PromptDraft, userId: number) =>
+  draft.kind === 'working' && draft.createdBy !== userId;
+
+/** The draft as `userId` may see it: null when missing or another moderator's working copy. */
+export async function getVisibleDraft(id: number, userId: number): Promise<PromptDraft | null> {
   const draft = await getDraft(id);
-  if (!draft || (workingIsMissing && draft.kind === 'working')) return new DraftNotFoundError(id);
+  return draft && !hiddenFrom(draft, userId) ? draft : null;
+}
+
+async function refusal(
+  id: number,
+  missing: (draft: PromptDraft) => boolean = () => false
+): Promise<DraftError> {
+  const draft = await getDraft(id);
+  if (!draft || missing(draft)) return new DraftNotFoundError(id);
   if (draft.publishedAt) return new DraftPublishedError();
   return new DraftConflictError();
 }
@@ -157,30 +170,34 @@ export async function updateDraft(
     .returningAll()
     .executeTakeFirst();
   // A working copy changes only through its owner's saveWorkingCopy.
-  if (!row) throw await refusal(id, { workingIsMissing: true });
+  if (!row) throw await refusal(id, (d) => d.kind === 'working');
   return toDraft(row);
 }
 
 // A published working copy becomes 'proposed' so it leaves the one-per-moderator slot: the next edit
-// starts a fresh copy, and the published one stays in the drafts list as a record.
+// starts a fresh copy, and the published one stays in the drafts list as a record — under
+// `workingName`, since "My changes" would not say what it was.
 export async function markPublished(
   id: number,
   promptIds: Record<string, number>,
-  expectedUpdatedAt: Date
+  expectedUpdatedAt: Date,
+  { userId, workingName }: { userId: number; workingName: string }
 ): Promise<PromptDraft> {
   const row = await getModeratorDb()
     .updateTable('text_scan_prompt_draft')
     .set({
       published_at: sql`now()`,
       published_prompt_ids: JSON.stringify(promptIds),
+      name: sql`CASE WHEN kind = 'working' THEN ${workingName} ELSE name END`,
       kind: 'proposed',
     })
     .where('id', '=', String(id))
+    .where((eb) => eb.or([eb('kind', '=', 'proposed'), eb('created_by', '=', userId)]))
     .where('updated_at', '=', expectedUpdatedAt)
     .where('published_at', 'is', null)
     .returningAll()
     .executeTakeFirst();
-  if (!row) throw await refusal(id);
+  if (!row) throw await refusal(id, (d) => hiddenFrom(d, userId));
   return toDraft(row);
 }
 
@@ -258,30 +275,37 @@ export async function discardWorkingCopy(userId: number): Promise<void> {
     .execute();
 }
 
-/** Names the moderator's working copy and shares it as a proposed draft. */
+/**
+ * Names the moderator's working copy and shares it as a proposed draft. `expectedUpdatedAt` is the copy
+ * as the moderator last saw it, so what gets proposed is what they were looking at.
+ */
 export async function proposeWorkingCopy(
   userId: number,
   name: string,
-  note: string | null
+  note: string | null,
+  expectedUpdatedAt: Date
 ): Promise<PromptDraft> {
   const trimmed = name.trim();
   if (!trimmed || trimmed.length > 100)
     throw new DraftValidationError('Name the draft in 1 to 100 characters.');
-  if (note && note.length > 2000)
+  const trimmedNote = note?.trim() || null;
+  if (trimmedNote && trimmedNote.length > 2000)
     throw new DraftValidationError('Note is at most 2000 characters.');
   const row = await getModeratorDb()
     .updateTable('text_scan_prompt_draft')
     .set({
       kind: 'proposed',
       name: trimmed,
-      note,
+      note: trimmedNote,
       updated_by: userId,
       updated_at: nextStamp,
     })
     .where('created_by', '=', userId)
     .where('kind', '=', 'working')
+    .where('updated_at', '=', expectedUpdatedAt)
     .returningAll()
     .executeTakeFirst();
-  if (!row) throw new DraftError('You have no changes to propose.', 404);
-  return toDraft(row);
+  if (row) return toDraft(row);
+  if (await getWorkingCopy(userId)) throw new DraftConflictError();
+  throw new DraftError('You have no changes to propose.', 404);
 }

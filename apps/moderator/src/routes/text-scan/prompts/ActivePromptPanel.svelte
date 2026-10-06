@@ -2,7 +2,7 @@
   import * as Collapsible from '@civitai/ui/components/ui/collapsible/index.js';
   import type { LabPrompts } from '$lib/server/text-scan-lab/harness-client';
   import type { PromptKey } from '$lib/text-scan-lab/types';
-  import DiffView from './DiffView.svelte';
+  import DiffView from '$lib/components/text-scan-lab/DiffView.svelte';
 
   let { promptKey, prompts }: { promptKey: PromptKey; prompts: LabPrompts } = $props();
 

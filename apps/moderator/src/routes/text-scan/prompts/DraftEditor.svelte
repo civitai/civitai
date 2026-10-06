@@ -12,7 +12,7 @@
   import type { DraftPrompts, PromptDraft } from '$lib/server/text-scan-lab/drafts.service';
   import type { LabPrompt } from '$lib/server/text-scan-lab/harness-client';
   import { PROMPT_KEYS, type PromptKey } from '$lib/text-scan-lab/types';
-  import DiffView from './DiffView.svelte';
+  import DiffView from '$lib/components/text-scan-lab/DiffView.svelte';
 
   let {
     draft,

@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { LabEntityType, LabLabel } from '$lib/text-scan-lab/types';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import type { LabEntityType, LabLabel, PromptKey } from '$lib/text-scan-lab/types';
   import type { CheckItemResult } from './+page.server';
   import SaveCaseForm from './SaveCaseForm.svelte';
   import ScanDetails from './ScanDetails.svelte';
@@ -10,12 +11,28 @@
     entityType,
     labels,
     testSets,
+    changedTitle,
+    onedit,
   }: {
     item: CheckItemResult;
     entityType: LabEntityType;
     labels: readonly LabLabel[];
     testSets: { id: number; name: string }[];
+    /** Heading of the second column, when the item was also scanned with changes. */
+    changedTitle: string;
+    onedit: (key: PromptKey) => void;
   } = $props();
+
+  const labelKey = (label: LabLabel): PromptKey => `label:${label}`;
+
+  const columns = $derived(
+    item.changed
+      ? [
+          { title: 'Current', result: item.current },
+          { title: changedTitle, result: item.changed },
+        ]
+      : [{ title: 'Current', result: item.current }]
+  );
 </script>
 
 <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -23,7 +40,13 @@
 
   <div class="mt-3 grid gap-3 lg:grid-cols-2">
     {#each labels as label (label)}
-      <VerdictCard {label} columns={[{ title: 'Current', result: item.current }]} />
+      <VerdictCard {label} {columns}>
+        {#snippet actions()}
+          <Button size="xs" variant="ghost" onclick={() => onedit(labelKey(label))}>
+            Edit definition
+          </Button>
+        {/snippet}
+      </VerdictCard>
     {/each}
   </div>
 
@@ -38,7 +61,11 @@
           </div>
         {/each}
       </div>
-      <ScanDetails title="Current" result={item.current} />
+      <div class="grid gap-3 lg:grid-cols-2">
+        {#each columns as column (column.title)}
+          <ScanDetails title={column.title} result={column.result} />
+        {/each}
+      </div>
     </div>
   </details>
 

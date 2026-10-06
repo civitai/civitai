@@ -197,3 +197,61 @@ describe('check — failures', () => {
     expect(res).toMatchObject({ status: 502, data: { error: 'Not signed in to the main app' } });
   });
 });
+
+describe('check — with my changes', () => {
+  const overrides = (prompts: Record<string, string>) => JSON.stringify(prompts);
+
+  it('scans current and changed in parallel, the changed run with the overrides', async () => {
+    harness.scanTexts.mockImplementation(
+      (_type: string, texts: { key: string }[], promptOverrides?: Record<string, string>) =>
+        Promise.resolve(texts.map((t) => ok(t.key, promptOverrides !== undefined)))
+    );
+    const res = await check({
+      input: 'buy now',
+      overrides: overrides({ 'label:scam': 'SCAM DEF' }),
+    });
+    expect(harness.scanTexts).toHaveBeenCalledTimes(2);
+    expect(harness.scanTexts.mock.calls[0]).toHaveLength(2);
+    expect(harness.scanTexts.mock.calls[1][2]).toEqual({ 'label:scam': 'SCAM DEF' });
+    expect(res).toMatchObject({
+      items: [
+        {
+          current: { ok: true, output: { scam: { detected: false } } },
+          changed: { ok: true, output: { scam: { detected: true } } },
+        },
+      ],
+    });
+  });
+
+  it('runs once, with changed null, when there are no overrides', async () => {
+    harness.scanTexts.mockImplementation(echoScan);
+    const res = await check({ input: 'buy now', overrides: '{}' });
+    expect(harness.scanTexts).toHaveBeenCalledTimes(1);
+    expect(res).toMatchObject({ items: [{ changed: null }] });
+  });
+
+  it('refuses a blank override by name before any scan', async () => {
+    const res = await check({ input: 'buy now', overrides: overrides({ 'label:scam': '  ' }) });
+    expect(res).toMatchObject({ status: 400 });
+    expect((res as { data: { error: string } }).data.error).toContain('label:scam');
+    nothingCalled();
+  });
+
+  it('keeps the current verdicts when only the changed run is refused', async () => {
+    harness.scanTexts.mockImplementation(
+      (_type: string, texts: { key: string }[], promptOverrides?: Record<string, string>) =>
+        promptOverrides
+          ? Promise.reject(new LabHarnessError('override too long'))
+          : echoScan(_type, texts)
+    );
+    const res = await check({ input: 'buy now', overrides: overrides({ base: 'BASE PROMPT' }) });
+    expect(res).toMatchObject({
+      items: [
+        {
+          current: { ok: true },
+          changed: { ok: false, error: 'override too long' },
+        },
+      ],
+    });
+  });
+});

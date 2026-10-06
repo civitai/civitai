@@ -10,9 +10,15 @@
   import { LAB_ENTITY_TYPES, LAB_LABELS, type LabEntityType } from '$lib/text-scan-lab/types';
 
   let {
+    overrides,
     onstart,
     onchecked,
-  }: { onstart: () => void; onchecked: (result: Record<string, unknown>) => void } = $props();
+  }: {
+    /** The prompt changes to test beside the current prompts, as JSON; `{}` for none. */
+    overrides: string;
+    onstart: () => void;
+    onchecked: (result: Record<string, unknown>) => void;
+  } = $props();
 
   let raw = $state('');
   let lookupAs = $state<LabEntityType>('Model');
@@ -95,6 +101,7 @@
   <input type="hidden" name="lookupAs" value={lookupAs} />
   <input type="hidden" name="judgeAs" value={judgeAs} />
   <input type="hidden" name="profileAs" value={profileAs} />
+  <input type="hidden" name="overrides" value={overrides} />
 
   <Textarea
     name="input"

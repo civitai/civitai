@@ -13,11 +13,11 @@
   let {
     draft,
     dirty,
-    totals,
+    children,
   }: {
     draft: PromptDraft;
     dirty: boolean;
-    totals?: Snippet;
+    children: Snippet;
   } = $props();
 
   const keys = $derived(PROMPT_KEYS.filter((k) => k in draft.prompts));
@@ -46,13 +46,7 @@
 <div class="mt-5 border-t border-dark-4 pt-4">
   <h3 class="text-sm font-semibold text-white">Publish to production</h3>
 
-  <div class="mt-2 text-xs text-dark-2">
-    {#if totals}
-      {@render totals()}
-    {:else}
-      No test-set runs yet.
-    {/if}
-  </div>
+  <div class="mt-2">{@render children()}</div>
 
   <form method="POST" action="?/publish" use:enhance={publish.enhance} class="mt-3">
     <input type="hidden" name="draftId" value={draft.id} />
