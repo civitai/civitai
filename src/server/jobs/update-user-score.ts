@@ -8,7 +8,7 @@ import { templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import type { CreatorScoreUnlock } from '~/server/services/creator-score-unlocks.service';
+import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
 import {
   buildCreatorScoreUnlocks,
   compiledCreatorScoreUnlockInputs,
