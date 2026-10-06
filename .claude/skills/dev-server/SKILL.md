@@ -668,8 +668,9 @@ node .claude/skills/dev-server/cli.mjs wt new <name> <branch> --base origin/feat
 ```
 
 It fetches the base, runs `git worktree add <repos-root>/worktrees/<name> -b <branch> --no-track <base>`,
-initialises `event-engine-common`, writes `.envrc` when the primary has one, runs `pnpm install`
-(`--no-install` skips it), and fails unless `git status -sb` prints `## <branch>` alone. It refuses an
+initialises `event-engine-common`, writes `.envrc` when the primary has one, copies every `.env`
+file (root and per-app, plus the skills' credentials), runs `pnpm install` (`--no-install` skips it),
+and fails unless `git status -sb` prints `## <branch>` alone. It refuses an
 existing branch or path. Don't hand-roll it, and don't use the `EnterWorktree` tool (it creates outside
 the repos root, tracking `origin/main`). Why each flag matters: `docs/dev/worktrees.md`.
 
@@ -699,9 +700,16 @@ What's already handled:
   ```bash
   node .claude/skills/dev-server/cli.mjs wt env                 # state per skill, never a value
   node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
+  node .claude/skills/dev-server/cli.mjs wt env <worktree> --refresh  # …and re-copy env files the primary edited since
   node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
   node .claude/skills/dev-server/cli.mjs wt env --restore       # bring back what this tree lacks
   ```
+
+- **Every app `.env`, on `wt new`.** The root `.env` and each `apps/*/.env` (any untracked
+  `.env` / `.env.*` git finds, minus examples and `.bak` files) are copied in full, so a tree also
+  works for a bare `pnpm`/`prisma` command that reads `.env` itself. A copy is a snapshot: when the
+  primary's file changes, `wt env <worktree> --refresh` re-copies every one the primary edited more
+  recently, over the tree's version. Without `--refresh`, existing files are never touched.
 
   It reports three states, because two were misleading. `set` is a skill with its own file.
   `root` is one with no file whose every declared key the root `.env` supplies — most skills fall
@@ -718,7 +726,7 @@ What's already handled:
   is precisely what must not exist in a public repository.
 
 
-- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. So a worktree file needs to restate only what it wants to change, and one that restates nothing is a no-op rather than an outage. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
+- **A worktree's own `.env` layers on the primary's.** The primary checkout's `.env` is the base of every session; `<worktree>/.env` (or an explicit `--env`) overrides it key by key. A hand-written worktree file needs to restate only what it wants to change. The full copy `wt new` writes restates everything, so it masks later edits to the primary until `wt env <worktree> --refresh`. The whole chain is logged as `Env: <base> <- <overlay>` at session start and returned as `envPaths` in session status (`envPath` remains the top of the chain).
 
   Before this they were **not** merged — the worktree file replaced the primary outright, so a two-key override file started the server with no `DATABASE_URL` and no secrets, failing in a way that looked nothing like the edit that caused it.
 

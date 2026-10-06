@@ -14,6 +14,7 @@ import { execFileSync } from 'child_process';
 import { readdirSync, lstatSync, rmdirSync, rmSync, unlinkSync, existsSync, writeFileSync } from 'fs';
 import { isInside, samePath } from './paths.mjs';
 import { syncSkillEnv } from './skill-env.mjs';
+import { syncAppEnv } from './app-env.mjs';
 import { resolve, sep } from 'path';
 
 function git(args, cwd) {
@@ -637,7 +638,31 @@ export async function cmdCreate(primaryArg, name, branch, opts = {}) {
     console.warn(`warning: could not copy skill credentials -- ${error.message}`);
   }
 
-  if (!opts.noInstall) execFileSync('pnpm', ['install'], { cwd: target, stdio: 'inherit', windowsHide: true });
+  // Every app .env, root and per-app, as full copies — the tree must also run outside the
+  // daemon's env chain. Non-fatal for the same reason as the credentials above.
+  try {
+    const appEnv = syncAppEnv(primary, target);
+    if (appEnv.copied.length) console.log(`env files: copied ${appEnv.copied.length} (${appEnv.copied.join(', ')})`);
+    if (appEnv.noDir.length) console.log(`env files: skipped ${appEnv.noDir.length} whose app is not on this branch (${appEnv.noDir.join(', ')})`);
+  } catch (error) {
+    console.warn(`warning: could not copy env files -- ${error.message}`);
+  }
+
+  if (!opts.noInstall) {
+    try {
+      // pnpm is a .cmd/.ps1 shim on Windows, which only a shell can launch (ENOENT otherwise).
+      // No popped console: this runs from a terminal and inherits its console, unlike the
+      // daemon's detached children.
+      execFileSync('pnpm', ['install'], {
+        cwd: target,
+        stdio: 'inherit',
+        windowsHide: true,
+        shell: process.platform === 'win32',
+      });
+    } catch (error) {
+      fail(`pnpm install failed in ${target} -- the worktree and its env files are in place; rerun it there.\n${error.message}`);
+    }
+  }
 
   const head = git(['status', '-sb'], target).split(/\r?\n/)[0];
   if (head !== `## ${branch}`) fail(`expected "## ${branch}" with no upstream, got "${head}" — fix with: git -C "${target}" branch --unset-upstream`);
