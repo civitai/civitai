@@ -26,7 +26,6 @@ export class TestSetError extends Error {
 export type TestSetRun = {
   version: string;
   status: string;
-  totals: unknown;
   startedAt: Date;
 };
 export type TestSet = {
@@ -134,7 +133,7 @@ export async function listSets({ includeArchived = false } = {}): Promise<TestSe
   const runs = await db
     .selectFrom('text_scan_test_run')
     .distinctOn(['set_id', 'version'])
-    .select(['set_id', 'version', 'status', 'totals', 'started_at'])
+    .select(['set_id', 'version', 'status', 'started_at'])
     .where(
       'set_id',
       'in',
@@ -153,7 +152,6 @@ export async function listSets({ includeArchived = false } = {}): Promise<TestSe
       .map((r) => ({
         version: r.version,
         status: r.status,
-        totals: r.totals,
         startedAt: new Date(r.started_at),
       }))
       // Active first, then drafts newest-run first.

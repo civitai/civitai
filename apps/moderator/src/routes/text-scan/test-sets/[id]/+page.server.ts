@@ -2,10 +2,13 @@ import { error, fail } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { Action, Actions, PageServerLoad } from './$types';
 import { requiresGrant } from '$lib/server/access';
+import { dbRead } from '$lib/server/db';
+import { getModeratorDb } from '$lib/server/moderator-db';
 import { parseForm, parseQuery } from '$lib/server/query';
 import { listDrafts } from '$lib/server/text-scan-lab/drafts.service';
 import { parseEntityIds } from '$lib/server/text-scan-lab/entity-ids';
 import { LabHarnessError } from '$lib/server/text-scan-lab/harness-client';
+import { purgeDeletedSources } from '$lib/server/text-scan-lab/purge.service';
 import {
   MAX_RUN_CASES,
   QUOTE_ABOVE,
@@ -50,6 +53,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
   const set = id ? await getSet(id) : null;
   if (!set) error(404, 'No such test set.');
   const q = parseQuery(url, compareSchema);
+  await purgeDeletedSources({ moderator: getModeratorDb(), main: dbRead }, set.id);
   const [cases, runs, drafts] = await Promise.all([
     listCases(set.id),
     listRuns(set.id),

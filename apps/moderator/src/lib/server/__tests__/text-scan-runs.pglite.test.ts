@@ -44,6 +44,10 @@ vi.mock('../text-scan-lab/harness-client', async (importOriginal) => ({
   ...harness,
 }));
 
+// The purge's own behaviour is text-scan-purge.pglite.test.ts; here only that a run purges first.
+const purge = vi.hoisted(() => ({ purgeDeletedSources: vi.fn() }));
+vi.mock('../text-scan-lab/purge.service', () => purge);
+
 const { LabHarnessError } = await import('../text-scan-lab/harness-client');
 const { createDraft, updateDraft } = await import('../text-scan-lab/drafts.service');
 const { addCase, createSet, updateExpected } = await import('../text-scan-lab/test-sets.service');
@@ -71,6 +75,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   holder.pg = await PGlite.create();
   await holder.pg.exec(SCHEMA);
+  purge.purgeDeletedSources.mockResolvedValue({ checked: 0, wiped: 0 });
   harness.getPrompts.mockResolvedValue({
     active: {
       base: { id: 1, key: 'base', content: 'BASE PROMPT' },
@@ -286,6 +291,55 @@ describe('startRun', () => {
   });
 });
 
+describe('purging deleted sources first', () => {
+  /** Stands in for the purge finding the first case's source deleted. */
+  const wipeFirst = (caseId: number) =>
+    purge.purgeDeletedSources.mockImplementation(async () => {
+      await holder.pg!.query(
+        'UPDATE text_scan_test_case SET fields = NULL, source_deleted_at = now() WHERE id = $1',
+        [caseId]
+      );
+      return { checked: 1, wiped: 1 };
+    });
+
+  it('purges the set before a run reads its cases, so a just-deleted source is skipped', async () => {
+    const { setId, caseIds } = await setWithCases(2);
+    wipeFirst(caseIds[0]);
+    harness.scanTexts.mockImplementation(allOk());
+
+    const run = await startRun({ setId, version: 'active' }, MOD);
+
+    expect(purge.purgeDeletedSources).toHaveBeenCalledWith(expect.anything(), setId);
+    expect(harness.scanTexts.mock.calls[0][1].map((t: LabText) => t.key)).toEqual([
+      String(caseIds[1]),
+    ]);
+    expect((await results(run.id)).map((r) => r.status)).toEqual(['skipped', 'ok']);
+  });
+
+  it('purges before quoting, so a wiped case is not counted', async () => {
+    harness.quoteTexts.mockImplementation(async (_t: string, texts: LabText[]) => ({
+      meanCostTotal: 1,
+      count: texts.length,
+    }));
+    const { setId, caseIds } = await setWithCases(12);
+    wipeFirst(caseIds[0]);
+    expect(await quoteRun({ setId, version: 'active' })).toEqual({
+      count: 11,
+      skipped: 1,
+      cost: 11,
+    });
+  });
+
+  it('starts no run when the purge fails', async () => {
+    const { setId } = await setWithCases(1);
+    purge.purgeDeletedSources.mockRejectedValue(new Error('main db down'));
+    await expect(startRun({ setId, version: 'active' }, MOD)).rejects.toThrow('main db down');
+    expect(harness.scanTexts).not.toHaveBeenCalled();
+    const { rows } = await holder.pg!.query('SELECT 1 FROM text_scan_test_run');
+    expect(rows).toHaveLength(0);
+  });
+});
+
 describe('quoteRun', () => {
   it('asks for confirmation only above ten cases', async () => {
     harness.quoteTexts.mockImplementation(async (_t: string, texts: LabText[]) => ({
@@ -340,8 +394,10 @@ describe('rerunErrors', () => {
     );
 
     harness.scanTexts.mockReset().mockImplementation(allOk('pg13'));
+    purge.purgeDeletedSources.mockClear();
     const rerun = await rerunErrors(setId, run.id);
 
+    expect(purge.purgeDeletedSources).toHaveBeenCalledWith(expect.anything(), setId);
     expect(harness.scanTexts).toHaveBeenCalledTimes(1);
     const [, texts, overrides] = harness.scanTexts.mock.calls[0];
     const errorKeys = before.filter((r) => r.status === 'error').map((r) => String(r.case_id));

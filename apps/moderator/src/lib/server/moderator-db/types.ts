@@ -625,7 +625,6 @@ export type text_scan_test_result = {
   status: string;
   output: unknown | null;
   workflow_id: string | null;
-  correct: unknown | null;
 };
 export type text_scan_test_run = {
   id: Generated<string>;

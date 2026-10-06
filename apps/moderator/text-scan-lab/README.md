@@ -9,7 +9,7 @@ Nothing here changes a live prompt until a draft is published.
 | `text_scan_test_set` | a named set of test cases |
 | `text_scan_test_case` | a text snapshot and what each label is expected to return |
 | `text_scan_test_run` | one run of a set against active or a draft, and exactly which prompts ran |
-| `text_scan_test_result` | one case's output in one run, scored per label |
+| `text_scan_test_result` | one case's output in one run; scored on read against the case's current expectation |
 
 ## Apply order
 
@@ -32,11 +32,17 @@ When the source entity or its author's account is deleted, `fields` is set to nu
 
 ## Purge
 
-Clears the text of cases whose source is gone:
+Clears the text of entity cases whose source row is gone or soft-deleted, or whose author's account is
+deleted. Free-text and synthetic cases are never touched. Opening a set's page, quoting a run and
+starting one purge that set first; this command purges every set, and prints counts only.
+
+**Run it weekly** (an operator task: the spoke has no scheduler). It is idempotent.
 
 ```bash
-pnpm --filter @civitai/moderator-app exec tsx text-scan-lab/purge.ts
+pnpm --filter @civitai/moderator-app exec tsx --env-file=.env text-scan-lab/purge.ts [--set <id>]
 ```
+
+It reads `MODERATOR_DATABASE_URL` and `DATABASE_REPLICA_URL` (main database, read only).
 
 ## Import
 

@@ -1,8 +1,10 @@
 import { sql, type Selectable } from 'kysely';
+import { dbRead } from '../db';
 import { getModeratorDb } from '../moderator-db';
 import type { text_scan_test_run } from '../moderator-db/types';
 import { DraftError, getDraft, validateDraftPrompts, type DraftPrompts } from './drafts.service';
 import { LabHarnessError, getPrompts, quoteTexts, scanTexts } from './harness-client';
+import { purgeDeletedSources } from './purge.service';
 import { getSet, listCases, type TestCase } from './test-sets.service';
 import { caseCorrect, diffRuns, totals, type LabelTotals } from '$lib/text-scan-lab/score';
 import type { Expected, LabEntityType, LabField, LabScanResult } from '$lib/text-scan-lab/types';
@@ -110,6 +112,8 @@ async function planRun(setId: number, version: RunVersion): Promise<Plan> {
     draft = { id: found.id, updatedAt: found.updatedAt };
   }
 
+  // Before reading the cases, so text whose source was deleted since is never quoted or sent.
+  await purgeDeletedSources({ moderator: getModeratorDb(), main: dbRead }, setId);
   const { runnable, skipped } = splitCases(await listCases(setId));
   if (!runnable.length) throw new RunError('No case in this set has text to scan.', 400);
   if (runnable.length > MAX_RUN_CASES)
@@ -422,6 +426,7 @@ async function planRerun(setId: number, runId: number) {
       .execute()
   ).map((r) => Number(r.case_id));
   if (!errorIds.length) throw new RunError('This run has no errors to re-run.', 400);
+  await purgeDeletedSources({ moderator: getModeratorDb(), main: dbRead }, setId);
   const errorSet = new Set(errorIds);
   const { runnable, skipped } = splitCases(
     (await listCases(setId)).filter((c) => errorSet.has(c.id))

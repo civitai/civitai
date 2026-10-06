@@ -238,16 +238,16 @@ describe('listSets', () => {
     await modelCase(set.id, 'a');
     await freeTextCase(set.id, 'b');
     await holder.pg!.exec(`
-      INSERT INTO text_scan_test_run (set_id, version, status, run_by, started_at, totals)
-        VALUES (${set.id}, 'active', 'done', ${MOD}, '2026-10-01', '{"n":1}'),
-               (${set.id}, 'active', 'done', ${MOD}, '2026-10-03', '{"n":2}'),
-               (${set.id}, '5', 'failed', ${MOD}, '2026-10-02', null);
+      INSERT INTO text_scan_test_run (set_id, version, status, run_by, started_at)
+        VALUES (${set.id}, 'active', 'failed', ${MOD}, '2026-10-01'),
+               (${set.id}, 'active', 'done', ${MOD}, '2026-10-03'),
+               (${set.id}, '5', 'failed', ${MOD}, '2026-10-02');
     `);
     const [listed] = await listSets();
     expect(listed).toMatchObject({ id: set.id, name: 'calibration', caseCount: 2 });
-    expect(listed.lastRuns.map((r) => [r.version, r.status, r.totals])).toEqual([
-      ['active', 'done', { n: 2 }],
-      ['5', 'failed', null],
+    expect(listed.lastRuns.map((r) => [r.version, r.status])).toEqual([
+      ['active', 'done'],
+      ['5', 'failed'],
     ]);
   });
 

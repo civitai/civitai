@@ -79,9 +79,6 @@ CREATE TABLE IF NOT EXISTS text_scan_test_result (
   -- parse.output on ok; { error } otherwise.
   output      jsonb,
   workflow_id text,
-  -- Unwritten: correctness is scored on read against the case's current expectation, so a relabel
-  -- never shows up as a prompt's change between two runs.
-  correct     jsonb,
   PRIMARY KEY (run_id, case_id)
 );
 CREATE INDEX IF NOT EXISTS text_scan_test_result_case_idx ON text_scan_test_result (case_id);
