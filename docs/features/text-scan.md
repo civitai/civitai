@@ -59,7 +59,7 @@ A verdict that arrives after the mode has left `active` is not written to the li
   and author, so they are refused there (403) and only the attributed, audited moderator endpoint
   `/api/mod/text-scan` serves them. That endpoint also attributes prompt and config writes to the
   signed-in moderator.
-- The moderator app's `/text-scan` lab (playground, prompts with drafts and publish, test sets, scored
+- The moderator app's `/text-scan` lab (Check, Versions with drafts and publish, test sets, scored
   runs) drives those actions. Its tables live in the moderator database and are applied by hand; see
   `apps/moderator/text-scan-lab/README.md`. Publishing a prompt needs the `textScan.prompt.publish`
   permission and editing test sets needs `textScan.testSet.edit`. Neither is held by anyone until

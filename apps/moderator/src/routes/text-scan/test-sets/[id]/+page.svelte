@@ -75,7 +75,7 @@
     </Table.Root>
   {:else}
     <p class="text-sm text-dark-2">
-      No cases yet.{canEdit ? ' Add entities above, or save one from the playground.' : ''}
+      No cases yet.{canEdit ? ' Add entities above, or save one from Check.' : ''}
     </p>
   {/if}
 </section>

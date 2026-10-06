@@ -77,3 +77,21 @@ export async function usernameExists(username: string): Promise<boolean> {
     .executeTakeFirst();
   return !!row;
 }
+
+/** A profile link's username to its account id. Exact match first, since the unique index serves it;
+ *  only a miss pays for the case-insensitive comparison, which no index covers. */
+export async function userIdByUsername(username: string): Promise<number | null> {
+  const exact = await dbRead
+    .selectFrom('User')
+    .select('id')
+    .where('username', '=', username)
+    .executeTakeFirst();
+  if (exact) return exact.id;
+  const folded = await dbRead
+    .selectFrom('User')
+    .select('id')
+    .where(sql<boolean>`lower(username) = lower(${username})`)
+    .limit(1)
+    .executeTakeFirst();
+  return folded?.id ?? null;
+}

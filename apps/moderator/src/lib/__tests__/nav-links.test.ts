@@ -7,7 +7,6 @@ import {
   navForUser,
   pageAccessState,
   PERMISSIONS,
-  type NavLink,
 } from '$lib/server/access';
 
 const page = { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' };
@@ -67,21 +66,17 @@ describe('a view link in NAVIGATION', () => {
   });
 });
 
-const flattenNavigation = (links: NavLink[]): NavLink[] =>
-  links.flatMap((l) => [l, ...flattenNavigation(l.children ?? [])]);
-
 describe('the text-scan lab', () => {
   it('declares the text-scan lab permissions and pages', () => {
     const ids = PERMISSIONS.map((p) => p.id);
-    expect(ids).toEqual(expect.arrayContaining(['textScan.prompt.publish', 'textScan.testSet.edit']));
-    const paths = flattenNavigation(NAVIGATION).map((n) => n.path);
-    expect(paths).toEqual(
-      expect.arrayContaining([
-        '/text-scan',
-        '/text-scan/playground',
-        '/text-scan/prompts',
-        '/text-scan/test-sets',
-      ])
+    expect(ids).toEqual(
+      expect.arrayContaining(['textScan.prompt.publish', 'textScan.testSet.edit'])
     );
+    const group = NAVIGATION.find((n) => n.path === '/text-scan');
+    expect(group?.children?.map((c) => [c.path, c.label])).toEqual([
+      ['/text-scan/check', 'Check'],
+      ['/text-scan/test-sets', 'Test sets'],
+      ['/text-scan/prompts', 'Versions'],
+    ]);
   });
 });

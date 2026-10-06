@@ -146,9 +146,9 @@ export const NAVIGATION: NavLink[] = [
     label: 'Text Scan',
     path: '/text-scan',
     children: [
-      { path: '/text-scan/playground', label: 'Playground' },
-      { path: '/text-scan/prompts', label: 'Prompts' },
-      { path: '/text-scan/test-sets', label: 'Test Sets' },
+      { path: '/text-scan/check', label: 'Check' },
+      { path: '/text-scan/test-sets', label: 'Test sets' },
+      { path: '/text-scan/prompts', label: 'Versions' },
     ],
   },
   {

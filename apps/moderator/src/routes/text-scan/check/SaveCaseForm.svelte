@@ -10,7 +10,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { expectedFromOutput } from '$lib/text-scan-lab/expected';
   import type { Expected, LabEntityType, LabLabel } from '$lib/text-scan-lab/types';
-  import type { RunItemResult } from './+page.server';
+  import type { CheckItemResult } from './+page.server';
 
   let {
     item,
@@ -18,15 +18,15 @@
     labels,
     testSets,
   }: {
-    item: RunItemResult;
+    item: CheckItemResult;
     entityType: LabEntityType;
     labels: readonly LabLabel[];
     testSets: { id: number; name: string }[];
   } = $props();
 
-  // Prefilled from what version A (active) said; the moderator corrects it before saving.
+  // Prefilled from the current verdict; the moderator corrects it before saving.
   let expected = $state<Expected>(
-    untrack(() => expectedFromOutput(item.a.ok ? item.a.output : null, labels))
+    untrack(() => expectedFromOutput(item.current.ok ? item.current.output : null, labels))
   );
   let setId = $state(untrack(() => String(testSets[0]?.id ?? '')));
   let open = $state(false);
@@ -41,7 +41,7 @@
     },
   });
   // The action lives on the test-set route: applying its unexpected error would render that route's
-  // error page over the playground, so it is shown as this form's refusal instead.
+  // error page over the Check page, so it is shown as this form's refusal instead.
   const enhanceSave: SubmitFunction = async (input) => {
     const settle = await save.enhance(input);
     if (!settle) return;
