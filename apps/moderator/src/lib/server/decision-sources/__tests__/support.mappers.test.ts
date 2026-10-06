@@ -279,13 +279,14 @@ describe('header warnings', () => {
       []
     );
   });
-  it('warns at the catalog threshold, below the cap', () => {
-    const w = headerWarnings(
-      { activeGroups: CATALOG_WARN_AT, lastRoutedAt: fresh, specCount: 1 },
-      now
+  it('warns at the catalog threshold — 90% of the cap — and not one below it', () => {
+    expect(CATALOG_WARN_AT).toBe(216);
+    expect(headerWarnings({ activeGroups: 215, lastRoutedAt: fresh, specCount: 1 }, now)).toEqual(
+      []
     );
+    const w = headerWarnings({ activeGroups: 216, lastRoutedAt: fresh, specCount: 1 }, now);
     expect(w).toHaveLength(1);
-    expect(w[0]).toMatch(/180 of 200/);
+    expect(w[0]).toMatch(/216 of 240/);
   });
   it('warns on more than one question spec under one version', () => {
     expect(headerWarnings({ activeGroups: 1, lastRoutedAt: fresh, specCount: 2 }, now)[0]).toMatch(

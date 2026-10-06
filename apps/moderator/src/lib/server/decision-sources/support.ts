@@ -35,10 +35,16 @@ export type ClickhouseReader = {
 
 const reader = (): ClickhouseReader => getClickhouse();
 
-/** The router's own hard ceiling on active groups — at it, a routing run aborts by design. */
-export const ROUTER_CATALOG_CAP = 200;
-/** Warn this far below the cap, while there is still room to act. */
-export const CATALOG_WARN_AT = 180;
+/**
+ * The router's own hard ceiling on active groups — at it, a routing run aborts by design.
+ *
+ * 🔴 A COPY, NOT A READ: this mirrors the router's `MAX_ACTIVE_GROUPS` setting, which this app cannot
+ * see. Change both together — a stale copy misstates the header's cap and truncates the "Duplicate of"
+ * picker, which is bounded by this same constant.
+ */
+export const ROUTER_CATALOG_CAP = 240;
+/** Warn at 90% of the cap, while there is still room to act. Derived, so a cap change moves it too. */
+export const CATALOG_WARN_AT = Math.floor(ROUTER_CATALOG_CAP * 0.9);
 /** No routed ticket for this long is worth a look — a quiet queue, or a stopped router. */
 export const STALE_ROUTING_MINUTES = 45;
 /** Group sizes at or above this in 24h are the router's own "misgroup or storm" alarm level. */
@@ -135,12 +141,15 @@ export const SUPPORT_SQL = {
     LEFT JOIN (SELECT group_key, title, created_by, founded_ticket_id FROM support_issue_groups FINAL
                WHERE router_version = {v:String}) AS g USING (group_key)
     WHERE m.router_version = {v:String} AND m.ticket_id = {tid:String}`,
+  // Bounded by the catalog cap, bound at the call site: while that copy matches the router, the
+  // active catalog cannot exceed it, so the picker offers every candidate. A separate literal here
+  // silently drops groups once the cap moves.
   duplicateTargets: `
     SELECT group_key, title, topic FROM support_issue_groups FINAL
     WHERE router_version = {v:String} AND closed_at IS NULL AND stale = 0
       AND group_key != {gk:String}
     ORDER BY (topic = {topic:String}) DESC, founded_at DESC
-    LIMIT 200`,
+    LIMIT {limit:UInt32}`,
 } as const;
 
 const TICKET_COLUMNS = `ticket_id, ticket_created_at, ticket_updated_at, ticket_status, ticket_subject,
@@ -617,7 +626,7 @@ export async function listDuplicateTargets(
   const out = await rows<{ group_key: string; title: string; topic: string }>(
     client,
     SUPPORT_SQL.duplicateTargets,
-    { v: input.version, gk: input.groupKey, topic: input.topic }
+    { v: input.version, gk: input.groupKey, topic: input.topic, limit: ROUTER_CATALOG_CAP }
   );
   return out.map((r) => ({ groupKey: r.group_key, title: r.title, topic: r.topic }));
 }
