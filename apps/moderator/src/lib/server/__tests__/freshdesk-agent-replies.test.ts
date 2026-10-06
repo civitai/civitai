@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CONVERSATION_PAGE_CAP,
   CONVERSATIONS_PER_PAGE,
+  getFreshdeskContact,
   getPublicAgentReplies,
 } from '../freshdesk.service';
 
@@ -58,6 +59,7 @@ describe('getPublicAgentReplies', () => {
     expect(out).toEqual({
       status: 'found',
       replies: [{ conversationId: '11', createdAt: '2026-10-01T10:00:00Z', text: 'agent public' }],
+      truncated: false,
     });
   });
 
@@ -90,13 +92,15 @@ describe('getPublicAgentReplies', () => {
     if (out.status !== 'found') return;
     expect(out.replies).toHaveLength(CONVERSATIONS_PER_PAGE + 1);
     expect(out.replies[0]).toMatchObject({ conversationId: '9001', text: 'latest' });
+    expect(out.truncated).toBe(false);
   });
 
-  it('stops at the page cap', async () => {
+  it('stops at the page cap, and says the list may be missing replies', async () => {
     const full = Array.from({ length: CONVERSATIONS_PER_PAGE }, (_, i) => convo({ id: 1 + i }));
     fetchMock.mockImplementation(async () => page(full));
-    await getPublicAgentReplies('73618');
+    const out = await getPublicAgentReplies('73618');
     expect(fetchMock).toHaveBeenCalledTimes(CONVERSATION_PAGE_CAP);
+    expect(out).toMatchObject({ status: 'found', truncated: true });
   });
 
   it("is 'none' when the ticket has no public agent reply", async () => {
@@ -146,5 +150,59 @@ describe('getPublicAgentReplies', () => {
     process.env.FRESHDESK_API_KEY = 'test-key';
     expect((await getPublicAgentReplies('73618/../contacts')).status).toBe('unavailable');
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// Shares the request helper with the reads above, so its outcomes are pinned here too.
+describe('getFreshdeskContact', () => {
+  it('finds the first contact, linked on the configured host', async () => {
+    fetchMock.mockResolvedValueOnce(
+      page({ results: [{ id: 4411, name: 'R. Vale', email: 'rv@example.test' }] })
+    );
+    expect(await getFreshdeskContact('rv@example.test')).toEqual({
+      status: 'found',
+      contact: {
+        id: 4411,
+        name: 'R. Vale',
+        email: 'rv@example.test',
+        createdAt: null,
+        url: 'https://help.example.test/a/contacts/4411',
+      },
+    });
+    expect(fetchMock.mock.calls[0][0]).toMatch(
+      /^https:\/\/help\.example\.test\/api\/v2\/search\/contacts\?query=/
+    );
+  });
+
+  it("is 'none' on an empty result", async () => {
+    fetchMock.mockResolvedValueOnce(page({ results: [] }));
+    expect(await getFreshdeskContact('rv@example.test')).toEqual({ status: 'none' });
+  });
+
+  it.each([
+    ['a 404', () => new Response('{}', { status: 404 }), /returned 404/],
+    ['a 429', () => new Response('{}', { status: 429 }), /rate limit/],
+  ])('is unavailable on %s', async (_label, response, reason) => {
+    fetchMock.mockResolvedValueOnce(response());
+    const out = await getFreshdeskContact('rv@example.test');
+    expect(out.status === 'unavailable' && out.reason).toMatch(reason);
+  });
+
+  it('is unavailable without a key or an email, asking nothing', async () => {
+    expect((await getFreshdeskContact(null)).status).toBe('unavailable');
+    delete process.env.FRESHDESK_API_KEY;
+    expect(await getFreshdeskContact('rv@example.test')).toEqual({
+      status: 'unavailable',
+      reason: 'Freshdesk is not configured.',
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('is unavailable when the request throws', async () => {
+    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));
+    expect(await getFreshdeskContact('rv@example.test')).toEqual({
+      status: 'unavailable',
+      reason: 'Freshdesk did not respond.',
+    });
   });
 });

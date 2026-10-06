@@ -1,6 +1,6 @@
 import { getClickhouse } from '../clickhouse';
 import { clickhouseDate } from '../clickhouse-date';
-import { freshdeskTicketUrl } from '../freshdesk.service';
+import { freshdeskTicketUrl, isFreshdeskId } from '../freshdesk.service';
 import type { Decision } from '../../decisions';
 
 /**
@@ -277,8 +277,7 @@ export const isGroupKey = (v: unknown): v is string =>
 /** A topic slug, which doubles as an area until an area taxonomy exists. */
 export const isAreaSlug = (v: unknown): v is string =>
   typeof v === 'string' && /^[a-z0-9_-]{1,64}$/.test(v);
-export const isTicketId = (v: unknown): v is string =>
-  typeof v === 'string' && /^\d{1,20}$/.test(v);
+export const isTicketId = isFreshdeskId;
 
 // ---------------------------------------------------------------------------------------------
 // Reads.

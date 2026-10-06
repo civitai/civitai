@@ -8,6 +8,7 @@ import {
   type MemberRuling,
 } from '$lib/decision-rulings';
 import type { ResolutionAnswer } from '$lib/server/decision-resolution.service';
+import { isFreshdeskId } from '$lib/server/freshdesk.service';
 import {
   groupMember,
   isAreaSlug,
@@ -111,8 +112,6 @@ export const foreignEmailIn = (text: string): string | null => {
   return null;
 };
 
-const NUMERIC_ID = /^\d{1,20}$/;
-
 function parseAnswer(p: {
   answerText?: string;
   answerTicketId?: string;
@@ -131,8 +130,8 @@ function parseAnswer(p: {
   if (
     ticketId === null ||
     conversationId === null ||
-    !NUMERIC_ID.test(ticketId) ||
-    !NUMERIC_ID.test(conversationId)
+    !isFreshdeskId(ticketId) ||
+    !isFreshdeskId(conversationId)
   )
     return 'The reply this answer came from is malformed — remove it and pick it again.';
   return { text, source: { ticketId, conversationId } };

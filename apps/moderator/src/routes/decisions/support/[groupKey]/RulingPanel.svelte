@@ -16,6 +16,7 @@
   import { dateTime, plural } from '$lib/format';
   import { FormState } from '$lib/form-state.svelte';
   import { denied } from '$lib/permissions';
+  import type { ResolutionAnswer } from '$lib/server/decision-resolution.service';
   import type { AnswerDraft } from './answer-draft.svelte';
 
   let {
@@ -41,10 +42,7 @@
     fingerprint: string;
     current: { ruling: GroupRuling; ruledBy: number; ruledAt: Date; targetKey: string | null } | null;
     /** The current ruling's answer, when it is `resolved`. */
-    answer: {
-      text: string;
-      source: { ticketId: string; conversationId: string } | null;
-    } | null;
+    answer: ResolutionAnswer | null;
     /** Members currently labelled "does not belong" — they would not get the answer. */
     notBelongs: number;
     /** The ruling and answer in progress — page-owned, because the member table pre-fills it. */
@@ -212,8 +210,8 @@
         </div>
       {/if}
 
-      {#if draft.ruling && HINT[draft.ruling as GroupRuling]}
-        <p class="text-dark-2 text-sm">{HINT[draft.ruling as GroupRuling]}</p>
+      {#if draft.ruling && HINT[draft.ruling]}
+        <p class="text-dark-2 text-sm">{HINT[draft.ruling]}</p>
       {/if}
 
       <div>

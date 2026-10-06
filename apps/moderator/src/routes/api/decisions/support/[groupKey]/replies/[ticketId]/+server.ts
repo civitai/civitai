@@ -1,7 +1,7 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requirePermission } from '$lib/server/api-guard';
-import { canAccess } from '$lib/server/access';
+import { requireAccess } from '$lib/server/access';
 import {
   getSupportGroup,
   groupMember,
@@ -22,8 +22,7 @@ import { getPublicAgentReplies } from '$lib/server/freshdesk.service';
  * here, and both permissions a `resolved` ruling needs.
  */
 export const GET: RequestHandler = async ({ params, url, locals }) => {
-  if (!locals.user || !canAccess(locals.user, '/decisions'))
-    error(403, 'You do not have access to this page.');
+  requireAccess(locals.user, '/decisions');
   requirePermission(locals, 'decisions.rule');
   requirePermission(locals, 'decisions.answer');
 

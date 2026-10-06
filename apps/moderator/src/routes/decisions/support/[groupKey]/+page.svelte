@@ -25,8 +25,10 @@
   // does not re-run this.
   const groupKey = $derived(group.groupKey);
   const draft = $derived(new AnswerDraft(groupKey));
+  // CURRENT members only: a label outlives a re-route, so the map can name tickets that have left.
   const notBelongs = $derived(
-    Object.values(data.memberLabels).filter((l) => l.ruling === 'not_belongs').length
+    (decision?.members ?? []).filter((m) => data.memberLabels[m.ticketId]?.ruling === 'not_belongs')
+      .length
   );
 </script>
 

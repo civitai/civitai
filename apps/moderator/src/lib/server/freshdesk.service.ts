@@ -21,7 +21,7 @@ export type FreshdeskContact = {
 export type FreshdeskResult =
   | { status: 'found'; contact: FreshdeskContact }
   | { status: 'none' }
-  | { status: 'unavailable'; reason: string };
+  | Unavailable;
 
 const DEFAULT_FRESHDESK_DOMAIN = 'civitai.freshdesk.com';
 
@@ -40,17 +40,67 @@ export const freshdeskTicketUrl = (
   domain: string | undefined = env.FRESHDESK_DOMAIN
 ): string => `https://${freshdeskHost(domain)}/a/tickets/${encodeURIComponent(String(ticketId))}`;
 
+/** Freshdesk's numeric id format — tickets and conversations alike. */
+export const isFreshdeskId = (v: unknown): v is string =>
+  typeof v === 'string' && /^\d{1,20}$/.test(v);
+
+type Unavailable = { status: 'unavailable'; reason: string };
+const unavailable = (reason: string): Unavailable => ({ status: 'unavailable', reason });
+const NOT_CONFIGURED = unavailable('Freshdesk is not configured.');
+
+/**
+ * One authenticated, READ-ONLY GET against the v2 API: the parsed body, or why it could not be had.
+ * Every Freshdesk call here goes through it, so "could not ask" is reported one way.
+ *
+ * ⚠️ Freshdesk rate-limits per ACCOUNT, not per key, so every call draws on the same hourly pool as
+ * every other integration using the account — a 429 says so rather than reading as an outage.
+ */
+async function freshdeskGet(
+  path: string,
+  label: string,
+  /** The reason to report for a 404, where a 404 means something specific to the caller. */
+  notFound: string | null = null
+): Promise<{ status: 'ok'; body: unknown } | Unavailable> {
+  const key = env.FRESHDESK_API_KEY;
+  if (!key) return NOT_CONFIGURED;
+  // Freshdesk authenticates with the API key as the basic-auth username and any password.
+  const auth = Buffer.from(`${key}:X`).toString('base64');
+  try {
+    const res = await fetch(`https://${freshdeskHost()}/api/v2${path}`, {
+      headers: { authorization: `Basic ${auth}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.status === 404 && notFound !== null) return unavailable(notFound);
+    if (res.status === 429) {
+      const wait = Number(res.headers.get('retry-after'));
+      return unavailable(
+        `Freshdesk's rate limit is reached${
+          Number.isFinite(wait) && wait > 0 ? ` — try again in ${wait}s` : ''
+        }.`
+      );
+    }
+    if (!res.ok) {
+      console.error(`[freshdesk] ${label} failed`, res.status);
+      return unavailable(`Freshdesk returned ${res.status}.`);
+    }
+    return { status: 'ok', body: (await res.json()) as unknown };
+  } catch (e) {
+    console.error(`[freshdesk] ${label} error`, e);
+    return unavailable('Freshdesk did not respond.');
+  }
+}
+
 /** One public reply an agent sent on a ticket. */
 export type AgentReply = { conversationId: string; createdAt: string | null; text: string };
 
 export type AgentRepliesResult =
-  | { status: 'found'; replies: AgentReply[] }
-  | { status: 'none' }
-  | { status: 'unavailable'; reason: string };
+  /** `truncated`: the page cap was reached, so a later reply may be missing from `replies`. */
+  { status: 'found'; replies: AgentReply[]; truncated: boolean } | { status: 'none' } | Unavailable;
 
 /** Conversations per page — Freshdesk's maximum. */
 export const CONVERSATIONS_PER_PAGE = 100;
-/** Pages read before stopping. A ticket past this many conversations offers only its earliest. */
+/** Pages read before stopping. A ticket past this many conversations offers only its earliest, and
+ *  says so (`truncated`). */
 export const CONVERSATION_PAGE_CAP = 5;
 
 type RawConversation = {
@@ -71,55 +121,28 @@ type RawConversation = {
  *
  * 🔴 `unavailable` IS NOT `none`. An unset key, a 404 (deleted or merged ticket), a 429 or a timeout
  * mean "could not ask"; reporting any of them as "no reply" tells the moderator the ticket was never
- * answered. Never throws.
- *
- * ⚠️ Freshdesk rate-limits per ACCOUNT, not per key, so every call here draws on the same hourly pool
- * as every other integration using the account. It runs on a moderator's click only.
+ * answered. Never throws. Runs on a moderator's click only.
  */
 export async function getPublicAgentReplies(ticketId: string): Promise<AgentRepliesResult> {
-  const key = env.FRESHDESK_API_KEY;
-  if (!key) return { status: 'unavailable', reason: 'Freshdesk is not configured.' };
-  if (!/^\d{1,20}$/.test(ticketId))
-    return { status: 'unavailable', reason: 'Not a Freshdesk ticket id.' };
+  if (!env.FRESHDESK_API_KEY) return NOT_CONFIGURED;
+  if (!isFreshdeskId(ticketId)) return unavailable('Not a Freshdesk ticket id.');
 
-  const auth = Buffer.from(`${key}:X`).toString('base64');
-  const base = `https://${freshdeskHost()}/api/v2/tickets/${ticketId}/conversations`;
   const all: RawConversation[] = [];
-  try {
-    for (let page = 1; page <= CONVERSATION_PAGE_CAP; page++) {
-      const res = await fetch(`${base}?per_page=${CONVERSATIONS_PER_PAGE}&page=${page}`, {
-        headers: { authorization: `Basic ${auth}` },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (res.status === 404)
-        return {
-          status: 'unavailable',
-          reason: `Freshdesk has no ticket ${ticketId} — it may have been deleted or merged.`,
-        };
-      if (res.status === 429) {
-        const wait = Number(res.headers.get('retry-after'));
-        return {
-          status: 'unavailable',
-          reason: `Freshdesk's rate limit is reached${
-            Number.isFinite(wait) && wait > 0 ? ` — try again in ${wait}s` : ''
-          }.`,
-        };
-      }
-      if (!res.ok) {
-        console.error('[freshdesk] conversations failed', res.status);
-        return { status: 'unavailable', reason: `Freshdesk returned ${res.status}.` };
-      }
-      const body = (await res.json()) as unknown;
-      if (!Array.isArray(body)) {
-        console.error('[freshdesk] conversations: unexpected body');
-        return { status: 'unavailable', reason: 'Freshdesk returned an unexpected response.' };
-      }
-      all.push(...(body as RawConversation[]));
-      if (body.length < CONVERSATIONS_PER_PAGE) break;
+  let truncated = false;
+  for (let page = 1; page <= CONVERSATION_PAGE_CAP; page++) {
+    const res = await freshdeskGet(
+      `/tickets/${ticketId}/conversations?per_page=${CONVERSATIONS_PER_PAGE}&page=${page}`,
+      'conversations',
+      `Freshdesk has no ticket ${ticketId} — it may have been deleted or merged.`
+    );
+    if (res.status !== 'ok') return res;
+    if (!Array.isArray(res.body)) {
+      console.error('[freshdesk] conversations: unexpected body');
+      return unavailable('Freshdesk returned an unexpected response.');
     }
-  } catch (e) {
-    console.error('[freshdesk] conversations error', e);
-    return { status: 'unavailable', reason: 'Freshdesk did not respond.' };
+    all.push(...(res.body as RawConversation[]));
+    if (res.body.length < CONVERSATIONS_PER_PAGE) break;
+    truncated = page === CONVERSATION_PAGE_CAP;
   }
 
   const replies = all
@@ -129,48 +152,32 @@ export async function getPublicAgentReplies(ticketId: string): Promise<AgentRepl
       createdAt: c.created_at ?? null,
       text: (c.body_text ?? '').trim(),
     }))
-    .filter((r) => /^\d{1,20}$/.test(r.conversationId) && r.text !== '')
+    .filter((r) => isFreshdeskId(r.conversationId) && r.text !== '')
     // ISO-8601 timestamps sort as strings; a reply with none sorts last.
     .sort((x, y) => (y.createdAt ?? '').localeCompare(x.createdAt ?? ''));
-  return replies.length > 0 ? { status: 'found', replies } : { status: 'none' };
+  return replies.length > 0 ? { status: 'found', replies, truncated } : { status: 'none' };
 }
 
 export async function getFreshdeskContact(email: string | null): Promise<FreshdeskResult> {
-  const key = env.FRESHDESK_API_KEY;
-  const domain = freshdeskHost();
-  if (!key) return { status: 'unavailable', reason: 'Freshdesk is not configured.' };
-  if (!email) return { status: 'unavailable', reason: 'This account has no email address.' };
+  if (!env.FRESHDESK_API_KEY) return NOT_CONFIGURED;
+  if (!email) return unavailable('This account has no email address.');
 
-  // Freshdesk authenticates with the API key as the basic-auth username and any password.
-  const auth = Buffer.from(`${key}:X`).toString('base64');
   const query = encodeURIComponent(`"email:'${email.replace(/'/g, '')}'"`);
-
-  try {
-    const res = await fetch(`https://${domain}/api/v2/search/contacts?query=${query}`, {
-      headers: { authorization: `Basic ${auth}` },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!res.ok) {
-      console.error('[freshdesk] search failed', res.status);
-      return { status: 'unavailable', reason: `Freshdesk returned ${res.status}.` };
-    }
-    const body = (await res.json()) as {
-      results?: { id: number; name?: string; email?: string; created_at?: string }[];
-    };
-    const hit = body.results?.[0];
-    if (!hit) return { status: 'none' };
-    return {
-      status: 'found',
-      contact: {
-        id: hit.id,
-        name: hit.name ?? null,
-        email: hit.email ?? null,
-        createdAt: hit.created_at ?? null,
-        url: `https://${domain}/a/contacts/${hit.id}`,
-      },
-    };
-  } catch (e) {
-    console.error('[freshdesk] lookup error', e);
-    return { status: 'unavailable', reason: 'Freshdesk did not respond.' };
-  }
+  const res = await freshdeskGet(`/search/contacts?query=${query}`, 'search');
+  if (res.status !== 'ok') return res;
+  const body = res.body as {
+    results?: { id: number; name?: string; email?: string; created_at?: string }[];
+  } | null;
+  const hit = body?.results?.[0];
+  if (!hit) return { status: 'none' };
+  return {
+    status: 'found',
+    contact: {
+      id: hit.id,
+      name: hit.name ?? null,
+      email: hit.email ?? null,
+      createdAt: hit.created_at ?? null,
+      url: `https://${freshdeskHost()}/a/contacts/${hit.id}`,
+    },
+  };
 }

@@ -37,6 +37,11 @@
       <p class="text-dark-2 text-sm">Asking Freshdesk…</p>
     {:then result}
       {#if result?.status === 'found'}
+        {#if result.truncated}
+          <p class="mb-2 text-sm text-amber-300">
+            ⚠ This ticket has more conversations than were read — a later reply may be missing.
+          </p>
+        {/if}
         <ul class="space-y-3">
           {#each result.replies as reply (reply.conversationId)}
             <li class="rounded border border-dark-4 p-3">

@@ -39,6 +39,12 @@
   } = $props();
 
   // ticketId → the label this session just submitted, shown until its own write settles.
+  /** A row toggle's look, on or off — the label buttons and "Use a reply" share it. */
+  const toggleClass = (on: boolean) =>
+    `rounded border px-2 py-0.5 text-xs disabled:opacity-50 ${
+      on ? 'border-blue-4 bg-blue-4/20 text-white' : 'border-dark-4 text-dark-2 hover:text-dark-0'
+    }`;
+
   const pending = new SvelteMap<string, MemberRuling>();
   // ticketId → why the last label on that row was refused. Held HERE, per row, rather than read off
   // the page-level `form`: that one is shared with the ruling panel, and a refusal routed by a scope
@@ -134,9 +140,7 @@
                     type="submit"
                     disabled={pending.has(m.ticketId)}
                     aria-pressed={shown === r}
-                    class="rounded border px-2 py-0.5 text-xs {shown === r
-                      ? 'border-blue-4 bg-blue-4/20 text-white'
-                      : 'border-dark-4 text-dark-2 hover:text-dark-0'} disabled:opacity-50">{MEMBER_RULING_LABEL[r]}</button
+                    class={toggleClass(shown === r)}>{MEMBER_RULING_LABEL[r]}</button
                   >
                 </form>
               {/each}
@@ -153,9 +157,7 @@
             <button
               type="button"
               aria-pressed={draft.replyTicket === m.ticketId}
-              class="rounded border px-2 py-0.5 text-xs {draft.replyTicket === m.ticketId
-                ? 'border-blue-4 bg-blue-4/20 text-white'
-                : 'border-dark-4 text-dark-2 hover:text-dark-0'}"
+              class={toggleClass(draft.replyTicket === m.ticketId)}
               onclick={() => (draft.replyTicket = m.ticketId)}>Use a reply ▸</button
             >
           </TableCell>

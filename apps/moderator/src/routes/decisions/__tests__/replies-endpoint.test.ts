@@ -12,9 +12,14 @@ const { getSupportGroup, getPublicAgentReplies, pageGranted } = vi.hoisted(() =>
 }));
 
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('$lib/server/access', () => ({
-  canAccess: (_user: unknown, path: string) => pageGranted.value && path === '/decisions',
-}));
+vi.mock('$lib/server/access', async () => {
+  const { error } = await import('@sveltejs/kit');
+  return {
+    requireAccess: (_user: unknown, path: string) => {
+      if (!pageGranted.value || path !== '/decisions') error(403, 'no access');
+    },
+  };
+});
 vi.mock('$lib/server/decision-sources/support', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/server/decision-sources/support')>()),
   getSupportGroup,

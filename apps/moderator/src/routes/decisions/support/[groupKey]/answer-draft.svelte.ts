@@ -1,3 +1,4 @@
+import type { GroupRuling } from '$lib/decision-rulings';
 import type { AgentReply } from '$lib/server/freshdesk.service';
 
 /**
@@ -8,7 +9,7 @@ import type { AgentReply } from '$lib/server/freshdesk.service';
  * moderator onto another group, and a reload of the SAME group (the 409 refresh) keeps it.
  */
 export class AnswerDraft {
-  ruling = $state('');
+  ruling = $state<GroupRuling | ''>('');
   text = $state('');
   /** The reply the text was pre-filled from. Cleared to record the answer without a source. */
   source = $state<{ ticketId: string; conversationId: string; text: string } | null>(null);
