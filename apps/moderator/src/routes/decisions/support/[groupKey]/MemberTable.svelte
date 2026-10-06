@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { untrack } from 'svelte';
+  import type { SubmitFunction } from '@sveltejs/kit';
   import { SvelteMap } from 'svelte/reactivity';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import {
@@ -11,7 +11,6 @@
     TableHeader,
     TableRow,
   } from '@civitai/ui/components/ui/table/index.js';
-  import { optimisticEnhancer } from '$lib/form-action';
   import { MEMBER_RULINGS, MEMBER_RULING_LABEL, type MemberRuling } from '$lib/decision-rulings';
   import { probabilityLabel } from '$lib/decisions';
   import { LINK_CLASS, MUTED_LINK_CLASS, dateTime } from '$lib/format';
@@ -25,39 +24,49 @@
     version,
     ticketHref,
     canRule,
-    error,
   }: {
     members: Member[];
     labels: PageData['memberLabels'];
     version: string;
     ticketHref: (ticketId: string) => string;
     canRule: boolean;
-    /** The refused label, if the last submit was one — rendered on its own row. */
-    error: { ticketId: string; message: string } | null;
   } = $props();
 
-  // ticketId → the label this session just submitted, shown until the reload lands or it is refused.
+  // ticketId → the label this session just submitted, shown until its own write settles.
   const pending = new SvelteMap<string, MemberRuling>();
-  $effect(() => {
-    // 🔴 Drops only the marks the reload has CONFIRMED. Clearing them all would wipe a second row's
-    // mark while its own write is still in flight; a refused one is undone by its enhancer. Depends on
-    // `labels` alone — `pending` is read untracked, or the effect would re-run on its own deletes.
-    const stored = labels;
-    untrack(() => {
-      for (const [ticketId, ruling] of pending)
-        if (stored[ticketId]?.ruling === ruling) pending.delete(ticketId);
-    });
-  });
+  // ticketId → why the last label on that row was refused. Held HERE, per row, rather than read off
+  // the page-level `form`: that one is shared with the ruling panel, and a refusal routed by a scope
+  // the server stamps is exactly the shape that renders in two panels, or in none.
+  const refused = new SvelteMap<string, string>();
 
-  // 🔴 Reads only `ticketId`, the `{#each}` key — `use:enhance` captures this closure once at mount.
-  const submit = (ticketId: string, ruling: MemberRuling) =>
-    optimisticEnhancer(
-      () => {
-        pending.set(ticketId, ruling);
-        return () => pending.delete(ticketId);
-      },
-      { reload: true }
-    );
+  /**
+   * One row's label submit. Optimistic, and it reverts: the mark goes on before the server answers
+   * and comes off when THIS write settles — after the reload on success, so the stored label takes
+   * over; at once on a refusal, which is then shown on the row.
+   *
+   * 🔴 Reads only `ticketId` (the `{#each}` key) and `ruling` (the inner key) — `use:enhance` captures
+   * this closure once at mount.
+   */
+  const submit =
+    (ticketId: string, ruling: MemberRuling): SubmitFunction =>
+    () => {
+      pending.set(ticketId, ruling);
+      refused.delete(ticketId);
+      return async ({ result, update }) => {
+        if (result.type !== 'success') {
+          pending.delete(ticketId);
+          refused.set(
+            ticketId,
+            result.type === 'failure' && typeof result.data?.error === 'string'
+              ? result.data.error
+              : 'The label was NOT recorded.'
+          );
+        }
+        // Applies the result (so `form` is current) and reloads on success only.
+        await update({ invalidateAll: result.type === 'success' });
+        if (result.type === 'success') pending.delete(ticketId);
+      };
+    };
 </script>
 
 <Table>
@@ -120,8 +129,8 @@
           {:else}
             <span class="text-dark-2 text-xs">{shown ? MEMBER_RULING_LABEL[shown] : '—'}</span>
           {/if}
-          {#if error && error.ticketId === m.ticketId}
-            <p class="mt-1 text-xs text-red-300" role="alert">{error.message}</p>
+          {#if refused.has(m.ticketId)}
+            <p class="mt-1 text-xs text-red-300" role="alert">{refused.get(m.ticketId)}</p>
           {/if}
         </TableCell>
       </TableRow>

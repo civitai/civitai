@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import { RadioGroup, RadioGroupItem } from '@civitai/ui/components/ui/radio-group/index.js';
@@ -15,7 +16,7 @@
     topic,
     topics,
     targets,
-    memberIds,
+    fingerprint,
     current,
     canRule,
   }: {
@@ -24,9 +25,9 @@
     topic: string;
     topics: string[];
     targets: { groupKey: string; title: string; topic: string }[];
-    /** The member ids this page rendered — posted so the server can refuse a ruling on a group that
-     *  changed underneath it. */
-    memberIds: string[];
+    /** The fingerprint of what this page rendered — posted so the server can refuse a ruling on a
+     *  group that changed underneath it. */
+    fingerprint: string;
     current: { ruling: GroupRuling; ruledBy: number; ruledAt: Date; targetKey: string | null } | null;
     canRule: boolean;
   } = $props();
@@ -53,6 +54,11 @@
       ruling = targetKey = escalateTo = '';
     },
     reload: true,
+    // A 409 means the group moved under the page: refresh it so the next submit compares against what
+    // is now on screen. A failure does not reset the form, so the moderator's note survives.
+    onSettled: (r) => {
+      if (r.type === 'failure' && r.status === 409) void invalidateAll();
+    },
   });
 
   const HINT: Partial<Record<GroupRuling, string>> = {
@@ -80,7 +86,7 @@
   {#if canRule}
     <form method="POST" action="?/rule" use:enhance={rule.enhance} class="space-y-4">
       <input type="hidden" name="version" value={version} />
-      <input type="hidden" name="members" value={memberIds.join(',')} />
+      <input type="hidden" name="fingerprint" value={fingerprint} />
       <RadioGroup name="ruling" bind:value={ruling} class="grid gap-2 sm:grid-cols-2">
         {#each GROUP_RULINGS as r (r)}
           <div class="flex items-center gap-2">

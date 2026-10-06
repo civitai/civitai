@@ -21,9 +21,10 @@ import { moderatorDbStatus, type ModeratorDbStatus } from '$lib/moderator-db-sta
 import {
   groupSnapshot,
   memberSnapshot,
-  membershipChanged,
   parseGroupRuling,
   parseMemberLabel,
+  snapshotChanged,
+  snapshotFingerprint,
 } from './ruling';
 
 export const load: PageServerLoad = async ({ params, url, locals }) => {
@@ -78,6 +79,8 @@ export const load: PageServerLoad = async ({ params, url, locals }) => {
     topics: topics.map((t) => t.topic),
     groupRuling,
     memberLabels,
+    // Posted back with a group ruling, so a group that moved underneath the page is refused.
+    fingerprint: snapshotFingerprint(detail),
     storeStatus,
     // Both halves: the permission, and a store that can take the write. Controls are withheld rather
     // than shown-and-broken when either is missing.
@@ -156,10 +159,12 @@ export const actions: Actions = {
 
     const current = await reread('rule', params.groupKey, form.get('version'));
     if (!current.ok) return current.failure;
-    if (membershipChanged(form.get('members'), current.detail))
+    if (snapshotChanged(form.get('fingerprint'), current.detail))
       return fail(409, {
         scope: 'rule' as const,
-        error: 'The group changed since this page loaded — reload and look again before ruling.',
+        error:
+          'The group changed since this page loaded. It has been refreshed above — review it and ' +
+          'submit again.',
       });
 
     try {

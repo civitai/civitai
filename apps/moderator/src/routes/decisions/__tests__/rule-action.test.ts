@@ -32,6 +32,9 @@ vi.mock('$lib/server/decision-resolution.service', async (importOriginal) => ({
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));
 
 const { actions, load } = await import('../support/[groupKey]/+page.server');
+const { snapshotFingerprint } = await import('../support/[groupKey]/ruling');
+type Detail = Parameters<typeof snapshotFingerprint>[0];
+const fp = (d: unknown) => snapshotFingerprint(d as Detail);
 
 const GK = 'g_3fa9c01d22be';
 
@@ -68,7 +71,7 @@ const post = (
   (actions as unknown as Record<string, Handler>)[action]({
     request: new Request(`https://moderator.example/decisions/support/${GK}`, {
       method: 'POST',
-      body: new URLSearchParams({ version: 'v-shown', members: '1,2', ...fields }),
+      body: new URLSearchParams({ version: 'v-shown', fingerprint: fp(detail()), ...fields }),
     }),
     params: { groupKey: GK },
     url: new URL(`https://moderator.example/decisions/support/${GK}`),
@@ -159,20 +162,20 @@ describe('the rule action', () => {
   });
 
   it('refuses a ruling when the group changed since the page loaded (409), without writing', async () => {
-    expect((await post('rule', { ruling: 'correct', members: '1' })).status).toBe(409);
-    expect((await post('rule', { ruling: 'correct', members: '1,2,3' })).status).toBe(409);
-    const noList = await (actions as unknown as Record<string, Handler>).rule({
-      request: new Request('https://moderator.example/x', {
-        method: 'POST',
-        body: new URLSearchParams({ version: 'v-shown', ruling: 'correct' }),
-      }),
-      params: { groupKey: GK },
-      locals: { user: { id: 1 }, grants: { 'decisions.rule': true } },
-    });
-    expect(noList.status).toBe(409);
+    // A member left…
+    expect(
+      (await post('rule', { ruling: 'correct', fingerprint: fp(detail({ members: ['1'] })) }))
+        .status
+    ).toBe(409);
+    // …or the SAME members, one re-routed in place with new probabilities — invisible to an id list.
+    const moved = detail();
+    moved.decision.members[1].probabilities.group = 0.42;
+    expect((await post('rule', { ruling: 'correct', fingerprint: fp(moved) })).status).toBe(409);
+    // …or nothing posted at all.
+    expect((await post('rule', { ruling: 'correct', fingerprint: '' })).status).toBe(409);
     expect(recordResolution).not.toHaveBeenCalled();
-    // Order does not matter — the same set is the same group.
-    expect((await post('rule', { ruling: 'correct', members: '2,1' })).success).toBe(true);
+    // The unchanged page's own fingerprint goes through.
+    expect((await post('rule', { ruling: 'correct' })).success).toBe(true);
   });
 
   it('records an escalation with its area', async () => {

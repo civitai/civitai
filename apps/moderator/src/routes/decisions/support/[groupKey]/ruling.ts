@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import {
   isGroupRuling,
@@ -118,19 +119,26 @@ export function parseMemberLabel(
 }
 
 /**
- * Has the group's membership changed since the moderator's page loaded?
+ * A fingerprint of everything `groupSnapshot` stores — membership, each member's topic and
+ * probabilities, the group's own topic.
+ */
+export const snapshotFingerprint = (d: SupportGroupDetail): string =>
+  createHash('sha256')
+    .update(JSON.stringify(groupSnapshot(d)))
+    .digest('hex')
+    .slice(0, 32);
+
+/**
+ * Has the group changed since the moderator's page loaded?
  *
  * 🔴 THE SNAPSHOT IS ONLY "WHAT THE HUMAN SAW" IF NOTHING MOVED IN BETWEEN. It is built from a server
  * re-read (so the client cannot forge it), and the router keeps adding and re-routing members while a
- * page sits open. The page posts the member ids it rendered; a mismatch refuses the ruling rather
- * than storing evidence the moderator never looked at. `null` (nothing posted) is a mismatch too.
+ * page sits open — including re-routing a ticket into the SAME group with new probabilities, which a
+ * member-id comparison would miss. The page posts the fingerprint of the snapshot it rendered; any
+ * difference refuses the ruling rather than storing evidence the moderator never looked at. Nothing
+ * posted is a difference too.
  */
-export function membershipChanged(
+export const snapshotChanged = (
   posted: FormDataEntryValue | null,
   d: SupportGroupDetail
-): boolean {
-  if (typeof posted !== 'string') return true;
-  const seen = posted.split(',').filter(Boolean).sort();
-  const now = (d.decision?.members ?? []).map((m) => m.ticketId).sort();
-  return seen.length !== now.length || seen.some((id, i) => id !== now[i]);
-}
+): boolean => posted !== snapshotFingerprint(d);

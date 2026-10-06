@@ -1,16 +1,15 @@
 <script lang="ts">
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import DecisionStoreNotice from '$lib/components/DecisionStoreNotice.svelte';
-  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { versionedHref } from '$lib/decisions';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural } from '$lib/format';
   import { denied } from '$lib/permissions';
   import MemberTable from './MemberTable.svelte';
   import RulingPanel from './RulingPanel.svelte';
-  import type { ActionData, PageData } from './$types';
+  import type { PageData } from './$types';
 
-  let { data, form }: { data: PageData; form: ActionData } = $props();
+  let { data }: { data: PageData } = $props();
 
   const group = $derived(data.detail.group);
   const decision = $derived(data.detail.decision);
@@ -19,15 +18,6 @@
 
   const rep = $derived(data.detail.representative);
 
-  // The ruling panel holds its own refusal (`FormState`). Label refusals arrive on the page-level
-  // `form`: one naming a ticket renders on that row, and any other — a denied grant, a malformed
-  // post — renders here, so no refusal is invisible.
-  const labelFailure = $derived(
-    form && 'error' in form && form.error && (form.scope === 'label' || form.scope === 'denied')
-      ? { ticketId: 'ticketId' in form ? (form.ticketId ?? null) : null, message: form.error }
-      : null
-  );
-  const memberIds = $derived(decision?.members.map((m) => m.ticketId) ?? []);
 </script>
 
 <header class="page-header">
@@ -103,15 +93,10 @@
       version={data.version}
       {ticketHref}
       canRule={data.canRule}
-      error={labelFailure?.ticketId ? { ticketId: labelFailure.ticketId, message: labelFailure.message } : null}
     />
   {/key}
 {:else}
   <p class="text-dark-2">No ticket is assigned to this group in this version.</p>
-{/if}
-
-{#if labelFailure && !labelFailure.ticketId}
-  <ErrorAlert class="mt-4" message={labelFailure.message} />
 {/if}
 
 {#if data.storeStatus === 'ok' && !data.canRule}
@@ -124,7 +109,7 @@
     topic={group.topic}
     topics={data.topics}
     targets={data.targets}
-    {memberIds}
+    fingerprint={data.fingerprint}
     current={data.groupRuling}
     canRule={data.canRule}
   />
