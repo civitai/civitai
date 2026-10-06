@@ -4,6 +4,7 @@
   import { dateTime } from '$lib/format';
   import { urlWith } from '$lib/url';
   import CursorPager from '$lib/components/CursorPager.svelte';
+  import WorkflowGateQueue from './WorkflowGateQueue.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -46,3 +47,7 @@
 {/if}
 
 <CursorPager href={data.nextCursor ? urlWith(page.url, { cursor: data.nextCursor }) : null} />
+
+{#if data.workflowGates}
+  <WorkflowGateQueue gates={data.workflowGates} />
+{/if}
