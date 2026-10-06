@@ -29,24 +29,22 @@ const ANNOUNCEMENT_RESERVE_CLASS = 'min-h-[203px] md:min-h-[162px]';
  * `useGetAnnouncements`) with #3000's anti-collapse mechanism (a PERSISTENT
  * min-height parent that stays mounted across the SSR→hydration handoff):
  *
- *   - `feedReserveCls` ON + `type === 'site'` + a non-dismissed announcement:
+ *   - `type === 'site'` + a non-dismissed announcement:
  *     render the REAL carousel inside a persistent `min-h` parent. The wrapper is
  *     gated on the seed (`serverExposedCount`) PRE-hydration — identical on the
- *     server render and first client paint (`exposeSSR` is a base/host-level flag
- *     held in `useState`, stable, NOT a laggy per-user overlay), so no hydration
- *     mismatch and the space is held from frame 0 — and on the LIVE
- *     `announcements.length` POST-hydration, so a live dismiss of the last
- *     announcement collapses the reserve immediately (no dead space until reload).
+ *     server render and first client paint, so no hydration mismatch and the space is
+ *     held from frame 0 — and on the LIVE `announcements.length` POST-hydration, so a
+ *     live dismiss of the last announcement collapses the reserve immediately.
  *     In steady state the carousel fills ~162px, so there is no dead space beyond
  *     the floor.
- *   - Flag OFF / non-`site` / server saw nothing (or saw it dismissed): NO wrapper.
- *     Byte-identical to today — the hook's `isClient` gate zeroes `data` on the
- *     server + first client paint, so this renders `null` there exactly as before,
- *     and a server-side dismisser reserves NO dead space.
+ *   - Non-`site` / server saw nothing (or saw it dismissed): NO wrapper. For
+ *     non-`site` the hook's `isClient` gate zeroes `data` on the server + first
+ *     client paint, so this renders `null` there; a server-side dismisser reserves
+ *     NO dead space.
  *
  * ONE bounded exception (unchanged from #3018): a user who dismissed a STILL-ACTIVE
  * announcement under the OLD localStorage bundle, on their FIRST load of the new
- * bundle with the flag ON. The localStorage→cookie migration runs CLIENT-side only,
+ * bundle. The localStorage→cookie migration runs CLIENT-side only,
  * so on that first load there is no cookie server-side → the seed is empty →
  * `serverExposedCount > 0` → SSR + first client paint render the carousel inside the
  * reserve; post-hydration the just-migrated store empties `announcements` → the
@@ -85,14 +83,15 @@ export function Announcements({
     exposeSSR && type === 'site' && (isClient ? announcements.length > 0 : serverExposedCount > 0);
   if (showReserve) {
     return (
-      <div className={clsx(className, ANNOUNCEMENT_RESERVE_CLASS)} data-testid="announcements-cls-reserve">
+      <div
+        className={clsx(className, ANNOUNCEMENT_RESERVE_CLASS)}
+        data-testid="announcements-cls-reserve"
+      >
         <AnnouncementsCarousel type={type} />
       </div>
     );
   }
 
-  // Flag OFF / non-site / server saw nothing (or dismissed): byte-identical to the
-  // #3018 behaviour — null on the server + first client paint, carousel afterwards.
   if (!announcements.length) return null;
 
   return <AnnouncementsCarousel className={className} type={type} />;

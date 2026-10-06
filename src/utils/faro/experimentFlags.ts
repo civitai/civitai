@@ -5,8 +5,8 @@ import type { FeatureAccess, FeatureFlagKey } from '~/server/services/feature-fl
  * Faro RUM beacon so flag-on vs flag-off cohorts are separable in Loki.
  *
  * WHY THIS EXISTS: Faro RUM is at 100% of users, but the beacons carry NO feature-flag
- * dimension. So a flag-gated A/B experiment (e.g. `feedReserveCls`, the announcement-CLS-reserve
- * flag ramped to 25% via Flipt) is UNMEASURABLE from RUM — CLS/LCP/exception beacons land in
+ * dimension. So a flag-gated A/B experiment (e.g. `genTabDeferView` ramped to a % via Flipt) is
+ * UNMEASURABLE from RUM — CLS/LCP/exception beacons land in
  * Loki with no way to split the flag-on cohort from flag-off. This module produces a small,
  * curated set of `exp_*` session attributes from the resolved feature flags, which FaroProvider
  * sets as Faro session metadata at init.
@@ -20,7 +20,8 @@ import type { FeatureAccess, FeatureFlagKey } from '~/server/services/feature-fl
  *   - Alloy's `faro.receiver` maps `Meta.Session` with prefix `session_` and the session's
  *     `attributes` map with prefix `attr_` (see `Meta.KeyVal` / `Session.KeyVal` in
  *     grafana/alloy `.../faro/receiver/internal/payload/payload.go`). So attribute
- *     `exp_feed_reserve_cls` lands in Loki as the logfmt field **`session_attr_exp_feed_reserve_cls`**.
+ *     `exp_gen_tab_defer_view` lands in Loki as the logfmt field
+ *     **`session_attr_exp_gen_tab_defer_view`**.
  *     NOTE: this is `session_attr_*`, NOT `context_*`. The `context_*` prefix is reserved for a
  *     BEACON's OWN payload context (e.g. resource_timing's `context_route`, web-vitals'
  *     `context_largest_shift_target`) — those are set per-push by the instrumentation that emits
@@ -55,7 +56,6 @@ export const RUM_EXPERIMENT_ATTR_PREFIX = 'exp_';
  * `attr` — the session-attribute name (`exp_*`) → Loki field `session_attr_<attr>`.
  */
 export const RUM_EXPERIMENT_FLAGS = [
-  { flag: 'feedReserveCls', attr: 'exp_feed_reserve_cls' },
   { flag: 'genTabDeferView', attr: 'exp_gen_tab_defer_view' },
 ] as const satisfies ReadonlyArray<{ flag: FeatureFlagKey; attr: string }>;
 
