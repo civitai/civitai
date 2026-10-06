@@ -47,8 +47,25 @@ It reads `MODERATOR_DATABASE_URL` and `DATABASE_REPLICA_URL` (main database, rea
 
 ## Import
 
-Seeds a test set from a local JSON file. Keep the file local (`*.local.*`); never commit it.
+Seeds a **new** test set from a local JSON file. Keep the file local (`*.local.*`); never commit it.
 
 ```bash
-pnpm --filter @civitai/moderator-app exec tsx text-scan-lab/import.ts --file <path.json> --set "<name>" --by <moderatorId> [--dry-run]
+CIVITAI_API_KEY=<your own API key> pnpm --filter @civitai/moderator-app exec \
+  tsx --env-file=.env text-scan-lab/import.ts --file <path.json> --set "<name>" --by <moderatorId> [--dry-run]
 ```
+
+```json
+{ "cases": [
+  { "entityType": "Model", "entityId": 123, "expected": { "nsfw": { "min": "none", "max": "pg13" }, "poi": false } },
+  { "entityType": "Comment", "fields": [{ "heading": "Comment", "text": "..." }], "expected": { "scam": true }, "synthetic": true, "note": "..." }
+] }
+```
+
+- An entity case snapshots the text the main app composes for it now; ids it cannot compose (not
+  found, too short) are skipped and counted. A free-text case uses its `fields`.
+- `expected` takes the labels the entity type scores; leave a label out to not score it.
+- The whole file is validated first, and the set and its cases are written in one transaction.
+  An existing set name is refused.
+- It reads `MODERATOR_DATABASE_URL` and `CIVITAI_APP_URL` from `.env` and prints both targets before
+  writing. Entity cases call `/api/mod/text-scan` with `CIVITAI_API_KEY`, the running moderator's own
+  key; composing text bills nothing. It prints counts only.
