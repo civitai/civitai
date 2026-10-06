@@ -334,3 +334,69 @@ describe('upsertModel — moderation-owned meta keys are not writable by the own
     expect(writtenMeta().textModeration).toBeDefined();
   });
 });
+
+// The publish paths read these keys to find a model's training workflow and its approval stamp, so
+// client meta must not be able to set, change or clear them — moderators included.
+describe('upsertModel — server-owned meta keys are not writable through client meta', () => {
+  const stored = { trainingStudioWorkflowId: 'wf-real', trainingStudioModerationApproved: true };
+  const writtenUpdateMeta = () =>
+    (mockDbWrite.model.update.mock.calls[0][0] as { data: { meta: Record<string, unknown> } }).data
+      .meta;
+
+  it.each([false, true])(
+    'keeps the stored values when client meta (isModerator=%s) blanks or redirects them',
+    async (isModerator) => {
+      mockDbRead.model.findUnique.mockResolvedValue({ ...storedModel, meta: stored });
+      mockUpdateReturning('PERSISTED Name', 'PERSISTED description');
+
+      await upsert({
+        id: MODEL_ID,
+        userId: OWNER_ID,
+        isModerator,
+        name: 'New Name',
+        meta: {
+          trainingStudioWorkflowId: 'wf-other',
+          trainingStudioModerationApproved: false,
+          commentsLocked: true,
+        } as unknown as ModelUpsertInput['meta'],
+      });
+
+      expect(writtenUpdateMeta()).toMatchObject({ ...stored, commentsLocked: true });
+    }
+  );
+
+  it('ignores them on create, and writes only what serverMeta carries', async () => {
+    mockDbWrite.model.create.mockResolvedValue({
+      id: MODEL_ID,
+      nsfwLevel: 1,
+      meta: null,
+      availability: 'Public',
+    });
+    await upsert({
+      userId: OWNER_ID,
+      name: 'New Name',
+      meta: {
+        trainingStudioWorkflowId: 'wf-client',
+        trainingStudioModerationApproved: true,
+      } as unknown as ModelUpsertInput['meta'],
+    });
+    const clientCreate = (mockDbWrite.model.create.mock.calls[0][0] as { data: { meta?: object } })
+      .data.meta;
+    expect(clientCreate ?? {}).not.toHaveProperty('trainingStudioWorkflowId');
+    expect(clientCreate ?? {}).not.toHaveProperty('trainingStudioModerationApproved');
+
+    mockDbWrite.model.create.mockClear();
+    await upsertModel({
+      ...baseInput,
+      userId: OWNER_ID,
+      name: 'New Name',
+      serverMeta: { trainingStudioWorkflowId: 'wf-server', trainingStudioModerationApproved: true },
+    } as Parameters<typeof upsertModel>[0]);
+    expect(
+      (mockDbWrite.model.create.mock.calls[0][0] as { data: { meta: object } }).data.meta
+    ).toMatchObject({
+      trainingStudioWorkflowId: 'wf-server',
+      trainingStudioModerationApproved: true,
+    });
+  });
+});

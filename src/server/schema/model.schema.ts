@@ -337,6 +337,10 @@ export type ModelMeta = Partial<{
    *  The idempotency key for `createDraftModelFromWorkflow`, and what the publish handler uses
    *  to stamp the published model back onto the workflow. */
   trainingStudioWorkflowId: string;
+  /** Set once the run passed the training moderation check (at materialization, or backfilled when
+   *  a later check reads the run as approved). A stamped model skips the publish-time check.
+   *  Server-owned. */
+  trainingStudioModerationApproved: boolean;
   unpublishedReason: UnpublishReason;
   customMessage: string;
   needsReview: boolean;
