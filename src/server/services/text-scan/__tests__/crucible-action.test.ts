@@ -80,6 +80,11 @@ describe('settleSkippedCrucibleScan', () => {
       result: { version: 1 },
     });
     await settleSkippedCrucibleScan(5, 'unchanged');
+    expect(dbMock.dbWrite.entityModeration.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { entityType_entityId: { entityType: 'Crucible', entityId: 5 } },
+      })
+    );
     expect(applyCrucibleNsfwEscalation).toHaveBeenCalledWith({
       entityId: 5,
       isNsfw: true,

@@ -1,7 +1,13 @@
 import type { Transaction } from 'kysely';
 import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { getHighestBrowsingLevelBit, NsfwLevel, nsfwBrowsingLevelsFlag } from '@civitai/shared';
+import {
+  allBrowsingLevelsFlag,
+  getHighestBrowsingLevelBit,
+  NsfwLevel,
+  nsfwBrowsingLevelsFlag,
+} from '@civitai/shared';
+import { hasCrucibleStarted } from '@civitai/shared/crucible';
 import { challengeDerivedNsfwLevel, isTextScanRaised } from '@civitai/shared/rated-entity-sql';
 import {
   collectionRatingLevel,
@@ -46,7 +52,23 @@ export type RatingReviewRow = {
   resolver: RatingReviewUser | null;
   entity: RatingReviewEntitySummary | null;
   scan: { level: number | null; reason: string | null } | null;
+  levelOptions: number[];
 };
+
+// Blocked is a ToS action, not a rating, as in the main app's `ratedLevel`.
+const ratingBits = (mask: number) => mask & allBrowsingLevelsFlag;
+
+// A challenge or crucible is judged against its live level, not the review's snapshot: the mask can
+// have moved since the dispute was filed.
+function moderatorLevelsFor(
+  entityType: RatingReviewEntityType,
+  snapshotLevel: number,
+  liveLevel: number | undefined
+): number[] {
+  const live = entityType === 'Challenge' || entityType === 'Crucible' ? liveLevel : undefined;
+  const level = live != null ? getHighestBrowsingLevelBit(ratingBits(live)) : snapshotLevel;
+  return ratingReviewModeratorLevels(entityType, level);
+}
 
 type Summary = Omit<RatingReviewEntitySummary, 'path'> & { parentId: number | null };
 
@@ -300,6 +322,7 @@ export async function getRatingReviews({
           }
         : null,
       scan: scans.get(t)?.get(r.entityId) ?? null,
+      levelOptions: moderatorLevelsFor(t, r.currentLevel, s?.nsfwLevel),
     };
   });
 
@@ -363,11 +386,6 @@ function assertOne(result: { numUpdatedRows: bigint }, entityType: RatingReviewE
 
 type LiveChallenge = { nsfwLevel: number; allowedNsfwLevel: number; collectionId: number | null };
 type LiveCrucible = { nsfwLevel: number; status: string; startAt: Date | null };
-
-// Same rule as the main app's `hasCrucibleStarted`: a scheduled crucible stays Pending until the
-// activation job runs, which can lag its start.
-const crucibleHasStarted = ({ status, startAt }: LiveCrucible, now = new Date()) =>
-  status !== 'Pending' || (!!startAt && new Date(startAt) <= now);
 
 // Their level is an allowed-entry mask read live under a row lock, not the review's snapshot.
 type MaskEntityType = 'Challenge' | 'Crucible';
@@ -522,14 +540,14 @@ async function applyCrucibleOverride(
   live: LiveCrucible,
   appliedLevel: number
 ): Promise<void> {
-  const allowed = challengeAllowedMaskAt(live.nsfwLevel, appliedLevel);
+  const allowed = challengeAllowedMaskAt(ratingBits(live.nsfwLevel), appliedLevel);
   assertOne(
     await trx
       .updateTable('Crucible')
       .set({
         moderatorNsfwLevel: appliedLevel,
         moderatorNsfwLevelBasis: challengeDerivedNsfwLevel(allowed),
-        nsfwLevel: allowed,
+        nsfwLevel: allowed | (live.nsfwLevel & ~allBrowsingLevelsFlag),
         textNsfw: appliedLevel >= NsfwLevel.R,
       })
       .where('id', '=', entityId)
@@ -605,15 +623,15 @@ export async function resolveRatingReview(input: {
     } else {
       exists = await entityExists(trx, entityType, entityId);
     }
-    const level = liveLevel != null ? getHighestBrowsingLevelBit(liveLevel) : review.currentLevel;
-    if (!ratingReviewModeratorLevels(entityType, level).includes(appliedLevel))
+    if (!moderatorLevelsFor(entityType, review.currentLevel, liveLevel).includes(appliedLevel))
       throw notApplicable();
     // The main app lets even a moderator change a crucible's levels only before it starts. Resolving
     // at the current level (a decline) leaves the mask as it is, so it stays available.
     if (
       crucible &&
-      crucibleHasStarted(crucible) &&
-      challengeAllowedMaskAt(crucible.nsfwLevel, appliedLevel) !== crucible.nsfwLevel
+      hasCrucibleStarted(crucible) &&
+      challengeAllowedMaskAt(ratingBits(crucible.nsfwLevel), appliedLevel) !==
+        ratingBits(crucible.nsfwLevel)
     )
       throw new RatingReviewResolveError(
         "This crucible has started; its allowed levels can't change."

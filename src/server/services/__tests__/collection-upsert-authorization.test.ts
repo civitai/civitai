@@ -425,11 +425,22 @@ describe('upsertCollection authorization', () => {
     expect(scanEntityInBackground).not.toHaveBeenCalled();
   });
 
+  // The pin reads the stored blob off the primary row `upsertCollection` loads for the update.
+  const storedMetadata = (metadata: Record<string, unknown>) =>
+    mockDbWrite.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      read: 'Public',
+      write: 'Private',
+      mode: null,
+      createdAt: new Date('2026-01-01'),
+      image: null,
+      metadata,
+    } as never);
+  const writtenMetadata = () => mockDbWrite.collection.update.mock.calls[0][0].data.metadata;
+
   it('pins forcedBrowsingLevel to the stored value for a non-moderator', async () => {
     arrange({ actorId: OWNER_ID });
-    mockDbRead.collection.findUnique.mockResolvedValue({
-      metadata: { forcedBrowsingLevel: 1 },
-    } as never);
+    storedMetadata({ forcedBrowsingLevel: 1 });
 
     await upsertCollection({
       input: {
@@ -441,13 +452,24 @@ describe('upsertCollection authorization', () => {
       },
     } as never);
 
-    const updateArgs = mockDbWrite.collection.update.mock.calls[0][0];
-    expect(updateArgs.data.metadata.forcedBrowsingLevel).toBe(1);
+    expect(writtenMetadata().forcedBrowsingLevel).toBe(1);
+  });
+
+  it('keeps the stored forcedBrowsingLevel and autoTagId when a non-moderator sends no metadata', async () => {
+    arrange({ actorId: MANAGER_ID });
+    storedMetadata({ forcedBrowsingLevel: 1, autoTagId: 5 });
+
+    await upsertCollection({
+      input: { id: COLLECTION_ID, name: 'Renamed', userId: MANAGER_ID, isMember: true },
+    } as never);
+
+    expect(writtenMetadata()).toEqual({ forcedBrowsingLevel: 1, autoTagId: 5 });
+    expect(mockDbRead.collection.findUnique).not.toHaveBeenCalled();
   });
 
   it('drops forcedBrowsingLevel from a non-moderator when none is stored', async () => {
     arrange({ actorId: OWNER_ID });
-    mockDbRead.collection.findUnique.mockResolvedValue({ metadata: {} } as never);
+    storedMetadata({});
 
     await upsertCollection({
       input: {
@@ -459,8 +481,7 @@ describe('upsertCollection authorization', () => {
       },
     } as never);
 
-    const updateArgs = mockDbWrite.collection.update.mock.calls[0][0];
-    expect(updateArgs.data.metadata).not.toHaveProperty('forcedBrowsingLevel');
+    expect(writtenMetadata()).not.toHaveProperty('forcedBrowsingLevel');
   });
 
   it('drops forcedBrowsingLevel from a non-moderator creating a collection', async () => {
@@ -490,9 +511,7 @@ describe('upsertCollection authorization', () => {
 
   it('lets a moderator change forcedBrowsingLevel', async () => {
     arrange({ actorId: MANAGER_ID });
-    mockDbRead.collection.findUnique.mockResolvedValue({
-      metadata: { forcedBrowsingLevel: 1 },
-    } as never);
+    storedMetadata({ forcedBrowsingLevel: 1 });
 
     await upsertCollection({
       input: {
@@ -505,8 +524,25 @@ describe('upsertCollection authorization', () => {
       },
     } as never);
 
-    const updateArgs = mockDbWrite.collection.update.mock.calls[0][0];
-    expect(updateArgs.data.metadata.forcedBrowsingLevel).toBe(31);
+    expect(writtenMetadata().forcedBrowsingLevel).toBe(31);
+  });
+
+  it('lets a moderator clear forcedBrowsingLevel', async () => {
+    arrange({ actorId: MANAGER_ID });
+    storedMetadata({ forcedBrowsingLevel: 1 });
+
+    await upsertCollection({
+      input: {
+        id: COLLECTION_ID,
+        name: 'Mine',
+        metadata: {},
+        userId: MANAGER_ID,
+        isModerator: true,
+        isMember: true,
+      },
+    } as never);
+
+    expect(writtenMetadata()).not.toHaveProperty('forcedBrowsingLevel');
   });
 });
 
@@ -536,6 +572,7 @@ describe('upsertCollection create-path scan', () => {
       entityType: 'Collection',
       entityId: COLLECTION_ID,
     });
+    expect(enqueueJobs).not.toHaveBeenCalled();
   });
 
   it('does not scan a new private collection', async () => {
@@ -547,6 +584,7 @@ describe('upsertCollection create-path scan', () => {
 
     expect(mockDbWrite.collection.create).toHaveBeenCalled();
     expect(scanEntityInBackground).not.toHaveBeenCalled();
+    expect(enqueueJobs).not.toHaveBeenCalled();
   });
 
   it('does not scan a Public → Private edit', async () => {

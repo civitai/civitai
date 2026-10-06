@@ -1250,6 +1250,18 @@ export const saveItemInCollections = async ({
   return data.length > 0 ? 'added' : removedCount > 0 ? 'removed' : null;
 };
 
+function withStoredModeratorMetadata(
+  sent: CollectionMetadataSchema | undefined,
+  stored: CollectionMetadataSchema | null | undefined
+): CollectionMetadataSchema {
+  const next = { ...sent };
+  if (stored?.autoTagId === undefined) delete next.autoTagId;
+  else next.autoTagId = stored.autoTagId;
+  if (stored?.forcedBrowsingLevel === undefined) delete next.forcedBrowsingLevel;
+  else next.forcedBrowsingLevel = stored.forcedBrowsingLevel;
+  return next;
+}
+
 export const upsertCollection = async ({
   input,
 }: {
@@ -1294,25 +1306,10 @@ export const upsertCollection = async ({
   // hit Save without touching (or knowing about) the field. Pin it to the stored value
   // instead: their save becomes a no-op on this field rather than a wall.
   // `forcedBrowsingLevel` is pinned the same way: it decides the collection's rating ahead of its
-  // items and any moderator rating, so only moderators (or system writers) set it.
-  if (!isModerator && metadata) {
-    const storedMetadata = id
-      ? ((
-          await dbRead.collection.findUnique({
-            where: { id },
-            select: { metadata: true },
-          })
-        )?.metadata as CollectionMetadataSchema | null)
-      : undefined;
-
-    const storedAutoTagId = storedMetadata?.autoTagId;
-    if (storedAutoTagId === undefined) delete metadata.autoTagId;
-    else metadata.autoTagId = storedAutoTagId;
-
-    const storedForcedBrowsingLevel = storedMetadata?.forcedBrowsingLevel;
-    if (storedForcedBrowsingLevel === undefined) delete metadata.forcedBrowsingLevel;
-    else metadata.forcedBrowsingLevel = storedForcedBrowsingLevel;
-  }
+  // items and any moderator rating, so only moderators (or system writers) set it. Both are carried
+  // over even when `metadata` is not sent, since the write replaces the whole blob.
+  const pinnedMetadata = (stored: CollectionMetadataSchema | null | undefined) =>
+    isModerator ? metadata ?? {} : withStoredModeratorMetadata(metadata, stored);
 
   if (id) {
     const permission = await getUserCollectionPermissionsById({
@@ -1336,6 +1333,7 @@ export const upsertCollection = async ({
         availability: true,
         mode: true,
         createdAt: true,
+        metadata: true,
         image: { select: { id: true } },
       },
     });
@@ -1401,7 +1399,9 @@ export const upsertCollection = async ({
           read: nextRead,
           write: nextWrite,
           mode: nextMode,
-          metadata: (metadata ?? {}) as Prisma.JsonObject,
+          metadata: pinnedMetadata(
+            currentCollection.metadata as CollectionMetadataSchema | null
+          ) as Prisma.JsonObject,
           image: imageId
             ? { connect: { id: imageId } }
             : image !== undefined
@@ -1592,7 +1592,7 @@ export const upsertCollection = async ({
       userId,
       type,
       mode,
-      metadata: (metadata ?? {}) as Prisma.JsonObject,
+      metadata: pinnedMetadata(undefined) as Prisma.JsonObject,
       contributors: {
         create: {
           userId,

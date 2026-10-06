@@ -29,7 +29,6 @@
   import {
     ratingReviewEntityLabels,
     ratingReviewLevelLabel,
-    ratingReviewModeratorLevels,
   } from '@civitai/shared/rating-review';
   import type { ActionData, PageData } from './$types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
@@ -233,7 +232,7 @@
               />
               <div class="flex flex-wrap items-center gap-2">
                 <span class="text-xs text-muted-foreground">Apply rating:</span>
-                {#each ratingReviewModeratorLevels(review.entityType, review.currentLevel) as level (level)}
+                {#each review.levelOptions as level (level)}
                   <Button
                     type="submit"
                     name="appliedLevel"

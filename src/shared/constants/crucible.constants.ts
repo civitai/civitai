@@ -92,11 +92,7 @@ export const getMaxCrucibleStartAt = (from: Date = new Date()) =>
 export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
   status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled;
 
-/** A scheduled crucible stays Pending until the activation job runs, which can lag its start. */
-export const hasCrucibleStarted = (
-  { status, startAt }: { status: CrucibleStatus; startAt: Date | string | null },
-  now = new Date()
-) => status !== CrucibleStatus.Pending || (!!startAt && new Date(startAt) <= now);
+export { hasCrucibleStarted } from '@civitai/shared/crucible';
 
 /**
  * Media types entries may be. Audio is excluded: judging is a side-by-side visual comparison.

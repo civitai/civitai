@@ -475,6 +475,48 @@ describe('resolveRatingReview', () => {
     expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4);
   });
 
+  it('offers and accepts the live level of a crucible widened before it started', async () => {
+    const all = 1 | 2 | 4 | 8 | 16;
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: all,
+      textNsfw: true,
+      status: 'Active',
+    });
+    // Filed while the mask still topped out at R.
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4, 8, 16]);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 16, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(all);
+  });
+
+  it('reads a crucible mask carrying the Blocked bit by its rating bits only', async () => {
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 4 | 32,
+      textNsfw: true,
+      status: 'Active',
+    });
+    const id = await fileReview('Crucible', crucibleId, 4, 1);
+
+    const { items } = await service.getRatingReviews({ status: 'Pending' });
+    expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4]);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 8, moderatorId: mod })
+    ).rejects.toThrow(/cannot be applied/);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
+    ).rejects.toThrow(/has started/);
+    await expect(
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+    expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4 | 32);
+  });
+
   it('lowers the mask of a crucible scheduled to start later', async () => {
     const crucibleId = await seedEntity(db, 'Crucible', {
       userId: owner,

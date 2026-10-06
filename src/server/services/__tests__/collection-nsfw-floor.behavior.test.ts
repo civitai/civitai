@@ -83,17 +83,19 @@ async function collection({
   moderatorNsfwLevel = null,
   metadata = {},
   read = 'Public',
+  availability = 'Public',
 }: {
   verdict?: number;
   items?: ('safe' | 'nsfw')[];
   moderatorNsfwLevel?: number | null;
   metadata?: Record<string, unknown>;
   read?: string;
+  availability?: string;
 }) {
   const id = nextId++;
   await holder.db.query(
-    `INSERT INTO "Collection" ("id", "moderatorNsfwLevel", "metadata", "read") VALUES ($1, $2, $3, $4)`,
-    [id, moderatorNsfwLevel, JSON.stringify(metadata), read]
+    `INSERT INTO "Collection" ("id", "moderatorNsfwLevel", "metadata", "read", "availability") VALUES ($1, $2, $3, $4, $5)`,
+    [id, moderatorNsfwLevel, JSON.stringify(metadata), read, availability]
   );
   for (const item of items)
     await holder.db.query(
@@ -155,5 +157,15 @@ describe('updateCollectionsNsfwLevels — text floor', () => {
   it('skips a collection that is not visible', async () => {
     const id = await collection({ verdict: R, items: ['nsfw'], read: 'Private' });
     expect(await levelAfterRecompute(id)).toBe(0);
+  });
+
+  it('skips a collection whose availability is Private', async () => {
+    const id = await collection({ verdict: R, items: ['nsfw'], availability: 'Private' });
+    expect(await levelAfterRecompute(id)).toBe(0);
+  });
+
+  it('rates an Unlisted collection', async () => {
+    const id = await collection({ verdict: R, items: ['safe'], read: 'Unlisted' });
+    expect(await levelAfterRecompute(id)).toBe(PG | NSFW_BUCKET);
   });
 });
