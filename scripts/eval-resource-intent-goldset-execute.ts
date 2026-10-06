@@ -1,7 +1,15 @@
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbRead } from '~/server/db/client';
 import { askJev, JEV_TIMEOUT_MS } from '~/server/services/ai/jev';
+import { parseLocalOverrides } from '@civitai/flipt';
+import {
+  ensureFliptInitialized,
+  FLIPT_FEATURE_FLAGS,
+  getFliptClientSync,
+  isFliptSync,
+} from '~/server/flipt/client';
 import { coverageAudience } from '~/server/services/generation/coverage-source';
+import type { ResourceIntentCoverage } from '~/server/services/resource-intent-matcher.service';
 import {
   buildResourceIntentStage1Request,
   compileCriteria,
@@ -55,7 +63,11 @@ export async function executeGoldsetStudy({
   retrievalParams: RetrievalRunParams;
   out: string | undefined;
 }): Promise<void> {
-  // The retrieval study's positive control runs FIRST, before any vendor spend, and so
+  // Coverage first: if the flags behind it cannot be evaluated, the run would grade a filter
+  // the endpoint does not use. Fails closed, before any index read or vendor call.
+  const coverage = await resolveEndpointCoverage();
+
+  // The retrieval study's positive control runs next, before any vendor spend, and so
   // also gates part one: a models index with no projected `insight.role` would turn
   // the purpose arm into the popularity arm and the study into a silent null result.
   const labeledIndexDocuments = await countLabeledIndexDocuments();
@@ -98,7 +110,7 @@ export async function executeGoldsetStudy({
     armOpts: {
       browsingLevel: allBrowsingLevelsFlag,
       // The anonymous audience, resolved exactly as the endpoint does on a cache miss.
-      coverage: await coverageAudience(undefined),
+      coverage,
       cap: M3_RETRIEVAL_PREREGISTRATION.cap,
     },
     labeledModelIds,
@@ -107,7 +119,7 @@ export async function executeGoldsetStudy({
 
   const report = [
     renderGoldsetReport(evaluateGoldset(pairs), { drawn: partOneRows.length }),
-    renderRetrievalReport(retrieval, { labeledIndexDocuments }),
+    renderRetrievalReport(retrieval, { labeledIndexDocuments, coverage }),
   ].join('\n');
   if (out) {
     const { writeFile } = await import('fs/promises');
@@ -117,6 +129,33 @@ export async function executeGoldsetStudy({
     );
   } else {
     console.log(report);
+  }
+  await closeStudyHandles();
+}
+
+/**
+ * Close what the study opened, so a finished `--execute` exits instead of hanging: the
+ * replica's Prisma pool (an idle session otherwise sits until the server times it out)
+ * and the Flipt SDK client (its config poller is a timer that keeps the process alive).
+ * The entry point (`runAsScript` in ./eval-resource-intent-goldset.ts) also exits
+ * explicitly once `main()` settles, because a handle opened deeper in the server graph
+ * cannot be enumerated from here; this is the clean half, that is the guarantee.
+ */
+export async function closeStudyHandles(deps?: {
+  disconnectDb: () => Promise<void>;
+  closeFlipt: () => void;
+}): Promise<void> {
+  const { disconnectDb, closeFlipt } = deps ?? {
+    disconnectDb: () => dbRead.$disconnect(),
+    // The SDK's package-root types declare its BROWSER client, which has no `close()`;
+    // under Node the NODE client is loaded, whose `close()` clears the config-refresh
+    // `setInterval` that keeps the process alive. Hence the structural type, not the import.
+    closeFlipt: () => (getFliptClientSync() as unknown as { close?: () => void } | null)?.close?.(),
+  };
+  try {
+    closeFlipt();
+  } finally {
+    await disconnectDb();
   }
 }
 
@@ -140,4 +179,73 @@ async function runStage1(
     console.warn(`[goldset] stage-1 error: ${error instanceof Error ? error.message : error}`);
     return null;
   }
+}
+
+/**
+ * The flags `coverageAudience` reads for an anonymous caller, with the entity id it passes.
+ * `GENERATION_LOADING_OPEN_TO_ALL` is read only when the first is on; both are checked here
+ * regardless, so a half-reachable Flipt cannot slip through on one branch.
+ */
+const COVERAGE_FLAGS = [
+  { flag: FLIPT_FEATURE_FLAGS.GENERATION_COVERAGE_NEXT, entityId: 'global' },
+  { flag: FLIPT_FEATURE_FLAGS.GENERATION_LOADING_OPEN_TO_ALL, entityId: '0' },
+] as const;
+
+/**
+ * The coverage the endpoint resolves for an anonymous caller — or an error, never a guess.
+ *
+ * 🔴 `coverageAudience` cannot be trusted on its own here. It reads flags through `isFlipt`,
+ * which returns `false` both for a flag that is really off AND when the Flipt client never
+ * initialised (unreachable, bad credentials) or the flag failed to evaluate. The two are
+ * indistinguishable through `isFlipt`, so an unreachable Flipt silently yields the flag
+ * defaults — which is how the first pilot (2026-10-06) graded `{next:false, member:true}`
+ * while the endpoint resolves `{next:true, member:false}`.
+ *
+ * So, after initialising Flipt, this refuses three ways before letting the endpoint's own
+ * `coverageAudience` resolve the value (one rule, not a copy):
+ *   1. `FLIPT_LOCAL_OVERRIDES` names a coverage flag. A local override is answered BEFORE
+ *      the client is consulted (by `isFlipt` and `isFliptSync` alike) whenever NODE_ENV is
+ *      not production, and `pnpm run tsscript` runs development — so an override passes
+ *      every check below with Flipt unreachable. Refused regardless of NODE_ENV.
+ *   2. No initialised client (`getFliptClientSync()` is null): Flipt is unreachable.
+ *   3. Any coverage flag whose evaluation is `null` through `isFliptSync` (missing flag or
+ *      an evaluation error).
+ */
+export async function resolveEndpointCoverage(
+  deps: Partial<{
+    ensureInitialized: () => Promise<void>;
+    overriddenFlags: () => string[];
+    clientInitialised: () => boolean;
+    evaluateSync: (flag: string, entityId: string) => boolean | null;
+    audience: () => Promise<ResourceIntentCoverage>;
+  }> = {}
+): Promise<ResourceIntentCoverage> {
+  const {
+    ensureInitialized = ensureFliptInitialized,
+    overriddenFlags = () => Object.keys(parseLocalOverrides(process.env.FLIPT_LOCAL_OVERRIDES)),
+    clientInitialised = () => getFliptClientSync() !== null,
+    evaluateSync = (flag: string, entityId: string) => isFliptSync(flag, entityId),
+    audience = () => coverageAudience(undefined),
+  } = deps;
+  await ensureInitialized();
+  const abort = (why: string) =>
+    new Error(
+      `[goldset] ${why} — coverage would not be what the endpoint resolves; aborting before any index read or vendor call.`
+    );
+  const overridden = COVERAGE_FLAGS.map(({ flag }) => flag).filter((flag) =>
+    overriddenFlags().includes(flag)
+  );
+  if (overridden.length) {
+    throw abort(`FLIPT_LOCAL_OVERRIDES sets ${overridden.join(', ')}`);
+  }
+  if (!clientInitialised()) {
+    throw abort('the Flipt client did not initialise (Flipt unreachable)');
+  }
+  const unevaluated = COVERAGE_FLAGS.filter(
+    ({ flag, entityId }) => evaluateSync(flag, entityId) === null
+  ).map(({ flag }) => flag);
+  if (unevaluated.length) {
+    throw abort(`feature flags could not be evaluated (${unevaluated.join(', ')})`);
+  }
+  return audience();
 }

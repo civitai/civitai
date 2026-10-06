@@ -42,11 +42,14 @@ const FORBIDDEN_IN_DRY_RUN = ['src/server/db/client.ts', 'src/server/meilisearch
  * the verdict block, the confound and the power assumption; nothing else pins the Sample,
  * Stage 1, Gold and Arms paragraphs, so this hash does. It is meant to be UPDATED ON
  * PURPOSE, in the same commit that amends the registration (and before any run under
- * it) — never to make an accidental change pass. Current value: v1 as printed by
- * `origin/main` at c8bc91037f, taken from that commit's own dry-run stdout.
+ * it) — never to make an accidental change pass. Current value: v2 (the live-Flipt
+ * abort, the coverage line, the History recording both pilots, and "before any registered
+ * run"; power assumption unchanged from v1), taken from the dry run's own stdout in the
+ * commit that amended it. Previous: v1,
+ * `0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3` (c8bc91037f).
  */
 const REGISTERED_PREREGISTRATION_SHA256 =
-  '0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3';
+  '2ad9ecdaf6810d60fac1c073b76013156e5457ad7ddc6de248d50be82a17c467';
 
 function exampleEnv(): Record<string, string> {
   const env: Record<string, string> = {};
@@ -120,5 +123,32 @@ describe('eval-resource-intent-goldset under tsx (the real entry point)', () => 
     expect(createHash('sha256').update(printed).digest('hex')).toBe(
       REGISTERED_PREREGISTRATION_SHA256
     );
+  }, 180_000);
+
+  it('🔴 a report much larger than a pipe buffer arrives COMPLETE through the real exit path', () => {
+    // `runAsScript` exits explicitly; without draining first, `process.exit` truncates a
+    // piped report (measured: 8–16 KB of a 4 MB report arrived, 5 runs of 5). The fixture
+    // prints through the gold-set runner's real `runAsScript`, real drain, real exit.
+    const bytes = 4_000_000;
+    const end = 'END-OF-REPORT';
+    const env: NodeJS.ProcessEnv = {
+      ...withoutPrismaEngine(process.env),
+      ...exampleEnv(),
+      NODE_ENV: 'development',
+      M3_BIG_REPORT_BYTES: String(bytes),
+      M3_BIG_REPORT_END: end,
+    };
+    const run = spawnSync(
+      process.execPath,
+      [TSX_CLI, path.join(ROOT, 'scripts/__tests__/fixtures/big-report-exit.ts')],
+      { cwd: ROOT, env, encoding: 'utf8', timeout: 150_000, maxBuffer: 64 * 1024 * 1024 }
+    );
+    expect(run.status).toBe(0);
+    const at = run.stdout.indexOf(end);
+    expect(
+      at,
+      `stdout was ${run.stdout.length} bytes and the end marker never arrived`
+    ).toBeGreaterThan(-1);
+    expect(run.stdout.slice(at - bytes, at)).toBe('x'.repeat(bytes));
   }, 180_000);
 });

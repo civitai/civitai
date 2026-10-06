@@ -15,6 +15,7 @@ import {
   renderRetrievalPreregistration,
   type RetrievalRunParams,
 } from './eval-resource-intent-registration';
+import { drainStdio, runScriptAndExit } from './lib/run-as-script';
 
 /**
  * Gold-set study runner (M3) — measures Stage-1 quality against the provenance
@@ -392,9 +393,22 @@ export function parseRetrievalParams(values: {
   };
 }
 
+/**
+ * Run `main` as a script: DRAIN stdout and stderr, then EXIT — 0 on success, 1 on failure.
+ * The exit is explicit because a finished `--execute` otherwise stayed alive on an open
+ * handle (it hung for 30+ minutes after writing its report); `closeStudyHandles` closes the
+ * known ones, and this makes the end of the run not depend on that list being complete. The
+ * drain is what stops that exit truncating a report printed to a pipe; both are the shared
+ * rule in ./lib/run-as-script.
+ */
+export async function runAsScript(
+  run: () => Promise<void> = main,
+  exit: (code: number) => void = process.exit,
+  flush: () => Promise<void> = drainStdio
+): Promise<void> {
+  await runScriptAndExit(run, exit, flush);
+}
+
 if (process.argv[1]?.endsWith('eval-resource-intent-goldset.ts')) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  void runAsScript();
 }

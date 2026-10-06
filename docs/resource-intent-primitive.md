@@ -492,6 +492,30 @@ either one that falls below. If the discordant rate is under 15%, re-plan the sa
 BEFORE the registered run: change the registered values only in a new commit dated
 before that run, and say why in it.
 
+**Coverage must resolve as the endpoint's does, or the run does not happen.** Both arms
+filter on generation coverage from `coverageAudience(undefined)`, which reads Flipt through
+`isFlipt` — and `isFlipt` returns `false` both for a flag that is off and when Flipt is
+unreachable, so an unreachable Flipt silently grades a filter the endpoint does not use.
+`--execute` therefore initialises Flipt and, before any index read or vendor call, aborts
+unless a live client exists and evaluates both coverage flags (`isFliptSync` not `null`) —
+and also if `FLIPT_LOCAL_OVERRIDES` sets either flag, because a local override is answered
+before the client is consulted and would otherwise pass with Flipt unreachable. The report
+prints the resolved `{next, member}`. A finished `--execute` closes the Flipt client and
+the replica connection, drains stdout and stderr, and exits explicitly (an earlier run
+hung on an open handle after writing its report; the drain stops that exit truncating a
+report printed to a pipe). The drain-then-exit rule is shared with
+`scripts/label-resource-insights.ts` in `scripts/lib/run-as-script.ts`.
+
+**The pilot, and registration v2.** The first pilot (2026-10-06) ran on flag defaults
+for exactly this reason and was discarded. The corrected pilot (2026-10-06, Flipt
+reachable, coverage resolved live) measured 85.0% scored and a 17.6% hit@10 discordant
+rate — both meet the registered power assumption, so the sample size (1000) and both VOID
+floors (667 scored; 10% infrastructure) are unchanged. At those rates ~150 discordant
+pairs are expected, and power against the 65/35 alternative is 0.955. The pilot's
+direction played no part in any choice. Registration v2 differs from v1 only in the
+live-Flipt abort, the coverage line in the report, its History text (which records both
+pilots), and its header now reading "before any registered run".
+
 The positive control reads the field the PURPOSE page filters on. Without it, an index
 whose projection had failed wholesale would turn PURPOSE into POPULARITY and the study
 into a quiet "no difference". The report also counts the scored prompts where both

@@ -5,6 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as MeiliClient from '~/server/meilisearch/client';
 import type * as JevModule from '~/server/services/ai/jev';
+import type * as FliptModule from '~/server/flipt/client';
 import type {
   ResourceIntentAnswer,
   ResourceIntentCriteria,
@@ -34,6 +35,25 @@ vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
 }));
 
 const askJev = vi.fn();
+// Feature-flag evaluation for the coverage guard. `null` = could not be evaluated (what
+// `isFliptSync` returns when Flipt is unreachable); a boolean = a real evaluation.
+// `flagTable` is the live flag state both readers see; `fliptSync` is the `isFliptSync`
+// reader alone (so a test can see which entity ids the GUARD asked for, separately from
+// the ones `coverageAudience` asks `isFlipt` for).
+const flagTable = vi.fn<(flag: string, entityId?: string) => boolean | null>(() => false);
+const fliptSync = vi.fn<(flag: string, entityId?: string) => boolean | null>((flag, entityId) =>
+  flagTable(flag, entityId)
+);
+const fliptClient = { close: vi.fn() };
+const fliptClientHolder: { current: typeof fliptClient | null } = { current: fliptClient };
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptModule>()),
+  ensureFliptInitialized: async () => undefined,
+  getFliptClientSync: () => fliptClientHolder.current,
+  isFliptSync: (flag: string, entityId?: string) => fliptSync(flag, entityId),
+  isFlipt: async (flag: string, entityId?: string) => flagTable(flag, entityId) === true,
+}));
+
 vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
   ...(await importOriginal<typeof JevModule>()),
   askJev: (...args: unknown[]) => askJev(...args),
@@ -64,6 +84,7 @@ const {
   renderRetrievalPreregistration,
 } = registrationModule;
 const goldsetModule = await import('../eval-resource-intent-goldset');
+const executeModule = await import('../eval-resource-intent-goldset-execute');
 type Outcome = Awaited<ReturnType<typeof runRetrievalArms>>[number];
 type GoldRow = Parameters<typeof runRetrievalArms>[0][number];
 const { buildResourceIntentFilter } = await import(
@@ -148,7 +169,7 @@ describe('the pre-registration', () => {
   it('pins the registered values', () => {
     expect(PREREGISTERED_RUN_PARAMS).toEqual({ sampleSize: 1000, sampleDays: 30 });
     expect(M3_RETRIEVAL_PREREGISTRATION).toMatchObject({
-      version: 1,
+      version: 2,
       registeredOn: '2026-10-06',
       primaryK: 10,
       secondaryK: 50,
@@ -186,8 +207,12 @@ describe('the pre-registration', () => {
         '            (including the 100-prompt pilot); fewer than 667 prompts scored (the n the',
         '            power calculation assumes); infrastructure exclusions (stage-1 failure,',
         '            arm error, label-read fallback) exceed 10% of drawn prompts; or both',
-        '            arms returned the same first 10 model ids on every scored prompt. (A failed',
-        '            positive control aborts before any run, so it produces no report at all.)',
+        '            arms returned the same first 10 model ids on every scored prompt. Two',
+        '            checks abort before any index read or vendor call, so they produce no',
+        '            report at all: coverage flags not evaluated by a live Flipt client (Flipt',
+        '            unreachable, a flag missing, or a coverage flag set in',
+        '            FLIPT_LOCAL_OVERRIDES — any of which is not the endpoint), and a failed',
+        '            positive control.',
       ],
       [
         'Known confound: people attach popular models, so attached-resource gold is biased',
@@ -1184,6 +1209,15 @@ describe('main — the --execute gate', () => {
   };
 
   beforeEach(() => {
+    flagTable.mockReset();
+    flagTable.mockReturnValue(false);
+    fliptSync.mockReset();
+    fliptSync.mockImplementation((flag, entityId) => flagTable(flag, entityId));
+    fliptClientHolder.current = fliptClient;
+    vi.unstubAllEnvs();
+    fliptClient.close.mockReset();
+    dbMock.dbRead.$disconnect.mockReset();
+    dbMock.dbRead.$disconnect.mockResolvedValue(undefined as never);
     askJev.mockReset();
     dbMock.dbRead.$queryRaw.mockReset();
     dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
@@ -1292,6 +1326,92 @@ describe('main — the --execute gate', () => {
     expect(report).toContain('| **scored** | **2** |');
   });
 
+  it('🔴 with --execute and Flipt unreachable, aborts before the index, the replica or the vendor', async () => {
+    const search = controlReturns(7000);
+    fliptSync.mockReturnValue(null);
+    const { result } = await runMain(['--execute', '--limit', '2']);
+    expect(String(result)).toContain('feature flags could not be evaluated');
+    expect(search).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(askJev).not.toHaveBeenCalled();
+  });
+
+  it('🔴 with --execute and a coverage flag overridden locally (the default env reader), aborts before the index', async () => {
+    const search = controlReturns(7000);
+    vi.stubEnv('FLIPT_LOCAL_OVERRIDES', 'generation-loading-open-to-all=on');
+    const { result } = await runMain(['--execute', '--limit', '2']);
+    expect(String(result)).toContain('FLIPT_LOCAL_OVERRIDES sets generation-loading-open-to-all');
+    expect(search).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('🔴 with --execute and no initialised Flipt client (the default reader), aborts before the index', async () => {
+    const search = controlReturns(7000);
+    fliptClientHolder.current = null;
+    const { result } = await runMain(['--execute', '--limit', '2']);
+    expect(String(result)).toContain('the Flipt client did not initialise');
+    expect(search).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it('🔴 the arms receive the RESOLVED coverage — next on, open-to-all off → {next:true, member:false}, not the defaults', async () => {
+    controlReturns(7000);
+    // The live state the first pilot missed: coverage-next ON, open-to-all OFF.
+    flagTable.mockImplementation((flag) => flag === 'generation-coverage-next');
+    dbMock.dbRead.$queryRaw.mockImplementation((async (query: { sql: string }) =>
+      query.sql.includes('WITH sampled AS')
+        ? [
+            {
+              imageId: 11,
+              prompt: 'a knight in anime style',
+              attachedTypes: ['LORA'],
+              attachedBaseModels: [BASE_MODEL],
+              attachedModels: [{ modelId: 4, modelType: 'LORA' }],
+              checkpointBaseModels: [BASE_MODEL],
+            },
+          ]
+        : []) as never);
+    askJev.mockImplementation(async () => ({
+      answers: STAGE1_ANSWERS('style'),
+      model: 'typesafe/jev-1.13-20260917',
+      usage: { promptTokens: 1, completionTokens: 1 },
+    }));
+
+    const { result, log } = await runMain(['--execute', '--limit', '2']);
+    expect(result).toBe('ok');
+
+    // The guard asked isFliptSync for each flag with coverageAudience's entity ids.
+    expect(fliptSync.mock.calls).toEqual([
+      ['generation-coverage-next', 'global'],
+      ['generation-loading-open-to-all', '0'],
+    ]);
+    // Printed …
+    const report = log.mock.calls.map((call) => String(call[0])).join('\n');
+    expect(report).toContain(
+      'Coverage (resolved as the endpoint does, for an anonymous caller): next=true, member=false.'
+    );
+    // … and what BOTH arms actually filtered on.
+    const resolvedGate = buildResourceIntentFilter({
+      modelTypes: ROLE_MODEL_TYPES.style,
+      baseModels: [BASE_MODEL],
+      browsingLevel: allBrowsingLevelsFlag,
+      coverage: { next: true, member: false },
+    });
+    const defaultGate = buildResourceIntentFilter({
+      modelTypes: ROLE_MODEL_TYPES.style,
+      baseModels: [BASE_MODEL],
+      browsingLevel: allBrowsingLevelsFlag,
+      coverage: { next: false, member: true },
+    });
+    // Control: the two coverages really produce different filters, so this can tell them apart.
+    expect(resolvedGate).not.toBe(defaultGate);
+    expect(searchCalls().map((c) => c.filter)).toEqual([
+      `(${resolvedGate} AND insight.role = "style")`,
+      resolvedGate,
+      resolvedGate,
+    ]);
+  });
+
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
     controlReturns(7000);
     const matchedRow = {
@@ -1364,6 +1484,10 @@ describe('main — the --execute gate', () => {
     expect(report).toContain('Judged 1 of 1 drawn rows; 0 skipped on a stage-1 failure.');
     // A registered run, scored at hit@10; the labeled model reaches the strata.
     expect(report).toContain('## Primary: hit@10');
+    // Flags evaluated (real false): the coverage the endpoint resolves, printed.
+    expect(report).toContain(
+      'Coverage (resolved as the endpoint does, for an anonymous caller): next=false, member=true.'
+    );
     expect(report).toContain('| all scored | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
     expect(report).toContain('| gold labeled | 1 | 100.0% | 0.0% | 1 | 0 | 1.00 |');
     // One scored prompt is far under the registered minimum: VOID, and exactly one verdict.
@@ -1371,6 +1495,9 @@ describe('main — the --execute gate', () => {
       '## Verdict: VOID',
     ]);
     expect(report).not.toContain('NOT THE PRE-REGISTERED RUN');
+    // The completion path closes what it opened, so the process can exit.
+    expect(fliptClient.close).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$disconnect).toHaveBeenCalledTimes(1);
   });
 
   it('splits an ODD --limit as ceil to matched, floor to unmatched', async () => {
@@ -1413,5 +1540,137 @@ describe('main — the --execute gate', () => {
     ]);
     const report = log.mock.calls.map((call) => String(call[0])).join('\n');
     expect(report).toContain('Judged 3 of 3 drawn rows; 0 skipped on a stage-1 failure.');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The coverage guard — never grade a filter the endpoint does not use
+// ---------------------------------------------------------------------------
+
+describe('resolveEndpointCoverage — fails closed when the coverage flags cannot be evaluated', () => {
+  const deps = (evaluateSync: (flag: string, entityId: string) => boolean | null) => {
+    const calls: string[] = [];
+    const audience = vi.fn(async () => ({ next: true, member: false }));
+    return {
+      calls,
+      audience,
+      deps: {
+        ensureInitialized: async () => {
+          calls.push('init');
+        },
+        evaluateSync: (flag: string, entityId: string) => {
+          calls.push(`${flag}@${entityId}`);
+          return evaluateSync(flag, entityId);
+        },
+        audience,
+      },
+    };
+  };
+
+  it('🔴 Flipt unreachable (every flag null): throws, names both flags, never resolves an audience', async () => {
+    const { deps: d, audience } = deps(() => null);
+    await expect(executeModule.resolveEndpointCoverage(d)).rejects.toThrow(
+      'feature flags could not be evaluated (generation-coverage-next, generation-loading-open-to-all)'
+    );
+    expect(audience).not.toHaveBeenCalled();
+  });
+
+  it('one flag unevaluable is enough to abort', async () => {
+    const { deps: d, audience } = deps((flag) =>
+      flag === 'generation-loading-open-to-all' ? null : true
+    );
+    await expect(executeModule.resolveEndpointCoverage(d)).rejects.toThrow(
+      'feature flags could not be evaluated (generation-loading-open-to-all)'
+    );
+    expect(audience).not.toHaveBeenCalled();
+  });
+
+  it('🔴 refuses when FLIPT_LOCAL_OVERRIDES names a coverage flag — before evaluating anything', async () => {
+    const { deps: d, audience, calls } = deps(() => true);
+    await expect(
+      executeModule.resolveEndpointCoverage({
+        ...d,
+        overriddenFlags: () => ['some-other-flag', 'generation-coverage-next'],
+      })
+    ).rejects.toThrow('FLIPT_LOCAL_OVERRIDES sets generation-coverage-next');
+    expect(audience).not.toHaveBeenCalled();
+    expect(calls).toEqual(['init']);
+  });
+
+  it('an override of an UNRELATED flag does not block the run', async () => {
+    const { deps: d } = deps(() => false);
+    await expect(
+      executeModule.resolveEndpointCoverage({ ...d, overriddenFlags: () => ['some-other-flag'] })
+    ).resolves.toEqual({ next: true, member: false });
+  });
+
+  it('🔴 refuses when the Flipt client did not initialise, even if every flag answers', async () => {
+    const { deps: d, audience } = deps(() => true);
+    await expect(
+      executeModule.resolveEndpointCoverage({ ...d, clientInitialised: () => false })
+    ).rejects.toThrow('the Flipt client did not initialise (Flipt unreachable)');
+    expect(audience).not.toHaveBeenCalled();
+  });
+
+  it('a real FALSE is not a failure: both flags evaluated → the endpoint audience', async () => {
+    const { deps: d, audience, calls } = deps(() => false);
+    await expect(executeModule.resolveEndpointCoverage(d)).resolves.toEqual({
+      next: true,
+      member: false,
+    });
+    expect(audience).toHaveBeenCalledTimes(1);
+    // Initialised first, then each flag with the entity id coverageAudience uses.
+    expect(calls).toEqual([
+      'init',
+      'generation-coverage-next@global',
+      'generation-loading-open-to-all@0',
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Shutdown — a finished --execute must exit, not hang on an open handle
+// ---------------------------------------------------------------------------
+
+describe('closeStudyHandles / runAsScript — a finished run exits', () => {
+  it('closes the Flipt client and disconnects the replica', async () => {
+    const order: string[] = [];
+    await executeModule.closeStudyHandles({
+      closeFlipt: () => order.push('flipt'),
+      disconnectDb: async () => {
+        order.push('db');
+      },
+    });
+    expect(order).toEqual(['flipt', 'db']);
+  });
+
+  it('still disconnects the replica when closing Flipt throws', async () => {
+    const disconnectDb = vi.fn(async () => undefined);
+    await expect(
+      executeModule.closeStudyHandles({
+        closeFlipt: () => {
+          throw new Error('close failed');
+        },
+        disconnectDb,
+      })
+    ).rejects.toThrow('close failed');
+    expect(disconnectDb).toHaveBeenCalledTimes(1);
+  });
+
+  it('🔴 runAsScript exits 0 once main resolves, and 1 (only) when it throws', async () => {
+    const exit = vi.fn();
+    await goldsetModule.runAsScript(async () => undefined, exit);
+    expect(exit.mock.calls).toEqual([[0]]);
+
+    exit.mockClear();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      await goldsetModule.runAsScript(async () => {
+        throw new Error('boom');
+      }, exit);
+    } finally {
+      error.mockRestore();
+    }
+    expect(exit.mock.calls).toEqual([[1]]);
   });
 });
