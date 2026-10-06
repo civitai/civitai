@@ -1,16 +1,6 @@
 import { createHash } from 'crypto';
 import { parseArgs } from 'util';
 
-import { Prisma } from '@prisma/client';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { dbRead } from '~/server/db/client';
-import { askJev, JEV_TIMEOUT_MS } from '~/server/services/ai/jev';
-import { coverageAudience } from '~/server/services/generation/coverage-source';
-import {
-  buildResourceIntentStage1Request,
-  compileCriteria,
-  parseResourceIntentStage1Answers,
-} from '~/server/services/resource-intent-stage1';
 import {
   RESOURCE_INTENT_SPEC_HASH,
   ROLE_MODEL_TYPES,
@@ -18,18 +8,13 @@ import {
   type ResourceIntentRole,
 } from '~/server/schema/resource-intent.schema';
 import {
-  countLabeledIndexDocuments,
-  evaluateRetrieval,
-  loadLabeledModelIds,
-  M3_RETRIEVAL_PREREGISTRATION,
+  GOLDSET_MATCHED_SQL,
+  GOLDSET_UNMATCHED_SQL,
   PREREGISTERED_RUN_PARAMS,
   preregistrationOverrides,
   renderRetrievalPreregistration,
-  renderRetrievalReport,
-  runRetrievalArms,
-  type RetrievalGoldRow,
   type RetrievalRunParams,
-} from './eval-resource-intent-retrieval';
+} from './eval-resource-intent-registration';
 
 /**
  * Gold-set study runner (M3) — measures Stage-1 quality against the provenance
@@ -46,17 +31,26 @@ import {
  *
  * Part two is the pre-registered two-arm RETRIEVAL comparison — the purpose-first
  * matcher against the popularity seed alone, graded on whether a resource the user
- * actually attached lands in each arm's shortlist head. Its core, its arms and its
- * pre-registration live in `./eval-resource-intent-retrieval.ts`; this file samples
- * its gold and runs it.
+ * actually attached lands in each arm's shortlist head. Its core and its arms live in
+ * `./eval-resource-intent-retrieval.ts`, its pre-registration and the gold-set queries in
+ * `./eval-resource-intent-registration.ts`; `./eval-resource-intent-goldset-execute.ts`
+ * samples the gold and runs it.
  *
  * The models-index positive control (see the retrieval module) runs before either
  * part, so it gates part one too.
  *
- * GATED EXECUTION — this script is committed but has NEVER been run: the live study
- * needs a prod replica read, the models index + an OpenRouter key (team step).
- * Without `--execute` it prints the committed queries and the retrieval
- * pre-registration, and exits.
+ * GATED EXECUTION — the live study needs a prod replica read, the models index + an
+ * OpenRouter key (team step). Without `--execute` it prints the committed queries and
+ * the retrieval pre-registration, and exits.
+ *
+ * 🔴 THE DRY RUN IS HERMETIC BY CONSTRUCTION: this file's static imports reach no
+ * database or search client (the queries and the pre-registration live in
+ * `./eval-resource-intent-registration.ts`), and everything `--execute` needs is in
+ * `./eval-resource-intent-goldset-execute.ts`, loaded by a dynamic import only under
+ * `--execute`. A static import of either client here would construct a Prisma client
+ * the dry run never uses, whose engine-load rejection nothing handles — exit 1 on a
+ * host without a Prisma engine, after the dry run has printed. The tsx smoke test spawns
+ * the dry run with no engine env and catches that.
  *
  *   pnpm run tsscript scripts/eval-resource-intent-goldset.ts --execute --limit 200
  *   pnpm run tsscript scripts/eval-resource-intent-goldset.ts --execute --limit 200 --out /tmp/goldset-report.md
@@ -69,99 +63,6 @@ import {
 
 export const GOLDSET_REVIEW_THRESHOLDS = [0.4, 0.5, 0.6, 0.7, 0.8] as const;
 export const GOLDSET_CALIBRATION_BUCKETS = 10;
-
-/**
- * The committed gold-set queries — reviewable and re-runnable as written.
- *
- * 🔴 Camel-case columns MUST be double-quoted: Postgres folds an unquoted identifier
- * to lower case, so the original `i.hideMeta` / `mv.baseModel` resolved to columns
- * that do not exist (42703) and both queries would have failed on their first
- * execution. The enum is cast to text because a raw query cannot deserialize an enum
- * ARRAY.
- *
- * Which images may enter the study at all — and so have their prompt sent to the
- * vendor: the conditions of `imageWhere` in `src/server/search-index/images.search-index.ts`
- * (the publicly searchable image: not in a review queue, not ToS-violating, minor or POI,
- * in a post that is published, not scheduled, and neither Private nor Unsearchable),
- * plus public meta, a non-empty prompt, no `blockedFor`, the window, and NO attached model
- * flagged POI or minor — an image's own `poi`/`minor` flags are derived from its models
- * only at scan time, so a model flagged since does not reach them.
- * ⚠️ `ingestion = 'Scanned'` is deliberately STRICTER than `imageWhere`'s
- * `imageReviewedSql()`, which also admits locked-rating images whose scan never ran — do
- * not "align" it. Requires the caller to join `"Post" p ON p.id = i."postId"`. One
- * fragment, used by both queries.
- */
-const GOLDSET_ELIGIBLE_IMAGE = (days: number) => Prisma.sql`
-      i."createdAt" > now() - make_interval(days => ${days}::int)
-  AND i."hideMeta" = false
-  AND length(i.meta->>'prompt') > 0
-  AND i.ingestion = 'Scanned'
-  AND i."tosViolation" = false
-  AND i."needsReview" IS NULL
-  AND i."blockedFor" IS NULL
-  AND i.minor = false
-  AND i.poi = false
-  AND p."publishedAt" IS NOT NULL
-  AND p."publishedAt" <= now()
-  AND p.availability != 'Private'::"Availability"
-  AND p.availability != 'Unsearchable'::"Availability"
-  AND NOT EXISTS (
-    SELECT 1
-    FROM "ImageResourceNew" fr
-    JOIN "ModelVersion" fmv ON fmv.id = fr."modelVersionId"
-    JOIN "Model" fm ON fm.id = fmv."modelId"
-    WHERE fr."imageId" = i.id
-      AND (fm.poi OR fm.minor)
-  )
-`;
-
-/**
- * Matched rows: SAMPLE images first (one table, `EXISTS` on an attachment), then join
- * and aggregate only the sample — rather than aggregating the whole window and sorting
- * it. Output is in the sample's random order (`rnd`), so any prefix is itself a random
- * sample. Also the retrieval study's gold: `attachedModels` is model-level
- * `{modelId, modelType}`; `checkpointBaseModels` feeds the request baseModel.
- */
-export const GOLDSET_MATCHED_SQL = (days: number, limit: number) => Prisma.sql`
-  WITH sampled AS (
-    SELECT i.id, i.meta->>'prompt' AS prompt, random() AS rnd
-    FROM "Image" i
-    JOIN "Post" p ON p.id = i."postId"
-    WHERE ${GOLDSET_ELIGIBLE_IMAGE(days)}
-      AND EXISTS (SELECT 1 FROM "ImageResourceNew" r WHERE r."imageId" = i.id)
-    ORDER BY rnd
-    LIMIT ${limit}::int
-  )
-  SELECT s.id AS "imageId",
-         s.prompt,
-         array_agg(DISTINCT m.type::text) AS "attachedTypes",
-         array_agg(DISTINCT mv."baseModel") AS "attachedBaseModels",
-         jsonb_agg(DISTINCT jsonb_build_object('modelId', m.id, 'modelType', m.type::text))
-           AS "attachedModels",
-         COALESCE(
-           array_agg(DISTINCT mv."baseModel") FILTER (WHERE m.type = 'Checkpoint'),
-           ARRAY[]::text[]
-         ) AS "checkpointBaseModels"
-  FROM sampled s
-  JOIN "ImageResourceNew" irn ON irn."imageId" = s.id
-  JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
-  JOIN "Model" m ON m.id = mv."modelId"
-  GROUP BY s.id, s.prompt, s.rnd
-  ORDER BY s.rnd
-`;
-
-export const GOLDSET_UNMATCHED_SQL = (days: number, limit: number) => Prisma.sql`
-  SELECT i.id AS "imageId",
-         i.meta->>'prompt' AS prompt,
-         ARRAY[]::text[] AS "attachedTypes",
-         ARRAY[]::text[] AS "attachedBaseModels"
-  FROM "Image" i
-  JOIN "Post" p ON p.id = i."postId"
-  WHERE ${GOLDSET_ELIGIBLE_IMAGE(days)}
-    AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" irn WHERE irn."imageId" = i.id)
-  ORDER BY random()
-  LIMIT ${limit}::int
-`;
 
 export type GoldsetRow = {
   imageId: number;
@@ -408,11 +309,6 @@ export function renderGoldsetReport(
   return lines.join('\n');
 }
 
-type MatchedSqlRow = GoldsetRow & {
-  attachedModels: { modelId: number; modelType: string }[];
-  checkpointBaseModels: string[];
-};
-
 export async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -460,91 +356,17 @@ export async function main(): Promise<void> {
     return;
   }
 
-  // The retrieval study's positive control runs FIRST, before any vendor spend, and so
-  // also gates part one: a models index with no projected `insight.role` would turn
-  // the purpose arm into the popularity arm and the study into a silent null result.
-  const labeledIndexDocuments = await countLabeledIndexDocuments();
-  if (labeledIndexDocuments < M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor) {
-    throw new Error(
-      `[goldset] positive control FAILED: ${labeledIndexDocuments} models-index documents carry a non-none insight.role (floor ${M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor}). The purpose arm cannot differ from the popularity arm on this index; aborting before any vendor call.`
-    );
-  }
-
-  const matched = await dbRead.$queryRaw<MatchedSqlRow[]>(GOLDSET_MATCHED_SQL(days, matchedDraw));
-  const unmatched = await dbRead.$queryRaw<GoldsetRow[]>(
-    GOLDSET_UNMATCHED_SQL(days, unmatchedLimit)
-  );
-
-  const partOneRows: GoldsetRow[] = [...matched.slice(0, matchedLimit), ...unmatched];
-  const pairs: { row: GoldsetRow; judgment: GoldsetJudgment }[] = [];
-  for (const row of partOneRows) {
-    const stage1 = await runStage1(row.prompt, null);
-    if (!stage1) {
-      console.warn(`[goldset] stage-1 failed for image ${row.imageId}; row skipped`);
-      continue;
-    }
-    pairs.push({ row, judgment: stage1.intent });
-  }
-
-  // Part two: the pre-registered retrieval comparison.
-  const retrievalRows: RetrievalGoldRow[] = matched
-    .slice(0, retrievalParams.sampleSize)
-    .map((row) => ({
-      imageId: row.imageId,
-      prompt: row.prompt,
-      attachedModels: row.attachedModels,
-      checkpointBaseModels: row.checkpointBaseModels,
-    }));
-  const labeledModelIds = await loadLabeledModelIds([
-    ...new Set(retrievalRows.flatMap((row) => row.attachedModels.map((m) => m.modelId))),
-  ]);
-  const outcomes = await runRetrievalArms(retrievalRows, {
-    stage1: runStage1,
-    armOpts: {
-      browsingLevel: allBrowsingLevelsFlag,
-      // The anonymous audience, resolved exactly as the endpoint does on a cache miss.
-      coverage: await coverageAudience(undefined),
-      cap: M3_RETRIEVAL_PREREGISTRATION.cap,
-    },
-    labeledModelIds,
+  // Everything past here reads the replica, the index and the vendor. It is loaded only
+  // now, so the dry run above never constructs a database or search client.
+  const { executeGoldsetStudy } = await import('./eval-resource-intent-goldset-execute');
+  await executeGoldsetStudy({
+    days,
+    matchedLimit,
+    unmatchedLimit,
+    matchedDraw,
+    retrievalParams,
+    out: values.out,
   });
-  const retrieval = evaluateRetrieval(outcomes, retrievalParams);
-
-  const report = [
-    renderGoldsetReport(evaluateGoldset(pairs), { drawn: partOneRows.length }),
-    renderRetrievalReport(retrieval, { labeledIndexDocuments }),
-  ].join('\n');
-  if (values.out) {
-    const { writeFile } = await import('fs/promises');
-    await writeFile(values.out, report);
-    console.log(
-      `[goldset] report written to ${values.out} (${pairs.length} of ${partOneRows.length} stage-1 rows judged, ${retrieval.primary.n} retrieval prompts scored)`
-    );
-  } else {
-    console.log(report);
-  }
-}
-
-/**
- * Stage 1 for one prompt, through the endpoint's own request builder, answer parser
- * and criteria compiler. `null` on any failure (vendor error, wrong shape, spec
- * desync) — the caller counts it, the endpoint would have degraded.
- */
-async function runStage1(
-  prompt: string,
-  baseModel: string | null
-): Promise<{ intent: ResourceIntentAnswer; criteria: ReturnType<typeof compileCriteria> } | null> {
-  try {
-    const response = await askJev(buildResourceIntentStage1Request(prompt, baseModel), {
-      timeoutMs: JEV_TIMEOUT_MS,
-    });
-    const intent = parseResourceIntentStage1Answers(response.answers);
-    if (!intent) return null;
-    return { intent, criteria: compileCriteria(intent, baseModel) };
-  } catch (error) {
-    console.warn(`[goldset] stage-1 error: ${error instanceof Error ? error.message : error}`);
-    return null;
-  }
 }
 
 /** Parse the retrieval flags; every default is the pre-registered value. */

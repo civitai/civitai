@@ -36,7 +36,9 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Samples the gold and grades stage-1 agreement, then runs the retrieval comparison below. |
-| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the pre-registration, the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar), the MET / NOT MET / VOID verdict and its report. |
+| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar), the MET / NOT MET / VOID verdict and its report. |
+| `scripts/eval-resource-intent-registration.ts`           | M3's registration: the pre-registered constants and text, and the committed gold-set queries. No database or search client, so the dry run is hermetic. |
+| `scripts/eval-resource-intent-goldset-execute.ts`         | The `--execute` half of the runner (replica, index, vendor), loaded only under `--execute`. |
 
 ## Hard rules
 
@@ -462,10 +464,12 @@ fetch from `searchResourceIntentSeedPage`, and it is never handed to the label
 re-rank. Neither arm calls stage 3.
 
 **The pre-registration lives in code, not here:** `M3_RETRIEVAL_PREREGISTRATION` in
-`scripts/eval-resource-intent-retrieval.ts`, rendered as text by
+`scripts/eval-resource-intent-registration.ts`, rendered as text by
 `renderRetrievalPreregistration()`. Read it by running the script without `--execute`
 (`pnpm run tsscript scripts/eval-resource-intent-goldset.ts`), which prints the committed
-queries and that text and spends nothing; every report opens with the same text. In
+queries and that text and exits 0. It still needs the server env to validate, but it
+loads no database or search client, so it needs no Prisma engine, no database and no
+index; every report opens with the same text. In
 brief: the primary metric is hit@10; the decision rule is b > c AND exact two-sided
 McNemar p < 0.05 on the hit@10 discordant pairs; and every run reports exactly one
 verdict on the closing clause — **MET** (the rule holds), **NOT MET** (it does not: the
@@ -520,5 +524,5 @@ Unit suites (fixture-based, no external calls):
 - `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
-- `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks the dry run prints its queries and the pre-registration. The in-process suites cannot see a load-time import cycle; this can.
+- `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks, from a module-load trace, that the dry run loads neither the database nor the search client (on any host), and that it prints its queries and the pre-registration and exits 0 with every `PRISMA_*` variable removed. The in-process suites cannot see a load-time import cycle; this can.
 - `scripts/__tests__/eval-resource-intent-retrieval.test.ts` — the M3 retrieval metric math against literal values, the verdict mapping, the pre-registration constants, both arms over an in-memory index, and the CLI gate.
