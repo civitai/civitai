@@ -72,21 +72,18 @@ describe('buildCreatorScoreLadder', () => {
     }
   });
 
-  it('places every total- and aggregate-score unlock exactly once, and no articles-score unlock', () => {
+  it('places every unlock exactly once, the daily article limits included', () => {
     const placed = buildCreatorScoreLadder(unlocks, seededTiers).flatMap((r) =>
       r.unlocks.map((u) => u.key)
     );
-    const expected = unlocks.filter((u) => u.scoreKind !== 'articles').map((u) => u.key);
 
-    expect([...placed].sort()).toEqual([...expected].sort());
-    expect(unlocks.some((u) => u.scoreKind === 'articles')).toBe(true);
+    expect([...placed].sort()).toEqual(unlocks.map((u) => u.key).sort());
+    expect(placed.filter((key) => key.startsWith('daily-articles:'))).toHaveLength(3);
   });
 
   it('falls back to one unnamed rung per threshold when no tiers exist', () => {
     const rungs = buildCreatorScoreLadder(unlocks, []);
-    const thresholds = [
-      ...new Set(unlocks.filter((u) => u.scoreKind !== 'articles').map((u) => u.minScore)),
-    ].sort((a, b) => a - b);
+    const thresholds = [...new Set(unlocks.map((u) => u.minScore))].sort((a, b) => a - b);
 
     expect(rungs.map((r) => r.minScore)).toEqual(thresholds);
     expect(rungs.every((r) => r.tier === null)).toBe(true);

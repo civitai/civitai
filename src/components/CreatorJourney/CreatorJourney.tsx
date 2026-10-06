@@ -82,7 +82,6 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
   const rungs = buildCreatorScoreLadder(journey.unlocks, journey.tiers);
   const next = nextCreatorScoreRung(rungs, total);
   const currentTier = currentCreatorScoreTier(rungs, total);
-  const articleUnlocks = journey.unlocks.filter((u) => u.scoreKind === 'articles');
   // Unlocks between tiers fold into the higher tier's rung, so the next rung is unnamed only past the top tier.
   const nextTier = next?.tier ?? null;
   // A badge is earned when it is granted, not when the score crosses its threshold: granting runs in
@@ -176,19 +175,6 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
             />
           ))}
         </Stack>
-        {articleUnlocks.length > 0 && (
-          <Text size="sm" c="dimmed">
-            Daily article limits follow your articles score
-            {journey.scores
-              ? ` (${numberWithCommas(Math.floor(journey.scores.articles))})`
-              : ''}{' '}
-            rather than your total:{' '}
-            {articleUnlocks
-              .map((u) => `${numberWithCommas(u.minScore)}: ${u.label.toLowerCase()}`)
-              .join('; ')}
-            .
-          </Text>
-        )}
       </Stack>
 
       <Stack gap="sm">
