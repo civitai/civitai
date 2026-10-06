@@ -436,9 +436,9 @@ describe('models search index projects insight.qualityScore', () => {
   it('🔴 fails soft on a label-read error rather than dropping the whole index batch', () => {
     // `ResourceInsight` is hand-applied per environment, so in any environment where that
     // has not happened this read throws on EVERY batch. Unguarded that does not merely lose
-    // the score: the batch is scored `error`, dropped after its retries, and `setLastUpdate`
-    // advances anyway — so published models leave the index permanently, every 15 minutes,
-    // with only a console line. An optional ordering refinement must not be able to do that.
+    // the score: every batch is scored `error` and fails after its retries, so published
+    // models stay out of the index for as long as the read keeps throwing, with only console
+    // lines. An optional ordering refinement must not be able to do that.
     //
     // Pinned on the RELATIONSHIP rather than the spelling: the call must sit inside a `try`,
     // and the recovery must be an empty Map (which falls through to the same cleared path an

@@ -242,10 +242,11 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   // environment (its migration says so), so in any environment where that has not
   // happened this read throws `P2021` on EVERY batch. Unguarded, that failure does not
   // degrade the score — it takes the whole batch down: `processSearchIndexTask` scores the
-  // batch `'error'`, the batch is dropped after its retries, and `update()` advances
-  // `setLastUpdate` regardless, so up to `READ_BATCH_SIZE` published models are dropped
-  // from the index PERMANENTLY, every 15 minutes, with a `console.error` as the only
-  // symptom. An optional ordering refinement must never be able to do that.
+  // batch `'error'` and it fails after its retries — a range batch's ids are dropped as
+  // `update()` advances `setLastUpdate`, and a targeted batch's are re-queued only to fail
+  // again next run — so published models stay out of the index for as long as the read
+  // keeps throwing, with `console.error` lines as the only symptom. An optional ordering
+  // refinement must never be able to do that.
   //
   // The empty Map falls through to the same `null` -> cleared path an unlabeled model
   // takes, which is already correct. ⚠️ Deliberately broader than `isMissingTableError`
