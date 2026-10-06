@@ -19,9 +19,11 @@ const SUPPORTED_CONTENT_TYPES = [
   'video/webm',
 ] as const;
 const PRESIGN_TIMEOUT_MS = 15_000;
-// Silence allowed after the body is sent. Short because a browser can report a small body as sent
-// before it leaves the device, so on a dead link this is the window the user actually waits out.
-const RESPONSE_TIMEOUT_MS = 60_000;
+// Silence allowed after the body is sent. Short for images because a browser can report a small body
+// as sent before it leaves the device, so on a dead link this is the window the user waits out.
+// Video keeps a long window: the reply to a large body may legitimately take longer.
+const IMAGE_RESPONSE_TIMEOUT_MS = 60_000;
+const VIDEO_RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const MAX_ATTEMPTS = 2;
 
 type SupportedContentType = (typeof SUPPORTED_CONTENT_TYPES)[number];
@@ -53,11 +55,12 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
       signal: controller.signal,
     });
     if (!response.ok) {
+      const failure = { status: response.status, retryAfter: response.headers.get('Retry-After') };
       throw new ConsumerBlobUploadError(
         response.status === 403 ? await response.text() : 'Failed to get upload URL',
         `presign-http-${response.status}`,
-        response.status === 429 || response.status >= 500,
-        { status: response.status, retryAfter: response.headers.get('Retry-After') }
+        shouldRetryPartError(failure),
+        failure
       );
     }
     return await response.json();
@@ -104,7 +107,9 @@ function postBlob(uploadUrl: string, data: Blob, contentType: string) {
     xhr.upload.addEventListener('progress', () => watchdog.arm());
     xhr.upload.addEventListener('load', () => {
       bodySent = true;
-      watchdog.arm(RESPONSE_TIMEOUT_MS);
+      watchdog.arm(
+        contentType.startsWith('video/') ? VIDEO_RESPONSE_TIMEOUT_MS : IMAGE_RESPONSE_TIMEOUT_MS
+      );
     });
     xhr.addEventListener('loadend', () => {
       watchdog.clear();

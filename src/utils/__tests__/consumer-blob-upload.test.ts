@@ -74,7 +74,7 @@ class FakeXHR {
   }
 }
 
-let presignMode: 'ok' | 'hang' | 'fail-once';
+let presignMode: 'ok' | 'hang' | 'throttle-once' | 'forbidden';
 let presignCount: number;
 const fetchMock = vi.fn((url: string, init?: RequestInit) => {
   if (url === PRESIGN_PATH) {
@@ -85,8 +85,19 @@ const fetchMock = vi.fn((url: string, init?: RequestInit) => {
           reject(new DOMException('Aborted', 'AbortError'))
         )
       );
-    if (presignMode === 'fail-once' && presignCount === 1)
-      return Promise.resolve({ ok: false, status: 503, headers: new Headers() });
+    if (presignMode === 'throttle-once' && presignCount === 1)
+      return Promise.resolve({
+        ok: false,
+        status: 429,
+        headers: new Headers({ 'Retry-After': '5' }),
+      });
+    if (presignMode === 'forbidden')
+      return Promise.resolve({
+        ok: false,
+        status: 403,
+        headers: new Headers(),
+        text: async () => 'Not allowed',
+      });
     const uploadUrl = `https://upload.test/blob?sig=${presignCount}`;
     return Promise.resolve({ ok: true, status: 200, json: async () => ({ uploadUrl }) });
   }
@@ -104,6 +115,7 @@ function track<T>(p: Promise<T>) {
 }
 
 const jpeg = () => new Blob([new Uint8Array(1024)], { type: 'image/jpeg' });
+const mp4 = () => new Blob([new Uint8Array(1024)], { type: 'video/mp4' });
 const kinds = () => reportApplicationError.mock.calls.map((c) => (c[0] as Error).message);
 
 beforeEach(() => {
@@ -157,8 +169,10 @@ describe('uploadConsumerBlob', () => {
     track(uploadConsumerBlob(jpeg()));
     await vi.advanceTimersByTimeAsync(20_000);
     FakeXHR.instances[0].progress();
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(29_999);
     expect(FakeXHR.instances[0].aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeXHR.instances[0].aborted).toBe(true);
   });
 
   it('throws once the retry stalls too', async () => {
@@ -190,19 +204,32 @@ describe('uploadConsumerBlob', () => {
     track(uploadConsumerBlob(jpeg()));
     await vi.advanceTimersByTimeAsync(0);
     FakeXHR.instances[0].bodySent();
-    await vi.advanceTimersByTimeAsync(45_000);
+    await vi.advanceTimersByTimeAsync(59_999);
     expect(FakeXHR.instances[0].aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(FakeXHR.instances[0].aborted).toBe(true);
     expect(kinds()).toEqual(['consumer blob upload failed: response-stalled']);
+  });
+
+  it('gives a sent video body a longer response window', async () => {
+    track(uploadConsumerBlob(mp4()));
+    await vi.advanceTimersByTimeAsync(0);
+    FakeXHR.instances[0].bodySent();
+    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+    expect(FakeXHR.instances[0].aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(FakeXHR.instances[0].aborted).toBe(true);
   });
 
   it('retries a 5xx response', async () => {
     const result = track(uploadConsumerBlob(jpeg()));
     await vi.advanceTimersByTimeAsync(0);
     FakeXHR.instances[0].respond(503, 'unavailable');
-    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+    // The minimum backoff is 1s; no retry may start before it.
+    await vi.advanceTimersByTimeAsync(999);
+    expect([FakeXHR.instances.length, presignCount]).toEqual([1, 1]);
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS - 999);
     FakeXHR.instances[1].respond(200, JSON.stringify({ id: 'b2' }));
     await vi.advanceTimersByTimeAsync(0);
 
@@ -222,15 +249,26 @@ describe('uploadConsumerBlob', () => {
     expect(kinds()).toEqual(['consumer blob upload failed: http-422']);
   });
 
-  it('retries a presign 5xx', async () => {
-    presignMode = 'fail-once';
+  it('retries a throttled presign after its Retry-After', async () => {
+    presignMode = 'throttle-once';
     const result = track(uploadConsumerBlob(jpeg()));
-    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(presignCount).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
     FakeXHR.instances[0].respond(200, JSON.stringify({ id: 'b1' }));
     await vi.advanceTimersByTimeAsync(0);
 
     expect(result.value).toEqual({ id: 'b1' });
-    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-503']);
+    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-429']);
+  });
+
+  it('does not retry a forbidden presign', async () => {
+    presignMode = 'forbidden';
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+
+    expect(result.error?.message).toBe('Not allowed');
+    expect(presignCount).toBe(1);
   });
 
   it('times out a hung presign request and throws after one retry', async () => {
