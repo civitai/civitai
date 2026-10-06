@@ -592,6 +592,7 @@ import {
 } from '~/server/services/blocks/steps/orchestrator-denylist';
 import { REGISTERED_STEP_IDS } from '~/server/services/blocks/steps';
 import { BLOCK_STEP_NAME } from '~/server/services/blocks/workflow.service';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockRedis = redisMock.redis;
@@ -10696,6 +10697,37 @@ describe("pass-through bridge (kind: 'step' with a bare $type)", () => {
       expect(tags).not.toContain('app-block:app_someone_else');
       expect(tags).toContain('passthrough');
     });
+
+    // civitai-app-starters#541 — `/models/train/from-orchestrator` admits only
+    // workflows carrying the training tag, so without it a block-run training
+    // can never reach the publish wizard.
+    it.each(['training', 'imageResourceTraining'])(
+      'adds the training tag to a `%s` submit and its quote, keeping app-block provenance',
+      async ($type) => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) });
+        for (const call of [ptRealSubmits()[0], ptWhatIfs()[0]]) {
+          const tags: string[] = call[0].body.tags;
+          expect(tags).toContain(TRAINING_WORKFLOW_TAG);
+          expect(tags).toContain('app-block:app_test');
+          expect(tags).toContain('passthrough');
+        }
+      }
+    );
+
+    it.each([PT_TYPE, 'trainingData'])(
+      'does NOT add the training tag to `%s` (submit or quote)',
+      async ($type) => {
+        mockVerifyBlockToken.mockResolvedValue(ptClaims());
+        happyUser();
+        ptQuoting(5, 5);
+        await caller().submitWorkflow({ blockToken: 'tok', body: ptBody({ $type }) });
+        expect(ptRealSubmits()[0][0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
+        expect(ptWhatIfs()[0][0].body.tags).not.toContain(TRAINING_WORKFLOW_TAG);
+      }
+    );
 
     // The price-check counter is the only thing that can tell "the block saw a
     // live quote" from "the orchestrator stopped pricing and every job silently

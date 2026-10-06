@@ -1006,14 +1006,22 @@ export type BlockWorkflowSnapshot = {
    * (`blocks.getImagesByIds` → `BlockGatedImage`). A pass-through step must not
    * create a SECOND image channel that those two do not see.
    *
-   * ⚠️ "BLOB-SHAPED" IS THE EXACT SCOPE OF THAT PROPERTY, AND TWO ALLOWED TYPES
-   * FALL OUTSIDE IT. `blobArchive`'s whole output is `{ url, entryCount, … }`
-   * and `imageResourceTraining.epochs[].blobUrl` is a plain string; a shape test
-   * cannot see either, so those urls reach the app here and are never seen by
-   * the publish path or the gated read. Stated rather than implied, because the
-   * measurement behind the splitter enumerated blob-TYPED fields and a reader
-   * takes it for the whole population. Closing it is a decision — lift a named
-   * string field, or refuse those `$type`s — not a cleanup.
+   * 🔴 A TRAINED CHECKPOINT IS IN NEITHER CHANNEL. For the `training` /
+   * `imageResourceTraining` `$type`s the epoch checkpoint (`epochs[].model`, or
+   * `epochs[].blobUrl` + `blobName`) is dropped before the split, so it reaches
+   * neither `imageUrls` nor this field; which epochs had one is reported on
+   * {@link trainedEpochs} instead. The legacy type's plain-string
+   * `epochs[].sampleImages` are lifted to `imageUrls` by position. See
+   * `splitPassThroughStep`.
+   *
+   * ⚠️ "BLOB-SHAPED" IS THE EXACT SCOPE OF THAT PROPERTY, AND PLAIN-STRING URLS
+   * FALL OUTSIDE IT. `blobArchive`'s whole output is `{ url, entryCount, … }`,
+   * and `imageResourceTraining.sampleInputImages` is a string list; a shape test
+   * sees neither, so those reach the app here and are never seen by the publish
+   * path or the gated read. Stated rather than implied, because the measurement
+   * behind the splitter enumerated blob-TYPED fields and a reader takes it for
+   * the whole population. Closing them is a decision — handle a named field by
+   * position, or refuse the `$type` — not a cleanup.
    *
    * 🔴 EVERYTHING ELSE IS UNSCANNED. Unlike {@link textOutputs}, no moderation
    * scan runs over this field: the pass-through arm has no `moderationPosture`,
@@ -1046,4 +1054,28 @@ export type BlockWorkflowSnapshot = {
    * SDK repo — tracked separately; nothing here edits another repo.
    */
   stepOutputs?: Array<{ $type: string; output: unknown }>;
+  /**
+   * The epochs of a pass-through `training` / `imageResourceTraining` step whose
+   * checkpoint is ready — the `epoch` a block hands to
+   * `/models/train/from-orchestrator?workflowId=…&epoch=…`, the publish wizard.
+   * The checkpoint itself is never on the wire (see {@link stepOutputs}). Empty —
+   * so omitted — unless the run's `moderationStatus` is `approved`.
+   *
+   * OMITTED when there is none, so every other snapshot stays byte-identical.
+   * 🔴 WIRE CONTRACT: name and shape are mirrored by `@civitai/app-sdk`.
+   */
+  trainedEpochs?: Array<{ $type: 'training' | 'imageResourceTraining'; epochNumber: number }>;
+  /**
+   * The model a block-run training workflow became, read from the ids the
+   * publish wizard stamps onto the workflow's metadata (`stampWorkflowDraftModel`
+   * on draft creation, `stampWorkflowPublished` on publish). `published` is
+   * false while it is still a draft. Also on `AppWorkflow`.
+   *
+   * Only for a workflow carrying a pass-through training step, and only when
+   * both ids are positive integers; OMITTED otherwise.
+   * 🔴 WIRE CONTRACT: name and shape are mirrored by `@civitai/app-sdk`.
+   */
+  publishedModel?: BlockPublishedModel;
 };
+
+export type BlockPublishedModel = { modelId: number; modelVersionId: number; published: boolean };

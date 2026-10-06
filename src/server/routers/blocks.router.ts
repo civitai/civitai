@@ -192,9 +192,11 @@ import {
   containsAirReference,
   estimateStepBuzz,
   getStep,
+  isTrainingStepType,
   planStepSpend,
   resolveStepVariant,
 } from '~/server/services/blocks/steps';
+import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
 import {
   assertStepTypeAllowed,
   PlatformInternalStepTypeError,
@@ -11185,7 +11187,7 @@ async function quotePassThroughBuzz(opts: {
       body: {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         steps: [orchestratorStep as any],
-        tags: buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step'),
+        tags: buildPassThroughWorkflowTags(claims, body.$type),
         currencies: resolveBlockCurrenciesForAccount(isGreen, undefined),
         ...(allowMatureContent === false ? { allowMatureContent: false } : {}),
       },
@@ -11257,18 +11259,8 @@ async function submitPassThroughStepWorkflow(opts: {
   const currencies = resolveBlockCurrenciesForAccount(isGreen, undefined);
 
   const orchestratorStep = buildPassThroughOrchestratorStep(body);
-  // 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
-  // arms pass a bounded server-side id there (a registry step id, a recipe id);
-  // `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
-  // verbatim into the same array as `app-block:<appId>` — the tag
-  // `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
-  // app-scoping boundary. The argument that it is safe anyway (an unknown
-  // `$type` fails the submit, so no workflow persists the forged tag) delegates
-  // the control to an orchestrator behaviour this repo does not own and has not
-  // measured. A constant needs no such argument. The per-`$type` dimension is
-  // kept on the audit row's `detail` JSON, which has no scoping meaning and no
-  // cardinality budget.
-  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+  // `$type` never reaches the tag array as text — see `buildPassThroughWorkflowTags`.
+  const tags = buildPassThroughWorkflowTags(claims, body.$type);
 
   const token = await getOrchestratorToken(userId, ctx);
   const quotedBuzz = await quotePassThroughBuzz({
@@ -11766,6 +11758,31 @@ function buildWorkflowTags(
     `app-block:block:${claims.blockId}`,
     `app-block:instance:${claims.blockInstanceId}`,
   ];
+}
+
+/**
+ * The pass-through arm's tags — the quote and the submit both build them here.
+ *
+ * 🔴 A CONSTANT IN THE `baseModel` SLOT, NOT THE SUBMITTED `$type`. The other
+ * arms pass a bounded server-side id there (a registry step id, a recipe id);
+ * `$type` is app-supplied free text, and `buildWorkflowTags` emits that slot
+ * verbatim into the same array as `app-block:<appId>` — the tag
+ * `assertBlockWorkflowTaggedForApp` and `queryAppWorkflows` treat as the
+ * app-scoping boundary. The argument that it is safe anyway (an unknown
+ * `$type` fails the submit, so no workflow persists the forged tag) delegates
+ * the control to an orchestrator behaviour this repo does not own and has not
+ * measured. A constant needs no such argument. The per-`$type` dimension is
+ * kept on the audit row's `detail` JSON, which has no scoping meaning and no
+ * cardinality budget.
+ *
+ * A training `$type` ALSO gets `TRAINING_WORKFLOW_TAG` — a server constant chosen
+ * by a closed-set test, so still no app text — because that tag is what admits a
+ * workflow to `/models/train/from-orchestrator`, the publish wizard a block hands
+ * its viewer to. It also lists the run in the viewer's Training Studio.
+ */
+function buildPassThroughWorkflowTags(claims: BlockClaims, stepType: string): string[] {
+  const tags = buildWorkflowTags(claims, PASS_THROUGH_ENGINE_LABEL, 'step');
+  return isTrainingStepType(stepType) ? [...tags, TRAINING_WORKFLOW_TAG] : tags;
 }
 
 /**
