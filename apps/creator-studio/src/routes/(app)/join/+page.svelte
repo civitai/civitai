@@ -182,6 +182,11 @@
           </li>
         {/each}
       </ul>
+      {#if data.creatorJourneyUrl}
+        <a href={data.creatorJourneyUrl} class="mt-4 inline-block text-sm text-blue-4 hover:underline">
+          See your full Creator Journey on Civitai →
+        </a>
+      {/if}
     </CardContent>
   </Card>
 {/if}
