@@ -2442,7 +2442,8 @@ export function PageBlockHost({
   // the host opens its OWN confirm dialog and only calls the mutation on an
   // explicit click — that click IS the consent boundary (the iframe can't fake
   // it, like the resource picker). The block sends INDEXES not urls; the SERVER
-  // resolves urls + is FAIL-CLOSED behind the ownership+app-tag guard. REQUEST-
+  // resolves urls + is FAIL-CLOSED behind the ownership+app-tag guard, and also
+  // requires the viewer's signed-in session, matching the token's subject. REQUEST-
   // style ⇒ every terminal path (no token / cancel / success / error) MUST reply
   // exactly once or the block hangs; a `settled` latch guards a double-reply.
   useEffect(() => {
@@ -2579,10 +2580,10 @@ export function PageBlockHost({
   }, [onMessage, send, token, getMyBuzzBalanceMutation, reviewNack, reportNoToken]);
 
   // GET_BUZZ_TRANSACTIONS → blocks.getMyBuzzTransactions → BUZZ_TRANSACTIONS_RESULT.
-  // The Buzz-dashboard ledger read. Host-MEDIATED (the iframe never holds the
-  // scope-gated token's power directly); the server self-binds off the token
-  // `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path MUST reply or
-  // the block hangs; on a null token we reply with the ERROR variant (mirrors
+  // The Buzz-dashboard ledger read. Host-MEDIATED: the block posts a request and
+  // the host makes the call with the page's block token. The server self-binds
+  // off the token `sub` + requires `buzz:read:self`. REQUEST-style ⇒ every path
+  // MUST reply or the block hangs; on a null token we reply with the ERROR variant (mirrors
   // GET_BUZZ_BALANCE) rather than dropping. A missing requestId is dropped.
   useEffect(() => {
     const off = onMessage<{ requestId?: unknown; params?: unknown } | undefined>(

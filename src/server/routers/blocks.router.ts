@@ -1835,6 +1835,21 @@ async function createBlockTextToImageStep(opts: {
   };
 }
 
+/**
+ * Refuses unless the block token's subject is the signed-in user the request
+ * arrived with. For bridge writes that run as `protectedProcedure`s: the session
+ * proves who is at the keyboard, the token proves which app and install is asking,
+ * and the two must name the same person.
+ */
+function assertBlockSubjectIsSessionUser(subjectUserId: number, sessionUserId: number): void {
+  if (subjectUserId !== sessionUserId) {
+    throw new TRPCError({
+      code: 'FORBIDDEN',
+      message: 'block token does not belong to the signed-in user',
+    });
+  }
+}
+
 export const blocksRouter = router({
   /**
    * Lists enabled block installs for a (modelId, slotId). Public — anon users
@@ -5104,8 +5119,13 @@ export const blocksRouter = router({
   /**
    * PUBLISH selected outputs of ONE of the calling app's OWN workflows as bare,
    * REAL-SCANNED public `Image` rows — the write half of the Model-Benchmarking
-   * shared-grid seam. FAIL-CLOSED, and identical gate order to
-   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard.
+   * shared-grid seam. FAIL-CLOSED, and the same gate order as
+   * queryAppWorkflows/cancelAppWorkflow up to the ownership guard, plus one gate
+   * those two do not carry: the request must arrive with the viewer's signed-in
+   * session (`protectedProcedure`, API-key and OAuth-token requests refused), and
+   * the token's subject must be that session's user. That comparison runs right
+   * after the non-anon subject check, before any flag read, rate bucket or
+   * orchestrator call.
    *
    * The block sends `workflowId` + optional `imageIndexes` (indexes into the same
    * ordered `images` array queryAppWorkflows exposes) — NEVER urls: the HOST
@@ -5124,7 +5144,8 @@ export const blocksRouter = router({
    *
    * MUTATION for the bearer-token-in-URL reason (see queryAppWorkflows).
    */
-  publishGenerationOutputs: publicProcedure
+  publishGenerationOutputs: protectedProcedure
+    .meta({ blockApiKeys: true })
     .input(
       z.object({
         blockToken: z.string().min(1),
@@ -5150,6 +5171,7 @@ export const blocksRouter = router({
           message: 'publishing requires an authenticated viewer',
         });
       }
+      assertBlockSubjectIsSessionUser(userId, ctx.user.id);
       await assertAppBlocksEnabledForTokenUser(userId);
       // Publish has its OWN (image-weighted) bucket — separate from the catalog
       // read bucket. Charge a base token per call up front (bounds call frequency

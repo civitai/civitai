@@ -85,7 +85,7 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     // unchanged — the count moved between rows, it did not leave the table.
     calls: 15,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
-    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
+    why: 'The tRPC bridge procs. Block-JWT-authed procedures (`publishGenerationOutputs` additionally requires a session matching the subject), so the flag is evaluated against the token subject, never ctx.user. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
   },
   'src/server/services/blocks/block-gated-images-read.service.ts': {
     calls: 1,
