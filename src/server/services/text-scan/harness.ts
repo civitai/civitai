@@ -273,9 +273,10 @@ function orchestratorErrorDetail(step: unknown): string {
     if (!node || typeof node !== 'object') return;
     for (const key of ERROR_KEYS) {
       const value = (node as Record<string, unknown>)[key];
-      if (typeof value === 'string' && value) found.push(value);
-      else if (Array.isArray(value))
-        found.push(...value.filter((v): v is string => typeof v === 'string' && !!v));
+      for (const v of Array.isArray(value) ? value : [value]) {
+        if (typeof v === 'string' && v) found.push(v);
+        else if (v && typeof v === 'object') found.push(JSON.stringify(v));
+      }
     }
   };
   const s = step as { metadata?: unknown; output?: unknown; jobs?: unknown } | undefined;

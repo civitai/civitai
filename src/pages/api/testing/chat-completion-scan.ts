@@ -66,18 +66,12 @@
  *     per-label firing counts. Text below the profile's minChars is not sent, and an
  *     item whose prompt key is missing counts as `missing_prompt`.
  *
- *   { "action": "sampleShadow", "entityType": "Post", "label": "nsfw", "verdict"?: "triggered",
- *     "n"?: 100, "sinceDays"?: 14, "seed"?: "shadow", "promptScope"?: "active" | "any",
- *     "format"?: "json" | "csv" }
- *     A reproducible random sample of SHADOW verdicts (`<Entity>:shadow` rows) for moderator
- *     grading, with the entity's current text. Only verdicts made with the active prompts
- *     unless `promptScope` is "any". `textChangedSinceScan` marks rows edited after the scan.
- *
  *   { "action": "quoteEntities", "entityType": "Post", "entityIds": [...], "model"?, "thinking"? }
  *     `whatif`-prices the production composition for up to 50 real entities. Submits nothing.
  *
- *   composeEntities is refused here (403): it reads any entity's text, private messages
- *     included, so it is only served by the attributed, audited /api/mod/text-scan.
+ *   composeEntities and sampleShadow are refused here (403): they read any entity's text and
+ *     author, private messages included, so only the attributed, audited /api/mod/text-scan
+ *     serves them.
  *
  *   { "action": "scanTexts", "entityType": "Comment",
  *     "texts": [{ "key": "...", "fields": [{ "heading": "...", "text": "..." }] }],
@@ -388,9 +382,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
   const action = (req.body as { action?: unknown } | undefined)?.action;
-  if (action === 'composeEntities')
+  // Both return entity text and author ids: only the attributed, audited endpoint serves them.
+  if (action === 'composeEntities' || action === 'sampleShadow')
     return res.status(403).json({
-      error: 'composeEntities is only served by /api/mod/text-scan, which records who read what.',
+      error: `${action} is only served by /api/mod/text-scan, which records who read what.`,
     });
   if (isTextScanHarnessAction(action)) {
     try {

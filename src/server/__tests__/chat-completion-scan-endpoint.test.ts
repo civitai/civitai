@@ -349,10 +349,17 @@ const hashOf = (id: number) =>
   });
 const queryValues = (call: number) => vi.mocked(dbMock.dbRead.$queryRaw).mock.calls[call].slice(1);
 
+// Served only by the attributed /api/mod/text-scan (the testing route refuses it), so driven directly.
+const shadow = (input: Record<string, unknown>) =>
+  runTextScanHarnessAction(textScanHarnessSchema.parse({ action: 'sampleShadow', ...input }), {
+    moderatorId: 1,
+  });
+
 describe('sampleShadow', () => {
   it('rejects a label the profile does not scan', async () => {
-    const res = await call({ action: 'sampleShadow', entityType: 'BountyEntry', label: 'scam' });
-    expect(res._status()).toBe(400);
+    await expect(shadow({ entityType: 'BountyEntry', label: 'scam' })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
@@ -362,9 +369,8 @@ describe('sampleShadow', () => {
       scanRow(2, 'hash-from-older-text'),
       scanRow(99, 'whatever'),
     ] as never);
-    const res = await call({ action: 'sampleShadow', entityType: 'BountyEntry', label: 'nsfw' });
-    expect(res._status()).toBe(200);
-    const items = (res._body() as { items: Array<Record<string, unknown>> }).items;
+    const res = await shadow({ entityType: 'BountyEntry', label: 'nsfw' });
+    const items = (res.body as { items: Array<Record<string, unknown>> }).items;
     expect(queryValues(0)).toContain('BountyEntry:shadow');
     expect(queryValues(0)).not.toContain('BountyEntry');
     expect(items.map((i) => [i.entityId, i.textChangedSinceScan])).toEqual([
@@ -383,13 +389,8 @@ describe('sampleShadow', () => {
 
   it('filters to the active prompt ids unless asked for any', async () => {
     vi.mocked(dbMock.dbRead.$queryRaw).mockResolvedValue([] as never);
-    await call({ action: 'sampleShadow', entityType: 'BountyEntry', label: 'nsfw' });
-    await call({
-      action: 'sampleShadow',
-      entityType: 'BountyEntry',
-      label: 'nsfw',
-      promptScope: 'any',
-    });
+    await shadow({ entityType: 'BountyEntry', label: 'nsfw' });
+    await shadow({ entityType: 'BountyEntry', label: 'nsfw', promptScope: 'any' });
     expect(queryValues(0)).toContain(JSON.stringify(PROMPT_IDS));
     expect(queryValues(1)).not.toContain(JSON.stringify(PROMPT_IDS));
   });
@@ -399,15 +400,9 @@ describe('sampleShadow', () => {
       scanRow(1, hashOf(1)),
       scanRow(2, hashOf(2), '=HYPERLINK("x")'),
     ] as never);
-    const res = await call({
-      action: 'sampleShadow',
-      entityType: 'BountyEntry',
-      label: 'nsfw',
-      format: 'csv',
-    });
-    expect(res._status()).toBe(200);
-    expect(res._headers()['Content-Type']).toBe('text/csv; charset=utf-8');
-    const csv = res._body() as unknown as string;
+    const res = await shadow({ entityType: 'BountyEntry', label: 'nsfw', format: 'csv' });
+    expect(res.kind).toBe('csv');
+    const csv = res.body as string;
     expect(csv.split('\r\n')[0]).toBe(
       '"entityType","entityId","userId","scannedAt","triggered","verdict","reason","declared","textChangedSinceScan","text","grade","note"'
     );
@@ -643,10 +638,14 @@ describe('free-text actions', () => {
     expect(submitWorkflow).not.toHaveBeenCalled();
   });
 
-  it('composeEntities is refused on the unattributed testing route', async () => {
-    const res = await call({ action: 'composeEntities', entityType: 'Comment', entityIds: [7] });
+  it.each([
+    { action: 'composeEntities', entityType: 'Comment', entityIds: [7] },
+    { action: 'sampleShadow', entityType: 'Post', label: 'nsfw' },
+  ])('$action is refused on the unattributed testing route', async (input) => {
+    const res = await call(input);
     expect(res._status()).toBe(403);
     expect(submitWorkflow).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('composeEntities returns the composed text without submitting', async () => {
@@ -760,25 +759,30 @@ describe('free-text actions', () => {
     });
   });
 
-  it.each(['scanTexts', 'quoteTexts'] as const)(
-    '%s sends a model override in the step',
-    async (action) => {
-      vi.mocked(submitWorkflow).mockResolvedValue({
-        ...scamWorkflow('wf'),
-        data: { ...scamWorkflow('wf').data, cost: { total: 1 } },
-      } as never);
-      await call({
-        action,
-        entityType: 'Comment',
-        texts: [{ key: 'a', fields: [{ heading: 'Comment', text: 'hello' }] }],
-        promptOverrides: SCAM_OVERRIDES,
-        model: 'air:override',
-      });
-      expect((vi.mocked(submitWorkflow).mock.calls[0][0].body!.steps[0] as any).input.model).toBe(
-        'air:override'
-      );
-    }
-  );
+  const ALL_ACTIVE = {
+    ...PROMPTS,
+    'label:scam': { id: 3, key: 'label:scam', content: 'SCAM DEF' },
+  };
+  const commentText = (key: string) => ({ key, fields: [{ heading: 'Comment', text: 'hello' }] });
+
+  it.each([
+    { action: 'scanTexts', entityType: 'Comment', texts: [commentText('a')] },
+    { action: 'quoteTexts', entityType: 'Comment', texts: [commentText('a')] },
+    { action: 'scanEntity', entityType: 'Model', entityId: 1 },
+    { action: 'batchEntities', entityType: 'Model', entityIds: [1] },
+    { action: 'quoteEntities', entityType: 'Model', entityIds: [1] },
+  ])('$action sends a model override in the step', async (input) => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue(ALL_ACTIVE);
+    vi.mocked(submitWorkflow).mockResolvedValue({
+      ...scamWorkflow('wf'),
+      data: { ...scamWorkflow('wf').data, cost: { total: 1 } },
+    } as never);
+    await call({ ...input, model: 'air:override' });
+    expect(submitWorkflow).toHaveBeenCalledTimes(1);
+    expect((vi.mocked(submitWorkflow).mock.calls[0][0].body!.steps[0] as any).input.model).toBe(
+      'air:override'
+    );
+  });
 
   it.each([
     {
@@ -795,6 +799,18 @@ describe('free-text actions', () => {
         ],
       },
       error: 'workflow wf-f failed: model air:missing not found',
+      outcome: 'workflow_failed',
+    },
+    {
+      name: 'a failed step with an object error',
+      data: {
+        id: 'wf-o',
+        status: 'failed',
+        steps: [
+          { $type: 'chatCompletion', status: 'failed', error: { code: 'E1', detail: 'boom' } },
+        ],
+      },
+      error: 'workflow wf-o failed: {"code":"E1","detail":"boom"}',
       outcome: 'workflow_failed',
     },
     {
@@ -849,26 +865,28 @@ describe('free-text actions', () => {
     expect(vi.mocked(submitWorkflow).mock.calls[0][0].query).toEqual({ wait: 30 });
   });
 
-  it('scanTexts never has more than `concurrency` workflows in flight', async () => {
+  const six = Array.from({ length: 6 }, (_, i) => i + 1);
+  it.each([
+    {
+      action: 'scanTexts',
+      entityType: 'Comment',
+      texts: six.map((i) => commentText(`k${i}`)),
+      wait: 30,
+    },
+    { action: 'quoteTexts', entityType: 'Comment', texts: six.map((i) => commentText(`k${i}`)) },
+    { action: 'batchEntities', entityType: 'Model', entityIds: six, wait: 30 },
+    { action: 'quoteEntities', entityType: 'Model', entityIds: six },
+  ])('$action never has more than `concurrency` workflows in flight', async (input) => {
+    vi.mocked(getActiveTextScanPrompts).mockResolvedValue(ALL_ACTIVE);
     let inFlight = 0;
     let maxInFlight = 0;
     vi.mocked(submitWorkflow).mockImplementation((async () => {
       maxInFlight = Math.max(maxInFlight, ++inFlight);
       await new Promise((resolve) => setTimeout(resolve, 5));
       inFlight--;
-      return scamWorkflow('wf');
+      return { data: { ...scamWorkflow('wf').data, cost: { total: 1 } } };
     }) as never);
-    const res = await call({
-      action: 'scanTexts',
-      entityType: 'Comment',
-      texts: Array.from({ length: 6 }, (_, i) => ({
-        key: `k${i}`,
-        fields: [{ heading: 'Comment', text: `text ${i}` }],
-      })),
-      promptOverrides: SCAM_OVERRIDES,
-      concurrency: 2,
-      wait: 30,
-    });
+    const res = await call({ ...input, concurrency: 2 });
     expect(res._status()).toBe(200);
     expect(submitWorkflow).toHaveBeenCalledTimes(6);
     expect(maxInFlight).toBe(2);
