@@ -26,10 +26,17 @@ function bodyFor(creatorScore: number, creatorJourneyUrl: string | null, isMembe
 
 const links = (body: string) => body.split(`href="${JOURNEY_URL}"`).length - 1;
 
-// From the score panel's label to the tips card, or the end of the page when the card is absent.
 function scorePanel(body: string) {
-  const end = body.indexOf('How to grow your creator score');
-  return body.slice(body.indexOf('Your creator score'), end === -1 ? undefined : end);
+  const start = body.lastIndexOf('<div', body.indexOf('cs-panel'));
+  expect(body.slice(start, body.indexOf('Your creator score'))).not.toContain('</div>');
+  const tags = /<\/?div[\s>]/g;
+  tags.lastIndex = start;
+  let depth = 0;
+  for (let tag = tags.exec(body); tag; tag = tags.exec(body)) {
+    depth += tag[0].startsWith('</') ? -1 : 1;
+    if (depth === 0) return body.slice(start, tags.lastIndex);
+  }
+  throw new Error('score panel not found');
 }
 
 describe('/join creator journey link placement', () => {
