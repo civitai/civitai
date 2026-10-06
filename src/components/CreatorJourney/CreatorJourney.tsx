@@ -12,7 +12,10 @@ import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { useSpotlight } from '~/hooks/useSpotlight';
+import {
+  SpotlightBorderCard,
+  SpotlightDivider,
+} from '~/components/SpotlightCard/SpotlightBorderCard';
 import { CREATOR_SCORE_EXPLAINER_HREF } from '~/shared/constants/creator-journey.constants';
 import type {
   CreatorScoreKinds,
@@ -215,20 +218,12 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
 
 function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {
   const accent = tierAccents[badge.key] ?? DEFAULT_ACCENT;
-  const { spotlightRef, handleMouseMove, handleMouseLeave } = useSpotlight({
-    size: 240,
-    color: `color-mix(in srgb, ${accent} 30%, transparent)`,
-  });
 
   return (
-    <Card
-      withBorder
-      radius="md"
-      p="md"
-      className="relative flex flex-col items-center gap-2 overflow-hidden text-center"
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
+    <SpotlightBorderCard
+      color={accent}
       style={accentVar(accent)}
+      faceClassName="flex flex-col items-center gap-2 p-4 text-center"
     >
       <div
         aria-hidden
@@ -236,11 +231,6 @@ function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {
         style={{
           background: 'radial-gradient(60% 100% at 50% 0%, var(--cj-accent) 0%, transparent 100%)',
         }}
-      />
-      <div
-        ref={spotlightRef}
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-500"
       />
       <TierBadge name={badge.name} badgeUrl={badge.badgeUrl} state="earned" size={72} />
       <Text fw={800} size="lg" lh={1.2}>
@@ -265,13 +255,16 @@ function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {
           </Text>
         )
       )}
-      <div className="mt-auto flex w-full items-center justify-center gap-1.5 border-0 border-t border-solid border-gray-2 pt-2 dark:border-dark-4">
-        <IconCalendarCheck size={14} className="shrink-0 text-gray-6 dark:text-dark-2" />
-        <Text size="xs" c="dimmed">
-          Earned {formatDate(badge.achievedAt)}
-        </Text>
+      <div className="mt-auto flex w-full flex-col items-center gap-2">
+        <SpotlightDivider />
+        <div className="flex items-center gap-1.5">
+          <IconCalendarCheck size={14} className="shrink-0 text-gray-6 dark:text-dark-2" />
+          <Text size="xs" c="dimmed">
+            Earned {formatDate(badge.achievedAt)}
+          </Text>
+        </div>
       </div>
-    </Card>
+    </SpotlightBorderCard>
   );
 }
 
