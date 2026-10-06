@@ -172,8 +172,10 @@ describe('chapter early-access refusals', () => {
 
   it('promises no rise above the top quantity rung', () => {
     const [topScore, topCap] = EARLY_ACCESS_CONFIG.scoreQuantityUnlock.at(-2) as [number, number];
-    expect(chapterEarlyAccessCapMessage({ active: 3, limit: topCap, score: topScore })).not.toMatch(
-      /raise/
+    expect(chapterEarlyAccessCapMessage({ active: 3, limit: topCap, score: topScore })).toBe(
+      `You already have 3 chapters in early access, the most your Creator Score of ${topScore.toLocaleString(
+        'en-US'
+      )} allows.`
     );
   });
 
