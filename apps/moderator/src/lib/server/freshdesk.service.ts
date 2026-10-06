@@ -23,9 +23,26 @@ export type FreshdeskResult =
   | { status: 'none' }
   | { status: 'unavailable'; reason: string };
 
+const DEFAULT_FRESHDESK_DOMAIN = 'civitai.freshdesk.com';
+
+/** The bare Freshdesk host. Tolerates a configured value that carries a scheme or a trailing slash,
+ *  which would otherwise produce `https://https://…`. */
+export const freshdeskHost = (configured: string | undefined = env.FRESHDESK_DOMAIN): string =>
+  (configured || DEFAULT_FRESHDESK_DOMAIN).replace(/^https?:\/\//, '').replace(/\/+$/, '');
+
+/**
+ * The agent-side URL of one ticket. 🔴 THE ONE PLACE A TICKET LINK IS BUILT — every ticket link on
+ * `/decisions` goes through it, including tickets whose source row carries a URL of its own (seeded
+ * groups have none, so a stored URL cannot be the rule).
+ */
+export const freshdeskTicketUrl = (
+  ticketId: string | number,
+  domain: string | undefined = env.FRESHDESK_DOMAIN
+): string => `https://${freshdeskHost(domain)}/a/tickets/${encodeURIComponent(String(ticketId))}`;
+
 export async function getFreshdeskContact(email: string | null): Promise<FreshdeskResult> {
   const key = env.FRESHDESK_API_KEY;
-  const domain = env.FRESHDESK_DOMAIN || 'civitai.freshdesk.com';
+  const domain = freshdeskHost();
   if (!key) return { status: 'unavailable', reason: 'Freshdesk is not configured.' };
   if (!email) return { status: 'unavailable', reason: 'This account has no email address.' };
 

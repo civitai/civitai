@@ -355,6 +355,9 @@ describe('the board executes nothing', () => {
       './$types',
       './abuse-detection-tables',
       './abuse-verdicts',
+      // The shared `Decision` shape and `collapseRulings`, which `abuse-decisions.ts` now builds on
+      // — a pure module with no imports at all.
+      './decisions',
       './moderator-db',
       '@civitai/moderation',
       // A TYPE, and only a type: `BadgeVariant` is `VariantProps<typeof badgeVariants>['variant']`,
