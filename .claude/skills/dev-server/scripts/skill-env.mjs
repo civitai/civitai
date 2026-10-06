@@ -68,6 +68,28 @@ function skillNames(root) {
 const envPath = (root, skill) => join(skillsDir(root), skill, '.env');
 
 /**
+ * Whether an example declares itself settings-only. Some skills keep local wiring in a
+ * `.env` — ports, timeouts, feature toggles — all defaulted and none secret. Listing those
+ * alongside real credentials buried the ones that matter: dev-server's twenty settings made
+ * the report unreadable, which is the failure it exists to prevent.
+ */
+function settingsOnly(file) {
+  if (!existsSync(file)) return false;
+  return /^#\s*skill-env:\s*settings-only\b/m.test(readFileSync(file, 'utf8'));
+}
+
+/** The KEY names a dotenv-style file declares, ignoring comments and blanks. */
+function declaredKeys(file) {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && line.includes('='))
+    .map((line) => line.slice(0, line.indexOf('=')).trim())
+    .filter(Boolean);
+}
+
+/**
  * What each skill's credential state is in `root`, plus whether a backup exists for it.
  *
  * `wants` is the signal that a skill takes credentials at all: a `.env.example` beside it. A
@@ -76,13 +98,24 @@ const envPath = (root, skill) => join(skillsDir(root), skill, '.env');
  */
 export function survey(root) {
   const backup = backupDir();
+  // Most skills fall back to the root .env, so one with no file of its own may still be
+  // fully configured. Reporting those as missing is how a report earns being ignored, and
+  // this one exists to be read.
+  const fromRoot = new Set(declaredKeys(join(root, '.env')));
   return skillNames(root).map((skill) => {
     const p = envPath(root, skill);
     const has = existsSync(p);
+    const example = join(skillsDir(root), skill, '.env.example');
+    const needs = declaredKeys(example);
+    const settings = settingsOnly(example);
+    const missingFromRoot = needs.filter((key) => !fromRoot.has(key));
     return {
       skill,
       has,
-      wants: existsSync(join(skillsDir(root), skill, '.env.example')),
+      wants: existsSync(example) && !settings,
+      needs,
+      viaRoot: !has && needs.length > 0 && missingFromRoot.length === 0,
+      missingFromRoot,
       backedUp: existsSync(join(backup, `${skill}.env`)),
       mtime: has ? statSync(p).mtime : undefined,
     };
@@ -91,23 +124,33 @@ export function survey(root) {
 
 function report(root, rows) {
   const relevant = rows.filter((r) => r.has || r.wants);
-  const missing = relevant.filter((r) => !r.has);
   const present = relevant.filter((r) => r.has);
+  const viaRoot = relevant.filter((r) => r.viaRoot);
+  const missing = relevant.filter((r) => !r.has && !r.viaRoot);
 
   console.log(`\nSkill credentials in ${root}\n`);
   for (const r of present) {
     const age = r.mtime ? r.mtime.toISOString().slice(0, 10) : '';
     console.log(`  set      ${r.skill.padEnd(20)} ${age}${r.backedUp ? '' : '   (no backup)'}`);
   }
+  for (const r of viaRoot) {
+    console.log(`  root     ${r.skill.padEnd(20)} ${r.needs.length} key(s) from the root .env`);
+  }
   for (const r of missing) {
-    console.log(`  ABSENT   ${r.skill.padEnd(20)} ${r.backedUp ? 'restorable from backup' : ''}`);
+    const why = r.missingFromRoot.length
+      ? `needs ${r.missingFromRoot.slice(0, 3).join(', ')}${
+          r.missingFromRoot.length > 3 ? ` +${r.missingFromRoot.length - 3} more` : ''
+        }`
+      : 'no .env.example to read';
+    const hint = r.backedUp ? '  (restorable from backup)' : '';
+    console.log(`  ABSENT   ${r.skill.padEnd(20)} ${why}${hint}`);
   }
   if (!relevant.length) console.log('  (no skill in this tree takes credentials)');
 
   const restorable = missing.filter((r) => r.backedUp).length;
   const unbacked = present.filter((r) => !r.backedUp).length;
   console.log(
-    `\n  ${present.length} set, ${missing.length} absent${
+    `\n  ${present.length} set, ${viaRoot.length} from the root .env, ${missing.length} absent${
       restorable ? ` (${restorable} restorable)` : ''
     }`
   );
@@ -192,7 +235,9 @@ export function syncSkillEnv(primary, target) {
   }
 
   const absent = survey(target)
-    .filter((r) => r.wants && !r.has)
+    // Not `!has`: a skill served by the root .env is configured, and warning about it on
+    // every worktree creation is what trains people to skip the warning.
+    .filter((r) => r.wants && !r.has && !r.viaRoot)
     .map((r) => r.skill);
   return { copied: names.length, kept, names, absent };
 }

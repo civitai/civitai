@@ -697,11 +697,17 @@ What's already handled:
   must not cost you a worktree. For a tree that already exists, `wt env`:
 
   ```bash
-  node .claude/skills/dev-server/cli.mjs wt env                 # presence per skill, never a value
+  node .claude/skills/dev-server/cli.mjs wt env                 # state per skill, never a value
   node .claude/skills/dev-server/cli.mjs wt env <worktree>      # fill another tree's gaps
   node .claude/skills/dev-server/cli.mjs wt env --backup        # copy them OUTSIDE the repo
   node .claude/skills/dev-server/cli.mjs wt env --restore       # bring back what this tree lacks
   ```
+
+  It reports three states, because two were misleading. `set` is a skill with its own file.
+  `root` is one with no file whose every declared key the root `.env` supplies — most skills fall
+  back to it, so those are configured and were previously reported as missing. `ABSENT` names the
+  key that is actually blocking. An example carrying `# skill-env: settings-only` is local wiring
+  rather than credentials (ports, timeouts, toggles) and is left out entirely.
 
   `--backup` exists because these files are one `git clean` from gone and nothing restores them: a
   skill whose `.gitignore` lists `.env` loses it to `clean -x`, one without a `.gitignore` loses the

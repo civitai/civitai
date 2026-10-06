@@ -53,8 +53,12 @@ Two obvious checks return success-shaped output while telling you nothing:
   2026-10-05, the primary had 7 and a worktree 0 of 47 skill directories. The symptoms name no
   cause: `FLIPT_URL and FLIPT_API_TOKEN must be set`, `credentials not configured`, a bare 401.
   `wt new` now copies them and warns about any skill whose credentials exist in no tree. To see the
-  state of a tree you already have, `wt env` lists presence per skill — never a value, because a
-  per-skill inventory annotated with what each unlocks is what must not exist in a public repo:
+  state of a tree you already have, `wt env` reports one of three states per skill — never a value,
+  because a per-skill inventory annotated with what each unlocks must not exist in a public repo:
+
+  `set` (its own file), `root` (no file, but the root `.env` supplies every key it declares — most
+  skills fall back to it) and `ABSENT`, which names the key that is blocking. An example carrying
+  `# skill-env: settings-only` is local wiring, not credentials, and is not counted.
 
   ```bash
   node .claude/skills/dev-server/cli.mjs wt env                 # what this tree has
