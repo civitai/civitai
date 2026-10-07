@@ -213,8 +213,9 @@ export function normalCdf(x: number): number {
  * - `minPromotableFraction`: the positive control on what PURPOSE actually reads — the
  *   share of scored prompts whose pool held at least one version the re-rank promotes.
  * - `planning`: power-planning inputs. Assumptions, not evidence; they decide nothing.
- *   `scored`, `hitDiscordant` / `hitDiscordantOf` and `mrrNonTieRate` are the pilot's
- *   NUISANCE rates (`replan.pilot`). `mrrPurposeShare`, the only effect-size input, is
+ *   `scored` is `sampleSize` × the pilot's scored fraction; `hitDiscordant` /
+ *   `hitDiscordantOf` and `mrrNonTieRate` are the pilot's other NUISANCE rates (counts in
+ *   `replan.pilot`). `mrrPurposeShare`, the only effect-size input, is
  *   still the offline replay's value — the pilot's effect estimate is not used.
  *   `v2PopularityHitRate` sizes the margin sentence; `replayDesigns` / `replayPrompts`
  *   are the replay's provenance, quoted in the Selection sentence.
