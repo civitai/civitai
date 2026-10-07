@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
-import { walkPages } from './keyset-walk';
+import { walkPages } from './keyset-walk.harness';
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
@@ -95,10 +95,11 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
+  const { rows } = await db.query<{ tablename: string }>(
+    `SELECT tablename FROM pg_tables WHERE schemaname = 'public'`
+  );
   await db.exec(`
-    TRUNCATE "User", "Post", "Image", "ImageConnection", "Report", "ImageReport", "ComicProject",
-      "ComicChapter", "ComicPanel", "Tag", "TagsOnImageNew", "TagsOnImageDetails", "TagsOnImageVote",
-      "ImageTagForReview", "ImageRatingRequest";
+    TRUNCATE ${rows.map((r) => `"${r.tablename}"`).join(', ')};
     INSERT INTO "User" ("id", "username") VALUES (7, 'uploader');
   `);
 });
@@ -113,15 +114,13 @@ const insertImages = async (columns: string, values: (id: number, n: number) => 
     await db.exec(`INSERT INTO "Image" ("id", ${columns}) VALUES (${id}, ${values(id, n)})`);
 };
 
-const walk = walkPages<number>;
-
 const LIMITS = [1, 2, 3, 4];
 
 describe('keyset queues reach every item exactly once', () => {
   it.each(LIMITS)('image review queue at %i per page', async (limit) => {
     await insertImages(`"needsReview"`, () => `'minor'`);
 
-    const seen = await walk((cursor) =>
+    const seen = await walkPages<number>((cursor) =>
       getImageReviewQueue({ needsReview: 'minor', browsingLevel: 1, cursor, limit })
     );
 
@@ -136,7 +135,9 @@ describe('keyset queues reach every item exactly once', () => {
       await db.exec(`INSERT INTO "ImageReport" VALUES (${imageId}, ${501 + n})`);
     }
 
-    const seen = await walk((cursor) => getReportedImageQueue({ browsingLevel: 1, cursor, limit }));
+    const seen = await walkPages<number>((cursor) =>
+      getReportedImageQueue({ browsingLevel: 1, cursor, limit })
+    );
 
     expect(seen).toEqual(NEWEST_FIRST);
   });
@@ -150,7 +151,7 @@ describe('keyset queues reach every item exactly once', () => {
         `INSERT INTO "ComicPanel" ("id", "chapterPosition", "projectId", "imageId") VALUES (${id}, 0, 1, ${id})`
       );
 
-    const seen = await walk((cursor) => getComicReviewQueue({ cursor, limit }));
+    const seen = await walkPages<number>((cursor) => getComicReviewQueue({ cursor, limit }));
 
     expect(seen).toEqual(NEWEST_FIRST);
   });
@@ -158,7 +159,7 @@ describe('keyset queues reach every item exactly once', () => {
   it.each(LIMITS)('pending ingestion queue at %i per page', async (limit) => {
     await insertImages(`"ingestion", "createdAt"`, () => `'Pending', now() - interval '1 hour'`);
 
-    const seen = await walk((cursor) =>
+    const seen = await walkPages<number>((cursor) =>
       getImagesPendingIngestion({ view: 'recent', cursor, limit })
     );
 
@@ -173,7 +174,7 @@ describe('keyset queues reach every item exactly once', () => {
       (_, n) => `'Error', 0, now() - interval '1 day' - make_interval(mins => ${n})`
     );
 
-    const seen = await walk((cursor) => getIngestionErrorImages({ cursor, limit }));
+    const seen = await walkPages<number>((cursor) => getIngestionErrorImages({ cursor, limit }));
 
     expect(seen).toEqual(NEWEST_FIRST);
   });
@@ -183,7 +184,7 @@ describe('keyset queues reach every item exactly once', () => {
     for (const id of IMAGE_IDS)
       await db.exec(`INSERT INTO "TagsOnImageNew" VALUES (${id}, 1, ${1 << 9})`);
 
-    const seen = await walk((cursor) => getImageTagReviewQueue({ cursor, limit }));
+    const seen = await walkPages<number>((cursor) => getImageTagReviewQueue({ cursor, limit }));
 
     expect(seen).toEqual(NEWEST_FIRST);
   });
@@ -193,7 +194,7 @@ describe('keyset queues reach every item exactly once', () => {
     for (const id of IMAGE_IDS)
       await db.exec(`INSERT INTO "ImageRatingRequest" VALUES (${id}, 3, 4, 'Pending', now())`);
 
-    const seen = await walk((cursor) => getImageRatingRequests({ cursor, limit }));
+    const seen = await walkPages<number>((cursor) => getImageRatingRequests({ cursor, limit }));
 
     expect(seen).toEqual(IMAGE_IDS);
   });

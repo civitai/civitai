@@ -24,10 +24,13 @@ export function parseDownleveledCursor(cursor: string): { at: string; id: number
   if (!match) return undefined;
   const [, at, rawId] = match;
   const id = Number(rawId);
-  // Out-of-range values match the shape but fail ClickHouse's typed parameters, which is a 500.
-  const date = new Date(`${at.replace(' ', 'T')}Z`);
+  const iso = at.replace(' ', 'T');
+  const date = new Date(`${iso}Z`);
   if (id > 0xffffffff || Number.isNaN(date.getTime())) return undefined;
-  if (date.toISOString().slice(0, 19) !== at.replace(' ', 'T')) return undefined;
+  if (date.toISOString().slice(0, 19) !== iso) return undefined;
+  // ClickHouse clamps a DateTime outside these years instead of rejecting it, serving a wrong page.
+  const year = date.getUTCFullYear();
+  if (year < 1970 || year > 2105) return undefined;
   return { at, id };
 }
 

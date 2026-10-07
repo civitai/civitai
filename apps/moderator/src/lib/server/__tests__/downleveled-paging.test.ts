@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { walkPages } from './keyset-walk';
+import { walkPages } from './keyset-walk.harness';
 
 /**
  * The downleveled queue pages through a ClickHouse table whose `createdAt` is whole seconds, and one
@@ -107,6 +107,9 @@ describe('downleveled queue paging', () => {
 describe('parseDownleveledCursor', () => {
   it('reads the cursor the service writes', () => {
     expect(parseDownleveledCursor(`${TIED_SECOND}|503`)).toEqual({ at: TIED_SECOND, id: 503 });
+  });
+
+  it('accepts the largest UInt32 id', () => {
     expect(parseDownleveledCursor(`${TIED_SECOND}|4294967295`)?.id).toBe(4294967295);
   });
 
@@ -121,6 +124,8 @@ describe('parseDownleveledCursor', () => {
     `${TIED_SECOND}|4294967296`,
     `2026-13-45 99:99:99|1`,
     `2026-02-30 00:00:00|1`,
+    `1960-01-01 00:00:00|1`,
+    `2200-01-01 00:00:00|1`,
   ])('ignores %j', (cursor) => {
     expect(parseDownleveledCursor(cursor)).toBeUndefined();
   });

@@ -2,7 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
-import { walkPages } from './keyset-walk';
+import { walkPages } from './keyset-walk.harness';
 
 /**
  * The appeals queue is worked oldest APPEAL first, and paging through it reaches every appeal.
