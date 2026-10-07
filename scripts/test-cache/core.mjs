@@ -25,14 +25,13 @@ import {
   statSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, isAbsolute, join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const CACHE_FORMAT = 2;
 export const MODES = ['off', 'shadow', 'on'];
 export const RECORDS_PER_TEST = 8;
 
-const HERE = dirname(fileURLToPath(import.meta.url));
 // Read once, at load: the daemon's checkout can pull mid-run, and a record must be salted with the
 // code that made it, not with whatever is on disk when the run ends.
 const LOADED_CORE = (() => {
