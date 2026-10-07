@@ -243,7 +243,7 @@ describe('the salt and the workspace manifests', () => {
     expect(globalSalt(root, 'v')).not.toBe(before);
   });
 
-  // Only the top-level `version` is dropped. `main`, `type`, `imports` and the rest steer resolution
+  // Only the top-level `version` and `scripts` are dropped. `main`, `type`, `imports` and the rest steer resolution
   // too, and the lockfile records none of them.
   it('still changes when any other field changes', () => {
     const root = setup();
@@ -277,21 +277,25 @@ describe('the salt and the workspace manifests', () => {
   });
 
   // The salt is version-blind; a test that reads a manifest itself must not be.
-  it('still re-runs a test that read a manifest when only its version changes', () => {
-    const root = setup();
-    writeFileSync(join(root, 't.test.ts'), 't');
-    const key = () =>
-      keyFor({
-        salt: globalSalt(root, 'v'),
-        project: 'unit',
-        testRel: 't.test.ts',
-        entries: ['apps/app/package.json'],
-        fingerprint: makeFingerprinter(root),
-      });
-    const before = key();
-    edit(root, 'apps/app/package.json', (pkg) => (pkg.version = '1.0.1'));
-    expect(key()).not.toBe(before);
-  });
+  // no-lint-rules-script-drift reads the root `scripts` itself, so it must re-run when they change.
+  it.each(['version', 'scripts'])(
+    'still re-runs a test that read a manifest when only its %s changes',
+    (field) => {
+      const root = setup();
+      writeFileSync(join(root, 't.test.ts'), 't');
+      const key = () =>
+        keyFor({
+          salt: globalSalt(root, 'v'),
+          project: 'unit',
+          testRel: 't.test.ts',
+          entries: ['package.json'],
+          fingerprint: makeFingerprinter(root),
+        });
+      const before = key();
+      edit(root, 'package.json', (pkg) => (pkg[field] = 'changed'));
+      expect(key()).not.toBe(before);
+    }
+  );
 });
 
 describe('tests that always run', () => {
