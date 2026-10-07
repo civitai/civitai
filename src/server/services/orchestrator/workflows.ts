@@ -758,7 +758,10 @@ function orchestratorErrorMessage(error: unknown) {
     : handleError(error as Parameters<typeof handleError>[0]);
 }
 
-/** Maps a failed orchestrator write onto the app's errors, so every paid call fails the same way. */
+/**
+ * Maps a failed orchestrator call onto the app's errors. 403 means insufficient funds — a caller
+ * where it does not must handle 403 first.
+ */
 export function throwOrchestratorFailure({
   error,
   response,

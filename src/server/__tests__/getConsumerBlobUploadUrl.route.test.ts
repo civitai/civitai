@@ -44,6 +44,10 @@ async function call() {
   return out;
 }
 
+const { getConsumerBlobUploadUrlService } = await import(
+  '~/server/services/orchestrator/consumerBlobUpload'
+);
+
 const upstream = (status: number, error?: unknown) =>
   getConsumerBlobUploadUrl.mockResolvedValueOnce({ data: undefined, error, response: { status } });
 
@@ -86,5 +90,17 @@ describe('GET /api/orchestrator/getConsumerBlobUploadUrl', () => {
   it('reports an unreachable upstream as a 502', async () => {
     getConsumerBlobUploadUrl.mockRejectedValueOnce(new TypeError('fetch failed'));
     expect((await call()).status).toBe(502);
+  });
+});
+
+describe('getConsumerBlobUploadUrlService', () => {
+  it.each([
+    ['no response', undefined],
+    ['an upstream 503', { status: 503 }],
+  ])('reports %s as SERVICE_UNAVAILABLE', async (_, response) => {
+    getConsumerBlobUploadUrl.mockResolvedValueOnce({ data: undefined, error: undefined, response });
+    await expect(getConsumerBlobUploadUrlService({ token: 't' })).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
   });
 });
