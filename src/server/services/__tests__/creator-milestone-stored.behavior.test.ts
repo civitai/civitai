@@ -137,10 +137,20 @@ describe('findStoredCandidates', () => {
     ]);
   });
 
+  it('keeps the earliest of several rows for one user', async () => {
+    await doodle(1, 'teal', '2026-03-05T00:00:00Z');
+    await doodle(1, 'teal', '2026-03-01T00:00:00Z');
+    await doodle(1, 'teal', '2026-03-09T00:00:00Z');
+    const sql = `SELECT d."userId", d."drawnAt" AS "achievedAt" FROM "Doodle" d ORDER BY d.id`;
+    expect(await find(detector({ sql }))).toEqual([
+      { userId: 1, milestoneKey: KEY, achievedAt: new Date('2026-03-01T00:00:00Z') },
+    ]);
+  });
+
   it('runs the stored query inside a read-only transaction with a statement timeout', async () => {
     await find(detector(), { limits: { timeoutMs: 1234, rowCap: 10 } });
     expect(statements.slice(0, 2)).toEqual([
-      'BEGIN TRANSACTION READ ONLY',
+      'BEGIN READ ONLY',
       'SET LOCAL statement_timeout = 1234',
     ]);
     expect(statements.at(-1)).toBe('COMMIT');
@@ -198,7 +208,26 @@ describe('findStoredCandidates', () => {
     const skip = await skipOf(findStoredCandidates(cancelling, KEY, detector(), {}));
     expect(skip.reason).toBe('timeout');
     expect(sent.at(-1)).toBe('ROLLBACK');
-    expect(release).toHaveBeenCalledWith(false);
+    expect(release).toHaveBeenCalled();
+  });
+
+  // node-postgres sends a query with no values over the simple protocol, which runs every statement
+  // in the text, so a stored text could COMMIT its way out of READ ONLY. The held-key parameter means
+  // a stored query always has one. Do not remove it without forcing the extended protocol another way.
+  it('always sends the stored query with parameters, so it runs as a single statement', async () => {
+    const sent: { text: string; values?: unknown[] }[] = [];
+    const recording = {
+      connect: async () => ({
+        query: async (text: string, values?: unknown[]) => {
+          sent.push({ text, values });
+          return { rows: [], fields: [] };
+        },
+        release: vi.fn(),
+      }),
+    } as never;
+    await skipOf(findStoredCandidates(recording, KEY, detector(), {}));
+    const stored = sent.find((call) => call.text.includes('AS stored'));
+    expect(stored?.values).toEqual([KEY]);
   });
 
   it('skips a result over the row cap', async () => {
@@ -245,6 +274,19 @@ describe('findStoredCandidates', () => {
         max_result_rows: 50,
         result_overflow_mode: 'throw',
       });
+    });
+
+    it('merges repeated ids and skips a result over the row cap', async () => {
+      const counting = detector({
+        clickhouse: 'SELECT id FROM ch_fixture',
+        sql: `SELECT cardinality($1::int[]) AS "userId", now() AS "achievedAt"`,
+      });
+      const queryClickhouse = async () => [{ id: 7 }, { id: 7 }, { id: 8 }];
+      expect(await find(counting, { queryClickhouse })).toEqual([
+        expect.objectContaining({ userId: 2 }),
+      ]);
+      const limits = { timeoutMs: 1000, rowCap: 2 };
+      expect((await skipOf(find(counting, { queryClickhouse, limits }))).reason).toBe('row-cap');
     });
 
     it.each([
@@ -302,16 +344,18 @@ describe('storedMilestoneGroups', () => {
 
   // Otherwise an edited query would announce everyone it newly finds as tonight's news.
   it('fingerprints what the query grants, not when it launched', () => {
-    const [a, b, c] = storedMilestoneGroups(
+    const [a, b, c, d, e] = storedMilestoneGroups(
       [
         { key: 'test:a', detector: valid },
         { key: 'test:b', detector: { ...valid, sql: `${TEAL_SQL} HAVING true` } },
         { key: 'test:c', detector: { ...valid, launchedAt: '2026-06-01T00:00:00Z' } },
+        { key: 'test:d', detector: { ...valid, dated: false } },
+        { key: 'test:e', detector: { ...valid, clickhouse: 'SELECT 1 AS id' } },
       ],
       { onSkip: () => undefined }
-    );
-    expect(a.fingerprint).not.toBe(b.fingerprint);
-    expect(a.fingerprint).toBe(c.fingerprint);
+    ).map((g) => g.fingerprint);
+    expect(new Set([a, b, d, e]).size).toBe(4);
+    expect(a).toBe(c);
   });
 
   it('loads definitions from the detector column', async () => {
@@ -319,20 +363,36 @@ describe('storedMilestoneGroups', () => {
       KEY,
       JSON.stringify(valid),
     ]);
-    const groups = await loadStoredMilestoneGroups(pool, { onSkip: () => undefined });
+    await q(
+      `INSERT INTO "CreatorMilestone" (key, track, hidden, name) VALUES ('test:plain', 'hidden', true, 'Plain')`
+    );
+    const skips: StoredMilestoneSkip[] = [];
+    const groups = await loadStoredMilestoneGroups(pool, {
+      onSkip: (skip) => void skips.push(skip),
+    });
     expect(groups.map((g) => g.keys)).toEqual([[KEY]]);
+    expect(skips).toEqual([]);
   });
 });
 
 describe('a stored group through the grant runner', () => {
   const AFTER_LAUNCH = new Date('2026-04-01T00:00:00Z');
 
-  async function grant(watermark: ActivityWatermark | null, sql = TEAL_SQL) {
+  async function grant(
+    watermark: ActivityWatermark | null,
+    {
+      sql = TEAL_SQL,
+      dated = true,
+      silent = undefined as true | undefined,
+      gated = false,
+      audience = null as number[] | null,
+    } = {}
+  ) {
     const [group] = storedMilestoneGroups(
       [
         {
           key: KEY,
-          detector: { type: 'query', sql, dated: true, launchedAt: '2026-01-01T00:00:00Z' },
+          detector: { type: 'query', sql, dated, silent, launchedAt: '2026-01-01T00:00:00Z' },
         },
       ],
       { onSkip: () => undefined }
@@ -344,9 +404,9 @@ describe('a stored group through the grant runner', () => {
       readPg: pool,
       writePg: pool,
       store: { get: async (k) => rows.get(k) ?? null, set: async (k, w) => void rows.set(k, w) },
-      gated: false,
+      gated,
       now: AFTER_LAUNCH,
-      audienceAmong: async (ids) => new Set(ids),
+      audienceAmong: async (ids) => new Set(ids.filter((id) => !audience || audience.includes(id))),
       notify: async (grants) => void notified.push(...grants),
     });
     return { result, notified, rows };
@@ -380,11 +440,44 @@ describe('a stored group through the grant runner', () => {
 
   it('announces nothing on the first run after its query changed', async () => {
     await doodle(2, 'teal', '2026-03-20T08:15:00Z');
-    const first = await grant(null, `${TEAL_SQL} HAVING false`);
+    const first = await grant(null, { sql: `${TEAL_SQL} HAVING false` });
     expect(first.result).toMatchObject({ granted: 0 });
     const [stored] = [...first.rows.values()];
 
     const edited = await grant({ ...stored, at: new Date('2026-03-01T00:00:00Z').getTime() });
     expect(edited.result).toMatchObject({ granted: 1, announced: 0 });
+  });
+
+  const watermarkAfter = async (options: Parameters<typeof grant>[1]) => {
+    const first = await grant(null, options);
+    await q(`DELETE FROM "UserCreatorMilestone"`);
+    const [stored] = [...first.rows.values()];
+    return { ...stored, at: new Date('2026-03-01T00:00:00Z').getTime() };
+  };
+
+  // Grants wait on the flag while it gates them; a stored group must not reach past the audience.
+  it('grants only the flag audience while grants are gated', async () => {
+    await doodle(1, 'teal', '2026-02-01T00:00:00Z');
+    await doodle(2, 'teal', '2026-02-01T00:00:00Z');
+    const { result } = await grant(null, { gated: true, audience: [2] });
+    expect(result).toMatchObject({ candidates: 2, audience: 1, granted: 1 });
+    expect(await q(`SELECT "userId" FROM "UserCreatorMilestone"`)).toEqual([{ userId: 2 }]);
+  });
+
+  // An undated finding cannot be told from a backlog, so it announces only from a clean run.
+  it('treats an undated definition as untimed', async () => {
+    await doodle(1, 'teal', '2026-03-20T00:00:00Z');
+    const sql = `SELECT DISTINCT d."userId", NULL::timestamptz AS "achievedAt"
+      FROM "Doodle" d WHERE d.color = 'teal'`;
+    const watermark = await watermarkAfter({ sql, dated: false });
+    const { result } = await grant({ ...watermark, gated: true }, { sql, dated: false });
+    expect(result).toMatchObject({ granted: 1, announced: 0 });
+  });
+
+  it('never announces a silent definition', async () => {
+    await doodle(1, 'teal', '2026-03-20T00:00:00Z');
+    const watermark = await watermarkAfter({ silent: true });
+    const { result } = await grant(watermark, { silent: true });
+    expect(result).toMatchObject({ granted: 1, announced: 0 });
   });
 });

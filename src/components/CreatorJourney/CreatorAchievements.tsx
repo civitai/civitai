@@ -211,7 +211,7 @@ function MilestoneBadge({
   );
 }
 
-function Hexagon({ label, state, size }: { label: string; state: TileState; size: number }) {
+export function Hexagon({ label, state, size }: { label: string; state: TileState; size: number }) {
   return (
     <div
       aria-hidden

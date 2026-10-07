@@ -1,7 +1,8 @@
 import { createHash } from 'crypto';
-import type { PoolClient, QueryResult } from 'pg';
+import type { QueryResult } from 'pg';
 import * as z from 'zod';
 import type { AugmentedPool } from '~/server/db/db-helpers';
+import { queryWithTimeout } from '~/server/db/db-helpers';
 import type {
   MilestoneCandidateRow,
   RowDetectorGroup,
@@ -84,28 +85,6 @@ function toSkip(milestoneKey: string, e: unknown) {
   return new StoredMilestoneSkip(milestoneKey, 'query-error', code);
 }
 
-async function inReadOnlyTransaction<T>(
-  pool: AugmentedPool,
-  milestoneKey: string,
-  timeoutMs: number,
-  work: (client: PoolClient) => Promise<T>
-) {
-  const client = await pool.connect();
-  let broken = false;
-  try {
-    await client.query('BEGIN TRANSACTION READ ONLY');
-    await client.query(`SET LOCAL statement_timeout = ${Math.floor(timeoutMs)}`);
-    const result = await work(client);
-    await client.query('COMMIT');
-    return result;
-  } catch (e) {
-    await client.query('ROLLBACK').catch(() => (broken = true));
-    throw toSkip(milestoneKey, e);
-  } finally {
-    client.release(broken);
-  }
-}
-
 async function clickhouseIds(
   milestoneKey: string,
   sql: string,
@@ -157,27 +136,26 @@ export async function findStoredCandidates(
     params = [await clickhouseIds(milestoneKey, detector.clickhouse, queryClickhouse, limits)];
   }
 
-  const { found, held } = await inReadOnlyTransaction(
-    readPg,
-    milestoneKey,
-    limits.timeoutMs,
-    async (client) => {
-      // A trailing line comment in the stored text must not swallow the closing parenthesis.
-      const found = await client.query({
-        text: `SELECT * FROM (\n${detector.sql}\n) AS stored LIMIT ${limits.rowCap + 1}`,
-        values: params,
-      });
-      checkShape(milestoneKey, found);
-      const held = await client.query<{ userId: number }>(
-        `SELECT "userId" FROM "UserCreatorMilestone" WHERE "milestoneKey" = $1`,
-        [milestoneKey]
-      );
-      return { found, held };
-    }
-  );
-
+  let found: QueryResult;
+  try {
+    // The newline keeps a trailing line comment in the stored text from swallowing the parenthesis.
+    found = await queryWithTimeout(
+      readPg,
+      limits.timeoutMs,
+      `SELECT * FROM (\n${detector.sql}\n) AS stored
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "UserCreatorMilestone" held
+        WHERE held."userId" = stored."userId" AND held."milestoneKey" = $${params.length + 1}
+      )
+      LIMIT ${limits.rowCap + 1}`,
+      [...params, milestoneKey]
+    );
+  } catch (e) {
+    throw toSkip(milestoneKey, e);
+  }
+  checkShape(milestoneKey, found);
   if (found.rows.length > limits.rowCap) throw new StoredMilestoneSkip(milestoneKey, 'row-cap');
-  const holders = new Set(held.rows.map((row) => row.userId));
+
   const earliest = new Map<number, Date | null>();
   for (const { userId, achievedAt } of found.rows as { userId: unknown; achievedAt: unknown }[]) {
     if (!Number.isSafeInteger(userId) || (userId as number) <= 0)
@@ -186,7 +164,6 @@ export async function findStoredCandidates(
     if (detector.dated ? !(at instanceof Date) || Number.isNaN(at.getTime()) : at !== null)
       throw new StoredMilestoneSkip(milestoneKey, 'shape');
     const id = userId as number;
-    if (holders.has(id)) continue;
     const seen = earliest.get(id);
     if (seen === undefined || (seen && at && at < seen)) earliest.set(id, at);
   }

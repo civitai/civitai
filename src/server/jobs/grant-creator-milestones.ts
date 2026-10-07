@@ -14,6 +14,7 @@ import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
   creatorJourneyAudienceAmong,
 } from '~/server/services/creator-journey-flag.service';
+import { logToAxiom } from '~/server/logging/client';
 import { createLogger } from '~/utils/logging';
 import { createJob } from './job';
 
@@ -57,7 +58,7 @@ export function memoizedAudience(evaluate: (userIds: number[]) => Promise<Set<nu
   };
 }
 
-const queryClickhouse: QueryClickhouse = async (query, settings) => {
+export const queryClickhouse: QueryClickhouse = async (query, settings) => {
   if (!clickhouse) throw new Error('ClickHouse is not configured');
   const response = await clickhouse.query({
     query,
@@ -67,8 +68,25 @@ const queryClickhouse: QueryClickhouse = async (query, settings) => {
   return response.json();
 };
 
+// Key, outcome and timing only: a stored query's text and parameters never leave the job.
+function reportStored(details: {
+  milestoneKey: string;
+  outcome: 'ran' | 'skipped' | 'unreadable';
+  ms?: number;
+  reason?: string;
+  code?: string;
+}) {
+  log('stored milestone', details);
+  logToAxiom({ type: 'info', name: 'creator-milestone-stored', ...details });
+}
+
 const logSkip = (skip: StoredMilestoneSkip) =>
-  log('stored milestone skipped', skip.milestoneKey, skip.reason, skip.code ?? '');
+  reportStored({
+    milestoneKey: skip.milestoneKey,
+    outcome: 'skipped',
+    reason: skip.reason,
+    code: skip.code,
+  });
 
 /**
  * The milestones defined on their own rows. Unreadable definitions (the column not yet migrated, say)
@@ -78,7 +96,12 @@ async function storedGroups(): Promise<MilestoneDetectorGroup[]> {
   try {
     return await loadStoredMilestoneGroups(pgDbWrite, { onSkip: logSkip, queryClickhouse });
   } catch (e) {
-    log('stored milestone definitions unreadable', (e as { code?: unknown })?.code ?? '');
+    const code = (e as { code?: unknown })?.code;
+    reportStored({
+      milestoneKey: '*',
+      outcome: 'unreadable',
+      code: typeof code === 'string' ? code : undefined,
+    });
     return [];
   }
 }
@@ -98,6 +121,8 @@ export const grantCreatorMilestones = createJob(
     const groups = [...activityDetectorGroups(), ...(await storedGroups())];
     for (const group of groups) {
       jobContext.checkIfCanceled();
+      const startedAt = Date.now();
+      const stored = 'candidates' in group ? group.keys[0] : null;
       try {
         results[group.id] = await runActivityGroup(group, {
           readPg: pgDbReadLong,
@@ -107,10 +132,18 @@ export const grantCreatorMilestones = createJob(
           audienceAmong,
           checkIfCanceled: () => jobContext.checkIfCanceled(),
         });
+        if (stored)
+          reportStored({ milestoneKey: stored, outcome: 'ran', ms: Date.now() - startedAt });
       } catch (e) {
         // Its watermark stays put, so the next run picks up from the last complete one.
         if (e instanceof StoredMilestoneSkip) {
-          logSkip(e);
+          reportStored({
+            milestoneKey: e.milestoneKey,
+            outcome: 'skipped',
+            reason: e.reason,
+            code: e.code,
+            ms: Date.now() - startedAt,
+          });
           results[group.id] = { skipped: e.reason };
           continue;
         }

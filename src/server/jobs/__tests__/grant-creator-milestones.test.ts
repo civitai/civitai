@@ -4,6 +4,18 @@ const mocks = vi.hoisted(() => ({
   kv: new Map<string, unknown>(),
   runActivityGroup: vi.fn(),
   loadStoredMilestoneGroups: vi.fn(),
+  logToAxiom: vi.fn(),
+  clickhouseQuery: vi.fn(),
+}));
+
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  clickhouse: { query: mocks.clickhouseQuery },
+}));
+
+vi.mock('~/server/logging/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof LoggingClient>()),
+  logToAxiom: mocks.logToAxiom,
 }));
 
 vi.mock('~/server/services/creator-milestone-stored', async (importOriginal) => ({
@@ -18,12 +30,15 @@ vi.mock('~/server/services/creator-milestone-activity.service', async (importOri
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ActivityService from '~/server/services/creator-milestone-activity.service';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
+import type * as LoggingClient from '~/server/logging/client';
 import type * as StoredService from '~/server/services/creator-milestone-stored';
 import { StoredMilestoneSkip } from '~/server/services/creator-milestone-stored';
 import {
   grantCreatorMilestones,
   keyValueWatermarkStore,
   memoizedAudience,
+  queryClickhouse,
 } from '~/server/jobs/grant-creator-milestones';
 import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
 
@@ -31,6 +46,7 @@ beforeEach(() => {
   mocks.kv.clear();
   mocks.runActivityGroup.mockReset();
   mocks.loadStoredMilestoneGroups.mockReset().mockResolvedValue([]);
+  mocks.logToAxiom.mockReset();
   dbMock.dbWrite.keyValue.findUnique.mockImplementation(
     async ({ where }: { where: { key: string } }) =>
       mocks.kv.has(where.key) ? { key: where.key, value: mocks.kv.get(where.key) } : null
@@ -112,7 +128,11 @@ describe('grant-creator-milestones', () => {
     );
   });
 
-  const storedGroup = { id: 'stored:test:x', keys: ['test:x'] };
+  const storedGroup = { id: 'stored:test:x', keys: ['test:x'], candidates: vi.fn() };
+  const storedReports = () =>
+    mocks.logToAxiom.mock.calls
+      .map(([entry]) => entry)
+      .filter((entry) => entry.name === 'creator-milestone-stored');
 
   it('runs stored groups after the code ones, and a skipped one does not fail the run', async () => {
     mocks.loadStoredMilestoneGroups.mockResolvedValue([storedGroup]);
@@ -122,6 +142,17 @@ describe('grant-creator-milestones', () => {
     });
     const results = await run();
     expect(results?.[storedGroup.id]).toEqual({ skipped: 'shape' });
+    expect(storedReports()).toEqual([
+      {
+        type: 'info',
+        name: 'creator-milestone-stored',
+        milestoneKey: 'test:x',
+        outcome: 'skipped',
+        reason: 'shape',
+        code: undefined,
+        ms: expect.any(Number),
+      },
+    ]);
     expect(mocks.runActivityGroup.mock.calls.map(([group]) => group.id)).toEqual([
       ...activityDetectorGroups().map((group) => group.id),
       storedGroup.id,
@@ -145,5 +176,38 @@ describe('grant-creator-milestones', () => {
     mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
     await run();
     expect(mocks.runActivityGroup).toHaveBeenCalledTimes(activityDetectorGroups().length);
+  });
+
+  // A stored query nobody can read in the repo is watched by its timing instead.
+  it('reports how long each stored group took, by key alone', async () => {
+    mocks.loadStoredMilestoneGroups.mockResolvedValue([storedGroup]);
+    mocks.runActivityGroup.mockResolvedValue({ granted: 3 });
+    await run();
+    expect(storedReports()).toEqual([
+      {
+        type: 'info',
+        name: 'creator-milestone-stored',
+        milestoneKey: 'test:x',
+        outcome: 'ran',
+        ms: expect.any(Number),
+      },
+    ]);
+  });
+
+  // The limits are what keep a stored ClickHouse stage read-only and bounded; they ride on the request.
+  it('hands stored groups a ClickHouse reader that sends their settings with the query', async () => {
+    await run();
+    expect(mocks.loadStoredMilestoneGroups).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ queryClickhouse })
+    );
+    mocks.clickhouseQuery.mockResolvedValue({ json: async () => [{ id: 1 }] });
+    const settings = { readonly: '1', max_execution_time: 5 };
+    expect(await queryClickhouse('SELECT 1 AS id', settings)).toEqual([{ id: 1 }]);
+    expect(mocks.clickhouseQuery).toHaveBeenCalledWith({
+      query: 'SELECT 1 AS id',
+      format: 'JSONEachRow',
+      clickhouse_settings: settings,
+    });
   });
 });

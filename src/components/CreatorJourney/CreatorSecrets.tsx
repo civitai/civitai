@@ -1,7 +1,7 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
-import { earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
-import { accentVar, HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
+import { earnedLabel, Hexagon } from '~/components/CreatorJourney/CreatorAchievements';
+import { accentVar, TierBadge } from '~/components/CreatorJourney/tier-badge';
 import type { RouterOutput } from '~/types/router';
 
 type Secret = RouterOutput['creatorJourney']['getMine']['secrets'][number];
@@ -45,19 +45,7 @@ function SecretTile({ secret }: { secret: Secret }) {
       {secret.badgeUrl ? (
         <TierBadge name={secret.name} badgeUrl={secret.badgeUrl} state="earned" size={40} />
       ) : (
-        <div
-          aria-hidden
-          className={clsx(
-            'flex size-10 shrink-0 items-center justify-center text-sm font-extrabold',
-            !secret.earned && 'bg-gray-3 text-gray-6 dark:bg-dark-4 dark:text-dark-2'
-          )}
-          style={{
-            clipPath: HEXAGON,
-            ...(secret.earned && { background: 'var(--cj-accent)', color: 'white' }),
-          }}
-        >
-          ?
-        </div>
+        <Hexagon label="?" state={secret.earned ? 'earned' : 'locked'} size={40} />
       )}
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <Text size="sm" fw={700} truncate>

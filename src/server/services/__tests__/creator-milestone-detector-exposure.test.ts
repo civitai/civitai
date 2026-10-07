@@ -31,16 +31,20 @@ function callArgument(source: string, openParen: number) {
 
 function detectorExposures(source: string) {
   const found: string[] = [];
-  for (const match of source.matchAll(/creatorMilestone\.(find\w*)\s*\(/g)) {
+  for (const match of source.matchAll(
+    /creatorMilestone\.(find\w*|create\w*|update\w*|upsert|delete\w*)\s*\(/g
+  )) {
     const arg = callArgument(source, match.index + match[0].length - 1);
-    if (!/\bselect\s*:/.test(arg)) found.push(`${match[1]} without select`);
+    if (!/^\s*\{[^]*?\bselect\s*:/.test(arg) || /\binclude\s*:/.test(arg))
+      found.push(`${match[1]} without select`);
   }
   if (/\bdetector\s*:\s*true\b/.test(source)) found.push('detector: true');
   if (/\bmilestone\s*:\s*(true\b|\{\s*include\b)/.test(source))
     found.push('whole milestone relation');
-  if (source.includes('"CreatorMilestone"')) {
-    if (/\b\w+\.\*|SELECT\s+\*/i.test(source)) found.push('star select');
-    if (/\b(SELECT|RETURNING)\b[^;`]*?[\s,.]"?detector"?\s*(,|\bFROM\b|`)/i.test(source))
+  if (/["']CreatorMilestone["']/.test(source)) {
+    if (/\b\w+\.\*|(SELECT|RETURNING)\s+\*|selectAll\(/i.test(source)) found.push('star select');
+    if (/\b(to_jsonb|row_to_json|to_json)\s*\(\s*\w+\s*\)/i.test(source)) found.push('whole row');
+    if (/\b(SELECT|RETURNING)\b[^;`]*?[\s,.(]"?detector"?(?!\w)/i.test(source))
       found.push('detector column');
   }
   return found;
@@ -60,6 +64,17 @@ describe('detectorExposures', () => {
     ],
     ['a star select', 'sql`SELECT m.* FROM "CreatorMilestone" m`'],
     ['the column by name', 'sql`SELECT key, detector FROM "CreatorMilestone"`'],
+    ['the column cast', 'sql`SELECT m.detector::text FROM "CreatorMilestone" m`'],
+    ['the column aliased', 'sql`SELECT detector AS d FROM "CreatorMilestone"`'],
+    ['a field of the column', `sql\`SELECT m.detector->>'sql' FROM "CreatorMilestone" m\``],
+    ['a returning star', 'sql`UPDATE "CreatorMilestone" SET name = $1 RETURNING *`'],
+    ['a whole row', 'sql`SELECT to_jsonb(m) FROM "CreatorMilestone" m`'],
+    ['a Kysely selectAll', `db.selectFrom('CreatorMilestone').selectAll().execute()`],
+    [
+      'a Prisma include',
+      `creatorMilestone.findMany({ include: { cosmetic: { select: { id: true } } } })`,
+    ],
+    ['a Prisma update without select', `creatorMilestone.update({ where: { key }, data })`],
   ])('flags %s', (_, source) => {
     expect(detectorExposures(source)).not.toEqual([]);
   });
