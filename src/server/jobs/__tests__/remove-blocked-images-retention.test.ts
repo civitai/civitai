@@ -358,9 +358,7 @@ describe('remove-blocked-images retention clock', () => {
     expect(result.appealHeld).toBe(0);
   });
 
-  // No CsamReport row exists yet for this owner, so the report hold above cannot see it. The
-  // flag alone has to keep the image, and its queue row, until a moderator resolves it.
-  it('holds a blocked image flagged for CSAM review before any report is filed', async () => {
+  it('holds a blocked image flagged for review with no other hold on its owner', async () => {
     heldUsers.length = 0;
     csamFlaggedIds.push(8);
     const result = await runJob();
