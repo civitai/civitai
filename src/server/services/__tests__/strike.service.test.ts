@@ -1292,7 +1292,11 @@ describe('strike.service', () => {
       meta: { muteReason: 'strike-escalation' },
     };
 
-    function mockAcceptTransaction(user: any, pointsSum: number, { openCase = false } = {}) {
+    function mockAcceptTransaction(
+      user: any,
+      pointsSum: number,
+      { openCase = false as boolean | 'scam' | 'generation' } = {}
+    ) {
       const { tx, userUpdate } = txClient(user, [[{ sum: pointsSum }]], { openCase });
       mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
       return { userUpdate };
@@ -1313,6 +1317,27 @@ describe('strike.service', () => {
         expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
       );
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
+    });
+
+    it('refuses while a Pending scam case also holds the account', async () => {
+      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2, { openCase: 'scam' });
+
+      const result = await acceptTosAfterMute({ userId: 1 });
+
+      expect(result).toEqual({ unmuted: false, reason: 'pending-review' });
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
+      // Acceptance is still recorded.
+      expect(mockSetUserSetting).toHaveBeenCalled();
+    });
+
+    it('still lifts the strike mute while only another kind of case is open', async () => {
+      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2, { openCase: 'generation' });
+
+      expect(await acceptTosAfterMute({ userId: 1 })).toEqual({ unmuted: true });
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
+      );
     });
 
     it('records against the domain the user accepted on', async () => {

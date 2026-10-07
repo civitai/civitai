@@ -603,7 +603,8 @@ export async function acceptTosAfterMute({
         userId,
         actorId: constants.system.user.id,
       });
-      if (!release.released) return { unmuted: false, reason: release.reason };
+      // Refused while a Pending scam case holds the account: that mute ends only with its ruling.
+      if (!release.released) return { unmuted: false, reason: 'pending-review' };
       return { unmuted: true };
     }
   );
