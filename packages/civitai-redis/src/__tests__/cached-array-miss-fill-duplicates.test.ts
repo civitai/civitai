@@ -4,7 +4,7 @@ import type { RedisKeyTemplateCache } from '../client';
 
 /**
  * `missConcurrentDuplicate` counts miss-fill lookups for an id that another fetch in the same
- * process is already looking up. It is a MEASUREMENT: every test here also asserts that the
+ * process is still filling (lookup or write). It is a MEASUREMENT: every test here also asserts that the
  * duplicate lookup and its writes still happen, so the counter cannot be satisfied by a change
  * that starts coalescing.
  *
@@ -14,6 +14,7 @@ import type { RedisKeyTemplateCache } from '../client';
 
 type Row = { id: number };
 const KEY = 'packed:caches:test-miss-fill' as RedisKeyTemplateCache;
+const KEY2 = 'packed:caches:test-miss-fill-other' as RedisKeyTemplateCache;
 
 function deferred() {
   let resolve!: () => void;
@@ -25,13 +26,20 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function build() {
+function build({ parkSets = false } = {}) {
   const sets: string[] = [];
+  // With parkSets, every SET parks on its own gate, holding the fetch in its write phase.
+  const setGates: ReturnType<typeof deferred>[] = [];
   const redis = {
     packed: {
       mGet: vi.fn(async (keys: RedisKeyTemplateCache[]) => keys.map(() => null)),
       set: vi.fn(async (key: RedisKeyTemplateCache) => {
         sets.push(key);
+        if (parkSets) {
+          const gate = deferred();
+          setGates.push(gate);
+          await gate.promise;
+        }
         return 'OK';
       }),
     },
@@ -68,10 +76,12 @@ function build() {
     return Object.fromEntries(ids.map((id) => [id, { id }])) as Record<string, Row>;
   });
   const cache = createCachedArray<Row>({ key: KEY, idKey: 'id', lookupFn, ttl: 60 });
+  // A second cache from the SAME builders, to pin that the registry is per cache.
+  const otherCache = createCachedArray<Row>({ key: KEY2, idKey: 'id', lookupFn, ttl: 60 });
   const total = () => duplicates.reduce((n, [, c]) => n + c, 0);
   /** Wait until `n` lookups are parked, i.e. every fetch so far is past its mGet. */
   const parked = (n: number) => vi.waitFor(() => expect(gates.length).toBe(n));
-  return { cache, lookupFn, calls, gates, sets, duplicates, total, parked };
+  return { cache, otherCache, lookupFn, calls, gates, setGates, sets, duplicates, total, parked };
 }
 
 afterEach(() => {
@@ -113,6 +123,37 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     expect([...t.sets].sort()).toEqual([`${KEY}:1`, `${KEY}:2`, `${KEY}:2`, `${KEY}:3`]);
   });
 
+  it("a fetch overlapping another fetch's WRITE phase still counts", async () => {
+    const t = build({ parkSets: true });
+    const a = t.cache.fetch([6]);
+    await t.parked(1);
+    t.gates[0].resolve();
+    // A's lookup is done; it is now parked in its SET.
+    await vi.waitFor(() => expect(t.setGates.length).toBe(1));
+
+    const b = t.cache.fetch([6]);
+    await t.parked(2);
+    t.gates[1].resolve();
+    await vi.waitFor(() => expect(t.setGates.length).toBe(2));
+    t.setGates.forEach((g) => g.resolve());
+    await Promise.all([a, b]);
+
+    expect(t.total()).toBe(1);
+    expect(t.sets).toEqual([`${KEY}:6`, `${KEY}:6`]);
+  });
+
+  it('the registry is per cache: the same id in two caches is not a duplicate', async () => {
+    const t = build();
+    const a = t.cache.fetch([7]);
+    const b = t.otherCache.fetch([7]);
+    await t.parked(2);
+    t.gates.forEach((g) => g.resolve());
+    await Promise.all([a, b]);
+
+    expect(t.total()).toBe(0);
+    expect(t.lookupFn).toHaveBeenCalledTimes(2);
+  });
+
   it('sequential fetches of the same id count 0 (the entry is removed once the fill settles)', async () => {
     const t = build();
     const first = t.cache.fetch([5]);
@@ -149,7 +190,7 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     expect(t.lookupFn).toHaveBeenCalledTimes(3);
   });
 
-  it('the id stays in flight while ANY holder is still looking it up', async () => {
+  it('the id stays in flight while ANY holder is still filling it', async () => {
     // A and B overlap (1). A settles while B is still parked; C then starts → still a duplicate
     // of B (2). Without per-entry holders, A's settle would drop the id and C would count 0.
     const t = build();
@@ -201,6 +242,11 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     const big = t.cache.fetch(Array.from({ length: 50_000 }, (_, i) => i + 1));
     await t.parked(1);
 
+    // Count full scans of the registry (the only Map here that holds 50k entries).
+    const iterate = vi.spyOn(Map.prototype, Symbol.iterator);
+    const registryScans = () =>
+      iterate.mock.contexts.filter((m) => (m as Map<unknown, unknown>).size >= 50_000).length;
+
     // At the cap: id 60001 is not registered, so a concurrent pair cannot see each other.
     const a = t.cache.fetch([60_001]);
     const b = t.cache.fetch([60_001]);
@@ -209,6 +255,8 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     t.gates[2].resolve();
     await Promise.all([a, b]);
     expect(t.total()).toBe(0);
+    // Every entry is fresh, so only the first fetch at the cap scans; b does not re-scan.
+    expect(registryScans()).toBe(1);
 
     // Past the age cap the big lookup's entries are stale; reaching the cap sweeps them, so the
     // next pair registers again and counts 1.
@@ -223,11 +271,13 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
 
     // The big fetch looks up in 10k chunks, each parking on a new gate: release them as they come.
     let settled = false;
-    void big.then(() => (settled = true));
-    while (!settled) {
+    const done = () => (settled = true);
+    void big.then(done, done);
+    for (let i = 0; i < 20 && !settled; i++) {
       t.gates.forEach((g) => g.resolve());
       await new Promise((r) => setTimeout(r, 0));
     }
+    await big;
     expect(t.lookupFn).toHaveBeenCalledTimes(9); // 5 chunks + a, b, c, d
   });
 

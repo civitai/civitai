@@ -1452,11 +1452,12 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   // (fetchThroughCache's compressed callers, e.g. tensor-metadata full; and
   // createCachedArray/createCachedObject caches built with `compress: true`, e.g.
   // imageMetaCache). It awaits the async brotli codec and discriminates on the sentinel
-  // byte so an uncompressed value (legacy, or a cached-array not-found marker, which is
-  // always written uncompressed) still decodes: first byte === sentinel → strip +
-  // brotli-decompress + unpack; else → unpack as raw. Provably safe HERE (and only here) because every value on these paths
-  // is an OBJECT (the `{ data, cachedAt }` wrapper, or a cached-array record/marker) whose
-  // msgpack first byte is always a MAP marker (0x80–0x8f / 0xde / 0xdf), never 0x01.
+  // byte so an uncompressed value (legacy, or a not-found marker as cached-array's fetch
+  // writes it) still decodes: first byte === sentinel → strip + brotli-decompress +
+  // unpack; else → unpack as raw. Provably safe HERE (and only here) because every value
+  // on these paths is an OBJECT (the `{ data, cachedAt }` wrapper, or a cached-array
+  // record/marker) whose msgpack first byte is always a MAP marker (0x80–0x8f / 0xde /
+  // 0xdf), never 0x01.
   // Preserves safeUnpack's evict-on-failure / fail-open semantics: a decompress/unpack
   // throw is treated as a cache miss (null) and evicts the bad entry.
   const safeUnpackCompressed = async <T>(

@@ -11,7 +11,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * to be symmetric across TWO modules — `cached-array.ts` must pass `{ compress }` to every one of
  * its `redis.packed` reads and to every write but the (deliberately uncompressed) notFound marker,
  * AND `client.ts`'s `packed.mGet` must actually honour it (before #4588 it could not — only
- * `packed.get` took the option, and `createCachedArray` reads exclusively through `mGet`). A test that mocks `redis.packed` proves neither half: it would pass
+ * `packed.get` took the option, and `createCachedArray` reads exclusively through `mGet`).
+ * A test that mocks `redis.packed` proves neither half: it would pass
  * against a client whose mGet ignores the flag entirely, which is the exact production defect —
  * a compressed value decoded on the general msgpack path throws, the entry is EVICTED, and the
  * read reports a MISS. Permanent miss+evict loop, no error anywhere.
