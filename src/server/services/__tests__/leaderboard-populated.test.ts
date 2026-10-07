@@ -6,6 +6,7 @@ vi.mock('~/server/services/user.service', () => ({
   getProfilePicturesForUsers: vi.fn(),
 }));
 
+import { leaderboardPopulatedKey } from '~/server/services/new-creators.service';
 import { getUnpopulatedLeaderboards, isLeaderboardPopulated } from '../leaderboard.service';
 
 const TODAY = '2026-10-09';
@@ -36,5 +37,16 @@ describe('isLeaderboardPopulated', () => {
   it('fails when the marker is from an earlier night', async () => {
     queryRaw.mockResolvedValue([board('empty', false, '2026-10-08')]);
     expect(await isLeaderboardPopulated()).toBe(false);
+  });
+});
+
+describe('reader SQL contract with markLeaderboardPopulated', () => {
+  it('unwraps the jsonb marker as text and joins on the writer key prefix', async () => {
+    queryRaw.mockReset();
+    queryRaw.mockResolvedValue([]);
+    await getUnpopulatedLeaderboards();
+    const [strings, ...values] = queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    expect(strings.some((s) => s.includes(`#>> '{}'`))).toBe(true);
+    expect(values).toContain(leaderboardPopulatedKey(''));
   });
 });
