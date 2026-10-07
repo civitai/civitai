@@ -1,5 +1,6 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
 
 export const creatorMilestoneNotifications = createNotificationProcessor({
   'creator-score-tier-reached': {
@@ -18,5 +19,13 @@ export const creatorMilestoneNotifications = createNotificationProcessor({
         url: '/user/account#creator-score',
       };
     },
+  },
+  'creator-milestone-reached': {
+    displayName: 'Creator milestone reached',
+    category: NotificationCategory.Milestone,
+    prepareMessage: ({ details }) => ({
+      message: `Milestone unlocked: ${details.name}. See it on your Creator Journey.`,
+      url: CREATOR_JOURNEY_HREF,
+    }),
   },
 });
