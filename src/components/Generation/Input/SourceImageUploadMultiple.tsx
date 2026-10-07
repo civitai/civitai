@@ -229,6 +229,7 @@ export function SourceImageUploadMultiple({
   // stuck in its loading state.
   const trackedUploadingIdsRef = useRef(new Set<string>());
   const trackedVerifyingUrlsRef = useRef(new Set<string>());
+  const inFlightUploadUrlsRef = useRef(new Set<string>());
   // Always-current value ref for use in async callbacks to avoid stale closures
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -578,6 +579,10 @@ export function SourceImageUploadMultiple({
 
   async function handleUpload(src: string | Blob | File, originUrl?: string) {
     const previewUrl = originUrl ?? (typeof src !== 'string' ? URL.createObjectURL(src) : src);
+    // The crop/upload effect re-runs whenever another upload settles and passes every image
+    // still marked uploading, including ones already in flight.
+    if (inFlightUploadUrlsRef.current.has(previewUrl)) return;
+    inFlightUploadUrlsRef.current.add(previewUrl);
     const id = getRandomId();
     setUploads((items) => {
       const copy = [...items];
@@ -614,6 +619,8 @@ export function SourceImageUploadMultiple({
     } catch (e) {
       setError((e as Error).message);
       setUploads((items) => items.filter((x) => x.id !== id));
+    } finally {
+      inFlightUploadUrlsRef.current.delete(previewUrl);
     }
   }
 
@@ -690,6 +697,7 @@ export function SourceImageUploadMultiple({
             // original value image behind each linked cropping card as its entry
             // is removed before the batched value swap.
             const toUploadIds = new Set(toUpload.map((u) => u.id));
+            let failure: string | undefined;
             const uploadResults = await Promise.all(
               toUpload.map(async ({ src, id, originalUrl }) => {
                 try {
@@ -704,12 +712,15 @@ export function SourceImageUploadMultiple({
                       },
                     };
                   }
-                } catch {
-                  // fall through to null below
+                  failure ??= response.blockedReason ?? 'Unexpected image upload error';
+                } catch (e) {
+                  failure ??= (e as Error).message;
                 }
                 return null;
               })
             );
+            // The cropping cards are cleared below, so a failure has to be reported here.
+            if (failure) setError(failure);
 
             const successful = uploadResults.filter(isDefined);
             if (successful.length > 0) {
@@ -1742,20 +1753,23 @@ export async function uploadOrchestratorImage(
    */
   metadataSource?: string | File
 ) {
-  const originalSize = await getImageDimensions(src);
-
-  // If already an orchestrator URL, return it directly
-  if (typeof src === 'string' && isOrchestratorUrl(src)) {
-    return {
-      url: src,
-      ...originalSize,
-      available: true,
-      type: 'image',
-      id: '',
-    };
-  }
-
+  let originalSize = { width: 0, height: 0 };
   try {
+    // Inside the try: callers render a failed upload from `blockedReason`, and a throw here
+    // would leave their card loading forever.
+    originalSize = await getImageDimensions(src);
+
+    // If already an orchestrator URL, return it directly
+    if (typeof src === 'string' && isOrchestratorUrl(src)) {
+      return {
+        url: src,
+        ...originalSize,
+        available: true,
+        type: 'image',
+        id: '',
+      };
+    }
+
     setImageUploading(id, true);
 
     // Read the source's generation metadata before the resize + JPEG re-encode
