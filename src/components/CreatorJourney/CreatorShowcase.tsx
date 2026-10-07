@@ -1,8 +1,9 @@
-import { Skeleton, Text, Title } from '@mantine/core';
-import { IconCalendarCheck, IconCrown, IconSparkles } from '@tabler/icons-react';
+import { ActionIcon, Skeleton, Text, Title, Tooltip } from '@mantine/core';
+import { IconCalendarCheck, IconCrown, IconEyeOff, IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { legendStatusLabel, showcaseMonthLabel } from '~/components/CreatorJourney/legend-status';
+import { useShowcaseOptOut } from '~/components/CreatorJourney/ShowcaseOptOutSetting';
 import { accentVar, TierBadge, tierAccents } from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
@@ -15,6 +16,7 @@ import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar'
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
+import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 type Showcase = RouterOutput['creatorJourney']['getShowcase'];
@@ -22,11 +24,19 @@ type ShowcaseUser = Showcase['legends'][number]['user'];
 
 const SUPERNOVA = { key: 'score:supernova', accent: tierAccents['score:supernova'] };
 const LEGEND = { key: 'score:legend', accent: tierAccents['score:legend'] };
+const HIDE_LABEL = 'Hide me from the showcase';
 
 export function CreatorShowcase() {
   const { data, isLoading } = trpc.creatorJourney.getShowcase.useQuery();
   const { data: ladder } = trpc.creatorJourney.getLadder.useQuery();
   const badgeUrl = (key: string) => ladder?.tiers.find((tier) => tier.key === key)?.badgeUrl;
+  const { setHidden, isPending: hiding } = useShowcaseOptOut({
+    onHidden: () =>
+      showSuccessNotification({
+        message:
+          "You're hidden from the Creator Showcase. You can turn it back on in your account settings.",
+      }),
+  });
 
   return (
     <CreatorShowcaseView
@@ -34,20 +44,26 @@ export function CreatorShowcase() {
       isLoading={isLoading}
       supernovaArt={badgeUrl(SUPERNOVA.key)}
       legendArt={badgeUrl(LEGEND.key)}
+      onHide={() => setHidden(true)}
+      hiding={hiding}
     />
   );
 }
 
-function CreatorShowcaseView({
+export function CreatorShowcaseView({
   showcase: data,
   isLoading,
   supernovaArt,
   legendArt,
+  onHide,
+  hiding,
 }: {
   showcase?: Showcase;
   isLoading?: boolean;
   supernovaArt?: string | null;
   legendArt?: string | null;
+  onHide?: () => void;
+  hiding?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const month = showcaseMonthLabel(new Date());
@@ -77,6 +93,8 @@ function CreatorShowcaseView({
                 user={user}
                 accent={SUPERNOVA.accent}
                 isViewer={user.id === currentUser?.id}
+                onHide={onHide}
+                hiding={hiding}
                 icon={<IconCalendarCheck size={14} />}
                 label={`Reached ${formatDate(achievedAt, 'MMM D', true)}`}
               />
@@ -98,6 +116,8 @@ function CreatorShowcaseView({
                 user={user}
                 accent={LEGEND.accent}
                 isViewer={user.id === currentUser?.id}
+                onHide={onHide}
+                hiding={hiding}
                 icon={<IconCrown size={14} />}
                 label={legendStatusLabel({ founding, since })}
                 highlight={founding}
@@ -244,10 +264,14 @@ function ShowcaseCreatorCard({
   icon,
   label,
   highlight,
+  onHide,
+  hiding,
 }: {
   user: ShowcaseUser;
   accent: string;
   isViewer?: boolean;
+  onHide?: () => void;
+  hiding?: boolean;
   icon: ReactNode;
   label: string;
   highlight?: boolean;
@@ -268,12 +292,29 @@ function ShowcaseCreatorCard({
         }}
       />
       {isViewer && (
-        <span
-          className="absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white"
-          style={{ background: 'var(--cj-accent)' }}
-        >
-          You
-        </span>
+        <>
+          <span
+            className="absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white"
+            style={{ background: 'var(--cj-accent)' }}
+          >
+            You
+          </span>
+          {onHide && (
+            <Tooltip label={HIDE_LABEL} withArrow withinPortal>
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="sm"
+                className="absolute right-2 top-2"
+                aria-label={HIDE_LABEL}
+                loading={hiding}
+                onClick={onHide}
+              >
+                <IconEyeOff size={16} />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </>
       )}
       <div
         className="relative rounded-full p-[3px] shadow-[0_0_18px_color-mix(in_srgb,var(--cj-accent)_45%,transparent)] group-hover/card:shadow-[0_0_30px_color-mix(in_srgb,var(--cj-accent)_75%,transparent)] motion-safe:transition-[box-shadow,transform] motion-safe:duration-300 motion-safe:group-hover/card:scale-105"
