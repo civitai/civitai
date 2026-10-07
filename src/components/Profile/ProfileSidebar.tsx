@@ -54,6 +54,7 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-profile-edit';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
+import { LegendStatusLine } from '~/components/CreatorJourney/LegendStatusLine';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const mapSize: Record<
@@ -327,6 +328,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         <Text c="dimmed" size="sm">
           Joined {formatDate(user.createdAt)}
         </Text>
+        {features.creatorJourney && <LegendStatusLine userId={user.id} />}
         {currentUser?.isModerator && (
           <CopyButton value={String(user.id)}>
             {({ copied, copy, color }) => (
