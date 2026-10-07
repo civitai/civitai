@@ -4,6 +4,7 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as EmailTemplates from '~/server/email/templates';
+import type * as BuzzService from '~/server/services/buzz.service';
 
 /**
  * The appeals queue lists images by `needsReview = 'appeal'`, and the blocked-image purge spares only
@@ -21,9 +22,17 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-const { createNotification, sendEmail } = vi.hoisted(() => ({
-  createNotification: vi.fn(async () => undefined),
-  sendEmail: vi.fn(async () => undefined),
+const { createNotification, sendEmail, refundTransaction, refundMultiAccountTransaction } =
+  vi.hoisted(() => ({
+    createNotification: vi.fn(async () => undefined),
+    sendEmail: vi.fn(async () => undefined),
+    refundTransaction: vi.fn(async () => undefined),
+    refundMultiAccountTransaction: vi.fn(async () => undefined),
+  }));
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BuzzService>()),
+  refundTransaction,
+  refundMultiAccountTransaction,
 }));
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -65,6 +74,7 @@ const updateMany =
 
 const APPEALED = 41;
 const FLAGGED = 42;
+const DECIDED = 43;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -78,13 +88,16 @@ beforeAll(async () => {
       "needsReview" text,
       "updatedAt" timestamp(3)
     );
+    -- Enums as in prod, so a predicate that compares them to a bound text parameter fails here too.
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
     CREATE TABLE "Appeal" (
       id serial PRIMARY KEY,
-      "entityType" text NOT NULL,
+      "entityType" "EntityType" NOT NULL,
       "entityId" int NOT NULL,
       "userId" int NOT NULL DEFAULT 7,
       "buzzTransactionId" text,
-      status text NOT NULL DEFAULT 'Pending',
+      status "AppealStatus" NOT NULL DEFAULT 'Pending',
       "resolvedBy" int,
       "resolvedAt" timestamp(3),
       "internalNotes" text,
@@ -96,6 +109,11 @@ beforeAll(async () => {
 beforeEach(async () => {
   createNotification.mockClear();
   sendEmail.mockClear();
+  refundTransaction.mockClear();
+  refundMultiAccountTransaction.mockClear();
+  dbMock.dbRead.user.findMany.mockResolvedValue([
+    { id: 7, email: 'appellant@example.com', username: 'appellant' },
+  ] as never);
   dbMock.dbWrite.image.updateMany.mockImplementation(updateMany('Image') as never);
   dbMock.dbWrite.appeal.updateMany.mockImplementation(updateMany('Appeal') as never);
   // resolveEntityAppeal's claim, so a close routed through it is observed rather than crashing.
@@ -104,8 +122,8 @@ beforeEach(async () => {
     return (
       await holder.db.query(
         `SELECT id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId"
-         FROM "Appeal" WHERE "entityId" = ANY($1)`,
-        [where.entityId.in]
+         FROM "Appeal" WHERE "entityId" = ANY($1) AND status = $2`,
+        [where.entityId.in, data.status]
       )
     ).rows;
   }) as never);
@@ -123,8 +141,14 @@ beforeEach(async () => {
     TRUNCATE "Image", "Appeal";
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 7, 'Blocked', 'moderated', 32, 'appeal'),
-      (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor');
-    INSERT INTO "Appeal" ("entityType", "entityId") VALUES ('Image', ${APPEALED});
+      (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor'),
+      (${DECIDED}, 9, 'Blocked', 'moderated', 32, NULL);
+    -- APPEALED also carries an earlier, decided appeal; FLAGGED shares its id with a post's appeal.
+    INSERT INTO "Appeal" ("entityType", "entityId", "userId", status, "buzzTransactionId") VALUES
+      ('Image', ${APPEALED}, 7, 'Approved', NULL),
+      ('Image', ${APPEALED}, 7, 'Pending', 'appeal-7-1790000000000-abcd1234'),
+      ('Post', ${FLAGGED}, 8, 'Pending', NULL),
+      ('Image', ${DECIDED}, 9, 'Rejected', NULL);
   `);
   dbMock.dbRead.image.findMany.mockImplementation((async ({ where }: any) => {
     const ids: number[] = where?.id?.in ?? [];
@@ -174,10 +198,16 @@ describe('handleBlockImages', () => {
     expect((await imageRow(APPEALED)).ingestion).toBe('Blocked');
   });
 
-  it('still clears another review flag on an image with no appeal', async () => {
+  it('still clears another review flag on an image with no pending appeal of its own', async () => {
     await handleBlockImages({ ids: [APPEALED, FLAGGED] });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
+  });
+
+  it('does not put an image whose appeal was already decided back in the appeals queue', async () => {
+    await handleBlockImages({ ids: [DECIDED] });
+
+    expect(await imageRow(DECIDED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
   });
 });
 
@@ -209,7 +239,10 @@ describe('reportCsamImages', () => {
 
     expect(await strandedAppeals()).toEqual([]);
     expect(await appeals()).toEqual([
+      { status: 'Approved', internalNotes: null },
       { status: 'Rejected', internalNotes: 'Closed by CSAM report' },
+      { status: 'Pending', internalNotes: null },
+      { status: 'Rejected', internalNotes: null },
     ]);
     expect((await imageRow(APPEALED)).needsReview).toBe('csam');
   });
@@ -219,5 +252,12 @@ describe('reportCsamImages', () => {
 
     expect(createNotification).not.toHaveBeenCalled();
     expect(sendEmail).not.toHaveBeenCalled();
+  });
+
+  it('does not refund the appeal fee', async () => {
+    await reportCsamImages({ imageIds: [APPEALED], user: moderator });
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(refundTransaction).not.toHaveBeenCalled();
   });
 });

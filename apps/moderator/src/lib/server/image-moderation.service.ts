@@ -161,12 +161,7 @@ export async function blockImage({
   await dbWrite
     .updateTable('Image')
     .set({
-      // The appeals queue reads this flag and the blocked-image purge spares only flagged rows, so a
-      // block from another queue must not take it off an image whose appeal is still Pending.
-      needsReview: sql<string | null>`CASE WHEN EXISTS (
-        SELECT 1 FROM "Appeal" a
-        WHERE a."entityType" = 'Image' AND a."entityId" = "Image".id AND a."status" = 'Pending'
-      ) THEN 'appeal' END`,
+      needsReview: null,
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,
@@ -183,6 +178,7 @@ export async function blockImage({
     })
     .where('id', '=', imageId)
     .execute();
+  await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
 
   await recordModActivity({ userId, entityType: 'image', entityId: imageId, activity: 'review' });
@@ -197,6 +193,30 @@ export async function blockImage({
     violationType,
     violationDetails,
   });
+}
+
+/**
+ * The appeals queue reads `needsReview = 'appeal'` and the blocked-image purge spares only flagged
+ * rows, so a block must leave the flag on while the appeal is Pending. A separate statement, not a
+ * CASE in the block's own SET: that one re-checks under the row lock with its start-of-statement
+ * snapshot, so it misses an appeal committed while it waited.
+ */
+async function keepPendingAppealFlag(imageId: number) {
+  await dbWrite
+    .updateTable('Image')
+    .set({ needsReview: 'appeal' })
+    .where('id', '=', imageId)
+    .where((eb) =>
+      eb.exists(
+        eb
+          .selectFrom('Appeal')
+          .select('Appeal.id')
+          .where('Appeal.entityType', '=', 'Image')
+          .whereRef('Appeal.entityId', '=', 'Image.id')
+          .where('Appeal.status', '=', 'Pending')
+      )
+    )
+    .execute();
 }
 
 export type AppealDecision = 'Approved' | 'Rejected';

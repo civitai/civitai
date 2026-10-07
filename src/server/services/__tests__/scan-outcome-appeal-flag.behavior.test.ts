@@ -36,12 +36,15 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { resolveScanOutcome, type ScanImage } from '../image-scan-pipeline';
+import { auditMetaData } from '~/utils/metadata/audit';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
+const holder = vi.hoisted(() => ({ db: null as unknown as PGlite, tagLevel: 1 }));
 
 const APPEALED = 41;
 const FLAGGED = 42;
+const DECIDED = 43;
+const VISIBLE = 44;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -61,17 +64,22 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
+    -- Enums as in prod, so a predicate that compares them to a bound text parameter fails here too.
+    CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
     CREATE TABLE "Appeal" (
       id serial PRIMARY KEY,
-      "entityType" text NOT NULL,
+      "entityType" "EntityType" NOT NULL,
       "entityId" int NOT NULL,
-      status text NOT NULL DEFAULT 'Pending'
+      status "AppealStatus" NOT NULL DEFAULT 'Pending'
     );
   `);
 });
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  vi.mocked(auditMetaData).mockReturnValue({ success: true } as never);
+  holder.tagLevel = 1;
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...values: unknown[]
@@ -92,7 +100,7 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
     const text = strings.join('');
     if (text.includes('TagsOnImageDetails'))
-      return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: 1, confidence: 90 }];
+      return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: holder.tagLevel, confidence: 90 }];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
     return [{ poi: false, minor: false, hasResource: false }];
   }) as never);
@@ -100,13 +108,29 @@ beforeEach(async () => {
     TRUNCATE "Image", "Appeal";
     INSERT INTO "Image" (id, ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 'Blocked', 'moderated', 32, 'appeal'),
-      (${FLAGGED}, 'Rescan', NULL, 4, 'minor');
-    INSERT INTO "Appeal" ("entityType", "entityId") VALUES ('Image', ${APPEALED});
+      (${FLAGGED}, 'Rescan', NULL, 4, 'minor'),
+      (${DECIDED}, 'Blocked', 'moderated', 32, NULL),
+      (${VISIBLE}, 'Scanned', NULL, 1, 'appeal');
+    -- FLAGGED shares its id with a post's appeal; DECIDED's own appeal is already closed.
+    INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
+      ('Image', ${APPEALED}, 'Pending'),
+      ('Post', ${FLAGGED}, 'Pending'),
+      ('Image', ${DECIDED}, 'Rejected'),
+      ('Image', ${VISIBLE}, 'Pending');
   `);
 });
 
-const scanImage = (id: number, ingestion: string) =>
-  ({
+type ScanFields = { ingestion: string; nsfwLevel: number; blockedFor: string | null };
+
+/** The image as `loadImageForScan` would hand it over, read from the stand-in row. */
+const scanImage = async (id: number, over: Partial<ScanFields> = {}) => {
+  const row = (
+    await holder.db.query<ScanFields>(
+      `SELECT ingestion, "nsfwLevel", "blockedFor" FROM "Image" WHERE id = $1`,
+      [id]
+    )
+  ).rows[0];
+  return {
     id,
     userId: 2,
     createdAt: new Date('2025-12-01T00:00:00.000Z'),
@@ -116,9 +140,10 @@ const scanImage = (id: number, ingestion: string) =>
     metadata: {},
     postId: null,
     nsfwLevelLocked: false,
-    nsfwLevel: 0,
-    ingestion,
-  } as unknown as ScanImage);
+    ...row,
+    ...over,
+  } as unknown as ScanImage;
+};
 
 /** Pending image appeals the queue cannot see: the closing condition of the ticket, as a query. */
 const strandedAppeals = async () =>
@@ -133,37 +158,99 @@ const strandedAppeals = async () =>
 
 const imageRow = async (id: number) =>
   (
-    await holder.db.query<{ needsReview: string | null; ingestion: string }>(
-      `SELECT "needsReview", ingestion FROM "Image" WHERE id = $1`,
+    await holder.db.query<ScanFields & { needsReview: string | null }>(
+      `SELECT "needsReview", ingestion, "blockedFor", "nsfwLevel" FROM "Image" WHERE id = $1`,
       [id]
     )
   ).rows[0];
 
+const scan = async (id: number) =>
+  resolveScanOutcome({ image: await scanImage(id), workflowId: 'wf', prompt: 'a landscape' });
+
 describe('a clean rescan', () => {
   it('does not leave a pending appeal the appeals queue cannot reach', async () => {
-    await resolveScanOutcome({ image: scanImage(APPEALED, 'Blocked'), workflowId: 'wf' });
+    await scan(APPEALED);
 
     expect(await strandedAppeals()).toEqual([]);
   });
 
-  it('keeps an image under appeal blocked until the appeal is decided', async () => {
-    // A rescan request clears the block first, so the scan cannot rely on the row still saying Blocked.
+  it('keeps an image under appeal blocked after its rescan request cleared the block', async () => {
     await holder.db.exec(
       `UPDATE "Image" SET ingestion = 'Rescan', "blockedFor" = NULL WHERE id = ${APPEALED}`
     );
 
-    const outcome = await resolveScanOutcome({
-      image: scanImage(APPEALED, 'Rescan'),
-      workflowId: 'wf',
-    });
+    const outcome = await scan(APPEALED);
 
     expect(outcome.ingestion).toBe('Blocked');
-    expect(await imageRow(APPEALED)).toEqual({ needsReview: 'appeal', ingestion: 'Blocked' });
+    expect(await imageRow(APPEALED)).toEqual({
+      needsReview: 'appeal',
+      ingestion: 'Blocked',
+      blockedFor: 'moderated',
+      nsfwLevel: 32,
+    });
   });
 
-  it('still clears another review flag on an image with no appeal', async () => {
-    await resolveScanOutcome({ image: scanImage(FLAGGED, 'Rescan'), workflowId: 'wf' });
+  it("keeps the image's own block reason", async () => {
+    await holder.db.exec(
+      `UPDATE "Image" SET "blockedFor" = 'AiNotVerified' WHERE id = ${APPEALED}`
+    );
 
-    expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+    await scan(APPEALED);
+
+    expect((await imageRow(APPEALED)).blockedFor).toBe('AiNotVerified');
+  });
+
+  it('does not block an image that was visible while under appeal', async () => {
+    const outcome = await scan(VISIBLE);
+
+    expect(outcome.ingestion).toBe('Scanned');
+    expect(await imageRow(VISIBLE)).toEqual({
+      needsReview: 'appeal',
+      ingestion: 'Scanned',
+      blockedFor: null,
+      nsfwLevel: 1,
+    });
+  });
+
+  it('still clears another review flag on an image with no pending appeal of its own', async () => {
+    await scan(FLAGGED);
+
+    expect(await imageRow(FLAGGED)).toMatchObject({ needsReview: null, ingestion: 'Scanned' });
+  });
+
+  it('does not put an image whose appeal was already decided back in the appeals queue', async () => {
+    await scan(DECIDED);
+
+    expect((await imageRow(DECIDED)).needsReview).toBeNull();
+  });
+});
+
+describe('a rescan that blocks an image under appeal', () => {
+  beforeEach(() => {
+    // The prompt audit only blocks an nsfw image.
+    holder.tagLevel = 16;
+    vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['prompt'] } as never);
+  });
+
+  it("records the scan's own block reason on an image that was already blocked", async () => {
+    await scan(APPEALED);
+
+    expect(await imageRow(APPEALED)).toEqual({
+      needsReview: 'appeal',
+      ingestion: 'Blocked',
+      blockedFor: 'prompt',
+      nsfwLevel: 32,
+    });
+  });
+
+  it("keeps the appeal and the scan's own block reason", async () => {
+    await scan(VISIBLE);
+
+    expect(await imageRow(VISIBLE)).toEqual({
+      needsReview: 'appeal',
+      ingestion: 'Blocked',
+      blockedFor: 'prompt',
+      nsfwLevel: 32,
+    });
   });
 });

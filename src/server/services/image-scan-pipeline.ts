@@ -333,6 +333,7 @@ export async function loadImageForScan(imageId: number) {
       nsfwLevelLocked: true,
       nsfwLevel: true,
       ingestion: true,
+      blockedFor: true,
     },
   });
 
@@ -610,12 +611,17 @@ export async function resolveScanOutcome({
   }
 
   // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
+  // A rescan request may already have cleared `ingestion` and `blockedFor`; it leaves the Blocked level.
   if ((await getPendingAppealImageIds([image.id])).size) {
     toUpdate.needsReview = 'appeal';
     reviewKey = 'appeal';
-    if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+    const wasBlocked =
+      image.ingestion === ImageIngestionStatus.Blocked ||
+      image.nsfwLevel === NsfwLevel.Blocked ||
+      image.blockedFor != null;
+    if (wasBlocked && toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
       toUpdate.ingestion = ImageIngestionStatus.Blocked;
-      toUpdate.blockedFor = BlockedReason.Moderated;
+      toUpdate.blockedFor = image.blockedFor ?? BlockedReason.Moderated;
       toUpdate.nsfwLevel = NsfwLevel.Blocked;
     }
   }

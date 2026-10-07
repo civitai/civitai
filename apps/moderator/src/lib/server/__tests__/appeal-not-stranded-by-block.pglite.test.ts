@@ -40,7 +40,10 @@ vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const { blockImage } = await import('../image-moderation.service');
 
+// Enums as in prod, so a predicate that compares them to a bound text parameter fails here too.
 const SCHEMA = `
+CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
+CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
   "type" TEXT,
@@ -57,14 +60,15 @@ CREATE TABLE "Image" (
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
-  "entityType" TEXT NOT NULL,
+  "entityType" "EntityType" NOT NULL,
   "entityId" INTEGER NOT NULL,
-  "status" TEXT NOT NULL DEFAULT 'Pending'
+  "status" "AppealStatus" NOT NULL DEFAULT 'Pending'
 );
 `;
 
 const APPEALED = 41;
 const FLAGGED = 42;
+const DECIDED = 43;
 
 let db: PGlite;
 
@@ -74,12 +78,15 @@ beforeEach(async () => {
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel") VALUES
       ($1, 7, 'appeal', 'moderated', 'Blocked', 32),
-      ($2, 8, 'minor', NULL, 'Scanned', 4)`,
-    [APPEALED, FLAGGED]
+      ($2, 8, 'minor', NULL, 'Scanned', 4),
+      ($3, 9, NULL, 'moderated', 'Blocked', 32)`,
+    [APPEALED, FLAGGED, DECIDED]
   );
+  // FLAGGED shares its id with a Pending appeal on a post; DECIDED's own appeal is already closed.
   await db.query(
-    `INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES (7, 'Image', $1)`,
-    [APPEALED]
+    `INSERT INTO "Appeal" ("userId", "entityType", "entityId", "status") VALUES
+      (7, 'Image', $1, 'Pending'), (8, 'Post', $2, 'Pending'), (9, 'Image', $3, 'Rejected')`,
+    [APPEALED, FLAGGED, DECIDED]
   );
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -116,9 +123,15 @@ describe('blocking an image that is under appeal', () => {
     expect((await imageRow(APPEALED)).ingestion).toBe('Blocked');
   });
 
-  it('still clears another review flag on an image with no appeal', async () => {
+  it('still clears another review flag on an image with no pending appeal of its own', async () => {
     await blockImage({ imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
+  });
+
+  it('does not put an image whose appeal was already decided back in the appeals queue', async () => {
+    await blockImage({ imageId: DECIDED, userId: 2 });
+
+    expect(await imageRow(DECIDED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
   });
 });
