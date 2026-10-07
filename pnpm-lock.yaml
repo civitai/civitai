@@ -74,8 +74,8 @@ importers:
         specifier: ^0.17.0
         version: 0.17.0(next@16.3.1(@babel/core@7.29.0)(@opentelemetry/api@1.9.0)(@playwright/test@1.57.0)(@types/node@24.13.3)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(sass@1.90.0))
       '@civitai/orchestration-client':
-        specifier: 0.2.0-beta.117
-        version: 0.2.0-beta.117
+        specifier: 0.2.0-beta.119
+        version: 0.2.0-beta.119
       '@civitai/shared':
         specifier: workspace:*
         version: link:packages/civitai-shared
@@ -2244,8 +2244,8 @@ packages:
     resolution: {integrity: sha512-ggULbVQdhp43MNq0vyhbVi91rljwrmCZGme38T7V2ZSBgz2vNbRnHycfOt3w0ecwMCOYnr7LGd5gs2pfMU7eKw==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/orchestration-client@0.2.0-beta.117':
-    resolution: {integrity: sha512-xm/jGgoXXIlg2/u5hm+s+hy2pFp0A6BZX8Omtq5e5Ed0hGc0P+perYFwAAUFeqdWJaIwSihaJ9wHmAgVCj2n4A==}
+  '@civitai/orchestration-client@0.2.0-beta.119':
+    resolution: {integrity: sha512-o9+axw/Pnvugc/7j0DwJA29L00qplalQoE6kIixmDh1epRhPWQk3OIyGiiLHQ/XELChTUaEPBV+MZxAdKsBxUg==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
   '@clavata/sdk@0.2.3':
@@ -13558,7 +13558,7 @@ snapshots:
       rfc6902: 5.2.0
       tslib: 2.8.1
 
-  '@civitai/orchestration-client@0.2.0-beta.117':
+  '@civitai/orchestration-client@0.2.0-beta.119':
     dependencies:
       '@hey-api/client-fetch': 0.1.14
       rfc6902: 5.2.0
