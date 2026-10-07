@@ -31,7 +31,10 @@ describe('buildWorkflowTips — rate bounds', () => {
 
   it('treats a non-numeric rate as no tip', () => {
     expect(
-      buildWorkflowTips({ civitaiTip: '0.5', creatorTip: NaN, hasTipEligibleResource: true })
+      buildWorkflowTips({ civitaiTip: '0.5', creatorTip: 0, hasTipEligibleResource: true })
     ).toBeUndefined();
+    expect(
+      buildWorkflowTips({ civitaiTip: 0.05, creatorTip: NaN, hasTipEligibleResource: true })
+    ).toEqual({ civitai: 0.05, creators: 0 });
   });
 });

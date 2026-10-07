@@ -166,19 +166,6 @@ const { submitWorkflow, deleteWorkflow } = vi.hoisted(() => ({
   })),
 }));
 vi.mock('~/server/services/orchestrator/workflows', () => ({ submitWorkflow, deleteWorkflow }));
-
-// Spies on the REAL eligibility rule so a case can force a verdict while the wiring around it runs.
-const { anyTipEligibleOverride } = vi.hoisted(() => ({
-  anyTipEligibleOverride: { value: undefined as boolean | undefined },
-}));
-vi.mock('~/shared/utils/creator-tip', async (importOriginal) => {
-  const real = await importOriginal<typeof CreatorTipMod>();
-  return {
-    ...real,
-    anyTipEligible: (resources: { tipsEnabled?: boolean }[]) =>
-      anyTipEligibleOverride.value ?? real.anyTipEligible(resources),
-  };
-});
 // The one observable that separates "the owner guard ran and agreed" from "the owner guard fell
 // open". Without asserting on it, reverting the fixture id to a non-numeric prefix silently
 // disables the guard for every test here again, exactly as it was before.
@@ -249,7 +236,7 @@ import {
 } from '~/shared/generation/model-substitution';
 import { classifyModelSubstitutionReason } from '~/shared/generation/workflow-capability';
 import { getWorkflowCapability } from '~/shared/generation/workflow-capability';
-import type * as CreatorTipMod from '~/shared/utils/creator-tip';
+import { getResourceData } from '~/server/services/generation/generation.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 
@@ -511,17 +498,33 @@ describe('generateFromGraph — reply + persistence (mutants G and H)', () => {
 describe('generateFromGraph — creator tip vs resource eligibility', () => {
   const tips = { civitaiTip: 0.05, creatorTip: 0.25 };
 
+  /** The resolved Qwen checkpoint, generatable, with its owner's tip eligibility. */
+  const resource = (tipsEnabled: boolean) => ({
+    id: QWEN_DEFAULT,
+    name: 'Qwen',
+    air: `urn:air:qwen:checkpoint:civitai:1@${QWEN_DEFAULT}`,
+    baseModel: 'Qwen',
+    trainedWords: [],
+    availability: 'Public',
+    canGenerate: true,
+    hasAccess: true,
+    strength: 1,
+    minStrength: -1,
+    maxStrength: 2,
+    model: { id: 1, name: 'Qwen', type: 'Checkpoint', poi: false },
+    tipsEnabled,
+  });
+
   beforeEach(() => {
     setEnv({ ORCHESTRATOR_MODE: 'prod' });
     submitWorkflow.mockClear();
-    anyTipEligibleOverride.value = undefined;
   });
   afterAll(() => {
     resetEnv();
-    anyTipEligibleOverride.value = undefined;
   });
 
-  async function submittedTips() {
+  async function submittedTips(resources: unknown[]) {
+    vi.mocked(getResourceData).mockResolvedValueOnce(resources as never);
     await generateFromGraph({
       input: input(QWEN_DEFAULT),
       externalCtx: ctx(),
@@ -532,13 +535,15 @@ describe('generateFromGraph — creator tip vs resource eligibility', () => {
     return (submitWorkflow.mock.calls[0][0].body as Record<string, unknown>).tips;
   }
 
-  it('drops the creator tip when no submitted resource can receive it, keeping the Civitai tip', async () => {
-    // getResourceData is mocked to resolve no resources, so the real rule finds nothing eligible.
-    expect(await submittedTips()).toEqual({ civitai: 0.05, creators: 0 });
+  it('drops the creator tip when the only resource is tip-exempt, keeping the Civitai tip', async () => {
+    expect(await submittedTips([resource(false)])).toEqual({ civitai: 0.05, creators: 0 });
   });
 
-  it('passes the creator tip through when a resource is eligible', async () => {
-    anyTipEligibleOverride.value = true;
-    expect(await submittedTips()).toEqual({ civitai: 0.05, creators: 0.25 });
+  it('passes the creator tip through when a resource is tip-eligible', async () => {
+    expect(await submittedTips([resource(true)])).toEqual({ civitai: 0.05, creators: 0.25 });
+  });
+
+  it('drops the creator tip when no resource resolves', async () => {
+    expect(await submittedTips([])).toEqual({ civitai: 0.05, creators: 0 });
   });
 });
