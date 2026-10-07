@@ -8,10 +8,11 @@ import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { GenerationStore } from '~/components/form-graph/generation/store';
 
 /**
- * The cost box beside Generate must spin only while an estimate is actually being fetched. When
- * the form is invalid (or the selection is gate-blocked) the whatIf query is disabled, the cost
- * stays 0, and the box used to spin until the form changed — read by users as "the upload spins
- * forever". Generate must stay disabled in those states either way.
+ * The cost box beside Generate must spin only while something is actually in flight (an estimate,
+ * or a source image upload). When the form is invalid (or the selection is gate-blocked) with
+ * nothing pending, the whatIf query is disabled, the cost stays 0, and the box used to spin until
+ * the form changed — read by users as "the upload spins forever". Generate must stay disabled in
+ * those states either way.
  *
  * The whatIf context is replaced with a fixture so each test sets exactly the state the footer
  * reads; everything below it (the cost box, Generate) renders for real.
@@ -100,14 +101,16 @@ import {
 
 const store = { getSnapshot: () => ({ state: {} }) } as unknown as GenerationStore;
 
+const footerUi = () => (
+  <div>
+    <SubmitButton store={store} />
+    <ConnectedBuzzTypeSelector store={store} />
+  </div>
+);
+
 function renderFooter(whatIf: WhatIfFixture) {
   state.whatIf = whatIf;
-  return renderWithProviders(
-    <div>
-      <SubmitButton store={store} />
-      <ConnectedBuzzTypeSelector store={store} />
-    </div>
-  );
+  return renderWithProviders(footerUi());
 }
 
 function costButton() {
@@ -148,12 +151,32 @@ describe('FormFooter cost box', () => {
     expect(generateButton().disabled).toBe(true);
   });
 
-  test('invalid form while an image is still uploading: still no spinner, Generate disabled', async () => {
-    // The provider folds "images pending" into isLoading, but no estimate can be requested for an
-    // invalid form, so there is nothing for the cost box to wait on.
+  test('invalid form while the first image is uploading: spinner shown, Generate disabled', async () => {
+    // The provider folds "images pending" into isLoading. The form is invalid only until the upload
+    // lands, and an estimate follows it, so this is a real wait.
     renderFooter({ ...base, canEstimateCost: false, isLoading: true });
     await vi.waitFor(() => costButton());
-    expect(costSpinning()).toBe(false);
+    expect(costSpinning()).toBe(true);
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('the upload then fails, leaving the form invalid: spinner gives way to a dash', async () => {
+    const view = await renderFooter({ ...base, canEstimateCost: false, isLoading: true });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(true);
+
+    state.whatIf = { ...base, canEstimateCost: false, isLoading: false };
+    await view.rerender(footerUi());
+    await vi.waitFor(() => expect(costSpinning()).toBe(false));
+    expect(costButton().textContent).toContain('–');
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('gate-blocked selection while an image is uploading: spinner shown, Generate disabled', async () => {
+    // Something is in flight, so the box spins; once the upload settles the gate leaves a dash.
+    renderFooter({ ...base, gateBlocked: true, isLoading: true });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(true);
     expect(generateButton().disabled).toBe(true);
   });
 

@@ -103,8 +103,9 @@ export function BuzzTypeSelector({
   loading: boolean;
   error?: boolean;
   /**
-   * No estimate will be requested (e.g. the form is invalid), so there is nothing to wait for:
-   * show a dash. Without this a zero cost reads as "still loading" and spins until the form changes.
+   * No estimate can be requested yet (e.g. the form is invalid): show a dash rather than treating a
+   * zero cost as "still loading", which spins until the form changes. `loading` still wins, so an
+   * upload that will make the form valid keeps the spinner.
    */
   unavailable?: boolean;
   onRetry?: () => void;
@@ -139,7 +140,7 @@ export function BuzzTypeSelector({
   const lastCostRef = useRef(0);
   if (totalCost > 0) lastCostRef.current = totalCost;
   const displayCost = isWhatIfLoading ? lastCostRef.current : totalCost;
-  const showLoading = !error && !unavailable && (isWhatIfLoading || displayCost <= 0);
+  const showLoading = !error && (isWhatIfLoading || (!unavailable && displayCost <= 0));
 
   if (error && onRetry) {
     return (
