@@ -9,6 +9,9 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * other queue still lists only live images.
  */
 
+// PGlite boots a WASM Postgres; under a full parallel run that alone can pass the default hook budget.
+vi.setConfig({ hookTimeout: 60_000 });
+
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
 vi.mock('../db', () => ({

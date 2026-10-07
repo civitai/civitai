@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
@@ -8,6 +8,9 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
  * The moderator-only review flag holds a Blocked image back from the purge until its own queue or a
  * filed report settles it. These writers must leave it on unless they are that decision.
  */
+
+// PGlite boots a WASM Postgres; under a full parallel run that alone can pass the default hook budget.
+vi.setConfig({ hookTimeout: 60_000 });
 
 const { dbHandle, recordModActivity } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
@@ -81,10 +84,16 @@ const OTHER_FLAG_REMOVED = 53;
 
 let db: PGlite;
 
-beforeEach(async () => {
-  recordModActivity.mockClear();
+// One instance per file: a fresh PGlite per case is what times out under a full-suite run.
+beforeAll(async () => {
   db = await PGlite.create();
   await db.exec(SCHEMA);
+  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
+});
+
+beforeEach(async () => {
+  recordModActivity.mockClear();
+  await db.exec(`TRUNCATE "Image", "Appeal", "User"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel") VALUES
       ($1, 7, 'csam', NULL, 'Scanned', 4),
@@ -92,10 +101,9 @@ beforeEach(async () => {
       ($3, 9, 'appeal', 'moderated', 'Blocked', 32)`,
     [FLAGGED, FLAGGED_REMOVED, OTHER_FLAG_REMOVED]
   );
-  dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
-afterEach(async () => {
+afterAll(async () => {
   dbHandle.current = null;
   await db.close();
 });
