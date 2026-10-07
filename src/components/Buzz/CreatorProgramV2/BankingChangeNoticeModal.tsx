@@ -5,6 +5,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BANKING_CHANGE_NOTICE_MARKDOWN,
   BANKING_CHANGE_NOTICE_SUBJECT,
@@ -13,6 +14,9 @@ import {
 export default function BankingChangeNoticeModal() {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  if (!features.bankingChangeNotice) return null;
+
   const markdown = BANKING_CHANGE_NOTICE_MARKDOWN.replace(
     /\{username\}/g,
     () => currentUser?.username ?? 'there'

@@ -2,12 +2,15 @@ import { Button } from '@mantine/core';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { dialogs } from '~/components/Dialog/dialog-registry2';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BANKING_CHANGE_NOTICE_SHOW_UNTIL,
   BANKING_CHANGE_NOTICE_SUBJECT,
 } from '~/shared/constants/banking-change-notice.constants';
 
 export function BankingChangeNoticeAlert() {
+  const features = useFeatureFlags();
+  if (!features.bankingChangeNotice) return null;
   if (Date.now() >= BANKING_CHANGE_NOTICE_SHOW_UNTIL.getTime()) return null;
 
   return (
