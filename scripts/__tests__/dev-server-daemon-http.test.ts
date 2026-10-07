@@ -56,8 +56,12 @@ describe('daemonFetch', () => {
 
     const armed = vi.spyOn(ClientRequest.prototype, 'setTimeout');
     const base = await listen((_req, res) => res.end('{}'));
-    await daemonFetch(`${base}/`).finally(() => armed.mockRestore());
-    expect(armed).toHaveBeenCalledWith(DAEMON_TIMEOUT_MS, expect.any(Function));
+    try {
+      await daemonFetch(`${base}/`);
+      expect(armed).toHaveBeenCalledWith(DAEMON_TIMEOUT_MS, expect.any(Function));
+    } finally {
+      armed.mockRestore();
+    }
   });
 
   // `fetch` gave up after undici's implicit 300s; `http.request` has no timeout of its own, so a
