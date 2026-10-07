@@ -64,7 +64,7 @@ vi.mock('~/components/Dialog/dialogStore', async (orig) => {
 // eslint-disable-next-line import/first
 import { sourceMetadataStore } from '~/store/source-metadata.store';
 // eslint-disable-next-line import/first
-import { ImagePrepError, resizeImage } from '~/shared/utils/canvas-utils';
+import { ImagePrepError, imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
 // eslint-disable-next-line import/first
 import {
   useImagesUploadingOrVerifying,
@@ -321,6 +321,8 @@ type Event = { kind: 'pending'; on: boolean } | { kind: 'value'; count: number }
 let events: Event[] = [];
 let lastValue: ImageValue[] = [];
 let valueWrites: ImageValue[][] = [];
+/** Adds an image to the harness's value from outside, as another part of the form would. */
+let pushValue: (image: ImageValue) => void = () => undefined;
 
 /** Samples the flag on every render, the way WhatIfProvider reads it. */
 function PendingProbe() {
@@ -342,6 +344,7 @@ function PendingHarness({
   max?: number;
 }) {
   const [value, setValue] = useState<ImageValue[]>(initialValue);
+  pushValue = (image) => setValue((prev) => [...prev, image]);
   const onChange = (next: ImageValue[]) =>
     setValue((prev) => {
       if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
@@ -606,6 +609,63 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
   });
 
+  test('an image in the value whose cached dimensions were evicted does not stop a new pick', async () => {
+    const existing = await loadableImageUrl();
+    cachedUrls.push(existing);
+    renderWithProviders(
+      <PendingHarness max={2} initialValue={[{ url: existing, width: 1024, height: 1024 }]} />
+    );
+    await vi.waitFor(() => expect(sourceMetadataStore.getMetadata(existing)?.width).toBe(1024));
+    // The store keeps a bounded number of entries and evicts the oldest.
+    sourceMetadataStore.removeMetadata(existing);
+    await pickFiles(1);
+
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].resolve({ url: await loadableImageUrl(), available: true });
+    await vi.waitFor(() => expect(lastValue).toHaveLength(2));
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+  });
+
+  test('a card queued while the crop modal is open starts once the crop session ends', async () => {
+    const dataUrl = `data:image/png;base64,${btoa(`crop-${Date.now()}`)}`;
+    cachedUrls.push(dataUrl);
+    mocks.getImageDimensions.mockImplementation(async (src: unknown) =>
+      src === dataUrl ? { width: 1024, height: 1024 } : { width: 600, height: 2000 }
+    );
+    renderWithProviders(<PendingHarness max={2} aspectRatios={['1:1']} />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+
+    // Another part of the form writes an image while the modal is open.
+    pushValue({ url: dataUrl, width: 1024, height: 1024 });
+    await vi.waitFor(() => expect(sourceMetadataStore.getMetadata(dataUrl)?.width).toBe(1024));
+
+    // The crop's own upload fails, so the session ends without changing the value.
+    const { onConfirm, images } = mocks.dialogTrigger.mock.calls[0][0].props;
+    void onConfirm([{ src: images[0].url, cropped: new Blob(['c'], { type: 'image/jpeg' }) }]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].reject(new Error(PRESIGN_ERROR));
+
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+  });
+
+  test('cancelling a re-crop of an image already in the value does not reopen the modal', async () => {
+    const existing = await loadableImageUrl();
+    cachedUrls.push(existing);
+    mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
+    renderWithProviders(
+      <PendingHarness
+        aspectRatios={['1:1']}
+        initialValue={[{ url: existing, width: 600, height: 2000 }]}
+      />
+    );
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+
+    mocks.dialogTrigger.mock.calls[0][0].props.onCancel();
+    await sleep(500);
+    expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1);
+  });
+
   test('an image already in the value whose dimensions cannot be read does not stop a new pick', async () => {
     const existing = await loadableImageUrl();
     mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
@@ -622,6 +682,12 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     uploads[0].resolve({ url: await loadableImageUrl(), available: true });
     await vi.waitFor(() => expect(lastValue).toHaveLength(2));
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    // Retried on a change, but not in a loop of its own: the count holds once nothing changes.
+    const readsOfExisting = () =>
+      mocks.getImageDimensions.mock.calls.filter(([src]) => src === existing).length;
+    const settledReads = readsOfExisting();
+    await sleep(500);
+    expect(readsOfExisting()).toBe(settledReads);
     // The unreadable url is retried on every change; it is reported once.
     expect(
       mocks.getImageDimensions.mock.calls.filter(([src]) => src === existing).length
@@ -646,6 +712,10 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
       );
     mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
     mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+    mocks.dialogTrigger.mockReset();
+    vi.mocked(resizeImage)
+      .mockReset()
+      .mockImplementation(async () => new Blob(['resized'], { type: 'image/png' }));
   });
   afterEach(() => {
     vi.useRealTimers();
@@ -721,7 +791,7 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     renderWithProviders(<PendingHarness />);
     await pickFiles(1);
     await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(2));
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(31_000);
     await expectFailedCard(PROCESS_ERROR);
     expect(reports()).toEqual([
       ['source image prep failed: dims:timeout', 'picked-file image/jpeg <5MB'],
@@ -734,10 +804,41 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     renderWithProviders(<PendingHarness />);
     await pickFiles(1);
     await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(1));
-    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(31_000);
     await expectFailedCard(PROCESS_ERROR);
     expect(reports()).toEqual([
       ['source image prep failed: dims:timeout', 'picked-file image/jpeg <5MB'],
     ]);
+  });
+
+  test('the upload bounds its resize and encode steps', async () => {
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    expect(vi.mocked(resizeImage)).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ stageTimeoutMs: 30_000 })
+    );
+    expect(vi.mocked(imageToJpegBlob)).toHaveBeenCalledWith(expect.anything(), {
+      stageTimeoutMs: 30_000,
+    });
+  });
+
+  test('a report names only listed types and error names', async () => {
+    // The crop path uploads a Blob, so the source is `blob` and the type comes from the Blob.
+    mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
+    vi.mocked(resizeImage).mockRejectedValueOnce(
+      new ImagePrepError('decode', false, 'decode broke', {
+        cause: Object.assign(new Error('x'), { name: 'WeirdError' }),
+      })
+    );
+    renderWithProviders(<PendingHarness aspectRatios={['1:1']} />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    const { onConfirm, images } = mocks.dialogTrigger.mock.calls[0][0].props;
+    void onConfirm([{ src: images[0].url, cropped: new Blob(['c'], { type: 'image/x-made-up' }) }]);
+
+    await vi.waitFor(() => expect(reports()).toHaveLength(1));
+    expect(reports()).toEqual([['source image prep failed: decode', 'blob other <5MB other']]);
   });
 });

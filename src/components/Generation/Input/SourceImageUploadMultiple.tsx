@@ -306,7 +306,13 @@ export function SourceImageUploadMultiple({
   const [error, setError] = useState<string | null>(null);
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
   const isCroppingRef = useRef(false);
-  const verifiedDimsRef = useRef(new Set<string>());
+  // Counts crop sessions that ended, so the crop/upload effect can start a card queued while the
+  // modal was open, even when the session ended without changing anything else it re-runs on.
+  const [cropsEnded, setCropsEnded] = useState(0);
+  const endCropping = () => {
+    isCroppingRef.current = false;
+    setCropsEnded((n) => n + 1);
+  };
   // Track which ids/urls this component has marked as uploading/verifying in the
   // global store, so we can force-clear them on unmount. Otherwise a workflow
   // switch that unmounts mid-flight (e.g., img2vid → txt2vid while a slot upload
@@ -459,6 +465,9 @@ export function SourceImageUploadMultiple({
     .filter((u) => u.status === 'queued')
     .map((u) => u.id)
     .join(',');
+  // Only while cards wait: a crop session ending with none queued must not re-run the effect, or a
+  // cancelled re-crop of the value's own images would reopen the modal straight away.
+  const cropEndedWithQueued = queuedCardIds ? cropsEnded : 0;
 
   // Holds the generator from the pick until the image is in the value, under one key per mount that
   // no upload id can take. The per-upload marker set inside uploadOrchestratorImage starts after an
@@ -527,7 +536,7 @@ export function SourceImageUploadMultiple({
     }
     // Keyed on the queued cards too: a card queued for a url already in play (a data: url swapped
     // out of the value for its upload) changes neither the url count nor dimension readiness.
-  }, [allDimsResolved, allImageUrls.length, getShouldCrop, queuedCardIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [allDimsResolved, allImageUrls.length, getShouldCrop, queuedCardIds, cropEndedWithQueued]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function removeItem(index: number) {
     const item = previewItems[index];
@@ -598,14 +607,16 @@ export function SourceImageUploadMultiple({
       .map((u) => u.url);
     const allUrls = [...valueUrls, ...uploadUrls];
 
+    // Read any url without cached dimensions, unless a read of it is already in flight. Keyed on
+    // the cache rather than on "read once": an entry the store evicts must be read again, or the
+    // crop/upload effect waits on it forever and no new card starts.
     const unresolved = allUrls.filter((url) => {
-      if (verifiedDimsRef.current.has(url)) return false;
+      if (trackedVerifyingUrlsRef.current.has(url)) return false;
       const cached = sourceMetadataStore.getMetadata(url);
       return !cached?.width || !cached?.height;
     });
 
     if (!unresolved.length) return;
-    for (const url of unresolved) verifiedDimsRef.current.add(url);
 
     // Track verifying state so FormFooter can show loading
     for (const url of unresolved) {
@@ -624,9 +635,8 @@ export function SourceImageUploadMultiple({
         )
           .then(({ width, height }) => ({ url, width, height }))
           .catch((e: ImagePrepError) => {
-            // A failed load must stay retryable, or the dimensions it was meant to
-            // correct are submitted as-is for the life of this mount.
-            verifiedDimsRef.current.delete(url);
+            // Nothing is cached for a failed load, so it is retried on the next change; otherwise
+            // the dimensions it was meant to correct are submitted as-is for the life of this mount.
             failures.set(url, e);
             return null;
           })
@@ -650,15 +660,20 @@ export function SourceImageUploadMultiple({
         reportImagePrepFailure(error, url, pickedFilesRef.current.get(url));
       }
       if (unreadable.size) {
-        setUploads((items) =>
-          items.map((x): ImagePreview => {
+        // Only when a queued card is affected: a new array re-runs this effect, which retries the
+        // url, which would fail again, without end, for an unreadable image already in the value.
+        setUploads((items) => {
+          let changed = false;
+          const next = items.map((x): ImagePreview => {
             if (x.status !== 'queued' || x.slotIndex !== undefined) return x;
             const error = failures.get(x.url);
             if (!error) return x;
+            changed = true;
             const message = error.timedOut ? IMAGE_PREP_TIMEOUT_ERROR : IMAGE_LOAD_ERROR;
             return { status: 'error', url: x.url, src: x.url, error: message, id: x.id };
-          })
-        );
+          });
+          return changed ? next : items;
+        });
       }
       setUnreadableUrls((prev) => {
         const next = new Set(prev);
@@ -890,7 +905,7 @@ export function SourceImageUploadMultiple({
             // emitted. Any entries that errored out are also removed here.
             setUploads((prev) => prev.filter((x) => !x.id || !toUploadIds.has(x.id)));
 
-            isCroppingRef.current = false;
+            endCropping();
           } else {
             // Nothing to upload: every image came back uncropped and is already an orchestrator
             // url. Pending picks go into the value as they are (what the no-crop path does for the
@@ -902,7 +917,7 @@ export function SourceImageUploadMultiple({
               .map(({ url, width, height }) => ({ url, width, height }));
             if (ready.length) onChange?.([...latest, ...ready]);
             setUploads((prev) => prev.filter((x) => !isPendingCard(x)));
-            isCroppingRef.current = false;
+            endCropping();
           }
         },
         onCancel: () => {
@@ -922,7 +937,7 @@ export function SourceImageUploadMultiple({
             onChange?.(reverted.length > 0 ? reverted : null);
           }
 
-          isCroppingRef.current = false;
+          endCropping();
         },
         aspectRatios,
       },
@@ -1056,7 +1071,7 @@ export function SourceImageUploadMultiple({
             },
           });
         });
-        isCroppingRef.current = false;
+        endCropping();
 
         if (!cropResult) {
           // Cancelled — clear upload indicators and tracking, leave value alone.
