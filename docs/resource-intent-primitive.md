@@ -478,10 +478,11 @@ v3 asks a new question of the popularity-seed matcher, in brief:
   prompt's top 10; the arms now differ only by the re-rank, so identical heads are expected
   on most prompts (as a proxy: reciprocal ranks @50 tied on 220 of the offline replay's 254
   prompts), and the count is printed without deciding anything.
-- **Power** comes from planning assumptions taken from an offline 254-prompt replay
-  (hit@10 discordance 13 of 254; MRR non-ties 13.4%, 68% favouring PURPOSE) at a planning
-  n of 822 scored: ≈ 0.81 for (i), ≈ 0.97 for (ii). They are assumptions, not evidence;
-  the text derives both from the constants.
+- **Power** comes from planning assumptions taken from the same best-of-18 offline
+  254-prompt replay that selected this design, so they are optimistic (hit@10 discordance
+  13 of 254; MRR non-ties 13.4%, 68% favouring PURPOSE), at a planning n of 822 scored —
+  the v2 registered run's scored count: ≈ 0.81 for (i), ≈ 0.97 for (ii). At the 667
+  scored floor, power for (i) is ≈ 0.74. The text derives all three from the constants.
 
 The labeled/unlabeled breakdown is reported but never decisive.
 
