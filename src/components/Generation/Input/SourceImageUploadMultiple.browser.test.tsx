@@ -43,6 +43,8 @@ vi.mock('~/components/Dialog/dialogStore', async (orig) => {
 });
 
 // eslint-disable-next-line import/first
+import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
+// eslint-disable-next-line import/first
 import {
   ImageUploadMultipleInput,
   type ImageValue,
@@ -103,10 +105,12 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /**
  * Settles uploads one at a time, oldest first, letting each outcome render before the next. Stops
- * only once no new upload has started for 500ms, so a late re-upload is settled and counted too.
+ * only once no new upload has started for 500ms, so a late re-upload is settled and counted too,
+ * or after MAX_SETTLES, so an upload loop ends the test instead of hanging it.
  */
+const MAX_SETTLES = 20;
 async function settleOneByOne(outcome: 'reject' | 'resolve') {
-  for (;;) {
+  for (let settled = 0; settled < MAX_SETTLES; settled++) {
     const upload = pending()[0];
     if (!upload) {
       await sleep(500);
@@ -186,29 +190,68 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
     expect(loaderCount()).toBe(0);
   });
 
-  test('a URL can be uploaded again after its failed card is removed', async () => {
-    renderWithProviders(<Harness layout="url-input" />);
-    const submitUrl = async () => {
-      await userEvent.fill(
-        page.getByPlaceholder('Add a file or provide a URL'),
-        'https://example.com/a.jpg'
-      );
-      await userEvent.keyboard('{Enter}');
-    };
+  const submitUrl = async (url: string) => {
+    await userEvent.fill(page.getByPlaceholder('Add a file or provide a URL'), url);
+    await userEvent.keyboard('{Enter}');
+  };
 
-    await submitUrl();
+  test('the same URL added again after its upload failed is uploaded once more, not looped', async () => {
+    renderWithProviders(<Harness layout="url-input" />);
+
+    await submitUrl('https://example.com/a.jpg');
     await vi.waitFor(() => expect(uploads).toHaveLength(1));
     await settleOneByOne('reject');
     await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
-    document
-      .querySelector<HTMLButtonElement>('[data-testid="source-images"] .mantine-Card-root button')!
-      .click();
-    await expect.element(page.getByText(PRESIGN_ERROR)).not.toBeInTheDocument();
 
-    await submitUrl();
+    await submitUrl('https://example.com/a.jpg');
     await vi.waitFor(() => expect(uploads).toHaveLength(2));
     await settleOneByOne('reject');
-    await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
+
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(2);
+    await expect.poll(() => page.getByText(PRESIGN_ERROR).elements().length).toBe(2);
     expect(loaderCount()).toBe(0);
+  });
+
+  test('the same URL added twice at once, uploads succeed: each card uploads once', async () => {
+    renderWithProviders(<Harness layout="url-input" />);
+
+    await submitUrl('https://example.com/a.jpg');
+    await submitUrl('https://example.com/a.jpg');
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    await settleOneByOne('resolve');
+
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(2);
+    await expect.poll(() => page.getByText('1024 x 1024').elements().length).toBe(2);
+    expect(loaderCount()).toBe(0);
+  });
+
+  test('the same URL added twice at once: each card takes its own upload outcome', async () => {
+    renderWithProviders(<Harness layout="url-input" />);
+
+    await submitUrl('https://example.com/a.jpg');
+    await submitUrl('https://example.com/a.jpg');
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    uploads[0].settled = true;
+    uploads[0].reject(new Error(PRESIGN_ERROR));
+    await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
+    await settleOneByOne('resolve');
+
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(2);
+    await expect.poll(() => page.getByText('1024 x 1024').elements().length).toBe(1);
+    expect(page.getByText(PRESIGN_ERROR).elements()).toHaveLength(1);
+    expect(loaderCount()).toBe(0);
+  });
+
+  test('a queued card shows the Loader and holds the generator', async () => {
+    // Dimensions never resolve, so the card stays queued.
+    mocks.getImageDimensions.mockReturnValue(new Promise(() => undefined));
+    renderWithProviders(<Harness />);
+    await pickFiles(1);
+
+    await expect.poll(loaderCount).toBe(1);
+    // What `useImagesUploadingOrVerifying` reads to hold the cost estimate and submit.
+    const { uploading, verifying } = useImagesUploadingStore.getState();
+    expect(uploading.length + verifying.length).toBeGreaterThan(0);
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
   });
 });
