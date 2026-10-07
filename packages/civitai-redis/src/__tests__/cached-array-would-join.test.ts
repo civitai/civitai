@@ -381,19 +381,19 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
     t.nextRead({ id: 8, cachedAt: new Date() });
     t.redis.packed.set.mockResolvedValueOnce(null);
     expect(await t.cache.update(8, (row) => row)).toBe(false);
-    const d = t.cache.fetch([8]);
+    const c = t.cache.fetch([8]);
     await t.parked(3);
     expect(t.total()).toBe(2);
 
     // A live entry is rewritten: update reports true and detaches the fill.
     t.nextRead({ id: 8, cachedAt: new Date() });
     expect(await t.cache.update(8, (row) => row)).toBe(true);
-    const c = t.cache.fetch([8]);
+    const d = t.cache.fetch([8]);
     await t.parked(4);
     expect(t.total()).toBe(2);
 
     t.gates.forEach((g) => g.resolve());
-    await Promise.all([a, b, d, c]);
+    await Promise.all([a, b, c, d]);
     expect(t.lookupFn).toHaveBeenCalledTimes(4);
   });
 

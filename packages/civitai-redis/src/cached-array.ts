@@ -105,8 +105,8 @@ export type CacheBuilderDeps = {
      * debounce-marker id, and no bust/invalidate/refresh/update detached it since. An upper
      * bound (the excess is unmeasured): an originator here stays registered while it also looks up
      * and writes the ids it would have joined, and writes values then markers in sequence, so its
-     * entries live longer than in #5488 — the more so the larger its combined batch. Measurement only: the lookup and its writes still happen. Cross-process
-     * duplicates are not visible here.
+     * entries live longer than in #5488 — the more so the larger its combined batch. Measurement
+     * only: the lookup and its writes still happen. Cross-process duplicates are not visible here.
      */
     missWouldJoin(cacheName: string, count: number): void;
   };
