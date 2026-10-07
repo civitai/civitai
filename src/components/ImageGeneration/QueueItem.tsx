@@ -210,7 +210,7 @@ export function QueueItem({
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel = canceled
-    ? 'cancelled - This generation was cancelled. Any undelivered generations were refunded.'
+    ? 'canceled - This generation was canceled. Any undelivered generations were refunded.'
     : hasUnstableResources && status === 'failed'
     ? `${status} - Potentially caused by unstable resources`
     : status === 'failed'
@@ -689,7 +689,7 @@ function StepOutputs({
  */
 const workflowStatusAlertMap: Partial<Record<WorkflowStatus, { color: string; message: string }>> =
   {
-    canceled: { color: 'gray', message: 'This generation was cancelled.' },
+    canceled: { color: 'gray', message: 'This generation was canceled.' },
   };
 
 function WorkflowStatusAlert({
