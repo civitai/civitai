@@ -19,11 +19,9 @@ const SUPPORTED_CONTENT_TYPES = [
   'video/webm',
 ] as const;
 const PRESIGN_TIMEOUT_MS = 15_000;
-// Silence allowed after the body is sent. Type stands in for size: a browser can report a small
-// body as sent before it leaves the device, so images get a short window on a dead link, while
-// the reply to a large video may legitimately take longer.
-const IMAGE_RESPONSE_TIMEOUT_MS = 60_000;
-const VIDEO_RESPONSE_TIMEOUT_MS = 5 * 60_000;
+// Silence allowed after the body is sent. Long because the orchestrator processes the media inside
+// the POST and cancels that work when the client aborts, so a short window fails slow uploads.
+const RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const MAX_ATTEMPTS = 2;
 
 type SupportedContentType = (typeof SUPPORTED_CONTENT_TYPES)[number];
@@ -57,7 +55,9 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
     if (!response.ok) {
       const failure = { status: response.status, retryAfter: response.headers.get('Retry-After') };
       throw new ConsumerBlobUploadError(
-        response.status === 403 ? await response.text() : 'Failed to get upload URL',
+        response.status === 400 || response.status === 403
+          ? await response.text()
+          : 'Failed to get upload URL',
         `presign-http-${response.status}`,
         shouldRetryPartError(failure),
         failure
@@ -85,12 +85,16 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
 function toUploadError(err: UploadPartError, responseText: string) {
   const reason = describePartFailure(err);
   const kind = reason?.kind === 'part-status' ? `http-${reason.status}` : reason?.kind ?? 'unknown';
-  const message = err.stalled
+  const message = err.responsePhase
+    ? 'Timed out waiting for the server to process the upload. Please try again.'
+    : err.stalled
     ? 'Upload stalled. Check your connection and try again.'
     : err.networkError
     ? 'Upload failed. Check your connection and try again.'
     : `Failed to upload blob: ${responseText || err.status}`;
-  return new ConsumerBlobUploadError(message, kind, shouldRetryPartError(err), err);
+  // Not after a response-phase stall: a retry would restart the server's processing from zero.
+  const retryable = shouldRetryPartError(err) && !err.responsePhase;
+  return new ConsumerBlobUploadError(message, kind, retryable, err);
 }
 
 function postBlob(uploadUrl: string, data: Blob, contentType: string) {
@@ -107,9 +111,7 @@ function postBlob(uploadUrl: string, data: Blob, contentType: string) {
     xhr.upload.addEventListener('progress', () => watchdog.arm());
     xhr.upload.addEventListener('load', () => {
       bodySent = true;
-      watchdog.arm(
-        contentType.startsWith('video/') ? VIDEO_RESPONSE_TIMEOUT_MS : IMAGE_RESPONSE_TIMEOUT_MS
-      );
+      watchdog.arm(RESPONSE_TIMEOUT_MS);
     });
     xhr.addEventListener('loadend', () => {
       watchdog.clear();
@@ -145,7 +147,8 @@ function postBlob(uploadUrl: string, data: Blob, contentType: string) {
 
 /**
  * Uploads a blob/file to the orchestrator using a presigned URL, directly from the browser.
- * Retries once, with a fresh presigned URL, on a stall, network error, 429 or 5xx.
+ * Retries once, with a fresh presigned URL, on a network error, 429, 5xx or a stall before the
+ * body is fully sent.
  *
  * @throws Error if file exceeds 64MB, has unsupported content type, or the upload fails
  */

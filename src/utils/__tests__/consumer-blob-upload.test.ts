@@ -41,8 +41,9 @@ class FakeXHR {
   setRequestHeader() {
     return undefined;
   }
-  getResponseHeader() {
-    return null;
+  headers: Record<string, string> = {};
+  getResponseHeader(name: string) {
+    return this.headers[name] ?? null;
   }
   send(body: unknown) {
     this.body = body;
@@ -63,8 +64,9 @@ class FakeXHR {
     this.status = 0;
     this.emit('loadend');
   }
-  respond(status: number, body: string) {
+  respond(status: number, body: string, headers: Record<string, string> = {}) {
     this.bodySent();
+    this.headers = headers;
     this.status = status;
     this.responseText = body;
     this.emit('loadend');
@@ -74,7 +76,8 @@ class FakeXHR {
   }
 }
 
-let presignMode: 'ok' | 'hang' | 'unavailable-once' | 'throttle-once' | 'forbidden';
+let presignMode: 'ok' | 'hang' | 'unavailable-once' | 'throttle-once' | 'rejected';
+let rejectedStatus: number;
 let presignCount: number;
 const fetchMock = vi.fn((url: string, init?: RequestInit) => {
   if (url === PRESIGN_PATH) {
@@ -93,10 +96,10 @@ const fetchMock = vi.fn((url: string, init?: RequestInit) => {
         status: 429,
         headers: new Headers({ 'Retry-After': '5' }),
       });
-    if (presignMode === 'forbidden')
+    if (presignMode === 'rejected')
       return Promise.resolve({
         ok: false,
-        status: 403,
+        status: rejectedStatus,
         headers: new Headers(),
         text: async () => 'Not allowed',
       });
@@ -202,27 +205,25 @@ describe('uploadConsumerBlob', () => {
     expect(kinds()).toEqual(['consumer blob upload failed: network-error']);
   });
 
-  it('gives a sent body a wider window, then reports a response stall', async () => {
-    track(uploadConsumerBlob(jpeg()));
-    await vi.advanceTimersByTimeAsync(0);
-    FakeXHR.instances[0].bodySent();
-    await vi.advanceTimersByTimeAsync(59_999);
-    expect(FakeXHR.instances[0].aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
+  it.each([
+    ['image', jpeg],
+    ['video', mp4],
+  ])(
+    'fails a %s upload whose sent body gets no reply in 5 min, without retrying',
+    async (_, make) => {
+      const result = track(uploadConsumerBlob(make()));
+      await vi.advanceTimersByTimeAsync(0);
+      FakeXHR.instances[0].bodySent();
+      await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
+      expect(FakeXHR.instances[0].aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1 + BACKOFF_MS);
 
-    expect(FakeXHR.instances[0].aborted).toBe(true);
-    expect(kinds()).toEqual(['consumer blob upload failed: response-stalled']);
-  });
-
-  it('gives a sent video body a longer response window', async () => {
-    track(uploadConsumerBlob(mp4()));
-    await vi.advanceTimersByTimeAsync(0);
-    FakeXHR.instances[0].bodySent();
-    await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
-    expect(FakeXHR.instances[0].aborted).toBe(false);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(FakeXHR.instances[0].aborted).toBe(true);
-  });
+      expect(FakeXHR.instances[0].aborted).toBe(true);
+      expect([FakeXHR.instances.length, presignCount]).toEqual([1, 1]);
+      expect(result.error?.message).toMatch(/Timed out waiting for the server/);
+      expect(kinds()).toEqual(['consumer blob upload failed: response-stalled']);
+    }
+  );
 
   it('retries a 5xx response', async () => {
     const result = track(uploadConsumerBlob(jpeg()));
@@ -237,6 +238,20 @@ describe('uploadConsumerBlob', () => {
 
     expect(result.value).toEqual({ id: 'b2' });
     expect(kinds()).toEqual(['consumer blob upload failed: http-503']);
+  });
+
+  it('retries a throttled upload after its Retry-After', async () => {
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(0);
+    FakeXHR.instances[0].respond(429, 'slow down', { 'Retry-After': '5' });
+    await vi.advanceTimersByTimeAsync(4_999);
+    expect(FakeXHR.instances).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    FakeXHR.instances[1].respond(200, JSON.stringify({ id: 'b2' }));
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(result.value).toEqual({ id: 'b2' });
+    expect(kinds()).toEqual(['consumer blob upload failed: http-429']);
   });
 
   it('does not retry a 422 rejection', async () => {
@@ -275,14 +290,18 @@ describe('uploadConsumerBlob', () => {
     expect(kinds()).toEqual(['consumer blob upload failed: presign-http-429']);
   });
 
-  it('does not retry a forbidden presign', async () => {
-    presignMode = 'forbidden';
-    const result = track(uploadConsumerBlob(jpeg()));
-    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+  it.each([400, 403])(
+    'shows the text of a %i presign rejection and does not retry',
+    async (status) => {
+      presignMode = 'rejected';
+      rejectedStatus = status;
+      const result = track(uploadConsumerBlob(jpeg()));
+      await vi.advanceTimersByTimeAsync(BACKOFF_MS);
 
-    expect(result.error?.message).toBe('Not allowed');
-    expect(presignCount).toBe(1);
-  });
+      expect(result.error?.message).toBe('Not allowed');
+      expect(presignCount).toBe(1);
+    }
+  );
 
   it('times out a hung presign request and throws after one retry', async () => {
     presignMode = 'hang';
