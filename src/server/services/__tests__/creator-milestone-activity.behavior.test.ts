@@ -808,7 +808,7 @@ describe('judge-vote detector', () => {
     return { group, calls };
   };
 
-  it('grants every judge rank at or below the vote count, undated', async () => {
+  it('grants every judge rank at or below the vote count', async () => {
     const { group, calls } = judgeGroup([
       { userId: CREATOR, votes: '1200' },
       { userId: TESTER, votes: '500' },
@@ -889,7 +889,10 @@ describe('judge-vote detector', () => {
     const candidates = await (
       group as Extract<MilestoneDetectorGroup, { candidates: unknown }>
     ).candidates(pg);
-    expect(candidates.map((row) => row.milestoneKey)).toEqual(['community:crucible-votes-1000']);
+    // Undated: a dated row before the watermark would be granted silently.
+    expect(candidates).toEqual([
+      { userId: CREATOR, milestoneKey: 'community:crucible-votes-1000', achievedAt: null },
+    ]);
   });
 
   it.each([

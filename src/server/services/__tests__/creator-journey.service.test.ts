@@ -7,6 +7,7 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import {
   buildActivityProgress,
@@ -579,13 +580,14 @@ describe('judge votes', () => {
 
     const { activity } = await getCreatorJourney(42);
 
-    expect(chQuery).toHaveBeenCalledWith(
-      expect.objectContaining({
-        query: judgeVoteCountSql,
-        query_params: { userId: 42 },
-        format: 'JSONEachRow',
-      })
-    );
+    expect(chQuery).toHaveBeenCalledTimes(1);
+    expect(chQuery).toHaveBeenCalledWith({
+      query: judgeVoteCountSql,
+      query_params: { userId: 42 },
+      format: 'JSONEachRow',
+      abort_signal: expect.any(AbortSignal),
+      clickhouse_settings: { max_execution_time: 5 },
+    });
     expect(
       activity.milestones.map(({ key, measure, current }) => ({ key, measure, current }))
     ).toEqual([
@@ -606,9 +608,36 @@ describe('judge votes', () => {
   // ClickHouse is a second store behind one page; its outage must not take the page down.
   it('still loads, at zero votes, when ClickHouse fails', async () => {
     chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
+    loggingMock.logToAxiom.mockClear();
 
     const { activity } = await getCreatorJourney(42);
 
     expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-journey-judge-votes' })
+    );
+  });
+
+  // The shared client would otherwise wait minutes on a stalled connection, holding the page.
+  it('gives up on a stalled ClickHouse after six seconds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      chQuery.mockImplementation(
+        ({ abort_signal }: { abort_signal: AbortSignal }) =>
+          new Promise((_, reject) =>
+            abort_signal.addEventListener('abort', () => reject(new Error('aborted')))
+          )
+      );
+      const journey = getCreatorJourney(42);
+      await vi.advanceTimersByTimeAsync(5_999);
+      expect(chQuery.mock.calls[0][0].abort_signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      // Asserted before awaiting, so a longer deadline fails here instead of hanging the test.
+      expect(chQuery.mock.calls[0][0].abort_signal.aborted).toBe(true);
+      const { activity } = await journey;
+      expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
