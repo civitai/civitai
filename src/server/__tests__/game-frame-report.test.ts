@@ -754,8 +754,14 @@ describe('the columns each guard reads are selected', () => {
     db.gameFrameGame.findUnique.mockResolvedValue({ id: GAME_ID, stateAt: null });
     await applyGameFrameState({ ...body().game, at: body().at } as never);
 
-    expect(db.gameFrameGame.upsert.mock.calls[0][0].select).toMatchObject({ stateAt: true });
-    expect(db.gameFrameGame.findUnique.mock.calls[0][0].select).toMatchObject({ stateAt: true });
+    expect(db.gameFrameGame.upsert.mock.calls[0][0].select).toMatchObject({
+      id: true,
+      stateAt: true,
+    });
+    expect(db.gameFrameGame.findUnique.mock.calls[0][0].select).toMatchObject({
+      id: true,
+      stateAt: true,
+    });
     expect(db.gameFrameReportReceipt.findUnique.mock.calls[0][0].select).toMatchObject({
       reportId: true,
     });

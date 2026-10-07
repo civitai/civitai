@@ -40,6 +40,16 @@ describe('delistGame', () => {
     expect(JSON.parse(String(init.body))).toEqual({ reason: input.reason, reportId: 991 });
   });
 
+  it.each([null, '', 'a'.repeat(65), 'a b', 'a\r\nx-evil: 1', 'modé'])(
+    'falls back to mod-<id> for a name Game Frame would refuse (%j)',
+    async (username) => {
+      const fetchImpl = reply(200, { ok: true, affected: [], state: 'delisted' });
+      await delistGame({ ...input, moderator: { id: 7, username } }, fetchImpl);
+      const [, init] = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
+      expect(init.headers).toMatchObject({ 'x-gf-mod-name': 'mod-7' });
+    }
+  );
+
   it('passes a plain username through as the moderator name', async () => {
     const fetchImpl = reply(200, { ok: true, affected: [], state: 'delisted' });
     await delistGame({ ...input, moderator: { id: 7, username: 'jane_doe.2' } }, fetchImpl);
@@ -53,6 +63,10 @@ describe('delistGame', () => {
     expect(await delistGame(input, reply(200, { ok: true, state: 'public' }))).toMatchObject({
       ok: false,
     });
+    for (const body of [{ state: 'delisted' }, { ok: false, state: 'delisted' }, null, []])
+      expect(await delistGame(input, reply(200, body)), JSON.stringify(body)).toMatchObject({
+        ok: false,
+      });
   });
 
   it.each([
