@@ -47,7 +47,7 @@ export function getBankableBreakdown({
   capRemaining: number;
 }): BankableBreakdown {
   const held = Math.max(0, balance);
-  // Spending lowers the balance but not the bankable amount, so the bankable part can be all of it.
+  // Spending lowers the balance but not `bankableRemaining`, so it can exceed the balance.
   const bankable = Math.min(Math.max(0, bankableRemaining), held);
   const cap = Math.max(0, capRemaining);
   const bankableNow = Math.min(bankable, cap);

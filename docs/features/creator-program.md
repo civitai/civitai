@@ -301,11 +301,11 @@ Bitwise flags on `User.onboarding`:
 |-----------|------|---------|
 | `CreatorProgramV2` | `src/components/Buzz/CreatorProgramV2/CreatorProgramV2.tsx` | Main dashboard |
 | `BankBuzzCard` | Same file | Buzz type selector + amount input for banking |
-| `BankableBuzzMeter` | `BankableBuzzMeter.tsx` | From the cutover, splits the yellow + green balance into bankable this month, over the cap, and not bankable (`getBankableBreakdown`) |
 | `ExtractBuzzCard` | Same file | All-or-nothing extraction button |
 | `CompensationPoolCard` | Same file | Unified pool value and size |
 | `EstimatedEarningsCard` | Same file | Per-type banked breakdown + value estimate |
 | `WithdrawCashCard` | Same file | Cash withdrawal interface |
+| `BankableBuzzMeter` | `src/components/Buzz/CreatorProgramV2/BankableBuzzMeter.tsx` | From the cutover, splits the yellow + green balance into bankable this month, over the cap, and not bankable (`getBankableBreakdown`) |
 
 ### Hooks (`CreatorProgram.util.ts`)
 
@@ -324,13 +324,13 @@ Bitwise flags on `User.onboarding`:
 
 ## Testing
 
-Test files: `src/server/services/__tests__/creator-program.service.test.ts`, `src/server/services/__tests__/creator-program-bankable.test.ts`
+Test files: `src/server/services/__tests__/creator-program.service.test.ts`, `src/server/services/__tests__/creator-program-bankable.test.ts`, `src/shared/utils/__tests__/creator-program.utils.test.ts`
 
 Covers: `getCreatorRequirements`, `joinCreatorsProgram`, `getBanked`/`getBankedBalance`, `bankBuzz`, `extractBuzz`, `getCompensationPool`, `withdrawCash`, unified pool invariants, the bankable amount.
 
 Run tests:
 ```bash
-pnpm exec vitest run --project 'unit*' src/server/services/__tests__/creator-program.service.test.ts src/server/services/__tests__/creator-program-bankable.test.ts
+pnpm exec vitest run --project 'unit*' src/server/services/__tests__/creator-program.service.test.ts src/server/services/__tests__/creator-program-bankable.test.ts src/shared/utils/__tests__/creator-program.utils.test.ts
 ```
 
 Shared utility tests: `src/shared/utils/__tests__/creator-program.utils.test.ts` (cap calculations).

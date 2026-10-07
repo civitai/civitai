@@ -40,8 +40,8 @@ export const BANKABLE_EARNING_PREDICATE_SQL = `(
 )`;
 
 /**
- * Earnings that set the Peak Earning Month for the tier cap: licence fees and user-paid early
- * access. Narrower than the bankable predicate: tips, donations and rewards do not set the peak.
+ * Sets the Peak Earning Month. Narrower than the bankable predicate on purpose: tips, donations,
+ * sales, bounties and app/placement fees are bankable but do not set the peak.
  */
 export const PEAK_EARNING_PREDICATE_SQL = `(
   type = 'licenseFee'
@@ -69,8 +69,8 @@ export type BankableAmount = BankableLedger & {
 };
 
 /**
- * The clock alone is not enough: if ingest stalls, a snapshot could miss pre-cutover rows and be
- * stored forever. A row dated after the settle point shows ingest has passed it.
+ * A row dated past the settle point shows ingest has reached it; the clock alone would store a
+ * short snapshot forever if ingest stalled.
  */
 async function hasIngestSettled(now: Date) {
   if (now < SNAPSHOT_SETTLED_AT || !clickhouse) return false;

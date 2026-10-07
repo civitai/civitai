@@ -377,6 +377,7 @@ export const APP_OPEN_COUNT_QUERY_MARKER = 'sum(dailyActors)';
  * entry as 0 (which is what the upsert's COALESCE does).
  */
 export function buildAppOpenCountSql(appBlockIds: string[]): string {
+  // Escape, never reject: a dropped id gets no row, and a missing row is written as 0.
   const inList = appBlockIds.map((id) => `'${escapeClickhouseString(id)}'`).join(', ');
   return `
     SELECT appBlockId, ${APP_OPEN_COUNT_QUERY_MARKER} AS openCount

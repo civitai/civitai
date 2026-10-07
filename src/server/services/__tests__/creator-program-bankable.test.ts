@@ -194,8 +194,7 @@ describe('getBankableAmount', () => {
     );
   });
 
-  // Every term matters and a wrong one returns a plausible number, so the whole query is pinned:
-  // a flipped sign, a swapped account column or a dropped date bound each fail here.
+  // Pinned whole: a wrong term still returns a plausible number.
   it('computes the cutover balance as Buzz in minus Buzz out before the cutover', async () => {
     mockLedger({ snapshot: 0, earned: 0, consumed: 0 });
 
