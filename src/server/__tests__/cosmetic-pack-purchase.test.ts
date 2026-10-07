@@ -28,6 +28,7 @@ const BUYER = 501;
 const PACK_CREATOR = 502;
 const FOREIGN_CREATOR = 503;
 const RESELLER = 504;
+const MODERATOR = 505;
 
 const member = (
   over: Partial<Parameters<typeof computePackPayouts>[0]['members'][number]> = {}
@@ -312,7 +313,15 @@ describe('computePackPayouts', () => {
   // bug this block exists to stop.
   describe('official (platform) members', () => {
     const official = (over = {}) =>
-      member({ cosmeticId: 81, createdById: null, addedById: null, floorAmount: 1700, ...over });
+      // A real official listing has a lister. With `addedById` null here too, a
+      // rule keyed on the lister instead of the creator would pass every case.
+      member({
+        cosmeticId: 81,
+        createdById: null,
+        addedById: MODERATOR,
+        floorAmount: 1700,
+        ...over,
+      });
 
     it('keeps an official member share with the bank instead of paying the pack creator', () => {
       const { components, officialTotal, remainder, packCreatorAmount } = computePackPayouts({
@@ -355,7 +364,7 @@ describe('computePackPayouts', () => {
     });
 
     it('scales foreign members against official ones and stays inside 70% of the price', () => {
-      const { components, packCreatorAmount } = computePackPayouts({
+      const { components, officialTotal, remainder, packCreatorAmount } = computePackPayouts({
         packPrice: 1000,
         packCreatorId: PACK_CREATOR,
         members: [foreign({ floorAmount: 1000 }), official({ floorAmount: 3001 })],
@@ -363,6 +372,9 @@ describe('computePackPayouts', () => {
       });
       const total = components.reduce((sum, c) => sum + c.amount, 0) + packCreatorAmount;
       expect(packCreatorAmount).toBe(0);
+      // 750.06 rounded UP: the scaling crumb is the bank's, never the pack creator's.
+      expect(officialTotal).toBe(751);
+      expect(remainder).toBe(0);
       // Scaled to 1000/4001 of its snapshot: basis 249, not the 1000 it would be
       // if the official member were left out of the scale.
       expect(components.map((c) => c.amount)).toEqual([Math.floor(249 * 0.7)]);

@@ -56,6 +56,7 @@ const PACK_CREATOR = 902;
 const OTHER_CREATOR = 903;
 const RESELLER = 904;
 const THIRD_CREATOR = 905;
+const LISTER = 906;
 const PLATFORM_KEEPS = 0.3;
 
 type Member = Parameters<typeof purchaseCosmeticPack>[0]['members'][number];
@@ -200,6 +201,25 @@ const SHAPES: Shape[] = [
     members: [
       mkMember({ createdById: null, addedById: null }),
       mkMember({ cosmeticId: 1002, floorAmount: 900 }),
+    ],
+  },
+  {
+    // Official AND stale: the official member has to take part in scaling, or
+    // the foreign creator is paid as if it were not there.
+    // Priced between the foreign snapshot alone and foreign + official, so the
+    // official member is what tips it into scaling — and what left a remainder
+    // for the lister before.
+    name: 'an official member in a pack whose snapshots exceed the price',
+    price: 4000,
+    members: [
+      mkMember({ floorAmount: 100 }),
+      mkMember({
+        cosmeticId: 1002,
+        createdById: OTHER_CREATOR,
+        addedById: OTHER_CREATOR,
+        floorAmount: 3000,
+      }),
+      mkMember({ cosmeticId: 1003, createdById: null, addedById: LISTER, floorAmount: 2000 }),
     ],
   },
   {
@@ -391,6 +411,12 @@ describe.each(SHAPES)(
     // rather than imported from src — that is what lets them disagree with
     // isSelfAuthoredPackMember — but two character-identical copies over the same
     // array caught nothing and could drift apart silently.
+    const isPayable = (m: Member) =>
+      m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId;
+    // Priced as foreign (not the lister's own), so the bank keeps their share.
+    const officialMembers = () =>
+      members.filter((m) => m.createdById == null && packCreatorId != null);
+
     const membersPaidFor = () =>
       members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
 
@@ -437,7 +463,10 @@ describe.each(SHAPES)(
       const owedTo = members.filter(
         (m) => m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId
       );
-      const snapshotTotal = owedTo.reduce((sum, m) => sum + m.floorAmount, 0);
+      const snapshotTotal = [...owedTo, ...officialMembers()].reduce(
+        (sum, m) => sum + m.floorAmount,
+        0
+      );
       const scale = snapshotTotal > charged && snapshotTotal > 0 ? charged / snapshotTotal : 1;
       for (const member of owedTo) {
         const attributable = payouts.filter((p) =>
@@ -452,6 +481,23 @@ describe.each(SHAPES)(
         }
         expect(attributable.some((p) => p.amount > 0)).toBe(true);
       }
+    });
+
+    // Justin, 2026-10-07: "Official item sales should go to the bank." The pack
+    // lister was paid on the whole remainder, official members' value included,
+    // and every other property here held while it happened.
+    it('pays the pack lister nothing for an official member', async () => {
+      const { charged, payouts } = await setup();
+      const covered = [...members.filter(isPayable), ...officialMembers()];
+      const snapshotTotal = covered.reduce((sum, m) => sum + m.floorAmount, 0);
+      const scale = snapshotTotal > charged && snapshotTotal > 0 ? charged / snapshotTotal : 1;
+      const coveredBasis = covered.reduce((sum, m) => sum + Math.floor(m.floorAmount * scale), 0);
+      const listerPaid = payouts
+        .filter((p) => p.externalTransactionId.endsWith(':pack'))
+        .reduce((sum, p) => sum + p.amount, 0);
+      expect(listerPaid).toBeLessThanOrEqual(
+        Math.floor(Math.max(0, charged - coveredBasis) * (1 - PLATFORM_KEEPS))
+      );
     });
 
     it('pays nobody outside the expected recipient set', async () => {

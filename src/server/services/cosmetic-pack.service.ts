@@ -378,8 +378,8 @@ export const computePackPayouts = ({
     }
   }
 
-  // Rounded up per member, the opposite of the payout basis, so scaling can only
-  // ever shrink the pack creator's remainder, never grow it.
+  // Rounded up per member, the opposite of the payout basis, so a scaling crumb
+  // lands with the bank rather than in the pack creator's remainder.
   const officialTotal = official.reduce(
     (sum, m) => sum + (scale === 1 ? m.floorAmount : Math.ceil(m.floorAmount * scale)),
     0
