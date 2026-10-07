@@ -189,14 +189,14 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteImageById: vi.fn(async () => undefined),
 }));
-const { settleBountyPayout, skipUnpayableBountyAward } = vi.hoisted(() => ({
+const { settleBountyPayout, refundUnpayableBountyAward } = vi.hoisted(() => ({
   settleBountyPayout: vi.fn(),
-  skipUnpayableBountyAward: vi.fn(async () => false),
+  refundUnpayableBountyAward: vi.fn(async () => false),
 }));
 vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   settleBountyPayout,
-  skipUnpayableBountyAward,
+  refundUnpayableBountyAward,
 }));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -423,7 +423,7 @@ describe('removeAllContent — bounties with a payout in flight', () => {
       .mockResolvedValueOnce(false)
       .mockResolvedValueOnce(false);
     // Bounty 5's award has no winner to pay, so the wipe goes past it.
-    skipUnpayableBountyAward.mockImplementation(async (bountyId: number) => bountyId === 5);
+    refundUnpayableBountyAward.mockImplementation(async (bountyId: number) => bountyId === 5);
 
     await removeAllContent({ id: TARGET, actorUserId: MOD });
 

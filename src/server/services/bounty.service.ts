@@ -798,7 +798,7 @@ export const deleteBountyById = async ({
         ? 'Refund reason: moderator deleted bounty'
         : 'Refund reason: owner deleted bounty',
     });
-    if (!settled && !(isModerator && (await skipUnpayableBountyAward(id))))
+    if (!settled && !(isModerator && (await refundUnpayableBountyAward(id))))
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message:
@@ -1237,30 +1237,53 @@ export async function settleBountyPayout(
 
 /**
  * The moderator override for a recorded award no retry can pay: it has no winner, or no supporter is
- * marked as awarding it. Returns true (after an error log) when the caller may go ahead and delete;
- * any other unsettled payout, such as a Buzz failure, stays blocking.
+ * marked as awarding it. The award becomes a refund to its supporters, and the caller may delete once
+ * this returns true. If the refund also fails, the supporter rows are logged before the delete
+ * cascades them away. Any other unsettled payout, such as a Buzz failure, returns false and blocks.
  */
-export async function skipUnpayableBountyAward(bountyId: number) {
-  const bounty = await dbWrite.bounty.findUnique({
-    where: { id: bountyId },
-    select: {
-      refunded: true,
-      payoutRecordedAt: true,
-      payoutSettledAt: true,
-      payoutWinnerUserId: true,
-    },
-  });
-  if (!bounty || bounty.refunded || !isPayoutPending(bounty)) return false;
-  const unpayable =
-    !bounty.payoutWinnerUserId ||
-    !(await dbWrite.bountyBenefactor.count({ where: { bountyId, awardedAt: { not: null } } }));
-  if (unpayable)
-    logBountyPayoutError({
-      bountyId,
-      name: 'bounty-award',
-      message: 'Deleted by a moderator with an award that cannot be paid; its escrow was not moved',
+export async function refundUnpayableBountyAward(bountyId: number) {
+  const converted = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, bountyId);
+    if (!locked || locked.refunded || !isPayoutPending(locked)) return false;
+    const unpayable =
+      !locked.payoutWinnerUserId ||
+      !(await tx.bountyBenefactor.count({ where: { bountyId, awardedAt: { not: null } } }));
+    if (!unpayable) return false;
+    await tx.bountyBenefactor.updateMany({
+      where: { bountyId },
+      data: { awardedToId: null, awardedAt: null },
     });
-  return unpayable;
+    await tx.bounty.update({
+      where: { id: bountyId },
+      data: { refunded: true, payoutWinnerUserId: null },
+    });
+    return true;
+  });
+  if (!converted) return false;
+
+  logBountyPayoutError({
+    bountyId,
+    name: 'bounty-award',
+    message: 'Award could not be paid; refunding its supporters instead',
+  });
+  const refunded = await settleBountyPayout(bountyId, {
+    firstAttempt: true,
+    refundDescription: 'Reason: Bounty refund, the award could not be paid',
+  });
+  if (!refunded) {
+    const benefactors = await dbWrite.bountyBenefactor.findMany({
+      where: { bountyId },
+      select: { userId: true, unitAmount: true, currency: true, buzzTransactionId: true },
+    });
+    logToAxiom({
+      name: 'bounty-refund',
+      type: 'error',
+      message: `Bounty ${bountyId}: refund of an unpayable award failed; deleted by a moderator anyway`,
+      bountyId,
+      benefactors,
+    }).catch(() => null);
+  }
+  return true;
 }
 
 const BOUNTY_PAYOUT_RETRY_AFTER_MS = 10 * 60 * 1000;
@@ -1275,6 +1298,7 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
     const due = await dbWrite.bounty.findMany({
       where: {
         id: { gt: cursor },
+        // `isPayoutPending` as a query, plus the age cutoff; keep the two in step.
         payoutRecordedAt: { not: null, lte: cutoff },
         payoutSettledAt: null,
       },

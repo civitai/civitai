@@ -1440,16 +1440,17 @@ export const removeAllContent = async ({
   });
   // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
   const unsettled = await dbWrite.bounty.findMany({
+    // `isPayoutPending` as a query; keep the two in step.
     where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
     select: { id: true },
   });
   const keptBountyIds: number[] = [];
   if (unsettled.length) {
-    const { settleBountyPayout, skipUnpayableBountyAward } = await import(
+    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
       '~/server/services/bounty.service'
     );
     for (const { id: bountyId } of unsettled)
-      if (!(await settleBountyPayout(bountyId)) && !(await skipUnpayableBountyAward(bountyId)))
+      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
         keptBountyIds.push(bountyId);
     if (keptBountyIds.length)
       logToAxiom({
