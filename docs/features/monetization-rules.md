@@ -116,8 +116,11 @@ video model. Paid access has no ceiling at all. What a tier buys is **allowance*
 `pricingLimitFor` adds a per-creator boost (`feeAllowanceBoost`, at most `FEE_ALLOWANCE_BOOST_MAX`,
 read from a system-Redis hash loaded by `src/pages/api/testing/fee-allowance-boost.ts`) to the tier
 allowance for a write that adds only a fee. A write adding a permanent gate is held to the tier
-allowance, so both apps' `assertPricingAllowed` take `addsGate`. Boosted fees spend ordinary slots, and
-the boost ends by the date check in `feeAllowanceBoost`, not by deleting the grant list.
+allowance, so a gate gets no boost in either app. Adding a gate to a version that already carries a fee
+spends no slot, so while a creator holds a boost it is refused once their month's slots exceed the tier
+allowance (`gateConversionExceedsAllowance`) — otherwise a boost-funded fee slot could become a gate.
+Boosted fees spend ordinary slots, and the boost ends by the date check in `feeAllowanceBoost`, not by
+deleting the grant list.
 
 **A lapse cannot change any price, but it lowers the allowance immediately.** `getCapTier` reads live
 subscription state at write time, and `incomplete`/`past_due`/`unpaid` all count as lapsed, so a

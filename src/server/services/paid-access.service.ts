@@ -622,6 +622,7 @@ export async function assertMonetizationWrite({
     wasPriced,
     willBePriced,
     addsGate: willHavePermanentGate,
+    hadGate: hadPermanentGate,
     tier,
     userMeta,
   });

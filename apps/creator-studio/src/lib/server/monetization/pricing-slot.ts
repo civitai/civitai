@@ -5,6 +5,8 @@ import {
   exceedsAllowance,
   feeAllowanceBoost,
   FEE_ALLOWANCE_BOOST_ENDS_AT,
+  gateConversionExceedsAllowance,
+  gateConversionMessage,
   gatePrices,
   monthlyPricingAllowance,
   pricingFloorMessage,
@@ -35,7 +37,18 @@ export type PricingGateResult = { ok: true } | { ok: false; status: 400 | 403; e
 //
 // Ownership is re-enforced here: the ids come from an owner-scoped read, but this decides a money rule.
 export async function unpricedVersionIds(userId: number, versionIds: number[]): Promise<number[]> {
-  if (versionIds.length === 0) return [];
+  return (await versionPriceState(userId, versionIds)).unpriced;
+}
+
+/**
+ * `unpriced` as unpricedVersionIds; `feeOnly` carry a licensing fee and no permanent gate — the ones a
+ * gate write converts without spending a slot.
+ */
+export async function versionPriceState(
+  userId: number,
+  versionIds: number[]
+): Promise<{ unpriced: number[]; feeOnly: number[] }> {
+  if (versionIds.length === 0) return { unpriced: [], feeOnly: [] };
   // Primary: this decides whether a write is exempt from the floor and the allowance, and a stale
   // replica reads an already-priced version as new — refusing an edit the creator is entitled to.
   const rows = await dbWrite
@@ -52,7 +65,11 @@ export async function unpricedVersionIds(userId: number, versionIds: number[]): 
     .where('m.userId', '=', userId)
     .where('m.deletedAt', 'is', null)
     .execute();
-  return rows.filter((r) => Number(r.fee ?? 0) <= 0 && r.gated == null).map((r) => r.id);
+  const ungated = rows.filter((r) => r.gated == null);
+  return {
+    unpriced: ungated.filter((r) => Number(r.fee ?? 0) <= 0).map((r) => r.id),
+    feeOnly: ungated.filter((r) => Number(r.fee ?? 0) > 0).map((r) => r.id),
+  };
 }
 
 /**
@@ -258,15 +275,43 @@ export async function releasePricingSlots(
 }
 
 /**
- * Refuse prices the creator may not set. `newlyPricedCount` is how many versions this write moves from
- * unpriced to priced — editing or clearing an existing price is exempt from both rules and passes zero.
- * `addsGate` is true for a permanent paid-access write, which gets no licensing-fee boost.
+ * Refuse licensing fees the creator may not set. `newlyPricedCount` is how many versions this write
+ * moves from unpriced to priced — editing or clearing an existing price is exempt and passes zero.
  */
-export async function assertPricingAllowed(
+export function assertFeePricingAllowed(
+  userId: number,
+  membership: Membership,
+  newlyPricedCount: number
+): Promise<PricingGateResult> {
+  return assertPricingAllowed(userId, membership, newlyPricedCount, false);
+}
+
+/**
+ * Refuse permanent paid access the creator may not set. A gate gets no licensing-fee boost, and
+ * `feeOnlyCount` versions that already carry a fee are checked too, though they spend no new slot.
+ */
+export async function assertGatePricingAllowed(
+  userId: number,
+  membership: Membership,
+  { newlyPricedCount, feeOnlyCount }: { newlyPricedCount: number; feeOnlyCount: number }
+): Promise<PricingGateResult> {
+  if (newlyPricedCount <= 0 && feeOnlyCount > 0) {
+    const tier = cappedTier(membership);
+    const boost = await getFeeAllowanceBoost(userId);
+    if (boost <= 0) return { ok: true };
+    const used = await countPricingSlotsThisMonth(userId);
+    if (gateConversionExceedsAllowance({ used, tier, boost }))
+      return { ok: false, status: 403, error: gateConversionMessage(used, tier) };
+    return { ok: true };
+  }
+  return assertPricingAllowed(userId, membership, newlyPricedCount, true);
+}
+
+async function assertPricingAllowed(
   userId: number,
   membership: Membership,
   newlyPricedCount: number,
-  { addsGate }: { addsGate: boolean }
+  addsGate: boolean
 ): Promise<PricingGateResult> {
   if (newlyPricedCount <= 0) return { ok: true };
 

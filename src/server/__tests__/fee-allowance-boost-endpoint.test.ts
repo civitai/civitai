@@ -6,6 +6,20 @@ vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
 
+const cohort = vi.hoisted(() => ({
+  bankers: [] as number[],
+  flagged: [] as number[],
+  validMembers: new Set<number>(),
+}));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: { $query: async () => cohort.bankers.map((userId) => ({ userId: String(userId) })) },
+}));
+vi.mock('~/server/services/creator-membership.service', () => ({
+  getValidCreatorMembershipMap: async (ids: number[]) =>
+    new Map(ids.map((id) => [id, cohort.validMembers.has(id)])),
+}));
+
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import handler from '~/pages/api/testing/fee-allowance-boost';
 
 const KEY = REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST;
@@ -23,6 +37,9 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
   redisMock.sysRedis.hSetNX.mockReset();
   redisMock.sysRedis.expireAt.mockReset();
+  dbMock.dbRead.$queryRaw.mockImplementation(
+    async () => cohort.flagged.map((id) => ({ id })) as never
+  );
 });
 afterEach(() => vi.useRealTimers());
 
@@ -62,5 +79,52 @@ describe('fee-allowance-boost grant', () => {
     const res = await call({ action: 'grant', userIds: [1] });
     expect(res.status).toHaveBeenCalledWith(400);
     expect(redisMock.sysRedis.hSetNX).not.toHaveBeenCalled();
+  });
+});
+
+describe('fee-allowance-boost grant-eligible', () => {
+  beforeEach(() => {
+    cohort.bankers = [1, 2];
+    cohort.flagged = [2, 3, 4];
+    cohort.validMembers = new Set([2, 3]);
+    redisMock.sysRedis.hSetNX.mockResolvedValue(true);
+  });
+
+  it('counts recent bankers plus members with a valid membership, once each', async () => {
+    const res = await call({ action: 'grant-eligible', dryRun: true });
+
+    expect(res.json).toHaveBeenCalledWith({ dryRun: true, bankers: 2, members: 2, eligible: 3 });
+    expect(redisMock.sysRedis.hSetNX).not.toHaveBeenCalled();
+  });
+
+  it('grants exactly that cohort', async () => {
+    await call({ action: 'grant-eligible' });
+
+    const granted = redisMock.sysRedis.hSetNX.mock.calls.map((c) => c[1]).sort();
+    expect(granted).toEqual(['1', '2', '3']);
+  });
+
+  it('asks only for members not banned from the program', async () => {
+    await call({ action: 'grant-eligible', dryRun: true });
+
+    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
+    expect(sql).toMatch(/onboarding & \? != 0\s+AND onboarding & \? = 0/);
+  });
+
+  it('writes a large list in bounded chunks', async () => {
+    cohort.bankers = Array.from({ length: 600 }, (_, i) => i + 1);
+    let inFlight = 0;
+    let peak = 0;
+    redisMock.sysRedis.hSetNX.mockImplementation(async () => {
+      peak = Math.max(peak, ++inFlight);
+      await Promise.resolve();
+      inFlight--;
+      return true;
+    });
+
+    await call({ action: 'grant-eligible' });
+
+    expect(redisMock.sysRedis.hSetNX).toHaveBeenCalledTimes(600);
+    expect(peak).toBe(250);
   });
 });

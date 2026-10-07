@@ -388,16 +388,38 @@ describe('assertMonetizationWrite', () => {
       redisMock.sysRedis.hGet.mockResolvedValue(null as never);
     });
 
-    it('may set a new licensing fee past the tier allowance', async () => {
+    // The form sends `paidAccess: null` when no gate is set, and a timed object for early access.
+    it.each([
+      ['no gate', null],
+      ['a timed early-access window', { permanent: false, timeframeDays: 7, terms: {} }],
+    ])(
+      'may set a new licensing fee past the tier allowance alongside %s',
+      async (_, paidAccess) => {
+        await expect(
+          assertMonetizationWrite({
+            ownerId: 1,
+            paidAccess: paidAccess as never,
+            licensingFee: 10,
+            storedLicensingFee: 0,
+            tier: 'free',
+            userMeta: ELIGIBLE,
+          })
+        ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+      }
+    );
+
+    it('may not add permanent paid access to a licensed version once past the tier allowance', async () => {
+      mockSlotCount.mockResolvedValue(4);
       await expect(
         assertMonetizationWrite({
           ownerId: 1,
-          licensingFee: 10,
-          storedLicensingFee: 0,
+          versionId: 5,
+          paidAccess: { permanent: true, terms: {} } as never,
+          storedLicensingFee: 10,
           tier: 'free',
           userMeta: ELIGIBLE,
         })
-      ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+      ).rejects.toThrow(/licensing fees only/);
     });
 
     it('may not add permanent paid access past it, even alongside a fee', async () => {

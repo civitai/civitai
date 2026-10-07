@@ -49,6 +49,12 @@ export function monthlyPricingAllowance(tier: string | null | undefined): number
 export const FEE_ALLOWANCE_BOOST_MAX = 100;
 export const FEE_ALLOWANCE_BOOST_ENDS_AT = new Date('2026-11-01T00:00:00Z');
 
+/** The boost's last day as creators read it, e.g. "October 31 (UTC)". */
+const BOOST_LAST_DAY = `${new Date(FEE_ALLOWANCE_BOOST_ENDS_AT.getTime() - 1).toLocaleDateString(
+  'en-US',
+  { month: 'long', day: 'numeric', timeZone: 'UTC' }
+)} (UTC)`;
+
 /**
  * The boost a creator holds at `now`: their stored grant clamped to the maximum, or 0 once the window
  * closes. This date check is the cutoff; the key's Redis expiry is only cleanup.
@@ -77,8 +83,47 @@ export function pricingLimitFor({
   return addsGate ? base : base + boost;
 }
 
+/** Both limits a counter needs. `null` = unlimited. A paid-access gate is held to `baseLimit`. */
+export function pricingAllowanceLimits({
+  tier,
+  boost,
+}: {
+  tier: string | null | undefined;
+  boost: number;
+}): { baseLimit: number | null; feeLimit: number | null } {
+  return {
+    baseLimit: finiteOrNull(monthlyPricingAllowance(tier)),
+    feeLimit: finiteOrNull(pricingLimitFor({ tier, boost, addsGate: false })),
+  };
+}
+
 export function feeAllowanceBoostNote(boost: number): string {
-  return boost > 0 ? `includes ${boost} extra for licensing fees through October 31 (UTC)` : '';
+  return boost > 0 ? `includes ${boost} extra for licensing fees through ${BOOST_LAST_DAY}` : '';
+}
+
+/**
+ * Whether putting a permanent gate on a version that already carries a fee would get past the tier
+ * allowance. Such a write spends no new slot, so without this a fee-only slot opened by the boost
+ * could be turned into a gate the tier never allowed. Spending at most the tier allowance means every
+ * fee slot this month fits in it, so the conversion is free as it always was.
+ */
+export function gateConversionExceedsAllowance({
+  used,
+  tier,
+  boost,
+}: {
+  used: number;
+  tier: string | null | undefined;
+  boost: number;
+}): boolean {
+  const base = monthlyPricingAllowance(tier);
+  return boost > 0 && Number.isFinite(base) && used > base;
+}
+
+export function gateConversionMessage(used: number, tier: string | null | undefined): string {
+  return `You have priced ${used} model versions this month, more than the ${monthlyPricingAllowance(
+    tier
+  )} your membership allows, using extra licensing-fee slots. Those slots cover licensing fees only, so permanent paid access can't be added to a licensed version this month.`;
 }
 
 /**
@@ -188,8 +233,8 @@ export function pricingLimitMessage({
   const base = pricingAllowanceMessage(used, limit, tierLabel);
   if (boost <= 0) return base;
   return addsGate
-    ? `${base} Your ${boost} extra slots through October 31 (UTC) cover licensing fees only, not paid access.`
-    : `${base} This includes your ${boost} extra licensing-fee slots through October 31 (UTC).`;
+    ? `${base} Your ${boost} extra slots through ${BOOST_LAST_DAY} cover licensing fees only, not paid access.`
+    : `${base} This includes your ${boost} extra licensing-fee slots through ${BOOST_LAST_DAY}.`;
 }
 
 /** What the creator's allowance looks like right now, for every counter and gate in either UI. */

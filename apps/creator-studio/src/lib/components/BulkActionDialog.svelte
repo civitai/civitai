@@ -273,7 +273,7 @@
       pricingFloor: caps.pricingFloor,
       // A bulk write only prices what is UNPRICED, so a selection with nothing unpriced spends no
       // allowance and faces no floor — which is how the server answers it too (unpricedVersionIds ->
-      // assertPricingAllowed short-circuits). Null means the count has not arrived; assume it prices.
+      // the allowance check short-circuits). Null means the count has not arrived; assume it prices.
       alreadyPriced: unpricedCount === 0,
       resolving: loadingPublished,
     })

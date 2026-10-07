@@ -40,12 +40,13 @@ import { getFlipt, fliptContext } from '$lib/server/flipt';
 import { getSaleLimitOverrides } from '$lib/server/monetization/sale-limits';
 import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
-  assertPricingAllowed,
+  assertGatePricingAllowed,
   countPricingSlotsThisMonth,
   getFeeAllowanceBoost,
   listPricingSlots,
   recordPricingSlots,
   unpricedVersionIds,
+  versionPriceState,
 } from '$lib/server/monetization/pricing-slot';
 import {
   earlyAccessDaysForScore,
@@ -266,14 +267,16 @@ export const actions: Actions = {
 
     // Paid-access prices are uncapped. What is limited is how many versions gain a price this month —
     // and only versions that are not already priced count, so re-pricing a selection is always free.
-    // Moderators are NOT exempt — see assertPricingAllowed. The fee paths in this app do not exempt
+    // Moderators are NOT exempt — see assertGatePricingAllowed. The fee paths in this app do not exempt
     // them either, and one write path answering this differently is how a spoke becomes a way around it.
-    const newlyPricedIds = permanent
-      ? await unpricedVersionIds(locals.user.id, versionIds.data)
-      : [];
+    const priceState = permanent
+      ? await versionPriceState(locals.user.id, versionIds.data)
+      : { unpriced: [], feeOnly: [] };
+    const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length, {
-        addsGate: true,
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, {
+        newlyPricedCount: newlyPricedIds.length,
+        feeOnlyCount: priceState.feeOnly.length,
       });
       if (!gate.ok) return fail(gate.status, { paidAccess: true, error: gate.error });
     }
@@ -481,13 +484,15 @@ export const actions: Actions = {
 
     // Only a version with no price yet spends allowance — re-saving one that already has a price stays
     // allowed even at the limit, so an edit can never strand a creator.
-    // Moderators are NOT exempt — see assertPricingAllowed.
-    const newlyPricedIds = permanent
-      ? await unpricedVersionIds(locals.user.id, [versionId.data])
-      : [];
+    // Moderators are NOT exempt — see assertGatePricingAllowed.
+    const priceState = permanent
+      ? await versionPriceState(locals.user.id, [versionId.data])
+      : { unpriced: [], feeOnly: [] };
+    const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length, {
-        addsGate: true,
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, {
+        newlyPricedCount: newlyPricedIds.length,
+        feeOnlyCount: priceState.feeOnly.length,
       });
       if (!gate.ok) return fail(gate.status, { versionId: versionId.data, error: gate.error });
     }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { maxLicensingFeeCeiling } from '@civitai/buzz';
 import type { Membership } from '../membership';
 
@@ -17,6 +17,18 @@ const state = vi.hoisted(() => ({
   charges: {} as Record<number, string>,
   chargeQueries: [] as string[],
   clickhouseDown: false,
+  // The stored fee-allowance boost grant for the creator (null = none).
+  boostGrant: null as string | null,
+  boostKeys: [] as string[],
+}));
+
+vi.mock('$lib/server/redis', () => ({
+  getSysRedis: () => ({
+    hGet: async (key: string, field: string) => {
+      state.boostKeys.push(`${key}:${field}`);
+      return state.boostGrant;
+    },
+  }),
 }));
 
 vi.mock('$lib/server/clickhouse', () => ({
@@ -122,6 +134,7 @@ vi.mock('$lib/server/db', () => {
 });
 
 const { setLicensingFee, bulkSetLicensingFee } = await import('../monetization/licensing-fee');
+const { assertGatePricingAllowed } = await import('../monetization/pricing-slot');
 
 const GOLD: Membership = { tier: 'gold', isMember: true, isCreatorProgramMember: true };
 
@@ -152,6 +165,8 @@ beforeEach(() => {
   state.clickhouseDown = false;
   state.slotsUsed = 0;
   state.creatorScore = 50_000;
+  state.boostGrant = null;
+  state.boostKeys = [];
 });
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
@@ -537,5 +552,89 @@ describe('eligibility floor and monthly allowance', () => {
 
     expect(result).toMatchObject({ ok: true, updated: 2 });
     expect(state.slots).toEqual([]);
+  });
+});
+
+describe('licensing-fee allowance boost', () => {
+  const FREE: Membership = { tier: null, isMember: false, isCreatorProgramMember: false };
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+    state.boostGrant = '100';
+    state.slotsUsed = 3;
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it('lets a granted creator set a fee past the tier allowance', async () => {
+    state.rows = [version()];
+
+    const result = await setLicensingFee(7, FREE, 1, 1, true);
+
+    expect(result).toEqual({ ok: true });
+    expect(state.boostKeys).toEqual(['system:pricing:fee-allowance-boost:7']);
+  });
+
+  it('counts a bulk fee against the tier allowance plus the boost', async () => {
+    state.rows = [version(), version({ id: 2 })];
+    state.slotsUsed = 101;
+    await expect(bulkSetLicensingFee(7, FREE, [1, 2], 1, true)).resolves.toMatchObject({ ok: true });
+
+    state.rows = [version(), version({ id: 2 })];
+    state.written = [];
+    state.slotsUsed = 102;
+    const result = await bulkSetLicensingFee(7, FREE, [1, 2], 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.written).toEqual([]);
+  });
+
+  it('gives a creator with no grant only the tier allowance', async () => {
+    state.boostGrant = null;
+    state.rows = [version()];
+
+    const result = await setLicensingFee(7, FREE, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('ends on its own at the start of November', async () => {
+    vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+    state.rows = [version()];
+
+    const result = await setLicensingFee(7, FREE, 1, 1, true);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(state.boostKeys).toEqual([]);
+  });
+
+  it('does not widen permanent paid access', async () => {
+    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 1, feeOnlyCount: 0 });
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('refuses a gate on a licensed version once boost-funded slots are in use', async () => {
+    state.slotsUsed = 4;
+
+    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+    expect(result.ok ? '' : result.error).toContain('licensing fees only');
+  });
+
+  it('leaves a gate on a licensed version free within the tier allowance', async () => {
+    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('leaves a gate on a licensed version free for a creator with no grant', async () => {
+    state.boostGrant = null;
+    state.slotsUsed = 50;
+
+    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+
+    expect(result).toEqual({ ok: true });
   });
 });

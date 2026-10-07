@@ -6,6 +6,8 @@ import {
   clearsLastPrice,
   exceedsAllowance,
   feeAllowanceBoost,
+  gateConversionExceedsAllowance,
+  gateConversionMessage,
   FEE_ALLOWANCE_BOOST_ENDS_AT,
   gatePrices,
   isAlreadyPriced,
@@ -274,6 +276,8 @@ export type PricingWriteCheck = {
   willBePriced: boolean;
   /** Whether this write leaves a permanent paid-access gate. Such a write gets no fee boost. */
   addsGate: boolean;
+  /** Whether the entity carries a permanent paid-access gate BEFORE this write. */
+  hadGate: boolean;
   /**
    * The owner's tier, or a thunk resolving it. Pass the thunk from a hot write path: `getCapTier` is
    * three uncached queries against the primary, and the tier is only read once a write turns out to
@@ -302,11 +306,14 @@ export async function assertPricingAllowed({
   wasPriced,
   willBePriced,
   addsGate,
+  hadGate,
   tier,
   userMeta,
 }: PricingWriteCheck): Promise<PricingWriteOutcome> {
-  if (!willBePriced || wasPriced)
+  if (!willBePriced || wasPriced) {
+    if (wasPriced && addsGate && !hadGate) await assertGateConversionAllowed(userId, tier);
     return { spendsSlot: false, releasesSlot: clearsLastPrice({ wasPriced, willBePriced }) };
+  }
 
   const score =
     userMeta !== undefined ? creatorScoreFromMeta(userMeta) : await getCreatorScore(userId);
@@ -333,6 +340,15 @@ export async function assertPricingAllowed({
   }
 
   return { spendsSlot: true, releasesSlot: false };
+}
+
+async function assertGateConversionAllowed(userId: number, tier: TierInput): Promise<void> {
+  const boost = await getFeeAllowanceBoost(userId);
+  if (boost <= 0) return;
+  const resolvedTier = typeof tier === 'function' ? await tier() : tier;
+  const used = await countPricingSlotsThisMonth(userId);
+  if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost }))
+    throw throwBadRequestError(gateConversionMessage(used, resolvedTier));
 }
 
 export type PricingSlotEntry = {

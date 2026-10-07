@@ -5,6 +5,9 @@ import {
   FEE_ALLOWANCE_BOOST_ENDS_AT,
   FEE_ALLOWANCE_BOOST_MAX,
   feeAllowanceBoost,
+  feeAllowanceBoostNote,
+  gateConversionExceedsAllowance,
+  pricingAllowanceLimits,
   pricingLimitFor,
   pricingLimitMessage,
   PRICING_SLOT_EXPLAINER,
@@ -251,5 +254,39 @@ describe('pricingLimitMessage', () => {
     expect(pricingLimitMessage({ used: 3, limit: 3, boost: 0, addsGate: true })).toBe(
       pricingAllowanceMessage(3, 3)
     );
+  });
+});
+
+describe('pricingAllowanceLimits', () => {
+  it('reports the tier limit and the boosted fee limit separately', () => {
+    expect(pricingAllowanceLimits({ tier: 'free', boost: 100 })).toEqual({
+      baseLimit: 3,
+      feeLimit: 103,
+    });
+    expect(pricingAllowanceLimits({ tier: 'gold', boost: 100 })).toEqual({
+      baseLimit: null,
+      feeLimit: null,
+    });
+  });
+});
+
+describe('gateConversionExceedsAllowance', () => {
+  it('refuses a gate on a licensed version only once boost-funded slots are in use', () => {
+    expect(gateConversionExceedsAllowance({ used: 4, tier: 'free', boost: 100 })).toBe(true);
+    expect(gateConversionExceedsAllowance({ used: 3, tier: 'free', boost: 100 })).toBe(false);
+  });
+
+  it('never applies without a boost or on an unlimited tier', () => {
+    expect(gateConversionExceedsAllowance({ used: 50, tier: 'free', boost: 0 })).toBe(false);
+    expect(gateConversionExceedsAllowance({ used: 500, tier: 'gold', boost: 100 })).toBe(false);
+  });
+});
+
+describe('the boost end date creators read', () => {
+  it('is the last UTC day before the window closes', () => {
+    expect(feeAllowanceBoostNote(100)).toBe(
+      'includes 100 extra for licensing fees through October 31 (UTC)'
+    );
+    expect(feeAllowanceBoostNote(0)).toBe('');
   });
 });

@@ -363,6 +363,32 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
   });
 });
 
+describe('ModelVersionUpsertForm — the licensing-fee allowance boost', () => {
+  // A paid-access gate is enforced against baseLimit, so the at-limit alert follows it; the boost is
+  // fee-only, and the alert has to say the creator can still add fees.
+  test('at the tier limit, says the extra slots still cover licensing fees', async () => {
+    allowance.data = { used: 3, baseLimit: 3, feeLimit: 103, feeBoost: 100 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've used this month's paid-access allowance"))
+      .toBeInTheDocument();
+    await expect.element(page.getByText(/cover 100 more this month/)).toBeInTheDocument();
+  });
+
+  test('without a boost, keeps the plain at-limit alert', async () => {
+    allowance.data = { used: 3, baseLimit: 3, feeLimit: 3, feeBoost: 0 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've priced all this month's versions"))
+      .toBeInTheDocument();
+    expect(page.getByText(/cover \d+ more this month/).elements()).toHaveLength(0);
+  });
+});
+
 describe('ModelVersionUpsertForm — monetization disclosure', () => {
   test('opens with the charge switch alone: no affirmation, no fee editor', async () => {
     renderForm();

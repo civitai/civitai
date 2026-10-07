@@ -564,6 +564,12 @@
     <!-- Two meters side by side get read as one budget — say what each counts where they meet. -->
     {#if permAtCap && data.caps.pricingFloor.eligible}
       <p class="w-full text-yellow-5">{PRICING_SLOT_EXPLAINER}</p>
+      {#if data.caps.feeBoost > 0 && !feeAllowance.atLimit}
+        <p class="w-full text-white">
+          You can still add {feeAllowance.remaining} more licensing fees this month with your extra
+          slots. They don't cover permanent paid access.
+        </p>
+      {/if}
     {/if}
     <details class="w-full">
       <summary

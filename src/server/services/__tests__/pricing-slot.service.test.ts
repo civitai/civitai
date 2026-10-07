@@ -333,6 +333,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -346,6 +347,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: true,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: { scores: { total: 0 } },
       })
@@ -360,6 +362,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: false,
         addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: { scores: { total: 0 } },
       })
@@ -375,6 +378,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: true,
         willBePriced: false,
         addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: { scores: { total: 0 } },
       })
@@ -397,6 +401,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: async () => 'gold',
         userMeta: { scores: { total: 50000 } },
       })
@@ -412,6 +417,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: async () => null,
         userMeta: { scores: { total: 50000 } },
       })
@@ -428,6 +434,7 @@ describe('assertPricingAllowed', () => {
       wasPriced: true,
       willBePriced: true,
       addsGate: false,
+      hadGate: false,
       tier,
       userMeta: { scores: { total: 50000 } },
     });
@@ -442,6 +449,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: 'gold',
         // Both keys, unequal — see the note on the same fixture in paid-access.service.test.ts.
         userMeta: { scores: { total: MONETIZATION_MIN_CREATOR_SCORE - 1, models: 50_000 } },
@@ -454,6 +462,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: 'gold',
         userMeta: eligible,
       })
@@ -468,6 +477,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -480,6 +490,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -494,6 +505,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: null,
         userMeta: eligible,
       })
@@ -509,6 +521,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: false,
+        hadGate: false,
         tier: 'free',
       })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
@@ -522,6 +535,7 @@ describe('assertPricingAllowed', () => {
         wasPriced: false,
         willBePriced: true,
         addsGate: overrides.addsGate ?? false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       });
@@ -567,6 +581,71 @@ describe('assertPricingAllowed', () => {
       vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
       mockCount.mockResolvedValue(3 as never);
       await expect(boosted()).rejects.toThrow(/3 of 3/);
+    });
+
+    it('bounds the grant-list read so a hung Redis cannot hold the save open', async () => {
+      redisMock.sysRedis.hGet.mockReturnValue(new Promise(() => undefined) as never);
+      redisMock.withSysReadDeadline.mockImplementationOnce(async () => {
+        throw new Error('sysRedis read timed out');
+      });
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    }, 2000);
+
+    it('tells a boosted creator the refusal already includes their extra slots', async () => {
+      mockCount.mockResolvedValue(103 as never);
+      await expect(boosted()).rejects.toThrow(/includes your 100 extra licensing-fee slots/);
+    });
+
+    describe('adding permanent paid access to a version that already carries a fee', () => {
+      const convert = () =>
+        assertPricingAllowed({
+          userId: 7,
+          wasPriced: true,
+          willBePriced: true,
+          addsGate: true,
+          hadGate: false,
+          tier: 'free',
+          userMeta: eligible,
+        });
+
+      it('is refused once boost-funded fee slots are in use', async () => {
+        mockCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
+      it('stays free while every slot this month fits the tier allowance', async () => {
+        mockCount.mockResolvedValue(3 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is free as before for a creator with no grant', async () => {
+        redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+        mockCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        expect(mockCount).not.toHaveBeenCalled();
+      });
+
+      it('is free as before once the window closes', async () => {
+        vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+        mockCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('does not apply to a version that already had its gate', async () => {
+        mockCount.mockResolvedValue(50 as never);
+        await expect(
+          assertPricingAllowed({
+            userId: 7,
+            wasPriced: true,
+            willBePriced: true,
+            addsGate: true,
+            hadGate: true,
+            tier: 'free',
+            userMeta: eligible,
+          })
+        ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
     });
 
     it('falls back to the tier allowance when the grant list cannot be read', async () => {

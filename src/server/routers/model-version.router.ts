@@ -1,9 +1,4 @@
-import {
-  finiteOrNull,
-  monthlyPricingAllowance,
-  pricingEligibility,
-  pricingLimitFor,
-} from '@civitai/buzz';
+import { pricingAllowanceLimits, pricingEligibility } from '@civitai/buzz';
 import {
   countPricingSlotsThisMonth,
   getFeeAllowanceBoost,
@@ -136,9 +131,7 @@ export const modelVersionRouter = router({
     ]);
     return {
       used,
-      /** A paid-access gate is held to `baseLimit`. */
-      feeLimit: finiteOrNull(pricingLimitFor({ tier, boost: feeBoost, addsGate: false })),
-      baseLimit: finiteOrNull(monthlyPricingAllowance(tier)),
+      ...pricingAllowanceLimits({ tier, boost: feeBoost }),
       feeBoost,
       eligibility: pricingEligibility(score),
     };
