@@ -1,4 +1,5 @@
 import { EventEmitter } from 'events';
+import { resolve } from 'path';
 import type * as ChildProcess from 'child_process';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -13,8 +14,14 @@ vi.mock('child_process', async (importOriginal) => ({
 
 // Lives under scripts/ because the daemon is not part of the app's module graph — same arrangement
 // as the rest of the queue's tests.
-const { defaultStartRun, TestQueue, cacheReporterArgv, cacheReporterPath, RUN_KINDS } =
-  await import('../../.claude/skills/dev-server/scripts/test-queue.mjs');
+const {
+  defaultStartRun,
+  TestQueue,
+  cacheReporterArgv,
+  cacheReporterPath,
+  sharedCacheCorePath,
+  RUN_KINDS,
+} = await import('../../.claude/skills/dev-server/scripts/test-queue.mjs');
 
 const fakeChild = () => {
   const child = new EventEmitter() as EventEmitter & Record<string, unknown>;
@@ -263,6 +270,15 @@ describe('result cache on queued runs', () => {
     start({ cacheMode: 'on', kind: 'typecheck' });
     expect(argvOf(0)).toEqual(['run', 'typecheck']);
     expect(envOf(0).CIVITAI_TEST_CACHE).toBe('off');
+    expect(envOf(0).CIVITAI_TEST_CACHE_CORE).toBeUndefined();
+  });
+
+  // Every tree keys with the daemon's core.mjs, so a fix to it reaches them all when this checkout
+  // pulls, without each tree rebasing.
+  it("points a cached run at the daemon's own key definition", () => {
+    start({ cacheMode: 'on' });
+    expect(envOf(0).CIVITAI_TEST_CACHE_CORE).toBe(resolve(__dirname, '../test-cache/core.mjs'));
+    expect(sharedCacheCorePath).toBe(resolve(__dirname, '../test-cache/core.mjs'));
   });
 
   /**

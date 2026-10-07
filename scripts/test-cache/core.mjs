@@ -8,7 +8,8 @@
  * read at runtime, and the inputs nothing else records (lockfile, configs, node, platform, vitest,
  * and this cache's own code). Anything under node_modules is left to the lockfile.
  *
- * Node builtins only: the queue runs the reporter from the primary checkout against any worktree.
+ * Node builtins only: the queue points every worktree at its own checkout's copy (load-core.mjs), and
+ * that copy must not resolve another checkout's packages.
  */
 
 import { createHash } from 'node:crypto';
@@ -44,7 +45,9 @@ const GLOBAL_INPUTS = [
   'tsconfig.json',
 ];
 const WORKSPACE_DIRS = ['packages', 'apps'];
-const OWN_CODE = ['core.mjs', 'fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs'];
+// core.mjs is hashed where it was loaded from, which the queue may point at another checkout; the
+// rest always run from the tree under test.
+const OWN_CODE = ['fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs', 'load-core.mjs'];
 
 // Named once because TWO rules need the same list, and a second copy is how the bare-specifier
 // exclusion below silently stopped agreeing with the pattern it is supposed to defer to.
@@ -287,13 +290,17 @@ function workspaceManifests(root) {
 }
 
 export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(root)) {
-  const own = OWN_CODE.map((f) => {
+  const hash = (f, abs) => {
     try {
-      return `${f}:${sha(readFileSync(join(HERE, f)))}`;
+      return `${f}:${sha(readFileSync(abs))}`;
     } catch {
       return `${f}:missing`;
     }
-  });
+  };
+  const own = [
+    hash('core.mjs', join(HERE, 'core.mjs')),
+    ...OWN_CODE.map((f) => hash(f, join(root, 'scripts', 'test-cache', f))),
+  ];
   return sha(
     JSON.stringify([
       CACHE_FORMAT,

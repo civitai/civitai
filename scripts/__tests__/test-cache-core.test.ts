@@ -12,6 +12,7 @@ import { join, resolve } from 'path';
 import { describe, expect, it } from 'vitest';
 
 import * as Core from '../test-cache/core.mjs';
+import { loadCore } from '../test-cache/load-core.mjs';
 
 type Node = { id: string; importedModules: Set<Node> };
 type Fingerprint = (rel: string) => string;
@@ -296,6 +297,46 @@ describe('the salt and the workspace manifests', () => {
       expect(key()).not.toBe(before);
     }
   );
+});
+
+describe('which key definition a run uses', () => {
+  const dir = () => mkdtempSync(join(tmpdir(), 'test-cache-core-'));
+  const ownCore = readFileSync(resolve(__dirname, '../test-cache/core.mjs'), 'utf8');
+
+  it("uses the tree's own core when the queue names none", async () => {
+    expect((await loadCore({})).keyFor).toBe(keyFor);
+  });
+
+  it('uses the core the queue names', async () => {
+    const path = join(dir(), 'core.mjs');
+    writeFileSync(path, ownCore);
+    const loaded = await loadCore({ CIVITAI_TEST_CACHE_CORE: path });
+    expect(loaded.keyFor).not.toBe(keyFor);
+    expect(typeof loaded.keyFor).toBe('function');
+  });
+
+  it("falls back to the tree's own when the named core cannot stand in for it", async () => {
+    const path = join(dir(), 'core.mjs');
+    writeFileSync(
+      path,
+      ['export const keyFor = () => "k";', 'export const globalSalt = () => "s";'].join('\n')
+    );
+    expect((await loadCore({ CIVITAI_TEST_CACHE_CORE: path })).keyFor).toBe(keyFor);
+    expect((await loadCore({ CIVITAI_TEST_CACHE_CORE: join(dir(), 'nope.mjs') })).keyFor).toBe(
+      keyFor
+    );
+  });
+
+  // The tracker, sequencer and reporter always run from the tree, wherever core.mjs came from, so
+  // the salt must hash the tree's copies of them.
+  it("changes the salt when the tree's reporter changes", () => {
+    const root = dir();
+    mkdirSync(join(root, 'scripts/test-cache'), { recursive: true });
+    writeFileSync(join(root, 'scripts/test-cache/reporter.mjs'), 'a');
+    const before = globalSalt(root, 'v');
+    writeFileSync(join(root, 'scripts/test-cache/reporter.mjs'), 'b');
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
 });
 
 describe('tests that always run', () => {
