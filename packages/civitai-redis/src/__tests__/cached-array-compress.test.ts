@@ -9,8 +9,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * WHY THIS FILE DRIVES THE REAL CLIENT: the hazard here is a SEAM, not a component. The flag has
  * to be symmetric across TWO modules — `cached-array.ts` must pass `{ compress }` to every one of
- * its `redis.packed` reads and to every write but fetch's (deliberately uncompressed) notFound marker,
- * AND `client.ts`'s `packed.mGet` must actually honour it (before #4588 it could not — only
+ * its `redis.packed` reads and to every write but fetch's (deliberately uncompressed) notFound
+ * marker, AND `client.ts`'s `packed.mGet` must actually honour it (before #4588 it could not — only
  * `packed.get` took the option, and `createCachedArray` reads exclusively through `mGet`).
  * A test that mocks `redis.packed` proves neither half: it would pass against a client whose mGet
  * ignores the flag entirely, which is the exact production defect — a compressed value decoded
@@ -363,10 +363,11 @@ describe('default / compress:false is byte-for-byte unchanged', () => {
 
 describe('SEAM LEDGER: every redis.packed call site in cached-array.ts is compress-aware', () => {
   // The behavioural tests above cover all NINE call sites as they exist today. This ledger is
-  // what catches the TENTH: a new redis.packed read or write added later without `packedOptions`
-  // would be silently asymmetric on a compressed cache, and no existing test would exercise it.
-  // Asserted as an exact COUNT in both directions — a shrinking set means the detector went
-  // blind, which passes an additions-only check while reporting a clean file.
+  // what catches the TENTH: a new redis.packed READ without `packedOptions` would be silently
+  // asymmetric on a compressed cache, and the exact set below also forces any new uncompressed
+  // write to be added on purpose. Asserted as an exact COUNT in both directions — a shrinking set
+  // means the detector went blind, which passes an additions-only check while reporting a clean
+  // file.
   const src = readFileSync(path.join(__dirname, '..', 'cached-array.ts'), 'utf8');
   // Paren-matched rather than regex-captured: the call sites here span 1–6 lines and a
   // "up to the closing paren" regex silently misses the single-line ones (it did, at first —

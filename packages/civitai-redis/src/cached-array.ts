@@ -158,8 +158,9 @@ const UPDATE_LOCK_TTL = 5;
  * first drops entries older than MAX_AGE (skipped until its oldest entry can have gone stale,
  * so a full registry of fresh entries is not re-scanned on every fetch) and, if still full,
  * registers no new ids — so a lookup that never settles can neither grow it without bound nor
- * inflate the count forever. Both only affect the measurement: a concurrent fetch of an id left unregistered at the cap is not
- * counted, so the metric can read low when more than MAX_ENTRIES ids are being filled at once.
+ * inflate the count forever. Both only affect the measurement: a concurrent fetch of an id left
+ * unregistered at the cap is not counted, so the metric can read low when more than MAX_ENTRIES
+ * ids are being filled at once.
  */
 const MISS_FILL_IN_FLIGHT_MAX_AGE_MS = 30_000;
 const MISS_FILL_IN_FLIGHT_MAX_ENTRIES = 50_000;
