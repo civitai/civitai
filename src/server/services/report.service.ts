@@ -745,8 +745,8 @@ export async function createEntityAppeal({
     const appeal = await dbWrite.$transaction(async (tx) => {
       switch (entityType) {
         case EntityType.Image: {
-          // The handler already refuses a flagged image off a replica read; this is the same rule
-          // under the row lock, so a moderator-only flag set in between is never overwritten.
+          // The handler refuses any flagged image off a replica read. This re-checks only the
+          // moderator-only flag, under the row lock, so one set in between is never overwritten.
           const updated = await tx.$executeRaw`
             UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
             WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'

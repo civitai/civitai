@@ -1026,13 +1026,15 @@ describe('grace mode', () => {
     expect(blockedRows()[0]).toMatchObject({ updatedAt: NOW });
   });
 
-  it('keeps the moderator-only review flag the blocked-image purge holds on', async () => {
+  // The worklist read misses a flag set after it, and hiding carries no statement-level hold.
+  it('keeps a moderator-only review flag set after the worklist read', async () => {
     seed({
       7: {
         deletedAt: NEWER,
         meta: { imageRemoval: 'grace' },
         images: [70, 71],
         reviewFlags: { 70: 'csam', 71: 'minor' },
+        primaryCsamFlagged: true,
       },
     });
 

@@ -7211,6 +7211,12 @@ export async function reportCsamImages({
   ip?: string;
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
+  // Flag first: an appeal that starts after this is refused by createEntityAppeal, and one that
+  // committed before it is closed below, so no pending appeal outlives the flag.
+  await dbWrite.image.updateMany({
+    where: { id: { in: imageIds } },
+    data: { needsReview: 'csam' },
+  });
   // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and the
   // uploader is not told.
   await dbWrite.appeal.updateMany({
@@ -7225,10 +7231,6 @@ export async function reportCsamImages({
       resolvedAt: new Date(),
       internalNotes: 'Closed by CSAM report',
     },
-  });
-  await dbWrite.image.updateMany({
-    where: { id: { in: imageIds } },
-    data: { needsReview: 'csam' },
   });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },

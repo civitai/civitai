@@ -452,6 +452,32 @@ describe('remove-blocked-images retention clock', () => {
     expect(deletedIds()).toContain(1);
     expect(queuePruneIds()).not.toContain(1);
     expect(queuePruneIds()).toContain(6);
-    expect(result).toMatchObject({ deleted: deletedIds().length - 1, heldAtDelete: 1 });
+    expect(result).toMatchObject({
+      deleted: deletedIds().length - 1,
+      heldAtDelete: 1,
+      retracted: deletedIds().length - 1,
+    });
+  });
+
+  // The returned counts are of images the DELETE removed, not of the candidates it was given.
+  it('counts an expired-hold image the guard kept as not purged', async () => {
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 6).map((id) => ({ id }))
+    );
+    const result = await runJob();
+
+    expect(deletedIds()).toContain(6);
+    expect(result).toMatchObject({ csamHoldExpired: 0, heldAtDelete: 1 });
+  });
+
+  it('counts a kept image on the non-retracting call as not deleted', async () => {
+    withoutModActivity.push(1);
+    mockDeleteImages
+      .mockImplementationOnce(async (ids: number[]) => ids.map((id) => ({ id })))
+      .mockImplementationOnce(async () => []);
+    const result = await runJob();
+
+    expect(mockDeleteImages.mock.calls[1]?.[0]).toEqual([1]);
+    expect(result).toMatchObject({ deletedWithoutRetraction: 0, heldAtDelete: 1 });
   });
 });
