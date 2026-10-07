@@ -305,6 +305,82 @@ describe('computePackPayouts', () => {
     expect(remainder).toBe(0);
     expect(packCreatorAmount).toBe(0);
   });
+
+  // Justin, 2026-10-07: "Official item sales should go to the bank." A platform
+  // cosmetic has no creator to pay, and its value is NOT the pack creator's — if
+  // you are about to fold official members back into the remainder, that is the
+  // bug this block exists to stop.
+  describe('official (platform) members', () => {
+    const official = (over = {}) =>
+      member({ cosmeticId: 81, createdById: null, addedById: null, floorAmount: 1700, ...over });
+
+    it('keeps an official member share with the bank instead of paying the pack creator', () => {
+      const { components, officialTotal, remainder, packCreatorAmount } = computePackPayouts({
+        packPrice: PACK_PRICE,
+        packCreatorId: PACK_CREATOR,
+        members: [member(), official()],
+        buyerId: BUYER,
+      });
+      // 3150, where paying the pack creator on the whole price gave 4340.
+      expect(packCreatorAmount).toBe(Math.floor((PACK_PRICE - 1700) * 0.7));
+      expect(remainder).toBe(PACK_PRICE - 1700);
+      expect(officialTotal).toBe(1700);
+      expect(components).toEqual([]);
+    });
+
+    it('still pays a foreign creator in full and takes the official value out of the remainder only', () => {
+      const { components, packCreatorAmount } = computePackPayouts({
+        packPrice: PACK_PRICE,
+        packCreatorId: PACK_CREATOR,
+        members: [member(), foreign(), official()],
+        buyerId: BUYER,
+      });
+      expect(components.map((c) => [c.userId, c.amount])).toEqual([
+        [FOREIGN_CREATOR, Math.floor(2100 * 0.7)],
+      ]);
+      expect(packCreatorAmount).toBe(Math.floor((PACK_PRICE - 2100 - 1700) * 0.7));
+    });
+
+    it('pays the pack creator nothing when official members alone exceed the price', () => {
+      const { components, remainder, packCreatorAmount, scaled } = computePackPayouts({
+        packPrice: 1000,
+        packCreatorId: PACK_CREATOR,
+        members: [member({ floorAmount: 300 }), official({ floorAmount: 3000 })],
+        buyerId: BUYER,
+      });
+      expect(packCreatorAmount).toBe(0);
+      expect(remainder).toBe(0);
+      expect(components).toEqual([]);
+      expect(scaled).toBe(true);
+    });
+
+    it('scales foreign members against official ones and stays inside 70% of the price', () => {
+      const { components, packCreatorAmount } = computePackPayouts({
+        packPrice: 1000,
+        packCreatorId: PACK_CREATOR,
+        members: [foreign({ floorAmount: 1000 }), official({ floorAmount: 3001 })],
+        buyerId: BUYER,
+      });
+      const total = components.reduce((sum, c) => sum + c.amount, 0) + packCreatorAmount;
+      expect(packCreatorAmount).toBe(0);
+      // Scaled to 1000/4001 of its snapshot: basis 249, not the 1000 it would be
+      // if the official member were left out of the scale.
+      expect(components.map((c) => c.amount)).toEqual([Math.floor(249 * 0.7)]);
+      expect(total).toBeLessThanOrEqual(700);
+    });
+
+    it('leaves a pack listed by the platform itself as it was', () => {
+      // No pack creator: the official members are the lister's own, so they do
+      // not compete with foreign members for the price.
+      const { components } = computePackPayouts({
+        packPrice: 3000,
+        packCreatorId: null,
+        members: [official({ floorAmount: 5000 }), foreign()],
+        buyerId: BUYER,
+      });
+      expect(components.map((c) => c.amount)).toEqual([Math.floor(2100 * 0.7)]);
+    });
+  });
 });
 
 describe('grantPackMembers', () => {

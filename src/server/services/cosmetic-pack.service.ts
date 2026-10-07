@@ -318,7 +318,11 @@ export const computePackPayouts = ({
       // not charged for it either — see the purchase path.
       m.createdById !== buyerId
   );
-  const snapshotTotal = payable.reduce((sum, m) => sum + m.floorAmount, 0);
+  // A platform cosmetic in a creator's pack is priced as a foreign member (it is
+  // not `isOwn`), so its share of the price is the bank's. Left out of this
+  // split, it fell into the remainder and paid the pack creator for it.
+  const official = members.filter((m) => m.createdById == null && packCreatorId != null);
+  const snapshotTotal = [...payable, ...official].reduce((sum, m) => sum + m.floorAmount, 0);
 
   // The floor is checked against LIVE list prices while payouts run off the
   // SNAPSHOT, so the two can diverge: a member re-priced down lets the pack be
@@ -374,14 +378,28 @@ export const computePackPayouts = ({
     }
   }
 
-  const remainder = Math.max(0, packPrice - foreignTotal);
+  // Rounded up per member, the opposite of the payout basis, so scaling can only
+  // ever shrink the pack creator's remainder, never grow it.
+  const officialTotal = official.reduce(
+    (sum, m) => sum + (scale === 1 ? m.floorAmount : Math.ceil(m.floorAmount * scale)),
+    0
+  );
+
+  const remainder = Math.max(0, packPrice - foreignTotal - officialTotal);
   // Not paid to the buyer: a pack creator buying their own pack is not charged
   // for their own portion (see computePackAmountDue), so there is nothing to pay
   // back — and paying it would book a Sell crediting them for a sale they funded.
   const packCreatorAmount =
     packCreatorId && packCreatorId !== buyerId ? computeCreatorShopSplit(remainder).creatorPool : 0;
 
-  return { components, foreignTotal, remainder, packCreatorAmount, scaled: scale !== 1 };
+  return {
+    components,
+    foreignTotal,
+    officialTotal,
+    remainder,
+    packCreatorAmount,
+    scaled: scale !== 1,
+  };
 };
 
 /**
