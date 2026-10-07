@@ -7,7 +7,9 @@ import { describe, expect, it } from 'vitest';
  * The ingest MV stores a member it has no name for as `unknown_<n>` — prod holds
  * `AppAuthorFee` (28) only as `'unknown_28'` — so the column is not always the
  * camelCase name. The helpers also accept a bare `'<n>'`, the spelling this file
- * was first written against; no prod row has ever carried it.
+ * was first written against. A read-only all-time scan of `buzzTransactions` on
+ * 2026-10-07 found no bare-digit row, but the arm is kept so a reader never
+ * silently mislabels one.
  *
  * Capitalising a non-name and indexing the enum is WRONG in a way no type error
  * can catch: `TransactionType['28']` hits the enum's REVERSE mapping and returns
@@ -15,15 +17,7 @@ import { describe, expect, it } from 'vitest';
  * falls back to `Tip`. Either way the transaction list and the CSV export show
  * the wrong label.
  *
- * 🔴 NOT A PURE REGRESSION SUITE, AND THE BASE RED IS DEGENERATE. These symbols
- * do not exist at the base commit, so running this file there produces
- * `is not a function`, not a failed assertion — which is evidence about the
- * import, not about behaviour. What demonstrates the defect in-tree is dropping
- * the numeric arm from the helper and watching the numeric case redden on its own
- * assertion. The name arm and the round-trips are invariant guards over behaviour
- * the base already had, and are labelled as such.
- *
- * 🔴 AND A GREEN RUN HERE IS NOT A CLAIM THAT PRODUCTION USES ANY OF THIS. Every
+ * 🔴 A GREEN RUN HERE IS NOT A CLAIM THAT PRODUCTION USES ANY OF THIS. Every
  * test below calls the helpers directly; a round-2 audit reverted both production
  * call sites to the expression they replaced and this whole file stayed green. The
  * wiring is pinned in `buzz-transactions-clickhouse-seam.test.ts` instead, which
@@ -56,12 +50,9 @@ describe('fromClickhouseTransactionType', () => {
   });
 
   /**
-   * 🔴 THE ARM THAT CARRIES THE DEFECT. The open-coded expression this replaced
-   * returned the string `'LicenseFee'` / `'AppAuthorFee'` out of the enum's
-   * reverse mapping where a number was declared. `toBe` is `Object.is`, so it
-   * separates the two on its own — which is why there is one assertion here and
-   * not four: a `typeof` check and a `not.toBe` against the name were both
-   * subsumed by this line and could never report.
+   * Capitalise-and-index returns the string `'LicenseFee'` / `'AppAuthorFee'` out
+   * of the enum's reverse mapping here. `toBe` is `Object.is`, so it separates
+   * that from the number on its own; a `typeof` check would add nothing.
    *
    * ⚠️ A re-derivation through the enum (`TransactionType[resolved]`) is subsumed
    * HERE but is not dead everywhere: a duplicate enum value flips the reverse map,
@@ -115,10 +106,10 @@ describe('fromClickhouseTransactionType', () => {
   /**
    * INVARIANT GUARD. The `Tip` fallback is long-standing and deliberate — it
    * predates this change and exists so an unrecognised value renders a label
-   * rather than blank. Pinned in both arms because the numeric arm is new code
-   * and dropping the fallback there would be silent.
+   * rather than blank. Pinned in every arm because dropping it from the numeric
+   * one would be silent.
    */
-  it('falls back to Tip for a value that names no member, in either arm', () => {
+  it('falls back to Tip for a value that names no member, in every arm', () => {
     expect(fromClickhouseTransactionType('notAType')).toBe(TransactionType.Tip);
     expect(fromClickhouseTransactionType('999')).toBe(TransactionType.Tip);
     expect(fromClickhouseTransactionType('unknown_999')).toBe(TransactionType.Tip);
