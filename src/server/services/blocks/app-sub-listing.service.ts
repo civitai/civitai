@@ -647,10 +647,8 @@ export async function syncSubListingForSharedRow(
       itemKey: args.itemKey,
       ...(args.change === 'withdrawn' ? { authorUserId: args.authorUserId } : {}),
     };
-    // A store-hidden row is left hidden, but its version moves: a moderator restore that read
-    // the shared row as live just before this change then fails its compare-and-set instead
-    // of republishing an item the app has just removed.
-    // Its own best-effort step: a failed touch must not stop the hide/withdraw below.
+    // Moves a store-hidden row's version so a restore that read the shared row as live fails
+    // its compare-and-set. Best-effort on its own: a failed touch must not stop the transition.
     await dbWrite.appSubListing
       .updateMany({ where: { ...where, status: 'hidden' }, data: { updatedAt: new Date() } })
       .catch((err: unknown) => {

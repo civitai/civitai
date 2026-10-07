@@ -582,6 +582,20 @@ describe('the tables are absent (manual-apply migration not run)', () => {
     await syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' });
     expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
   });
+
+  // Before the migration `app_listings` exists and `app_sub_listings` does not, so the first
+  // statement to fail is the version touch, not the parent read.
+  it.each(missing)(
+    'the hooks stay silent when the sub-listing table is missing (%s)',
+    async (err) => {
+      write.appSubListing.updateMany.mockRejectedValue(err);
+      await expect(
+        syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
+      ).resolves.toBeUndefined();
+      expect(write.appSubListing.updateMany).toHaveBeenCalled();
+      expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+    }
+  );
 });
 
 describe('withdrawSubListing / listMySubListings', () => {
@@ -721,7 +735,7 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
     expect(statuses).toEqual([undefined, 'hidden', 'hidden']);
   });
 
-  // End to end against a stateful row: a restore that read the shared row as live, then lost
+  // Against a stateful updateMany fake: a restore that read the shared row as live, then lost
   // the race to an in-app hide, must fail its compare-and-set.
   it('a restore racing an in-app hide fails its compare-and-set', async () => {
     const hidden = liveRow({ status: 'hidden' });

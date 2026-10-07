@@ -1130,9 +1130,9 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * `LISTING_CURSOR_MAX` characters, so lifting it out of the hash makes the redis keyspace
  * AND the `cache_name` metric label request-controlled and unbounded — exactly the
  * property the note at the bottom of this comment relies on. (`kind`, `category` and
- * `sort` are closed enums and `limit` is 1..50, so those four could be lifted; they would multiply the label
- * cardinality by their product, and they do not help while `cursor` stays hashed,
- * because `cursor` is the tuning room the collision is built out of.) Widening
+ * `sort` are closed enums and `limit` is 1..50, so those four could be lifted; they would
+ * multiply the label cardinality by their product, and they do not help while `cursor`
+ * stays hashed, because `cursor` is the tuning room the collision is built out of.) Widening
  * `hashify` is the other alternative and it is global — see below.
  *
  * If that trade stops holding, the fix is to key on a per-axis allowlist plus a
