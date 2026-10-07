@@ -181,8 +181,8 @@ describe('ordering', () => {
   });
 
   it('lists new Supernovas newest first', async () => {
-    await grant(OTHER, 'score:supernova', '2026-11-03 00:00:00');
     await grant(GOOD, 'score:supernova', '2026-11-04 00:00:00');
+    await grant(OTHER, 'score:supernova', '2026-11-03 00:00:00');
     expect(ids((await showcase()).newSupernovas)).toEqual([GOOD, OTHER]);
   });
 });
