@@ -85,6 +85,26 @@ describe('SearchRetryBanner copy', () => {
     );
   });
 
+  test('slow state (initial load): neutral copy', async () => {
+    renderWithProviders(
+      <SearchRetryBanner
+        delayMs={600_000}
+        attempt={1}
+        maxAttempts={3}
+        onRetry={() => undefined}
+        isInitialLoad
+        slow
+      />
+    );
+
+    await expect.element(page.getByText('Images are taking longer than usual')).toBeInTheDocument();
+    expect(visibleText()).toBe(
+      'Images are taking longer than usual' +
+        "We'll keep trying automatically." +
+        'Retrying in 600s · Attempt 1 of 3'
+    );
+  });
+
   // Absorbing: nothing in the test flips `countdownActive` back on.
   test('retrying-now state: neutral copy', async () => {
     renderWithProviders(
