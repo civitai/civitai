@@ -7,6 +7,8 @@
  * Keys are permanent: renaming one re-grants everyone under the new key.
  */
 
+import { SCORE_TIERS, scoreTierKey } from '~/shared/constants/creator-journey.constants';
+
 export const PUBLISHED_ENTITIES = ['model', 'article'] as const;
 export const USER_METRICS = ['followerCount', 'reactionCount'] as const;
 
@@ -60,15 +62,7 @@ const userMetric = (metric: (typeof USER_METRICS)[number]): MilestoneRegistryEnt
 });
 
 export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = {
-  'score:spark': scoreTier(),
-  'score:kindle': scoreTier(),
-  'score:flame': scoreTier(),
-  'score:blaze': scoreTier(),
-  'score:beacon': scoreTier(),
-  'score:nova': scoreTier(),
-  'score:star': scoreTier(),
-  'score:supernova': scoreTier(),
-  'score:legend': scoreTier(),
+  ...Object.fromEntries(SCORE_TIERS.map((tier) => [scoreTierKey(tier.slug), scoreTier()])),
 
   'create:models-1': published('model'),
   'create:models-5': published('model'),

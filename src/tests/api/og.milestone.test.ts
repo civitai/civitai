@@ -85,6 +85,16 @@ describe('/api/og?type=milestone', () => {
     expect(fallback._headers['cache-control']).toBe('public, max-age=300, s-maxage=300');
   });
 
+  it('keeps the SHORT cache when the lookup throws', async () => {
+    // The lookup is built to throw (an unreadable suppression list); the error path's hour-long
+    // cache would pin a live creator's card to the fallback.
+    getMilestoneShareCard.mockRejectedValue(new Error('suppression list unavailable'));
+    const res = await render('42.supernova');
+
+    expect(res._headers['content-type']).toBe('image/png');
+    expect(res._headers['cache-control']).toBe('public, max-age=300, s-maxage=300');
+  });
+
   it('serves the fallback for an id that is not a score tier, without a lookup', async () => {
     for (const id of ['42.score:legend', '42.unknown', '42']) {
       const res = await render(id);

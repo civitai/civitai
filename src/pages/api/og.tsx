@@ -529,6 +529,7 @@ async function fetchHubData(id: number): Promise<EntityData | null> {
 // Entity types whose visibility the owner can withdraw after a link is shared. They
 // take the short cache below, so revocation is not deferred by the edge.
 const REVOCABLE_TYPES = new Set(['hub']);
+const SHORT_CACHE = 'public, max-age=300, s-maxage=300';
 
 const dataFetchers: Record<string, (id: number) => Promise<EntityData | null>> = {
   model: fetchModelData,
@@ -935,7 +936,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       res.setHeader('Content-Type', 'image/png');
       // Short either way: a hidden badge or a new strike must take a shared card down within
       // minutes, and a creator whose card is not live yet must not be stuck on the fallback.
-      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+      res.setHeader('Cache-Control', SHORT_CACHE);
       return res.send(milestoneBuffer);
     }
 
@@ -985,7 +986,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       // owner every link they handed out stops working. The long branch below would
       // keep serving that hub's name, description and owner from the CDN edge for a
       // week after revocation, so a revocable entity takes a short cache instead.
-      res.setHeader('Cache-Control', 'public, max-age=300, s-maxage=300');
+      res.setHeader('Cache-Control', SHORT_CACHE);
     } else if (data && !coverFetchFailed) {
       // Real entity card with the cover embedded, OR no cover by design (NSFW /
       // video / genuinely no image — a PERMANENT placeholder) → long edge cache.
@@ -1014,7 +1015,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       });
       const buffer = Buffer.from(await fallback.arrayBuffer());
       res.setHeader('Content-Type', 'image/png');
-      res.setHeader('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+      res.setHeader(
+        'Cache-Control',
+        type === 'milestone' ? SHORT_CACHE : 'public, max-age=3600, s-maxage=3600'
+      );
       res.send(buffer);
     } catch {
       res.status(500).json({ error: 'Failed to generate OG image' });

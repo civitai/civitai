@@ -1,5 +1,5 @@
-// A zone behind UTC, so a crossing early on the 1st (UTC) would print the previous month if the
-// card formatted in local time.
+// A zone behind UTC: the crossing below is Oct 31 here and Nov 1 in UTC, so a card that formatted the
+// month in local time would print the wrong one.
 process.env.TZ = 'America/Los_Angeles';
 
 import { readFileSync } from 'fs';
@@ -10,7 +10,6 @@ import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({
   excluded: vi.fn(async (): Promise<number[]> => []),
   flagOn: vi.fn(async (_user: { id: number; isModerator: boolean }) => true),
-  pictures: vi.fn(async (_ids: number[]): Promise<Record<number, unknown>> => ({})),
 }));
 vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricExcluded>()),
@@ -20,19 +19,16 @@ vi.mock('~/server/services/creator-journey-flag.service', async (importOriginal)
   ...(await importOriginal<typeof JourneyFlag>()),
   isCreatorJourneyOnFor: mocks.flagOn,
 }));
-vi.mock('~/server/services/user.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof UserService>()),
-  getProfilePicturesForUsers: mocks.pictures,
-}));
 
 import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
 import type * as JourneyFlag from '~/server/services/creator-journey-flag.service';
-import type * as UserService from '~/server/services/user.service';
-import { getMilestoneShareCard } from '~/server/services/creator-milestone-share.service';
-import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import {
+  getMilestoneShareCard,
+  isMilestoneShareable,
+} from '~/server/services/creator-milestone-share.service';
+import {
+  milestoneOgEndpoint,
   parseMilestoneShareId,
-  SCORE_TIERS,
   scoreTierKey,
 } from '~/shared/constants/creator-journey.constants';
 import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants';
@@ -44,6 +40,7 @@ const MIGRATION = join(
   'packages/civitai-db-schema/prisma/migrations/20261005120000_creator_milestone/migration.sql'
 );
 
+const TIMESTAMP_OID = 1114;
 const holder = { db: null as unknown as PGlite };
 const pg = {
   cancellableQuery: async (sql: string, params?: unknown[]) => ({
@@ -54,7 +51,6 @@ const pg = {
 const q = (sql: string, params?: unknown[]) => holder.db.query(sql, params);
 
 const NOW = new Date('2026-11-15T12:00:00Z');
-// 03:00 UTC on Nov 1 is still Oct 31 in Los Angeles.
 const CROSSED = '2026-11-01 03:00:00';
 const CREATOR = 10;
 
@@ -63,17 +59,26 @@ const addUser = (id: number, flags: UserFlags = {}) =>
   q(`INSERT INTO "User" (id, username, image, muted, settings) VALUES ($1, $2, $3, $4, $5)`, [
     id,
     `u${id}`,
-    flags.image === undefined ? null : flags.image,
+    flags.image ?? null,
     !!flags.muted,
     JSON.stringify(flags.optedOut ? { hideFromCreatorShowcase: true } : {}),
   ]);
 
-/** `silent` mirrors the grant writer: a silent (backfill) grant stamps seenAt equal to achievedAt. */
-const grant = (userId: number, slug: ScoreTierSlug, silent = false) =>
+/**
+ * Mirrors the grant writer: a silent (backfill) grant stamps seenAt equal to achievedAt; an announced
+ * one starts unseen, and opening the celebration later stamps seenAt with that later time.
+ */
+const grant = (
+  userId: number,
+  slug: ScoreTierSlug,
+  seen: 'unseen' | 'silent' | 'later' = 'unseen'
+) =>
   q(
     `INSERT INTO "UserCreatorMilestone" ("userId", "milestoneKey", "achievedAt", "seenAt")
-     VALUES ($1, $2, $3::timestamp, CASE WHEN $4::boolean THEN $3::timestamp END)`,
-    [userId, scoreTierKey(slug), CROSSED, silent]
+     VALUES ($1, $2, $3::timestamp, CASE $4
+       WHEN 'silent' THEN $3::timestamp
+       WHEN 'later' THEN $3::timestamp + interval '2 days' END)`,
+    [userId, scoreTierKey(slug), CROSSED, seen]
   );
 
 async function attachBadge(slug: ScoreTierSlug) {
@@ -94,17 +99,46 @@ const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
     JSON.stringify(settings),
   ]);
 
+type Picture = {
+  nsfwLevel: number;
+  ingestion?: string;
+  tosViolation?: boolean;
+  needsReview?: string;
+};
+async function setPicture(userId: number, url: string, picture: Picture) {
+  const { rows } = await q(
+    `INSERT INTO "Image" (url, type, "nsfwLevel", ingestion, "tosViolation", "needsReview")
+     VALUES ($1, 'image', $2, $3, $4, $5) RETURNING id`,
+    [
+      url,
+      picture.nsfwLevel,
+      picture.ingestion ?? 'Scanned',
+      !!picture.tosViolation,
+      picture.needsReview ?? null,
+    ]
+  );
+  await q(`UPDATE "User" SET "profilePictureId" = $1 WHERE id = $2`, [
+    (rows[0] as { id: number }).id,
+    userId,
+  ]);
+}
+
 const card = (slug: ScoreTierSlug = 'supernova', userId = CREATOR) =>
   getMilestoneShareCard({ userId, slug }, { pg, now: NOW });
 
 beforeAll(async () => {
-  holder.db = new PGlite();
+  // The app reads `timestamp` as UTC (src/server/db/appsDb.ts); PGlite's default reads it as local.
+  holder.db = new PGlite({
+    parsers: { [TIMESTAMP_OID]: (value: string) => new Date(value.replace(' ', 'T') + 'Z') },
+  });
   await holder.db.exec(`
-    CREATE TABLE "User" (id int PRIMARY KEY, username text, image text,
+    CREATE TABLE "User" (id int PRIMARY KEY, username text, image text, "profilePictureId" int,
       "isModerator" boolean NOT NULL DEFAULT false, muted boolean NOT NULL DEFAULT false,
       "deletedAt" timestamp(3), "bannedAt" timestamp(3),
       "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}');
     CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, data jsonb);
+    CREATE TABLE "Image" (id serial PRIMARY KEY, url text, type text, "nsfwLevel" int,
+      ingestion text, "tosViolation" boolean NOT NULL DEFAULT false, "needsReview" text);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
       "expiresAt" timestamp(3) NOT NULL);
     CREATE TABLE "UserProfile" ("userId" int PRIMARY KEY, "privacySettings" jsonb);
@@ -115,9 +149,8 @@ beforeAll(async () => {
 beforeEach(async () => {
   mocks.excluded.mockReset().mockResolvedValue([]);
   mocks.flagOn.mockReset().mockResolvedValue(true);
-  mocks.pictures.mockReset().mockResolvedValue({});
   await holder.db.exec(`
-    TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User";
+    TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User", "Image";
     UPDATE "CreatorMilestone" SET "cosmeticId" = NULL;
   `);
 });
@@ -140,9 +173,16 @@ describe('milestone share card', () => {
     expect(mocks.flagOn).toHaveBeenCalledWith({ id: CREATOR, isModerator: false });
   });
 
+  // The usual way a card is shared: the creator opened the celebration first, so seenAt is set.
+  it('renders a crossing the creator has already seen', async () => {
+    await addUser(CREATOR);
+    await grant(CREATOR, 'supernova', 'later');
+    expect(await card()).toMatchObject({ reached: 'November 2026' });
+  });
+
   it('falls back for a backfilled (caught-up) grant, which has no observed crossing', async () => {
     await addUser(CREATOR);
-    await grant(CREATOR, 'supernova', true);
+    await grant(CREATOR, 'supernova', 'silent');
     expect(await card()).toBeNull();
   });
 
@@ -195,20 +235,59 @@ describe('milestone share card', () => {
     await grant(CREATOR, 'supernova');
     expect(await card()).not.toBeNull();
   });
+});
 
-  it('shows a safe profile picture, else falls back to the account image, never an NSFW one', async () => {
-    await addUser(CREATOR, { image: 'https://example.com/avatar.png' });
+describe('share card avatar', () => {
+  const avatarFor = async (picture?: Picture) => {
+    await addUser(CREATOR, { image: 'https://example.com/oauth-avatar.png' });
     await grant(CREATOR, 'supernova');
+    if (picture) await setPicture(CREATOR, 'profile-pic', picture);
+    return (await card())?.avatarUrl;
+  };
 
-    mocks.pictures.mockResolvedValue({
-      [CREATOR]: { url: 'safe-pic', nsfwLevel: 1, type: 'image' },
-    });
-    expect((await card())?.avatarUrl).toContain('safe-pic');
+  it('shows a scanned, safe profile picture', async () => {
+    expect(await avatarFor({ nsfwLevel: 1 })).toContain('profile-pic');
+  });
 
-    mocks.pictures.mockResolvedValue({
-      [CREATOR]: { url: 'nsfw-pic', nsfwLevel: 4, type: 'image' },
-    });
-    expect((await card())?.avatarUrl).toBe('https://example.com/avatar.png');
+  it.each([
+    ['NSFW', { nsfwLevel: 4 }],
+    ['blocked by moderation', { nsfwLevel: 1, ingestion: 'Blocked' }],
+    ['not yet scanned', { nsfwLevel: 1, ingestion: 'Pending' }],
+    ['a ToS violation', { nsfwLevel: 1, tosViolation: true }],
+    ['awaiting review', { nsfwLevel: 1, needsReview: 'minor' }],
+  ])('shows no avatar for a picture that is %s', async (_, picture) => {
+    expect(await avatarFor(picture)).toBeNull();
+  });
+
+  // The account image is unscanned, and the server would fetch it from whatever host was stored.
+  it('never falls back to the account image', async () => {
+    expect(await avatarFor()).toBeNull();
+  });
+});
+
+describe('profile og:image swap', () => {
+  it('is shareable exactly when the card renders', async () => {
+    await addUser(CREATOR);
+    await grant(CREATOR, 'supernova');
+    await grant(CREATOR, 'nova', 'silent');
+    const shareable = (slug: ScoreTierSlug) =>
+      isMilestoneShareable({ userId: CREATOR, slug }, { pg, now: NOW });
+
+    expect(await shareable('supernova')).toBe(true);
+    expect(await shareable('nova')).toBe(false);
+    expect(await shareable('legend')).toBe(false);
+  });
+
+  // Lead's veto: a `?milestone=` link whose card will not render must preview the person, so the
+  // profile's og:image is exactly what it is without the param.
+  it('keeps the profile’s own og:image when the card will not render', () => {
+    const withoutParam = milestoneOgEndpoint(CREATOR, null, undefined);
+    expect(withoutParam).toBeUndefined();
+    expect(milestoneOgEndpoint(CREATOR, 'legend', false)).toBe(withoutParam);
+    expect(milestoneOgEndpoint(CREATOR, 'legend', undefined)).toBe(withoutParam);
+    expect(milestoneOgEndpoint(CREATOR, 'legend', true)).toBe(
+      `/api/og?type=milestone&id=${CREATOR}.legend`
+    );
   });
 });
 
@@ -224,12 +303,5 @@ describe('share id', () => {
       '9999999999.legend',
     ])
       expect(parseMilestoneShareId(raw), raw).toBeNull();
-  });
-
-  it('SCORE_TIERS names exactly the registry score tiers', () => {
-    const registryTiers = Object.keys(creatorMilestoneRegistry).filter((key) =>
-      key.startsWith('score:')
-    );
-    expect(SCORE_TIERS.map((tier) => scoreTierKey(tier.slug))).toEqual(registryTiers);
   });
 });

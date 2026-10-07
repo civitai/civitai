@@ -7,8 +7,9 @@ export const CREATOR_SCORE_EXPLAINER_HREF = '/user/account#creator-score';
 export const FIRST_PUBLISH_CARD_DAYS = 14;
 
 /**
- * Every Creator Score tier, lowest first. A tier's milestone key is `score:<slug>`. Accents are
- * sampled from each tier's enamel plate, so glows and bars match the art.
+ * Every Creator Score tier, lowest first. A tier's milestone key is `score:<slug>`, and the grant
+ * registry is built from this list, so a slug is permanent: renaming one re-grants everyone. Accents
+ * are sampled from each tier's enamel plate, so glows and bars match the art.
  */
 export const SCORE_TIERS = [
   { slug: 'spark', accent: '#c92a2a' },
@@ -32,6 +33,17 @@ export function parseScoreTierSlug(value: unknown): ScoreTierSlug | null {
 
 /** A milestone share card's id, `<userId>.<tierSlug>`, e.g. `42.supernova`. */
 export const milestoneShareId = (userId: number, slug: ScoreTierSlug) => `${userId}.${slug}`;
+
+/** A profile's og:image endpoint for `?milestone=`. Undefined keeps the profile's own preview. */
+export function milestoneOgEndpoint(
+  userId: number,
+  milestone: ScoreTierSlug | null,
+  shareable: boolean | undefined
+) {
+  return milestone && shareable
+    ? `/api/og?type=milestone&id=${milestoneShareId(userId, milestone)}`
+    : undefined;
+}
 
 export function parseMilestoneShareId(raw: string) {
   const match = /^(\d{1,10})\.([a-z]+)$/.exec(raw);

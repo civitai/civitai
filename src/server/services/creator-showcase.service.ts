@@ -1,7 +1,10 @@
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { userBasicCache } from '~/server/redis/caches';
-import { milestoneShowableUserSql } from '~/server/services/creator-milestone-exclusions';
+import {
+  milestoneShowableUserSql,
+  toUtcTimestamp,
+} from '~/server/services/creator-milestone-exclusions';
 import { CacheTTL } from '~/server/common/constants';
 import {
   achievedAtIsObserved,
@@ -27,9 +30,6 @@ type ShowcaseCandidate = {
 };
 
 type ShowcaseRow = Omit<ShowcaseCandidate, 'achievedMonth'>;
-
-/** `timestamp(3)` columns hold UTC wall time, so compare against a zoneless UTC literal. */
-const toUtcTimestamp = (date: Date) => date.toISOString().replace('T', ' ').replace('Z', '');
 
 const utcMonth = (now: Date) => now.toISOString().slice(0, 7);
 
