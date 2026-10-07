@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 import { walkPages } from './keyset-walk';
 
@@ -80,7 +80,6 @@ CREATE TABLE "ImageRatingRequest" (
   "imageId" INTEGER, "weight" INTEGER, "nsfwLevel" INTEGER, "status" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
 );
-INSERT INTO "User" ("id", "username") VALUES (7, 'uploader');
 `;
 
 const IMAGE_IDS = [101, 102, 103, 104, 105];
@@ -88,13 +87,23 @@ const NEWEST_FIRST = [...IMAGE_IDS].reverse();
 
 let db: PGlite;
 
-beforeEach(async () => {
+// One instance per file: a fresh PGlite per case is what times out under a full-suite run.
+beforeAll(async () => {
   db = await PGlite.create();
   await db.exec(SCHEMA);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
 
-afterEach(async () => {
+beforeEach(async () => {
+  await db.exec(`
+    TRUNCATE "User", "Post", "Image", "ImageConnection", "Report", "ImageReport", "ComicProject",
+      "ComicChapter", "ComicPanel", "Tag", "TagsOnImageNew", "TagsOnImageDetails", "TagsOnImageVote",
+      "ImageTagForReview", "ImageRatingRequest";
+    INSERT INTO "User" ("id", "username") VALUES (7, 'uploader');
+  `);
+});
+
+afterAll(async () => {
   dbHandle.current = null;
   await db.close();
 });
