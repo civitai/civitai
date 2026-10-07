@@ -105,7 +105,7 @@ export const NAVIGATION: NavLink[] = [
       // that every navigation in the app waits on. The counts live on the page's own tabs instead,
       // fetched separately. A countKey nothing produces renders as a silently missing badge.
       { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' },
-      { path: '/models/minor-hash-matches', query: 'tab=appeals', label: 'Model Flag Appeals' },
+      { path: '/models/flag-appeals', label: 'Model Flag Appeals' },
     ],
   },
   {
@@ -136,7 +136,6 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/prompt-tester', label: 'Prompt Tester' },
       { path: '/audit/scanner-audit', label: 'Scanner Audit' },
       { path: '/audit/generator-restrictions', label: 'Generator Restrictions' },
-      { path: '/audit/generator-restrictions', query: 'type=scam', label: 'Scam Restrictions' },
       { path: '/audit/training-models', label: 'Training Models' },
       { path: '/audit/training-data', label: 'Training Data Review' },
       { path: '/audit/relabel', label: 'Removal Label Relabel' },
@@ -199,12 +198,22 @@ export const NAVIGATION: NavLink[] = [
   // being listed: they are steps of one loop, and granting a reviewer the queue but not the run history
   // would hide the numbers their review produces.
   { path: '/xguard', label: 'XGuard Lab' },
-  { path: '/users', label: 'Users' },
-  // A SIBLING of `/users`, not a child, and deliberately so. `/users`' grant is what User Lookup's ban,
-  // purge and bulk-comment actions are gated on, so a read-only list living under it would make
-  // "let them see new signups" mean "let them ban anyone". `canAccess` takes the longest matching
-  // grant, so this path carries its own.
-  { path: '/users/newest', label: 'Newest Users' },
+  // A group with no path of its own, so `/users` stays a grantable page: giving the group `/users` would
+  // make it a section, which has no grant — orphaning the stored `/users` row and the ban/purge actions
+  // gated on it.
+  //
+  // Each child carries its OWN grant, and `canAccess` takes the longest matching one. `/users`' grant
+  // gates ban, purge and bulk-comment, so a read-only list living under it would make "let them see new
+  // signups" mean "let them ban anyone"; likewise a scam reviewer must not gain `/users` by holding
+  // `/users/scam-restrictions`.
+  {
+    label: 'Users',
+    children: [
+      { path: '/users', label: 'Users' },
+      { path: '/users/newest', label: 'Newest Users' },
+      { path: '/users/scam-restrictions', label: 'Scam Restrictions' },
+    ],
+  },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];

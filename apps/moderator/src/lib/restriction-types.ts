@@ -22,6 +22,9 @@ export type RestrictionType = (typeof RESTRICTION_TYPES)[number];
 /** What the queue shows when the URL names no type — the only type that existed before the seam. */
 export const RESTRICTION_TYPE: RestrictionType = 'generation';
 
+/** Scam restrictions review users, not prompts, so they have their own page under Users. */
+export const GENERATOR_RESTRICTION_TYPES = ['generation', 'bot-account'] as const;
+
 export const RESTRICTION_TYPE_LABELS: Record<RestrictionType, string> = {
   generation: 'Generation',
   'bot-account': 'Bot account',

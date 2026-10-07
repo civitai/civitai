@@ -297,3 +297,10 @@ describe('generator-restrictions actions — flagSuspicious', () => {
     expect(saveSuspiciousMatches).not.toHaveBeenCalled();
   });
 });
+
+describe('generator-restrictions — scam is not a list type here', () => {
+  it('offers only the remaining types', async () => {
+    const { GENERATOR_RESTRICTION_TYPES } = await import('$lib/restriction-types');
+    expect([...GENERATOR_RESTRICTION_TYPES]).toEqual(['generation', 'bot-account']);
+  });
+});

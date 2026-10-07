@@ -229,7 +229,8 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `shared/generation/gates.ts` (`gateRuleSchema`), `shared/generation/messages.ts` (`generatorMessageSchema`)
   - Infra: **Redis** — sysRedis hashes `GENERATION.GATE_RULES` / `GENERATION.MESSAGES` (one field per entry, migrated on first use from `SYSTEM.FEATURES`; the status cards still read `SYSTEM.FEATURES`) **+ Flipt** (`GENERATION_TESTING`)
 - [x] **`/moderator/generation-restrictions`** — **Migrated** to the spoke at
-  **`/audit/generator-restrictions`** (label "Generator Restrictions").
+  **`/audit/generator-restrictions`** (label "Generator Restrictions"). Its `scam` type has since moved
+  to **`/users/scam-restrictions`** (Users nav section, own grant); `?type=scam` redirects there.
   - Spoke: `user-restriction.service.ts` reads the queue with Kysely and writes suspicious matches to the
     SAME `system:suspicious-audit-matches` list (shared Redis, 1000-entry trim) that
     `userRestriction.getSuspiciousMatches` still serves `/moderator/suspicious-audit-matches` from.

@@ -7,7 +7,7 @@ import { getUserGeneratedWorkflows, isWorkflowSource } from '$lib/server/user-wo
 // off-site generation history, prompts and signed media included, for work never published to the site
 // — so the grant list names consumers that exist, not consumers that might. Add a path here when a page
 // actually mounts the panel.
-const PAGES = ['/audit/generator-restrictions', '/retool/user-lookup'];
+const PAGES = ['/audit/generator-restrictions', '/users/scam-restrictions', '/retool/user-lookup'];
 
 export const GET: RequestHandler = async ({ params, url, locals }) => {
   const userId = requireIdParam(locals, params.userId, PAGES, 'userId');

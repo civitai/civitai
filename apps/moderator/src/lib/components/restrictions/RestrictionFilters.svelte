@@ -8,13 +8,18 @@
   import { urlWith } from '$lib/url';
 
   import {
-    RESTRICTION_TYPES,
     RESTRICTION_TYPE_LABELS,
     RESTRICTION_TYPE as RESTRICTION_TYPE_DEFAULT,
     type RestrictionType,
   } from '$lib/restriction-types';
 
-  let { q, status, type }: { q: string; status: string; type: RestrictionType } = $props();
+  let {
+    q,
+    status,
+    type,
+    types,
+  }: { q: string; status: string; type: RestrictionType; types?: readonly RestrictionType[] } =
+    $props();
 
   // Same staging as the other filter bars: rulings reload the page, and a mirrored prop would clear a
   // search the moderator had typed but not yet submitted.
@@ -58,24 +63,26 @@
     <Label for="restriction-q" class="text-xs text-dark-2">Username or user ID</Label>
     <Input id="restriction-q" bind:value={() => term, typed} class="mt-1 w-64" placeholder="Search…" />
   </div>
-  <div>
-    <Label for="restriction-type" class="text-xs text-dark-2">Type</Label>
-    <!-- No "any" option: the two queues are reviewed under different assumptions, and `navigate` drops
-         `page`/`selected` because both name a row in the set being replaced. -->
-    <Select.Root
-      type="single"
-      bind:value={() => type, (v) => navigate({ type: v ?? RESTRICTION_TYPE_DEFAULT })}
-    >
-      <Select.Trigger id="restriction-type" class="mt-1 w-40">
-        {RESTRICTION_TYPE_LABELS[type]}
-      </Select.Trigger>
-      <Select.Content>
-        {#each RESTRICTION_TYPES as t (t)}
-          <Select.Item value={t}>{RESTRICTION_TYPE_LABELS[t]}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-  </div>
+  {#if types}
+    <div>
+      <Label for="restriction-type" class="text-xs text-dark-2">Type</Label>
+      <!-- No "any" option: the two queues are reviewed under different assumptions, and `navigate` drops
+           `page`/`selected` because both name a row in the set being replaced. -->
+      <Select.Root
+        type="single"
+        bind:value={() => type, (v) => navigate({ type: v ?? RESTRICTION_TYPE_DEFAULT })}
+      >
+        <Select.Trigger id="restriction-type" class="mt-1 w-40">
+          {RESTRICTION_TYPE_LABELS[type]}
+        </Select.Trigger>
+        <Select.Content>
+          {#each types as t (t)}
+            <Select.Item value={t}>{RESTRICTION_TYPE_LABELS[t]}</Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    </div>
+  {/if}
   <div>
     <Label for="restriction-status" class="text-xs text-dark-2">Status</Label>
     <Select.Root

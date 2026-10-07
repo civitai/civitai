@@ -9,30 +9,32 @@ import {
   PERMISSIONS,
 } from '$lib/server/access';
 
-const page = { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' };
-const appeals = { path: page.path, query: 'tab=appeals', label: 'Model Flag Appeals' };
+// A synthetic page with a view link, so the query-link behaviour stays covered whether or not any
+// real nav entry currently uses one.
+const page = { path: '/example/queue', label: 'Queue' };
+const appeals = { path: page.path, query: 'tab=appeals', label: 'Appeals view' };
 const siblings = [page, appeals];
 const at = (href: string) => new URL(href, 'https://mod.test');
 
 describe('navHref', () => {
   it('carries a view link query', () => {
-    expect(navHref(appeals)).toBe('/models/minor-hash-matches?tab=appeals');
-    expect(navHref(page)).toBe('/models/minor-hash-matches');
+    expect(navHref(appeals)).toBe('/example/queue?tab=appeals');
+    expect(navHref(page)).toBe('/example/queue');
   });
 });
 
 describe('isNavLinkActive', () => {
   it('marks the view, not the page, while its query is on the URL', () => {
-    const url = at('/models/minor-hash-matches?tab=appeals&page=2');
+    const url = at('/example/queue?tab=appeals&page=2');
     expect(isNavLinkActive(appeals, siblings, url)).toBe(true);
     expect(isNavLinkActive(page, siblings, url)).toBe(false);
   });
 
   it('marks the page on any other tab', () => {
-    const url = at('/models/minor-hash-matches?tab=auto');
+    const url = at('/example/queue?tab=auto');
     expect(isNavLinkActive(appeals, siblings, url)).toBe(false);
     expect(isNavLinkActive(page, siblings, url)).toBe(true);
-    expect(isNavLinkActive(page, siblings, at('/models/minor-hash-matches'))).toBe(true);
+    expect(isNavLinkActive(page, siblings, at('/example/queue'))).toBe(true);
   });
 
   it('matches neither on another page', () => {
@@ -40,40 +42,105 @@ describe('isNavLinkActive', () => {
     expect(isNavLinkActive(appeals, siblings, url)).toBe(false);
     expect(isNavLinkActive(page, siblings, url)).toBe(false);
   });
+
+  it('marks only the deepest sibling when one path nests under another', () => {
+    const users = { path: '/users', label: 'Users' };
+    const newest = { path: '/users/newest', label: 'Newest Users' };
+    const url = at('/users/newest');
+    expect(isNavLinkActive(newest, [users, newest], url)).toBe(true);
+    expect(isNavLinkActive(users, [users, newest], url)).toBe(false);
+    expect(isNavLinkActive(users, [users, newest], at('/users'))).toBe(true);
+  });
 });
 
-describe('a view link in NAVIGATION', () => {
-  const reviewer = { roles: ['moderator:reviewer'] };
-  const labelsUnder = (group: string) =>
-    navForUser(reviewer)
-      .find((l) => l.path === group)
-      ?.children?.map((c) => c.label);
+const reviewer = { roles: ['moderator:reviewer'] };
+const labelsUnder = (group: string) =>
+  navForUser(reviewer)
+    .find((l) => l.label === group)
+    ?.children?.map((c) => [c.path, c.label]);
 
-  it('reaches whoever holds the page grant, with no grant of its own', () => {
-    applyGrants({ '/models/minor-hash-matches': ['moderator:reviewer'] });
-    expect(labelsUnder('/models')).toEqual(['Minor Hash Matches', 'Model Flag Appeals']);
-    expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(true);
+describe('the Users section', () => {
+  it('lists Users, Newest Users and Scam Restrictions for someone holding all three', () => {
+    applyGrants({
+      '/users': ['moderator:reviewer'],
+      '/users/newest': ['moderator:reviewer'],
+      '/users/scam-restrictions': ['moderator:reviewer'],
+    });
+    expect(labelsUnder('Users')).toEqual([
+      ['/users', 'Users'],
+      ['/users/newest', 'Newest Users'],
+      ['/users/scam-restrictions', 'Scam Restrictions'],
+    ]);
   });
 
-  it('is hidden from whoever lacks the page grant', () => {
-    applyGrants({ '/bounties/poi-appeals': ['moderator:reviewer'] });
-    expect(labelsUnder('/models')).toBeUndefined();
+  it('keeps the three grants independent', () => {
+    applyGrants({ '/users': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/users')).toBe(true);
+    expect(canAccess(reviewer, '/users/scam-restrictions')).toBe(false);
+    expect(canAccess(reviewer, '/users/newest')).toBe(false);
+    expect(labelsUnder('Users')).toEqual([['/users', 'Users']]);
+
+    applyGrants({ '/users/scam-restrictions': ['moderator:reviewer'] });
+    expect(canAccess(reviewer, '/users/scam-restrictions')).toBe(true);
+    expect(canAccess(reviewer, '/users')).toBe(false);
+    expect(labelsUnder('Users')).toEqual([['/users/scam-restrictions', 'Scam Restrictions']]);
   });
 
-  it('is not offered as a separate grant on /admin', () => {
-    const models = pageAccessState().tree.find((n) => n.key === '/models');
-    expect(models?.children.map((c) => c.label)).toEqual(['Minor Hash Matches']);
-  });
-
-  it('opens the scam queue from Audit under the Generator Restrictions grant', () => {
+  it('leaves Scam Restrictions out of Audit', () => {
     applyGrants({ '/audit/generator-restrictions': ['moderator:reviewer'] });
-    expect(labelsUnder('/audit')).toEqual(['Generator Restrictions', 'Scam Restrictions']);
-    const scam = NAVIGATION.find((n) => n.path === '/audit')?.children?.find(
-      (c) => c.label === 'Scam Restrictions'
+    expect(labelsUnder('Audit')).toEqual([
+      ['/audit/generator-restrictions', 'Generator Restrictions'],
+    ]);
+    expect(canAccess(reviewer, '/users/scam-restrictions')).toBe(false);
+  });
+});
+
+describe('the Models section', () => {
+  it('shows both pages, each under its own grant', () => {
+    applyGrants({
+      '/models/minor-hash-matches': ['moderator:reviewer'],
+      '/models/flag-appeals': ['moderator:reviewer'],
+    });
+    expect(labelsUnder('Models')).toEqual([
+      ['/models/minor-hash-matches', 'Minor Hash Matches'],
+      ['/models/flag-appeals', 'Model Flag Appeals'],
+    ]);
+
+    applyGrants({ '/models/minor-hash-matches': ['moderator:reviewer'] });
+    expect(labelsUnder('Models')).toEqual([['/models/minor-hash-matches', 'Minor Hash Matches']]);
+    expect(canAccess(reviewer, '/models/flag-appeals')).toBe(false);
+
+    applyGrants({ '/models/flag-appeals': ['moderator:reviewer'] });
+    expect(labelsUnder('Models')).toEqual([['/models/flag-appeals', 'Model Flag Appeals']]);
+    expect(canAccess(reviewer, '/models/minor-hash-matches')).toBe(false);
+  });
+
+  it('is hidden from whoever holds neither page', () => {
+    applyGrants({ '/bounties/poi-appeals': ['moderator:reviewer'] });
+    expect(labelsUnder('Models')).toBeUndefined();
+  });
+});
+
+describe('/admin grantable pages', () => {
+  const tree = pageAccessState().tree;
+  const keys = (node: { children: { key: string }[] } | undefined) =>
+    node?.children.map((c) => c.key);
+
+  it('lists every Users page as its own grantable row', () => {
+    const keysAtTop = tree.map((n) => n.key);
+    expect(keysAtTop).toEqual(
+      expect.arrayContaining(['/users', '/users/newest', '/users/scam-restrictions'])
     );
-    expect(scam && navHref(scam)).toBe('/audit/generator-restrictions?type=scam');
-    const audit = pageAccessState().tree.find((n) => n.key === '/audit');
-    expect(audit?.children.map((c) => c.label)).not.toContain('Scam Restrictions');
+    expect(pageAccessState().paths).toEqual(
+      expect.arrayContaining(['/users', '/users/newest', '/users/scam-restrictions'])
+    );
+  });
+
+  it('lists both Models pages as grantable', () => {
+    expect(keys(tree.find((n) => n.key === '/models'))).toEqual([
+      '/models/minor-hash-matches',
+      '/models/flag-appeals',
+    ]);
   });
 });
 

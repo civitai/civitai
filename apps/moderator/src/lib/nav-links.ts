@@ -12,6 +12,15 @@ const queryMatches = (query: string, url: URL) =>
 export function isNavLinkActive(link: NavLink, siblings: NavLink[], url: URL): boolean {
   if (link.external || !link.path || !isPathActive(link.path, url.pathname)) return false;
   if (link.query) return queryMatches(link.query, url);
+  const longerSibling = siblings.some(
+    (other) =>
+      !other.query &&
+      !other.external &&
+      other.path &&
+      other.path.length > link.path!.length &&
+      isPathActive(other.path, url.pathname)
+  );
+  if (longerSibling) return false;
   return !siblings.some(
     (other) => other.query && other.path === link.path && queryMatches(other.query, url)
   );

@@ -57,11 +57,10 @@
     '/articles': IconArticle,
     '/models': IconBox,
     '/audit': IconListSearch,
-    '/users': IconUsers,
     '/admin': IconShieldLock,
     '/page-visits': IconChartBar,
   };
-  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto };
+  const groupIcons: Record<string, typeof IconPhoto> = { Images: IconPhoto, Users: IconUsers };
   const iconFor = (item: NavLink) =>
     (item.path ? icons[item.path] : groupIcons[item.label]) ?? IconCircle;
 
