@@ -361,7 +361,7 @@ describe('default / compress:false is byte-for-byte unchanged', () => {
   });
 });
 
-describe('SEAM LEDGER: every redis.packed call site in cached-array.ts is compress-aware', () => {
+describe('SEAM LEDGER: every redis.packed read in cached-array.ts is compress-aware; only the notFound write is not', () => {
   // The behavioural tests above cover all NINE call sites as they exist today. This ledger is
   // what catches the TENTH: a new redis.packed READ without `packedOptions` would be silently
   // asymmetric on a compressed cache, and the exact set below also forces any new uncompressed
