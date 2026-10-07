@@ -162,7 +162,9 @@ export function StickerPlacementBar({
   const settled = !countsLoading && !placementsLoading && !countsError;
   const inviting = !total && canPlace && settled;
 
-  if (!total && !canPlace) return null;
+  // Still drawn when the bar has nothing else to say: it is the only way out of
+  // preview, and the drafts outlive whatever made `canPlace` false.
+  if (!total && !canPlace) return <StickerPreviewToggle imageId={imageId} className={className} />;
 
   return (
     <>

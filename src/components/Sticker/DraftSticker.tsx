@@ -640,7 +640,9 @@ export function DraftSticker({
           <IconDropletHalf2 size={14} />
         </ActionIcon>
       </Popover.Target>
-      <Popover.Dropdown p="sm">
+      {/* Portalled, so the cluster's hiding does not reach it. A keyboard press
+          on the toggle is not an outside click, so the slider stays open. */}
+      <Popover.Dropdown p="sm" style={previewing ? HIDDEN : undefined}>
         <Text size="xs" c="dimmed" className="mb-2">
           Opacity
         </Text>
