@@ -29,6 +29,7 @@ import {
 import {
   milestoneOgEndpoint,
   parseMilestoneShareId,
+  SCORE_TIERS,
   scoreTierKey,
 } from '~/shared/constants/creator-journey.constants';
 import type { ScoreTierSlug } from '~/shared/constants/creator-journey.constants';
@@ -287,6 +288,19 @@ describe('profile og:image swap', () => {
     expect(milestoneOgEndpoint(CREATOR, 'legend', undefined)).toBe(withoutParam);
     expect(milestoneOgEndpoint(CREATOR, 'legend', true)).toBe(
       `/api/og?type=milestone&id=${CREATOR}.legend`
+    );
+  });
+});
+
+describe('score tier slugs', () => {
+  // The grant registry and the share id are both built from SCORE_TIERS, so a renamed slug moves
+  // every code path at once. The seeded rows do not move: a rename would re-grant everyone.
+  it('SCORE_TIERS names exactly the seeded score-tier rows', async () => {
+    const { rows } = await q(
+      `SELECT key FROM "CreatorMilestone" WHERE track = 'score' ORDER BY "sortOrder"`
+    );
+    expect(SCORE_TIERS.map((tier) => scoreTierKey(tier.slug))).toEqual(
+      (rows as { key: string }[]).map((row) => row.key)
     );
   });
 });
