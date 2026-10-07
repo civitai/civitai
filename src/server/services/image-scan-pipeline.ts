@@ -627,7 +627,7 @@ export async function resolveScanOutcome({
     }
   }
 
-  // A CSAM flag outranks an appeal and is only ever lifted by a moderator, never by a scan. The
+  // This review flag outranks an appeal and is only ever lifted by a moderator, never by a scan. The
   // SET re-checks the stored value for a flag that lands after the image was loaded.
   if (image.needsReview === 'csam') {
     toUpdate.needsReview = 'csam';

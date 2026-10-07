@@ -72,6 +72,7 @@ const {
   heldUsers,
   appealedIds,
   csamFlaggedIds,
+  withoutModActivity,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
   const sqlLog: string[] = [];
@@ -80,6 +81,8 @@ const {
   const heldUsers: { userId: number; oldestReport: Date }[] = [];
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
+  // Images whose block has no moderator takedown on record, so they take the non-retracting call.
+  const withoutModActivity: number[] = [];
   const mockEnv = {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
@@ -104,7 +107,9 @@ const {
     // below, which would otherwise answer it with Image rows.
     if (sql.includes('FROM "ModActivity"')) {
       const ids = (values[0] as number[]) ?? [];
-      return MOD_ACTIVITY.filter((m) => ids.includes(m.entityId));
+      return MOD_ACTIVITY.filter(
+        (m) => ids.includes(m.entityId) && !withoutModActivity.includes(m.entityId)
+      );
     }
     // Blocked images belonging to the still-held users.
     if (sql.includes('"userId" = ANY')) {
@@ -122,6 +127,7 @@ const {
     heldUsers,
     appealedIds,
     csamFlaggedIds,
+    withoutModActivity,
     mockEnv,
     mockDbRead: {
       jobQueue: {
@@ -199,6 +205,7 @@ beforeEach(() => {
   heldUsers.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
+  withoutModActivity.length = 0;
   heldUsers.push(
     { userId: HELD_USER, oldestReport: RECENT },
     { userId: STRANDED_USER, oldestReport: OLD_REPORT }
@@ -420,6 +427,20 @@ describe('remove-blocked-images retention clock', () => {
     const onlyWhere = deleteOptions()?.onlyWhere as { sql: string; values: unknown[] } | undefined;
     expect(onlyWhere?.sql).toBe(purgeHoldGuard([]).sql);
     expect(onlyWhere?.values).toEqual([[STRANDED_USER]]);
+  });
+
+  it('guards the non-retracting delete as well as the takedown one', async () => {
+    withoutModActivity.push(1);
+    await runJob();
+
+    const guards = mockDeleteImages.mock.calls.map(
+      (c) => (c[2] as { onlyWhere?: { sql: string; values: unknown[] } } | undefined)?.onlyWhere
+    );
+    expect(guards).toHaveLength(2);
+    for (const guard of guards) {
+      expect(guard?.sql).toBe(purgeHoldGuard([]).sql);
+      expect(guard?.values).toEqual([[STRANDED_USER]]);
+    }
   });
 
   it('keeps the queue row of an image a hold kept at delete time', async () => {

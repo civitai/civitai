@@ -71,7 +71,7 @@ type Fixture = {
   csamReports?: CsamReport[];
   /** `CsamReport` rows the primary holds, when a report lands after the worklist read. */
   primaryCsamReports?: CsamReport[];
-  /** One of the account's images carries the CSAM review flag, as the replica sees it. */
+  /** One of the account's images carries the moderator-only review flag, as the replica sees it. */
   csamFlagged?: boolean;
   /** The flag as the primary holds it, when it lands after the worklist read. */
   primaryCsamFlagged?: boolean;
@@ -79,6 +79,8 @@ type Fixture = {
   ingestion?: Record<number, string>;
   /** Per-image `blockedFor`; an id absent from here holds NULL. */
   blockedFor?: Record<number, string>;
+  /** Per-image `needsReview`; an id absent from here holds NULL. */
+  reviewFlags?: Record<number, string>;
   /** Per-image `postId`; an id absent from here holds NULL. */
   postIdOf?: Record<number, number>;
   /** Image ids holding a `JobQueue(BlockedImageDelete)` row. */
@@ -255,6 +257,8 @@ function parseSetClause(sql: string, params: unknown[]) {
     const value = assignment.slice(split + 1).trim();
 
     if (value === '?') row[column] = queue.shift();
+    else if (/^CASE WHEN "needsReview" = 'csam' THEN 'csam' END$/.test(value))
+      row[column] = { keeps: 'csam' };
     else if (value === 'now()') row[column] = new Date();
     else if (value === 'NULL') row[column] = null;
     else if (value.startsWith('"metadata" || jsonb_build_object(')) {
@@ -341,6 +345,10 @@ function applyImageUpdate(sql: string, values: unknown[]) {
         id
       );
 
+    if (row.needsReview && typeof row.needsReview === 'object') {
+      const kept = (row.needsReview as { keeps: string }).keeps;
+      recorded.needsReview = fixture.reviewFlags?.[id] === kept ? kept : null;
+    }
     if (typeof row.ingestion === 'string') (fixture.ingestion ??= {})[id] = row.ingestion;
     if (typeof row.blockedFor === 'string') (fixture.blockedFor ??= {})[id] = row.blockedFor;
     fireBlockedDeleteTrigger(fixture, id, before, recorded);
@@ -1018,6 +1026,24 @@ describe('grace mode', () => {
     expect(blockedRows()[0]).toMatchObject({ updatedAt: NOW });
   });
 
+  it('keeps the moderator-only review flag the blocked-image purge holds on', async () => {
+    seed({
+      7: {
+        deletedAt: NEWER,
+        meta: { imageRemoval: 'grace' },
+        images: [70, 71],
+        reviewFlags: { 70: 'csam', 71: 'minor' },
+      },
+    });
+
+    await run();
+
+    expect(blockedRows().map((row) => [row.id, row.needsReview])).toEqual([
+      [70, 'csam'],
+      [71, null],
+    ]);
+  });
+
   it('clears needsReview the way the moderator block path does', async () => {
     seedUser({ id: 7, imageRemoval: 'grace', images: 1 });
 
@@ -1328,7 +1354,7 @@ describe('removal choice re-read on the destructive path', () => {
   });
 });
 
-describe('an image flagged for CSAM review', () => {
+describe('an image carrying the moderator-only review flag', () => {
   it('keeps the account out of both worklists', async () => {
     cursorStore[FRESH_KEY] = NEWER;
     seed({

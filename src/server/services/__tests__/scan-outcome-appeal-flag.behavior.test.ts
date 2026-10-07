@@ -279,7 +279,7 @@ describe('a rescan that blocks an image under appeal', () => {
   });
 });
 
-describe('a rescan of an image flagged for CSAM review', () => {
+describe('a rescan of an image carrying the moderator-only review flag', () => {
   it.each([
     ['a blocked image', CSAM_BLOCKED],
     ['a visible image', CSAM_SCANNED],

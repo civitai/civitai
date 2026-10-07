@@ -35,6 +35,7 @@ vi.mock('~/server/search-index', () => ({
 import * as imageService from '~/server/services/image.service';
 import { purgeHoldGuard } from '~/server/jobs/image-ingestion';
 import { thumbnailCache, userImageVideoCountCaches } from '~/server/redis/caches';
+import { imagesSearchIndex } from '~/server/search-index';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const holder = vi.hoisted(() => ({ db: null as unknown as PGlite }));
@@ -43,17 +44,19 @@ const PLAIN_USER = 1;
 const OPEN_REPORT_USER = 2;
 const EXPIRED_REPORT_USER = 3;
 const CLOSED_REPORT_USER = 4;
+const UNSENT_ARCHIVED_USER = 5;
 
 // Image ids, named for the case each one pins.
 const PLAIN = 10; // blocked, no hold -> deleted
 const APPEALED = 11; // flagged for appeal mid-run -> kept
-const FLAGGED = 12; // flagged for CSAM review mid-run -> kept
+const FLAGGED = 12; // moderator-only review flag set mid-run -> kept
 const UNBLOCKED = 13; // unblocked mid-run -> kept
 const REPORTED = 14; // owner's report filed mid-run -> kept
 const EXPIRED = 15; // owner's open report already judged past the ceiling -> deleted
 const CLOSED = 16; // owner's report sent and archived -> deleted
 const OTHER_FLAG = 17; // a review flag that is not a hold -> deleted
-const ALL = [PLAIN, APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, CLOSED, OTHER_FLAG];
+const UNSENT = 18; // owner's report archived but never sent -> kept
+const ALL = [PLAIN, APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, CLOSED, OTHER_FLAG, UNSENT];
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -80,8 +83,6 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   vi.clearAllMocks();
-  vi.spyOn(imageService, 'queueImageSearchIndexUpdate').mockResolvedValue(undefined as never);
-  vi.spyOn(imageService, 'deleteImageFromS3').mockResolvedValue(undefined as never);
   vi.spyOn(userImageVideoCountCaches, 'bust').mockResolvedValue(undefined);
   vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
@@ -103,11 +104,13 @@ beforeEach(async () => {
       (${REPORTED}, ${OPEN_REPORT_USER}, 'Blocked', NULL),
       (${EXPIRED}, ${EXPIRED_REPORT_USER}, 'Blocked', NULL),
       (${CLOSED}, ${CLOSED_REPORT_USER}, 'Blocked', NULL),
-      (${OTHER_FLAG}, ${PLAIN_USER}, 'Blocked', 'minor');
+      (${OTHER_FLAG}, ${PLAIN_USER}, 'Blocked', 'minor'),
+      (${UNSENT}, ${UNSENT_ARCHIVED_USER}, 'Blocked', NULL);
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
       (${OPEN_REPORT_USER}, NULL, NULL),
       (${EXPIRED_REPORT_USER}, now(), NULL),
-      (${CLOSED_REPORT_USER}, now(), now());
+      (${CLOSED_REPORT_USER}, now(), now()),
+      (${UNSENT_ARCHIVED_USER}, NULL, now());
   `);
 });
 
@@ -128,16 +131,35 @@ describe('purgeHoldGuard on the delete', () => {
       CLOSED,
       OTHER_FLAG,
     ]);
-    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED]);
+    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, UNSENT]);
+    // A kept image's own side effects must not run: it is still live in the database.
+    const deindexed = vi
+      .mocked(imagesSearchIndex.queueUpdate)
+      .mock.calls.flatMap(([items]) => (items as { id: number }[]).map((i) => i.id));
+    expect(deindexed.sort((a, b) => a - b)).toEqual([PLAIN, EXPIRED, CLOSED, OTHER_FLAG]);
   });
 
   it('holds an open report whose owner the run did not judge expired', async () => {
     await imageService.deleteImages(ALL, true, { onlyWhere: purgeHoldGuard([]) });
 
-    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED]);
+    expect(await remaining()).toEqual([APPEALED, FLAGGED, UNBLOCKED, REPORTED, EXPIRED, UNSENT]);
   });
 
-  // The positive control for the two cases above: without the guard the same call deletes every
+  it('applies the guard to every batch, not only the first', async () => {
+    const extra = Array.from({ length: 150 }, (_, i) => 1000 + i);
+    const lastFlagged = extra[extra.length - 1];
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview")
+      SELECT g, ${PLAIN_USER}, 'Blocked', CASE WHEN g = ${lastFlagged} THEN 'csam' END
+      FROM generate_series(${extra[0]}, ${lastFlagged}) g;
+    `);
+
+    await imageService.deleteImages(extra, true, { onlyWhere: purgeHoldGuard([]) });
+
+    expect((await remaining()).filter((id) => id >= extra[0])).toEqual([lastFlagged]);
+  });
+
+  // The positive control for the cases above: without the guard the same call deletes every
   // fixture row, so what they keep is the guard's doing.
   it('deletes every listed image when no guard is given', async () => {
     await imageService.deleteImages(ALL, true);

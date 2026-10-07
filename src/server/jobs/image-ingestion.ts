@@ -556,15 +556,15 @@ export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
  * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
  * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it.
  * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
- * report, past `CSAM_HOLD_MAX_DAYS`.
+ * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
  */
 export function purgeHoldGuard(reportHoldExpiredUserIds: number[]) {
   return Prisma.sql`
-    ingestion = 'Blocked'::"ImageIngestionStatus"
-    AND "needsReview" IS DISTINCT FROM 'appeal'
-    AND "needsReview" IS DISTINCT FROM 'csam'
+    "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    AND "Image"."needsReview" IS DISTINCT FROM 'csam'
     AND (
-      "userId" = ANY(${reportHoldExpiredUserIds}::int[])
+      "Image"."userId" = ANY(${reportHoldExpiredUserIds}::int[])
       OR NOT EXISTS (
         SELECT 1 FROM "CsamReport" c
         WHERE c."userId" = "Image"."userId"
@@ -685,8 +685,9 @@ export const removeBlockedImages = createJob(
       return true;
     });
 
-    // Only the images actually being destroyed this run, so the alert can't over-report an
-    // expired hold whose images fell outside the batch or turned out to be stale.
+    // Only the images this run is about to delete, so the alert can't list an expired hold whose
+    // images fell outside the batch or turned out to be stale. The DELETE's own guard may still keep
+    // one; the returned count is of what was actually deleted.
     const expiredUserIdSet = new Set(expiredUserIds);
     const holdExpiredDeletions = imagesToDelete.filter((img) => expiredUserIdSet.has(img.userId));
 
@@ -883,12 +884,12 @@ export const removeBlockedImages = createJob(
       // second number is deletions that deliberately left the shared stored object alone. It is
       // NOT "account deletions" — it is everything with no moderator takedown on record, which is
       // account deletions plus every automated block plus every whole-library block.
-      retracted: takedowns.length,
-      deletedWithoutRetraction: deletedWithoutRetraction.length,
+      retracted: takedowns.filter((id) => deletedSet.has(id)).length,
+      deletedWithoutRetraction: deletedWithoutRetraction.filter((id) => deletedSet.has(id)).length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
-      csamHoldExpired: holdExpiredDeletions.length,
+      csamHoldExpired: holdExpiredDeletions.filter((x) => deletedSet.has(x.id)).length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
     };

@@ -668,7 +668,7 @@ describe('image-scan-result webhook - pipeline tests', () => {
       return {
         ingestion: param('ingestion'),
         nsfwLevel: param('nsfwLevel'),
-        // The scan's value is the ELSE arm; a stored CSAM flag is kept over it.
+        // The scan's value is the ELSE arm; a stored moderator-only flag is kept over it.
         needsReview: param(
           'needsReview',
           `CASE WHEN "needsReview" = 'csam' THEN 'csam'\\s+ELSE \\$(\\d+) END`
