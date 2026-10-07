@@ -4727,6 +4727,9 @@ export const getJudgeStats = async ({
   };
 };
 
+// Enough to cover every open crucible today; the caught-up filter runs after the SQL limit.
+const JUDGING_SUGGESTION_CANDIDATES = 50;
+
 /**
  * Still judgeable by this viewer, and inside their browsing level on both the crucible's rating and
  * its cover — the rule the landing feed applies client-side in useApplyHiddenPreferences.
@@ -4776,13 +4779,24 @@ export const getJudgingSuggestions = async ({
         ) judgeable
       ) = 2
     ORDER BY c."createdAt" DESC, c.id DESC
-    LIMIT ${limit}
+    LIMIT ${JUDGING_SUGGESTION_CANDIDATES}
   `;
   if (!rows.length) return [];
 
+  const counts = await countJudgingPairs({
+    crucibleIds: rows.map(({ id }) => id),
+    userId,
+    viewerLevel: browsingLevel,
+  });
+  const ids = rows
+    .map(({ id }) => id)
+    .filter((id) => (counts.get(id)?.remainingPairs ?? 0) > 0)
+    .slice(0, limit);
+  if (!ids.length) return [];
+
   return withPaidEntryCount(
     await dbRead.crucible.findMany({
-      where: { id: { in: rows.map(({ id }) => id) } },
+      where: { id: { in: ids } },
       select: crucibleListSelect,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })

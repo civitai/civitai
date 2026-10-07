@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
-import { countJudgingPairs, getJudgingStatuses } from '~/server/services/crucible.service';
+import {
+  countJudgingPairs,
+  getJudgingStatuses,
+  getJudgingSuggestions,
+} from '~/server/services/crucible.service';
 import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY as CAP } from '~/shared/constants/crucible.constants';
 
@@ -161,5 +165,25 @@ describe('getJudgingStatuses', () => {
     findMany.mockResolvedValue([crucibleRow(1, { nsfwLevel: 4 })]);
 
     expect(await getJudgingStatuses({ crucibleIds: [1], userId: JUDGE, isGreen: true })).toEqual([]);
+  });
+});
+
+describe('getJudgingSuggestions', () => {
+  beforeEach(() => judgeState({}));
+
+  it('skips crucibles the judge has no pairs left in', async () => {
+    queryRaw
+      .mockResolvedValueOnce([{ id: 1 }, { id: 2 }, { id: 3 }]) // candidates, newest first
+      .mockResolvedValueOnce(entries({ 1: [10, 11], 2: [20, 21], 3: [30, 31] }));
+    judgeState({ 1: { voted: ['10:11'], votes: { 10: 1, 11: 1 } } });
+    findMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) =>
+      where.id.in.map((id) => ({ id }))
+    );
+    dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
+
+    const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 1 });
+
+    expect(suggestions.map((c) => c.id)).toEqual([2]);
+    expect(findMany.mock.calls.at(-1)![0].where).toEqual({ id: { in: [2] } });
   });
 });
