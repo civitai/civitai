@@ -4099,6 +4099,7 @@ export interface Appeal {
   resolvedBy: number | null;
   resolvedByUser?: User | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
 }
@@ -5419,6 +5420,8 @@ export interface UserRestriction {
   resolvedAt: Date | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Date | null;
 }

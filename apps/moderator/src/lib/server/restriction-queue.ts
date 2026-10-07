@@ -6,6 +6,7 @@ import { requiresGrant } from '$lib/server/access';
 import type { RestrictionType } from '$lib/restriction-types';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
+import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import {
   getGenerationRestrictions,
   saveSuspiciousMatches,
@@ -125,6 +126,7 @@ export const restrictionActions = (types: readonly RestrictionType[]): Actions =
       z.object({
         userRestrictionId: z.coerce.number().int().positive(),
         status: z.enum(['Upheld', 'Overturned']),
+        ...resolutionReasonFields,
       }),
       await request.formData()
     );
@@ -136,10 +138,13 @@ export const restrictionActions = (types: readonly RestrictionType[]): Actions =
     if (!row) return fail(404, { error: 'Restriction not found.' });
     const unwired = unwiredRuling(row);
     if (unwired) return fail(400, { error: unwired });
+    const reason = checkedResolutionReason('restriction', input.status, input);
+    if (typeof reason === 'string') return fail(400, { error: reason });
 
     const result = await resolveRestriction({
       userRestrictionId: input.userRestrictionId,
       status: input.status,
+      ...reason,
       userId: row.userId,
       moderatorId: locals.user.id,
     });
@@ -150,7 +155,10 @@ export const restrictionActions = (types: readonly RestrictionType[]): Actions =
   // row keeps its cancelled subscription and is never told the outcome.
   ban: requiresGrant('audit.ban.execute', async ({ request, locals }) => {
     const input = parseForm(
-      banFieldsSchema.extend({ userRestrictionId: z.coerce.number().int().positive() }),
+      banFieldsSchema.extend({
+        userRestrictionId: z.coerce.number().int().positive(),
+        ...resolutionReasonFields,
+      }),
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
@@ -165,6 +173,13 @@ export const restrictionActions = (types: readonly RestrictionType[]): Actions =
     // the `ban` handler exists to avoid.
     const unwired = unwiredRuling(row);
     if (unwired) return fail(400, { error: unwired });
+    // Before the ban for the same reason: a ban that lands and then fails the reason check strands
+    // the Pending row. The ban form has one internal-note box, and it is the ruling's note as well.
+    const reason = checkedResolutionReason('restriction', 'Upheld', {
+      resolvedReason: input.resolvedReason,
+      internalNotes: input.detailsInternal,
+    });
+    if (typeof reason === 'string') return fail(400, { error: reason });
 
     const banned = await setBanned({
       userId: row.userId,
@@ -189,6 +204,7 @@ export const restrictionActions = (types: readonly RestrictionType[]): Actions =
     const resolved = await resolveRestriction({
       userRestrictionId: input.userRestrictionId,
       status: 'Upheld',
+      ...reason,
       userId: row.userId,
       moderatorId: locals.user.id,
     });

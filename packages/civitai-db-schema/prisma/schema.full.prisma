@@ -6598,6 +6598,7 @@ model Appeal {
   resolvedBy        Int?
   resolvedByUser    User?        @relation("resolvedAppeals", fields: [resolvedBy], references: [id], onDelete: SetNull)
   resolvedMessage   String?
+  resolvedReason    String?
   internalNotes     String?
   buzzTransactionId String?
 
@@ -8323,6 +8324,8 @@ model UserRestriction {
   resolvedAt      DateTime?
   resolvedBy      Int?
   resolvedMessage String?
+  resolvedReason  String?
+  internalNotes   String?
   userMessage     String?
   userMessageAt   DateTime?
 

@@ -756,6 +756,8 @@ export async function resolveRestriction(input: {
   userRestrictionId: number;
   status: 'Overturned' | 'Upheld';
   resolvedMessage?: string;
+  resolvedReason: string;
+  internalNotes?: string;
   userId: number;
   moderatorId: number;
 }): Promise<ActionResult> {
@@ -764,7 +766,9 @@ export async function resolveRestriction(input: {
     {
       userRestrictionId: input.userRestrictionId,
       status: input.status,
+      resolvedReason: input.resolvedReason,
       ...(input.resolvedMessage ? { resolvedMessage: input.resolvedMessage } : {}),
+      ...(input.internalNotes ? { internalNotes: input.internalNotes } : {}),
     },
     'Restriction ruling'
   );

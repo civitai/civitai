@@ -294,6 +294,8 @@ function closePendingAppeal(
     resolvedBy: number;
     resolvedAt: Date;
     resolvedMessage?: string | null;
+    resolvedReason?: string;
+    internalNotes?: string;
   }
 ) {
   return dbWrite
@@ -387,12 +389,16 @@ export async function resolveImageAppeal({
   imageId,
   status,
   resolvedMessage,
+  resolvedReason,
+  internalNotes,
   userId,
   deferAppealEmail = false,
 }: {
   imageId: number;
   status: AppealDecision;
   resolvedMessage?: string;
+  resolvedReason: string;
+  internalNotes?: string;
   userId: number;
   deferAppealEmail?: boolean;
 }): Promise<ClosedAppeal | undefined> {
@@ -402,6 +408,8 @@ export async function resolveImageAppeal({
     status,
     resolvedBy: userId,
     resolvedMessage: resolvedMessage ?? null,
+    resolvedReason,
+    ...(internalNotes ? { internalNotes } : {}),
     resolvedAt: new Date(),
   });
   if (!appeal) {

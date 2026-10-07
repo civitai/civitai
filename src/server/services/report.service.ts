@@ -621,6 +621,9 @@ export function reopenAppeal({ id, message }: { id: number; message: string }) {
       resolvedAt: null,
       resolvedBy: null,
       resolvedMessage: null,
+      // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
+      resolvedReason: null,
+      internalNotes: null,
     },
   });
 }

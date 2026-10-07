@@ -11,6 +11,10 @@
   import type { RestrictionRow } from '$lib/server/user-restriction.service';
   import { unwiredRulingReason } from '$lib/restriction-types';
   import UserWorkflowsPanel from '$lib/components/UserWorkflowsPanel.svelte';
+  import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
+  import RulingForm from '$lib/components/RulingForm.svelte';
+  import { RESTRICTION_RULING_CHOICES } from '$lib/ruling-choices';
+  import { resolutionReasonLabel } from '@civitai/shared/resolution-reasons';
   import TriggerCard from './TriggerCard.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
@@ -43,7 +47,11 @@
   const unwiredReason = $derived(unwiredRulingReason(restriction.type));
 
   let banning = $state(false);
-  let ruling: 'Upheld' | 'Overturned' | null = $state(null);
+  let banReason = $state('');
+  const toggleBan = () => {
+    banning = !banning;
+    banReason = '';
+  };
 
   // `onSubmit` picks the successor row while the current list still holds it — the reload that follows
   // replaces it, and under the Pending filter the row just ruled on is gone by then.
@@ -97,52 +105,42 @@
         {unwiredReason}
       </p>
     {/if}
-    <div class="mb-3 flex flex-wrap items-center gap-2">
-      <form method="POST" action="?/resolve" use:enhance={rule.enhance}>
-        <input type="hidden" name="userRestrictionId" value={restriction.id} />
-        <input type="hidden" name="userId" value={restriction.userId} />
-        <input type="hidden" name="status" value="Upheld" />
-        <Button
-          type="submit"
-          size="sm"
-          variant="destructive"
-          disabled={rule.submitting || !!unwiredReason}
-          onclick={() => (ruling = 'Upheld')}
-        >
-          {rule.submitting && ruling === 'Upheld' ? 'Upholding…' : 'Uphold mute'}
-        </Button>
-      </form>
-      <form method="POST" action="?/resolve" use:enhance={rule.enhance}>
-        <input type="hidden" name="userRestrictionId" value={restriction.id} />
-        <input type="hidden" name="userId" value={restriction.userId} />
-        <input type="hidden" name="status" value="Overturned" />
-        <Button
-          type="submit"
-          size="sm"
-          disabled={rule.submitting || !!unwiredReason}
-          onclick={() => (ruling = 'Overturned')}
-        >
-          {rule.submitting && ruling === 'Overturned' ? 'Removing…' : 'Remove mute'}
-        </Button>
-      </form>
-      {#if canBan}
-        <!-- Disabled for the same reason, and it is the sharper case: this action bans and THEN rules,
-             so on a row that cannot be ruled on it would ban the account and strand the Pending row. -->
-        <Button size="sm" variant="outline" disabled={!!unwiredReason} onclick={() => (banning = !banning)}>Ban user</Button>
-      {/if}
-
-      {#if selected.size > 0}
-        <form method="POST" action="?/flagSuspicious" use:enhance={flag.enhance}>
+    <div class="mb-3">
+      <RulingForm
+        subject="restriction"
+        choices={RESTRICTION_RULING_CHOICES}
+        action="?/resolve"
+        enhancer={rule.enhance}
+        idPrefix="restriction-{restriction.id}"
+        disabled={rule.submitting || !!unwiredReason}
+      >
+        {#snippet hidden()}
           <input type="hidden" name="userRestrictionId" value={restriction.id} />
-          {#each [...selected] as key (key)}
-            <input type="hidden" name="key" value={key} />
-          {/each}
-          <Button type="submit" size="sm" variant="outline" disabled={flag.submitting}>
-            Flag {selected.size} as false {selected.size === 1 ? 'positive' : 'positives'}
-          </Button>
-        </form>
-      {/if}
+        {/snippet}
+      </RulingForm>
     </div>
+
+    {#if canBan || selected.size > 0}
+      <div class="mb-3 flex flex-wrap items-center gap-2">
+        {#if canBan}
+          <!-- Disabled for the same reason, and it is the sharper case: this action bans and THEN rules,
+               so on a row that cannot be ruled on it would ban the account and strand the Pending row. -->
+          <Button size="sm" variant="outline" disabled={!!unwiredReason} onclick={toggleBan}>Ban user</Button>
+        {/if}
+
+        {#if selected.size > 0}
+          <form method="POST" action="?/flagSuspicious" use:enhance={flag.enhance}>
+            <input type="hidden" name="userRestrictionId" value={restriction.id} />
+            {#each [...selected] as key (key)}
+              <input type="hidden" name="key" value={key} />
+            {/each}
+            <Button type="submit" size="sm" variant="outline" disabled={flag.submitting}>
+              Flag {selected.size} as false {selected.size === 1 ? 'positive' : 'positives'}
+            </Button>
+          </form>
+        {/if}
+      </div>
+    {/if}
 
     {#if banning}
       <div class="mb-3">
@@ -151,13 +149,30 @@
           username={restriction.username}
           enhancer={ban.enhance}
           busy={ban.submitting}
-          onCancel={() => (banning = false)}
+          canConfirm={!!banReason}
+          noteRequired={banReason === 'other'}
+          onCancel={toggleBan}
         >
           {#snippet hidden()}
             <input type="hidden" name="userRestrictionId" value={restriction.id} />
           {/snippet}
           {#snippet prompt()}
             <p class="mb-2 text-sm text-dark-0">This also upholds the restriction.</p>
+            <div class="mb-2">
+              <!-- No note box of its own: the ban's internal note below is recorded on the ruling too. -->
+              <ResolutionReasonFields
+                subject="restriction"
+                verdict="Upheld"
+                idPrefix="restriction-ban-{restriction.id}"
+                showNote={false}
+                bind:reason={banReason}
+              />
+              {#if banReason === 'other'}
+                <p class="mt-1 text-xs text-amber-300">
+                  Other needs an internal note below saying why; it is recorded on the ruling too.
+                </p>
+              {/if}
+            </div>
           {/snippet}
         </BanConfirmForm>
       </div>
@@ -197,6 +212,12 @@
     {#if restriction.resolvedAt}
       <div class="rounded-xl border border-dark-4 bg-dark-6 p-4">
         <p class="text-xs text-dark-2">Resolved {dateTime(restriction.resolvedAt)}</p>
+        {#if restriction.resolvedReason}
+          <p class="text-sm text-dark-0">Reason: {resolutionReasonLabel(restriction.resolvedReason)}</p>
+        {/if}
+        {#if restriction.internalNotes}
+          <p class="text-sm text-dark-2">Note: {restriction.internalNotes}</p>
+        {/if}
         {#if restriction.resolvedMessage}
           <p class="text-sm text-dark-0">{restriction.resolvedMessage}</p>
         {/if}

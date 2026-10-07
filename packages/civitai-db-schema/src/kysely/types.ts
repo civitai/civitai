@@ -400,6 +400,7 @@ export type Appeal = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
 };
@@ -4798,6 +4799,8 @@ export type UserRestriction = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Timestamp | null;
 };
