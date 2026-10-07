@@ -71,7 +71,7 @@ function parentRow(over: Record<string, unknown> = {}) {
   };
 }
 
-const VERSION = '2026-10-01T00:00:00.000Z';
+const VERSION = '2026-10-01T00:00:00.123Z';
 const BODY = { itemKey: 'gen-1', title: 'Gen One', tagline: 'Makes things', subPath: 'g/ONE' };
 
 function liveRow(over: Record<string, unknown> = {}) {
@@ -93,7 +93,7 @@ function liveRow(over: Record<string, unknown> = {}) {
     pendingSubmittedAt: null,
     status: 'approved',
     approvedAt: new Date('2026-10-01'),
-    updatedAt: new Date('2026-10-01'),
+    updatedAt: new Date('2026-10-01T00:00:00.123Z'),
     ...over,
   };
 }
@@ -611,6 +611,15 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
 describe('moderateSubListing', () => {
   const mod = (input: Record<string, unknown>) =>
     moderateSubListing({ input: { version: VERSION, ...input } as never, moderatorId: 9 });
+
+  it('the compare-and-set window is exactly the millisecond the read saw', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
+    await mod({ id: 'asl_x', action: 'approve' });
+    expect(casWrite().where.updatedAt).toEqual({
+      gte: new Date('2026-10-01T00:00:00.123Z'),
+      lt: new Date('2026-10-01T00:00:00.124Z'),
+    });
+  });
 
   it('approves a pending item, stamps the moderator and busts the catalog', async () => {
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));

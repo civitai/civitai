@@ -43,7 +43,7 @@ app's shared storage, is not hidden and was authored by the caller; a title (1â€
 of one to four `[A-Za-z0-9_-]` segments; and a rating no less mature than the parent's (unset
 inherits it). Limits: 30/hour and 100/day per user per parent, `max_per_author` active items,
 8 KB body. While the tables are absent the endpoints answer 503. An upsert that keeps losing a
-race with a concurrent moderator action answers 409 (`conflict`) after three attempts.
+race with another write to the same item answers 409 (`conflict`) after three attempts.
 
 The scope is sensitive (manifests must justify it), consent-exempt (the checks above are the
 gate) and never minted for dev, tunnel or review tokens.

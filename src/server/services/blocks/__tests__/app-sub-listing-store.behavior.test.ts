@@ -122,9 +122,11 @@ dbMock.dbWrite.appSubListing.updateMany.mockImplementation(
       if (v === null) return [`${snake(k)} IS NULL`];
       // The compare-and-set's millisecond window: `{ gte, lt }`.
       if (v && typeof v === 'object' && !(v instanceof Date)) {
+        const ops: Record<string, string> = { gte: '>=', lt: '<' };
         return Object.entries(v as Record<string, unknown>).map(([op, bound]) => {
+          if (!ops[op]) throw new Error(`bridge: unsupported operator ${op}`);
           values.push(bound);
-          return `${snake(k)} ${op === 'gte' ? '>=' : '<'} $${values.length}`;
+          return `${snake(k)} ${ops[op]} $${values.length}`;
         });
       }
       values.push(v);
@@ -549,8 +551,7 @@ describe('store catalog with sub-listings, executed', () => {
   });
 
   it('a row whose updated_at Postgres wrote at microsecond precision can still be moderated', async () => {
-    // No truncation: the column default and hand edits write microseconds, which a JS Date
-    // cannot carry, so the compare-and-set must not demand an exact match.
+    // Not truncated: the column default and hand edits write microseconds.
     await holder.db.exec(`
       UPDATE app_sub_listings
          SET status = 'pending',
