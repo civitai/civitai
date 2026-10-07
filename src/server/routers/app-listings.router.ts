@@ -1833,6 +1833,8 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
+        includeSubListings: !!ctx.features?.appStoreSubListings,
+        viewerBrowsingLevel: ctx.user?.browsingLevel ?? null,
       });
     }),
 

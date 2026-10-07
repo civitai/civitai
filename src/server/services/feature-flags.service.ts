@@ -660,6 +660,13 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer,
+  // `appListings.listAvailable` mixes approved sub-listing cards into the page. Read
+  // server-side per user (`ctx.features`); the client renders whatever the page contains.
+  // `[]` so it is dark for everyone, mods included, until the Flipt flag exists. Writes are
+  // NOT gated on it — they are gated by the parent's `app_sub_listing_parents` row — so
+  // items can queue for moderation while the store side is dark.
+  appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key

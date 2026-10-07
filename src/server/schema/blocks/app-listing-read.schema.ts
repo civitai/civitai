@@ -274,6 +274,38 @@ export type ListingCard = {
   kindData: ListingCardKindData;
 };
 
+/**
+ * One store card for a SUB-LISTING: an item a parent app placed in the store. Public-field
+ * allowlist like `ListingCard`. `kind` and `category` are the parent's, so the grid's filters
+ * and client-side search treat it like any other card; `contentRating` is the stricter of
+ * parent and item. `runHref` is built server-side under the parent's run route; there is no
+ * author-supplied URL.
+ *
+ * Only the tRPC store grid returns these (behind the `app-store-sub-listings` flag). The
+ * public REST catalog never does.
+ */
+export type SubListingCard = {
+  cardType: 'sub-listing';
+  id: string;
+  name: string;
+  tagline: string | null;
+  kind: ListingKind;
+  category: string | null;
+  contentRating: string | null;
+  /** The item image when it is cleared for this viewer, else the parent's cover. */
+  coverUrl: string | null;
+  /** The item's author. */
+  creator: ListingCreatorChip;
+  parent: { id: string; slug: string; name: string; iconUrl: string | null };
+  runHref: string;
+};
+
+export type StoreGridItem = ListingCard | SubListingCard;
+
+export function isSubListingCard(item: StoreGridItem): item is SubListingCard {
+  return (item as SubListingCard).cardType === 'sub-listing';
+}
+
 export type ListingGalleryScreenshot = {
   url: string;
   caption: string | null;
