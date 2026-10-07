@@ -80,6 +80,9 @@ export enum TransactionType {
   AppAuthorFee = 28,
 }
 
+/** Every App Blocks author-fee leg's description starts with this; ledger queries match on it. */
+export const APP_AUTHOR_FEE_DESCRIPTION = 'App author fee';
+
 type BuzzTypeConfig =
   | {
       type: 'spend';
