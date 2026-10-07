@@ -24,6 +24,7 @@ import {
   IconFlame,
   IconHeart,
   IconHexagonFilled,
+  IconMedal,
   IconMoodSmile,
   IconPhoto,
   IconReport,
@@ -228,7 +229,7 @@ const metricTypes: Record<
   }),
   wins: () => ({
     tooltip: 'Wins',
-    icon: <IconTrophy {...iconProps} />,
+    icon: <IconMedal {...iconProps} />,
   }),
 };
 
