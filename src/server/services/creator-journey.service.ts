@@ -6,7 +6,10 @@ import { getCreatorScoreUnlocks } from '~/server/services/creator-score-unlocks.
 import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
+import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
+import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
 import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
+import { achievedAtIsObserved } from '~/server/services/creator-milestone-grant.service';
 
 type MilestoneDefinition = {
   key: string;
@@ -115,6 +118,29 @@ export async function getCreatorJourney(userId: number) {
       achievedAt,
     })),
   };
+}
+
+const LEGEND_KEY = 'score:legend';
+
+/**
+ * A Legend whose crossing was never observed (granted silently) is a founding Legend, undated.
+ * Nothing is returned when the owner hides the Legend badge, or all badges, on their profile.
+ */
+export async function getLegendStatus(userId: number) {
+  const legend = await dbRead.userCreatorMilestone.findUnique({
+    where: { userId_milestoneKey: { userId, milestoneKey: LEGEND_KEY } },
+    select: { achievedAt: true, seenAt: true, milestone: { select: { cosmeticId: true } } },
+  });
+  // Almost no profile belongs to a Legend, so the privacy read waits until one is found.
+  if (!legend) return null;
+  const profile = await dbRead.userProfile.findUnique({
+    where: { userId },
+    select: { privacySettings: true },
+  });
+  const privacy = profile?.privacySettings as PrivacySettingsSchema | null | undefined;
+  if (!isBadgeShownOnProfile(privacy, legend.milestone.cosmeticId)) return null;
+  const founding = !achievedAtIsObserved(legend);
+  return { founding, since: founding ? null : legend.achievedAt };
 }
 
 /**

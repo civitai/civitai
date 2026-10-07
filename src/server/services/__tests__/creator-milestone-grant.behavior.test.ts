@@ -13,6 +13,7 @@ import type * as NotificationService from '~/server/services/notification.servic
 import { applyUserScoreUpdates, persistScoreBatch } from '~/server/jobs/update-user-score';
 import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import {
+  achievedAtIsObserved,
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
   grantMilestones,
@@ -350,6 +351,66 @@ describe('backfill', () => {
     expect(await held(DELETED)).toEqual([]);
     expect(await held(BANNED)).toEqual([]);
     expect(await held(LATE)).toEqual([{ milestoneKey: 'score:spark', seen: true }]);
+  });
+});
+
+/**
+ * Founding Legends and the showcase's "new this month" read achievedAtIsObserved, so each grant path
+ * has to leave the row shape it expects. Not pinned here: a crossing before a definition launches is
+ * inserted unseen and stamped seen in a later statement, so it reads as observed unless both land in
+ * the same millisecond, in which case it reads as unobserved and simply goes undated. Wrapping the
+ * grant and markMilestonesSeen in one transaction would make that every time, and nothing here would
+ * notice.
+ */
+describe('achievedAtIsObserved on every grant path', () => {
+  const rowOf = async (userId: number, key: string) => {
+    const [row] = await q<{ achievedAt: Date; seenAt: Date | null }>(
+      `SELECT "achievedAt", "seenAt" FROM "UserCreatorMilestone" WHERE "userId" = $1 AND "milestoneKey" = $2`,
+      [userId, key]
+    );
+    return row;
+  };
+
+  it('is false for a nightly late grant of a tier the old total had already passed', async () => {
+    await addUser(LATE, 4000);
+    const transitions = await applyUserScoreUpdates(pg, [[String(LATE), { models: 3000 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(achievedAtIsObserved(await rowOf(LATE, 'score:spark'))).toBe(false);
+  });
+
+  it('is true for a nightly crossing, before and after the user sees it', async () => {
+    await addUser(ELIGIBLE, 400);
+    const transitions = await applyUserScoreUpdates(pg, [[String(ELIGIBLE), { models: 600 }]]);
+    await grantScoreTierMilestones(pg, transitions);
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'score:spark'))).toBe(true);
+    await q(
+      `UPDATE "UserCreatorMilestone" SET "seenAt" = "achievedAt" + interval '2 days' WHERE "userId" = $1`,
+      [ELIGIBLE]
+    );
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'score:spark'))).toBe(true);
+  });
+
+  it('is false for a row the launch backfill granted', async () => {
+    await addUser(ELIGIBLE, 600);
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'score:spark'))).toBe(false);
+  });
+
+  it('follows the detector on the shared writer: its own date is observed, none is not', async () => {
+    await addUser(ELIGIBLE, null);
+    await addUser(LATE, null);
+    await grantMilestones(pg, {
+      sql: `SELECT x."userId", 'create:decoy' AS "milestoneKey", x."achievedAt", true AS silent
+        FROM jsonb_to_recordset($1::jsonb) AS x("userId" int, "achievedAt" timestamp)`,
+      params: [
+        JSON.stringify([
+          { userId: ELIGIBLE, achievedAt: '2025-03-04 05:06:07' },
+          { userId: LATE, achievedAt: null },
+        ]),
+      ],
+    });
+    expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'create:decoy'))).toBe(true);
+    expect(achievedAtIsObserved(await rowOf(LATE, 'create:decoy'))).toBe(false);
   });
 });
 
