@@ -105,7 +105,9 @@ beforeAll(async () => {
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
     );
   `);
-  for (const migration of MIGRATIONS) await holder.db.exec(readFileSync(migration, 'utf8'));
+  // Twice: migrations are applied by hand, possibly more than once.
+  for (const migration of [...MIGRATIONS, ...MIGRATIONS])
+    await holder.db.exec(readFileSync(migration, 'utf8'));
   // Definitions the score detector must ignore: another track below every score, and a score row
   // without a threshold. The migration seeds neither, so without them the track and threshold
   // filters would be untested.
@@ -422,6 +424,22 @@ describe('cosmetics beyond the badge', () => {
       ]);
     }
     expect(await previewMilestoneCosmetics(pg, { afterUserId: 0 })).toEqual({ users: 0, rows: 0 });
+  });
+
+  it('counts a cosmetic listed as both badge and extra once, in the preview as in the grant', async () => {
+    await addUser(ELIGIBLE, 600);
+    await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
+    const badge = await attachCosmetic('score:spark');
+    await q(
+      `INSERT INTO "CreatorMilestoneCosmetic" ("milestoneKey", "cosmeticId") VALUES ($1, $2)`,
+      ['score:spark', badge]
+    );
+    expect(await previewMilestoneCosmetics(pg, { afterUserId: 0 })).toEqual({ users: 1, rows: 1 });
+    expect(await grantMilestoneCosmeticsBatch(pg, { afterUserId: 0, limit: 10 })).toEqual({
+      users: 1,
+      inserted: 1,
+      lastUserId: ELIGIBLE,
+    });
   });
 });
 
