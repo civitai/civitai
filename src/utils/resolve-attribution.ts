@@ -39,6 +39,13 @@ export type ResolveAttribution = {
  *
  * Call sites with no request context (jobs, server-side fetches) do not call
  * this; they pass `internal` directly.
+ *
+ * Known gap: `internal` covers only internal callers that present the system
+ * account's credential. A worker that is handed a download URL WITHOUT a token
+ * (e.g. one run by a provider the orchestrator does not authorize) arrives with
+ * no session, so it is classified `anon` and cannot be told apart from an
+ * anonymous visitor here. Distinguishing it needs a signal on the request
+ * itself, which this function does not have.
  */
 export function resolveActorFor(user: { id?: number } | null | undefined): ResolveActor {
   if (user?.id == null) return 'anon';

@@ -23,10 +23,21 @@ import { describe, expect, it } from 'vitest';
  * resolve is recorded as `threaded` and its callers are pinned in the second
  * table instead.
  *
- * Known limit: comments are stripped with string-unaware regexes, so a string
- * literal containing `/*` (a glob) followed later by `*\/` could hide code
- * between them. An EXISTING call site hidden that way fails the ledger loudly;
- * only a newly added one in such a file could slip past.
+ * The ledger finds calls by NAME, so a call under another name would be
+ * invisible to it. The alias gate below closes the routes to one: importing a
+ * guarded function under a different local name (`{ resolveDownloadUrl as rdu }`),
+ * renaming it in a destructure (`{ resolveDownloadUrl: rdu } = await import(…)`),
+ * and calling it through a computed key on a namespace or dynamic import of its
+ * module (`dw[k](…)`, `(await import(…))[k](…)`). A plain member call
+ * (`dw.resolveDownloadUrl(`) keeps the name and is counted by the ledger.
+ *
+ * Known limits, both needing deliberate indirection rather than an ordinary edit:
+ * - A guarded function passed around as a value (`const f = resolveDownloadUrl;
+ *   f(…)`, or handed to a helper) is not followed.
+ * - Comments are stripped with string-unaware regexes, so a string literal
+ *   containing `/*` (a glob) followed later by `*\/` could hide code between
+ *   them. An EXISTING call site hidden that way fails the ledger loudly; only a
+ *   newly added one in such a file could slip past.
  */
 
 const SRC = path.resolve(__dirname, '../..');
@@ -104,7 +115,78 @@ function scan(fn: string): Record<string, string[]> {
   return found;
 }
 
+const GUARDED = ['resolveDownloadUrl', 'getDownloadUrlByFileId', 'getFileForModelVersion'];
+const GUARDED_MODULE = String.raw`['"][^'"]*(?:delivery-worker|file\.service)['"]`;
+
+/** Every way `src` reaches a guarded function under a name the ledger cannot see. */
+function aliasViolationsIn(src: string): string[] {
+  const code = stripComments(src);
+  const out: string[] = [];
+  const names = GUARDED.join('|');
+  for (const m of code.matchAll(new RegExp(`\\b(${names})\\s+as\\s+([\\w$]+)`, 'g'))) {
+    if (m[1] !== m[2]) out.push(`imports ${m[1]} as ${m[2]}`);
+  }
+  for (const m of code.matchAll(new RegExp(`\\b(${names})\\s*:\\s*([\\w$]+)\\s*[,}]`, 'g'))) {
+    if (m[1] !== m[2]) out.push(`destructures ${m[1]} as ${m[2]}`);
+  }
+  for (const m of code.matchAll(
+    new RegExp(`import\\s+\\*\\s+as\\s+([\\w$]+)\\s+from\\s+${GUARDED_MODULE}`, 'g')
+  )) {
+    if (new RegExp(`(?<![\\w$.])${m[1].replace('$', '\\$')}\\s*\\[`).test(code))
+      out.push(`indexes namespace ${m[1]} by a computed key`);
+  }
+  if (new RegExp(`import\\(\\s*${GUARDED_MODULE}\\s*\\)\\s*\\)\\s*\\[`).test(code))
+    out.push('indexes a dynamic import by a computed key');
+  return out;
+}
+
 describe('storage-resolver attribution call-site ledger', () => {
+  // The ledgers match by name; this is what makes "by name" complete.
+  it('no file reaches a guarded function under another name', () => {
+    const violations: string[] = [];
+    for (const file of walk(SRC)) {
+      const raw = readFileSync(file, 'utf8');
+      if (!GUARDED.some((n) => raw.includes(n)) && !/delivery-worker|file\.service/.test(raw))
+        continue;
+      for (const v of aliasViolationsIn(raw))
+        violations.push(`${path.relative(SRC, file).split(path.sep).join('/')}: ${v}`);
+    }
+    expect(
+      violations,
+      'a guarded resolve function is reached under a name the call-site ledger cannot see; ' +
+        'import it under its own name so the ledger counts the call'
+    ).toEqual([]);
+  });
+
+  it('the alias gate sees every shape it claims to', () => {
+    const src = [
+      `import { resolveDownloadUrl as rdu, isStorageResolverEnabled } from '~/utils/delivery-worker';`,
+      `import { getFileForModelVersion } from '~/server/services/file.service';`,
+      `import * as dw from '~/utils/delivery-worker';`,
+      `const { getDownloadUrlByFileId: wire } = await import('~/utils/delivery-worker');`,
+      `await dw[k](1, u);`,
+      `await (await import('~/utils/delivery-worker'))[k](1, u);`,
+      `// import { resolveDownloadUrl as commented } from '~/utils/delivery-worker';`,
+    ].join('\n');
+    expect(aliasViolationsIn(src)).toEqual([
+      'imports resolveDownloadUrl as rdu',
+      'destructures getDownloadUrlByFileId as wire',
+      'indexes namespace dw by a computed key',
+      'indexes a dynamic import by a computed key',
+    ]);
+    // Negative control: the ordinary shapes the ledger already counts are not flagged.
+    expect(
+      aliasViolationsIn(
+        [
+          `import { resolveDownloadUrl } from '~/utils/delivery-worker';`,
+          `import * as dw from '~/utils/delivery-worker';`,
+          `await dw.resolveDownloadUrl(1, u, n, { caller: 'vault', actor: 'user' });`,
+          `const { resolveDownloadUrl: resolveDownloadUrl } = x;`,
+        ].join('\n')
+      )
+    ).toEqual([]);
+  });
+
   it('every resolveDownloadUrl call names its caller and actor', () => {
     expect(scan('resolveDownloadUrl')).toEqual({
       'pages/api/download/vault/[vaultItemId].ts': ['vault|derived'],

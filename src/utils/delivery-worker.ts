@@ -157,8 +157,9 @@ export async function getDownloadUrlByFileId(
     fileName: fileName ? safeDecodeURIComponent(fileName) : undefined,
     caller: options?.caller,
     actor: options?.actor,
-    // Omitted rather than sent as `false` so an older resolver, which does not
-    // know the field, receives a byte-identical request to the one it does today.
+    // Omitted rather than sent as `false`, so a resolver that does not know the
+    // field never sees it on an ordinary resolve. (`caller` and `actor` above are
+    // always sent; the resolver ignores fields it does not know.)
     ...(canRequestDirect ? { direct: true } : {}),
   });
 
