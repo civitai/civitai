@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
+import type * as SessionModule from '~/server/auth/get-server-auth-session';
+import type * as SideEffectsModule from '~/server/auth/login-side-effects';
+import type * as ServerUrlHelpers from '~/server/utils/url-helpers';
 
 import {
   SAFE_RETURN_PATHS,
@@ -15,19 +18,15 @@ const { BASE_URL } = vi.hoisted(() => {
 });
 
 vi.mock('~/server/auth/get-server-auth-session', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/auth/get-server-auth-session')>()),
+  ...(await importOriginal<typeof SessionModule>()),
   getServerAuthSession: vi.fn(async () => ({ user: { id: 1, createdAt: '2020-01-01' } })),
 }));
 vi.mock('~/server/auth/login-side-effects', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/auth/login-side-effects')>()),
+  ...(await importOriginal<typeof SideEffectsModule>()),
   runLoginSideEffects: vi.fn(async () => undefined),
 }));
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/logging/client')>()),
-  logToAxiom: vi.fn(async () => undefined),
-}));
 vi.mock('~/server/utils/url-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/utils/url-helpers')>()),
+  ...(await importOriginal<typeof ServerUrlHelpers>()),
   getBaseUrl: () => BASE_URL,
 }));
 

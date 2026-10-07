@@ -1,6 +1,5 @@
 import { useEffect } from 'react';
-import { LOGIN_POPUP_CHANNEL, LOGIN_POPUP_DONE } from '~/utils/auth-helpers';
-import { safeInternalPath } from '~/utils/url-helpers';
+import { LOGIN_POPUP_CHANNEL, LOGIN_POPUP_DONE, popupDoneTarget } from '~/utils/auth-helpers';
 
 // Login-completion landing, reached by EITHER the OAuth popup OR the email magic-link tab (which has no opener).
 // By now the session cookie is set on this domain (the auth-code flow's /api/auth/callback minted it on this
@@ -27,8 +26,7 @@ export default function LoginPopupDonePage() {
     }
     if (!hasSameOriginOpener) {
       // Email magic-link tab: go to where login started.
-      const cb = new URLSearchParams(window.location.search).get('cb');
-      window.location.replace(safeInternalPath(cb, '/'));
+      window.location.replace(popupDoneTarget(window.location.search));
     }
   }, []);
 
