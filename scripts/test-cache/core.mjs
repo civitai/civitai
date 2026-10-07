@@ -36,12 +36,10 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 // Inputs every test depends on that no import edge or file read records. This cache's own code is
 // among them: a fix to how reads are captured must invalidate everything recorded without it.
 // `node_modules/.pnpm/lock.yaml` is what pnpm actually INSTALLED, which a rebased tree that skipped
-// `pnpm install` does not share with its lockfile. The package.json files carry `exports` maps, and a
-// symlinked workspace package resolves through them — the lockfile does not record `exports`.
+// `pnpm install` does not share with its lockfile.
 const GLOBAL_INPUTS = [
   'pnpm-lock.yaml',
   'node_modules/.pnpm/lock.yaml',
-  'package.json',
   'vitest.config.mts',
   'tsconfig.json',
 ];
@@ -249,8 +247,29 @@ function listTree(abs) {
   return out.sort();
 }
 
+// The package.json files carry `exports` maps, and a symlinked workspace package resolves through
+// them — the lockfile does not record `exports`. Their `version` is left out: every release bumps one,
+// and keying on it threw away every record in every worktree several times a day. A test that reads a
+// manifest itself is still keyed on its whole content, through keyFor.
+export function manifestFingerprint(root, rel) {
+  let text;
+  try {
+    text = readFileSync(join(root, rel), 'utf8');
+  } catch {
+    return 'missing';
+  }
+  let pkg;
+  try {
+    pkg = JSON.parse(text);
+  } catch {
+    return `file:${sha(text)}`;
+  }
+  if (pkg && typeof pkg === 'object' && !Array.isArray(pkg)) delete pkg.version;
+  return `manifest:${sha(JSON.stringify(pkg))}`;
+}
+
 function workspaceManifests(root) {
-  const out = [];
+  const out = ['package.json'];
   for (const ws of WORKSPACE_DIRS) {
     let names = [];
     try {
@@ -278,7 +297,7 @@ export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(
       process.platform,
       vitestVersion,
       GLOBAL_INPUTS.map((f) => [f, fingerprint(f)]),
-      workspaceManifests(root).map((f) => [f, fingerprint(f)]),
+      workspaceManifests(root).map((f) => [f, manifestFingerprint(root, f)]),
       own,
     ])
   );

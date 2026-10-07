@@ -22,6 +22,7 @@ const {
   isCoveredElsewhere,
   alwaysRuns,
   keyFor,
+  globalSalt,
   makeFingerprinter,
   mode,
   shadowCandidates,
@@ -43,6 +44,7 @@ const {
     fingerprint: Fingerprint;
   }) => string;
   makeFingerprinter: (root: string) => Fingerprint;
+  globalSalt: (root: string, vitestVersion: string) => string;
   mode: (env: Record<string, string | undefined>) => string;
   shadowCandidates: (rel: string) => string[];
   changedSince: (root: string, rel: string, sinceMs: number) => boolean;
@@ -187,6 +189,74 @@ describe('the key', () => {
     const before = key(['src']);
     writeFileSync(join(root, 'src/sub/new.ts'), 'n');
     expect(key(['src'])).not.toBe(before);
+  });
+});
+
+// Every release bumps a `version` in one of these manifests, and when the salt saw it every record in
+// every worktree stopped matching: the first queued run after each release ran ~2,500 files instead
+// of ~250. If you are about to put `version` back in the salt, that is what it costs.
+describe('the salt and the workspace manifests', () => {
+  const manifests = ['package.json', 'apps/app/package.json', 'packages/pkg/package.json'];
+  const setup = () => {
+    const root = mkdtempSync(join(tmpdir(), 'test-cache-salt-'));
+    for (const rel of manifests) {
+      mkdirSync(join(root, rel, '..'), { recursive: true });
+      writeManifest(root, rel, { name: rel, version: '1.0.0', exports: { '.': './index.ts' } });
+    }
+    return root;
+  };
+  const writeManifest = (root: string, rel: string, pkg: object) =>
+    writeFileSync(join(root, rel), JSON.stringify(pkg, null, 2));
+  const edit = (root: string, rel: string, change: (pkg: Record<string, unknown>) => void) => {
+    const pkg = JSON.parse(readFileSync(join(root, rel), 'utf8'));
+    change(pkg);
+    writeManifest(root, rel, pkg);
+  };
+
+  it.each(manifests)('ignores a release bumping the version in %s', (rel) => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, rel, (pkg) => (pkg.version = '1.0.1'));
+    expect(globalSalt(root, 'v')).toBe(before);
+  });
+
+  it.each(manifests)('still changes when the exports of %s change', (rel) => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, rel, (pkg) => (pkg.exports = { '.': './other.ts' }));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a dependency changes', () => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.dependencies = { zod: '^3.0.0' }));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a manifest it cannot parse changes', () => {
+    const root = setup();
+    writeFileSync(join(root, 'apps/app/package.json'), '{ "version": "1.0.0",');
+    const before = globalSalt(root, 'v');
+    writeFileSync(join(root, 'apps/app/package.json'), '{ "version": "1.0.1",');
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  // The salt is version-blind; a test that reads a manifest itself must not be.
+  it('still re-runs a test that read a manifest when only its version changes', () => {
+    const root = setup();
+    writeFileSync(join(root, 't.test.ts'), 't');
+    const key = () =>
+      keyFor({
+        salt: globalSalt(root, 'v'),
+        project: 'unit',
+        testRel: 't.test.ts',
+        entries: ['apps/app/package.json'],
+        fingerprint: makeFingerprinter(root),
+      });
+    const before = key();
+    edit(root, 'apps/app/package.json', (pkg) => (pkg.version = '1.0.1'));
+    expect(key()).not.toBe(before);
   });
 });
 
