@@ -7,10 +7,12 @@ import {
   IconTrendingUp,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { ReactNode } from 'react';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { CreatorAchievements, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
 import {
   accentVar,
@@ -407,6 +409,7 @@ function LadderRung({
   const reached = kinds.total >= rung.minScore;
   const accent = accentOf(rung.tier);
   const state: BadgeState = badgeEarned ? 'earned' : isNext ? 'next' : 'locked';
+  const rewards = (rung.tier && tierRewards[rung.tier.key]) ?? [];
 
   return (
     <div className="flex gap-3 sm:gap-4" style={accentVar(accent)}>
@@ -477,23 +480,21 @@ function LadderRung({
             {rung.tier.hint}
           </Text>
         )}
-        {rung.unlocks.length > 0 ? (
+        {rewards.length > 0 || rung.unlocks.length > 0 ? (
           <ul className="m-0 mt-1 flex list-none flex-col gap-1 p-0">
+            {rewards.map((reward) => (
+              <UnlockItem key={reward} unlocked={badgeEarned}>
+                {reward}
+              </UnlockItem>
+            ))}
             {groupCreatorScoreUnlocks(rung.unlocks).map((group) => {
               const unlocked = group.unlocks.every((u) => isCreatorScoreUnlockReached(u, kinds));
               return (
-                <li key={group.key} className="flex items-start gap-2">
-                  {unlocked ? (
-                    <IconCircleCheck size={16} className="mt-0.5 shrink-0 text-green-6" />
-                  ) : (
-                    <IconLock size={16} className="mt-0.5 shrink-0 text-gray-5" />
-                  )}
-                  <Text size="sm" c={unlocked ? undefined : 'dimmed'}>
-                    {group.label}
-                    {group.minScore !== rung.minScore &&
-                      ` (from ${numberWithCommas(group.minScore)})`}
-                  </Text>
-                </li>
+                <UnlockItem key={group.key} unlocked={unlocked}>
+                  {group.label}
+                  {group.minScore !== rung.minScore &&
+                    ` (from ${numberWithCommas(group.minScore)})`}
+                </UnlockItem>
               );
             })}
           </ul>
@@ -504,5 +505,20 @@ function LadderRung({
         )}
       </div>
     </div>
+  );
+}
+
+function UnlockItem({ unlocked, children }: { unlocked: boolean; children: ReactNode }) {
+  return (
+    <li className="flex items-start gap-2">
+      {unlocked ? (
+        <IconCircleCheck size={16} className="mt-0.5 shrink-0 text-green-6" />
+      ) : (
+        <IconLock size={16} className="mt-0.5 shrink-0 text-gray-5" />
+      )}
+      <Text size="sm" c={unlocked ? undefined : 'dimmed'}>
+        {children}
+      </Text>
+    </li>
   );
 }
