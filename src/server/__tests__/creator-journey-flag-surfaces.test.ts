@@ -19,7 +19,7 @@ describe('Creator Journey flag gates', () => {
     );
     // One chunk per procedure, whatever kind of procedure it is or how it is written.
     const procedures = router.split(/^ {2}(?=\w+: \w+Procedure(?!\w))/m).slice(1);
-    expect(procedures).toHaveLength(3);
+    expect(procedures).toHaveLength(5);
     for (const procedure of procedures) {
       expect(procedure, procedure.split(':')[0]).toContain(
         ".use(isFlagProtected('creatorJourney'))"

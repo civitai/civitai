@@ -239,7 +239,9 @@
     </SidebarFooter>
   </Sidebar>
 
-  <SidebarInset>
+  <!-- min-w-0: a flex item's automatic minimum is its content's width, so one wide table would widen
+       the whole content column past the viewport instead of scrolling inside its own container. -->
+  <SidebarInset class="min-w-0">
     <header class="flex h-12 shrink-0 items-center gap-2 px-4">
       <SidebarTrigger />
     </header>

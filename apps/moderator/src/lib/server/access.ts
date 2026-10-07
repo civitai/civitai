@@ -271,7 +271,8 @@ export function grantsSnapshot(): Record<string, Role[]> {
 
 type RoleUser = Pick<SessionUser, 'roles'> | null | undefined;
 
-const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);
+/** The admin check: holds `moderator:admin`, which reaches everything and grants everything. */
+export const isSuper = (user: RoleUser) => (user?.roles ?? []).includes(SUPER_ROLE);
 
 function allows(path: string, user: RoleUser): boolean {
   if (isSuper(user)) return true;

@@ -10,7 +10,15 @@
  */
 
 import { execFileSync, spawnSync } from 'child_process';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { fileURLToPath } from 'url';
 import { join } from 'path';
@@ -95,11 +103,24 @@ try {
   git(['clone', '-q', origin, seed], scratch);
   identity(seed);
   commit(seed, 'a');
+  // apps/web exists on the branch; apps/gone does not, so its .env has nowhere to go
+  mkdirSync(join(seed, 'apps', 'web'), { recursive: true });
+  writeFileSync(join(seed, '.gitignore'), '.env\n.env.*\n!.env.example\n');
+  writeFileSync(join(seed, '.env.example'), 'KEY=\n');
+  writeFileSync(join(seed, 'apps', 'web', 'keep'), '');
+  git(['add', '.gitignore', '.env.example', 'apps/web/keep'], seed);
+  git(['commit', '-qm', 'env layout'], seed);
   git(['push', '-q', 'origin', 'main'], seed);
 
   git(['clone', '-q', origin, primary], scratch);
   identity(primary);
   const localOnly = commit(primary, 'local-only');
+  writeFileSync(join(primary, '.env'), 'ROOT=1\n');
+  writeFileSync(join(primary, '.env.local'), 'LOCAL=1\n');
+  writeFileSync(join(primary, '.env.bak-123'), 'OLD=1\n');
+  writeFileSync(join(primary, 'apps', 'web', '.env'), 'WEB=1\n');
+  mkdirSync(join(primary, 'apps', 'gone'), { recursive: true });
+  writeFileSync(join(primary, 'apps', 'gone', '.env'), 'GONE=1\n');
 
   const remoteTip = commit(seed, 'c');
   git(['push', '-q', 'origin', 'main'], seed);
@@ -124,6 +145,28 @@ try {
     git(['status', '-sb'], tree).split('\n')[0],
     '## feat/one'
   );
+  const read = (rel) => (existsSync(join(tree, rel)) ? readFileSync(join(tree, rel), 'utf8') : null);
+  check('copies the root .env', read('.env'), 'ROOT=1\n');
+  check('copies a .env.* variant', read('.env.local'), 'LOCAL=1\n');
+  check('copies a per-app .env', read('apps/web/.env'), 'WEB=1\n');
+  check('skips a .env backup', read('.env.bak-123'), null);
+  check('skips an app the branch does not have', existsSync(join(tree, 'apps', 'gone')), false);
+  check('the copies stay out of git', git(['status', '--porcelain'], tree), '');
+
+  // `wt env --refresh`: re-copies what the primary edited since, fills nothing over a newer file
+  const { syncAppEnv } = await import('./app-env.mjs');
+  writeFileSync(join(tree, 'apps', 'web', '.env'), 'WEB=tree\n');
+  const past = new Date(Date.now() - 60_000);
+  utimesSync(join(tree, 'apps', 'web', '.env'), past, past);
+  writeFileSync(join(primary, '.env'), 'ROOT=2\n');
+  check('without --refresh, an existing file is kept', syncAppEnv(primary, tree).refreshed.join(), '');
+  check('without --refresh, the old value stays', read('.env'), 'ROOT=1\n');
+  const refreshed = syncAppEnv(primary, tree, { refresh: true }).refreshed;
+  check('--refresh re-copies files the primary edited later', refreshed.join(), '.env,apps/web/.env');
+  check('--refresh brings the new value', read('.env'), 'ROOT=2\n');
+  writeFileSync(join(primary, '.env.example'), 'KEY=edited-in-primary\n');
+  syncAppEnv(primary, tree, { refresh: true });
+  check('never copies a tracked .env.example', /edited-in-primary/.test(read('.env.example')), false);
 
   const dupBranch = run(primary, 'two', 'feat/one');
   check('refuses an existing branch name', dupBranch.code, 1);

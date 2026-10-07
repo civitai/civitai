@@ -73,6 +73,19 @@ describe('creator milestone registry', () => {
     }
   });
 
+  it('seeds every activity key with the track and threshold its name states', () => {
+    const activity = seeded.filter((row) => row.track !== 'score');
+    expect(activity.length).toBeGreaterThan(0);
+    for (const row of activity) {
+      const [track, rest] = row.key.split(':');
+      expect({ key: row.key, track: row.track, threshold: row.threshold }).toEqual({
+        key: row.key,
+        track,
+        threshold: Number(rest.split('-').pop()),
+      });
+    }
+  });
+
   it('gives every definition a real launch date', () => {
     for (const [key, definition] of Object.entries(creatorMilestoneRegistry)) {
       expect(Number.isNaN(definition.launchedAt.getTime()), key).toBe(false);

@@ -58,6 +58,7 @@ import {
   computeRecruiterScore,
   getRankForScore,
   MILESTONE_NAMES,
+  RECRUITER_RANK_ACCENT,
   type ReferralDashboardProps,
 } from './dashboard.types';
 
@@ -71,14 +72,6 @@ const tierColors: Record<string, string> = {
   bronze: '#fd7e14',
   silver: '#adb5bd',
   gold: '#fab005',
-};
-
-const rankAccent: Record<string, string> = {
-  rookie: 'gray',
-  recruit: 'teal',
-  advocate: 'blue',
-  champion: 'grape',
-  legend: 'yellow',
 };
 
 const INITIAL_ACTIVITY_COUNT = 10;
@@ -128,7 +121,7 @@ export function ReferralDashboardFull({
   const rankProgressPct = nextRank
     ? Math.min(100, Math.round(((score - rank.min) / (nextRank.min - rank.min)) * 100))
     : 100;
-  const rankColor = rankAccent[rank.key];
+  const rankColor = RECRUITER_RANK_ACCENT[rank.key];
 
   const hitMilestones = useMemo(
     () => new Set(data.milestones.map((m) => m.threshold)),
@@ -244,7 +237,7 @@ export function ReferralDashboardFull({
         rank={rank}
         rankColor={rankColor}
         nextRank={nextRank}
-        nextRankColor={nextRank ? rankAccent[nextRank.key] : rankColor}
+        nextRankColor={nextRank ? RECRUITER_RANK_ACCENT[nextRank.key] : rankColor}
         score={score}
         scoreToNextRank={scoreToNextRank}
         rankProgressPct={rankProgressPct}

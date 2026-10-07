@@ -36,7 +36,9 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. Committed, never executed; no-ops without `--execute`. Samples the gold and grades stage-1 agreement, then runs the retrieval comparison below. |
-| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the pre-registration, the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar), the MET / NOT MET / VOID verdict and its report. |
+| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar), the MET / NOT MET / VOID verdict and its report. |
+| `scripts/eval-resource-intent-registration.ts`           | M3's registration: the pre-registered constants and text, and the committed gold-set queries. No database or search client, so the dry run is hermetic. |
+| `scripts/eval-resource-intent-goldset-execute.ts`         | The `--execute` half of the runner (replica, index, vendor), loaded only under `--execute`. |
 
 ## Hard rules
 
@@ -462,10 +464,12 @@ fetch from `searchResourceIntentSeedPage`, and it is never handed to the label
 re-rank. Neither arm calls stage 3.
 
 **The pre-registration lives in code, not here:** `M3_RETRIEVAL_PREREGISTRATION` in
-`scripts/eval-resource-intent-retrieval.ts`, rendered as text by
+`scripts/eval-resource-intent-registration.ts`, rendered as text by
 `renderRetrievalPreregistration()`. Read it by running the script without `--execute`
 (`pnpm run tsscript scripts/eval-resource-intent-goldset.ts`), which prints the committed
-queries and that text and spends nothing; every report opens with the same text. In
+queries and that text and exits 0. It still needs the server env to validate, but it
+loads no database or search client, so it needs no Prisma engine, no database and no
+index; every report opens with the same text. In
 brief: the primary metric is hit@10; the decision rule is b > c AND exact two-sided
 McNemar p < 0.05 on the hit@10 discordant pairs; and every run reports exactly one
 verdict on the closing clause — **MET** (the rule holds), **NOT MET** (it does not: the
@@ -487,6 +491,30 @@ prompts) and the hit@10 discordant rate, (b + c) / scored (assumed >= 15%), and 
 either one that falls below. If the discordant rate is under 15%, re-plan the sample size
 BEFORE the registered run: change the registered values only in a new commit dated
 before that run, and say why in it.
+
+**Coverage must resolve as the endpoint's does, or the run does not happen.** Both arms
+filter on generation coverage from `coverageAudience(undefined)`, which reads Flipt through
+`isFlipt` — and `isFlipt` returns `false` both for a flag that is off and when Flipt is
+unreachable, so an unreachable Flipt silently grades a filter the endpoint does not use.
+`--execute` therefore initialises Flipt and, before any index read or vendor call, aborts
+unless a live client exists and evaluates both coverage flags (`isFliptSync` not `null`) —
+and also if `FLIPT_LOCAL_OVERRIDES` sets either flag, because a local override is answered
+before the client is consulted and would otherwise pass with Flipt unreachable. The report
+prints the resolved `{next, member}`. A finished `--execute` closes the Flipt client and
+the replica connection, drains stdout and stderr, and exits explicitly (an earlier run
+hung on an open handle after writing its report; the drain stops that exit truncating a
+report printed to a pipe). The drain-then-exit rule is shared with
+`scripts/label-resource-insights.ts` in `scripts/lib/run-as-script.ts`.
+
+**The pilot, and registration v2.** The first pilot (2026-10-06) ran on flag defaults
+for exactly this reason and was discarded. The corrected pilot (2026-10-06, Flipt
+reachable, coverage resolved live) measured 85.0% scored and a 17.6% hit@10 discordant
+rate — both meet the registered power assumption, so the sample size (1000) and both VOID
+floors (667 scored; 10% infrastructure) are unchanged. At those rates ~150 discordant
+pairs are expected, and power against the 65/35 alternative is 0.955. The pilot's
+direction played no part in any choice. Registration v2 differs from v1 only in the
+live-Flipt abort, the coverage line in the report, its History text (which records both
+pilots), and its header now reading "before any registered run".
 
 The positive control reads the field the PURPOSE page filters on. Without it, an index
 whose projection had failed wholesale would turn PURPOSE into POPULARITY and the study
@@ -520,5 +548,5 @@ Unit suites (fixture-based, no external calls):
 - `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
-- `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks the dry run prints its queries and the pre-registration. The in-process suites cannot see a load-time import cycle; this can.
+- `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks, from a module-load trace, that the dry run loads neither the database nor the search client (on any host), and that it prints its queries and the pre-registration and exits 0 with every `PRISMA_*` variable removed. The in-process suites cannot see a load-time import cycle; this can.
 - `scripts/__tests__/eval-resource-intent-retrieval.test.ts` — the M3 retrieval metric math against literal values, the verdict mapping, the pre-registration constants, both arms over an in-memory index, and the CLI gate.

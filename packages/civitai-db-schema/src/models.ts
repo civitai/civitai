@@ -3003,6 +3003,7 @@ export interface Cosmetic {
   cosmeticShopItems?: CosmeticShopItem[];
   packMemberships?: CosmeticShopItemCosmetic[];
   creatorMilestones?: CreatorMilestone[];
+  milestoneExtras?: CreatorMilestoneCosmetic[];
 }
 
 export interface UserCosmetic {
@@ -3033,6 +3034,14 @@ export interface CreatorMilestone {
   cosmetic?: Cosmetic | null;
   sortOrder: number;
   achievements?: UserCreatorMilestone[];
+  extraCosmetics?: CreatorMilestoneCosmetic[];
+}
+
+export interface CreatorMilestoneCosmetic {
+  milestoneKey: string;
+  milestone?: CreatorMilestone;
+  cosmeticId: number;
+  cosmetic?: Cosmetic;
 }
 
 export interface UserCreatorMilestone {

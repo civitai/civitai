@@ -4,7 +4,9 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, plural } from '$lib/format';
   import { denied } from '$lib/permissions';
+  import { AnswerDraft } from './answer-draft.svelte';
   import MemberTable from './MemberTable.svelte';
+  import ReplyPicker from './ReplyPicker.svelte';
   import RulingPanel from './RulingPanel.svelte';
   import type { PageData } from './$types';
 
@@ -18,6 +20,16 @@
   const rep = $derived(data.detail.representative);
   const repLabel = $derived(rep ? requesterTierLabel(rep.memberTier, rep.payingPriority) : null);
 
+  // 🔴 KEYED ON THE KEY STRING, NOT ON `group`. Every reload hands `group` a new object, and a draft
+  // derived from it would be wiped by the 409 refresh it has to survive; a string that did not change
+  // does not re-run this.
+  const groupKey = $derived(group.groupKey);
+  const draft = $derived(new AnswerDraft(groupKey));
+  // CURRENT members only: a label outlives a re-route, so the map can name tickets that have left.
+  const notBelongs = $derived(
+    (decision?.members ?? []).filter((m) => data.memberLabels[m.ticketId]?.ruling === 'not_belongs')
+      .length
+  );
 </script>
 
 <header class="page-header">
@@ -34,11 +46,17 @@
 
 <section class="mb-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
   {#if group.gist}
+    <h2 class="text-dark-2 mb-1 text-xs font-medium tracking-wide uppercase">Group definition</h2>
     <!-- Customer-written text: rendered as text, never as HTML. -->
-    <p class="mb-2 break-words whitespace-pre-wrap">{group.gist}</p>
+    <p class="mb-2 break-words whitespace-pre-wrap text-white">{group.gist}</p>
+    <p class="text-dark-2 mb-3 text-sm">
+      Mark a member <strong class="text-dark-0">Yes</strong> (belongs) when its ticket fits this
+      definition. The founder is only the first ticket that matched — compare each member to the
+      definition, not to the founder.
+    </p>
   {/if}
   <p class="text-sm">
-    Representative:
+    Founder:
     {#if rep?.routed}
       <a class={LINK_CLASS} href={ticketHref(group.foundedTicketId)}>#{group.foundedTicketId}</a>
     {:else}
@@ -92,8 +110,11 @@
       version={data.version}
       {ticketHref}
       canRule={data.canRule}
+      canAnswer={data.canAnswer}
+      {draft}
     />
   {/key}
+  <ReplyPicker {draft} version={data.version} />
 {:else}
   <p class="text-dark-2">No ticket is assigned to this group in this version.</p>
 {/if}
@@ -110,6 +131,10 @@
     targets={data.targets}
     fingerprint={data.fingerprint}
     current={data.groupRuling}
+    answer={data.answer}
+    {notBelongs}
+    {draft}
     canRule={data.canRule}
+    canAnswer={data.canAnswer}
   />
 {/key}

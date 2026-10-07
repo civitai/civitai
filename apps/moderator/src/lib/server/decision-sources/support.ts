@@ -1,6 +1,6 @@
 import { getClickhouse } from '../clickhouse';
 import { clickhouseDate } from '../clickhouse-date';
-import { freshdeskTicketUrl } from '../freshdesk.service';
+import { freshdeskTicketUrl, isFreshdeskId } from '../freshdesk.service';
 import type { Decision } from '../../decisions';
 
 /**
@@ -35,10 +35,16 @@ export type ClickhouseReader = {
 
 const reader = (): ClickhouseReader => getClickhouse();
 
-/** The router's own hard ceiling on active groups — at it, a routing run aborts by design. */
-export const ROUTER_CATALOG_CAP = 200;
-/** Warn this far below the cap, while there is still room to act. */
-export const CATALOG_WARN_AT = 180;
+/**
+ * The router's own hard ceiling on active groups — at it, a routing run aborts by design.
+ *
+ * 🔴 A COPY, NOT A READ: this mirrors the router's `MAX_ACTIVE_GROUPS` setting, which this app cannot
+ * see. Change both together — a stale copy misstates the header's cap and truncates the "Duplicate of"
+ * picker, which is bounded by this same constant.
+ */
+export const ROUTER_CATALOG_CAP = 240;
+/** Warn at 90% of the cap, while there is still room to act. Derived, so a cap change moves it too. */
+export const CATALOG_WARN_AT = Math.floor(ROUTER_CATALOG_CAP * 0.9);
 /** No routed ticket for this long is worth a look — a quiet queue, or a stopped router. */
 export const STALE_ROUTING_MINUTES = 45;
 /** Group sizes at or above this in 24h are the router's own "misgroup or storm" alarm level. */
@@ -135,12 +141,15 @@ export const SUPPORT_SQL = {
     LEFT JOIN (SELECT group_key, title, created_by, founded_ticket_id FROM support_issue_groups FINAL
                WHERE router_version = {v:String}) AS g USING (group_key)
     WHERE m.router_version = {v:String} AND m.ticket_id = {tid:String}`,
+  // Bounded by the catalog cap, bound at the call site: while that copy matches the router, the
+  // active catalog cannot exceed it, so the picker offers every candidate. A separate literal here
+  // silently drops groups once the cap moves.
   duplicateTargets: `
     SELECT group_key, title, topic FROM support_issue_groups FINAL
     WHERE router_version = {v:String} AND closed_at IS NULL AND stale = 0
       AND group_key != {gk:String}
     ORDER BY (topic = {topic:String}) DESC, founded_at DESC
-    LIMIT 200`,
+    LIMIT {limit:UInt32}`,
 } as const;
 
 const TICKET_COLUMNS = `ticket_id, ticket_created_at, ticket_updated_at, ticket_status, ticket_subject,
@@ -268,8 +277,7 @@ export const isGroupKey = (v: unknown): v is string =>
 /** A topic slug, which doubles as an area until an area taxonomy exists. */
 export const isAreaSlug = (v: unknown): v is string =>
   typeof v === 'string' && /^[a-z0-9_-]{1,64}$/.test(v);
-export const isTicketId = (v: unknown): v is string =>
-  typeof v === 'string' && /^\d{1,20}$/.test(v);
+export const isTicketId = isFreshdeskId;
 
 // ---------------------------------------------------------------------------------------------
 // Reads.
@@ -312,7 +320,9 @@ export function headerWarnings(
   h: Omit<SupportHeader, 'warnings' | 'version' | 'cap'>,
   now = Date.now(),
   /** A version pinned by `?version=` is usually a retired one, whose quiet is expected, not a fault. */
-  pinned = false
+  pinned = false,
+  /** Admins also see the router's own data-quality notes, which no moderator can act on. */
+  admin = false
 ): string[] {
   const out: string[] = [];
   if (h.activeGroups >= CATALOG_WARN_AT)
@@ -320,7 +330,8 @@ export function headerWarnings(
       `The catalog holds ${h.activeGroups} of ${ROUTER_CATALOG_CAP} active groups. At the cap the ` +
         'router stops routing, and nothing retires groups automatically.'
     );
-  if (h.specCount > 1)
+  // Engineer-facing: two specs under one version is expected while a spec change rolls out.
+  if (admin && h.specCount > 1)
     out.push(
       `${h.specCount} different question specs answered under this one router version, so its ` +
         'answers mix questions that were worded differently.'
@@ -336,7 +347,7 @@ export function headerWarnings(
 
 export async function getSupportHeader(
   version: string,
-  opts: { pinned?: boolean; now?: number } = {},
+  opts: { pinned?: boolean; now?: number; admin?: boolean } = {},
   client = reader()
 ): Promise<SupportHeader> {
   const [r] = await rows<{
@@ -355,7 +366,12 @@ export async function getSupportHeader(
     version,
     cap: ROUTER_CATALOG_CAP,
     ...base,
-    warnings: headerWarnings(base, opts.now ?? Date.now(), opts.pinned ?? false),
+    warnings: headerWarnings(
+      base,
+      opts.now ?? Date.now(),
+      opts.pinned ?? false,
+      opts.admin ?? false
+    ),
   };
 }
 
@@ -561,7 +577,7 @@ export type SupportGroupDetail = {
    * The founding ticket's member row, or `null` when the founder has been re-routed out.
    *
    * 🔴 NOT `decision.lead`. The lead falls back to the oldest member so the decision always has a
-   * face, but the page's "Representative" line names the FOUNDER — rendering a fallback member's
+   * face, but the page's "Founder" line names the FOUNDER — rendering a fallback member's
    * user, tier and badges next to the founder's ticket number would attribute one customer's details
    * to another's ticket.
    */
@@ -610,6 +626,13 @@ export async function getSupportGroup(
   };
 }
 
+/**
+ * The ticket's member row in this group, or `null` when it is not a CURRENT member — the router may
+ * have re-routed it since a page loaded. The one membership test for anything acting on a member.
+ */
+export const groupMember = (d: SupportGroupDetail, ticketId: string): SupportMember | null =>
+  d.decision?.members.find((m) => m.ticketId === ticketId) ?? null;
+
 export async function listDuplicateTargets(
   input: { version: string; groupKey: string; topic: string },
   client = reader()
@@ -617,7 +640,7 @@ export async function listDuplicateTargets(
   const out = await rows<{ group_key: string; title: string; topic: string }>(
     client,
     SUPPORT_SQL.duplicateTargets,
-    { v: input.version, gk: input.groupKey, topic: input.topic }
+    { v: input.version, gk: input.groupKey, topic: input.topic, limit: ROUTER_CATALOG_CAP }
   );
   return out.map((r) => ({ groupKey: r.group_key, title: r.title, topic: r.topic }));
 }

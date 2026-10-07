@@ -318,6 +318,10 @@ export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.
 export const getFliptCacheStats = flipt.getCacheStats;
+// The underlying SDK client (or `null` before init), for a short-lived process that must
+// `close()` it on the way out — its config poller is a timer that otherwise keeps the
+// process alive. `getClientSync` closes over the instance (no `this`), like the above.
+export const getFliptClientSync = flipt.getClientSync;
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`

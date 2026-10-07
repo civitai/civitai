@@ -5,9 +5,8 @@
  *
  * 1. A WORKTREE GETS NONE OF THEM. The daemon layers the APP's env chain (root `.env`, per-app
  *    `.env`) and nothing has ever touched `.claude/skills/*​/.env`, so a fresh worktree starts
- *    with zero of them. Measured: the primary had 7, the worktree 0 of 47 skill dirs. There is
- *    no `wt create` to hook — worktrees come from the `git worktree add` recipe in CLAUDE.md —
- *    so this is a verb that recipe calls, not an automatic step.
+ *    with zero of them. Measured: the primary had 7, the worktree 0 of 47 skill dirs. `wt new`
+ *    copies them on creation; `wt env <tree>` fills an existing tree.
  *
  * 2. THE GAP IS INVISIBLE. A missing credential surfaces as whatever that skill says when it
  *    cannot authenticate: "FLIPT_URL and FLIPT_API_TOKEN must be set", "credentials not
@@ -35,6 +34,7 @@ import {
 } from 'fs';
 import { homedir } from 'os';
 import { basename, join, resolve } from 'path';
+import { syncAppEnv } from './app-env.mjs';
 import { resolvePrimaryCheckout, samePath } from './paths.mjs';
 
 /**
@@ -263,6 +263,27 @@ Copied ${r.copied} credential file(s) into ${target}.${
   return r.copied;
 }
 
+/** The app env files alongside: the root `.env` and every per-app one. */
+function syncApp(primary, target, refresh) {
+  let r;
+  try {
+    r = syncAppEnv(primary, target, { refresh });
+  } catch (error) {
+    console.warn(`Could not copy env files -- ${error.message.split('\n')[0]}`);
+    return;
+  }
+  if (r.skipped) return;
+  for (const p of r.copied) console.log(`  copied    ${p}`);
+  for (const p of r.refreshed) console.log(`  refreshed ${p}`);
+  for (const p of r.noDir) console.log(`  skipped   ${p} (its app is not on this branch)`);
+  const stale = refresh ? '' : ' Pass --refresh to re-copy any the primary has edited since.';
+  console.log(
+    `\nEnv files: ${r.copied.length} copied, ${r.refreshed.length} refreshed, ${r.kept.length} left as they were.${
+      r.kept.length ? stale : ''
+    }\n`
+  );
+}
+
 export function cmdSkillEnv(projectRoot, argv) {
   const rows = survey(projectRoot);
 
@@ -280,7 +301,9 @@ export function cmdSkillEnv(projectRoot, argv) {
         primary.error ? ` (${primary.error.split('\n')[0]})` : ''
       }.\n  Copying from ${primary.path} instead.`);
     }
-    return sync(primary.path, resolve(target));
+    const copied = sync(primary.path, resolve(target));
+    syncApp(primary.path, resolve(target), argv.includes('--refresh'));
+    return copied;
   }
 
   return report(projectRoot, rows);

@@ -1,3 +1,4 @@
+import { chunk } from 'lodash-es';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { isFlipt } from '~/server/flipt/client';
 import { isFliptOnForTesters } from '~/server/flipt/tester-segment';
@@ -46,7 +47,28 @@ export async function creatorJourneyAudience(pg: AugmentedPool, userIds: number[
     `,
     [userIds]
   );
-  const candidates = await query.result();
-  const on = await Promise.all(candidates.map((user) => isCreatorJourneyOnFor(user)));
-  return new Set(candidates.filter((_, i) => on[i]).map((user) => user.id));
+  return flagOnAmong(await query.result());
+}
+
+/** Of `userIds`, already known to be owed a milestone, the grantable users the flag is on for. */
+export async function creatorJourneyAudienceAmong(pg: AugmentedPool, userIds: number[]) {
+  if (!userIds.length) return new Set<number>();
+  const query = await pg.cancellableQuery<{ id: number; isModerator: boolean }>(
+    `
+    SELECT u.id, u."isModerator"
+    FROM "User" u
+    WHERE u.id = ANY($1::int[]) AND ${milestoneGrantableUserSql('u')}
+    `,
+    [userIds]
+  );
+  return flagOnAmong(await query.result());
+}
+
+async function flagOnAmong(candidates: { id: number; isModerator: boolean }[]) {
+  const audience = new Set<number>();
+  for (const batch of chunk(candidates, 1000)) {
+    const on = await Promise.all(batch.map((user) => isCreatorJourneyOnFor(user)));
+    batch.forEach((user, i) => on[i] && audience.add(user.id));
+  }
+  return audience;
 }

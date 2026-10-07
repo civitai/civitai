@@ -39,8 +39,8 @@
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
 
-  // Only ever a pathname this app redirected from, but rendered as text rather than a link so a
-  // hand-edited `?denied=` cannot turn the dashboard into a jumping-off point to somewhere else.
+  // Rendered as text. The link beside it is `data.returnTo`, which the server validated as a path on
+  // this app, so a hand-edited `?denied=` cannot turn the dashboard into a jumping-off point elsewhere.
   const denied = $derived(page.url.searchParams.get('denied'));
 
   const name = $derived(data.user?.username ?? 'moderator');
@@ -313,6 +313,9 @@
   >
     You don't have access to <code>{denied}</code>, so you were sent here. An admin can grant it on the
     Permissions page.
+    {#if data.returnTo}
+      Once granted, <a class="underline hover:text-amber-100" href={data.returnTo}>try it again</a>.
+    {/if}
   </div>
 {/if}
 

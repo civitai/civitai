@@ -27,6 +27,19 @@ describe('buildInbox', () => {
     expect(out.rows.map((r) => [r.groupKey, r.state])).toEqual([['g4', 'escalated']]);
   });
 
+  it('resolved is its own state, not "ruled"', () => {
+    const rulings = new Map([
+      ['g1', ruled('resolved')],
+      ['g3', ruled('correct')],
+    ]);
+    expect(
+      buildInbox(rows, rulings, { state: 'resolved', page: 1 }).rows.map((r) => r.groupKey)
+    ).toEqual(['g1']);
+    expect(
+      buildInbox(rows, rulings, { state: 'ruled', page: 1 }).rows.map((r) => r.groupKey)
+    ).toEqual(['g3']);
+  });
+
   it('an unreadable store is unknown state, not "unruled", and the filter is not applied', () => {
     const out = buildInbox(rows, null, { state: 'unruled', page: 1 });
     expect(out.stateApplied).toBe(false);

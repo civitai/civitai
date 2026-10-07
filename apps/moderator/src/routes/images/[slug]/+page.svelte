@@ -7,6 +7,7 @@
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
   import ImageQueueGrid from '$lib/components/ImageQueueGrid.svelte';
+  import AgeBadge from '$lib/components/AgeBadge.svelte';
   import QueueHeader from './QueueHeader.svelte';
   import QueueSelectionBar from './QueueSelectionBar.svelte';
   import ReviewActions from './ReviewActions.svelte';
@@ -309,7 +310,7 @@
             class="hover:text-foreground"
             >{item.appeal.username ?? `[deleted] #${item.appeal.userId}`}</a
           >
-          · {fmt(item.appeal.createdAt)}
+          · {fmt(item.appeal.createdAt)} <AgeBadge since={item.appeal.createdAt} />
         </div>
         {#if item.reports.length > 0}
           <div class="flex flex-col gap-1">

@@ -191,7 +191,10 @@ describe('each call binds the RIGHT value to each parameter', () => {
     expect(params(SUPPORT_SQL.group)).toEqual([{ v: 'v1', gk: 'g_a' }]);
     expect(params(SUPPORT_SQL.members)).toEqual([{ v: 'v1', gk: 'g_a' }]);
     expect(params(SUPPORT_SQL.list)).toEqual([{ v: 'v1', topic: 'crypto', limit: 1001 }]);
-    expect(params(SUPPORT_SQL.duplicateTargets)).toEqual([{ v: 'v1', gk: 'g_a', topic: 'crypto' }]);
+    // The picker is bounded by the router's catalog cap (240), so it can offer every active group.
+    expect(params(SUPPORT_SQL.duplicateTargets)).toEqual([
+      { v: 'v1', gk: 'g_a', topic: 'crypto', limit: 240 },
+    ]);
     expect(params(ticketSql(false))).toEqual([{ v: 'v1', tid: '42' }]);
     expect(params(SUPPORT_SQL.membership)).toEqual([{ v: 'v1', tid: '42' }]);
   });
@@ -271,6 +274,22 @@ describe('composition over real-shaped rows', () => {
     const h = await getSupportHeader('v', {}, client);
     expect(h.lastRoutedAt).toBeNull();
     expect(h.warnings).toEqual(['No ticket has been routed under this version yet.']);
+  });
+
+  it('header: the question-spec note reaches the warnings for an admin only', async () => {
+    const { client } = recordingClient(() => [
+      { active_groups: 3, n_routed: 0, last_routed: '1970-01-01 00:00:00.000', n_specs: 2 },
+    ]);
+    const spec = /2 different question specs/;
+    expect((await getSupportHeader('v', { admin: true }, client)).warnings[0]).toMatch(spec);
+    expect((await getSupportHeader('v', {}, client)).warnings.join('\n')).not.toMatch(spec);
+  });
+
+  it("header: reports the router's catalog cap", async () => {
+    const { client } = recordingClient(() => [
+      { active_groups: 3, n_routed: 0, last_routed: '1970-01-01 00:00:00.000', n_specs: 0 },
+    ]);
+    expect((await getSupportHeader('v', {}, client)).cap).toBe(240);
   });
 });
 

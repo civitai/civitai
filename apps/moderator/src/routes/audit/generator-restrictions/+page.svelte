@@ -8,6 +8,7 @@
   import RestrictionDetail from './RestrictionDetail.svelte';
   import StatusBadge from './StatusBadge.svelte';
   import Pager from '$lib/components/Pager.svelte';
+  import AgeBadge from '$lib/components/AgeBadge.svelte';
   import { RESTRICTION_TYPE, RESTRICTION_TYPE_LABELS, RULINGS_WIRED_FOR } from '$lib/restriction-types';
   import type { PageData } from './$types';
 
@@ -79,7 +80,11 @@
               </span>
               <span class="flex shrink-0 items-center gap-2">
                 <StatusBadge status={item.status} />
-                <span class="text-xs text-dark-2">{dateTime(item.createdAt)}</span>
+                {#if item.status === 'Pending'}
+                  <AgeBadge since={item.createdAt} />
+                {:else}
+                  <span class="text-xs text-dark-2">{dateTime(item.createdAt)}</span>
+                {/if}
               </span>
             </a>
           </li>

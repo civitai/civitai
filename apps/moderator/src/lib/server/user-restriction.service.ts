@@ -114,6 +114,10 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
     .$if(!!restrictionId, (qb) => qb.where('ur.id', '=', restrictionId!))
     .$if(!!username, (qb) => qb.where('u.username', 'ilike', `%${username}%`));
 
+  // The account is muted while its row is Pending, so the queue is worked oldest first: newest first
+  // left month-old mutes on the last page. A history view reads newest first.
+  const direction = status === 'Pending' ? 'asc' : 'desc';
+
   const [rows, count] = await Promise.all([
     base
       .select([
@@ -129,7 +133,8 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
         'ur.userMessage',
         'ur.userMessageAt',
       ])
-      .orderBy('ur.createdAt', 'desc')
+      .orderBy('ur.createdAt', direction)
+      .orderBy('ur.id', direction)
       .limit(limit)
       .offset((page - 1) * limit)
       .execute(),

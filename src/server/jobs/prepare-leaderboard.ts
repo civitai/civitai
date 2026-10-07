@@ -158,7 +158,7 @@ type LegendsBoardResult = {
   position: number; // 1-1000
 };
 async function updateLegendsBoardResults() {
-  log('Legends Board - Fetching');
+  log('Legacy Board - Fetching');
   const legendsBoardDataRes = await pgDbReadLong.cancellableQuery<LegendsBoardResult>(`
     WITH scores AS (
       SELECT
@@ -199,9 +199,9 @@ async function updateLegendsBoardResults() {
   `);
   const legendsBoardData = await legendsBoardDataRes.result();
 
-  log('Legends Board - Truncating');
+  log('Legacy Board - Truncating');
   await dbWrite.$executeRaw`TRUNCATE "LegendsBoardResult"`;
-  log('Legends Board - Populating');
+  log('Legacy Board - Populating');
   const tasks = chunk(legendsBoardData, 500).map((batch) => async () => {
     const batchJson = JSON.stringify(batch);
     await dbWrite.$executeRaw`
@@ -210,7 +210,7 @@ async function updateLegendsBoardResults() {
     `;
   });
   await limitConcurrency(tasks, 2);
-  log('Legends Board - Done');
+  log('Legacy Board - Done');
 }
 
 type LeaderboardContext = {

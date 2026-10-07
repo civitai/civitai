@@ -91,6 +91,8 @@ export async function currentResolutions(
 }
 
 export type GroupRulingSummary = {
+  /** The row's id — what `resolutionAnswer` reads a `resolved` ruling's answer by. */
+  id: string;
   ruling: GroupRuling;
   ruledBy: number;
   ruledAt: Date;
@@ -115,6 +117,7 @@ export function partitionResolutions(resolutions: readonly Resolution[]): {
   for (const r of resolutions) {
     if (r.subKey === '' && isGroupRuling(r.ruling))
       groups.set(r.itemKey, {
+        id: r.id,
         ruling: r.ruling,
         ruledBy: r.ruledBy,
         ruledAt: r.ruledAt,
@@ -127,6 +130,40 @@ export function partitionResolutions(resolutions: readonly Resolution[]): {
     }
   }
   return { groups, members };
+}
+
+/** A `resolved` ruling's answer, and the Freshdesk reply it was pre-filled from, if any. */
+export type ResolutionAnswer = {
+  text: string;
+  /** Both ids, or neither. */
+  source: { ticketId: string; conversationId: string } | null;
+};
+
+/**
+ * The answer stored on one `resolved` row, or `null` when that row is not one.
+ *
+ * Read separately from `currentResolutions` on purpose: only a `resolved` row asks for these columns,
+ * and a `resolved` row cannot exist without them, so every other read keeps working on a database the
+ * `resolved` DDL has not reached yet.
+ */
+export async function resolutionAnswer(
+  id: string,
+  db: ResolutionDb = defaultDb()
+): Promise<ResolutionAnswer | null> {
+  const row = await db
+    .selectFrom('decision_resolution')
+    .select(['answer_text', 'answer_ticket_id', 'answer_conversation_id'])
+    .where('id', '=', id)
+    .where('ruling', '=', 'resolved')
+    .executeTakeFirst();
+  if (!row?.answer_text) return null;
+  return {
+    text: row.answer_text,
+    source:
+      row.answer_ticket_id && row.answer_conversation_id
+        ? { ticketId: row.answer_ticket_id, conversationId: row.answer_conversation_id }
+        : null,
+  };
 }
 
 export type NewResolution = {
@@ -143,6 +180,17 @@ export type NewResolution = {
   ruledBy: number;
   /** What the source said about the item when the ruling was made. */
   shown: Record<string, unknown>;
+  /** `resolved` only — the DDL refuses an answer on any other ruling, and a `resolved` without one. */
+  answer?: ResolutionAnswer | null;
+};
+
+/** The database predates the `resolved` ruling: its column is missing, or its CHECK refuses the value. */
+const predatesResolved = (e: unknown): boolean => {
+  const err = e as { code?: unknown; constraint?: unknown } | null;
+  return (
+    err?.code === '42703' ||
+    (err?.code === '23514' && err.constraint === 'decision_resolution_ruling_valid')
+  );
 };
 
 /**
@@ -171,11 +219,25 @@ export async function recordResolution(
         ruled_by: input.ruledBy,
         apply_state: initialApplyState(input.ruling),
         shown: JSON.stringify(input.shown),
+        // Named only when there is an answer, so no other ruling depends on the `resolved` columns.
+        ...(input.answer
+          ? {
+              answer_text: input.answer.text,
+              answer_ticket_id: input.answer.source?.ticketId ?? null,
+              answer_conversation_id: input.answer.source?.conversationId ?? null,
+            }
+          : {}),
       })
       .returning('id')
       .executeTakeFirst();
     return row ? { inserted: 1, id: String(row.id) } : { inserted: 0, id: null };
   } catch (e) {
+    if (input.ruling === 'resolved' && predatesResolved(e))
+      throw new Error(
+        `this database predates the \`resolved\` ruling — apply ${SCHEMA_FILE} (as the ` +
+          'application role) to add it',
+        { cause: e }
+      );
     const status = moderatorDbStatus(e);
     if (status === 'no-schema')
       throw new Error(`decision_resolution does not exist — apply ${SCHEMA_FILE}`, { cause: e });

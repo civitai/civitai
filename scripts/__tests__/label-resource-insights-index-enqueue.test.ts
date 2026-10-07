@@ -602,7 +602,7 @@ describe('label writes are announced to the models search index', () => {
     });
 
     it('drainStdio resolves only AFTER both stream callbacks have fired', async () => {
-      const { drainStdio } = await import('../label-resource-insights');
+      const { drainStdio } = await import('../lib/run-as-script');
       // The property the two tests above cannot see, and the reason the export
       // exists: a `drainStdio` that ISSUED the empty writes without AWAITING
       // them satisfies every write assertion and still lets `process.exit` run

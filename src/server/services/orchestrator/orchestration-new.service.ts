@@ -221,7 +221,10 @@ export type WhatIfOptions = {
  * or chained workflows) should call `buildResolvedSource` and set the
  * `resolvedSource` field so the wrapper uses pre-computed source metadata.
  */
-type StepInput = WorkflowStepTemplate & {
+type StepInput = Omit<WorkflowStepTemplate, 'priority'> & {
+  // orchestration-client steps (preprocessVideo, ming, qwen) carry its wider
+  // Priority, which adds 'idle'
+  priority?: WorkflowStepTemplate['priority'] | DownloadPriority;
   input: unknown;
   /** Pre-computed source metadata from step creators via `buildResolvedSource`. */
   resolvedSource?: { metadata: Record<string, unknown>; imageMetadata: string };

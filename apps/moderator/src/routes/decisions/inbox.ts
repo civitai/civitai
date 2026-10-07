@@ -1,7 +1,7 @@
 import { itemState, type GroupRuling, type ItemState } from '$lib/decision-rulings';
 
 /** The inbox's state filter. `all` is the absence of one. */
-export const STATE_FILTERS = ['unruled', 'ruled', 'escalated', 'all'] as const;
+export const STATE_FILTERS = ['unruled', 'ruled', 'escalated', 'resolved', 'all'] as const;
 export type StateFilter = (typeof STATE_FILTERS)[number];
 export const DEFAULT_STATE: StateFilter = 'unruled';
 export const PAGE_SIZE = 50;

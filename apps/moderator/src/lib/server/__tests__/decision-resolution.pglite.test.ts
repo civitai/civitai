@@ -2,10 +2,17 @@ import type { PGlite } from '@electric-sql/pglite';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   currentResolutions,
+  partitionResolutions,
   recordResolution,
+  resolutionAnswer,
   type NewResolution,
 } from '../decision-resolution.service';
-import { decisionsKysely, freshDecisionsDb, insertRaw } from './decision-resolution-pglite.harness';
+import {
+  decisionsKysely,
+  freshDecisionsDb,
+  insertRaw,
+  v1DecisionsDb,
+} from './decision-resolution-pglite.harness';
 
 /**
  * The resolution writer and reader, run UNMODIFIED against the real DDL. Append-only and "latest per
@@ -13,8 +20,8 @@ import { decisionsKysely, freshDecisionsDb, insertRaw } from './decision-resolut
  */
 
 let open: PGlite[] = [];
-const setup = async () => {
-  const pg = await freshDecisionsDb();
+const setup = async (make: () => Promise<PGlite> = freshDecisionsDb) => {
+  const pg = await make();
   open.push(pg);
   return { pg, k: decisionsKysely(pg) };
 };
@@ -209,5 +216,87 @@ describe('currentResolutions — the latest ruling per item wins', () => {
     expect(
       await currentResolutions({ source: 'support-ticket', sourceVersion: 'v', itemKeys: [] }, k)
     ).toEqual([]);
+  });
+});
+
+const ANSWER = 'Clear site data for the domain, then sign in again.';
+
+describe('the resolved ruling', () => {
+  it('stores the answer and its source, and reads them back by the group ruling id', async () => {
+    const { pg, k } = await setup();
+    await recordResolution(
+      ruling({
+        ruling: 'resolved',
+        answer: { text: ANSWER, source: { ticketId: '73618', conversationId: '150003911207' } },
+      }),
+      k
+    );
+    const { groups } = partitionResolutions(
+      await currentResolutions(
+        { source: 'support-ticket', sourceVersion: 'v-test', itemKeys: [GK] },
+        k
+      )
+    );
+    const g = groups.get(GK);
+    expect(g?.ruling).toBe('resolved');
+    expect(await resolutionAnswer(g!.id, k)).toEqual({
+      text: ANSWER,
+      source: { ticketId: '73618', conversationId: '150003911207' },
+    });
+    expect((await allRows(pg))[0].apply_state).toBe('n/a');
+  });
+
+  it('un-resolving is a newer ruling — the answer row stays, and the current ruling has none', async () => {
+    const { pg, k } = await setup();
+    await recordResolution(
+      ruling({ ruling: 'resolved', answer: { text: ANSWER, source: null } }),
+      k
+    );
+    await recordResolution(ruling({ ruling: 'correct' }), k);
+    const current = await currentResolutions(
+      { source: 'support-ticket', sourceVersion: 'v-test', itemKeys: [GK] },
+      k
+    );
+    expect(current.map((r) => r.ruling)).toEqual(['correct']);
+    expect(await resolutionAnswer(current[0].id, k)).toBeNull();
+    expect((await allRows(pg)).map((r) => r.ruling)).toEqual(['resolved', 'correct']);
+  });
+
+  it('refuses resolved without an answer, and an answer on another ruling (the DDL)', async () => {
+    const { k } = await setup();
+    await expect(recordResolution(ruling({ ruling: 'resolved' }), k)).rejects.toMatchObject({
+      code: '23514',
+    });
+    await expect(
+      recordResolution(ruling({ ruling: 'split', answer: { text: ANSWER, source: null } }), k)
+    ).rejects.toMatchObject({ code: '23514' });
+  });
+});
+
+/**
+ * 🔴 THE DEPLOY-ORDER GAP. The app can be released before the DDL reaches a database. Every ruling
+ * other than `resolved` must keep working there, and `resolved` must fail naming the file to apply.
+ */
+describe('on a database the resolved DDL has not reached (v1)', () => {
+  it('still records and reads every other ruling', async () => {
+    const { k } = await setup(v1DecisionsDb);
+    expect((await recordResolution(ruling({ ruling: 'park' }), k)).inserted).toBe(1);
+    expect(
+      (await recordResolution(ruling({ ruling: 'belongs', subKey: '20417' }), k)).inserted
+    ).toBe(1);
+    const out = await currentResolutions(
+      { source: 'support-ticket', sourceVersion: 'v-test', itemKeys: [GK] },
+      k
+    );
+    expect(out.map((r) => r.ruling).sort()).toEqual(['belongs', 'park']);
+  });
+
+  it('refuses resolved with a message naming schema.sql', async () => {
+    const { k } = await setup(v1DecisionsDb);
+    await expect(
+      recordResolution(ruling({ ruling: 'resolved', answer: { text: ANSWER, source: null } }), k)
+    ).rejects.toThrow(
+      /predates the `resolved` ruling — apply apps\/moderator\/decisions\/schema\.sql/
+    );
   });
 });

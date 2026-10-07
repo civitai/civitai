@@ -26,6 +26,7 @@
     unruled: 'Unruled',
     ruled: 'Ruled',
     escalated: 'Escalated',
+    resolved: 'Resolved',
     all: 'All',
   };
 
@@ -36,7 +37,11 @@
 
 <header class="page-header">
   <h1>Decisions</h1>
-  <p class="text-dark-2">Items waiting on a human ruling, by source.</p>
+  <p class="text-dark-2">
+    Items waiting on a human ruling, by source. The support router groups tickets that ask the same
+    thing — a question with an established answer, or a known issue reported many times — so one
+    ruling can cover the whole group.
+  </p>
 </header>
 
 {#if data.sourceStatus === 'unreachable'}
