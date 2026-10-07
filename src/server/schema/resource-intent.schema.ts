@@ -243,8 +243,8 @@ export const resourceIntentResponseSchema = z.strictObject({
    * The `ResourceInsight` read failed while producing this response.
    *
    * 🔴 ONLY INTERPRETABLE WHEN `degraded === false`. On a `degraded: false`
-   * response it means the shortlist is in seed order (purpose page, then popularity
-   * fill) rather than label order. On a `degraded: true` one it means only that the label read had already
+   * response it means the shortlist is in seed (popularity) order rather than label
+   * order. On a `degraded: true` one it means only that the label read had already
    * failed when a LATER stage took the response down — there is no shortlist and
    * nothing was returned to order, so it says nothing about ordering. That pairing
    * is reachable: the label read fails, the matcher falls back, and then stage 3 or

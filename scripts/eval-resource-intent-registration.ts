@@ -2,8 +2,9 @@ import { Prisma } from '@prisma/client';
 import { RESOURCE_INTENT_DEFAULT_LIMIT } from '~/server/schema/resource-intent.schema';
 
 /**
- * M3's registration: the pre-registered constants, the text built from them, and the
- * committed gold-set queries — everything the dry run prints, and nothing else.
+ * M3's registration: the pre-registered constants, the text built from them, the pure
+ * statistics that text and the verdict share, v2's superseded record, and the committed
+ * gold-set queries.
  *
  * 🔴 KEEP THIS MODULE FREE OF DATABASE AND SEARCH CLIENTS. The dry run
  * (`scripts/eval-resource-intent-goldset.ts` without `--execute`) imports only this, so it
@@ -12,6 +13,11 @@ import { RESOURCE_INTENT_DEFAULT_LIMIT } from '~/server/schema/resource-intent.s
  */
 
 /**
+ * 🔴 REGISTRATION v2 — SUPERSEDED, KEPT VERBATIM AS THE RECORD. Its registered run judged
+ * the then-shipped purpose-first matcher NOT MET, and that verdict is binding. Nothing reads
+ * these constants or `renderRetrievalPreregistrationV2` at runtime; the running registration
+ * is `M3_RETRIEVAL_PREREGISTRATION` (v3) below. Do not edit either.
+ *
  * 🔴 The pre-registered constants. Changing any of these after a run has been seen
  * turns the study into a fishing expedition. The CLI can override two of them (sample
  * size and sample window, for the pilot); an override prints a warning, stamps the report
@@ -54,7 +60,7 @@ import { RESOURCE_INTENT_DEFAULT_LIMIT } from '~/server/schema/resource-intent.s
  *     result rather than an error. The floor is far below the real labeled count, so it
  *     only catches a TOTAL projection fault, by design.
  */
-export const M3_RETRIEVAL_PREREGISTRATION = {
+export const M3_RETRIEVAL_PREREGISTRATION_V2 = {
   version: 2,
   registeredOn: '2026-10-06',
   primaryK: 10,
@@ -69,30 +75,9 @@ export const M3_RETRIEVAL_PREREGISTRATION = {
   pilotSampleSize: 100,
 } as const;
 
-export type RetrievalRunParams = {
-  sampleSize: number;
-  sampleDays: number;
-};
-
-/** The CLI-overridable subset, at its pre-registered values. */
-export const PREREGISTERED_RUN_PARAMS: RetrievalRunParams = {
-  sampleSize: M3_RETRIEVAL_PREREGISTRATION.sampleSize,
-  sampleDays: M3_RETRIEVAL_PREREGISTRATION.sampleDays,
-};
-
-/** Every overridden parameter, as `name: preregistered -> used`. Empty ⇒ the registered run. */
-export function preregistrationOverrides(params: RetrievalRunParams): string[] {
-  return (Object.keys(PREREGISTERED_RUN_PARAMS) as (keyof RetrievalRunParams)[])
-    .filter((key) => params[key] !== PREREGISTERED_RUN_PARAMS[key])
-    .map((key) => `${key}: ${PREREGISTERED_RUN_PARAMS[key]} -> ${params[key]}`);
-}
-
-/**
- * The pre-registration as text — printed by the dry run and at the top of every report.
- * Built from the constants so the text cannot state a value the code does not use.
- */
-export function renderRetrievalPreregistration(): string {
-  const p = M3_RETRIEVAL_PREREGISTRATION;
+/** Registration v2's text, verbatim — the record, never printed by a run. */
+export function renderRetrievalPreregistrationV2(): string {
+  const p = M3_RETRIEVAL_PREREGISTRATION_V2;
   const k = p.primaryK;
   return [
     `M3 RETRIEVAL PRE-REGISTRATION v${p.version} (registered ${p.registeredOn}, before any registered run)`,
@@ -179,6 +164,281 @@ export function renderRetrievalPreregistration(): string {
     'not the labels themselves — which the labeled/unlabeled breakdown is reported to',
     'inform.',
   ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Pure statistics. They live here, not in the retrieval module, so the dry run can print
+// the power statement without loading a database or search client.
+// ---------------------------------------------------------------------------
+
+function logChoose(n: number, k: number): number {
+  let sum = 0;
+  for (let i = 1; i <= k; i++) sum += Math.log(n - k + i) - Math.log(i);
+  return sum;
+}
+
+/**
+ * Exact two-sided McNemar: with n = b + c discordant pairs, under H0 the smaller count
+ * is Binomial(n, 0.5), and p = min(1, 2 * P(X <= min(b, c))). Summed in log space so
+ * n in the thousands neither underflows nor overflows. No discordant pairs ⇒ p = 1.
+ * Also the exact two-sided sign test on (up, down).
+ */
+export function exactMcNemarP(b: number, c: number): number {
+  const n = b + c;
+  if (n === 0) return 1;
+  const k = Math.min(b, c);
+  const logHalfN = n * Math.log(0.5);
+  let tail = 0;
+  for (let i = 0; i <= k; i++) tail += Math.exp(logChoose(n, i) + logHalfN);
+  return Math.min(1, 2 * tail);
+}
+
+/** Standard normal CDF (Abramowitz & Stegun 7.1.26, absolute error < 1.5e-7). */
+export function normalCdf(x: number): number {
+  const t = 1 / (1 + (0.3275911 * Math.abs(x)) / Math.SQRT2);
+  const poly =
+    ((((1.061405429 * t - 1.453152027) * t + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t;
+  const erf = 1 - poly * Math.exp(-(x * x) / 2);
+  return x >= 0 ? 0.5 * (1 + erf) : 0.5 * (1 - erf);
+}
+
+/**
+ * 🔴 REGISTRATION v3 — the running registration. Changing any value after a run has been
+ * seen turns the study into a fishing expedition; the CLI may override `sampleSize` and
+ * `sampleDays` (the pilot), which stamps the report as not the registered run and VOIDs it.
+ *
+ * - `nonInferiorityMargin` / `nonInferiorityZ`: co-primary (i), a one-sided 95% bound on
+ *   the paired hit@`primaryK` difference.
+ * - `alpha`: co-primary (ii), the exact two-sided sign test on MRR@`secondaryK`.
+ * - `minPromotableFraction`: the positive control on what PURPOSE actually reads — the
+ *   share of scored prompts whose pool held at least one version the re-rank promotes.
+ * - `planning`: power-planning inputs — the v2 registered run's scored count and
+ *   popularity hit rate, and the best-of-`replayDesigns` offline replay. Assumptions,
+ *   not evidence; they decide nothing.
+ */
+export const M3_RETRIEVAL_PREREGISTRATION = {
+  version: 3,
+  registeredOn: '2026-10-07',
+  primaryK: 10,
+  secondaryK: RESOURCE_INTENT_DEFAULT_LIMIT,
+  alpha: 0.05,
+  nonInferiorityMargin: 0.02,
+  nonInferiorityZ: 1.645,
+  sampleSize: 1000,
+  sampleDays: 30,
+  cap: RESOURCE_INTENT_DEFAULT_LIMIT,
+  minPromotableFraction: 0.1,
+  planning: {
+    scored: 822,
+    v2PopularityHitRate: 0.113,
+    replayDesigns: 18,
+    replayPrompts: 254,
+    replayHitDiscordant: 13,
+    mrrNonTieRate: 0.134,
+    mrrPurposeShare: 0.68,
+  },
+  voidIf: { minScored: 667, maxInfraExclusionFraction: 0.1 },
+  pilotSampleSize: 100,
+} as const;
+
+/** The planned power of each co-primary, derived from `planning` alone. */
+export function plannedPower() {
+  const p = M3_RETRIEVAL_PREREGISTRATION;
+  const { scored, replayPrompts, replayHitDiscordant, mrrNonTieRate, mrrPurposeShare } = p.planning;
+  const hitDiscordantRate = replayHitDiscordant / replayPrompts;
+  // At a true difference of 0, se = sqrt(discordant rate / n).
+  const nonInferiorityPowerAt = (n: number) =>
+    1 - normalCdf(p.nonInferiorityZ - p.nonInferiorityMargin / Math.sqrt(hitDiscordantRate / n));
+  const hitSe = Math.sqrt(hitDiscordantRate / scored);
+  const nonInferiorityPower = nonInferiorityPowerAt(scored);
+  const floorHitSe = Math.sqrt(hitDiscordantRate / p.voidIf.minScored);
+  const nonInferiorityPowerAtFloor = nonInferiorityPowerAt(p.voidIf.minScored);
+  const mrrNonTies = Math.round(scored * mrrNonTieRate);
+  let mrrPower = 0;
+  for (let up = 0; up <= mrrNonTies; up++) {
+    const down = mrrNonTies - up;
+    if (up > down && exactMcNemarP(up, down) < p.alpha) {
+      mrrPower += Math.exp(
+        logChoose(mrrNonTies, up) +
+          up * Math.log(mrrPurposeShare) +
+          down * Math.log(1 - mrrPurposeShare)
+      );
+    }
+  }
+  return {
+    hitDiscordantRate,
+    hitSe,
+    nonInferiorityPower,
+    floorHitSe,
+    nonInferiorityPowerAtFloor,
+    mrrNonTies,
+    mrrPower,
+  };
+}
+
+/**
+ * The running pre-registration as text — printed by the dry run and at the top of every
+ * report. Built from the constants so the text cannot state a value the code does not use.
+ */
+export function renderRetrievalPreregistration(): string {
+  const p = M3_RETRIEVAL_PREREGISTRATION;
+  const k = p.primaryK;
+  const k2 = p.secondaryK;
+  const power = plannedPower();
+  const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
+  return [
+    `M3 RETRIEVAL PRE-REGISTRATION v${p.version} (registered ${p.registeredOn}, before any registered run)`,
+    '',
+    'History: v1 and v2 were registered 2026-10-06; v2 changed only how the run resolves',
+    'coverage. The v2 registered run judged the then-shipped purpose-first matcher (a',
+    'role-filtered, quality-sorted seed page with a popularity fill, then the label re-rank)',
+    'NOT MET. That verdict is binding: the purpose-first seed is not delivered. v2 is kept',
+    'verbatim as renderRetrievalPreregistrationV2 in',
+    'scripts/eval-resource-intent-registration.ts. The shipped matcher has since changed: it',
+    'seeds from the popularity page alone, and the label re-rank is the only place the',
+    'labels act. v3 asks a new question of that matcher; it is not a re-run of v2.',
+    '',
+    `Selection: this matcher and this decision rule were chosen from an offline`,
+    `${p.planning.replayPrompts}-prompt replay that screened ${p.planning.replayDesigns} seed x ranker designs and kept the only one that`,
+    `tied popularity on hit@${k} and led it on MRR@${k2}. The planning figures below come from`,
+    `that same best-of-${p.planning.replayDesigns} screen and are therefore optimistic.`,
+    '',
+    "Scope: v3 judges THIS design under THIS rule. A v3 MET does not revise v2's binding NOT",
+    'MET on whether the purpose-first seed beats popularity.',
+    '',
+    'Question: does the shipped matcher (PURPOSE arm: popularity seed + label re-rank) do at',
+    `least as well as the popularity seed alone (POPULARITY arm) on hit@${k}, while ranking`,
+    'attached resources higher?',
+    '',
+    `Sample: ${p.sampleSize} images drawn at random from the last ${p.sampleDays} days with a`,
+    'non-empty public prompt (hideMeta false) and >=1 attached resource, that are publicly',
+    'searchable: scanned, not in a review queue, not ToS-violating, blocked, or flagged',
+    'minor or POI, in a published (not scheduled) post that is neither Private nor',
+    'Unsearchable, and with no attached model flagged POI or minor.',
+    "Stage 1: run per prompt through the endpoint's own request builder and answer parser,",
+    "with baseModel = the base model of the image's attached checkpoint when exactly one",
+    'is attached, otherwise none. Stage 3 is not run by either arm.',
+    'Gold: the attached models (ImageResourceNew -> ModelVersion -> Model) whose type is in',
+    'ROLE_MODEL_TYPES[stage-1 role]. Attached models of other types are excluded from the',
+    'gold; their share is reported, with checkpoints (which no role admits) also reported',
+    'apart from it.',
+    `Arms: identical criteria, browsingLevel (all levels), coverage (the anonymous audience,`,
+    `resolved as the endpoint does and printed in the report) and cap (${p.cap}).`,
+    'PURPOSE = findResourceIntentCandidates (popularity seed + label re-rank). POPULARITY =',
+    'the pool that same call ranked, cut to the cap, with no label ordering. One seed per',
+    'prompt, so the arms share one pool and differ only by the re-rank.',
+    '',
+    'Co-primary. BOTH must hold for MET (intersection-union; alpha is not split):',
+    `  (i)  Non-inferiority on hit@${k}, margin ${p.nonInferiorityMargin} absolute. n = scored prompts,`,
+    `       b = PURPOSE hit and POPULARITY miss, c = the reverse, d = (b - c) / n,`,
+    '       se = sqrt(b + c - (b - c)^2 / n) / n. Holds iff',
+    `       d - ${p.nonInferiorityZ} * se > -${p.nonInferiorityMargin} (one-sided 95%). If b + c = 0, se = 0 and the`,
+    '       bound is 0.',
+    `  (ii) Superiority on MRR@${k2}, by an exact two-sided sign test over the scored prompts`,
+    `       whose reciprocal rank @${k2} differs between the arms: up = PURPOSE higher, down =`,
+    `       POPULARITY higher. Holds iff up > down AND the exact two-sided p on (up, down)`,
+    `       is < ${p.alpha}.`,
+    '',
+    'Verdict on the closing clause — every run reports exactly one:',
+    '  MET     — (i) and (ii) both hold.',
+    '  NOT MET — either does not. The closing clause is judged not met for this matcher;',
+    '            any follow-up is new work under a new registration, not a re-run.',
+    `  VOID    — no verdict, if ANY of: a registered value was overridden (including the`,
+    `            ${p.pilotSampleSize}-prompt pilot); fewer than ${p.voidIf.minScored} prompts scored (the scored-fraction`,
+    `            floor carried from v2's sample design: ${p.sampleSize} drawn x ${(
+      (p.voidIf.minScored / p.sampleSize) *
+      100
+    ).toFixed(1)}%); infrastructure`,
+    `            exclusions (stage-1 failure, arm error, label-read fallback) exceed ${(
+      p.voidIf.maxInfraExclusionFraction * 100
+    ).toFixed(0)}%`,
+    '            of drawn prompts; or the positive control fails. VOID takes precedence over',
+    '            both co-primaries. One check aborts before any index read or vendor call and',
+    '            produces no report: coverage flags not evaluated by a live Flipt client',
+    '            (Flipt unreachable, a flag missing, or a coverage flag set in',
+    '            FLIPT_LOCAL_OVERRIDES — any of which is not the endpoint).',
+    '',
+    `Positive control: VOID if fewer than ${(p.minPromotableFraction * 100).toFixed(
+      0
+    )}% of scored prompts have at least one pool version`,
+    'the re-rank promotes — a ResourceInsight label at or above the promote-confidence',
+    'floor that agrees with the request on role or style family. Without one the re-rank',
+    'can still demote, but has nothing it could promote — and ranking attached resources',
+    'HIGHER is what the question asks of it.',
+    '',
+    `No identical-head rule: v2 voided a run whose arms returned the same first ${k} model ids`,
+    'on every scored prompt. The arms now differ only by the re-rank, which moves nothing',
+    'on a prompt whose pool holds no label it promotes or demotes, so identical heads are',
+    'expected on most prompts. (The offline replay is a proxy, not a count of identical',
+    "heads: the arms' reciprocal ranks @50 tied on 220 of its 254 prompts.)",
+    'The count is printed as a diagnostic only, so it can neither void nor bias a run; the',
+    'positive control is what catches a re-rank with nothing to act on.',
+    '',
+    `Secondary (reported, never decisive): hit@${k2}, mean MRR@${k2} per arm, and hit@${k}`,
+    'stratified by whether any gold model carries a non-stale ResourceInsight label at or',
+    'above the promote-confidence floor the index projection applies.',
+    '',
+    'Excluded and counted, never scored: a stage-1 failure, role = none, no in-role',
+    'attachment, either arm erroring, and a PURPOSE label read that fell back.',
+    '',
+    `Power (planning assumptions, NOT evidence; optimistic, from the best-of-${p.planning.replayDesigns} screen):`,
+    `hit@${k} discordance ${p.planning.replayHitDiscordant} of ${p.planning.replayPrompts} = ${pct(
+      power.hitDiscordantRate
+    )}. The planning n is ${p.planning.scored} scored: the scored count of the v2`,
+    `registered run (${p.planning.scored} of ${p.sampleSize} drawn), i.e. the yield expected at the same sample design.`,
+    `There se = sqrt(${power.hitDiscordantRate.toFixed(4)} / ${
+      p.planning.scored
+    }) = ${power.hitSe.toFixed(
+      4
+    )}, so power for (i) at a true difference of 0 is ${power.nonInferiorityPower.toFixed(2)}.`,
+    `At the ${p.voidIf.minScored} floor se = ${power.floorHitSe.toFixed(
+      4
+    )} and that power is ${power.nonInferiorityPowerAtFloor.toFixed(
+      2
+    )}: a binding NOT MET from a run scoring between ${p.voidIf.minScored} and ${
+      p.planning.scored
+    }`,
+    'prompts is lower-powered than planned.',
+    `MRR@${k2} non-ties ${pct(p.planning.mrrNonTieRate)} of scored (${power.mrrNonTies} of ${
+      p.planning.scored
+    }) with ${pct(p.planning.mrrPurposeShare)} favouring PURPOSE`,
+    `gives power for (ii) of ${power.mrrPower.toFixed(2)}.`,
+    `The margin: ${
+      p.nonInferiorityMargin
+    } is absolute against a hit@${k} base rate of about 10-11% (v2: ${pct(
+      p.planning.v2PopularityHitRate
+    )} for POPULARITY),`,
+    `so a relative loss of up to ${(
+      (p.nonInferiorityMargin / p.planning.v2PopularityHitRate) *
+      100
+    ).toFixed(0)}% — roughly one hit in five — would still pass (i).`,
+    'The pilot re-measures the scored fraction and',
+    'both rates; a shortfall there means re-planning in a new commit, never after the run.',
+    '',
+    'Known confound: people attach popular models, so attached-resource gold is biased',
+    'TOWARD the POPULARITY arm. A MET verdict is therefore conservative. A NOT MET verdict',
+    'stands as the verdict on the closing clause; the confound limits only the reading of',
+    'WHY — the gold measures retrieval of what people attached, not the labels themselves —',
+    'which the labeled/unlabeled breakdown is reported to inform.',
+  ].join('\n');
+}
+
+export type RetrievalRunParams = {
+  sampleSize: number;
+  sampleDays: number;
+};
+
+/** The CLI-overridable subset, at its pre-registered values. */
+export const PREREGISTERED_RUN_PARAMS: RetrievalRunParams = {
+  sampleSize: M3_RETRIEVAL_PREREGISTRATION.sampleSize,
+  sampleDays: M3_RETRIEVAL_PREREGISTRATION.sampleDays,
+};
+
+/** Every overridden parameter, as `name: preregistered -> used`. Empty ⇒ the registered run. */
+export function preregistrationOverrides(params: RetrievalRunParams): string[] {
+  return (Object.keys(PREREGISTERED_RUN_PARAMS) as (keyof RetrievalRunParams)[])
+    .filter((key) => params[key] !== PREREGISTERED_RUN_PARAMS[key])
+    .map((key) => `${key}: ${PREREGISTERED_RUN_PARAMS[key]} -> ${params[key]}`);
 }
 
 /**

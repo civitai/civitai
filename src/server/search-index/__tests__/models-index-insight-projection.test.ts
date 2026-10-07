@@ -97,16 +97,16 @@ vi.mock('~/server/search-index/base.search-index', async (importOriginal) => ({
 
 /**
  * `insight.role` / `insight.styleFamily` are the two MEANING axes — filterable, not
- * sortable; the resource-intent seed filters on the role and sorts on
- * `insight.qualityScore`. `insight.modelVersionId` is the id of the version all three were taken from, projected but
+ * sortable; no runtime query filters or sorts on any `insight.*` field (the resource-intent
+ * seed is popularity alone). `insight.modelVersionId` is the id of the version all three were taken from, projected but
  * declared in NO attribute list, so no search path can return it at all (argued at the
  * projection site in ../models.search-index.ts; the four absences are pinned below). This
  * file pins the wiring that puts all four on a document.
  *
- * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's queries. What the index WRITES and
- * how the seed QUERIES are separable, and the two seed pages (filter, sort and limit) are
- * already pinned in ~/server/services/__tests__/resource-intent-matcher.seed.test.ts, which
- * also runs the matcher against an in-memory index that honours them. A second guard here
+ * ⚠️ WHAT THIS FILE DELIBERATELY DOES NOT PIN: the seed's query. What the index WRITES and
+ * how the seed QUERIES are separable, and the seed page (filter, sort and limit) is already
+ * pinned in ~/server/services/__tests__/resource-intent-matcher.seed.test.ts, which also
+ * runs the matcher against an in-memory index that honours it. A second guard here
  * would fail in exactly the cases that one already fails in, so there isn't one.
  *
  * ⚠️ An earlier version of this paragraph said "the attribute lists reach a live index only
@@ -409,7 +409,7 @@ describe('models search index projects insight.qualityScore', () => {
     // attribute and an explicit null sort the same way (measured). But every live write is
     // `PUT /indexes/<uid>/documents`, which MERGES top-level fields — so on a document that
     // already carries a score, omitting leaves the stale value in place and a retracted
-    // label keeps its top-of-pool seeding forever. Measured both arms on v1.15.0: the null
+    // label stays visible to any filter or sort on it forever. Measured both arms on v1.15.0: the null
     // PUT cleared a stored 0.9; the control PUT with no key left a stored 0.1 intact.
     //
     // 🔴 All FOUR keys, for the same reason: `role`, `styleFamily` and `modelVersionId` are
