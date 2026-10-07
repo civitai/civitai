@@ -136,7 +136,8 @@ export function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore })
       cost={cost}
       loading={isLoading}
       error={isError}
-      // The whatIf query is disabled in both cases, so no estimate is coming.
+      // The whatIf query is disabled in both cases, so no estimate is coming. Its other disable
+      // reasons (resources/images loading) are transient, or (no user, noSubmit) leave no footer.
       unavailable={!canEstimateCost || gateBlocked}
       onRetry={() => refetch()}
       tourTarget={GEN_BUZZ_KEY}

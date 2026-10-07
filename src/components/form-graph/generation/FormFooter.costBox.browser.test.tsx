@@ -157,11 +157,20 @@ describe('FormFooter cost box', () => {
     expect(generateButton().disabled).toBe(true);
   });
 
-  test('gate-blocked selection: no spinner, Generate disabled', async () => {
+  test('gate-blocked selection with no cost yet: no spinner', async () => {
     renderFooter({ ...base, gateBlocked: true });
     await vi.waitFor(() => costButton());
     expect(costSpinning()).toBe(false);
+  });
+
+  test('gate-blocked selection: no spinner, Generate disabled', async () => {
+    // A valid payload can still hold a cached cost from before the gate applied, so the dash must
+    // not depend on the cost being 0.
+    renderFooter({ ...base, gateBlocked: true, total: 37 });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(false);
     expect(costButton().textContent).toContain('–');
+    expect(costButton().textContent).not.toContain('37');
     expect(generateButton().disabled).toBe(true);
   });
 
