@@ -226,8 +226,8 @@ export async function getLegendStatus(userId: number, source?: ShowcaseSource) {
   });
   const privacy = profile?.privacySettings as PrivacySettingsSchema | null | undefined;
   if (!isBadgeShownOnProfile(privacy, legend.milestone.cosmeticId)) return null;
-  // The label stands on its own, so an unreadable showcase drops only the count, and a profile never
-  // waits out another request's cache fill.
+  // The label stands on its own, so an unreadable showcase drops only the count, and a profile does not
+  // wait out another request's fill of the candidate list.
   const legends = await getVisibleShowcaseRows({ retryCount: 0, ...source })
     .then((rows) => rows.legends)
     .catch(() => null);

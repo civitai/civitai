@@ -349,6 +349,11 @@ describe('cached candidates, live standing', () => {
         ]),
     ],
     ['hiding badges', () => setPrivacy(GOOD, { showBadges: false })],
+    ['metric-suppressed', async () => void mocks.excluded.mockResolvedValue([GOOD])],
+    [
+      'leaderboard-excluded',
+      () => q(`UPDATE "User" SET "excludeFromLeaderboards" = true WHERE id = $1`, [GOOD]),
+    ],
   ])('drops a Legend newly %s while the candidate list is cached', async (_, change) => {
     await addUser(GOOD);
     await addUser(OTHER);
@@ -361,6 +366,15 @@ describe('cached candidates, live standing', () => {
     const { legends } = await getCreatorShowcase({ pg, now: NOW });
     expect(legends.map(({ user }) => user.id)).toEqual([OTHER]);
     expect(candidateReads()).toBe(1);
+  });
+
+  it('drops the count rather than wait while another request fills an empty cache', async () => {
+    await addUser(GOOD);
+    await grant(GOOD, 'score:legend', LAST_MONTH);
+    redisMock.redis.setNxKeepTtlWithEx.mockClear().mockResolvedValue(false);
+
+    expect(await getLegendStatus(GOOD, { pg, now: NOW })).toMatchObject({ oneOf: null });
+    expect(redisMock.redis.setNxKeepTtlWithEx).toHaveBeenCalledTimes(1);
   });
 
   it('moves "this month" at the UTC month boundary while the candidate list is cached', async () => {
