@@ -155,17 +155,29 @@ describe('generator-restrictions actions — ruling scope', () => {
     expect(resolveRestriction).not.toHaveBeenCalled();
   });
 
-  it('resolves a scam restriction', async () => {
-    getGenerationRestrictions.mockResolvedValue({ items: [row({ type: 'scam' })], totalCount: 1 });
+  // Pages are granted separately, so the other queue's ids must not be reachable by posting one.
+  it('refuses a scam restriction id on every action', async () => {
+    getGenerationRestrictions.mockResolvedValue({
+      items: [row({ type: 'scam', triggers: [{ key: '5-1', category: 'prohibited' }] })],
+      totalCount: 1,
+    });
+    const flag = new FormData();
+    flag.append('userRestrictionId', '5');
+    flag.append('key', '5-1');
 
-    const result = await actions.resolve(
-      formEvent({ userRestrictionId: '5', status: 'Overturned' })
-    );
+    const results = (await Promise.all([
+      actions.resolve(formEvent({ userRestrictionId: '5', status: 'Overturned' })),
+      actions.ban(formEvent({ userRestrictionId: '5' })),
+      actions.flagSuspicious({
+        request: { formData: async () => flag },
+        locals: { user: { id: 7 } },
+      } as unknown as Parameters<(typeof actions)['flagSuspicious']>[0]),
+    ])) as { status: number }[];
 
-    expect(result).toEqual({ success: true });
-    expect(resolveRestriction).toHaveBeenCalledWith(
-      expect.objectContaining({ userRestrictionId: 5, status: 'Overturned', userId: 42 })
-    );
+    expect(results.map((r) => r.status)).toEqual([404, 404, 404]);
+    expect(resolveRestriction).not.toHaveBeenCalled();
+    expect(setBanned).not.toHaveBeenCalled();
+    expect(saveSuspiciousMatches).not.toHaveBeenCalled();
   });
 
   it('still resolves a generation restriction', async () => {
@@ -257,7 +269,6 @@ describe('generator-restrictions actions — ruling scope', () => {
 describe('generator-restrictions actions — flagSuspicious', () => {
   const triggersRow = () =>
     row({
-      type: 'scam',
       triggers: [
         { key: '5-0', category: 'scam', reason: 'Fake support', text: 'claim your prize' },
         { key: '5-1', category: 'prohibited', prompt: 'a prompt', matchedWord: 'x' },
@@ -295,5 +306,12 @@ describe('generator-restrictions actions — flagSuspicious', () => {
 
     expect(result.status).toBe(400);
     expect(saveSuspiciousMatches).not.toHaveBeenCalled();
+  });
+});
+
+describe('generator-restrictions — scam is not a list type here', () => {
+  it('offers only the remaining types', async () => {
+    const { GENERATOR_RESTRICTION_TYPES } = await import('$lib/restriction-types');
+    expect([...GENERATOR_RESTRICTION_TYPES]).toEqual(['generation', 'bot-account']);
   });
 });

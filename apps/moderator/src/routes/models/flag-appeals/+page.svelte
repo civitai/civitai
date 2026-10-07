@@ -6,10 +6,10 @@
 </script>
 
 <header class="page-header">
-  <h1>Minor Hash Matches</h1>
+  <h1>Model Flag Appeals</h1>
   <p>
-    Models sharing a file hash with something a moderator flagged as depicting a minor, and what the
-    scanner flagged on its own.
+    Owners contesting a model flagged as depicting a minor or a real person, whether the flag came
+    from a hash match, the text scan or a moderator.
   </p>
 </header>
 

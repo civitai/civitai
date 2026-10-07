@@ -10,7 +10,11 @@
   import { fetchSupport } from './user-support';
   import { REWARDS_ELIGIBILITY } from './enforcement-options';
   import { FormState } from '$lib/form-state.svelte';
-  import { unwiredRulingReason } from '$lib/restriction-types';
+  import {
+    GENERATOR_RESTRICTIONS_PATH,
+    SCAM_RESTRICTIONS_PATH,
+    unwiredRulingReason,
+  } from '$lib/restriction-types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
@@ -98,7 +102,12 @@
         {#if unwiredReason}
           <p class="mb-2 text-sm text-amber-200">
             {unwiredReason} Review it in the
-            <a href="/audit/generator-restrictions?type={identity.restrictionType}" class={LINK_CLASS}>
+            <a
+              href={identity.restrictionType === 'scam'
+                ? SCAM_RESTRICTIONS_PATH
+                : `${GENERATOR_RESTRICTIONS_PATH}?type=${identity.restrictionType}`}
+              class={LINK_CLASS}
+            >
               restriction queue
             </a>.
           </p>
