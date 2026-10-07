@@ -310,7 +310,7 @@
             class="hover:text-foreground"
             >{item.appeal.username ?? `[deleted] #${item.appeal.userId}`}</a
           >
-          · <AgeBadge since={item.appeal.createdAt} />
+          · {fmt(item.appeal.createdAt)} <AgeBadge since={item.appeal.createdAt} />
         </div>
         {#if item.reports.length > 0}
           <div class="flex flex-col gap-1">
