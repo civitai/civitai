@@ -7,6 +7,7 @@ import {
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getViewerMonetization } from '~/server/services/paid-access.service';
+import { isViewerOrModerator } from '~/utils/is-viewer';
 
 // The subset of a generation resource that paid-access gating reads/mutates. Kept structural so the
 // caller passes its full (much larger) resource type unchanged.
@@ -54,9 +55,6 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
   // Sale-aware, and viewer-aware with it: an owner is shown their stored price, a buyer the
   // discounted one.
   const monetization = await getViewerMonetization({ versions: [...byId.values()], viewer: user });
-  const isOwnerOrMod = (ownerId: number) =>
-    (!!user.id && ownerId === user.id) || !!user.isModerator;
-
   const gated = new Map<number, { resource: T; ownerId: number; terms: ModelVersionTerms }>();
   for (const r of resources) {
     const row = monetization[r.id]?.paidAccess;
@@ -73,7 +71,7 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
     [...gated.values()]
       .filter(
         ({ resource, ownerId, terms }) =>
-          resource.covered && !isOwnerOrMod(ownerId) && !isFreeGeneration(terms)
+          resource.covered && !isViewerOrModerator(user, ownerId) && !isFreeGeneration(terms)
       )
       .map(({ resource }) => resource.id),
     user
@@ -81,7 +79,7 @@ export async function applyPaidAccessGating<T extends PaidAccessGatingResource>(
 
   for (const { resource, ownerId, terms } of gated.values()) {
     resource.hasAccess = grantsGeneration(terms, {
-      isOwnerOrMod: isOwnerOrMod(ownerId),
+      isOwnerOrMod: isViewerOrModerator(user, ownerId),
       hasBought: purchased.has(resource.id),
     });
     resource.canGenerate = resource.hasAccess && resource.canGenerate;
