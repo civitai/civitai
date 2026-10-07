@@ -38,6 +38,18 @@ describe('number words are carved out of the youth-noun pattern', () => {
     });
   });
 
+  describe('a -teen word that is not about age no longer blocks', () => {
+    it.each([
+      'canteen, nude adult woman',
+      'cant33n, nude adult woman',
+      'velveteen dress, nude adult woman',
+      'sateen sheets, nude adult woman',
+      'for the umpteenth time, nude adult woman',
+    ])('%s', (prompt) => {
+      expect(includesInappropriate({ prompt })).toBe(false);
+    });
+  });
+
   describe('the youth terms the pattern exists for still block', () => {
     it.each([
       'teen, nude',
