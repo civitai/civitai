@@ -16,9 +16,20 @@ export type ActivityWatermarkStore = {
   set: (groupKey: string, watermark: ActivityWatermark) => Promise<void>;
 };
 
-/** Adding or removing a key changes this, so the group starts over with a silent run. */
-export const watermarkKeyFor = (group: MilestoneDetectorGroup) =>
-  `creator-milestones:watermark:${group.id}:${[...group.keys].sort().join(',')}`;
+export type MilestoneDefinitionRow = { key: string; threshold: number | null };
+
+/**
+ * Adding or removing a key, or changing a threshold, changes this, so the group starts over with a
+ * silent run rather than announcing everyone the change newly qualifies.
+ */
+export const watermarkKeyFor = (
+  group: MilestoneDetectorGroup,
+  definitions: MilestoneDefinitionRow[]
+) =>
+  `creator-milestones:watermark:${group.id}:${definitions
+    .map((d) => `${d.key}=${d.threshold}`)
+    .sort()
+    .join(',')}`;
 
 /**
  * The earliest achievedAt that is announced, or null when nothing in this run is. A run can only
@@ -70,7 +81,18 @@ export async function runActivityGroup(
 ): Promise<ActivityGroupResult> {
   const { readPg, writePg, store, gated, now = new Date(), chunkSize = 2000 } = deps;
   const notify = deps.notify ?? notifyMilestonesReached;
-  const watermarkKey = watermarkKeyFor(group);
+
+  // A run that matched no definition would still record a complete watermark, and the next run, with
+  // the rows in place, would announce every qualifier as a crossing.
+  const definitionQuery = await writePg.cancellableQuery<MilestoneDefinitionRow>(
+    `SELECT key, threshold FROM "CreatorMilestone" WHERE key = ANY($1::text[])`,
+    [group.keys]
+  );
+  const definitions = await definitionQuery.result();
+  const missing = group.keys.filter((key) => !definitions.some((d) => d.key === key));
+  if (missing.length) throw new Error(`No CreatorMilestone row for ${missing.join(', ')}`);
+
+  const watermarkKey = watermarkKeyFor(group, definitions);
   const announceFrom = announceFromFor(group, await store.get(watermarkKey), gated);
 
   const candidateQuery = await readPg.cancellableQuery<{ userId: number }>(
@@ -94,7 +116,12 @@ export async function runActivityGroup(
       params: [group.keys, userChunk, announceFrom?.toISOString() ?? null],
     });
     granted += grants.length;
-    const fresh = grants.filter((grant) => !grant.silent);
+    let fresh = grants.filter((grant) => !grant.silent);
+    // Ungated, everyone is granted, but only the flag audience is told: the page it links to is theirs.
+    if (!gated && fresh.length) {
+      const audience = await deps.audienceAmong([...new Set(fresh.map((g) => g.userId))]);
+      fresh = fresh.filter((grant) => audience.has(grant.userId));
+    }
     announced += fresh.length;
     // Sent per chunk: a re-run's ON CONFLICT never returns these grants again.
     await notify(fresh);

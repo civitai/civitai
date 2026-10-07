@@ -24,11 +24,16 @@ const notHeld = (user: string) => `NOT EXISTS (
     WHERE held."userId" = ${user} AND held."milestoneKey" = m.key
   )`;
 
+// What the profile counts (userModelCountCache, userArticleCountCache), so a badge never claims more
+// published work than the creator's own profile shows. publishedAt is required to date the Nth item.
 const publishedSources = {
   model: `SELECT x."userId", x."publishedAt", x.id FROM "Model" x
-    WHERE x.status = 'Published' AND x."deletedAt" IS NULL AND x."publishedAt" IS NOT NULL`,
+    WHERE x.status = 'Published' AND x.availability != 'Private'
+      AND (x.mode IS NULL OR x.mode != 'Archived')
+      AND x."deletedAt" IS NULL AND x."publishedAt" IS NOT NULL`,
   article: `SELECT x."userId", x."publishedAt", x.id FROM "Article" x
-    WHERE x.status = 'Published' AND x."publishedAt" IS NOT NULL`,
+    WHERE x.status = 'Published' AND x.availability != 'Private'
+      AND x."publishedAt" IS NOT NULL AND x."publishedAt" <= now()`,
 } as const;
 
 function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {

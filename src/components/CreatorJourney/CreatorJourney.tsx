@@ -87,6 +87,7 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
   // A badge is earned when it is granted, not when the score crosses its threshold: granting runs in
   // a job, and a hidden tier stays masked until then.
   const earnedKeys = new Set(journey.earned.map((badge) => badge.key));
+  const shelf = journey.earned.filter(isShelfBadge);
   const accent = accentOf(currentTier);
 
   return (
@@ -191,9 +192,9 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
         <Title order={2} size="h3">
           Badges Earned
         </Title>
-        {journey.earned.length > 0 ? (
+        {shelf.length > 0 ? (
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">
-            {journey.earned.map((badge) => (
+            {shelf.map((badge) => (
               <EarnedBadgeCard key={badge.key} badge={badge} />
             ))}
           </div>
@@ -210,6 +211,11 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
       </Stack>
     </Stack>
   );
+}
+
+// Activity milestones have no art and get their own section, so the shelf holds tiers and art badges.
+export function isShelfBadge(badge: Pick<Journey['earned'][number], 'track' | 'badgeUrl'>) {
+  return badge.track === 'score' || !!badge.badgeUrl;
 }
 
 function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {

@@ -29,6 +29,19 @@ export const keyValueWatermarkStore: ActivityWatermarkStore = {
   },
 };
 
+/** Evaluates each user once per run: most candidates appear in several groups. */
+export function memoizedAudience(evaluate: (userIds: number[]) => Promise<Set<number>>) {
+  const known = new Map<number, boolean>();
+  return async (userIds: number[]) => {
+    const unknown = userIds.filter((id) => !known.has(id));
+    if (unknown.length) {
+      const inAudience = await evaluate(unknown);
+      for (const id of unknown) known.set(id, inAudience.has(id));
+    }
+    return new Set(userIds.filter((id) => known.get(id)));
+  };
+}
+
 // Activity milestones. Score tiers are granted inside update-user-score, the only place scores change.
 export const grantCreatorMilestones = createJob(
   'grant-creator-milestones',
@@ -37,6 +50,9 @@ export const grantCreatorMilestones = createJob(
     const gated = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG;
     const results: Record<string, unknown> = {};
     const failures: string[] = [];
+    const audienceAmong = memoizedAudience((userIds) =>
+      creatorJourneyAudienceAmong(pgDbReadLong, userIds)
+    );
 
     for (const group of activityDetectorGroups()) {
       jobContext.checkIfCanceled();
@@ -46,7 +62,7 @@ export const grantCreatorMilestones = createJob(
           writePg: pgDbWrite,
           store: keyValueWatermarkStore,
           gated,
-          audienceAmong: (userIds) => creatorJourneyAudienceAmong(pgDbWrite, userIds),
+          audienceAmong,
           checkIfCanceled: () => jobContext.checkIfCanceled(),
         });
       } catch (e) {

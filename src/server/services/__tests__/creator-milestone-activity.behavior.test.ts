@@ -62,6 +62,14 @@ function memoryStore(initial: Record<string, ActivityWatermark> = {}) {
   return { store, rows };
 }
 
+async function storedKeyFor(group: MilestoneDetectorGroup) {
+  const definitions = await q<{ key: string; threshold: number | null }>(
+    `SELECT key, threshold FROM "CreatorMilestone" WHERE key = ANY($1::text[])`,
+    [group.keys]
+  );
+  return watermarkKeyFor(group, definitions);
+}
+
 async function run(
   group: MilestoneDetectorGroup,
   {
@@ -69,9 +77,10 @@ async function run(
     gated = false,
     audience = null as number[] | null,
     now = AFTER_LAUNCH,
+    chunkSize = undefined as number | undefined,
   } = {}
 ) {
-  const { store, rows } = memoryStore(watermark ? { [watermarkKeyFor(group)]: watermark } : {});
+  const { store, rows } = memoryStore(watermark ? { [await storedKeyFor(group)]: watermark } : {});
   const notified: MilestoneGrant[] = [];
   const result = await runActivityGroup(group, {
     readPg: pg,
@@ -81,6 +90,7 @@ async function run(
     now,
     audienceAmong: async (ids) => new Set(ids.filter((id) => !audience || audience.includes(id))),
     notify: async (grants) => void notified.push(...grants),
+    chunkSize,
   });
   return { result, notified, rows };
 }
@@ -112,10 +122,12 @@ beforeAll(async () => {
     );
     CREATE TABLE "Model" (
       id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL,
+      availability text NOT NULL DEFAULT 'Public', mode text,
       "deletedAt" timestamp(3), "publishedAt" timestamp(3)
     );
     CREATE TABLE "Article" (
-      id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL, "publishedAt" timestamp(3)
+      id serial PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL,
+      availability text NOT NULL DEFAULT 'Public', "publishedAt" timestamp(3)
     );
     CREATE TABLE "ModelMetric" (
       "modelId" int PRIMARY KEY, "userId" int NOT NULL, status text NOT NULL,
@@ -159,8 +171,10 @@ describe('published-count detector', () => {
     ]);
     await addModels(QUIET, ['2026-01-01 10:00', '2026-01-02 10:00'], 'Draft');
     await q(
-      `INSERT INTO "Model" ("userId", status, "deletedAt", "publishedAt")
-       VALUES ($1, 'Published', now(), '2026-01-01')`,
+      `INSERT INTO "Model" ("userId", status, "deletedAt", availability, mode, "publishedAt") VALUES
+        ($1, 'Published', now(), 'Public', NULL, '2026-01-01'),
+        ($1, 'Published', NULL, 'Private', NULL, '2026-01-01'),
+        ($1, 'Published', NULL, 'Public', 'Archived', '2026-01-01')`,
       [QUIET]
     );
     await run(MODELS);
@@ -177,9 +191,16 @@ describe('published-count detector', () => {
       [CREATOR]
     );
     await addModels(QUIET, ['2026-02-01']);
+    await q(
+      `INSERT INTO "Article" ("userId", status, availability, "publishedAt") VALUES
+        ($1, 'Published', 'Private', '2026-02-01'),
+        ($1, 'Published', 'Public', now() + interval '1 day')`,
+      [TESTER]
+    );
     await run(ARTICLES);
     expect((await held(CREATOR)).map((r) => r.key)).toEqual(['create:articles-1']);
     expect(await held(QUIET)).toEqual([]);
+    expect(await held(TESTER)).toEqual([]);
   });
 });
 
@@ -187,16 +208,15 @@ describe('download and user-metric detectors', () => {
   it('takes the best published, non-private model, and grants every threshold it passes', async () => {
     await q(
       `INSERT INTO "ModelMetric" ("modelId", "userId", status, availability, "downloadCount") VALUES
-        (1, $1, 'Published', 'Public', 1500),
+        (1, $1, 'Published', 'Public', 600),
+        (4, $1, 'Published', 'Public', 500),
         (2, $1, 'Published', 'Private', 900000),
         (3, $2, 'Draft', 'Public', 900000)`,
       [CREATOR, QUIET]
     );
     await run(DOWNLOADS);
-    expect((await held(CREATOR)).map((r) => r.key)).toEqual([
-      'reach:downloads-100',
-      'reach:downloads-1000',
-    ]);
+    // 600 + 500 would pass 1,000: the definition is one model's downloads, not the creator's total.
+    expect((await held(CREATOR)).map((r) => r.key)).toEqual(['reach:downloads-100']);
     expect(await held(QUIET)).toEqual([]);
   });
 
@@ -304,13 +324,62 @@ describe('announcing', () => {
     expect(second.notified).toEqual([]);
   });
 
+  it('refuses to run a group whose definitions are not seeded, and records nothing', async () => {
+    const { store, rows } = memoryStore();
+    await expect(
+      runActivityGroup(
+        { ...MODELS, keys: [...MODELS.keys, 'create:models-999'] },
+        {
+          readPg: pg,
+          writePg: pg,
+          store,
+          gated: false,
+          audienceAmong: async (ids) => new Set(ids),
+          notify: async () => undefined,
+        }
+      )
+    ).rejects.toThrow('No CreatorMilestone row for create:models-999');
+    expect(rows.size).toBe(0);
+  });
+
+  it('ungated, grants everyone but tells only the flag audience', async () => {
+    await addModels(CREATOR, ['2026-10-31 12:00']);
+    await addModels(TESTER, ['2026-10-31 12:00']);
+    const { notified } = await run(MODELS, { watermark: yesterday(), audience: [TESTER] });
+    expect(notified.map((g) => g.userId)).toEqual([TESTER]);
+    expect((await held(CREATOR)).map((r) => r.seen)).toEqual([false]);
+  });
+
+  it('grants and announces across chunks', async () => {
+    await addModels(CREATOR, ['2026-10-31 12:00']);
+    await addModels(TESTER, ['2026-10-31 13:00']);
+    const { notified } = await run(MODELS, { watermark: yesterday(), chunkSize: 1 });
+    expect(notified.map((g) => g.userId).sort()).toEqual([CREATOR, TESTER]);
+  });
+
+  // publishedAt is stored in UTC with no zone; the cutoff must not move with the session's zone.
+  it('compares the cutoff in UTC whatever the session zone', async () => {
+    await addModels(CREATOR, ['2026-10-31 00:30']);
+    await addModels(QUIET, ['2026-10-30 23:30']);
+    await q(`SET TIME ZONE 'America/New_York'`);
+    try {
+      const { notified } = await run(MODELS, { watermark: yesterday() });
+      expect(notified.map((g) => g.userId)).toEqual([CREATOR]);
+    } finally {
+      await q(`SET TIME ZONE 'UTC'`);
+    }
+  });
+
   it('leaves the watermark alone when a grant fails, so the next run is not told it completed', async () => {
     await addModels(CREATOR, ['2026-10-31 12:00']);
     const { store, rows } = memoryStore();
     const failing = {
-      cancellableQuery: async (sql: string) => {
+      cancellableQuery: async (sql: string, params?: unknown[]) => {
         if (sql.includes('INSERT INTO')) throw new Error('write failed');
-        throw new Error(`unexpected query: ${sql}`);
+        return (pg as { cancellableQuery: (s: string, p?: unknown[]) => unknown }).cancellableQuery(
+          sql,
+          params
+        );
       },
     } as never;
     await expect(
@@ -344,9 +413,20 @@ describe('announceFromFor', () => {
 });
 
 describe('watermark key', () => {
+  const rows = [
+    { key: 'create:models-1', threshold: 1 },
+    { key: 'create:models-5', threshold: 5 },
+  ];
+
   it('changes when a key joins a group, so the enlarged group starts with a silent run', () => {
-    expect(watermarkKeyFor({ ...MODELS, keys: [...MODELS.keys, 'create:models-50'] })).not.toBe(
-      watermarkKeyFor(MODELS)
+    expect(watermarkKeyFor(MODELS, [...rows, { key: 'create:models-50', threshold: 50 }])).not.toBe(
+      watermarkKeyFor(MODELS, rows)
+    );
+  });
+
+  it('changes when a threshold moves, so newly qualifying users are not announced as crossings', () => {
+    expect(watermarkKeyFor(MODELS, [rows[0], { key: 'create:models-5', threshold: 4 }])).not.toBe(
+      watermarkKeyFor(MODELS, rows)
     );
   });
 });
