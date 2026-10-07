@@ -119,6 +119,12 @@ const CONTEXT_RESOLVERS: Partial<Record<ReportEntity, ContextResolver>> = {
       FROM "Announcement" a JOIN "User" u ON u.id = a."userId"
       WHERE a.id = ${entityId} AND u.username IS NOT NULL
     )`,
+
+  // Absolute, on games.civitai.com: Game Frame computes it, and `getReportItemUrl` uses it as-is.
+  gameFrameGame: (entityId) =>
+    sql<string | null>`(
+      SELECT g.url FROM "GameFrameGame" g WHERE g.id = ${entityId}
+    )`,
 };
 
 /** The types `entityUrl` cannot answer for. Derived from the resolvers so a new one cannot be written

@@ -423,11 +423,14 @@ describe('the advisory locks have exactly one call site', () => {
   // article ids article.service.ts locks on.
   // creator-gallery-hidden-users takes one for the same count-then-insert reason, on a creator's
   // gallery hidden-users cap. Classed two-arg form (0x47480001), never nested inside another lock.
+  // game-frame-report takes two classed locks (0x47460001 per gfReportId, then 0x47460002 per game
+  // slug), always in that order, so a resent report cannot be filed twice and mirror writes serialise.
   const ALLOWED = [
     'services/article.service.ts',
     'services/creator-announcement.service.ts',
     'services/creator-gallery-hidden-users.service.ts',
     'services/free-placement.service.ts',
+    'services/game-frame-report.service.ts',
   ];
 
   it('is taken only inside createFreePlacement', () => {

@@ -65,11 +65,17 @@
   const notesForm = new FormState({ onSuccess: null, reload: true, onSettled: reloadIfGone });
   const placementForm = new FormState({ onSuccess: null, reload: true });
   const sweepForm = new FormState({ onSuccess: null, reload: true });
+  const delistForm = new FormState({
+    onSuccess: (result) => toast.success(String(result?.delisted ?? 'Delisted')),
+    reload: true,
+    onSettled: reloadIfGone,
+  });
 
   let selectedId = $state<number | null>(null);
   // Armed per placement id, so closing the sheet and opening another report cannot leave a live
   // destructive button pointed at the previous one.
   let confirmingPlacement = $state<number | null>(null);
+  let confirmingDelist = $state<number | null>(null);
   // The reporter's own words, wherever this entity type puts them: `comment` is the free-text field on
   // most forms, `violation`/`reason` is what the picker-driven ones carry.
   const reportComment = (r: { details: unknown }) =>
@@ -122,6 +128,7 @@
     statusForm.error = null;
     notesForm.error = null;
     placementForm.error = null;
+    delistForm.error = null;
   }
 </script>
 
@@ -377,6 +384,33 @@
               <Button size="sm" variant="destructive" onclick={() => (confirmingPlacement = placementId)}>
                 Remove placement
               </Button>
+            {/if}
+          </div>
+        {/if}
+
+        {#if data.type === 'gameFrameGame'}
+          <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            <p class="mb-2 text-sm">
+              Delisting takes this game and its forks off Civitai Games, then sets this report Actioned.
+              Undelisting is done on Civitai Games.
+            </p>
+            {#if confirmingDelist === selected.id}
+              <form method="POST" action="?/delistGame" use:enhance={delistForm.enhance} class="flex flex-wrap gap-2">
+                <input type="hidden" name="id" value={selected.id} />
+                <Button type="submit" size="sm" variant="destructive" disabled={delistForm.submitting}>
+                  Yes, delist it
+                </Button>
+                <Button type="button" size="sm" variant="outline" onclick={() => (confirmingDelist = null)}>
+                  Cancel
+                </Button>
+              </form>
+            {:else}
+              <Button size="sm" variant="destructive" onclick={() => (confirmingDelist = selected.id)}>
+                Delist game
+              </Button>
+            {/if}
+            {#if delistForm.error}
+              <p class="mt-2 text-sm text-red-300" role="alert">{delistForm.error}</p>
             {/if}
           </div>
         {/if}

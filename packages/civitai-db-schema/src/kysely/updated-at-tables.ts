@@ -47,6 +47,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'CryptoDeposit',
   'CryptoTransaction',
   'EntityModeration',
+  'GameFrameGame',
   'GenerationPreset',
   'HomeBlock',
   'HuggingFaceImport',

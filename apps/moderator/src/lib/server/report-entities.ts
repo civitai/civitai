@@ -102,6 +102,13 @@ const TABLES: Record<ReportEntity, Omit<ReportEntityMeta, 'type' | 'label'>> = {
     table: 'Challenge',
     ownerColumn: 'createdById',
   },
+  // `userId` is the game's author; null for Civitai's own bundled games.
+  gameFrameGame: {
+    reportTable: 'GameFrameGameReport',
+    fk: 'gameFrameGameId',
+    table: 'GameFrameGame',
+    ownerColumn: 'userId',
+  },
   // `ownerId` is who OPENED the conversation, which is not who was reported — see
   // `chatReportSubject`. Null keeps it out of the owner-column loop; both call sites add it back with
   // that predicate.

@@ -386,6 +386,11 @@ export const serverSchema = z
     // fallback to WEBHOOK_TOKEN has to stay. (Named for the value, not for the direction of any one
     // caller: it is one secret, and the sibling jobs that call in already use this name.)
     MOD_INBOUND_TOKEN: z.string().optional(),
+    // Civitai Games (Game Frame) → /api/internal/game-frame/*. Both unset (or '') means the endpoint
+    // answers 503 and Game Frame keeps reports in its outbox. '' is accepted for the same ConfigMap
+    // reason as MODERATOR_APP_INTERNAL_URL above.
+    GF_REPORT_TOKEN: z.string().optional(),
+    GAMES_GUEST_USER_ID: z.union([z.coerce.number().int().positive(), z.literal('')]).optional(),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
