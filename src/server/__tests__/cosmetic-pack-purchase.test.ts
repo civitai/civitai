@@ -362,6 +362,21 @@ describe('computePackPayouts', () => {
       expect(remainder).toBe(0);
     });
 
+    it('attributes a platform-listed pack official members their share of the price', () => {
+      // No lister, so these are the lister's own: they take the remainder, which
+      // is what keeps them from falling back to a zero row.
+      const { attributed } = computePackPayouts({
+        packPrice: 900,
+        packCreatorId: null,
+        members: [
+          member({ cosmeticId: 81, createdById: null, addedById: null, floorAmount: 100 }),
+          member({ cosmeticId: 82, createdById: null, addedById: null, floorAmount: 300 }),
+        ],
+        buyerId: BUYER,
+      });
+      expect([attributed.get(81), attributed.get(82)]).toEqual([225, 675]);
+    });
+
     it('leaves out a member the buyer authored', () => {
       const { attributed } = computePackPayouts({
         packPrice: PACK_PRICE,
