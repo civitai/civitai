@@ -60,6 +60,7 @@ const MODELS = groupFor('create:models-1');
 const ARTICLES = groupFor('create:articles-1');
 const DOWNLOADS = groupFor('reach:downloads-100');
 const FOLLOWERS = groupFor('reach:followers-100');
+const SHOP = groupFor('earn:shop-sales-100000');
 
 const AFTER_LAUNCH = new Date('2026-11-01T00:00:00Z');
 
@@ -124,6 +125,33 @@ const held = (userId: number) =>
     [userId]
   );
 
+let purchaseSeq = 0;
+async function addSales(
+  sales: {
+    cosmeticId?: number | null;
+    shopItemId?: number;
+    amount: number;
+    at: string;
+    refunded?: boolean;
+    id?: string;
+  }[]
+) {
+  for (const sale of sales)
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchases"
+        ("buzzTransactionId", "cosmeticId", "shopItemId", "unitAmount", "purchasedAt", refunded)
+       VALUES ($1, $2, $3, $4, $5::timestamp, $6)`,
+      [
+        sale.id ?? `tx-${++purchaseSeq}`,
+        sale.cosmeticId ?? null,
+        sale.shopItemId ?? 0,
+        sale.amount,
+        sale.at,
+        sale.refunded ?? false,
+      ]
+    );
+}
+
 async function addModels(userId: number, publishedAt: string[], status = 'Published') {
   for (const at of publishedAt)
     await q(
@@ -136,7 +164,16 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, meta jsonb, "deletedAt" timestamp(3), "bannedAt" timestamp(3));
-    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
+    CREATE TABLE "Cosmetic" (id serial PRIMARY KEY, "createdById" int);
+    CREATE TABLE "CosmeticShopItem" (id int PRIMARY KEY, "addedById" int);
+    CREATE TABLE "UserCosmeticShopPurchases" (
+      "buzzTransactionId" text PRIMARY KEY, "cosmeticId" int, "shopItemId" int NOT NULL,
+      "unitAmount" int NOT NULL, "purchasedAt" timestamp(3) NOT NULL, refunded boolean NOT NULL
+    );
+    CREATE TABLE "UserCosmeticShopPurchaseCosmetic" (
+      "buzzTransactionId" text NOT NULL, "cosmeticId" int NOT NULL, "unitAmount" int NOT NULL,
+      PRIMARY KEY ("buzzTransactionId", "cosmeticId")
+    );
     CREATE TABLE "UserCosmetic" (
       "userId" int NOT NULL, "cosmeticId" int NOT NULL, "claimKey" text NOT NULL DEFAULT 'claimed',
       PRIMARY KEY ("userId", "cosmeticId", "claimKey")
@@ -175,7 +212,9 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   await holder.db.exec(`
-    TRUNCATE "UserCosmetic", "UserCreatorMilestone", "User", "Model", "Article", "ModelMetric", "UserMetric";
+    TRUNCATE "UserCosmetic", "UserCreatorMilestone", "User", "Model", "Article", "ModelMetric", "UserMetric",
+      "CosmeticShopItem", "UserCosmeticShopPurchases", "UserCosmeticShopPurchaseCosmetic";
+    DELETE FROM "Cosmetic";
   `);
   for (const id of [CREATOR, QUIET, TESTER]) await q(`INSERT INTO "User" (id) VALUES ($1)`, [id]);
   await q(`INSERT INTO "User" (id, "bannedAt") VALUES ($1, now())`, [BANNED]);
@@ -251,6 +290,153 @@ describe('download and user-metric detectors', () => {
     expect((await held(CREATOR)).map((r) => r.key)).toEqual(['reach:followers-100']);
     expect(await held(QUIET)).toEqual([]);
     expect(await held(BANNED)).toEqual([]);
+  });
+});
+
+describe('shop revenue detector', () => {
+  // Cosmetic 1 is CREATOR's, cosmetic 2 is an official one, shop item 50 is a pack QUIET built.
+  beforeEach(async () => {
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (1, $1), (2, NULL)`, [CREATOR]);
+    await q(`INSERT INTO "CosmeticShopItem" (id, "addedById") VALUES (40, $1), (50, $2)`, [
+      TESTER,
+      QUIET,
+    ]);
+  });
+
+  it('dates each threshold by the sale that carried the gross total across it', async () => {
+    // Inserted newest first with ids running against time: transaction ids are not chronological.
+    await addSales([
+      { id: 'a', cosmeticId: 1, shopItemId: 40, amount: 1000, at: '2026-03-04 10:00' },
+      { id: 'b', cosmeticId: 1, shopItemId: 40, amount: 200000, at: '2026-03-03 10:00' },
+      { id: 'c', cosmeticId: 1, shopItemId: 40, amount: 40000, at: '2026-03-02 10:00' },
+      { id: 'd', cosmeticId: 1, shopItemId: 40, amount: 60000, at: '2026-03-01 10:00' },
+    ]);
+    // One candidate per threshold: later sales above it must not compete to date the grant.
+    const candidates = await q<{ milestoneKey: string; achievedAt: Date }>(
+      `${SHOP.sql({ keys: '$1', users: '$2' })} ORDER BY "milestoneKey"`,
+      [SHOP.keys, null]
+    );
+    expect(candidates.map((c) => c.milestoneKey)).toEqual([
+      'earn:shop-sales-100000',
+      'earn:shop-sales-250000',
+    ]);
+    await run(SHOP);
+    expect(await held(CREATOR)).toEqual([
+      { key: 'earn:shop-sales-100000', seen: true, at: '2026-03-02 10:00' },
+      { key: 'earn:shop-sales-250000', seen: true, at: '2026-03-03 10:00' },
+    ]);
+  });
+
+  it('credits a cosmetic to its creator, not the shop item lister, and a pack to its builder', async () => {
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-03-01' },
+      { cosmeticId: null, shopItemId: 50, amount: 100000, at: '2026-03-01' },
+    ]);
+    await run(SHOP);
+    expect((await held(CREATOR)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
+    expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
+    expect(await held(TESTER)).toEqual([]);
+  });
+
+  // A pack built around official or other creators' cosmetics: each member is its creator's sale.
+  it('splits a pack sale between its builder and the creators of the members inside it', async () => {
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (4, $1)`, [QUIET]);
+    await addSales([
+      { id: 'pack', cosmeticId: null, shopItemId: 50, amount: 200000, at: '2026-03-01' },
+    ]);
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
+       VALUES ('pack', 1, 100000), ('pack', 2, 60000), ('pack', 4, 30000)`
+    );
+    await run(SHOP);
+    const [creator] = await q(activityValuesSql, [CREATOR]);
+    const [builder] = await q(activityValuesSql, [QUIET]);
+    expect([creator.revenue, builder.revenue]).toEqual([100000, 40000]);
+    expect((await held(CREATOR)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
+    expect(await held(QUIET)).toEqual([]);
+  });
+
+  // An official member is recorded at its full list price, which can exceed what the buyer paid.
+  it("a pack never subtracts from its builder's other sales", async () => {
+    await addSales([
+      { id: 'cheap-pack', cosmeticId: null, shopItemId: 50, amount: 50000, at: '2026-03-02' },
+      { id: 'own-sale', cosmeticId: 4, shopItemId: 40, amount: 100000, at: '2026-03-03' },
+    ]);
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (4, $1)`, [QUIET]);
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
+       VALUES ('cheap-pack', 2, 60000)`
+    );
+    await run(SHOP);
+    const [builder] = await q(activityValuesSql, [QUIET]);
+    expect(builder.revenue).toBe(100000);
+    expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
+  });
+
+  it('leaves out refunded sales and official cosmetics', async () => {
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 99999, at: '2026-03-01' },
+      { cosmeticId: 1, shopItemId: 40, amount: 50000, at: '2026-03-02', refunded: true },
+      {
+        id: 'refunded-pack',
+        cosmeticId: null,
+        shopItemId: 50,
+        amount: 500000,
+        at: '2026-03-02',
+        refunded: true,
+      },
+      { cosmeticId: 2, shopItemId: 40, amount: 500000, at: '2026-03-02' },
+    ]);
+    // A refund leaves the pack's member rows in place.
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
+       VALUES ('refunded-pack', 1, 1)`
+    );
+    await run(SHOP);
+    expect(await held(CREATOR)).toEqual([]);
+    expect(await held(TESTER)).toEqual([]);
+    expect(await held(QUIET)).toEqual([]);
+  });
+
+  it('announces a crossing since the previous run, and not one before it', async () => {
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-10-31 12:00' },
+      { cosmeticId: null, shopItemId: 50, amount: 100000, at: '2026-10-30 12:00' },
+    ]);
+    const { notified } = await run(SHOP, {
+      watermark: { at: new Date('2026-10-31T00:00:00Z').getTime(), gated: false },
+    });
+    expect(notified.map((g) => `${g.userId}:${g.milestoneKey}`)).toEqual([
+      `${CREATOR}:earn:shop-sales-100000`,
+    ]);
+  });
+
+  it('while gated, grants only the flag audience', async () => {
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (3, $1)`, [TESTER]);
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-10-31 12:00' },
+      { cosmeticId: 3, shopItemId: 40, amount: 100000, at: '2026-10-31 12:00' },
+    ]);
+    const { result, notified } = await run(SHOP, {
+      watermark: { at: new Date('2026-10-31T00:00:00Z').getTime(), gated: true },
+      gated: true,
+      audience: [TESTER],
+    });
+    expect(result).toMatchObject({ candidates: 2, audience: 1, granted: 1 });
+    expect(await held(CREATOR)).toEqual([]);
+    expect(notified.map((g) => g.userId)).toEqual([TESTER]);
+  });
+
+  // Dated by a real sale, so a gated run can still tell tonight's crossing from a backlog.
+  it('announces a dated crossing even across gated runs', async () => {
+    await addSales([{ cosmeticId: 1, shopItemId: 40, amount: 100000, at: '2026-10-31 12:00' }]);
+    const { notified } = await run(SHOP, {
+      watermark: { at: new Date('2026-10-31T00:00:00Z').getTime(), gated: true },
+      gated: true,
+    });
+    expect(notified.map((g) => `${g.userId}:${g.milestoneKey}`)).toEqual([
+      `${CREATOR}:earn:shop-sales-100000`,
+    ]);
   });
 });
 
@@ -564,6 +750,15 @@ describe('journey progress values', () => {
       [CREATOR]
     );
 
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (1, $1), (2, NULL)`, [CREATOR]);
+    await q(`INSERT INTO "CosmeticShopItem" (id, "addedById") VALUES (50, $1)`, [CREATOR]);
+    await addSales([
+      { cosmeticId: 1, shopItemId: 40, amount: 70000, at: '2026-01-01' },
+      { cosmeticId: null, shopItemId: 50, amount: 40000, at: '2026-01-02' },
+      { cosmeticId: 1, shopItemId: 40, amount: 900000, at: '2026-01-03', refunded: true },
+      { cosmeticId: 2, shopItemId: 40, amount: 900000, at: '2026-01-03' },
+    ]);
+
     const [values] = await q<Record<ActivityMeasure, number>>(activityValuesSql, [CREATOR]);
     expect(values).toEqual({
       models: 5,
@@ -571,6 +766,7 @@ describe('journey progress values', () => {
       downloads: 600,
       followers: 120,
       reactions: 1000,
+      revenue: 110000,
     });
 
     for (const group of groups) await run(group);
@@ -589,6 +785,13 @@ describe('journey progress values', () => {
 
   it('read zero for a creator with nothing', async () => {
     const [values] = await q(activityValuesSql, [QUIET]);
-    expect(values).toEqual({ models: 0, articles: 0, downloads: 0, followers: 0, reactions: 0 });
+    expect(values).toEqual({
+      models: 0,
+      articles: 0,
+      downloads: 0,
+      followers: 0,
+      reactions: 0,
+      revenue: 0,
+    });
   });
 });
