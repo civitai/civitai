@@ -3,7 +3,10 @@ import type { AddressInfo } from 'net';
 import { afterEach, describe, expect, it } from 'vitest';
 
 // Imported by path: it runs under plain node and is never bundled.
-import { daemonFetch } from '../../.claude/skills/dev-server/scripts/daemon-http.mjs';
+import {
+  DAEMON_TIMEOUT_MS,
+  daemonFetch,
+} from '../../.claude/skills/dev-server/scripts/daemon-http.mjs';
 
 let server: Server | undefined;
 
@@ -48,7 +51,13 @@ describe('daemonFetch', () => {
 
   // `fetch` gave up after undici's implicit 300s; `http.request` has no timeout of its own, so a
   // daemon that accepts and never answers would hang a waiter forever without this.
-  it('rejects when the daemon accepts and never answers', async () => {
+  // cli.mjs and console.mjs send every daemon call through this default, including session and app
+  // starts; shortening it below fetch's old 300s would fail calls that used to succeed.
+  it('waits at least as long as fetch did by default', () => {
+    expect(DAEMON_TIMEOUT_MS).toBeGreaterThanOrEqual(300_000);
+  });
+
+  it('rejects when the daemon accepts and never answers', { timeout: 5_000 }, async () => {
     const base = await listen(() => undefined);
 
     await expect(daemonFetch(`${base}/hang`, { timeoutMs: 200 })).rejects.toThrow(

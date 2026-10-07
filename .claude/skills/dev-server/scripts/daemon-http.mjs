@@ -10,7 +10,12 @@ import { request } from 'http';
  * The timeout replaces undici's 300s headers/body timeouts, which `fetch` applied implicitly; without
  * one, a daemon that accepts and never answers hangs its caller forever.
  */
-export function daemonFetch(url, { method = 'GET', headers = {}, body, timeoutMs = 300_000 } = {}) {
+export const DAEMON_TIMEOUT_MS = 300_000;
+
+export function daemonFetch(
+  url,
+  { method = 'GET', headers = {}, body, timeoutMs = DAEMON_TIMEOUT_MS } = {}
+) {
   return new Promise((done, fail) => {
     const req = request(url, { method, headers }, (res) => {
       let text = '';
