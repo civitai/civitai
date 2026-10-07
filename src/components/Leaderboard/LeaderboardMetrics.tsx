@@ -21,11 +21,13 @@ import {
   IconDownload,
   IconEye,
   IconFileStar,
+  IconFlame,
   IconHeart,
   IconHexagonFilled,
   IconMoodSmile,
   IconPhoto,
   IconReport,
+  IconScale,
   IconShieldChevron,
   IconStar,
   IconTarget,
@@ -33,6 +35,7 @@ import {
   IconTargetOff,
   IconThumbUp,
   IconTrophy,
+  IconUsers,
   IconVideo,
   IconX,
 } from '@tabler/icons-react';
@@ -210,6 +213,22 @@ const metricTypes: Record<
   allJudgments: () => ({
     tooltip: 'All Judgments',
     icon: <IconBadges {...iconProps} />,
+  }),
+  crucibles: () => ({
+    tooltip: 'Crucibles',
+    icon: <IconFlame {...iconProps} />,
+  }),
+  votes: () => ({
+    tooltip: 'Votes',
+    icon: <IconScale {...iconProps} />,
+  }),
+  entrants: () => ({
+    tooltip: 'Entrants',
+    icon: <IconUsers {...iconProps} />,
+  }),
+  wins: () => ({
+    tooltip: 'Wins',
+    icon: <IconTrophy {...iconProps} />,
   }),
 };
 
