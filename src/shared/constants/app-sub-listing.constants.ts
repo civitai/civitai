@@ -1,3 +1,4 @@
+import type { StoreGridItem, SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 import {
   OFFSITE_CONTENT_RATING_LADDER,
   type OffsiteRatingValue,
@@ -93,4 +94,8 @@ export function subListingRunHref(parentSlug: string, subPath: string, subListin
   return `/apps/run/${encodeURIComponent(parentSlug)}/${path}?sl=${encodeURIComponent(
     subListingId
   )}`;
+}
+
+export function isSubListingCard(item: StoreGridItem): item is SubListingCard {
+  return (item as SubListingCard).cardType === 'sub-listing';
 }

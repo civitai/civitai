@@ -23,4 +23,5 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Civitai LLM Client | [docs/features/civitai-llm-client.md](civitai-llm-client.md) |
 | Challenge Platform | [docs/features/challenge-platform.md](challenge-platform.md) |
 | Civitai Link | [docs/features/civitai-link.md](civitai-link.md) |
+| App Store sub-listings (items inside an app as store cards) | [docs/features/app-store-sub-listings.md](app-store-sub-listings.md) |
 | Generator model onboarding (new ecosystem / model / version) | [docs/features/generator-model-onboarding.md](generator-model-onboarding.md) |

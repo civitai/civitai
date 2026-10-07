@@ -1,11 +1,19 @@
-import { Tabs } from '@mantine/core';
+import { Badge, Tabs } from '@mantine/core';
 import { keepPreviousData } from '@tanstack/react-query';
-import { IconCheck, IconClipboardList, IconClock, IconFlag, IconX } from '@tabler/icons-react';
+import {
+  IconCheck,
+  IconClipboardList,
+  IconClock,
+  IconFlag,
+  IconLayoutGrid,
+  IconX,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ActivePreviewsPanel } from '~/components/Apps/ActivePreviewsPanel';
 import { AppListingsModerationTable } from '~/components/Apps/AppListingsModerationTable';
+import { SubListingReviewQueue } from '~/components/Apps/SubListingReviewQueue';
 // The off-site review MODAL is now PAGE-OWNED (lifted here) so a single instance is
 // shared by the unified Pending list AND the `AppListingsModerationTable` — no
 // divergence. `OffsiteReportsQueue` still powers the Reports tab.
@@ -90,11 +98,16 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-type TabValue = 'pending' | 'approved' | 'rejected' | 'reports' | 'manage';
+type TabValue = 'pending' | 'approved' | 'rejected' | 'reports' | 'manage' | 'sub-listings';
 
 function isTabValue(v: unknown): v is TabValue {
   return (
-    v === 'pending' || v === 'approved' || v === 'rejected' || v === 'reports' || v === 'manage'
+    v === 'pending' ||
+    v === 'approved' ||
+    v === 'rejected' ||
+    v === 'reports' ||
+    v === 'manage' ||
+    v === 'sub-listings'
   );
 }
 
@@ -206,6 +219,23 @@ export const APPS_REVIEW_POLL_MS = 15_000;
 function mergeById<T extends { id: string }>(accumulated: T[], page: T[]): T[] {
   const seen = new Set(accumulated.map((r) => r.id));
   return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
+}
+
+/**
+ * Pending store items — new ones plus edits to approved ones — so the work shows on the tab
+ * without opening it. Polls with the rest of the queue; renders nothing at zero or on error.
+ */
+export function SubListingPendingBadge() {
+  const { data } = trpc.appListings.countSubListingQueue.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data?.count) return null;
+  return (
+    <Badge size="xs" color="yellow" variant="filled" data-testid="sub-listing-pending-count">
+      {data.count}
+    </Badge>
+  );
 }
 
 export default function ReviewQueuePage() {
@@ -332,6 +362,13 @@ export default function ReviewQueuePage() {
             <Tabs.Tab value="manage" leftSection={<IconClipboardList size={14} />}>
               Manage listings
             </Tabs.Tab>
+            <Tabs.Tab
+              value="sub-listings"
+              leftSection={<IconLayoutGrid size={14} />}
+              rightSection={<SubListingPendingBadge />}
+            >
+              Sub-listings
+            </Tabs.Tab>
           </Tabs.List>
 
           <Tabs.Panel value="pending" pt="md">
@@ -365,6 +402,12 @@ export default function ReviewQueuePage() {
           <Tabs.Panel value="reports" pt="md">
             {/* Off-site listing REPORT queue + mod takedown actions. Unchanged. */}
             <OffsiteReportsQueue />
+          </Tabs.Panel>
+
+          <Tabs.Panel value="sub-listings" pt="md">
+            {/* Store items apps place in the store as their own cards: new items and
+                edits to approved ones. Same moderators as the queue above. */}
+            <SubListingReviewQueue />
           </Tabs.Panel>
 
           <Tabs.Panel value="manage" pt="md">

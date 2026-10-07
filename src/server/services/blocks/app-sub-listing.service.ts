@@ -14,7 +14,6 @@ import { checkSubListingWriteRateLimit } from '~/server/utils/shared-storage-rat
 import {
   APP_SUB_LISTING_CONTENT_RATINGS,
   APP_SUB_LISTING_ITEM_KEY_MAX,
-  APP_SUB_LISTING_REASON_MAX,
   APP_SUB_LISTING_TAGLINE_MAX,
   APP_SUB_LISTING_TITLE_MAX,
   isRatingAtLeastAsStrict,
@@ -22,6 +21,10 @@ import {
   type AppSubListingStatus,
 } from '~/shared/constants/app-sub-listing.constants';
 import type { SessionUser } from '~/types/session';
+import type {
+  ListSubListingQueueInput,
+  ModerateSubListingInput,
+} from '~/server/schema/blocks/app-sub-listing.schema';
 
 /**
  * App Store sub-listings — the write path.
@@ -634,33 +637,10 @@ export async function syncSubListingForSharedRow(
 // Moderation (`/apps/review` → Sub-listings).
 // ---------------------------------------------------------------------------
 
-export const SUB_LISTING_MOD_ACTIONS = [
-  'approve',
-  'hide',
-  'restore',
-  'approve-edit',
-  'reject-edit',
-] as const;
-export type SubListingModAction = (typeof SUB_LISTING_MOD_ACTIONS)[number];
-
-export const moderateSubListingSchema = z.object({
-  id: z.string().min(1).max(64),
-  action: z.enum(SUB_LISTING_MOD_ACTIONS),
-  reason: z.string().trim().max(APP_SUB_LISTING_REASON_MAX).optional(),
-});
-export type ModerateSubListingInput = z.infer<typeof moderateSubListingSchema>;
-
 /** The queue: new pending rows plus approved rows carrying a staged edit. */
 const QUEUE_WHERE = {
   OR: [{ status: 'pending' }, { status: 'approved', pendingSubmittedAt: { not: null } }],
 } satisfies Prisma.AppSubListingWhereInput;
-
-export const listSubListingQueueSchema = z.object({
-  view: z.enum(['queue', 'approved', 'hidden']).default('queue'),
-  cursor: z.string().min(1).max(64).optional(),
-  limit: z.number().int().min(1).max(50).default(25),
-});
-export type ListSubListingQueueInput = z.infer<typeof listSubListingQueueSchema>;
 
 const imageSelect = { select: { url: true } } as const;
 

@@ -302,10 +302,6 @@ export type SubListingCard = {
 
 export type StoreGridItem = ListingCard | SubListingCard;
 
-export function isSubListingCard(item: StoreGridItem): item is SubListingCard {
-  return (item as SubListingCard).cardType === 'sub-listing';
-}
-
 export type ListingGalleryScreenshot = {
   url: string;
   caption: string | null;

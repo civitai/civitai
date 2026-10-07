@@ -61,6 +61,10 @@ import {
   unpublishOwnListingSchema,
 } from '~/server/schema/blocks/offsite-moderation.schema';
 import { messageAppOwnerSchema } from '~/server/schema/blocks/app-moderator-message.schema';
+import {
+  listSubListingQueueSchema,
+  moderateSubListingSchema,
+} from '~/server/schema/blocks/app-sub-listing.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import {
   recordStoreScopeApplied,
@@ -385,6 +389,24 @@ function applyStoreGates(
     rawFloor as string | undefined
   );
   return { scope: narrowStoreScope(rawScope), floor: applyAudienceFloor(ctx) };
+}
+
+/** Map a `SubListingError` (duck-typed, so the service stays a lazy import) to TRPC. */
+function mapSubListingError(err: unknown): TRPCError {
+  if (err instanceof TRPCError) return err;
+  if (err instanceof Error && err.name === 'SubListingError') {
+    const status = (err as { status?: unknown }).status;
+    const code =
+      status === 404
+        ? 'NOT_FOUND'
+        : status === 409
+        ? 'CONFLICT'
+        : status === 503
+        ? 'SERVICE_UNAVAILABLE'
+        : 'BAD_REQUEST';
+    return new TRPCError({ code, message: err.message, cause: err });
+  }
+  return new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'Unexpected error', cause: err });
 }
 
 /**
@@ -1773,6 +1795,47 @@ export const appListingsRouter = router({
         return await listMyListingModerationEvents({ input, userId: ctx.user.id });
       } catch (err) {
         throw mapOffsiteError(err);
+      }
+    }),
+
+  // -------------------------------------------------------------------------
+  // App Store SUB-LISTINGS moderation (`/apps/review` → Sub-listings). Same audience as the
+  // app review queue: `moderatorProcedure` is the server half of `isAppReviewer`.
+  // -------------------------------------------------------------------------
+
+  /** MOD: new pending items plus approved items with a staged edit (or the approved / hidden lists). */
+  listSubListingQueue: moderatorProcedure
+    .input(listSubListingQueueSchema)
+    .query(async ({ input }) => {
+      const { listSubListingQueue } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await listSubListingQueue(input);
+      } catch (err) {
+        throw mapSubListingError(err);
+      }
+    }),
+
+  /** MOD: the tab-label count — new pending items plus staged edits. 0 while the tables are absent. */
+  countSubListingQueue: moderatorProcedure.query(async () => {
+    const { countSubListingQueue } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    return { count: await countSubListingQueue() };
+  }),
+
+  /** MOD: approve / hide / restore / approve-edit / reject-edit. Stamps `moderated_by_id`. */
+  moderateSubListing: moderatorProcedure
+    .input(moderateSubListingSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { moderateSubListing } = await import(
+        '~/server/services/blocks/app-sub-listing.service'
+      );
+      try {
+        return await moderateSubListing({ input, moderatorId: ctx.user.id });
+      } catch (err) {
+        throw mapSubListingError(err);
       }
     }),
 
