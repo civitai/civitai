@@ -189,7 +189,7 @@ Tiering reflects head-moderator guidance on what's actually used day-to-day.
   - Schemas: `article.schema.ts` (`getModeratorArticlesSchema` extends `infiniteQuerySchema`)
   - Infra: **Postgres only.** `ArticleContextMenu` may issue extra mutations — verify.
 
-- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve).
+- [x] **`/moderator/article-rating-review`** — `src/pages/moderator/article-rating-review.tsx` — flag: `articleRatingDispute` — **Migrated** (commit 1603e46e0; spoke owns mutations, optimistic resolve), **then retired**: the spoke's `/ratings` queue (`RatingReview`, every rated entity) replaced it, and the old path redirects there. The procedures below no longer exist.
   - Procedures: `article.getRatingReviews`, `article.getRatingReviewCounts` (queries)
   - Services: `article.service.ts` → `getArticleRatingReviews`, `getArticleRatingReviewCounts`
   - Schemas: `article.schema.ts` (`getArticleRatingReviewsSchema`) + `ReportStatus` enum

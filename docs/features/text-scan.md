@@ -20,9 +20,10 @@ single orchestrator `chatCompletion` step with a strict JSON schema; the verdict
 ## Entities
 
 The scanned entities, and the fields and labels each scans, are the profiles in
-`src/server/services/text-scan/profiles/`. Crucible's scan (name, description → `nsfw`) replaces
-XGuard. Collection's (name, description of Public collections readable as Public or Unlisted →
-`nsfw`, a floor on the collection's rating) replaces Clavata.
+`src/server/services/text-scan/profiles/`. Once Crucible is active, its scan (name, description →
+`nsfw`) replaces XGuard; off or in shadow, XGuard still runs. Collection's (name, description of
+Public collections readable as Public or Unlisted → `nsfw`, a floor on the collection's rating)
+replaces Clavata only once Collection is cut over with `disableClavataFor`.
 
 ## Actions
 
@@ -58,8 +59,16 @@ Every finished verdict is logged to Axiom as `name: 'scan-verdict'`, with `syste
 (shadow and active), `xguard` (its result callback) or `clavata` (the entity-moderation job, clean
 results included). Each event carries the entity type and id, `flagged`, `acted`, and the
 system's labels; no user text is logged. The profanity filter's verdict is stored on the entity
-(`profanityEvaluation` on `Model.meta` and `Bounty.details`). Clavata scans chat as `Chat` windows
-and has no CommentV2 queue, so those don't pair one to one with text scan's entities.
+(`profanityEvaluation` on `Model.meta` and `Bounty.details`). Clavata scans chat as `Chat` windows,
+so chat verdicts don't pair one to one with text scan's per-message ones.
+
+## Shipped with text scan, whatever the mode
+
+- The Clavata scam auto-mute files a Pending scam case and one `Scam` strike, and sends one "Account
+  restricted" notice; see `docs/moderator-app/strike-rules.md`.
+- Bounty awards are recorded under the payout lock, then paid with one key shared by the manual and
+  expiry paths (`bounty-award-b<bountyId>-<accountType>`), so a retry can't pay twice. The hourly
+  `bounty-payout-retry` job settles awards recorded but not yet marked paid.
 
 ## Adding an entity or a label
 
