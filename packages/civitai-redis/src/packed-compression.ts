@@ -16,9 +16,9 @@ import { promisify } from 'util';
  * call sites in redis/client.ts set/get are already async and simply `await` these.
  * Off-loop is not free, though: the threadpool's CPU is still the app's CPU.
  *
- * WINDOW SIZED TO THE VALUE: the one-shot encoder allocates its window per call, and at brotli's
- * default 22-bit (4 MiB) window that allocation is mostly kernel time under musl (the
- * node:24-alpine base) — several times the CPU of a window sized to the input, at the same ratio.
+ * WINDOW SIZED TO THE VALUE: at brotli's default 22-bit (4 MiB) window, a one-shot compress spends
+ * most of its CPU in the kernel under musl (the node:24-alpine base) — several times the CPU of a
+ * window sized to the input, at the same ratio. The encoder allocates its window per call.
  * Do not drop BROTLI_PARAM_LGWIN; see packedBrotliWindowBits. Decoding is unaffected: the decoder
  * reads the window from each stream's header, so values written with the old window still decode.
  *
@@ -93,8 +93,9 @@ export type PackedCodecTimer = (op: 'compress' | 'decompress', seconds: number) 
 /**
  * Brotli window (log2 bytes) about as large as the input, clamped to brotli's minimum and to its
  * DEFAULT (22) rather than its maximum (24), so values of 4 MiB and up keep the window they always
- * had. A larger window buys no extra matches. Smaller values get a smaller window than before:
- * same ratio and compress CPU, possibly slightly slower decode at the large end.
+ * had. A larger window buys no extra matches. Smaller values get a smaller window than before: same
+ * ratio, far less compress CPU on musl for small values; decode of a ~358 KiB value measured
+ * slightly slower on musl.
  */
 export function packedBrotliWindowBits(byteLength: number): number {
   const { BROTLI_MIN_WINDOW_BITS, BROTLI_DEFAULT_WINDOW } = zlib.constants;
