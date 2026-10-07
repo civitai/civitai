@@ -372,6 +372,8 @@ const featureFlags = createFeatureFlags({
   // ramps; everyone else keeps the current chat, which still ships alongside it.
   chatRedesign: { availability: ['mod'], fliptKey: 'chat-redesign' },
   creatorsProgram: ['mod', 'granted'],
+  // The banking-change notice alert and modal on the Buzz dashboard. Dark until the Flipt flag is on.
+  bankingChangeNotice: { availability: [], fliptKey: 'banking-change-notice' },
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
   membershipsV2: ['public'],
