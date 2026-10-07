@@ -3,12 +3,10 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { restoreScamCase, type ScamCleanupRecord } from '~/server/services/scam-cleanup.service';
-import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 const MODERATOR_UNMUTE_ACTIVITIES = ['unmute', 'revokeTimedMute'];
 const SYSTEM_ACTOR_ID = constants.system.user.id;
-const CLEANUP_ONLY_MESSAGE =
-  'Recorded automatically: the account was already muted by a moderator, so only its content was hidden.';
+const SCAM_CASE_CLOSED_VOID_REASON = 'The account was unmuted, which closed its scam review.';
 
 type LedgerClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw' | 'userRestriction'>;
 
@@ -24,6 +22,7 @@ export type ScamTriggerEntry = {
   textHash?: string;
   contentAt?: string | null;
   cleanup?: ScamCleanupRecord | null;
+  strikeId?: number | null;
 };
 
 export async function scamVerdictActioned(
@@ -76,8 +75,9 @@ export async function scamTextSeenBefore(
 
 /**
  * Closes what an unmute lifts: Pending scam cases, and the cleanup records kept for an account a
- * moderator had muted. Returns their ids; hand them to `restoreScamCases` once the transaction
- * commits. A closed row is no longer selected, so its content is restored once.
+ * moderator had muted, voiding the strikes they issued. Returns their ids; hand them to
+ * `restoreScamCases` once the transaction commits. A closed row is no longer selected, so its
+ * content is restored once.
  */
 export async function closeScamCasesOpenedBefore(
   userId: number,
@@ -95,7 +95,31 @@ export async function closeScamCasesOpenedBefore(
       AND (status = 'Pending' OR (status = 'Upheld' AND "resolvedBy" = ${SYSTEM_ACTOR_ID}))
     RETURNING id
   `;
-  return closed.map(({ id }) => id);
+  const ids = closed.map(({ id }) => id);
+  await voidScamCaseStrikes(ids, { voidedBy: null, reason: SCAM_CASE_CLOSED_VOID_REASON }, client);
+  return ids;
+}
+
+/**
+ * Database-only, so it can run inside the transaction that closes the case. Escalation is not re-run:
+ * the caller settles the mute itself in that same transaction.
+ */
+export async function voidScamCaseStrikes(
+  userRestrictionIds: number[],
+  { voidedBy, reason }: { voidedBy: number | null; reason: string },
+  client: LedgerClient = dbWrite
+) {
+  if (!userRestrictionIds.length) return [];
+  const rows = await client.$queryRaw<{ id: number }[]>`
+    UPDATE "UserStrike" s
+    SET status = 'Voided', "voidedAt" = now(), "voidedBy" = ${voidedBy}::int, "voidReason" = ${reason}
+    FROM "UserRestriction" ur,
+      jsonb_array_elements(CASE WHEN jsonb_typeof(ur.triggers) = 'array' THEN ur.triggers ELSE '[]'::jsonb END) t
+    WHERE ur.id = ANY(${userRestrictionIds}::int[]) AND ur.type = 'scam'
+      AND s.id = (t->>'strikeId')::int AND s."userId" = ur."userId" AND s.status = 'Active'
+    RETURNING s.id
+  `;
+  return rows.map(({ id }) => id);
 }
 
 export async function restoreScamCases(userId: number, userRestrictionIds: number[]) {
@@ -129,42 +153,21 @@ export async function appendScamTrigger(
   return rows[0]?.index ?? null;
 }
 
-/**
- * One system-resolved `scam` row per moderator-muted account, so its cleanup stays restorable and
- * deduped without opening a case. `null` if this verdict is already recorded.
- */
-export async function fileScamCleanupRecord(
-  userId: number,
-  entry: ScamTriggerEntry,
-  client: LedgerClient = dbWrite
+type TriggerSlot = { userRestrictionId: number; index: number; dedupeKey: string };
+
+async function setTriggerField(
+  { userRestrictionId, index, dedupeKey }: TriggerSlot,
+  field: 'cleanup' | 'strikeId',
+  value: unknown
 ) {
-  const existing = await client.userRestriction.findFirst({
-    where: {
-      userId,
-      type: 'scam',
-      status: UserRestrictionStatus.Upheld,
-      resolvedBy: SYSTEM_ACTOR_ID,
-    },
-    orderBy: { createdAt: 'desc' },
-    select: { id: true },
-  });
-  if (existing) {
-    const index = await appendScamTrigger(existing.id, entry, client);
-    return index === null ? null : { userRestrictionId: existing.id, index, created: false };
-  }
-  const created = await client.userRestriction.create({
-    data: {
-      userId,
-      type: 'scam',
-      status: UserRestrictionStatus.Upheld,
-      triggers: [entry],
-      resolvedAt: new Date(),
-      resolvedBy: SYSTEM_ACTOR_ID,
-      resolvedMessage: CLEANUP_ONLY_MESSAGE,
-    },
-    select: { id: true },
-  });
-  return { userRestrictionId: created.id, index: 0, created: true };
+  await dbWrite.$executeRaw`
+    UPDATE "UserRestriction"
+    SET triggers = jsonb_set(triggers, ARRAY[${String(index)}, ${field}], ${JSON.stringify(
+    value
+  )}::jsonb),
+        "updatedAt" = now()
+    WHERE id = ${userRestrictionId} AND triggers -> ${index}::int ->> 'dedupeKey' = ${dedupeKey}
+  `;
 }
 
 export async function recordScamCleanup(
@@ -173,12 +176,14 @@ export async function recordScamCleanup(
   dedupeKey: string,
   record: ScamCleanupRecord
 ) {
-  await dbWrite.$executeRaw`
-    UPDATE "UserRestriction"
-    SET triggers = jsonb_set(triggers, ARRAY[${String(index)}, 'cleanup'], ${JSON.stringify(
-    record
-  )}::jsonb),
-        "updatedAt" = now()
-    WHERE id = ${userRestrictionId} AND triggers -> ${index}::int ->> 'dedupeKey' = ${dedupeKey}
-  `;
+  await setTriggerField({ userRestrictionId, index, dedupeKey }, 'cleanup', record);
+}
+
+export async function recordScamStrike(
+  userRestrictionId: number,
+  index: number,
+  dedupeKey: string,
+  strikeId: number
+) {
+  await setTriggerField({ userRestrictionId, index, dedupeKey }, 'strikeId', strikeId);
 }

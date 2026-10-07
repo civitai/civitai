@@ -10,6 +10,7 @@ import { cancelSubscription, reinstateSubscription } from '~/server/services/str
 import { updateUserById } from '~/server/services/user.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { restoreScamCase } from '~/server/services/scam-cleanup.service';
+import { voidScamCaseStrikes } from '~/server/services/scam-case-ledger';
 import type { UserMeta } from '~/server/schema/user.schema';
 import {
   hasOtherPendingRestriction,
@@ -19,12 +20,18 @@ import {
 } from '~/server/services/user-restriction.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { UserRestrictionStatus } from '~/shared/utils/prisma/enums';
+import type { Prisma } from '@prisma/client';
 
 export type RulingEffects = {
   upheldNotification: string;
   overturnedNotification: string;
   upheldSource: string;
   overturnedSource: string;
+  overturnInTransaction?: (
+    tx: Prisma.TransactionClient,
+    restriction: { id: number; userId: number },
+    moderatorId: number
+  ) => Promise<unknown>;
   afterOverturn?: (restriction: { id: number; userId: number }) => Promise<unknown>;
 };
 
@@ -41,6 +48,12 @@ export const RULING_EFFECTS: Partial<Record<UserRestrictionType, RulingEffects>>
     overturnedNotification: 'review-restriction-overturned',
     upheldSource: 'moderator:scamRestrictionUpheld',
     overturnedSource: 'moderator:scamRestrictionOverturned',
+    overturnInTransaction: (tx, { id }, moderatorId) =>
+      voidScamCaseStrikes(
+        [id],
+        { voidedBy: moderatorId > 0 ? moderatorId : null, reason: 'Scam restriction overturned.' },
+        tx
+      ),
     afterOverturn: ({ id }) =>
       restoreScamCase(id).catch((error) =>
         logToAxiom({
@@ -134,6 +147,7 @@ export async function resolveUserRestriction({
     // seen here or files after the unmute and mutes again on its own.
     stillHeld = await dbWrite.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT 1 FROM "User" WHERE id = ${restriction.userId} FOR UPDATE`;
+      await effects.overturnInTransaction?.(tx, restriction, moderatorId);
       if (await hasOtherPendingRestriction(tx, restriction.userId, restriction.id)) return true;
       // Overturning clears the whole mute, not just the flag: an uphold sets `mutedAt`, and leaving
       // it behind on an overturn keeps the account off every leaderboard and makes the next

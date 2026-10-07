@@ -946,6 +946,31 @@ describe('strike.service', () => {
       expect(result).toEqual(mockCreatedStrike);
     });
 
+    it('finds an account the replica has not caught up with on the primary', async () => {
+      mockDbRead.user.findUnique.mockReset();
+      mockDbRead.user.findUnique.mockResolvedValueOnce(null);
+      mockDbWrite.user.findUnique.mockResolvedValueOnce({ id: 100 });
+
+      expect(await createStrike(baseInput)).toEqual(mockCreatedStrike);
+    });
+
+    it('sends no notice, email or escalation notice when the caller sends its own', async () => {
+      mockTransactionForEscalation(3, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: {},
+      });
+
+      expect(await createStrike({ ...baseInput, points: 3, notifyUser: false })).toEqual(
+        mockCreatedStrike
+      );
+
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(mockStrikeIssuedEmailSend).not.toHaveBeenCalled();
+      expect(mockDbWrite.$transaction).toHaveBeenCalled();
+    });
+
     it('calls evaluateStrikeEscalation after creation', async () => {
       await createStrike(baseInput);
 

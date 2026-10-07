@@ -234,7 +234,7 @@ export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy"
 
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
-export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
+export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
 

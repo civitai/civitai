@@ -1167,6 +1167,7 @@ export const StrikeReason = {
   HarassmentContent: 'HarassmentContent',
   ProhibitedContent: 'ProhibitedContent',
   ManualModAction: 'ManualModAction',
+  Scam: 'Scam',
 } as const;
 
 export type StrikeReason = (typeof StrikeReason)[keyof typeof StrikeReason];

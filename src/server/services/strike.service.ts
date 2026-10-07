@@ -333,7 +333,7 @@ export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted
  */
 export async function evaluateStrikeEscalation(
   userId: number,
-  { allowMute = false }: { allowMute?: boolean } = {}
+  { allowMute = false, silent = false }: { allowMute?: boolean; silent?: boolean } = {}
 ): Promise<{ totalPoints: number; action: EscalationAction }> {
   // The point total and the mute-state write are one atomic unit. `FOR UPDATE` on the strike rows
   // only serializes concurrent evaluations while the transaction is open, so the write has to be
@@ -493,7 +493,7 @@ export async function evaluateStrikeEscalation(
 
   userUpdateCounter?.inc({ location: 'strike.service:evaluateStrikeEscalation' });
 
-  if (notify) {
+  if (notify && !silent) {
     await createNotification(
       action === 'unmuted'
         ? {
@@ -606,7 +606,13 @@ export async function acceptTosAfterMute({
 /**
  * Create a new strike for a user.
  */
-export async function createStrike(input: CreateStrikeInput & { issuedBy?: number }) {
+/**
+ * `notifyUser: false` is for a caller that sends its own notice for the event the strike is part of;
+ * the strike's notification, email and escalation notice are all skipped.
+ */
+export async function createStrike(
+  input: CreateStrikeInput & { issuedBy?: number; notifyUser?: boolean }
+) {
   const {
     userId,
     reason,
@@ -618,13 +624,17 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
     reportId,
     expiresInDays,
     issuedBy,
+    notifyUser = true,
   } = input;
 
-  // Validate user exists
-  const userExists = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { id: true },
-  });
+  const userArgs = { where: { id: userId }, select: { id: true } } as const;
+  // An automated strike can land seconds after the account was created, ahead of the replica.
+  const userExists =
+    (await dbRead.user.findUnique(userArgs)) ??
+    (await dbWrite.user.findUnique(userArgs).then((user) => {
+      if (user) dbReadFallbackCounter.inc({ entity: 'user', caller: 'createStrike' });
+      return user;
+    }));
   if (!userExists) {
     throw new TRPCError({ code: 'NOT_FOUND', message: `User ${userId} not found` });
   }
@@ -684,7 +694,8 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
     });
   }
 
-  await evaluateStrikeEscalation(userId, { allowMute: true });
+  await evaluateStrikeEscalation(userId, { allowMute: true, silent: !notifyUser });
+  if (!notifyUser) return strike;
 
   // Get updated active points for notification/email
   const activePoints = await getActiveStrikePoints(userId);

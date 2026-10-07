@@ -1059,6 +1059,18 @@ describe('resolveUserRestriction — scam rulings', () => {
     );
   });
 
+  it('upholding keeps the strike', async () => {
+    const id = fileScam();
+    dbWrite.$queryRaw.mockClear();
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      moderatorId: MOD_ID,
+    });
+    const sql = dbWrite.$queryRaw.mock.calls.map(([strings]) => strings.join('?'));
+    expect(sql.some((q) => q.includes('UPDATE "UserStrike"'))).toBe(false);
+  });
+
   it('upholding sets mutedAt and sends the scam notice', async () => {
     const id = fileScam();
     await resolveUserRestriction({
@@ -1174,7 +1186,14 @@ describe('resolveUserRestriction — scam rulings', () => {
         (fn as (tx: unknown) => unknown)({
           ...dbWrite,
           $queryRaw: async (strings: TemplateStringsArray) => {
-            order.push(strings.join('?').includes('FOR UPDATE') ? 'lock' : 'query');
+            const sql = strings.join('?');
+            order.push(
+              sql.includes('FOR UPDATE')
+                ? 'lock'
+                : sql.includes('UPDATE "UserStrike"')
+                ? 'void-strikes'
+                : 'query'
+            );
             return [];
           },
           userRestriction: {
@@ -1192,7 +1211,24 @@ describe('resolveUserRestriction — scam rulings', () => {
         moderatorId: MOD_ID,
       });
 
-      expect(order).toEqual(['lock', 'open-case']);
+      expect(order).toEqual(['lock', 'void-strikes', 'open-case']);
+    });
+
+    it('voids the scam strike even when another case keeps the account muted', async () => {
+      const id = fileScam();
+      fileCase(2, 'generation');
+      dbWrite.$queryRaw.mockClear();
+
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Overturned,
+        moderatorId: MOD_ID,
+      });
+
+      const voidCall = dbWrite.$queryRaw.mock.calls.find(([strings]) =>
+        strings.join('?').includes('UPDATE "UserStrike"')
+      );
+      expect(voidCall?.slice(1)).toEqual([MOD_ID, expect.any(String), [id]]);
     });
 
     it('overturning a generation case leaves the mute while a scam case is open', async () => {

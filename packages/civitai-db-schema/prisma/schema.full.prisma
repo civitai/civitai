@@ -8260,6 +8260,7 @@ enum StrikeReason {
   HarassmentContent
   ProhibitedContent
   ManualModAction
+  Scam
 }
 
 enum StrikeStatus {

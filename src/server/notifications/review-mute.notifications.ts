@@ -1,14 +1,18 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { strikeReasonPublicLabel } from '~/server/schema/strike.schema';
+import { StrikeReason } from '~/shared/utils/prisma/enums';
 
 export const reviewMuteNotifications = createNotificationProcessor({
+  // Sent only for scam cases, which also issue a silent Scam strike: this is the event's one notice.
   'review-muted': {
-    displayName: 'Account paused for review',
+    displayName: 'Account restricted',
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: () => ({
-      message:
-        'Your account has been paused while a moderator reviews recent activity on it. You will be notified when the review is complete.',
+      message: `Account restricted: ${
+        strikeReasonPublicLabel[StrikeReason.Scam]
+      }. A moderator will review this restriction and you will be notified of the outcome.`,
     }),
   },
   'review-restriction-upheld': {

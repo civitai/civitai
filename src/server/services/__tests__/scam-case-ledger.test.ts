@@ -15,11 +15,12 @@ const {
   appendScamTrigger,
   closeScamCasesOpenedBefore,
   restoreScamCases,
-  fileScamCleanupRecord,
   lastModeratorUnmuteAt,
   recordScamCleanup,
+  recordScamStrike,
   scamTextSeenBefore,
   scamVerdictActioned,
+  voidScamCaseStrikes,
 } = await import('~/server/services/scam-case-ledger');
 
 const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?').replace(/\s+/g, ' ');
@@ -100,6 +101,14 @@ describe('scam case ledger', () => {
       expect(restoreScamCase).not.toHaveBeenCalled();
     });
 
+    it('voids the strikes the closed cases issued', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([{ id: 5 }]).mockResolvedValueOnce([]);
+      await closeScamCasesOpenedBefore(42, AT);
+      const call = dbMock.dbWrite.$queryRaw.mock.calls[1];
+      expect(sqlOf(call)).toContain('UPDATE "UserStrike" s');
+      expect(values(call)).toEqual([null, expect.any(String), [5]]);
+    });
+
     it('runs on the transaction it is given', async () => {
       const tx = { $queryRaw: vi.fn(async () => []) };
       await closeScamCasesOpenedBefore(42, AT, tx as never);
@@ -156,50 +165,40 @@ describe('scam case ledger', () => {
     };
     await recordScamCleanup(5, 2, 'wf-1', record);
     const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
-    expect(sqlOf(call)).toContain(
-      `SET triggers = jsonb_set(triggers, ARRAY[?, 'cleanup'], ?::jsonb)`
-    );
+    expect(sqlOf(call)).toContain(`SET triggers = jsonb_set(triggers, ARRAY[?, ?], ?::jsonb)`);
     expect(sqlOf(call)).toContain(`WHERE id = ? AND triggers -> ?::int ->> 'dedupeKey' = ?`);
-    expect(values(call)).toEqual(['2', JSON.stringify(record), 5, 2, 'wf-1']);
+    expect(values(call)).toEqual(['2', 'cleanup', JSON.stringify(record), 5, 2, 'wf-1']);
   });
 
-  describe('fileScamCleanupRecord', () => {
-    it('opens an already-resolved system record when the account has none', async () => {
-      dbMock.dbWrite.userRestriction.create.mockResolvedValue({ id: 9 });
-      expect(await fileScamCleanupRecord(42, entry)).toEqual({
-        userRestrictionId: 9,
-        index: 0,
-        created: true,
-      });
+  it('writes the strike id into the entry at that index, guarded by its dedupe key', async () => {
+    await recordScamStrike(5, 2, 'wf-1', 77);
+    expect(values(dbMock.dbWrite.$executeRaw.mock.calls[0])).toEqual([
+      '2',
+      'strikeId',
+      '77',
+      5,
+      2,
+      'wf-1',
+    ]);
+  });
 
-      const { where } = dbMock.dbWrite.userRestriction.findFirst.mock.calls[0][0];
-      expect(where).toEqual({ userId: 42, type: 'scam', status: 'Upheld', resolvedBy: -1 });
-      const { data } = dbMock.dbWrite.userRestriction.create.mock.calls[0][0];
-      expect(data).toMatchObject({
-        userId: 42,
-        type: 'scam',
-        status: 'Upheld',
-        resolvedBy: -1,
-        triggers: [entry],
-      });
-      expect(data.resolvedAt).toBeInstanceOf(Date);
+  describe('voidScamCaseStrikes', () => {
+    it('voids only active strikes named by the cases, on the same account', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 77 }]);
+      expect(await voidScamCaseStrikes([5], { voidedBy: 3, reason: 'Overturned' })).toEqual([77]);
+      const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
+      const sql = sqlOf(call);
+      expect(sql).toContain(`SET status = 'Voided', "voidedAt" = now(), "voidedBy" = ?::int`);
+      expect(sql).toContain(`WHERE ur.id = ANY(?::int[]) AND ur.type = 'scam'`);
+      expect(sql).toContain(
+        `s.id = (t->>'strikeId')::int AND s."userId" = ur."userId" AND s.status = 'Active'`
+      );
+      expect(values(call)).toEqual([3, 'Overturned', [5]]);
     });
 
-    it('appends to the existing record instead of opening another', async () => {
-      dbMock.dbWrite.userRestriction.findFirst.mockResolvedValue({ id: 9 });
-      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ index: 2 }]);
-      expect(await fileScamCleanupRecord(42, entry)).toEqual({
-        userRestrictionId: 9,
-        index: 2,
-        created: false,
-      });
-      expect(dbMock.dbWrite.userRestriction.create).not.toHaveBeenCalled();
-    });
-
-    it('returns null when the verdict is already on the record', async () => {
-      dbMock.dbWrite.userRestriction.findFirst.mockResolvedValue({ id: 9 });
-      dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
-      expect(await fileScamCleanupRecord(42, entry)).toBeNull();
+    it('does not query for no cases', async () => {
+      expect(await voidScamCaseStrikes([], { voidedBy: null, reason: 'x' })).toEqual([]);
+      expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     });
   });
 });
