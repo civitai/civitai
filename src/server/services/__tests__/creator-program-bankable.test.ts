@@ -101,6 +101,11 @@ describe('getBankableAmount', () => {
 
     expect(result?.snapshot).toBe(50_000);
     expect(result?.remaining).toBe(50_000);
+    expect(sysRedis.hSet).toHaveBeenCalledWith(
+      REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT,
+      String(userId),
+      '50000'
+    );
   });
 
   it('uses a stored snapshot instead of recomputing it', async () => {
@@ -159,15 +164,15 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
     expect(BANKABLE_EARNING_PREDICATE_SQL).not.toContain('compensation');
   });
 
-  it('counts licence fees, donations, shop sales, bounties and app author fees from anyone', () => {
+  it('counts licence fees, donations, shop sales and bounties from anyone', () => {
     expect(BANKABLE_EARNING_PREDICATE_SQL).toMatch(
-      /^\(\s*type IN \('licenseFee', 'donation', 'sell', 'bounty', 'appAuthorFee', '28'\)\n/
+      /^\(\s*type IN \('licenseFee', 'donation', 'sell', 'bounty'\)\n/
     );
   });
 
-  it('counts app author fees recorded before they had their own type', () => {
+  it('counts app author fees under both ledger types they have been stored as', () => {
     expect(BANKABLE_EARNING_PREDICATE_SQL).toMatch(
-      /\n\s*OR \(type = 'fee' AND description LIKE 'App author fee%'\)\n/
+      /\n\s*OR \(type IN \('fee', 'unknown_28'\) AND description LIKE 'App author fee%'\)\n/
     );
   });
 

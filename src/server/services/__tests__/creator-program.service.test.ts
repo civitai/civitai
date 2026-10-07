@@ -166,6 +166,11 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps queued once-values, so a test that leaves some unread breaks the next one.
+  mockGetCounterPartyBuzzTransactions
+    .mockReset()
+    .mockResolvedValue({ counterPartyAccountType: 'yellow', totalBalance: 0 });
+  mockCachedObject.fetch.mockReset().mockResolvedValue({});
   mockSysRedis.get.mockResolvedValue(null);
   // Default fetchThroughCache: just call the function
   mockFetchThroughCache.mockImplementation(async (_key: string, fn: () => Promise<any>) => fn());
@@ -514,6 +519,21 @@ describe('bankBuzz', () => {
       );
     });
 
+    it('nets the live banked total from the bankable amount, not a stale cached one', async () => {
+      mockBankableLedger({ snapshot: 550000, earned: 0 });
+      mockFetchThroughCache.mockImplementation(async (key: string, fn: () => Promise<any>) =>
+        key === `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}` ? { green: 0, yellow: 0 } : fn()
+      );
+      mockGetCounterPartyBuzzTransactions.mockReset();
+      mockBankedAmounts(0, 500000);
+
+      await bankBuzz(userId, 100000, 'yellow');
+
+      expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: 50000, type: TransactionType.Bank })
+      );
+    });
+
     it('refuses to bank when the bankable amount cannot be read', async () => {
       mockClickhouse.$query.mockRejectedValue(new Error('clickhouse down'));
 
@@ -637,7 +657,7 @@ describe('getBanked after the bankable-amount cutover', () => {
     vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
   });
 
-  it('nets deposits made this month from a briefly cached ledger', async () => {
+  it('reads the ledger through a short cache', async () => {
     mockBankedAmounts(0, 5000);
 
     const result = await getBanked(userId);
@@ -654,6 +674,22 @@ describe('getBanked after the bankable-amount cutover', () => {
       { ttl: CacheTTL.sm }
     );
   });
+
+  // Only the ledger is cached: a deposit must show up in `remaining` without waiting it out.
+  it('nets this month from the bank account on every read of a cached ledger', async () => {
+    const cachedLedger = { snapshot: 30000, earned: 10000, consumed: 0 };
+    mockFetchThroughCache.mockImplementation(async (key: string, fn: () => Promise<any>) =>
+      key === `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}` ? cachedLedger : fn()
+    );
+
+    mockBankedAmounts(0, 5000);
+    const before = await getBanked(userId);
+    mockBankedAmounts(0, 25000);
+    const after = await getBanked(userId);
+
+    expect(before.bankable?.remaining).toBe(35000);
+    expect(after.bankable?.remaining).toBe(15000);
+  });
 });
 
 describe('getBankCap', () => {
@@ -661,8 +697,10 @@ describe('getBankCap', () => {
     vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
   });
 
+  const dayAfterCutover = new Date(BANKABLE_CUTOVER.getTime() + 24 * 60 * 60 * 1000);
+
   it('refills a cap cached before the cutover once the cutover has passed', async () => {
-    vi.setSystemTime(BANKABLE_CUTOVER);
+    vi.setSystemTime(dayAfterCutover);
     mockCachedObject.fetch
       .mockResolvedValueOnce({ [userId]: { ...defaultCap, countsCompensation: true } })
       .mockResolvedValueOnce({ [userId]: { ...defaultCap, cap: 100000 } });
@@ -671,6 +709,30 @@ describe('getBankCap', () => {
 
     expect(mockCachedObject.bust).toHaveBeenCalledWith(userId);
     expect(caps[userId].cap).toBe(100000);
+  });
+
+  // Caps cached by the build before this one have no countsCompensation at all.
+  it('refills a cached cap that predates the countsCompensation field', async () => {
+    vi.setSystemTime(dayAfterCutover);
+    const { countsCompensation: _, ...legacyCap } = defaultCap;
+    mockCachedObject.fetch
+      .mockResolvedValueOnce({ [userId]: legacyCap })
+      .mockResolvedValueOnce({ [userId]: { ...defaultCap, cap: 100000 } });
+
+    const caps = await getBankCap(userId);
+
+    expect(mockCachedObject.bust).toHaveBeenCalledWith(userId);
+    expect(caps[userId].cap).toBe(100000);
+  });
+
+  it('keeps a cap computed after the cutover', async () => {
+    vi.setSystemTime(dayAfterCutover);
+    mockCachedObject.fetch.mockResolvedValueOnce({ [userId]: defaultCap });
+
+    const caps = await getBankCap(userId);
+
+    expect(mockCachedObject.bust).not.toHaveBeenCalled();
+    expect(caps[userId].cap).toBe(defaultCap.cap);
   });
 
   it('keeps a compensation-inclusive cap before the cutover', async () => {
