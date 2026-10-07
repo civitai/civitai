@@ -97,7 +97,8 @@ describe('fee-allowance-boost grant', () => {
 
 describe('fee-allowance-boost grant-eligible', () => {
   beforeEach(() => {
-    cohort.bankers = [1, 2];
+    // 0 is not a user id; the cohort must drop it.
+    cohort.bankers = [0, 1, 2];
     cohort.flagged = [2, 3, 4];
     cohort.validMembers = new Set([2, 3]);
     cohort.excluded = new Set();

@@ -647,13 +647,13 @@ describe('licensing-fee allowance boost', () => {
     expect(state.boostKeys).toEqual([]);
   });
 
-  const gate = async (rows: ReturnType<typeof version>[]) => {
+  const gate = async (rows: ReturnType<typeof version>[], membership: Membership = FREE) => {
     state.rows = rows;
     const priceState = await versionPriceState(
       7,
       rows.map((r) => r.id)
     );
-    return assertGatePricingAllowed(7, FREE, priceState);
+    return assertGatePricingAllowed(7, membership, priceState);
   };
   const licensed = () => version({ currentFee: 10 });
 
@@ -691,6 +691,26 @@ describe('licensing-fee allowance boost', () => {
       ['createdAt', '>=', new Date('2026-10-01T00:00:00Z')],
     ]);
   });
+
+  // A lapsed member keeps their tier string but is held to free; this row is what tells the two apart.
+  it.each([
+    ['a silver member', { tier: 'silver', isMember: true, isCreatorProgramMember: true }, true],
+    ['a free creator', FREE, false],
+    [
+      'a lapsed gold member',
+      { tier: 'gold', isMember: false, isCreatorProgramMember: true },
+      false,
+    ],
+  ] as [string, Membership, boolean][])(
+    'applies the conversion rule to the tier %s is held to',
+    async (_, membership, allowed) => {
+      state.slotsUsed = 4;
+
+      const result = await gate([licensed()], membership);
+
+      expect(result.ok).toBe(allowed);
+    }
+  );
 
   it('leaves a gate on a licensed version free within the tier allowance', async () => {
     const result = await gate([licensed()]);
