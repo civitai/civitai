@@ -2508,48 +2508,54 @@ export function countRemainingPairs({
 export type JudgingPairCount = { remainingPairs: number; visibleEntries: number; judged: boolean };
 
 /**
- * Pairs left for one judge across several crucibles: one entries query, two Redis reads each.
+ * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
  * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
- * viewer's browsing level all change the count without a vote.
+ * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
+ * query off crucibles the judge never voted in, which the feed asks about most.
  */
 export async function countJudgingPairs({
   crucibleIds,
   userId,
   viewerLevel,
+  judgedOnly = false,
 }: {
   crucibleIds: number[];
   userId: number;
   viewerLevel: number;
+  judgedOnly?: boolean;
 }) {
-  const ids = [...new Set(crucibleIds)];
   const counts = new Map<number, JudgingPairCount>();
-  if (!ids.length) return counts;
+  const uniqueIds = [...new Set(crucibleIds)];
+  if (!uniqueIds.length) return counts;
 
-  const [entries, judgeState] = await Promise.all([
-    dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
-      SELECT ce."crucibleId", ce.id
-      FROM "CrucibleEntry" ce
-      JOIN "Crucible" c ON c.id = ce."crucibleId"
-      JOIN "Image" i ON i.id = ce."imageId"
-      WHERE ce."crucibleId" IN (${Prisma.join(ids)})
-        AND ce."userId" != ${userId}
-        AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, viewerLevel)}
-    `,
-    Promise.all(
-      ids.map((id) =>
-        Promise.all([
-          sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
-          sysRedis.sMembers(getVotedPairsKey(id, userId)),
-        ])
-      )
-    ),
-  ]);
+  const judgeState = await Promise.all(
+    uniqueIds.map(async (id) => {
+      const [judgeEntryVotes, votedPairKeys = []] = await Promise.all([
+        sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
+        sysRedis.sMembers(getVotedPairsKey(id, userId)),
+      ]);
+      return { id, judgeEntryVotes, votedPairKeys };
+    })
+  );
+  const counted = judgedOnly
+    ? judgeState.filter(({ votedPairKeys }) => votedPairKeys.length > 0)
+    : judgeState;
+  if (!counted.length) return counts;
 
-  const entryIds = new Map<number, number[]>(ids.map((id) => [id, []]));
+  const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
+    SELECT ce."crucibleId", ce.id
+    FROM "CrucibleEntry" ce
+    JOIN "Crucible" c ON c.id = ce."crucibleId"
+    JOIN "Image" i ON i.id = ce."imageId"
+    WHERE ce."crucibleId" IN (${Prisma.join(counted.map(({ id }) => id))})
+      AND ce."userId" != ${userId}
+      AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, viewerLevel)}
+  `;
+
+  const entryIds = new Map<number, number[]>(counted.map(({ id }) => [id, []]));
   for (const { crucibleId, id } of entries) entryIds.get(crucibleId)?.push(id);
 
-  ids.forEach((crucibleId, i) => {
-    const [judgeEntryVotes, votedPairKeys = []] = judgeState[i];
+  for (const { id: crucibleId, judgeEntryVotes, votedPairKeys } of counted) {
     const visible = entryIds.get(crucibleId) ?? [];
     counts.set(crucibleId, {
       remainingPairs: countRemainingPairs({
@@ -2561,7 +2567,7 @@ export async function countJudgingPairs({
       visibleEntries: visible.length,
       judged: votedPairKeys.length > 0,
     });
-  });
+  }
   return counts;
 }
 
@@ -2653,9 +2659,12 @@ export const getJudgingStatuses = async ({
     crucibleIds: open.map(({ id }) => id),
     userId,
     viewerLevel: getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel }),
+    judgedOnly: true,
   });
-  return open.map(({ id }) => {
-    const { remainingPairs, visibleEntries, judged } = counts.get(id)!;
+  return open.flatMap(({ id }) => {
+    const counted = counts.get(id);
+    if (!counted) return [];
+    const { remainingPairs, visibleEntries, judged } = counted;
     return {
       crucibleId: id,
       judged,
@@ -4787,10 +4796,12 @@ export const getJudgingSuggestions = async ({
     crucibleIds: rows.map(({ id }) => id),
     userId,
     viewerLevel: browsingLevel,
+    judgedOnly: true,
   });
+  // An uncounted candidate was never judged, and the SQL above guarantees it two judgeable entries.
   const ids = rows
     .map(({ id }) => id)
-    .filter((id) => (counts.get(id)?.remainingPairs ?? 0) > 0)
+    .filter((id) => (counts.get(id)?.remainingPairs ?? 1) > 0)
     .slice(0, limit);
   if (!ids.length) return [];
 

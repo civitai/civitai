@@ -24,6 +24,13 @@ function judgeState(state: Record<number, { votes?: Record<number, number>; vote
   );
 }
 
+/** Every value a tagged-template `$queryRaw` call binds, nested Prisma fragments flattened. */
+const boundValues = (call: unknown[]): unknown[] =>
+  call.slice(1).flatMap(function flat(value: unknown): unknown[] {
+    const nested = (value as { values?: unknown[] } | null)?.values;
+    return Array.isArray(nested) ? nested.flatMap(flat) : [value];
+  });
+
 const entries = (byCrucible: Record<number, number[]>) =>
   Object.entries(byCrucible).flatMap(([crucibleId, ids]) =>
     ids.map((id) => ({ crucibleId: Number(crucibleId), id }))
@@ -79,6 +86,37 @@ describe('countJudgingPairs', () => {
     expect(redisMock.sysRedis.sMembers).toHaveBeenCalledTimes(1);
   });
 
+  it('skips the entries query when judgedOnly and nothing is judged', async () => {
+    const counts = await countJudgingPairs({
+      crucibleIds: [1, 2],
+      userId: JUDGE,
+      viewerLevel: 1,
+      judgedOnly: true,
+    });
+
+    expect(queryRaw).not.toHaveBeenCalled();
+    expect(counts.size).toBe(0);
+  });
+
+  it('queries and returns only judged crucibles when judgedOnly', async () => {
+    queryRaw.mockResolvedValue(entries({ 101: [10, 11, 12] }));
+    judgeState({ 101: { voted: ['10:11'], votes: { 10: 1, 11: 1 } } });
+
+    const counts = await countJudgingPairs({
+      crucibleIds: [101, 202],
+      userId: JUDGE,
+      viewerLevel: 1,
+      judgedOnly: true,
+    });
+
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+    const values = boundValues(queryRaw.mock.calls[0]);
+    expect(values).toContain(101);
+    expect(values).not.toContain(202);
+    expect([...counts.keys()]).toEqual([101]);
+    expect(counts.get(101)).toMatchObject({ judged: true, remainingPairs: 2 });
+  });
+
   it('makes no queries for no crucibles', async () => {
     const counts = await countJudgingPairs({ crucibleIds: [], userId: JUDGE, viewerLevel: 1 });
 
@@ -104,7 +142,7 @@ describe('getJudgingStatuses', () => {
     judgeState({});
   });
 
-  it('reports available, caught up and never judged', async () => {
+  it('reports available and caught up, and omits never-judged crucibles', async () => {
     findMany.mockResolvedValue([crucibleRow(1), crucibleRow(2), crucibleRow(3)]);
     queryRaw.mockResolvedValue(entries({ 1: [10, 11, 12], 2: [20, 21], 3: [30, 31] }));
     judgeState({
@@ -117,7 +155,6 @@ describe('getJudgingStatuses', () => {
     expect(statuses).toEqual([
       { crucibleId: 1, judged: true, available: true, votesUsedUp: false },
       { crucibleId: 2, judged: true, available: false, votesUsedUp: true },
-      { crucibleId: 3, judged: false, available: true, votesUsedUp: false },
     ]);
   });
 
@@ -149,7 +186,8 @@ describe('getJudgingStatuses', () => {
       crucibleRow(2, { userId: 777 }), // host blocked the viewer
       crucibleRow(3),
     ]);
-    queryRaw.mockResolvedValue(entries({ 3: [30, 31] }));
+    queryRaw.mockResolvedValue(entries({ 3: [30, 31, 32] }));
+    judgeState({ 3: { voted: ['30:31'], votes: { 30: 1, 31: 1 } } });
 
     const statuses = await getJudgingStatuses({
       crucibleIds: [1, 2, 3],
@@ -169,21 +207,44 @@ describe('getJudgingStatuses', () => {
 });
 
 describe('getJudgingSuggestions', () => {
-  beforeEach(() => judgeState({}));
+  beforeEach(() => {
+    vi.clearAllMocks();
+    judgeState({});
+    findMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) =>
+      where.id.in.map((id) => ({ id }))
+    );
+    dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
+  });
 
   it('skips crucibles the judge has no pairs left in', async () => {
     queryRaw
       .mockResolvedValueOnce([{ id: 1 }, { id: 2 }, { id: 3 }]) // candidates, newest first
       .mockResolvedValueOnce(entries({ 1: [10, 11], 2: [20, 21], 3: [30, 31] }));
     judgeState({ 1: { voted: ['10:11'], votes: { 10: 1, 11: 1 } } });
-    findMany.mockImplementation(async ({ where }: { where: { id: { in: number[] } } }) =>
-      where.id.in.map((id) => ({ id }))
-    );
-    dbMock.dbRead.crucibleEntry.groupBy.mockResolvedValue([]);
 
     const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 1 });
 
     expect(suggestions.map((c) => c.id)).toEqual([2]);
     expect(findMany.mock.calls.at(-1)![0].where).toEqual({ id: { in: [2] } });
+  });
+
+  // The candidates SQL already requires two judgeable entries, so an unjudged crucible has pairs.
+  it('keeps unjudged candidates without counting their entries', async () => {
+    queryRaw.mockResolvedValueOnce([{ id: 1 }, { id: 2 }]);
+
+    const suggestions = await getJudgingSuggestions({ userId: JUDGE, limit: 2 });
+
+    expect(suggestions.map((c) => c.id)).toEqual([1, 2]);
+    expect(queryRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('caps the candidates query at 50, not at the requested limit', async () => {
+    queryRaw.mockResolvedValueOnce([]);
+
+    await getJudgingSuggestions({ userId: JUDGE, limit: 3 });
+
+    const values = boundValues(queryRaw.mock.calls[0]);
+    expect(values.at(-1)).toBe(50);
+    expect(values).not.toContain(3);
   });
 });
