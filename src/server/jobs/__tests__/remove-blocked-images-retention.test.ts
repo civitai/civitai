@@ -141,7 +141,9 @@ const {
         return 0;
       }),
     },
-    mockDeleteImages: vi.fn(async () => undefined),
+    mockDeleteImages: vi.fn(async (ids: number[], ..._rest: unknown[]) =>
+      ids.map((id) => ({ id }))
+    ),
     mockLogToAxiom: vi.fn(),
   };
 });
@@ -158,12 +160,13 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(a
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
-import { removeBlockedImages } from '~/server/jobs/image-ingestion';
+import { purgeHoldGuard, removeBlockedImages } from '~/server/jobs/image-ingestion';
 
 const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 async function runJob() {
   return (await removeBlockedImages.run(ctx).result) as Partial<{
     deleted: number;
+    heldAtDelete: number;
     staleRemoved: number;
     waitingForRetention: number;
     csamHeld: number;
@@ -407,5 +410,27 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(deletedIds()).toContain(8);
     expect(result.csamReviewHeld).toBe(0);
+  });
+
+  // The guard's own semantics are pinned against Postgres in
+  // remove-blocked-images-hold-guard.behavior.test.ts; this pins that the job hands it over.
+  it('re-checks its holds on the delete, exempting only the report holds it expired', async () => {
+    await runJob();
+
+    const onlyWhere = deleteOptions()?.onlyWhere as { sql: string; values: unknown[] } | undefined;
+    expect(onlyWhere?.sql).toBe(purgeHoldGuard([]).sql);
+    expect(onlyWhere?.values).toEqual([[STRANDED_USER]]);
+  });
+
+  it('keeps the queue row of an image a hold kept at delete time', async () => {
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 1).map((id) => ({ id }))
+    );
+    const result = await runJob();
+
+    expect(deletedIds()).toContain(1);
+    expect(queuePruneIds()).not.toContain(1);
+    expect(queuePruneIds()).toContain(6);
+    expect(result).toMatchObject({ deleted: deletedIds().length - 1, heldAtDelete: 1 });
   });
 });

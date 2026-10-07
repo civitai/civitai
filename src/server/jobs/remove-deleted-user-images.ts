@@ -118,6 +118,10 @@ async function drainUser(
           WHERE c."userId" = ${userId}
             AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM "Image" f
+          WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
+        )
       LIMIT ${budget}
     `;
 
@@ -169,6 +173,10 @@ async function drainUser(
             SELECT 1 FROM "CsamReport" c
             WHERE c."userId" = ${userId}
               AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" f
+            WHERE f."userId" = ${userId} AND f."needsReview" = 'csam'
           )
       `;
     }
@@ -443,6 +451,9 @@ export const removeDeletedUserImages = createJob(
           WHERE c."userId" = u.id
             AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
+        )
         AND (
           EXISTS (
             SELECT 1 FROM "Image" i
@@ -488,6 +499,9 @@ export const removeDeletedUserImages = createJob(
             SELECT 1 FROM "CsamReport" c
             WHERE c."userId" = u.id
               AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "Image" f WHERE f."userId" = u.id AND f."needsReview" = 'csam'
           )
           AND (
             EXISTS (

@@ -71,6 +71,10 @@ type Fixture = {
   csamReports?: CsamReport[];
   /** `CsamReport` rows the primary holds, when a report lands after the worklist read. */
   primaryCsamReports?: CsamReport[];
+  /** One of the account's images carries the CSAM review flag, as the replica sees it. */
+  csamFlagged?: boolean;
+  /** The flag as the primary holds it, when it lands after the worklist read. */
+  primaryCsamFlagged?: boolean;
   /** Per-image `ingestion`; an id absent from here is `Scanned`. */
   ingestion?: Record<number, string>;
   /** Per-image `blockedFor`; an id absent from here holds NULL. */
@@ -204,6 +208,13 @@ function blockedByCsamReport(sql: string, reports: CsamReport[] | undefined) {
 
 /** What the primary sees, which is what every gate on a write is answered from. */
 const reportsOnPrimary = (fixture: Fixture) => fixture.primaryCsamReports ?? fixture.csamReports;
+
+/** The per-account review-flag exclusion, as every statement that carries it spells it. */
+const REVIEW_FLAG_HOLD =
+  /NOT EXISTS \(\s*SELECT 1 FROM "Image" f\s+WHERE f\."userId" = (?:\?|u\.id) AND f\."needsReview" = 'csam'\s*\)/;
+const blockedByReviewFlag = (sql: string, flagged: boolean | undefined) =>
+  !!flagged && REVIEW_FLAG_HOLD.test(sql);
+const flaggedOnPrimary = (fixture: Fixture) => fixture.primaryCsamFlagged ?? fixture.csamFlagged;
 
 /** The primary-side statements re-read the choice; absent from the SQL means they do not. */
 function passesPrimaryChoice(sql: string, fixture: Fixture) {
@@ -379,6 +390,7 @@ function seed(next: Record<number, Fixture>) {
       order
         .filter((id) => bound === undefined || inRange(fixtures[id].deletedAt))
         .filter((id) => !blockedByCsamReport(sql, fixtures[id].csamReports))
+        .filter((id) => !blockedByReviewFlag(sql, fixtures[id].csamFlagged))
         .filter((id) => {
           const fixture = fixtures[id];
           const immediate = modeOf(fixture) === 'immediate';
@@ -435,6 +447,7 @@ function seed(next: Record<number, Fixture>) {
         if (gated && (fixture.restored || !passesPrimaryChoice(sql, fixture)))
           return Promise.resolve([]);
         if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve([]);
+        if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve([]);
         const images = pendingImages(sql, values, fixture);
         const page = images.slice(0, limit).map((id) => ({
           id,
@@ -476,6 +489,7 @@ function seed(next: Record<number, Fixture>) {
       if (sql.includes('u."deletedAt" IS NOT NULL') && fixture.restored) return Promise.resolve(0);
       if (!passesPrimaryChoice(sql, fixture)) return Promise.resolve(0);
       if (blockedByCsamReport(sql, reportsOnPrimary(fixture))) return Promise.resolve(0);
+      if (blockedByReviewFlag(sql, flaggedOnPrimary(fixture))) return Promise.resolve(0);
 
       deletedPostIds.push(...ids);
       fixture.posts = (fixture.posts ?? []).filter((id) => !ids.includes(id));
@@ -1311,6 +1325,51 @@ describe('removal choice re-read on the destructive path', () => {
     // flip still costs the account every id already fetched.
     expect(mockDeleteImages).toHaveBeenCalledTimes(1);
     expect(result.deletedImages).toBe(100);
+  });
+});
+
+describe('an image flagged for CSAM review', () => {
+  it('keeps the account out of both worklists', async () => {
+    cursorStore[FRESH_KEY] = NEWER;
+    seed({
+      7: { deletedAt: RECENT, images: ids(10), posts: [900], csamFlagged: true },
+      8: { deletedAt: ANCIENT, images: ids(10, 100), posts: [901], csamFlagged: true },
+    });
+
+    const result = await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+    expect(mockLogToAxiom).toHaveBeenCalledWith(expect.objectContaining({ candidates: 0 }));
+  });
+
+  it('stops the image delete for a flag set after the worklist read', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], primaryCsamFlagged: true } });
+
+    const result = await run();
+
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(pagedImageIds).toEqual([]);
+    expect(result.deletedImages).toBe(0);
+  });
+
+  it('stops the post delete for a flag set after the worklist read', async () => {
+    seed({ 7: { deletedAt: NEWER, images: [], posts: [900], primaryCsamFlagged: true } });
+
+    const result = await run();
+
+    expect(deletedPostIds).toEqual([]);
+    expect(result.deletedUsers).toBe(0);
+  });
+
+  it('does not hold an account whose images carry no flag', async () => {
+    seed({ 7: { deletedAt: NEWER, images: ids(10), posts: [900], csamFlagged: false } });
+
+    const result = await run();
+
+    expect(result.deletedImages).toBe(10);
+    expect(deletedPostIds).toEqual([900]);
   });
 });
 
