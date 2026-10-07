@@ -19,7 +19,7 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-// The page's text, minus the `<style>` blocks MantineProvider injects (their CSS is textContent too).
+// The page's text, minus the `<style>` blocks MantineProvider injects (their CSS is text too).
 const visibleText = () => {
   const body = document.body.cloneNode(true) as HTMLElement;
   body.querySelectorAll('style, script').forEach((node) => node.remove());

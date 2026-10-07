@@ -160,13 +160,13 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
     // again — in the next section they land in.
     //
     // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the
-    // statement above collapses every first path segment outside `targetData` to `'models'` (and `images`
-    // too while image search is off), so `/` → `/models/123/slug`, or any move between two such
-    // paths, leaves it unchanged and this never runs. The other explicit discard is
-    // `blurAndDiscardCarriedText`, on submit and on Escape; separately, emptying the input
-    // discards through the setter. Together they narrow the window rather than closing it, and
-    // the remainder is deliberate: text blurred away and then left alone survives in the carrier
-    // until the next pick from the selector re-seeds it.
+    // statement above collapses every first path segment outside `targetData` to `'models'` (and
+    // `images` too while image search is off), so `/` → `/models/123/slug`, or any move between two
+    // such paths, leaves it unchanged and this never runs. The other explicit discard is
+    // `blurAndDiscardCarriedText`, on submit and on Escape; separately, emptying the input discards
+    // through the setter. Together they narrow the window rather than closing it, and the remainder
+    // is deliberate: text blurred away and then left alone survives in the carrier until the next
+    // pick from the selector re-seeds it.
     carriedSearchText.current = '';
     setTargetIndex(searchTarget);
   }, [searchTarget]);
