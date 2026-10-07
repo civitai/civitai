@@ -25,11 +25,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
       useInfiniteQuery: (input: Record<string, unknown>) => {
         mocks.input = input;
         return {
-        data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-        isLoading: false,
-        isFetchingNextPage: false,
-        fetchNextPage: vi.fn(),
-        hasNextPage: false,
+          data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+          isLoading: false,
+          isFetchingNextPage: false,
+          fetchNextPage: vi.fn(),
+          hasNextPage: false,
         };
       },
     },

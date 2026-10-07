@@ -17,7 +17,7 @@
 -- LOCKS ON EXISTING TABLES — brief, but not zero. Each `REFERENCES` takes a SHARE ROW EXCLUSIVE
 -- lock on the table it points at ("User", "Image" and "app_listings"), held until COMMIT. While it
 -- is held, or while this transaction is QUEUED for it, writes (INSERT/UPDATE/DELETE) to those
--- tables wait; reads do not. The transaction itself is milliseconds (empty tables, one seed
+-- tables wait; reads do not. The transaction itself is trivial (empty tables, one seed
 -- row), and `lock_timeout` below caps each lock wait at 3s: if a long write transaction holds
 -- one of those tables, this aborts instead of stalling every writer queued behind it. So:
 --   1. First check for long-running write transactions on those tables, e.g.
@@ -31,8 +31,8 @@
 --
 -- ROLLBACK (discards every sub-listing; take a copy first if any rows matter). Dropping a table
 -- also drops its foreign keys, which locks the same three referenced tables (at least against
--- writes, and depending on the Postgres version possibly against reads too) until COMMIT, so the
--- same three steps apply:
+-- writes, and depending on the Postgres version possibly against reads too) until COMMIT, so run the
+-- same pre-checks:
 --   BEGIN;
 --   SET LOCAL lock_timeout = '3s';
 --   DROP TABLE IF EXISTS "app_sub_listings";

@@ -47,11 +47,9 @@ export const listingSortSchema = z.enum(['top-rated', 'popular', 'newest', 'name
 export type ListingSort = z.infer<typeof listingSortSchema>;
 
 /**
- * Upper bound on the opaque keyset cursor. The `name` sort key is 64 CHARACTERS
- * (`left(LOWER(name), 64)`), and a character is up to 4 bytes of UTF-8, so the
- * worst-case body is 256 (key) + 1 + 30 (id) + 1 + ~24 (pinned mean) ≈ 312 bytes,
- * i.e. ≈ 416 base64url characters. 512 covers that with margin; 128 rejected the
- * next-page cursor of any page ending on a long non-ASCII title.
+ * Upper bound on the opaque keyset cursor. Sized for the `name` sort key (64 characters,
+ * up to 4 UTF-8 bytes each) plus id and pinned mean, base64url-encoded; lowering it stops
+ * pagination on pages ending in a long non-ASCII title.
  */
 export const LISTING_CURSOR_MAX = 512;
 
@@ -65,9 +63,8 @@ export const listAppListingsSchema = z.object({
   cursor: z.string().max(LISTING_CURSOR_MAX).optional(),
   limit: z.number().int().min(1).max(50).default(20),
   /**
-   * Opt in to sub-listing cards (`SubListingCard`) in `items`, which also needs the
-   * `app-store-sub-listings` flag. Only the `/apps` store grid asks for them; every other
-   * caller gets app cards only, whatever the flag says.
+   * Opt in to sub-listing cards (`SubListingCard`) in `items`; also needs the
+   * `app-store-sub-listings` flag. Only the `/apps` store grid asks.
    */
   includeSubListings: z.boolean().optional(),
 });

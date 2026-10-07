@@ -264,15 +264,10 @@ export async function readSharedItemForSubListing(
 }
 
 /**
- * The owner of `imageId` if an ANONYMOUS viewer may see it, else null.
- *
- * Reuses `getImage`'s non-moderator read with no viewer rather than restating its predicate:
- * in a published (`publishedAt < now()`), non-private post, `needsReview` clear and reviewed
- * (`imageReviewedSql`: scanned, or a moderator-locked rating), and not Blocked. A card shows
- * its image to every store visitor, so the image must already be public; a private,
- * scheduled, unscanned or removed image is refused here rather than quietly falling back to
- * the parent cover at render. The per-viewer maturity check still runs at render
- * (`projectSubListingCard`).
+ * Owner of `imageId` if an anonymous viewer may see it, else null. A card shows its image to
+ * every store visitor, so this reuses `getImage`'s non-moderator read rather than restating
+ * its visibility rule. Render re-checks that the image's post is still public and the
+ * per-viewer maturity (`hydrateSubListingCards` / `projectSubListingCard`).
  */
 async function publicImageOwner(imageId: number): Promise<number | null> {
   const { getImage } = await import('~/server/services/image.service');
@@ -410,8 +405,7 @@ async function writeSubListing(
     if ((await activeCount()) >= parent.maxPerAuthor) {
       throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
     }
-    // 🔴 ALWAYS `pending`: nothing an app publishes reaches the store until a moderator
-    // approves it. There is deliberately no per-parent auto-approve.
+    // Always `pending`: moderator approval is mandatory.
     try {
       const created = await dbWrite.appSubListing.create({
         data: {
@@ -424,7 +418,6 @@ async function writeSubListing(
         },
         select: { id: true, status: true },
       });
-      // A pending row is not in the cached store page, so there is nothing to bust.
       return {
         id: created.id,
         status: created.status as AppSubListingStatus,
@@ -462,7 +455,6 @@ async function writeSubListing(
     if ((await activeCount()) >= parent.maxPerAuthor) {
       throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
     }
-    // A republished item goes back to review, like a new one.
     const written = await casUpdate({
       ...liveColumns(content),
       ...CLEAR_PENDING,
@@ -476,7 +468,7 @@ async function writeSubListing(
   }
 
   if (status === 'pending') {
-    // Never approved: the live columns ARE the draft, and a moderator has not seen it yet.
+    // Never approved: the live columns ARE the draft.
     const written = await casUpdate({
       ...liveColumns(content),
       ...CLEAR_PENDING,
@@ -649,12 +641,20 @@ export async function syncSubListingForSharedRow(
       select: { id: true },
     });
     if (!parent) return;
+    const where: Prisma.AppSubListingWhereInput = {
+      parentListingId: parent.id,
+      itemKey: args.itemKey,
+      ...(args.change === 'withdrawn' ? { authorUserId: args.authorUserId } : {}),
+    };
+    // A store-hidden row is left hidden, but its version moves: a moderator restore that read
+    // the shared row as live just before this change then fails its compare-and-set instead
+    // of republishing an item the app has just removed.
+    await dbWrite.appSubListing.updateMany({
+      where: { ...where, status: 'hidden' },
+      data: { updatedAt: new Date() },
+    });
     await transitionActive({
-      where: {
-        parentListingId: parent.id,
-        itemKey: args.itemKey,
-        ...(args.change === 'withdrawn' ? { authorUserId: args.authorUserId } : {}),
-      },
+      where,
       data:
         args.change === 'withdrawn'
           ? { status: 'withdrawn', ...CLEAR_PENDING }
@@ -787,15 +787,19 @@ export async function countSubListingQueue(): Promise<number> {
   }
 }
 
-/** Whether the shared-storage row behind a sub-listing exists and is not hidden in the app. */
-async function isSharedItemLive(parentListingId: string, itemKey: string): Promise<boolean> {
+async function isSharedItemLive(row: {
+  parentListingId: string;
+  itemKey: string;
+  authorUserId: number;
+}): Promise<boolean> {
   const parent = await dbRead.appListing.findUnique({
-    where: { id: parentListingId },
+    where: { id: row.parentListingId },
     select: { appBlock: { select: { blockId: true } } },
   });
   if (!parent?.appBlock) return false;
-  const item = await readSharedItemForSubListing(parent.appBlock.blockId, itemKey);
-  return item != null && !item.hidden;
+  const item = await readSharedItemForSubListing(parent.appBlock.blockId, row.itemKey);
+  // Same author as the card: a key the app reused for someone else's item is not this item.
+  return item != null && !item.hidden && item.authorUserId === row.authorUserId;
 }
 
 export async function moderateSubListing(args: {
@@ -831,10 +835,9 @@ export async function moderateSubListing(args: {
         break;
       case 'restore':
         if (status !== 'hidden') throw invalid();
-        // The in-app moderation sync hides the store item when its shared row is hidden or
-        // deleted in the app. Restoring it here would put back a card for an item the app no
-        // longer shows, so restore needs the shared row to be live again first.
-        if (!(await isSharedItemLive(row.parentListingId, row.itemKey))) {
+        // The in-app moderation sync hides the item when its shared row is hidden or deleted;
+        // don't restore a card for an item the app no longer shows.
+        if (!(await isSharedItemLive(row))) {
           throw new SubListingError(
             409,
             'invalid_transition',

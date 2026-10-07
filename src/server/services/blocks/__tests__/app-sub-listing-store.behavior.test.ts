@@ -174,7 +174,10 @@ beforeAll(async () => {
       "nsfwLevel" integer NOT NULL DEFAULT 0, "ingestion" text NOT NULL DEFAULT 'Scanned',
       "needsReview" text, "poi" boolean NOT NULL DEFAULT false, "minor" boolean NOT NULL DEFAULT false,
       "tosViolation" boolean NOT NULL DEFAULT false, "acceptableMinor" boolean NOT NULL DEFAULT false,
-      "blockedFor" text
+      "blockedFor" text, "postId" integer
+    );
+    CREATE TABLE "Post" (
+      "id" integer PRIMARY KEY, "publishedAt" timestamptz, "availability" text NOT NULL DEFAULT 'Public'
     );
     CREATE TABLE app_blocks (
       id text PRIMARY KEY, status text NOT NULL, current_version_deployed_at timestamptz
@@ -201,10 +204,11 @@ afterAll(async () => {
 async function seed() {
   await holder.db.exec(`
     TRUNCATE app_sub_listings, app_sub_listing_parents, app_listing_metrics, app_listings,
-             app_blocks, "Image", "User" CASCADE;
+             app_blocks, "Image", "Post", "User" CASCADE;
     INSERT INTO "User" (id, username) VALUES (${OWNER}, 'owner'), (${AUTHOR}, 'author');
-    INSERT INTO "Image" (id, url, "userId", "nsfwLevel") VALUES
-      (1, 'parent-cover', ${OWNER}, 1), (2, 'item-a', ${AUTHOR}, 1);
+    INSERT INTO "Post" (id, "publishedAt") VALUES (1, now() - interval '1 day');
+    INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "postId") VALUES
+      (1, 'parent-cover', ${OWNER}, 1, NULL), (2, 'item-a', ${AUTHOR}, 1, 1);
     INSERT INTO app_blocks (id, status, current_version_deployed_at) VALUES
       ('ab_PARENT', 'approved', now()), ('ab_OTHER', 'approved', now());
     INSERT INTO app_listings (id, kind, slug, name, status, app_block_id, category, content_rating, cover_id, user_id, created_at) VALUES
@@ -392,6 +396,20 @@ describe('store catalog with sub-listings, executed', () => {
     expect(card?.coverUrl).toBe('parent-cover');
   });
 
+  // Publicity is checked at submit, and re-checked here on every render: a post made private,
+  // unpublished or deleted after the card was approved stops showing its image.
+  it.each([
+    ['made private', `UPDATE "Post" SET availability = 'Private' WHERE id = 1`],
+    ['unpublished', `UPDATE "Post" SET "publishedAt" = NULL WHERE id = 1`],
+    ['scheduled', `UPDATE "Post" SET "publishedAt" = now() + interval '1 day' WHERE id = 1`],
+    ['deleted', `UPDATE "Image" SET "postId" = NULL WHERE id = 2; DELETE FROM "Post" WHERE id = 1`],
+  ])('falls back to the parent cover when the image post is %s', async (_l, sql) => {
+    // Positive control: the image shows while its post is public.
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('item-a');
+    await holder.db.exec(sql);
+    expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
+  });
+
   it('falls back to the parent cover while the item image is still scanning', async () => {
     await holder.db.exec(
       `UPDATE "Image" SET "ingestion" = 'Pending', "nsfwLevel" = 0 WHERE id = 2`
@@ -527,7 +545,7 @@ describe('store catalog with sub-listings, executed', () => {
 
   it('a staged edit does not change the rendered card, and approving it does', async () => {
     await holder.db.exec(`
-      INSERT INTO "Image" (id, url, "userId", "nsfwLevel") VALUES (3, 'item-a-v2', ${AUTHOR}, 1);
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel", "postId") VALUES (3, 'item-a-v2', ${AUTHOR}, 1, 1);
       UPDATE app_sub_listings
          SET pending_title = 'Gen Alpha v2', pending_tagline = 'second', pending_sub_path = 'g/A2',
              pending_image_id = 3, pending_content_rating = 'pg13',

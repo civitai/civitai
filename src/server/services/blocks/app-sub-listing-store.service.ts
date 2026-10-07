@@ -48,6 +48,8 @@ type SubListingHydrateRow = {
   image_tos_violation: boolean | null;
   image_acceptable_minor: boolean | null;
   image_blocked_for: string | null;
+  /** The item image is in a published, non-private post (see `hydrateSubListingCards`). */
+  image_public: boolean | null;
 };
 
 export type SubListingViewer = {
@@ -76,7 +78,9 @@ export function projectSubListingCard(
   const contentRating = effectiveSubListingRating(row.parent_content_rating, row.content_rating);
   const parentCover = listingCoverUrl({ url: row.parent_cover_url }, null);
   let coverUrl = parentCover;
-  if (row.image_url && row.image_ingestion != null) {
+  // The image was public when it was submitted; this re-checks it on every render, so a post
+  // made private or unpublished later stops showing its image on the card.
+  if (row.image_url && row.image_ingestion != null && row.image_public) {
     const verdict = classifyGatedImageForViewer(
       {
         ingestion: row.image_ingestion,
@@ -145,11 +149,13 @@ export async function hydrateSubListingCards(
            i.poi AS image_poi, i.minor AS image_minor,
            i."tosViolation" AS image_tos_violation,
            i."acceptableMinor" AS image_acceptable_minor,
-           i."blockedFor" AS image_blocked_for
+           i."blockedFor" AS image_blocked_for,
+           (p."publishedAt" < now() AND p."availability"::text <> 'Private') AS image_public
     FROM app_sub_listings s
     JOIN app_listings al ON al.id = s.parent_listing_id
     JOIN "User" u ON u.id = s.author_user_id
     LEFT JOIN "Image" i ON i.id = s.image_id
+    LEFT JOIN "Post" p ON p.id = i."postId"
     LEFT JOIN "Image" pc ON pc.id = al.cover_id
     LEFT JOIN "Image" pi ON pi.id = al.icon_id
     WHERE s.id IN (${Prisma.join(ids)})

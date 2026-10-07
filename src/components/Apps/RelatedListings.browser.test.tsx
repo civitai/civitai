@@ -10,9 +10,8 @@ import type {
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /**
- * The related-apps rail on a listing detail page renders `ListingCard`s only. `listAvailable`
- * is typed as a mix of app and sub-listing cards, so the rail must neither ask for sub-listings
- * nor hand one to `AppListingCard` (which reads `card.kindData.kind` and throws on one).
+ * The related rail renders `ListingCard`s only: it must not ask for sub-listings, and must drop
+ * any that arrive (`AppListingCard` reads `card.kindData.kind` and throws on one).
  */
 
 const mocks = vi.hoisted(() => ({

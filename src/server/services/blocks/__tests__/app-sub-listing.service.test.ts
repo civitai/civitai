@@ -258,8 +258,14 @@ describe('upsertSubListing — refusals', () => {
     expect(arg).toEqual({ id: 5, isModerator: false });
   });
 
-  it('a failure other than not-found surfaces instead of reading as "not public"', async () => {
-    mockGetImage.mockRejectedValueOnce(new Error('db down'));
+  it.each([
+    ['a plain error', new Error('db down')],
+    [
+      'a non-NOT_FOUND TRPCError',
+      new TRPCError({ code: 'INTERNAL_SERVER_ERROR', message: 'db down' }),
+    ],
+  ])('%s from the image read surfaces instead of reading as "not public"', async (_l, err) => {
+    mockGetImage.mockRejectedValueOnce(err);
     await expect(upsert({ ...BODY, imageId: 5 })).rejects.toThrow('db down');
   });
 
@@ -338,13 +344,12 @@ describe('upsertSubListing — status changes', () => {
       authorUserId: AUTHOR,
       status: 'pending',
     });
-    expect(write.appSubListing.create.mock.calls[0][0].data.approvedAt ?? null).toBeNull();
+    expect(write.appSubListing.create.mock.calls[0][0].data).not.toHaveProperty('approvedAt');
     // A pending row cannot be on the cached store page.
     expect(mockBust).not.toHaveBeenCalled();
   });
 
-  // Product decision: nothing an app publishes reaches the store without a moderator. There is
-  // no per-parent auto-approve; a parent row carrying an old `autoApprove` value changes nothing.
+  // Moderator approval is mandatory; a stale `autoApprove` on the parent row must change nothing.
   it.each([
     ['a new item', null],
     ['a republished (withdrawn) item', 'withdrawn'],
@@ -357,7 +362,13 @@ describe('upsertSubListing — status changes', () => {
     await expect(upsert()).resolves.toMatchObject({ status: 'pending' });
     const written = existing ? casWrite().data : write.appSubListing.create.mock.calls[0][0].data;
     expect(written.status).toBe('pending');
-    expect(written.approvedAt ?? null).toBeNull();
+    if (existing) {
+      // The withdrawn row still carries its old approval stamp (`liveRow` sets one); the
+      // republish must clear it, or a later hide + restore would skip review.
+      expect(written).toHaveProperty('approvedAt', null);
+    } else {
+      expect(written).not.toHaveProperty('approvedAt');
+    }
     expect(mockBust).not.toHaveBeenCalled();
   });
 
@@ -632,13 +643,13 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
       change: 'withdrawn',
       authorUserId: AUTHOR,
     });
-    expect(casWrite().where).toEqual({
+    expect(casWrite(1).where).toEqual({
       parentListingId: PARENT,
       itemKey: 'gen-1',
       authorUserId: AUTHOR,
       status: 'pending',
     });
-    expect(casWrite().data).toMatchObject({ status: 'withdrawn' });
+    expect(casWrite(1).data).toMatchObject({ status: 'withdrawn' });
     expect(mockBust).toHaveBeenCalled();
   });
 
@@ -660,9 +671,31 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
     });
     const wheres = write.appSubListing.updateMany.mock.calls.map((c) => c[0].where.status);
     // An author-withdrawn item stays withdrawn, so a republish still returns it to review.
-    expect(wheres).toEqual(['pending', 'approved']);
-    expect(casWrite().data).toMatchObject({ status: 'hidden', moderatedById: 9 });
+    expect(wheres).toEqual(['hidden', 'pending', 'approved']);
+    expect(casWrite(1).data).toMatchObject({ status: 'hidden', moderatedById: 9 });
   });
+
+  // A store-side restore reads the shared row, then compare-and-sets the hidden row. Moving the
+  // hidden row's version here makes a restore that read the row just before this change fail.
+  it.each(['hidden', 'withdrawn'] as const)(
+    'an in-app %s moves the version of a store-hidden row without changing it',
+    async (change) => {
+      await syncSubListingForSharedRow({
+        appBlockId: 'apb_1',
+        itemKey: 'gen-1',
+        change,
+        authorUserId: AUTHOR,
+      });
+      const touch = casWrite(0);
+      expect(touch.where).toMatchObject({
+        parentListingId: PARENT,
+        itemKey: 'gen-1',
+        status: 'hidden',
+      });
+      expect(Object.keys(touch.data)).toEqual(['updatedAt']);
+      expect(touch.data.updatedAt).toBeInstanceOf(Date);
+    }
+  );
 
   it('is best-effort: a failure is logged, never thrown', async () => {
     write.appSubListing.updateMany.mockRejectedValueOnce(new Error('db down'));
@@ -763,9 +796,23 @@ describe('moderateSubListing', () => {
     await expectError(mod({ id: 'asl_x', action: 'restore' }), 409, 'invalid_transition');
     expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
     expect(mockBust).not.toHaveBeenCalled();
-    // It read THIS item's shared row, in the parent app's schema.
     expect(mockPoolQuery.mock.calls[0][0]).toContain('"app_custom_generators".shared_kv');
     expect(mockPoolQuery.mock.calls[0][1]).toEqual(['gen-1']);
+  });
+
+  it('restore is refused when the app reused the key for another author’s item', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ author_user_id: 7, hidden: false }] });
+    await expectError(mod({ id: 'asl_x', action: 'restore' }), 409, 'invalid_transition');
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('restore is refused when the parent listing has no backing block', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
+    read.appListing.findUnique.mockResolvedValueOnce({ appBlock: null });
+    await expectError(mod({ id: 'asl_x', action: 'restore' }), 409, 'invalid_transition');
+    expect(mockPoolQuery).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('restore is allowed once the shared row is live again (positive control)', async () => {

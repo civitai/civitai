@@ -94,8 +94,7 @@ function FieldValue({ field, value }: { field: keyof Content; value: unknown }) 
       </Text>
     );
   if (field === 'imageUrl') {
-    // `imageUrl` is the stored image KEY, not a URL: resolve it through the edge, as the store
-    // card does server-side.
+    // `imageUrl` is the stored image KEY, not a URL: resolve it through the edge.
     return (
       <Image
         src={getEdgeUrl(String(value), { width: QUEUE_IMAGE_WIDTH })}

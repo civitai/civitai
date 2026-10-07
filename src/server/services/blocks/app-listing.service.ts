@@ -879,13 +879,11 @@ export function listingSortKeyExpr(
       };
     case 'name':
     default:
-      // `name` is unbounded `text`; the RAW sort key is encoded into the base64
-      // cursor, so a long name would overflow the cursor bound (`LISTING_CURSOR_MAX`,
-      // sized for 64 four-byte characters) and halt pagination (BAD_REQUEST). Bound
-      // the key to 64 chars — IDENTICAL in
-      // SELECT + the keyset WHERE (same `expr`), so paging stays exact; `al.id`
-      // remains the total-order tiebreak, so a 64-char-truncation collision
-      // still paginates correctly.
+      // `name` is unbounded `text`; the RAW sort key is encoded into the base64 cursor, so a
+      // long name could overflow the cursor bound (`LISTING_CURSOR_MAX`, sized for 64
+      // four-byte characters) and halt pagination (BAD_REQUEST). Bound the key to 64 chars —
+      // IDENTICAL in SELECT + the keyset WHERE (same `expr`), so paging stays exact; `al.id`
+      // remains the total-order tiebreak, so a 64-char-truncation collision still paginates.
       return { expr: Prisma.sql`left(LOWER(al.name), 64)`, descending: false };
   }
 }
@@ -1128,10 +1126,10 @@ export async function getGlobalRecommendMean(): Promise<number> {
  *
  * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
  * grid defect above. The alternative to accepting it is putting the remaining axes in
- * the literal key too, and the blocker is `cursor`: it is a free-form string of up to `LISTING_CURSOR_MAX` bytes,
- * so lifting it out of the hash makes the redis keyspace AND the `cache_name` metric
- * label request-controlled and unbounded — exactly the property the note at the bottom
- * of this comment relies on. (`kind`, `category` and `sort` are closed enums and
+ * the literal key too, and the blocker is `cursor`: it is a free-form string of up to
+ * `LISTING_CURSOR_MAX` characters, so lifting it out of the hash makes the redis keyspace
+ * AND the `cache_name` metric label request-controlled and unbounded — exactly the
+ * property the note at the bottom of this comment relies on. (`kind`, `category` and `sort` are closed enums and
  * `limit` is 1..50, so those four could be lifted; they would multiply the label
  * cardinality by their product, and they do not help while `cursor` stays hashed,
  * because `cursor` is the tuning room the collision is built out of.) Widening
@@ -1343,8 +1341,7 @@ export async function listAvailableListings(
   // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
   // no mutation to hang a bust on. It is NOT a redis-outage backstop: `queryCache` has no
   // fail-open, so a redis outage is a 500 on `/apps` and on `GET /api/v1/apps`.
-  //
-  // A cursor taken on a sub-listing row resumes inside the child tier of its sort key.
+
   const cursorTb = isAppSubListingId(cursorId) ? 1 : 0;
   // On the parents-only statement a child cursor means every parent on that sort key was
   // already served (parents sort before their children), so it resumes strictly after the

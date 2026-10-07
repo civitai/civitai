@@ -249,8 +249,7 @@ export function AppListingsMarketplaceBody() {
       // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
       // request-time zod error, not a bigger page.
       limit: 48,
-      // The store grid is the one surface that renders `SubListingCard`s, so it is the one
-      // caller that opts in. The server still adds them only behind the flag.
+      // The only caller that renders `SubListingCard`s.
       includeSubListings: true,
     },
     {
