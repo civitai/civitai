@@ -23,7 +23,12 @@ import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile } from '~/utils/file-utils';
 import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
-import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
+import {
+  ImagePrepError,
+  imageToJpegBlob,
+  prepStage,
+  resizeImage,
+} from '~/shared/utils/canvas-utils';
 import { getImageDimensions } from '~/utils/image-utils';
 import { ExifParser } from '~/utils/metadata';
 import clsx from 'clsx';
@@ -49,6 +54,7 @@ import {
   extractSourceMetadataFromUrl,
 } from '~/utils/metadata/extract-source-metadata';
 import { isDefined } from '~/utils/type-guards';
+import { reportApplicationError } from '~/utils/application-error';
 
 type AspectRatio = `${number}:${number}`;
 
@@ -199,6 +205,77 @@ function MetadataAction({ url, apply }: { url: string; apply?: ImageMetadataAppl
 
 const iconSize = 18;
 const maxSizeFormatted = formatBytes(maxOrchestratorImageFileSize);
+
+const IMAGE_LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
+const IMAGE_PREP_TIMEOUT_ERROR =
+  "Couldn't process this image on your device. Try a smaller photo or a screenshot.";
+/** Bound on each local step of preparing a source image (read, decode, encode, metadata). */
+export const IMAGE_PREP_STAGE_TIMEOUT_MS = 30_000;
+
+const REPORTED_IMAGE_TYPES = [
+  'image/jpeg',
+  'image/png',
+  'image/webp',
+  'image/heic',
+  'image/heif',
+  'image/avif',
+];
+const REPORTED_ERROR_NAMES = [
+  'Error',
+  'TypeError',
+  'DOMException',
+  'NotReadableError',
+  'EncodingError',
+  'NotFoundError',
+  'SecurityError',
+  'AbortError',
+  'TimeoutError',
+  'InvalidStateError',
+];
+
+type PickedFileInfo = { type: string; size: number };
+
+/**
+ * Reports a source image that could not be prepared on the device, with bounded fields only: the
+ * stage, where the image came from, a picked file's type (from a short list) and size bucket, and
+ * the underlying error's name (from a short list). Never a url, file name or error text.
+ */
+function reportImagePrepFailure(
+  error: ImagePrepError,
+  src: string | Blob | File,
+  file?: PickedFileInfo
+) {
+  const source =
+    typeof src !== 'string'
+      ? src instanceof File
+        ? 'picked-file'
+        : 'blob'
+      : src.startsWith('blob:')
+      ? 'picked-file'
+      : src.startsWith('data:')
+      ? 'data-url'
+      : /^https?:/i.test(src)
+      ? 'url'
+      : 'other';
+  const info = typeof src !== 'string' ? src : file;
+  const MB = 1024 * 1024;
+  const type = info && (REPORTED_IMAGE_TYPES.includes(info.type) ? info.type : 'other');
+  const size = info && (info.size < 5 * MB ? '<5MB' : info.size <= 20 * MB ? '5-20MB' : '>20MB');
+  const cause = error.cause;
+  const causeName = cause instanceof Error || cause instanceof DOMException ? cause.name : 'Error';
+  const errorName = REPORTED_ERROR_NAMES.includes(causeName) ? causeName : 'other';
+  void reportApplicationError(
+    new Error(`source image prep failed: ${error.stage}${error.timedOut ? ':timeout' : ''}`),
+    {
+      name: 'source-image-prep',
+      message: [source, type, size, error.timedOut ? undefined : errorName]
+        .filter(Boolean)
+        .join(' '),
+      resolveStack: false,
+    }
+  );
+}
+
 export function SourceImageUploadMultiple({
   value: rawValue,
   onChange,
@@ -237,6 +314,12 @@ export function SourceImageUploadMultiple({
   // stuck in its loading state.
   const trackedUploadingIdsRef = useRef(new Set<string>());
   const trackedVerifyingUrlsRef = useRef(new Set<string>());
+  // Type and size of picked files by preview url, for the load-failure report only.
+  const pickedFilesRef = useRef(new Map<string, PickedFileInfo>());
+  const reportedLoadFailuresRef = useRef(new Set<string>());
+  // Urls whose dimensions could not be read. They no longer hold back the crop/upload effect, which
+  // otherwise waits on every url in play and would never start any other card.
+  const [unreadableUrls, setUnreadableUrls] = useState<ReadonlySet<string>>(new Set());
   // Always-current value ref for use in async callbacks to avoid stale closures
   const valueRef = useRef(value);
   valueRef.current = value;
@@ -372,6 +455,10 @@ export function SourceImageUploadMultiple({
     [uploads]
   );
   const pendingUploadUrls = useMemo(() => pendingUploads.map((u) => u.url), [pendingUploads]);
+  const queuedCardIds = pendingUploads
+    .filter((u) => u.status === 'queued')
+    .map((u) => u.id)
+    .join(',');
 
   // Holds the generator from the pick until the image is in the value, under one key per mount that
   // no upload id can take. The per-upload marker set inside uploadOrchestratorImage starts after an
@@ -405,7 +492,7 @@ export function SourceImageUploadMultiple({
       allImageUrls.length > 0 &&
       allImageUrls.every((url) => {
         const meta = state.metadataByUrl[url];
-        return meta?.width && meta?.height;
+        return (meta?.width && meta?.height) || unreadableUrls.has(url);
       })
   );
 
@@ -419,11 +506,12 @@ export function SourceImageUploadMultiple({
     if (!allDimsResolved) return;
 
     // Build dimensioned image list for crop check
-    const allImages = allImageUrls.map((url) => {
+    const allImages = allImageUrls.flatMap((url) => {
       const fromValue = value?.find((v) => v.url === url);
-      if (fromValue?.width && fromValue?.height) return fromValue;
+      if (fromValue?.width && fromValue?.height) return [fromValue];
       const meta = sourceMetadataStore.getMetadata(url);
-      return { url, width: meta!.width!, height: meta!.height! };
+      // An unreadable url has no dimensions to check against.
+      return meta?.width && meta?.height ? [{ url, width: meta.width, height: meta.height }] : [];
     });
 
     if (!getShouldCrop(allImages)) {
@@ -437,7 +525,9 @@ export function SourceImageUploadMultiple({
       }));
       openCropModal(withAspectRatio, pendingUploads);
     }
-  }, [allDimsResolved, allImageUrls.length, getShouldCrop]); // eslint-disable-line react-hooks/exhaustive-deps
+    // Keyed on the queued cards too: a card queued for a url already in play (a data: url swapped
+    // out of the value for its upload) changes neither the url count nor dimension readiness.
+  }, [allDimsResolved, allImageUrls.length, getShouldCrop, queuedCardIds]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function removeItem(index: number) {
     const item = previewItems[index];
@@ -524,14 +614,20 @@ export function SourceImageUploadMultiple({
     }
 
     const snapshot = value;
+    const failures = new Map<string, ImagePrepError>();
     Promise.all(
       unresolved.map((url) =>
-        getImageDimensions(url, { loadRetries: 2 })
+        prepStage(
+          'dims',
+          () => getImageDimensions(url, { loadRetries: 2 }),
+          IMAGE_PREP_STAGE_TIMEOUT_MS
+        )
           .then(({ width, height }) => ({ url, width, height }))
-          .catch(() => {
+          .catch((e: ImagePrepError) => {
             // A failed load must stay retryable, or the dimensions it was meant to
             // correct are submitted as-is for the life of this mount.
             verifiedDimsRef.current.delete(url);
+            failures.set(url, e);
             return null;
           })
           .finally(() => {
@@ -543,6 +639,33 @@ export function SourceImageUploadMultiple({
       const verified = results.filter(
         (r): r is { url: string; width: number; height: number } => r !== null
       );
+
+      // A url the browser cannot read never gets dimensions, so its queued cards would never
+      // start: end them on an error the user can act on. The url stays retryable (above).
+      const unreadable = new Set(failures.keys());
+      for (const [url, error] of failures) {
+        // Once per url: a url already in the value is retried on every change.
+        if (reportedLoadFailuresRef.current.has(url)) continue;
+        reportedLoadFailuresRef.current.add(url);
+        reportImagePrepFailure(error, url, pickedFilesRef.current.get(url));
+      }
+      if (unreadable.size) {
+        setUploads((items) =>
+          items.map((x): ImagePreview => {
+            if (x.status !== 'queued' || x.slotIndex !== undefined) return x;
+            const error = failures.get(x.url);
+            if (!error) return x;
+            const message = error.timedOut ? IMAGE_PREP_TIMEOUT_ERROR : IMAGE_LOAD_ERROR;
+            return { status: 'error', url: x.url, src: x.url, error: message, id: x.id };
+          })
+        );
+      }
+      setUnreadableUrls((prev) => {
+        const next = new Set(prev);
+        for (const url of unreadable) next.add(url);
+        for (const { url } of verified) next.delete(url);
+        return next.size === prev.size && [...next].every((u) => prev.has(u)) ? prev : next;
+      });
 
       // Cache verified dims in the store
       for (const { url, width, height } of verified) {
@@ -615,7 +738,12 @@ export function SourceImageUploadMultiple({
     );
     // uploadOrchestratorImage marks `id` itself; tracked so an unmount mid-upload clears it too.
     trackedUploadingIdsRef.current.add(id);
-    const response = await uploadOrchestratorImage(url, id);
+    const response = await uploadOrchestratorImage(
+      url,
+      id,
+      undefined,
+      pickedFilesRef.current.get(url)
+    );
     trackedUploadingIdsRef.current.delete(id);
     setUploads((items) =>
       items.map((x): ImagePreview => {
@@ -805,11 +933,12 @@ export function SourceImageUploadMultiple({
   function handleChange(items: (string | File)[]) {
     setUploads((prev) => [
       ...prev,
-      ...items.map((src) => ({
-        status: 'queued' as const,
-        url: typeof src !== 'string' ? URL.createObjectURL(src) : src,
-        id: getRandomId(),
-      })),
+      ...items.map((src) => {
+        const url = typeof src !== 'string' ? URL.createObjectURL(src) : src;
+        if (typeof src !== 'string')
+          pickedFilesRef.current.set(url, { type: src.type, size: src.size });
+        return { status: 'queued' as const, url, id: getRandomId() };
+      }),
     ]);
   }
 
@@ -1766,13 +1895,16 @@ export async function uploadOrchestratorImage(
    * Where to read generation metadata from, when that isn't `src` itself — the
    * crop flow uploads a re-encoded Blob and only the pre-crop url still has EXIF.
    */
-  metadataSource?: string | File
+  metadataSource?: string | File,
+  /** Type and size of the picked file behind a `blob:` src, for the failure report only. */
+  file?: PickedFileInfo
 ) {
   let originalSize = { width: 0, height: 0 };
+  const timeoutMs = IMAGE_PREP_STAGE_TIMEOUT_MS;
   try {
     // Inside the try: callers render a failed upload from `blockedReason`, and a throw here
     // would leave their card loading forever.
-    originalSize = await getImageDimensions(src);
+    originalSize = await prepStage('dims', () => getImageDimensions(src), timeoutMs);
 
     // If already an orchestrator URL, return it directly
     if (typeof src === 'string' && isOrchestratorUrl(src)) {
@@ -1802,11 +1934,16 @@ export async function uploadOrchestratorImage(
       maxWidth: maxUpscaleSize,
       minWidth: minUploadSize,
       minHeight: minUploadSize,
+      stageTimeoutMs: timeoutMs,
     });
-    const jpegBlob = await imageToJpegBlob(resized);
+    const jpegBlob = await imageToJpegBlob(resized, { stageTimeoutMs: timeoutMs });
 
     // Get dimensions after resizing
-    const resizedSize = await getImageDimensions(jpegBlob);
+    const resizedSize = await prepStage(
+      'dims-after-encode',
+      () => getImageDimensions(jpegBlob),
+      timeoutMs
+    );
 
     // Upload using presigned URL
     const blob = await uploadConsumerBlob(jpegBlob);
@@ -1845,12 +1982,18 @@ export async function uploadOrchestratorImage(
   } catch (e) {
     setImageUploading(id, false);
     const error = e as Error;
+    // Local preparation failures only: the upload itself reports its own (consumer-blob-upload),
+    // and a size requirement is a validation message, not a failure.
+    if (error instanceof ImagePrepError) reportImagePrepFailure(error, src, file);
 
     return {
       url: typeof src === 'string' ? src : URL.createObjectURL(src),
       ...originalSize,
       available: false,
-      blockedReason: error.message,
+      blockedReason:
+        error instanceof ImagePrepError && error.timedOut
+          ? IMAGE_PREP_TIMEOUT_ERROR
+          : error.message,
     };
   }
 }

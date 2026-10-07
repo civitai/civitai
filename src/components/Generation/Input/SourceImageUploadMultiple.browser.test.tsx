@@ -6,6 +6,7 @@ import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
 import type * as CanvasUtils from '~/shared/utils/canvas-utils';
 import type * as ImageUtils from '~/utils/image-utils';
 import type * as Constants from '~/server/common/constants';
+import type * as ApplicationError from '~/utils/application-error';
 
 /**
  * A failed source-image upload must end on an error card with the spinner cleared, and must not
@@ -17,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   uploadConsumerBlob: vi.fn(),
   getImageDimensions: vi.fn(),
   dialogTrigger: vi.fn(),
+  reportApplicationError: vi.fn(),
   /** A loadable local url the uploader treats as already uploaded (no network request). */
   orchestratorUrl: '',
 }));
@@ -43,6 +45,11 @@ vi.mock('~/server/common/constants', async (orig) => {
   };
 });
 
+vi.mock('~/utils/application-error', async (orig) => ({
+  ...(await orig<typeof ApplicationError>()),
+  reportApplicationError: mocks.reportApplicationError,
+}));
+
 vi.mock('~/utils/metadata/extract-source-metadata', () => ({
   extractSourceMetadata: vi.fn(async () => undefined),
   extractSourceMetadataFromUrl: vi.fn(async () => undefined),
@@ -54,6 +61,10 @@ vi.mock('~/components/Dialog/dialogStore', async (orig) => {
   return { ...actual, dialogStore: { ...actual.dialogStore, trigger: mocks.dialogTrigger } };
 });
 
+// eslint-disable-next-line import/first
+import { sourceMetadataStore } from '~/store/source-metadata.store';
+// eslint-disable-next-line import/first
+import { ImagePrepError, resizeImage } from '~/shared/utils/canvas-utils';
 // eslint-disable-next-line import/first
 import {
   useImagesUploadingOrVerifying,
@@ -322,11 +333,15 @@ function PendingProbe() {
 function PendingHarness({
   aspectRatios,
   layout,
+  initialValue = [],
+  max = 1,
 }: {
   aspectRatios?: `${number}:${number}`[];
   layout?: 'default' | 'url-input';
+  initialValue?: ImageValue[];
+  max?: number;
 }) {
-  const [value, setValue] = useState<ImageValue[]>([]);
+  const [value, setValue] = useState<ImageValue[]>(initialValue);
   const onChange = (next: ImageValue[]) =>
     setValue((prev) => {
       if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
@@ -341,7 +356,7 @@ function PendingHarness({
       <ImageUploadMultipleInput
         value={value}
         onChange={onChange}
-        max={1}
+        max={max}
         aspectRatios={aspectRatios}
         layout={layout}
       />
@@ -507,5 +522,222 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
     expect(valueWrites).toContainEqual(kept);
     await sleep(300);
     expect(lastValue).toEqual(kept);
+  });
+});
+
+/**
+ * A queued card starts only from the crop/upload effect. Any card that effect can never reach sits
+ * on a spinner with no upload, and (through the pending flag) keeps Generate disabled.
+ */
+describe('SourceImageUploadMultiple — a card that cannot start', () => {
+  let unsubscribe = () => undefined as void;
+  const cachedUrls: string[] = [];
+  afterEach(() => {
+    unsubscribe();
+    for (const url of cachedUrls.splice(0)) sourceMetadataStore.removeMetadata(url);
+  });
+
+  beforeEach(() => {
+    events = [];
+    lastValue = [];
+    valueWrites = [];
+    uploads = [];
+    mocks.orchestratorUrl = '';
+    useImagesUploadingStore.setState({ uploading: [], verifying: [] });
+    unsubscribe = useImagesUploadingStore.subscribe(() => undefined);
+    mocks.uploadConsumerBlob
+      .mockReset()
+      .mockImplementation(
+        () => new Promise((resolve, reject) => uploads.push({ resolve, reject, settled: false }))
+      );
+    mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+    mocks.dialogTrigger.mockReset();
+  });
+
+  const LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
+  const loadFailures = () =>
+    mocks.reportApplicationError.mock.calls.map(([error, ctx]) => [
+      (error as Error).message,
+      (ctx as { message?: string } | undefined)?.message,
+    ]);
+
+  test('a picked file whose image cannot be read ends on an error card and frees the generator', async () => {
+    mocks.getImageDimensions.mockRejectedValue(new Error('Image failed to load'));
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+
+    await expect.element(page.getByText(LOAD_ERROR)).toBeVisible();
+    await expect.poll(loaderCount).toBe(0);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(loadFailures()).toEqual([
+      ['source image prep failed: dims', 'picked-file image/jpeg <5MB Error'],
+    ]);
+  });
+
+  test('a pasted url whose image cannot be read ends on an error card and frees the generator', async () => {
+    mocks.getImageDimensions.mockRejectedValue(new Error('Image failed to load'));
+    renderWithProviders(<PendingHarness layout="url-input" />);
+    await userEvent.fill(
+      page.getByPlaceholder('Add a file or provide a URL'),
+      'https://example.com/hotlinked.jpg'
+    );
+    await userEvent.keyboard('{Enter}');
+
+    await expect.element(page.getByText(LOAD_ERROR)).toBeVisible();
+    await expect.poll(loaderCount).toBe(0);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(loadFailures()).toEqual([['source image prep failed: dims', 'url Error']]);
+  });
+
+  test('a data url whose dimensions are already cached is uploaded', async () => {
+    const dataUrl = `data:image/png;base64,${btoa(String(Date.now()))}`;
+    sourceMetadataStore.setMetadata(dataUrl, { width: 1024, height: 1024 });
+    cachedUrls.push(dataUrl);
+    renderWithProviders(
+      <PendingHarness initialValue={[{ url: dataUrl, width: 1024, height: 1024 }]} />
+    );
+
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].resolve({ url: await loadableImageUrl(), available: true });
+    await vi.waitFor(() => expect(lastValue).toHaveLength(1));
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+  });
+
+  test('an image already in the value whose dimensions cannot be read does not stop a new pick', async () => {
+    const existing = await loadableImageUrl();
+    mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
+      if (src === existing) throw new Error('Image failed to load');
+      return { width: 1024, height: 1024 };
+    });
+    renderWithProviders(
+      <PendingHarness max={2} initialValue={[{ url: existing, width: 1024, height: 1024 }]} />
+    );
+    await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalled());
+    await pickFiles(1);
+
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].resolve({ url: await loadableImageUrl(), available: true });
+    await vi.waitFor(() => expect(lastValue).toHaveLength(2));
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    // The unreadable url is retried on every change; it is reported once.
+    expect(
+      mocks.getImageDimensions.mock.calls.filter(([src]) => src === existing).length
+    ).toBeGreaterThan(1);
+    expect(mocks.reportApplicationError).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Every local step before the upload (dimension read, reading the picked file back, decode, encode,
+ * metadata copy, the re-read after encoding) must end on an error card, release the generator, and
+ * send exactly one bounded report naming the stage. A step that never settles is bounded.
+ */
+describe('SourceImageUploadMultiple — a source image that cannot be prepared', () => {
+  beforeEach(() => {
+    uploads = [];
+    useImagesUploadingStore.setState({ uploading: [], verifying: [] });
+    mocks.uploadConsumerBlob
+      .mockReset()
+      .mockImplementation(
+        () => new Promise((resolve, reject) => uploads.push({ resolve, reject, settled: false }))
+      );
+    mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const reports = () =>
+    mocks.reportApplicationError.mock.calls.map(([error, ctx]) => [
+      (error as Error).message,
+      (ctx as { message?: string } | undefined)?.message,
+    ]);
+  const PROCESS_ERROR =
+    "Couldn't process this image on your device. Try a smaller photo or a screenshot.";
+
+  async function expectFailedCard(text: string) {
+    await expect.element(page.getByText(text)).toBeVisible();
+    await expect.poll(loaderCount).toBe(0);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+  }
+
+  // The pre-check passes `options`; the upload's own dimension reads do not.
+  const uploadReadsOnly = (impl: (call: number) => Promise<unknown>) => {
+    let call = 0;
+    mocks.getImageDimensions.mockImplementation((_src: unknown, options?: unknown) =>
+      options ? Promise.resolve({ width: 1024, height: 1024 }) : impl(call++)
+    );
+  };
+
+  test('dims: the upload cannot read the image', async () => {
+    uploadReadsOnly(() => Promise.reject(new TypeError('Image failed to load')));
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await expectFailedCard('Image failed to load');
+    expect(reports()).toEqual([
+      ['source image prep failed: dims', 'picked-file image/jpeg <5MB TypeError'],
+    ]);
+  });
+
+  test.each(['read-blob', 'decode', 'encode', 'metadata'] as const)(
+    '%s: the resize step fails',
+    async (stage) => {
+      vi.mocked(resizeImage).mockRejectedValueOnce(
+        new ImagePrepError(stage, false, `${stage} broke`, {
+          cause: new DOMException('x', 'NotReadableError'),
+        })
+      );
+      renderWithProviders(<PendingHarness />);
+      await pickFiles(1);
+      await expectFailedCard(`${stage} broke`);
+      expect(reports()).toEqual([
+        [`source image prep failed: ${stage}`, 'picked-file image/jpeg <5MB NotReadableError'],
+      ]);
+    }
+  );
+
+  test('dims-after-encode: the re-encoded image cannot be read', async () => {
+    uploadReadsOnly((call) =>
+      call === 0
+        ? Promise.resolve({ width: 1024, height: 1024 })
+        : Promise.reject(new Error('Image failed to load'))
+    );
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await expectFailedCard('Image failed to load');
+    expect(reports()).toEqual([
+      ['source image prep failed: dims-after-encode', 'picked-file image/jpeg <5MB Error'],
+    ]);
+  });
+
+  test('a step in the upload that never settles times out onto an error card', async () => {
+    uploadReadsOnly(() => new Promise(() => undefined));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expectFailedCard(PROCESS_ERROR);
+    expect(reports()).toEqual([
+      ['source image prep failed: dims:timeout', 'picked-file image/jpeg <5MB'],
+    ]);
+  });
+
+  test('a dimension pre-check that never settles times out onto an error card', async () => {
+    mocks.getImageDimensions.mockImplementation(() => new Promise(() => undefined));
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await expectFailedCard(PROCESS_ERROR);
+    expect(reports()).toEqual([
+      ['source image prep failed: dims:timeout', 'picked-file image/jpeg <5MB'],
+    ]);
   });
 });
