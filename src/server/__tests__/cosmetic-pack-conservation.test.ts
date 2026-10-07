@@ -411,14 +411,15 @@ describe.each(SHAPES)(
     // rather than imported from src — that is what lets them disagree with
     // isSelfAuthoredPackMember — but two character-identical copies over the same
     // array caught nothing and could drift apart silently.
+    const membersPaidFor = () =>
+      members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
+
+    // Hand-written for the same reason, and shared for the same reason.
     const isPayable = (m: Member) =>
       m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId;
     // Priced as foreign (not the lister's own), so the bank keeps their share.
     const officialMembers = () =>
       members.filter((m) => m.createdById == null && packCreatorId != null);
-
-    const membersPaidFor = () =>
-      members.filter((m) => !(m.createdById === buyerId && m.createdById !== packCreatorId));
 
     // Computed from the shape, not by calling the code under test: every other
     // property bounds outflow by inflow, so a defect that charged everyone zero
@@ -460,9 +461,7 @@ describe.each(SHAPES)(
 
     it('pays every foreign creator something attributable to their member', async () => {
       const { charged, payouts } = await setup();
-      const owedTo = members.filter(
-        (m) => m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId
-      );
+      const owedTo = members.filter(isPayable);
       const snapshotTotal = [...owedTo, ...officialMembers()].reduce(
         (sum, m) => sum + m.floorAmount,
         0
@@ -504,10 +503,7 @@ describe.each(SHAPES)(
       const { payouts } = await setup();
       const expected = new Set<number>(
         members
-          .filter(
-            (m) =>
-              m.createdById != null && m.createdById !== packCreatorId && m.createdById !== buyerId
-          )
+          .filter(isPayable)
           .flatMap((m) => [
             m.createdById as number,
             ...(m.addedById && m.addedById !== m.createdById && m.addedById !== buyerId
