@@ -133,9 +133,23 @@ describe('grant-creator-milestones', () => {
       .map(([entry]) => entry)
       .filter((entry) => entry.name === 'creator-milestone-stored');
 
-  it('runs the judge ranks alongside the activity groups', async () => {
+  it('runs the judge ranks alongside the activity groups, reading the real ClickHouse', async () => {
     mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
     await run();
+    const judge = mocks.runActivityGroup.mock.calls
+      .map(([group]) => group)
+      .find((group) => group.keys.includes('community:crucible-votes-500'));
+    mocks.clickhouseQuery.mockResolvedValue({ json: async () => [] });
+    const readPg = {
+      cancellableQuery: async () => ({ result: async () => [{ min: 500 }], cancel: vi.fn() }),
+    };
+    expect(await judge.candidates(readPg)).toEqual([]);
+    expect(mocks.clickhouseQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.stringContaining('FROM crucible_votes WHERE userId > 0'),
+        clickhouse_settings: expect.objectContaining({ readonly: '1' }),
+      })
+    );
     expect(mocks.runActivityGroup.mock.calls.map(([group]) => group.keys)).toContainEqual([
       'community:crucible-votes-500',
       'community:crucible-votes-1000',

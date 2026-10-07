@@ -17,6 +17,7 @@ import {
   maskUnearnedMilestone,
 } from '~/server/services/creator-journey.service';
 import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
+import { judgeVoteCountSql } from '~/server/services/creator-milestone-detectors';
 
 const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[0]> = {}) => ({
   key: 'hidden:remix',
@@ -578,7 +579,13 @@ describe('judge votes', () => {
 
     const { activity } = await getCreatorJourney(42);
 
-    expect(chQuery).toHaveBeenCalledWith(expect.objectContaining({ query_params: { userId: 42 } }));
+    expect(chQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: judgeVoteCountSql,
+        query_params: { userId: 42 },
+        format: 'JSONEachRow',
+      })
+    );
     expect(
       activity.milestones.map(({ key, measure, current }) => ({ key, measure, current }))
     ).toEqual([
@@ -588,6 +595,12 @@ describe('judge votes', () => {
     ]);
     // 640 has passed 500, which the nightly job has not granted yet, so 1k is the target.
     expect(activity.closestNext).toMatchObject({ key: 'community:crucible-votes-1000' });
+  });
+
+  // The mock answers any SQL, and a failed query reads as zero votes, so the text is what pins it.
+  it("counts only the viewer's own attributed votes, bound by the parameter it sends", () => {
+    expect(judgeVoteCountSql).toBe(`SELECT count() AS votes FROM crucible_votes
+  WHERE userId = {userId:UInt32}`);
   });
 
   // ClickHouse is a second store behind one page; its outage must not take the page down.

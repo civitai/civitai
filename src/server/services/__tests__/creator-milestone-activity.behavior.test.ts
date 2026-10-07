@@ -18,6 +18,7 @@ import {
   activityDetectorGroups,
   activityValuesSql,
   judgeVoteGroups,
+  judgeVoteTotalsSql,
 } from '~/server/services/creator-milestone-detectors';
 import type { ActivityMeasure } from '~/server/services/creator-milestone-registry';
 import {
@@ -824,8 +825,62 @@ describe('judge-vote detector', () => {
     expect(group.timed).toBe(false);
     // Totals below the lowest rank stay in ClickHouse; the read-only flag rides on the request.
     expect(calls).toHaveLength(1);
-    expect(calls[0].sql).toMatch(/HAVING votes >= 500$/);
-    expect(calls[0].settings).toMatchObject({ readonly: '1' });
+    expect(calls[0].sql).toBe(judgeVoteTotalsSql(500));
+    expect(calls[0].settings).toEqual({
+      readonly: '1',
+      max_execution_time: 60,
+      max_result_rows: 1_000_000,
+    });
+  });
+
+  // The fake ignores the SQL, so the text is what pins the filters: rows before 2026-10-04 carry
+  // userId 0, and without `userId > 0` they would reach the guard below and fail every run.
+  it('asks ClickHouse only for attributed totals at or above the lowest rank', () => {
+    expect(judgeVoteTotalsSql(500)).toBe(`SELECT userId, count() AS votes
+  FROM crucible_votes WHERE userId > 0 GROUP BY userId HAVING votes >= 500`);
+  });
+
+  it('announces a rank crossed after the previous complete run', async () => {
+    const watermark = { at: new Date('2026-10-31T00:00:00Z').getTime(), gated: false };
+    await run(judgeGroup([{ userId: CREATOR, votes: '600' }]).group, { watermark });
+    const { notified } = await run(judgeGroup([{ userId: CREATOR, votes: '1200' }]).group, {
+      watermark,
+    });
+    expect(
+      notified.map(({ userId, milestoneKey, silent }) => ({ userId, milestoneKey, silent }))
+    ).toEqual([{ userId: CREATOR, milestoneKey: 'community:crucible-votes-1000', silent: false }]);
+  });
+
+  it('fails, rather than finding nobody, when the replica has no rank rows yet', async () => {
+    const [group] = judgeVoteGroups(async () => []);
+    const emptyPg = {
+      cancellableQuery: async () => ({
+        result: async () => [{ min: null }],
+        cancel: async () => undefined,
+      }),
+    } as never;
+    await expect(
+      (group as Extract<MilestoneDetectorGroup, { candidates: unknown }>).candidates(emptyPg)
+    ).rejects.toThrow('No CreatorMilestone thresholds for the judge ranks');
+  });
+
+  it('records no complete run when ClickHouse fails', async () => {
+    const [group] = judgeVoteGroups(async () => {
+      throw new Error('ClickHouse unavailable');
+    });
+    const { store, rows } = memoryStore();
+    await expect(
+      runActivityGroup(group, {
+        readPg: pg,
+        writePg: pg,
+        store,
+        gated: false,
+        now: AFTER_LAUNCH,
+        audienceAmong: async (ids) => new Set(ids),
+        notify: async () => undefined,
+      })
+    ).rejects.toThrow('ClickHouse unavailable');
+    expect(rows.size).toBe(0);
   });
 
   it('does not offer a rank the judge already holds', async () => {

@@ -114,26 +114,34 @@ export type ActivityValues = Record<ActivityMeasure, number>;
 
 type PostgresActivityValues = Omit<ActivityValues, 'votes'>;
 
+const JUDGE_VOTES_TIMEOUT_SECONDS = 5;
+
 async function getJudgeVotes(userId: number) {
   if (!clickhouse) return 0;
+  // The shared client waits minutes for a stalled connection; the page should not.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), (JUDGE_VOTES_TIMEOUT_SECONDS + 1) * 1000);
   try {
     const response = await clickhouse.query({
       query: judgeVoteCountSql,
       query_params: { userId },
       format: 'JSONEachRow',
-      clickhouse_settings: { max_execution_time: 5 },
+      abort_signal: controller.signal,
+      clickhouse_settings: { max_execution_time: JUDGE_VOTES_TIMEOUT_SECONDS },
     });
     const [row] = (await response.json()) as { votes?: unknown }[];
     const votes = Number(row?.votes ?? 0);
     return Number.isSafeInteger(votes) ? Math.min(votes, 2147483647) : 0;
   } catch (e) {
-    // The page still loads; the Judge ladder reads as no votes until ClickHouse answers.
+    // The page still loads; the vote ladder reads as no votes until ClickHouse answers.
     logToAxiom({
       type: 'error',
       name: 'creator-journey-judge-votes',
       message: e instanceof Error ? e.message : String(e),
     });
     return 0;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

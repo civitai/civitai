@@ -227,7 +227,8 @@ export function judgeVoteGroups(
           [keys]
         );
         const [{ min } = { min: null }] = await thresholds.result();
-        if (min == null) return [];
+        // An empty answer here would record a complete run, and the next one would announce every judge.
+        if (min == null) throw new Error('No CreatorMilestone thresholds for the judge ranks');
 
         const totals = (await queryClickhouse(judgeVoteTotalsSql(min), {
           readonly: '1',
