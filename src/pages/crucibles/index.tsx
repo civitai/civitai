@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { CrucibleFiltersDropdown } from '~/components/Crucible/CrucibleFiltersDropdown';
+import { CrucibleJudgeNextButton } from '~/components/Crucible/CrucibleJudgeNextButton';
 import { CruciblesInfinite } from '~/components/Crucible/CruciblesInfinite';
 import { UserCrucibleWelcome } from '~/components/Crucible/UserCrucibleWelcome';
 import { FeaturedCrucibleHero } from '~/components/Crucible/FeaturedCrucibleHero';
@@ -33,14 +34,17 @@ function CruciblesPage() {
           <Group justify="space-between" align="center" wrap="wrap">
             <Title order={1}>Crucible Discovery</Title>
             {currentUser && (
-              <Button
-                component={Link}
-                href="/crucibles/create"
-                leftSection={<IconPlus size={18} />}
-                radius="xl"
-              >
-                Create Crucible
-              </Button>
+              <Group gap="sm">
+                <CrucibleJudgeNextButton />
+                <Button
+                  component={Link}
+                  href="/crucibles/create"
+                  leftSection={<IconPlus size={18} />}
+                  radius="xl"
+                >
+                  Create Crucible
+                </Button>
+              </Group>
             )}
           </Group>
 
