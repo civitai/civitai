@@ -359,8 +359,7 @@ describe('KNOWN_STATIC_ENDPOINT_SEGMENTS ⇄ withBlockScope route files drift gu
       'item',
       'list',
       'me',
-      // `mine` / `sub-listings` / `upsert` — the App Store item surface
-      // (`v1/blocks/sub-listings/*.ts`). `withdraw` was already earned above.
+      // mine, sub-listings, upsert: v1/blocks/sub-listings/*.ts
       'mine',
       'models',
       'poll',

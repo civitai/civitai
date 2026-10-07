@@ -11,7 +11,7 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /** The store grid renders a sub-listing item with its own card, beside the app cards. */
 
-const mocks = vi.hoisted(() => ({ items: [] as unknown[] }));
+const mocks = vi.hoisted(() => ({ items: [] as unknown[], canOpenPages: true }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -29,8 +29,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
   }),
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
-  useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: true }),
-  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: true }),
+  useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.canOpenPages }),
+  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: mocks.canOpenPages }),
 }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
@@ -75,6 +75,7 @@ const CHILD: SubListingCard = {
 
 beforeEach(() => {
   mocks.items = [PARENT, CHILD] satisfies StoreGridItem[];
+  mocks.canOpenPages = true;
 });
 
 describe('store grid with sub-listings', () => {
@@ -106,5 +107,15 @@ describe('store grid with sub-listings', () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     await expect.element(page.getByText('Custom Generators').first()).toBeVisible();
     expect(page.getByTestId('apps-sub-listing-card').elements()).toHaveLength(0);
+  });
+
+  test('without app pages the sub-card sends the viewer to the parent store page', async () => {
+    mocks.canOpenPages = false;
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    const cta = page.getByTestId('apps-sub-listing-cta');
+    await expect.element(cta).toBeVisible();
+    expect(cta.element().closest('a')?.getAttribute('href')).toBe(
+      '/apps/store-preview/custom-generators'
+    );
   });
 });

@@ -221,10 +221,7 @@ function mergeById<T extends { id: string }>(accumulated: T[], page: T[]): T[] {
   return [...accumulated, ...page.filter((r) => !seen.has(r.id))];
 }
 
-/**
- * Pending store items — new ones plus edits to approved ones — so the work shows on the tab
- * without opening it. Polls with the rest of the queue; renders nothing at zero or on error.
- */
+/** Pending store items — new ones plus edits to approved ones — shown on the tab label. */
 export function SubListingPendingBadge() {
   const { data } = trpc.appListings.countSubListingQueue.useQuery(undefined, {
     refetchInterval: APPS_REVIEW_POLL_MS,
@@ -405,8 +402,6 @@ export default function ReviewQueuePage() {
           </Tabs.Panel>
 
           <Tabs.Panel value="sub-listings" pt="md">
-            {/* Store items apps place in the store as their own cards: new items and
-                edits to approved ones. Same moderators as the queue above. */}
             <SubListingReviewQueue />
           </Tabs.Panel>
 

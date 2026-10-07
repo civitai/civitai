@@ -248,22 +248,37 @@ describe('appListings.listReviews — scope gate', () => {
 });
 
 describe('appListings.listAvailable — the sub-listing response-shape flag', () => {
-  it('threads the per-viewer flag and browsing level into the service', async () => {
-    const user = { ...modUser, browsingLevel: 3 };
+  it('threads the per-viewer flag into the service', async () => {
     const on = appListingsRouter.createCaller(
-      fakeCtx(user, { appStoreSubListings: true }) as never
+      fakeCtx(modUser, { appStoreSubListings: true }) as never
     );
     await on.listAvailable({ limit: 20 });
     expect(mockListAvailableListings).toHaveBeenLastCalledWith(
       expect.anything(),
-      expect.objectContaining({ includeSubListings: true, viewerBrowsingLevel: 3 })
+      expect.objectContaining({ includeSubListings: true })
     );
-
-    const off = appListingsRouter.createCaller(fakeCtx(user) as never);
+    const off = appListingsRouter.createCaller(fakeCtx(modUser) as never);
     await off.listAvailable({ limit: 20 });
     expect(mockListAvailableListings).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({ includeSubListings: false })
+    );
+  });
+
+  // The request browsing level, not the stored preference: a viewer who switched mature content
+  // off keeps an old saved level that must not reach the image check.
+  it.each([
+    ['mature on, nsfw domain', { showNsfw: true, browsingLevel: 7 }, { canViewNsfw: true }, 7],
+    ['mature off, nsfw domain', { showNsfw: false, browsingLevel: 7 }, { canViewNsfw: true }, 1],
+    ['sfw domain', { showNsfw: true, browsingLevel: 28 }, { canViewNsfw: false }, 3],
+  ])('passes the request browsing level (%s)', async (_label, prefs, flags, expected) => {
+    const caller = appListingsRouter.createCaller(
+      fakeCtx({ ...modUser, ...prefs }, flags) as never
+    );
+    await caller.listAvailable({ limit: 20 });
+    expect(mockListAvailableListings).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewerBrowsingLevel: expected })
     );
   });
 });

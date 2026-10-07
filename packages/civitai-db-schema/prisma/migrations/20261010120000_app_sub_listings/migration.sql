@@ -2,12 +2,14 @@
 -- App Store SUB-LISTINGS — items a parent app places in the store as their own cards
 -- ============================================================
 -- NOT AUTO-APPLIED. Migrations in this repo are applied by hand (see CLAUDE.md -> Database):
--- there is no `prisma migrate deploy` path. A human runs this file against the apps database
--- environments in order, dev first, then production, BEFORE the code that reads these tables
--- deploys. Running it early is safe: no deployed code reads either table until then.
+-- there is no `prisma migrate deploy` path. A human runs this file against the main civitai
+-- database (the one holding `app_listings`), dev first, then production, BEFORE the code that
+-- reads these tables deploys. Running it before the code deploys is safe: nothing reads these
+-- tables until that code is live.
 --
 -- If the code deploys first nothing breaks publicly: the store read path catches the missing
--- table and serves parents only, and the three write endpoints answer 503.
+-- table and serves parents only, and the three `/api/v1/blocks/sub-listings/*` endpoints
+-- answer 503.
 --
 -- ADDITIVE ONLY. Two new tables and one seed row; nothing on `app_listings` changes.
 -- Idempotent (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`), so a re-run is a no-op.
@@ -21,9 +23,9 @@ BEGIN;
 
 SET LOCAL lock_timeout = '3s';
 
--- One row per parent listing that may carry sub-listings. Enabling a parent is a
--- moderator-only action; with no row (or enabled = false) the write endpoints refuse and the
--- store shows none of the parent's children.
+-- One row per parent listing that may carry sub-listings. Rows are created by hand (this file
+-- seeds the first). With no row, or enabled = false, the write endpoints refuse and the store
+-- shows none of the parent's children.
 CREATE TABLE IF NOT EXISTS "app_sub_listing_parents" (
   "parent_listing_id" TEXT PRIMARY KEY REFERENCES "app_listings"("id") ON DELETE CASCADE,
   "enabled"           BOOLEAN NOT NULL DEFAULT false,

@@ -93,6 +93,7 @@ import {
 } from '~/server/trpc';
 import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { isHostForColor } from '~/server/utils/server-domain';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
 
 /**
  * App Store Listings (W13) — asset pipeline + off-site submission router (NEW
@@ -397,10 +398,14 @@ function mapSubListingError(err: unknown): TRPCError {
   if (err instanceof Error && err.name === 'SubListingError') {
     const status = (err as { status?: unknown }).status;
     const code =
-      status === 404
+      status === 403
+        ? 'FORBIDDEN'
+        : status === 404
         ? 'NOT_FOUND'
         : status === 409
         ? 'CONFLICT'
+        : status === 429
+        ? 'TOO_MANY_REQUESTS'
         : status === 503
         ? 'SERVICE_UNAVAILABLE'
         : 'BAD_REQUEST';
@@ -1798,12 +1803,10 @@ export const appListingsRouter = router({
       }
     }),
 
-  // -------------------------------------------------------------------------
-  // App Store SUB-LISTINGS moderation (`/apps/review` → Sub-listings). Same audience as the
-  // app review queue: `moderatorProcedure` is the server half of `isAppReviewer`.
-  // -------------------------------------------------------------------------
-
-  /** MOD: new pending items plus approved items with a staged edit (or the approved / hidden lists). */
+  /**
+   * MOD: store items awaiting review (new items plus staged edits), or the approved / hidden
+   * lists. `moderatorProcedure` is the server half of `isAppReviewer`, the `/apps/review` gate.
+   */
   listSubListingQueue: moderatorProcedure
     .input(listSubListingQueueSchema)
     .query(async ({ input }) => {
@@ -1897,7 +1900,7 @@ export const appListingsRouter = router({
         scope,
         floor,
         includeSubListings: !!ctx.features?.appStoreSubListings,
-        viewerBrowsingLevel: ctx.user?.browsingLevel ?? null,
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
     }),
 

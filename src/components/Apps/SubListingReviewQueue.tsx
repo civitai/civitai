@@ -12,11 +12,15 @@ import {
   Stack,
   Table,
   Text,
-  Textarea,
 } from '@mantine/core';
 import { Fragment, useState } from 'react';
 import Link from 'next/link';
 import { ModQueryError, isModAuthzError } from '~/components/Apps/ModQuerySurface';
+import {
+  ReasonGatedField,
+  ReasonGatedSubmitButton,
+  reasonMeetsMin,
+} from '~/components/Apps/ReasonGatedActionModal';
 import {
   AppsTableColgroup,
   APPS_SUB_LISTING_QUEUE_COLUMNS,
@@ -52,8 +56,7 @@ const ACTION_LABELS: Record<SubListingModAction, string> = {
 /** Actions that open a reason prompt before they run. */
 const NEEDS_REASON = new Set<SubListingModAction>(['hide', 'reject-edit']);
 
-/** The actions a row offers, from its state. One place, so a button never offers a
- *  transition the server would refuse. */
+/** The actions a row offers, from its state. */
 export function subListingRowActions(
   row: Pick<QueueRow, 'status' | 'pending'>
 ): SubListingModAction[] {
@@ -162,7 +165,11 @@ export function SubListingReviewQueue() {
         utils.appListings.countSubListingQueue.invalidate(),
       ]);
     },
-    onError: (error) => showErrorNotification({ title: 'Action failed', error }),
+    onError: (error) => {
+      showErrorNotification({ title: 'Action failed', error });
+      // A conflict means the row changed under the moderator; show them the current version.
+      void utils.appListings.listSubListingQueue.invalidate();
+    },
   });
 
   function act(row: QueueRow, action: SubListingModAction) {
@@ -170,7 +177,7 @@ export function SubListingReviewQueue() {
       setPrompt({ row, action });
       return;
     }
-    moderate.mutate({ id: row.id, action });
+    moderate.mutate({ id: row.id, action, version: row.version });
   }
 
   if (query.error && isModAuthzError(query.error)) return null;
@@ -258,33 +265,33 @@ export function SubListingReviewQueue() {
         title={prompt ? `${ACTION_LABELS[prompt.action]}: ${prompt.row.live.title}` : ''}
       >
         <Stack gap="sm">
-          <Textarea
-            label={prompt?.action === 'hide' ? 'Reason (shown to the author)' : 'Reason (optional)'}
+          <ReasonGatedField
+            label={prompt?.action === 'hide' ? 'Reason (shown to the author)' : 'Reason'}
             value={reason}
-            onChange={(e) => setReason(e.currentTarget.value)}
+            onChange={setReason}
+            required={prompt?.action === 'hide'}
             maxLength={APP_SUB_LISTING_REASON_MAX}
-            autosize
             minRows={2}
           />
           <Group justify="flex-end">
             <Button variant="default" onClick={() => setPrompt(null)}>
               Cancel
             </Button>
-            <Button
+            <ReasonGatedSubmitButton
               color="red"
-              loading={moderate.isPending}
-              disabled={prompt?.action === 'hide' && !reason.trim()}
+              busy={moderate.isPending}
+              gateOpen={prompt?.action !== 'hide' || reasonMeetsMin(reason)}
+              label={prompt ? ACTION_LABELS[prompt.action] : ''}
               onClick={() =>
                 prompt &&
                 moderate.mutate({
                   id: prompt.row.id,
                   action: prompt.action,
+                  version: prompt.row.version,
                   reason: reason.trim() || undefined,
                 })
               }
-            >
-              {prompt ? ACTION_LABELS[prompt.action] : ''}
-            </Button>
+            />
           </Group>
         </Stack>
       </Modal>

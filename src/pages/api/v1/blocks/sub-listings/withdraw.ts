@@ -11,6 +11,8 @@ import {
   withdrawSubListing,
 } from '~/server/services/blocks/app-sub-listing.service';
 
+export const config = { api: { bodyParser: { sizeLimit: '2kb' } } };
+
 /**
  * POST /api/v1/blocks/sub-listings/withdraw — scope `apps:store:items:write`.
  *
@@ -18,8 +20,6 @@ import {
  * Returns `{ ok, withdrawn }`; `withdrawn: false` when there was nothing of theirs to withdraw
  * (or a moderator has hidden it, which the app cannot change).
  */
-export const config = { api: { bodyParser: { sizeLimit: '2kb' } } };
-
 export const baseHandler = withAxiom(async function handler(
   req: NextApiRequest,
   res: NextApiResponse

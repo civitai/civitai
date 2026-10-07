@@ -11,17 +11,18 @@ Two tables, created by `packages/civitai-db-schema/prisma/migrations/20261010120
 
 - `app_sub_listing_parents` — one row per parent listing allowed to carry sub-listings:
   `enabled`, `auto_approve` (default false) and `max_per_author`. No row, or `enabled = false`,
-  means the app cannot publish and the store shows none of its children. Enabling a parent is a
-  moderator action.
+  means the app cannot publish and the store shows none of its children. Parent rows are created
+  by hand (the migration seeds the first).
 - `app_sub_listings` — one row per item, unique on `(parent_listing_id, item_key)`, where
   `item_key` is the app's shared-storage row key. There is no URL column: the card links to
   `/apps/run/<parent slug>/<sub_path>?sl=<id>`, built server-side.
 
 Statuses: `pending` → `approved` by a moderator; `hidden` is a moderator lock the app cannot
-lift; `withdrawn` is set by the author (or the in-app withdraw) and returns as `pending` on
-republish.
+lift; `withdrawn` is set by the author (or the in-app withdraw) and returns on republish as
+`pending`, or `approved` when the parent has `auto_approve`.
 
-**Edits to an approved item do not take it out of the store.** The proposed version is staged in
+**Edits to an approved item do not take it out of the store.** Unless the parent has
+`auto_approve` (then the edit goes live immediately), the proposed version is staged in
 the `pending_*` columns (a complete snapshot while `pending_submitted_at` is set) and the live
 columns keep serving the last approved version. A moderator approves the edit (copied onto the
 live columns) or rejects it (cleared, with an optional reason in `edit_rejection_reason`). A new
@@ -29,11 +30,11 @@ edit overwrites a staged one; an edit identical to the live version clears it.
 
 ## Publishing (block token, scope `apps:store:items:write`)
 
-| Endpoint                                   | Body                                                         | Returns                    |
-| ------------------------------------------ | ------------------------------------------------------------ | -------------------------- |
+| Endpoint                                    | Body                                                          | Returns                       |
+| ------------------------------------------- | ------------------------------------------------------------- | ----------------------------- |
 | `POST /api/v1/blocks/sub-listings/upsert`   | `itemKey, title, tagline?, imageId?, subPath, contentRating?` | `{ id, status, pendingEdit }` |
-| `POST /api/v1/blocks/sub-listings/withdraw` | `itemKey`                                                    | `{ ok, withdrawn }`        |
-| `GET /api/v1/blocks/sub-listings/mine`      | —                                                            | the caller's items + status |
+| `POST /api/v1/blocks/sub-listings/withdraw` | `itemKey`                                                     | `{ ok, withdrawn }`           |
+| `GET /api/v1/blocks/sub-listings/mine`      | —                                                             | the caller's items + status   |
 
 The parent is the calling app's own listing, from the token. A publish requires: an enabled
 parent row; a signed-in subject passing the shared-write trust check; an item that exists in the
@@ -68,12 +69,6 @@ Opening a sub-card records the parent's `App_Open` event with `subListingId` add
 the page, `moderatorProcedure` on `appListings.listSubListingQueue`, `countSubListingQueue` and
 `moderateSubListing`). The tab shows a pending count (new items plus staged edits). Actions:
 approve, hide (with a reason), restore, approve edit, reject edit; each records
-`moderated_by_id` / `moderated_at`.
-
-## Tests
-
-- `src/server/services/blocks/__tests__/app-sub-listing-store.behavior.test.ts` — the real store
-  statement on PGlite with the real migration: every parent state hides the children.
-- `src/server/services/blocks/__tests__/app-sub-listing.service.test.ts` — write path, status
-  changes, hooks and moderation.
-- `src/server/services/blocks/__tests__/store-items-scope-plumbing.test.ts` — scope wiring.
+`moderated_by_id` / `moderated_at`. A decision carries the version of the row the moderator was
+shown, so an author edit that lands in between is refused (409) rather than approved unseen.
+Restoring an item that was never approved returns it to review, not to the store.

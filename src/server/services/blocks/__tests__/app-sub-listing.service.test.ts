@@ -31,7 +31,9 @@ vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQu
 
 const {
   cleanSubListingText,
+  countSubListingQueue,
   listMySubListings,
+  listSubListingQueue,
   moderateSubListing,
   SubListingError,
   syncSubListingForSharedRow,
@@ -69,6 +71,7 @@ function parentRow(over: Record<string, unknown> = {}) {
   };
 }
 
+const VERSION = '2026-10-01T00:00:00.000Z';
 const BODY = { itemKey: 'gen-1', title: 'Gen One', tagline: 'Makes things', subPath: 'g/ONE' };
 
 function liveRow(over: Record<string, unknown> = {}) {
@@ -267,43 +270,54 @@ describe('upsertSubListing — refusals', () => {
   });
 });
 
+/** The data of the single compare-and-set write a branch made. */
+function casWrite(n = 0) {
+  const call = write.appSubListing.updateMany.mock.calls[n]?.[0];
+  if (!call) throw new Error(`no updateMany call #${n}`);
+  return call as { where: Record<string, unknown>; data: Record<string, unknown> };
+}
+
 describe('upsertSubListing — status changes', () => {
-  it('a new item starts pending, and is keyed by (parent, itemKey)', async () => {
-    await expect(upsert()).resolves.toMatchObject({ status: 'pending', pendingEdit: false });
+  it('a new item starts pending, keyed by (parent, itemKey), and busts nothing', async () => {
+    await expect(upsert()).resolves.toEqual({
+      id: expect.stringMatching(/^asl_[0-9A-HJKMNP-TV-Z]{26}$/),
+      status: 'pending',
+      pendingEdit: false,
+    });
     expect(write.appSubListing.findUnique).toHaveBeenCalledWith({
       where: { parentListingId_itemKey: { parentListingId: PARENT, itemKey: 'gen-1' } },
     });
-    const { data } = write.appSubListing.create.mock.calls[0][0];
-    expect(data).toMatchObject({
+    expect(write.appSubListing.create.mock.calls[0][0].data).toMatchObject({
       parentListingId: PARENT,
       itemKey: 'gen-1',
       authorUserId: AUTHOR,
       status: 'pending',
       approvedAt: null,
     });
-    expect(data.id).toMatch(/^asl_[0-9A-HJKMNP-TV-Z]{26}$/);
-    expect(mockBust).toHaveBeenCalledTimes(1);
+    // A pending row cannot be on the cached store page.
+    expect(mockBust).not.toHaveBeenCalled();
   });
 
-  it('an auto-approving parent approves a new item directly', async () => {
+  it('an auto-approving parent approves a new item directly and busts the catalog', async () => {
     read.appListing.findFirst.mockResolvedValueOnce(
       parentRow({ subListingParent: { enabled: true, autoApprove: true, maxPerAuthor: 20 } })
     );
     await expect(upsert()).resolves.toMatchObject({ status: 'approved' });
     expect(write.appSubListing.create.mock.calls[0][0].data.approvedAt).toBeInstanceOf(Date);
+    expect(mockBust).toHaveBeenCalledTimes(1);
   });
 
   it('is idempotent: a second publish of a pending item updates it in place', async () => {
-    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
+    const row = liveRow({ status: 'pending' });
+    write.appSubListing.findUnique.mockResolvedValueOnce(row);
     await expect(upsert({ ...BODY, title: 'Gen One v2' })).resolves.toMatchObject({
       status: 'pending',
       pendingEdit: false,
     });
     expect(write.appSubListing.create).not.toHaveBeenCalled();
-    expect(write.appSubListing.update.mock.calls[0][0].data).toMatchObject({
-      title: 'Gen One v2',
-      pendingSubmittedAt: null,
-    });
+    expect(casWrite().where).toEqual({ id: row.id, status: 'pending', updatedAt: row.updatedAt });
+    expect(casWrite().data).toMatchObject({ title: 'Gen One v2', pendingSubmittedAt: null });
+    expect(mockBust).not.toHaveBeenCalled();
   });
 
   it('a concurrent first publish that loses the insert is applied as an edit', async () => {
@@ -314,7 +328,29 @@ describe('upsertSubListing — status changes', () => {
       .mockResolvedValueOnce(null)
       .mockResolvedValueOnce(liveRow({ status: 'pending' }));
     await expect(upsert()).resolves.toMatchObject({ status: 'pending' });
-    expect(write.appSubListing.update).toHaveBeenCalledTimes(1);
+    expect(write.appSubListing.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('an author write that loses a race with a moderator re-reads and re-decides', async () => {
+    // Read says pending; a moderator approves before the write lands; the retry sees approved
+    // and stages the edit instead of overwriting the approved version.
+    write.appSubListing.findUnique
+      .mockResolvedValueOnce(liveRow({ status: 'pending' }))
+      .mockResolvedValueOnce(liveRow({ status: 'approved', updatedAt: new Date('2026-10-02') }));
+    write.appSubListing.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(upsert({ ...BODY, title: 'Late edit' })).resolves.toMatchObject({
+      status: 'approved',
+      pendingEdit: true,
+    });
+    expect(casWrite(1).data).toMatchObject({ pendingTitle: 'Late edit' });
+    expect(casWrite(1).data).not.toHaveProperty('title');
+  });
+
+  it('gives up with 409 after repeated lost races instead of looping', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(liveRow({ status: 'pending' }));
+    write.appSubListing.updateMany.mockResolvedValue({ count: 0 });
+    await expectError(upsert({ ...BODY, title: 'x' }), 409, 'conflict');
+    expect(write.appSubListing.updateMany.mock.calls.length).toBeLessThan(5);
   });
 
   it('an edit to an APPROVED item is staged; the live columns are not written', async () => {
@@ -322,7 +358,7 @@ describe('upsertSubListing — status changes', () => {
     await expect(
       upsert({ ...BODY, title: 'Gen One v2', imageId: 9, contentRating: 'pg13' })
     ).resolves.toEqual({ id: liveRow().id, status: 'approved', pendingEdit: true });
-    const { data } = write.appSubListing.update.mock.calls[0][0];
+    const { data } = casWrite();
     expect(data).toMatchObject({
       pendingTitle: 'Gen One v2',
       pendingTagline: 'Makes things',
@@ -335,6 +371,8 @@ describe('upsertSubListing — status changes', () => {
     for (const live of ['title', 'tagline', 'imageId', 'subPath', 'contentRating', 'status']) {
       expect(data).not.toHaveProperty(live);
     }
+    // The live version is unchanged, so the cached page is still right.
+    expect(mockBust).not.toHaveBeenCalled();
   });
 
   it('a further edit overwrites the staged one', async () => {
@@ -346,9 +384,7 @@ describe('upsertSubListing — status changes', () => {
       })
     );
     await upsert({ ...BODY, title: 'Second try' });
-    expect(write.appSubListing.update.mock.calls[0][0].data).toMatchObject({
-      pendingTitle: 'Second try',
-    });
+    expect(casWrite().data).toMatchObject({ pendingTitle: 'Second try' });
   });
 
   it('an edit identical to the live version clears a staged edit instead of queueing one', async () => {
@@ -356,15 +392,12 @@ describe('upsertSubListing — status changes', () => {
       liveRow({ pendingTitle: 'Other', pendingSubPath: 'g/ONE', pendingSubmittedAt: new Date() })
     );
     await expect(upsert()).resolves.toMatchObject({ status: 'approved', pendingEdit: false });
-    expect(write.appSubListing.update.mock.calls[0][0].data).toMatchObject({
-      pendingTitle: null,
-      pendingSubmittedAt: null,
-    });
+    expect(casWrite().data).toMatchObject({ pendingTitle: null, pendingSubmittedAt: null });
     // With nothing staged, an identical publish writes nothing at all.
-    write.appSubListing.update.mockClear();
+    write.appSubListing.updateMany.mockClear();
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow());
     await upsert();
-    expect(write.appSubListing.update).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('the staged edit passes the same write-time checks as a new item', async () => {
@@ -376,7 +409,7 @@ describe('upsertSubListing — status changes', () => {
     await expectError(upsert({ ...BODY, imageId: 3 }), 403, 'image_not_yours');
     mockTextSafe.mockRejectedValueOnce(new SharedContentBlockedError('pattern', 'blocked'));
     await expectError(upsert({ ...BODY, title: 'Changed' }), 400, 'text_rejected');
-    expect(write.appSubListing.update).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('a hidden item is a moderator lock: republishing writes nothing', async () => {
@@ -384,13 +417,14 @@ describe('upsertSubListing — status changes', () => {
     await expect(upsert({ ...BODY, title: 'Try again' })).resolves.toMatchObject({
       status: 'hidden',
     });
-    expect(write.appSubListing.update).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('a withdrawn item comes back as pending with the new content', async () => {
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'withdrawn' }));
     await expect(upsert({ ...BODY, title: 'Back' })).resolves.toMatchObject({ status: 'pending' });
-    expect(write.appSubListing.update.mock.calls[0][0].data).toMatchObject({
+    expect(casWrite().where).toMatchObject({ status: 'withdrawn' });
+    expect(casWrite().data).toMatchObject({
       title: 'Back',
       status: 'pending',
       approvedAt: null,
@@ -404,21 +438,87 @@ describe('upsertSubListing — status changes', () => {
   });
 });
 
+describe('the tables are absent (manual-apply migration not run)', () => {
+  const missing = [
+    Object.assign(new Error('missing'), { code: 'P2021' }),
+    Object.assign(new Error('missing'), { code: '42P01' }),
+    new Error('relation "app_sub_listings" does not exist'),
+  ];
+
+  it.each(missing)('upsert, withdraw, mine, queue and moderate answer 503 (%s)', async (err) => {
+    read.appListing.findFirst.mockRejectedValue(err);
+    await expectError(upsert(), 503, 'unavailable');
+    await expectError(
+      withdrawSubListing({ appBlockId: 'apb_1', userId: AUTHOR, body: { itemKey: 'k' } }),
+      503,
+      'unavailable'
+    );
+    await expectError(
+      listMySubListings({ appBlockId: 'apb_1', userId: AUTHOR }),
+      503,
+      'unavailable'
+    );
+    read.appSubListing.findMany.mockRejectedValueOnce(err);
+    await expectError(listSubListingQueue({ view: 'queue', limit: 25 }), 503, 'unavailable');
+    write.appSubListing.findUnique.mockRejectedValueOnce(err);
+    await expectError(
+      moderateSubListing({
+        input: { id: 'asl_x', action: 'approve', version: VERSION },
+        moderatorId: 9,
+      }),
+      503,
+      'unavailable'
+    );
+  });
+
+  it('the queue count reads 0, but any other error still throws', async () => {
+    read.appSubListing.count.mockRejectedValueOnce(missing[0]);
+    await expect(countSubListingQueue()).resolves.toBe(0);
+    read.appSubListing.count.mockRejectedValueOnce(new Error('connection reset'));
+    await expect(countSubListingQueue()).rejects.toThrow('connection reset');
+  });
+
+  it('a missing COLUMN is not a missing table: it surfaces as itself', async () => {
+    const half = new Error('column "pending_title" of relation "app_sub_listings" does not exist');
+    write.appSubListing.findUnique.mockRejectedValueOnce(half);
+    await expect(
+      moderateSubListing({
+        input: { id: 'asl_x', action: 'approve', version: VERSION },
+        moderatorId: 9,
+      })
+    ).rejects.toBe(half);
+  });
+
+  it('the in-app hooks stay silent instead of logging an error per withdraw', async () => {
+    read.appListing.findFirst.mockRejectedValueOnce(missing[0]);
+    await syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' });
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalled();
+  });
+});
+
 describe('withdrawSubListing / listMySubListings', () => {
   it('withdraws only the caller’s own pending or approved row', async () => {
     await expect(
       withdrawSubListing({ appBlockId: 'apb_1', userId: AUTHOR, body: { itemKey: 'gen-1' } })
     ).resolves.toEqual({ ok: true, withdrawn: true });
-    expect(write.appSubListing.updateMany.mock.calls[0][0]).toMatchObject({
-      where: {
-        parentListingId: PARENT,
-        itemKey: 'gen-1',
-        authorUserId: AUTHOR,
-        status: { in: ['pending', 'approved'] },
-      },
-      data: { status: 'withdrawn', pendingSubmittedAt: null },
-    });
-    write.appSubListing.updateMany.mockResolvedValueOnce({ count: 0 });
+    const wheres = write.appSubListing.updateMany.mock.calls.map((c) => c[0].where);
+    expect(wheres).toEqual([
+      { parentListingId: PARENT, itemKey: 'gen-1', authorUserId: AUTHOR, status: 'approved' },
+      { parentListingId: PARENT, itemKey: 'gen-1', authorUserId: AUTHOR, status: 'pending' },
+    ]);
+    expect(casWrite().data).toMatchObject({ status: 'withdrawn', pendingSubmittedAt: null });
+    expect(mockBust).toHaveBeenCalledTimes(1);
+  });
+
+  it('withdrawing a pending item busts nothing; withdrawing nothing reports false', async () => {
+    write.appSubListing.updateMany
+      .mockResolvedValueOnce({ count: 0 })
+      .mockResolvedValueOnce({ count: 1 });
+    await expect(
+      withdrawSubListing({ appBlockId: 'apb_1', userId: AUTHOR, body: { itemKey: 'gen-1' } })
+    ).resolves.toEqual({ ok: true, withdrawn: true });
+    expect(mockBust).not.toHaveBeenCalled();
+    write.appSubListing.updateMany.mockResolvedValue({ count: 0 });
     await expect(
       withdrawSubListing({ appBlockId: 'apb_1', userId: AUTHOR, body: { itemKey: 'gen-1' } })
     ).resolves.toEqual({ ok: true, withdrawn: false });
@@ -448,17 +548,20 @@ describe('withdrawSubListing / listMySubListings', () => {
 });
 
 describe('syncSubListingForSharedRow (in-app hooks)', () => {
-  it('an author withdraw withdraws only their own item for that key', async () => {
+  it('an author withdraw withdraws only their own active item for that key', async () => {
     await syncSubListingForSharedRow({
       appBlockId: 'apb_1',
       itemKey: 'gen-1',
       change: 'withdrawn',
       authorUserId: AUTHOR,
     });
-    expect(write.appSubListing.updateMany.mock.calls[0][0]).toMatchObject({
-      where: { parentListingId: PARENT, itemKey: 'gen-1', authorUserId: AUTHOR },
-      data: { status: 'withdrawn' },
+    expect(casWrite().where).toEqual({
+      parentListingId: PARENT,
+      itemKey: 'gen-1',
+      authorUserId: AUTHOR,
+      status: 'approved',
     });
+    expect(casWrite().data).toMatchObject({ status: 'withdrawn' });
     expect(mockBust).toHaveBeenCalled();
   });
 
@@ -471,17 +574,17 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
     expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 
-  it('a moderator hide or delete hides the item and records the moderator', async () => {
+  it('a moderator hide hides only an active item, recording the moderator', async () => {
     await syncSubListingForSharedRow({
       appBlockId: 'apb_1',
       itemKey: 'gen-1',
       change: 'hidden',
       moderatorId: 9,
     });
-    expect(write.appSubListing.updateMany.mock.calls[0][0]).toMatchObject({
-      where: { parentListingId: PARENT, itemKey: 'gen-1', status: { not: 'hidden' } },
-      data: { status: 'hidden', moderatedById: 9 },
-    });
+    const wheres = write.appSubListing.updateMany.mock.calls.map((c) => c[0].where.status);
+    // An author-withdrawn item stays withdrawn, so a republish still returns it to review.
+    expect(wheres).toEqual(['approved', 'pending']);
+    expect(casWrite().data).toMatchObject({ status: 'hidden', moderatedById: 9 });
   });
 
   it('is best-effort: a failure is logged, never thrown', async () => {
@@ -497,37 +600,69 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
 
 describe('moderateSubListing', () => {
   const mod = (input: Record<string, unknown>) =>
-    moderateSubListing({ input: input as never, moderatorId: 9 });
+    moderateSubListing({ input: { version: VERSION, ...input } as never, moderatorId: 9 });
 
-  it('approves a pending item and stamps the moderator', async () => {
+  it('approves a pending item, stamps the moderator and busts the catalog', async () => {
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
     await mod({ id: 'asl_x', action: 'approve' });
-    const call = write.appSubListing.updateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: 'asl_x', status: 'pending', pendingSubmittedAt: null });
-    expect(call.data).toMatchObject({ status: 'approved', moderatedById: 9 });
-    expect(call.data.moderatedAt).toBeInstanceOf(Date);
-    expect(call.data.approvedAt).toBeInstanceOf(Date);
-    expect(mockBust).toHaveBeenCalled();
+    const { where, data } = casWrite();
+    expect(where).toEqual({ id: 'asl_x', status: 'pending', updatedAt: liveRow().updatedAt });
+    expect(data).toMatchObject({ status: 'approved', moderatedById: 9 });
+    expect(data.moderatedAt).toBeInstanceOf(Date);
+    expect(data.approvedAt).toBeInstanceOf(Date);
+    expect(mockBust).toHaveBeenCalledTimes(1);
   });
 
-  it('hides with a reason, and restores to approved', async () => {
+  it('refuses a decision made on a different version than the row now has', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
+    await expectError(
+      moderateSubListing({
+        input: { id: 'asl_x', action: 'approve', version: '2026-10-03T00:00:00.000Z' },
+        moderatorId: 9,
+      }),
+      409,
+      'conflict'
+    );
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['approve', { status: 'pending' }],
+    ['hide', { status: 'approved' }],
+    ['restore', { status: 'hidden' }],
+    ['reject-edit', { pendingTitle: 'x', pendingSubPath: 'g/x', pendingSubmittedAt: new Date() }],
+  ] as const)('%s is a compare-and-set on the row as read', async (action, state) => {
+    const row = liveRow(state);
+    write.appSubListing.findUnique.mockResolvedValueOnce(row);
+    await mod({ id: 'asl_x', action, reason: 'r' });
+    expect(casWrite().where).toEqual({ id: 'asl_x', status: row.status, updatedAt: row.updatedAt });
+  });
+
+  it('hides with a reason; restore returns an approved-before item to the store', async () => {
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow());
     await mod({ id: 'asl_x', action: 'hide', reason: 'spam' });
-    expect(write.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
+    expect(casWrite().data).toMatchObject({
       status: 'hidden',
       statusReason: 'spam',
       moderatedById: 9,
     });
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
     await mod({ id: 'asl_x', action: 'restore' });
-    expect(write.appSubListing.updateMany.mock.calls[1][0].data).toMatchObject({
-      status: 'approved',
-      statusReason: null,
+    expect(casWrite(1).data).toMatchObject({ status: 'approved', statusReason: null });
+  });
+
+  it('restore sends a never-approved item back to review, not into the store', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(
+      liveRow({ status: 'hidden', approvedAt: null })
+    );
+    await expect(mod({ id: 'asl_x', action: 'restore' })).resolves.toMatchObject({
+      status: 'pending',
     });
+    expect(casWrite().data).toMatchObject({ status: 'pending' });
+    expect(mockBust).not.toHaveBeenCalled();
   });
 
   it('approve-edit copies the staged snapshot onto the live columns and clears it', async () => {
-    const submitted = new Date();
     write.appSubListing.findUnique.mockResolvedValueOnce(
       liveRow({
         pendingTitle: 'Gen One v2',
@@ -535,13 +670,11 @@ describe('moderateSubListing', () => {
         pendingImageId: 9,
         pendingSubPath: 'g/TWO',
         pendingContentRating: 'pg13',
-        pendingSubmittedAt: submitted,
+        pendingSubmittedAt: new Date(),
       })
     );
     await mod({ id: 'asl_x', action: 'approve-edit' });
-    const call = write.appSubListing.updateMany.mock.calls[0][0];
-    expect(call.where).toEqual({ id: 'asl_x', status: 'approved', pendingSubmittedAt: submitted });
-    expect(call.data).toMatchObject({
+    expect(casWrite().data).toMatchObject({
       title: 'Gen One v2',
       tagline: null,
       imageId: 9,
@@ -551,6 +684,7 @@ describe('moderateSubListing', () => {
       pendingSubmittedAt: null,
       moderatedById: 9,
     });
+    expect(mockBust).toHaveBeenCalledTimes(1);
   });
 
   it('reject-edit clears the staged edit, keeps the item approved and records the reason', async () => {
@@ -558,7 +692,7 @@ describe('moderateSubListing', () => {
       liveRow({ pendingTitle: 'Nope', pendingSubPath: 'g/ONE', pendingSubmittedAt: new Date() })
     );
     await mod({ id: 'asl_x', action: 'reject-edit', reason: 'misleading' });
-    const { data } = write.appSubListing.updateMany.mock.calls[0][0];
+    const { data } = casWrite();
     expect(data).toMatchObject({ editRejectionReason: 'misleading', pendingTitle: null });
     expect(data).not.toHaveProperty('status');
   });
@@ -578,7 +712,7 @@ describe('moderateSubListing', () => {
   it('loses cleanly to a concurrent change (compare-and-set)', async () => {
     write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
     write.appSubListing.updateMany.mockResolvedValueOnce({ count: 0 });
-    await expectError(mod({ id: 'asl_x', action: 'approve' }), 409, 'invalid_transition');
+    await expectError(mod({ id: 'asl_x', action: 'approve' }), 409, 'conflict');
     expect(mockBust).not.toHaveBeenCalled();
   });
 

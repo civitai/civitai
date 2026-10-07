@@ -3410,9 +3410,9 @@ model AppListingModerationEvent {
 }
 
 /// App Store sub-listings: per-parent switch. No row (or `enabled = false`) means the parent
-/// may not publish sub-listings and the store shows none of its children. Enabling a parent is
-/// moderator-only. MANUAL-APPLY (`20261010120000_app_sub_listings`); every reader degrades
-/// while the table is absent.
+/// may not publish sub-listings and the store shows none of its children. Rows are created by
+/// hand. MANUAL-APPLY (`20261010120000_app_sub_listings`); every reader degrades while the
+/// table is absent.
 model AppSubListingParent {
   parentListingId String     @id @map("parent_listing_id")
   parentListing   AppListing @relation("AppSubListingParentSwitch", fields: [parentListingId], references: [id], onDelete: Cascade)

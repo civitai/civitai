@@ -41,6 +41,7 @@ function fakeCtx(user: unknown) {
   };
 }
 
+const V = '2026-10-01T00:00:00.000Z';
 const reviewer = { id: 1, isModerator: true, tier: 'free', username: 'mod', onboarding: 0x1f };
 const regular = { id: 2, isModerator: false, tier: 'free', username: 'user', onboarding: 0x1f };
 
@@ -48,7 +49,7 @@ const procs = {
   list: (c: ReturnType<typeof appListingsRouter.createCaller>) => c.listSubListingQueue({}),
   count: (c: ReturnType<typeof appListingsRouter.createCaller>) => c.countSubListingQueue(),
   moderate: (c: ReturnType<typeof appListingsRouter.createCaller>) =>
-    c.moderateSubListing({ id: 'asl_1', action: 'approve' }),
+    c.moderateSubListing({ id: 'asl_1', action: 'approve', version: V }),
 };
 
 beforeEach(() => vi.clearAllMocks());
@@ -84,25 +85,29 @@ describe('Sub-listing moderation follows the app review queue’s audience', () 
   it('records the acting moderator from the session, never the input', async () => {
     await appListingsRouter
       .createCaller(fakeCtx(reviewer) as never)
-      .moderateSubListing({ id: 'asl_1', action: 'hide', reason: 'spam' });
+      .moderateSubListing({ id: 'asl_1', action: 'hide', reason: 'spam', version: V });
     expect(mockModerate).toHaveBeenCalledWith({
-      input: { id: 'asl_1', action: 'hide', reason: 'spam' },
+      input: { id: 'asl_1', action: 'hide', reason: 'spam', version: V },
       moderatorId: reviewer.id,
     });
   });
 
-  it('maps a service refusal to its TRPC code', async () => {
+  it.each([
+    [403, 'FORBIDDEN'],
+    [404, 'NOT_FOUND'],
+    [409, 'CONFLICT'],
+    [429, 'TOO_MANY_REQUESTS'],
+    [503, 'SERVICE_UNAVAILABLE'],
+    [400, 'BAD_REQUEST'],
+  ])('maps a service %i refusal to %s', async (status, code) => {
     mockModerate.mockRejectedValueOnce(
-      Object.assign(new Error('Cannot approve a approved store item'), {
-        name: 'SubListingError',
-        status: 409,
-      })
+      Object.assign(new Error('refused'), { name: 'SubListingError', status })
     );
     await expect(
       appListingsRouter
         .createCaller(fakeCtx(reviewer) as never)
-        .moderateSubListing({ id: 'asl_1', action: 'approve' })
-    ).rejects.toMatchObject({ code: 'CONFLICT' });
+        .moderateSubListing({ id: 'asl_1', action: 'approve', version: V })
+    ).rejects.toMatchObject({ code });
   });
 
   it('returns the queue count for the tab label', async () => {

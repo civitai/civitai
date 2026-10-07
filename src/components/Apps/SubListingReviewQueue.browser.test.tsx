@@ -12,6 +12,7 @@ const m = vi.hoisted(() => ({
   calls: [] as Record<string, unknown>[],
   invalidated: [] as string[],
   lastView: null as unknown,
+  fail: null as null | { message: string; data: { code: string } },
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -34,12 +35,14 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
         'appListings.moderateSubListing': {
           useMutation: (opts: {
             onSuccess?: (d: unknown, v: Record<string, unknown>) => unknown;
+            onError?: (e: unknown) => unknown;
           }) => ({
             isPending: false,
             variables: undefined,
             mutate: (vars: Record<string, unknown>) => {
               m.calls.push(vars);
-              void opts.onSuccess?.({}, vars);
+              if (m.fail) void opts.onError?.(m.fail);
+              else void opts.onSuccess?.({}, vars);
             },
           }),
         },
@@ -81,6 +84,7 @@ function row(over: Row = {}): Row {
     pending: null,
     createdAt: new Date(),
     moderatedAt: null,
+    version: '2026-10-01T00:00:00.000Z',
     ...over,
   };
 }
@@ -92,10 +96,13 @@ const buttonNames = () =>
     .elements()
     .map((b) => b.textContent);
 
+const V = '2026-10-01T00:00:00.000Z';
+
 beforeEach(() => {
   m.rows = [];
   m.calls = [];
   m.invalidated = [];
+  m.fail = null;
 });
 
 describe('subListingRowActions', () => {
@@ -126,7 +133,7 @@ describe('SubListingReviewQueue', () => {
     await expect.element(page.getByText('Neon Portraits')).toBeVisible();
     expect(buttonNames()).toEqual(['Approve', 'Hide']);
     await userEvent.click(page.getByRole('button', { name: 'Approve' }));
-    expect(m.calls).toEqual([{ id: 'asl_1', action: 'approve' }]);
+    expect(m.calls).toEqual([{ id: 'asl_1', action: 'approve', version: V }]);
     await expect
       .poll(() => [...m.invalidated].sort())
       .toEqual(['countSubListingQueue', 'listSubListingQueue']);
@@ -142,7 +149,9 @@ describe('SubListingReviewQueue', () => {
     expect(m.calls).toEqual([]);
     await dialog.getByRole('textbox').fill('Misleading title');
     await userEvent.click(confirm);
-    expect(m.calls).toEqual([{ id: 'asl_1', action: 'hide', reason: 'Misleading title' }]);
+    expect(m.calls).toEqual([
+      { id: 'asl_1', action: 'hide', version: V, reason: 'Misleading title' },
+    ]);
   });
 
   test('a staged edit shows a before/after diff and approve-edit / reject-edit', async () => {
@@ -162,7 +171,7 @@ describe('SubListingReviewQueue', () => {
     expect(page.getByTestId('sub-listing-diff-tagline').elements()).toHaveLength(0);
     expect(buttonNames()).toEqual(['Approve edit', 'Reject edit', 'Hide']);
     await userEvent.click(page.getByRole('button', { name: 'Approve edit' }));
-    expect(m.calls).toEqual([{ id: 'asl_1', action: 'approve-edit' }]);
+    expect(m.calls).toEqual([{ id: 'asl_1', action: 'approve-edit', version: V }]);
   });
 
   test('rejecting an edit takes an optional reason', async () => {
@@ -172,7 +181,9 @@ describe('SubListingReviewQueue', () => {
     renderWithProviders(<SubListingReviewQueue />);
     await userEvent.click(page.getByRole('button', { name: 'Reject edit' }));
     await userEvent.click(page.getByRole('dialog').getByRole('button', { name: 'Reject edit' }));
-    expect(m.calls).toEqual([{ id: 'asl_1', action: 'reject-edit', reason: undefined }]);
+    expect(m.calls).toEqual([
+      { id: 'asl_1', action: 'reject-edit', version: V, reason: undefined },
+    ]);
   });
 
   test('a hidden item offers restore', async () => {
@@ -181,7 +192,7 @@ describe('SubListingReviewQueue', () => {
     await expect.element(page.getByText('spam')).toBeVisible();
     expect(buttonNames()).toEqual(['Restore']);
     await userEvent.click(page.getByRole('button', { name: 'Restore' }));
-    expect(m.calls).toEqual([{ id: 'asl_1', action: 'restore' }]);
+    expect(m.calls).toEqual([{ id: 'asl_1', action: 'restore', version: V }]);
   });
 
   test('switching view asks for that list', async () => {
@@ -189,5 +200,26 @@ describe('SubListingReviewQueue', () => {
     expect(m.lastView).toBe('queue');
     await userEvent.click(page.getByText('Hidden'));
     await expect.poll(() => m.lastView).toBe('hidden');
+  });
+
+  test('a refused action (e.g. the item changed) reloads the queue and the count stays', async () => {
+    m.rows = [row()];
+    m.fail = {
+      message: 'This item changed since it was loaded; reload it',
+      data: { code: 'CONFLICT' },
+    };
+    renderWithProviders(<SubListingReviewQueue />);
+    await userEvent.click(page.getByRole('button', { name: 'Approve' }));
+    await expect.poll(() => m.invalidated).toEqual(['listSubListingQueue']);
+  });
+
+  test('hiding needs a reason of at least the moderation minimum', async () => {
+    m.rows = [row({ status: 'approved' })];
+    renderWithProviders(<SubListingReviewQueue />);
+    await userEvent.click(page.getByRole('button', { name: 'Hide' }));
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('textbox').fill('no');
+    await expect.element(dialog.getByRole('button', { name: 'Hide' })).toBeDisabled();
+    expect(m.calls).toEqual([]);
   });
 });

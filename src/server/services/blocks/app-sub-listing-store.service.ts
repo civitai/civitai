@@ -22,12 +22,6 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 
-/**
- * Sub-listing rows for the store grid, hydrated live below the catalog cache.
- *
- * Only `approved` rows are returned, so a child hidden or withdrawn after its id was cached
- * drops out on the next render rather than waiting for the cache to expire.
- */
 type SubListingHydrateRow = {
   id: string;
   title: string;
@@ -64,7 +58,7 @@ export type SubListingViewer = {
 
 /**
  * The levels an item image may carry to be shown to this viewer on this card: the viewer's
- * browsing level, capped at SFW off a red-capable host, and capped at the card's own
+ * browsing level, capped at SFW unless the host is red-capable, and capped at the card's own
  * (effective) rating so an image cannot be more mature than the card that carries it.
  */
 export function subListingImageCeiling(viewer: SubListingViewer, rating: string | null): number {
@@ -126,6 +120,13 @@ export function projectSubListingCard(
   };
 }
 
+/**
+ * Sub-listing rows for the store grid, hydrated live below the catalog cache.
+ *
+ * Only `approved` rows by authors who are not banned or deleted are returned, so a child that
+ * changed after its id was cached drops out on the next render rather than waiting for the
+ * cache to expire.
+ */
 export async function hydrateSubListingCards(
   db: Pick<PrismaClient, '$queryRaw'>,
   ids: string[],
@@ -153,6 +154,8 @@ export async function hydrateSubListingCards(
     LEFT JOIN "Image" pi ON pi.id = al.icon_id
     WHERE s.id IN (${Prisma.join(ids)})
       AND s.status = 'approved'
+      AND u."bannedAt" IS NULL
+      AND u."deletedAt" IS NULL
   `);
   return new Map(rows.map((r) => [r.id, projectSubListingCard(r, viewer)]));
 }

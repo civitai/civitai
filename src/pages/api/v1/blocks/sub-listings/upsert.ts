@@ -14,16 +14,15 @@ import {
 } from '~/server/services/blocks/app-sub-listing.service';
 import type { SessionUser } from '~/types/session';
 
+export const config = { api: { bodyParser: { sizeLimit: '8kb' } } };
+
 /**
  * POST /api/v1/blocks/sub-listings/upsert — scope `apps:store:items:write`.
  *
  * Publishes (or edits) the viewer's own app item as an App Store card under the calling app.
- * Body: `{ itemKey, title, tagline?, imageId?, subPath, contentRating? }`.
- * Returns `{ id, status, pendingEdit }`. The parent app comes from the token, never the body.
- * Every check is in `upsertSubListing`; 503 while the tables are not yet applied.
+ * The parent app comes from the token, never the body. Every check is in `upsertSubListing`;
+ * 503 while the tables are not yet applied.
  */
-export const config = { api: { bodyParser: { sizeLimit: '8kb' } } };
-
 export const baseHandler = withAxiom(async function handler(
   req: NextApiRequest,
   res: NextApiResponse

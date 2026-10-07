@@ -184,11 +184,10 @@ export const BLOCK_SCOPE_TO_OAUTH_BIT: Record<string, ScopeBitmaskRequirement> =
   //
   //   - SENSITIVE ⇒ the manifest must justify it: it writes something every store visitor
   //     sees, under the viewer's name.
-  //   - CONSENT-EXEMPT, like `apps:storage:shared:write`. The real gates are server-side and
-  //     per call (the parent's enabled switch, the trust check, item authorship, text safety,
-  //     rate limits, moderator approval), and a consent-gated scope would be silently
-  //     dropped from tokens before any of them could run.
-  //   - :write is self-bound ⇒ a non-anon subject is required.
+  //   - CONSENT-EXEMPT, like `apps:storage:shared:write`: the real gates are server-side and
+  //     per call, and a consent-gated scope would be dropped from tokens before any of them
+  //     could run.
+  //   - A non-anon subject is required (enforced in `enforceContextBinding`).
   //   - Minted by NO dev or review allowlist, so it only reaches an approved app's token.
   'apps:store:items:write': SKIP_OAUTH_CHECK,
 } as const;

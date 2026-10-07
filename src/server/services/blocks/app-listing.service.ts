@@ -1367,6 +1367,17 @@ export async function listAvailableListings(
 
   // A cursor taken on a sub-listing row resumes inside the child tier of its sort key.
   const cursorTb = cursorId?.startsWith('asl_') ? 1 : 0;
+  // The keyset over (sort_key, tb, id), for one arm whose tb is fixed. Applied inside each arm
+  // with its own ORDER BY / LIMIT so neither arm sorts more than a page.
+  const armKeyset = (keyExpr: Prisma.Sql, idCol: Prisma.Sql, tb: number) => Prisma.sql`(
+        ${cursorSortKey}::text IS NULL
+        OR ${keyExpr} ${keysetCmp} ${cursorSortKey}::text
+        OR (${keyExpr} = ${cursorSortKey}::text AND (
+          ${tb}::int > ${cursorTb}::int
+          OR (${tb}::int = ${cursorTb}::int AND ${idCol} ${keysetCmp} ${cursorId}::text)
+        ))
+      )`;
+  const childKeyExpr = subListingSortKeyExpr(sort, globalMean);
   const withSubListingsPage = (levelFilter: Prisma.Sql) =>
     catalogPageCache(
       scope,
@@ -1376,16 +1387,21 @@ export async function listAvailableListings(
     )<{ id: string; sort_key: string }[]>(
       Prisma.sql`
     SELECT u.id, u.sort_key FROM (
-      SELECT al.id, ${sortKeyExpr} AS sort_key, 0 AS tb
+      (SELECT al.id, ${sortKeyExpr} AS sort_key, 0 AS tb
       FROM app_listings al
       LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
       LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
       WHERE ${eligibility(levelFilter)}
+        AND ${armKeyset(sortKeyExpr, Prisma.sql`al.id`, 0)}
+      ORDER BY sort_key ${dir}, al.id ${dir}
+      LIMIT ${limit + 1})
       UNION ALL
-      SELECT s.id, ${subListingSortKeyExpr(sort, globalMean)} AS sort_key, 1 AS tb
+      (SELECT s.id, ${childKeyExpr} AS sort_key, 1 AS tb
       FROM app_sub_listings s
       JOIN app_listings al ON al.id = s.parent_listing_id
       JOIN app_sub_listing_parents sp ON sp.parent_listing_id = s.parent_listing_id
+      -- A banned or deleted author's items leave the store with them.
+      JOIN "User" au ON au.id = s.author_user_id AND au."bannedAt" IS NULL AND au."deletedAt" IS NULL
       LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
       LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
       WHERE ${eligibility(levelFilter)}
@@ -1395,13 +1411,10 @@ export async function listAvailableListings(
         -- re-submitted block would make every child link a 404.
         AND ab.status = 'approved'
         AND ${subListingMatureFilter(redCapable)}
+        AND ${armKeyset(childKeyExpr, Prisma.sql`s.id`, 1)}
+      ORDER BY sort_key ${dir}, s.id ${dir}
+      LIMIT ${limit + 1})
     ) u
-    WHERE ${cursorSortKey}::text IS NULL
-      OR u.sort_key ${keysetCmp} ${cursorSortKey}::text
-      OR (u.sort_key = ${cursorSortKey}::text AND (
-        u.tb > ${cursorTb}::int
-        OR (u.tb = ${cursorTb}::int AND u.id ${keysetCmp} ${cursorId}::text)
-      ))
     ORDER BY u.sort_key ${dir}, u.tb ASC, u.id ${dir}
     LIMIT ${limit + 1}
   `,

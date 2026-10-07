@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
+import { isMissingTableError } from '~/server/services/blocks/app-access.service';
 import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import {
   assertSharedTextSafe,
@@ -29,10 +30,10 @@ import type {
 /**
  * App Store sub-listings — the write path.
  *
- * Writers: the app (through three block-token endpoints, as the item's author), the in-app
- * withdraw / moderator hide of the matching shared row, and moderators on `/apps/review`.
- * Every write busts the store catalog cache: the cached statement reads `status`, the
- * rating, the title (the `name` sort) and the parent switch.
+ * Writers: the app (through the `upsert` and `withdraw` block-token endpoints, as the item's
+ * author), the in-app withdraw / moderator hide of the matching shared row, and moderators on
+ * `/apps/review`. A write busts the store catalog cache when it changes what the cached id
+ * page can contain.
  *
  * The tables are manual-apply. While they are absent every function here throws
  * `SubListingError` with status 503 rather than a raw Prisma error.
@@ -52,6 +53,7 @@ export type SubListingErrorCode =
   | 'author_cap'
   | 'not_found'
   | 'invalid_transition'
+  | 'conflict'
   | 'unavailable';
 
 export class SubListingError extends Error {
@@ -66,21 +68,10 @@ export class SubListingError extends Error {
   }
 }
 
-function isMissingSubListingTable(err: unknown): boolean {
-  const code = (err as { code?: unknown })?.code;
-  if (code === 'P2021' || code === '42P01') return true;
-  const message = (err as { message?: unknown })?.message;
-  return (
-    typeof message === 'string' &&
-    /app_sub_listing/.test(message) &&
-    /does not exist/i.test(message)
-  );
-}
-
 /** Map a missing-table error to the 503 every caller expects; rethrow anything else. */
 function rethrowUnavailable(err: unknown): never {
   if (err instanceof SubListingError) throw err;
-  if (isMissingSubListingTable(err)) {
+  if (isMissingTableError(err)) {
     throw new SubListingError(503, 'unavailable', 'Store items are not available yet');
   }
   throw err;
@@ -90,14 +81,9 @@ async function bustCatalog() {
   await bustAppListingCatalogCache().catch(() => undefined);
 }
 
-// ---------------------------------------------------------------------------
-// Input + cleaning.
-// ---------------------------------------------------------------------------
-
-// Control characters, bidi overrides/isolates and zero-width characters: invisible text that
-// can disguise what a title says.
-// eslint-disable-next-line no-control-regex
-const INVISIBLE_RE = /[\u0000-\u001f\u007f-\u009f​-‏‪-‮⁠-⁩﻿]/g;
+// Control and format characters (bidi overrides, zero-width joiners, soft hyphens): invisible
+// text that can disguise what a title says.
+const INVISIBLE_RE = /[\p{Cc}\p{Cf}]/gu;
 
 export function cleanSubListingText(value: string): string {
   return value.normalize('NFC').replace(INVISIBLE_RE, ' ').replace(/\s+/g, ' ').trim();
@@ -190,10 +176,6 @@ function liveColumns(c: SubListingContent) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Parent + item resolution.
-// ---------------------------------------------------------------------------
-
 type ResolvedParent = {
   id: string;
   slug: string;
@@ -265,10 +247,6 @@ export async function readSharedItemForSubListing(
   const row = rows[0];
   return row ? { authorUserId: row.author_user_id, hidden: row.hidden } : null;
 }
-
-// ---------------------------------------------------------------------------
-// App-facing writes (block-token endpoints).
-// ---------------------------------------------------------------------------
 
 export type UpsertSubListingResult = {
   id: string;
@@ -353,33 +331,45 @@ export async function upsertSubListing(args: {
   }
 
   try {
-    const result = await writeSubListing(parent, itemKey, user.id, content);
-    await bustCatalog();
+    const { catalogAffected, ...result } = await writeSubListing(parent, itemKey, user.id, content);
+    if (catalogAffected) await bustCatalog();
     return result;
   } catch (err) {
     rethrowUnavailable(err);
   }
 }
 
+type WriteOutcome = UpsertSubListingResult & {
+  /** The write changed what the cached store id page can contain. */
+  catalogAffected: boolean;
+};
+
+const MAX_WRITE_ATTEMPTS = 3;
+
 async function writeSubListing(
   parent: ResolvedParent,
   itemKey: string,
   authorUserId: number,
-  content: SubListingContent
-): Promise<UpsertSubListingResult> {
+  content: SubListingContent,
+  attempt = 1
+): Promise<WriteOutcome> {
+  const again = () => {
+    if (attempt >= MAX_WRITE_ATTEMPTS) {
+      throw new SubListingError(409, 'conflict', 'The item changed while saving, retry');
+    }
+    return writeSubListing(parent, itemKey, authorUserId, content, attempt + 1);
+  };
+  const activeCount = () =>
+    dbWrite.appSubListing.count({
+      where: { parentListingId: parent.id, authorUserId, status: { in: ['pending', 'approved'] } },
+    });
+
   const existing = await dbWrite.appSubListing.findUnique({
     where: { parentListingId_itemKey: { parentListingId: parent.id, itemKey } },
   });
 
   if (!existing) {
-    const active = await dbWrite.appSubListing.count({
-      where: {
-        parentListingId: parent.id,
-        authorUserId,
-        status: { in: ['pending', 'approved'] },
-      },
-    });
-    if (active >= parent.maxPerAuthor) {
+    if ((await activeCount()) >= parent.maxPerAuthor) {
       throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
     }
     const status: AppSubListingStatus = parent.autoApprove ? 'approved' : 'pending';
@@ -396,12 +386,15 @@ async function writeSubListing(
         },
         select: { id: true, status: true },
       });
-      return { id: created.id, status: created.status as AppSubListingStatus, pendingEdit: false };
+      return {
+        id: created.id,
+        status: created.status as AppSubListingStatus,
+        pendingEdit: false,
+        catalogAffected: status === 'approved',
+      };
     } catch (err) {
       // A concurrent first publish of the same item won the insert: apply this as an edit.
-      if ((err as { code?: unknown })?.code === 'P2002') {
-        return writeSubListing(parent, itemKey, authorUserId, content);
-      }
+      if ((err as { code?: unknown })?.code === 'P2002') return again();
       throw err;
     }
   }
@@ -412,41 +405,51 @@ async function writeSubListing(
   const status = existing.status as AppSubListingStatus;
 
   // A moderator's hide is a lock the app cannot lift.
-  if (status === 'hidden') return { id: existing.id, status, pendingEdit: false };
+  if (status === 'hidden') {
+    return { id: existing.id, status, pendingEdit: false, catalogAffected: false };
+  }
+
+  // Every update is a compare-and-set on the state this branch was chosen from, so a
+  // moderator action landing between the read and the write is never overwritten.
+  const casUpdate = async (data: Prisma.AppSubListingUncheckedUpdateManyInput) => {
+    const { count } = await dbWrite.appSubListing.updateMany({
+      where: { id: existing.id, status: existing.status, updatedAt: existing.updatedAt },
+      data: { ...data, updatedAt: new Date() },
+    });
+    return count > 0;
+  };
 
   if (status === 'withdrawn') {
-    const active = await dbWrite.appSubListing.count({
-      where: {
-        parentListingId: parent.id,
-        authorUserId,
-        status: { in: ['pending', 'approved'] },
-      },
-    });
-    if (active >= parent.maxPerAuthor) {
+    if ((await activeCount()) >= parent.maxPerAuthor) {
       throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
     }
     const next: AppSubListingStatus = parent.autoApprove ? 'approved' : 'pending';
-    await dbWrite.appSubListing.update({
-      where: { id: existing.id },
-      data: {
-        ...liveColumns(content),
-        ...CLEAR_PENDING,
-        editRejectionReason: null,
-        status: next,
-        statusReason: null,
-        approvedAt: next === 'approved' ? new Date() : null,
-      },
+    const written = await casUpdate({
+      ...liveColumns(content),
+      ...CLEAR_PENDING,
+      editRejectionReason: null,
+      status: next,
+      statusReason: null,
+      approvedAt: next === 'approved' ? new Date() : null,
     });
-    return { id: existing.id, status: next, pendingEdit: false };
+    if (!written) return again();
+    return {
+      id: existing.id,
+      status: next,
+      pendingEdit: false,
+      catalogAffected: next === 'approved',
+    };
   }
 
   if (status === 'pending' || parent.autoApprove) {
     // Never approved (or the parent trusts its authors): the live columns ARE the draft.
-    await dbWrite.appSubListing.update({
-      where: { id: existing.id },
-      data: { ...liveColumns(content), ...CLEAR_PENDING, editRejectionReason: null },
+    const written = await casUpdate({
+      ...liveColumns(content),
+      ...CLEAR_PENDING,
+      editRejectionReason: null,
     });
-    return { id: existing.id, status, pendingEdit: false };
+    if (!written) return again();
+    return { id: existing.id, status, pendingEdit: false, catalogAffected: status === 'approved' };
   }
 
   // Approved: keep the live version and stage the edit, unless it changes nothing.
@@ -458,27 +461,41 @@ async function writeSubListing(
     contentRating: existing.contentRating,
   };
   if (sameContent(live, content)) {
-    if (existing.pendingSubmittedAt) {
-      await dbWrite.appSubListing.update({
-        where: { id: existing.id },
-        data: { ...CLEAR_PENDING },
-      });
-    }
-    return { id: existing.id, status, pendingEdit: false };
+    if (existing.pendingSubmittedAt && !(await casUpdate({ ...CLEAR_PENDING }))) return again();
+    return { id: existing.id, status, pendingEdit: false, catalogAffected: false };
   }
-  await dbWrite.appSubListing.update({
-    where: { id: existing.id },
-    data: {
-      pendingTitle: content.title,
-      pendingTagline: content.tagline,
-      pendingImageId: content.imageId,
-      pendingSubPath: content.subPath,
-      pendingContentRating: content.contentRating,
-      pendingSubmittedAt: new Date(),
-      editRejectionReason: null,
-    },
+  const written = await casUpdate({
+    pendingTitle: content.title,
+    pendingTagline: content.tagline,
+    pendingImageId: content.imageId,
+    pendingSubPath: content.subPath,
+    pendingContentRating: content.contentRating,
+    pendingSubmittedAt: new Date(),
+    editRejectionReason: null,
   });
-  return { id: existing.id, status, pendingEdit: true };
+  if (!written) return again();
+  return { id: existing.id, status, pendingEdit: true, catalogAffected: false };
+}
+
+/**
+ * Move a pending or approved row out of the store, busting the catalog only when an approved
+ * row (the only kind the cached page can hold) moved. Returns the number of rows changed.
+ */
+async function transitionActive(args: {
+  where: Prisma.AppSubListingWhereInput;
+  data: Prisma.AppSubListingUncheckedUpdateManyInput;
+}): Promise<number> {
+  const data = { ...args.data, updatedAt: new Date() };
+  const approved = await dbWrite.appSubListing.updateMany({
+    where: { ...args.where, status: 'approved' },
+    data,
+  });
+  const pending = await dbWrite.appSubListing.updateMany({
+    where: { ...args.where, status: 'pending' },
+    data,
+  });
+  if (approved.count > 0) await bustCatalog();
+  return approved.count + pending.count;
 }
 
 export async function withdrawSubListing(args: {
@@ -503,16 +520,14 @@ export async function withdrawSubListing(args: {
     );
   }
   try {
-    const { count } = await dbWrite.appSubListing.updateMany({
+    const count = await transitionActive({
       where: {
         parentListingId: parent.id,
         itemKey: parsed.data.itemKey,
         authorUserId: args.userId,
-        status: { in: ['pending', 'approved'] },
       },
       data: { status: 'withdrawn', ...CLEAR_PENDING },
     });
-    if (count > 0) await bustCatalog();
     return { ok: true, withdrawn: count > 0 };
   } catch (err) {
     rethrowUnavailable(err);
@@ -572,15 +587,6 @@ export async function listMySubListings(args: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// In-app hooks: the shared row was withdrawn by its author, or hidden/deleted by a moderator.
-// ---------------------------------------------------------------------------
-
-/**
- * Mirror an in-app removal onto the matching sub-listing. Best-effort: the in-app write has
- * already committed in another database, so a failure here is logged and swallowed (a
- * moderator hide on the store side and the app's own reconcile still catch it).
- */
 export type SyncSubListingForSharedRowArgs = {
   appBlockId: string;
   itemKey: string;
@@ -591,6 +597,11 @@ export type SyncSubListingForSharedRowArgs = {
   moderatorId?: number;
 };
 
+/**
+ * Mirror an in-app removal onto the matching sub-listing. Best-effort: the in-app write has
+ * already committed in another database, so a failure here is logged and swallowed (a
+ * moderator hide in the store still catches it).
+ */
 export async function syncSubListingForSharedRow(
   args: SyncSubListingForSharedRowArgs
 ): Promise<void> {
@@ -602,13 +613,11 @@ export async function syncSubListingForSharedRow(
       select: { id: true },
     });
     if (!parent) return;
-    const { count } = await dbWrite.appSubListing.updateMany({
+    await transitionActive({
       where: {
         parentListingId: parent.id,
         itemKey: args.itemKey,
-        ...(args.change === 'withdrawn'
-          ? { authorUserId: args.authorUserId, status: { in: ['pending', 'approved'] } }
-          : { status: { not: 'hidden' } }),
+        ...(args.change === 'withdrawn' ? { authorUserId: args.authorUserId } : {}),
       },
       data:
         args.change === 'withdrawn'
@@ -621,8 +630,9 @@ export async function syncSubListingForSharedRow(
               ...CLEAR_PENDING,
             },
     });
-    if (count > 0) await bustCatalog();
   } catch (err) {
+    // Before the manual-apply migration there is nothing to mirror onto.
+    if (isMissingTableError(err)) return;
     logToAxiom({
       name: 'app-sub-listing-shared-sync-failed',
       type: 'error',
@@ -632,10 +642,6 @@ export async function syncSubListingForSharedRow(
     }).catch(() => null);
   }
 }
-
-// ---------------------------------------------------------------------------
-// Moderation (`/apps/review` → Sub-listings).
-// ---------------------------------------------------------------------------
 
 /** The queue: new pending rows plus approved rows carrying a staged edit. */
 const QUEUE_WHERE = {
@@ -655,6 +661,8 @@ export type SubListingQueueRow = {
   pending: (SubListingContent & { imageUrl: string | null; submittedAt: Date }) | null;
   createdAt: Date;
   moderatedAt: Date | null;
+  /** Echoed back by `moderateSubListing`, so a decision applies only to what was shown. */
+  version: string;
 };
 
 export async function listSubListingQueue(
@@ -688,6 +696,7 @@ export async function listSubListingQueue(
         pendingImage: imageSelect,
         createdAt: true,
         moderatedAt: true,
+        updatedAt: true,
         parentListing: { select: { id: true, slug: true, name: true } },
         author: { select: { id: true, username: true, image: true } },
       },
@@ -723,6 +732,7 @@ export async function listSubListingQueue(
             : null,
         createdAt: r.createdAt,
         moderatedAt: r.moderatedAt,
+        version: r.updatedAt.toISOString(),
       })),
       nextCursor: rows.length > input.limit ? page[page.length - 1]?.id : undefined,
     };
@@ -736,7 +746,7 @@ export async function countSubListingQueue(): Promise<number> {
   try {
     return await dbRead.appSubListing.count({ where: QUEUE_WHERE });
   } catch (err) {
-    if (isMissingSubListingTable(err)) return 0;
+    if (isMissingTableError(err)) return 0;
     throw err;
   }
 }
@@ -745,12 +755,18 @@ export async function moderateSubListing(args: {
   input: ModerateSubListingInput;
   moderatorId: number;
 }): Promise<{ id: string; status: AppSubListingStatus; pendingEdit: boolean }> {
-  const { id, action, reason } = args.input;
-  const stamp = { moderatedById: args.moderatorId, moderatedAt: new Date() };
+  const { id, action, reason, version } = args.input;
+  const now = new Date();
+  const stamp = { moderatedById: args.moderatorId, moderatedAt: now, updatedAt: now };
   try {
     const row = await dbWrite.appSubListing.findUnique({ where: { id } });
     if (!row) throw new SubListingError(404, 'not_found', 'Store item not found');
     const status = row.status as AppSubListingStatus;
+    // The moderator decides on the version the queue showed them; anything the author changed
+    // since then has not been reviewed.
+    const stale = () =>
+      new SubListingError(409, 'conflict', 'This item changed since it was loaded; reload it');
+    if (row.updatedAt.getTime() !== new Date(version).getTime()) throw stale();
     const invalid = () =>
       new SubListingError(409, 'invalid_transition', `Cannot ${action} a ${status} store item`);
 
@@ -758,7 +774,7 @@ export async function moderateSubListing(args: {
     switch (action) {
       case 'approve':
         if (status !== 'pending') throw invalid();
-        data = { status: 'approved', approvedAt: new Date(), statusReason: null, ...stamp };
+        data = { status: 'approved', approvedAt: now, statusReason: null, ...stamp };
         break;
       case 'hide':
         if (status === 'hidden') throw invalid();
@@ -766,12 +782,10 @@ export async function moderateSubListing(args: {
         break;
       case 'restore':
         if (status !== 'hidden') throw invalid();
-        data = {
-          status: 'approved',
-          approvedAt: row.approvedAt ?? new Date(),
-          statusReason: null,
-          ...stamp,
-        };
+        // An item hidden before it was ever approved goes back to review, not into the store.
+        data = row.approvedAt
+          ? { status: 'approved', statusReason: null, ...stamp }
+          : { status: 'pending', statusReason: null, ...stamp };
         break;
       case 'approve-edit':
         if (status !== 'approved' || !row.pendingSubmittedAt || row.pendingTitle == null) {
@@ -794,22 +808,19 @@ export async function moderateSubListing(args: {
         break;
     }
 
-    // Compare-and-set on the state the transition was decided from, so two moderators acting
-    // at once (or a moderator racing a new edit) cannot both apply.
+    // Compare-and-set on the row as read, so two moderators acting at once, or an author edit
+    // landing between the read and the write, cannot both apply.
     const { count } = await dbWrite.appSubListing.updateMany({
-      where: { id, status: row.status, pendingSubmittedAt: row.pendingSubmittedAt },
+      where: { id, status: row.status, updatedAt: row.updatedAt },
       data,
     });
-    if (count === 0) throw invalid();
-    await bustCatalog();
-    const after = await dbWrite.appSubListing.findUnique({
-      where: { id },
-      select: { status: true, pendingSubmittedAt: true },
-    });
+    if (count === 0) throw stale();
+    const nextStatus = (data.status as AppSubListingStatus | undefined) ?? status;
+    if (status === 'approved' || nextStatus === 'approved') await bustCatalog();
     return {
       id,
-      status: (after?.status ?? status) as AppSubListingStatus,
-      pendingEdit: after?.pendingSubmittedAt != null,
+      status: nextStatus,
+      pendingEdit: data.pendingSubmittedAt === undefined && row.pendingSubmittedAt != null,
     };
   } catch (err) {
     rethrowUnavailable(err);

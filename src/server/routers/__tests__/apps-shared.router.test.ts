@@ -1326,6 +1326,7 @@ describe('the item’s store card follows an in-app withdraw or moderator hide',
       sql.startsWith('DELETE') ? { rows: [], rowCount: 1 } : { rows: [], rowCount: 0 }
     );
     await caller().withdraw({ blockToken: 't', key: 'gen-1' });
+    expect(mockSyncSubListing).toHaveBeenCalledTimes(1);
     expect(mockSyncSubListing).toHaveBeenCalledWith({
       appBlockId: 'apb_test',
       itemKey: 'gen-1',
@@ -1343,6 +1344,7 @@ describe('the item’s store card follows an in-app withdraw or moderator hide',
   it.each(['hide', 'delete'] as const)('a moderator %s hides the store item', async (action) => {
     mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', blockId: 'app-voting' });
     await modCaller().purgeSharedRow({ appBlockId: 'apb_x', key: 'gen-1', action });
+    expect(mockSyncSubListing).toHaveBeenCalledTimes(1);
     expect(mockSyncSubListing).toHaveBeenCalledWith({
       appBlockId: 'apb_x',
       itemKey: 'gen-1',

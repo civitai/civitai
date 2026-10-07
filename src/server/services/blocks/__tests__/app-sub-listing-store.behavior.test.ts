@@ -34,7 +34,11 @@ import type * as BetaService from '~/server/services/blocks/app-listing-beta.ser
  * the wrong arm; only running the statement can. The sub-listing tables come from the real
  * migration file, so this also proves that file applies.
  */
-const holder = { db: null as unknown as PGlite };
+const holder = {
+  db: null as unknown as PGlite,
+  /** Runs once, right after the next moderator read: simulates a write racing the decision. */
+  afterRead: null as null | (() => Promise<void>),
+};
 
 const runSql = (query: Prisma.Sql) =>
   holder.db.query(query.text, query.values as unknown[]).then((r) => r.rows);
@@ -101,6 +105,9 @@ dbMock.dbWrite.appSubListing.findUnique.mockImplementation(
       [args.where.id]
     );
     const row = rows[0];
+    const race = holder.afterRead;
+    holder.afterRead = null;
+    if (race) await race();
     return row ? Object.fromEntries(Object.entries(row).map(([k, v]) => [camel(k), v])) : null;
   }
 );
@@ -126,11 +133,15 @@ dbMock.dbWrite.appSubListing.updateMany.mockImplementation(
 
 const { listAvailableListings } = await import('~/server/services/blocks/app-listing.service');
 const { moderateSubListing } = await import('~/server/services/blocks/app-sub-listing.service');
+const { hydrateSubListingCards } = await import(
+  '~/server/services/blocks/app-sub-listing-store.service'
+);
 
 const OWNER = 7001;
 const AUTHOR = 7002;
 const PARENT = 'apl_PARENT';
 const OTHER = 'apl_OTHER';
+const OFFSITE = 'apl_OFFSITE';
 const CHILD_A = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2A';
 const CHILD_B = 'asl_01J9ZK3Q4R5S6T7V8W9X0Y1Z2B';
 
@@ -142,7 +153,10 @@ const MIGRATION = path.resolve(
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
-    CREATE TABLE "User" ("id" integer PRIMARY KEY, "username" text, "image" text);
+    CREATE TABLE "User" (
+      "id" integer PRIMARY KEY, "username" text, "image" text,
+      "bannedAt" timestamptz, "deletedAt" timestamptz
+    );
     CREATE TABLE "Image" (
       "id" integer PRIMARY KEY, "url" text NOT NULL, "userId" integer NOT NULL,
       "nsfwLevel" integer NOT NULL DEFAULT 0, "ingestion" text NOT NULL DEFAULT 'Scanned',
@@ -183,11 +197,12 @@ async function seed() {
       ('ab_PARENT', 'approved', now()), ('ab_OTHER', 'approved', now());
     INSERT INTO app_listings (id, kind, slug, name, status, app_block_id, category, content_rating, cover_id, user_id, created_at) VALUES
       ('${PARENT}', 'onsite', 'custom-generators', 'Custom Generators', 'approved', 'ab_PARENT', 'generation', 'pg', 1, ${OWNER}, now() - interval '2 days'),
-      ('${OTHER}', 'onsite', 'other-app', 'Other App', 'approved', 'ab_OTHER', 'tools', 'g', NULL, ${OWNER}, now() - interval '3 days');
+      ('${OTHER}', 'onsite', 'other-app', 'Other App', 'approved', 'ab_OTHER', 'tools', 'g', NULL, ${OWNER}, now() - interval '3 days'),
+      ('${OFFSITE}', 'offsite', 'zeta-offsite', 'Zeta Offsite', 'approved', NULL, 'tools', 'g', NULL, ${OWNER}, now() - interval '4 days');
     INSERT INTO app_listing_metrics (app_listing_id, install_count) VALUES ('${PARENT}', 50), ('${OTHER}', 10);
     INSERT INTO app_sub_listing_parents (parent_listing_id, enabled) VALUES ('${PARENT}', true);
     INSERT INTO app_sub_listings (id, parent_listing_id, item_key, author_user_id, title, tagline, image_id, sub_path, status, approved_at) VALUES
-      ('${CHILD_A}', '${PARENT}', 'gen-a', ${AUTHOR}, 'Gen Alpha', 'first', 2, 'g/A', 'approved', now()),
+      ('${CHILD_A}', '${PARENT}', 'gen-a', ${AUTHOR}, 'Gen Alpha', 'first', 2, 'g/A', 'approved', now() - interval '1 day'),
       ('${CHILD_B}', '${PARENT}', 'gen-b', ${AUTHOR}, 'Gen Beta', NULL, NULL, 'g/B', 'approved', now());
   `);
 }
@@ -208,6 +223,13 @@ async function page(opts: Partial<NonNullable<ListOpts>> = {}, sort: ListingSort
   return res.items;
 }
 const ids = (items: { id: string }[]) => items.map((i) => i.id);
+async function versionOf(id: string) {
+  const { rows } = await holder.db.query<{ updated_at: Date }>(
+    'SELECT updated_at FROM app_sub_listings WHERE id = $1',
+    [id]
+  );
+  return rows[0].updated_at.toISOString();
+}
 const childIds = (items: { id: string }[]) => ids(items).filter((id) => id.startsWith('asl_'));
 
 beforeEach(seed);
@@ -278,15 +300,38 @@ describe('store catalog with sub-listings, executed', () => {
     },
   ];
 
-  it('covers every parent state the design names', () => {
-    expect(PARENT_STATES).toHaveLength(11);
-  });
-
   it.each(PARENT_STATES)('hides the children when the parent is $name', async (state) => {
     if (state.sql) await holder.db.exec(state.sql);
     const items = await page(state.opts);
-    if (state.name !== 'the external-only scope') expect(ids(items)).toContain(OTHER);
+    // A listing that must still show under this state, so an empty page cannot pass.
+    expect(ids(items)).toContain(state.opts?.scope === 'public-external' ? OFFSITE : OTHER);
     expect(childIds(items)).toEqual([]);
+  });
+
+  it.each(['bannedAt', 'deletedAt'])('hides the items of an author with %s set', async (col) => {
+    await holder.db.exec(`UPDATE "User" SET "${col}" = now() WHERE id = ${AUTHOR}`);
+    const items = await page();
+    expect(ids(items)).toContain(PARENT);
+    expect(childIds(items)).toEqual([]);
+  });
+
+  it('a banned author’s items take no slot on the page', async () => {
+    await holder.db.exec(`UPDATE "User" SET "bannedAt" = now() WHERE id = ${AUTHOR}`);
+    const res = await listAvailableListings({ kind: 'all', sort: 'name', limit: 2 }, BASE_OPTS);
+    expect(ids(res.items)).toEqual([PARENT, OTHER]);
+  });
+
+  it.each([
+    [{ kind: 'onsite' }, true],
+    [{ kind: 'offsite' }, false],
+    [{ category: 'generation' }, true],
+    [{ category: 'tools' }, false],
+  ] as const)('follows the parent through the filter %o', async (filter, shown) => {
+    const res = await listAvailableListings(
+      { kind: 'all', sort: 'name', limit: 50, ...filter },
+      BASE_OPTS
+    );
+    expect(childIds(res.items).length).toBe(shown ? 2 : 0);
   });
 
   it('a moderator floor sees the children of a moderators-only parent', async () => {
@@ -342,34 +387,75 @@ describe('store catalog with sub-listings, executed', () => {
     expect((await page()).find((i) => i.id === CHILD_A)?.coverUrl).toBe('parent-cover');
   });
 
-  it('orders a parent before its children on a tied sort key, and pages through them', async () => {
+  it('orders a parent before its children on a tied sort key', async () => {
     const all = ids(await page({}, 'popular'));
     const p = all.indexOf(PARENT);
     // Children share the parent's popularity key; `tb` puts the parent first, then id DESC.
     expect(all.slice(p, p + 3)).toEqual([PARENT, CHILD_B, CHILD_A]);
+  });
 
-    const seen: string[] = [];
-    let cursor: string | undefined;
-    for (let i = 0; i < 10; i++) {
-      const res = await listAvailableListings(
-        { kind: 'all', sort: 'popular', limit: 1, cursor },
-        BASE_OPTS
-      );
-      seen.push(...ids(res.items));
-      cursor = res.nextCursor;
-      if (!cursor) break;
+  it.each(['name', 'newest', 'popular', 'top-rated'] as const)(
+    'pages through every card exactly once under the %s sort',
+    async (sort) => {
+      const all = ids(await page({}, sort));
+      expect(all).toHaveLength(5);
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      for (let i = 0; i < 10; i++) {
+        const res = await listAvailableListings({ kind: 'all', sort, limit: 1, cursor }, BASE_OPTS);
+        seen.push(...ids(res.items));
+        cursor = res.nextCursor;
+        if (!cursor) break;
+      }
+      expect(cursor).toBeUndefined();
+      expect(seen).toEqual(all);
     }
-    expect(cursor).toBeUndefined();
-    expect(seen).toEqual(all);
+  );
+
+  it('shows the item image only within the viewer level, on a red host, under its rating', async () => {
+    await holder.db.exec(`
+      UPDATE "Image" SET "nsfwLevel" = 4 WHERE id = 2;
+      UPDATE app_sub_listings SET content_rating = 'r' WHERE id = '${CHILD_A}'`);
+    const cover = async (opts: Partial<NonNullable<ListOpts>>) =>
+      (await page(opts)).find((i) => i.id === CHILD_A)?.coverUrl;
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 7 })).toBe('item-a');
+    expect(await cover({ redCapable: true, viewerBrowsingLevel: 1 })).toBe('parent-cover');
+    expect(await cover({ redCapable: true })).toBe('parent-cover');
+  });
+
+  it('hydration renders only approved items by authors in good standing', async () => {
+    const viewer = { redCapable: false };
+    const both = await hydrateSubListingCards(dbMock.dbRead, [CHILD_A, CHILD_B], viewer);
+    expect([...both.keys()].sort()).toEqual([CHILD_A, CHILD_B]);
+    await holder.db.exec(`UPDATE app_sub_listings SET status = 'hidden' WHERE id = '${CHILD_A}'`);
+    const one = await hydrateSubListingCards(dbMock.dbRead, [CHILD_A, CHILD_B], viewer);
+    expect([...one.keys()]).toEqual([CHILD_B]);
+    await holder.db.exec(`UPDATE "User" SET "bannedAt" = now() WHERE id = ${AUTHOR}`);
+    expect((await hydrateSubListingCards(dbMock.dbRead, [CHILD_B], viewer)).size).toBe(0);
   });
 
   it('serves parents only while the sub-listing tables are absent', async () => {
-    await holder.db.exec(`ALTER TABLE app_sub_listings RENAME TO app_sub_listings_hidden`);
+    await holder.db.exec(`
+      ALTER TABLE app_sub_listings RENAME TO app_sub_listings_hidden;
+      ALTER TABLE app_sub_listing_parents RENAME TO app_sub_listing_parents_hidden`);
     try {
       const items = await page();
-      expect(ids(items).sort()).toEqual([OTHER, PARENT].sort());
+      expect(ids(items).sort()).toEqual([OFFSITE, OTHER, PARENT].sort());
     } finally {
-      await holder.db.exec(`ALTER TABLE app_sub_listings_hidden RENAME TO app_sub_listings`);
+      await holder.db.exec(`
+        ALTER TABLE app_sub_listings_hidden RENAME TO app_sub_listings;
+        ALTER TABLE app_sub_listing_parents_hidden RENAME TO app_sub_listing_parents`);
+    }
+  });
+
+  it('a half-applied schema surfaces instead of degrading to parents only', async () => {
+    await holder.db.exec(`ALTER TABLE app_sub_listing_parents RENAME COLUMN enabled TO enabled_x`);
+    try {
+      await expect(page()).rejects.toThrow(/enabled/);
+    } finally {
+      await holder.db.exec(
+        `ALTER TABLE app_sub_listing_parents RENAME COLUMN enabled_x TO enabled`
+      );
     }
   });
 
@@ -379,7 +465,8 @@ describe('store catalog with sub-listings, executed', () => {
       UPDATE app_sub_listings
          SET pending_title = 'Gen Alpha v2', pending_tagline = 'second', pending_sub_path = 'g/A2',
              pending_image_id = 3, pending_content_rating = 'pg13',
-             pending_submitted_at = date_trunc('milliseconds', now())
+             pending_submitted_at = date_trunc('milliseconds', now()),
+             updated_at = date_trunc('milliseconds', now())
        WHERE id = '${CHILD_A}'`);
     const card = async () => (await page()).find((i) => i.id === CHILD_A);
 
@@ -392,7 +479,7 @@ describe('store catalog with sub-listings, executed', () => {
     });
 
     await moderateSubListing({
-      input: { id: CHILD_A, action: 'approve-edit' },
+      input: { id: CHILD_A, action: 'approve-edit', version: await versionOf(CHILD_A) },
       moderatorId: OWNER,
     });
 
@@ -412,5 +499,45 @@ describe('store catalog with sub-listings, executed', () => {
       pending_submitted_at: null,
       moderated_by_id: OWNER,
     });
+  });
+
+  it('an author edit landing between the moderator’s read and write is not approved unseen', async () => {
+    await holder.db.exec(`
+      UPDATE app_sub_listings
+         SET pending_title = 'Seen edit', pending_sub_path = 'g/A',
+             pending_submitted_at = date_trunc('milliseconds', now()),
+             updated_at = date_trunc('milliseconds', now()) - interval '1 second'
+       WHERE id = '${CHILD_A}'`);
+    const version = await versionOf(CHILD_A);
+    holder.afterRead = async () => {
+      await holder.db.exec(`
+        UPDATE app_sub_listings
+           SET pending_title = 'Unseen edit', updated_at = date_trunc('milliseconds', now())
+         WHERE id = '${CHILD_A}'`);
+    };
+    await expect(
+      moderateSubListing({
+        input: { id: CHILD_A, action: 'approve-edit', version },
+        moderatorId: OWNER,
+      })
+    ).rejects.toMatchObject({ status: 409, code: 'conflict' });
+    const { rows } = await holder.db.query<{ title: string; pending_title: string }>(
+      `SELECT title, pending_title FROM app_sub_listings WHERE id = $1`,
+      [CHILD_A]
+    );
+    expect(rows[0]).toEqual({ title: 'Gen Alpha', pending_title: 'Unseen edit' });
+  });
+
+  it('a decision on an out-of-date version is refused before anything is written', async () => {
+    await holder.db.exec(
+      `UPDATE app_sub_listings SET status = 'pending', updated_at = date_trunc('milliseconds', now()) WHERE id = '${CHILD_A}'`
+    );
+    await expect(
+      moderateSubListing({
+        input: { id: CHILD_A, action: 'approve', version: '2020-01-01T00:00:00.000Z' },
+        moderatorId: OWNER,
+      })
+    ).rejects.toMatchObject({ status: 409, code: 'conflict' });
+    expect(childIds(await page())).toEqual([CHILD_B]);
   });
 });
