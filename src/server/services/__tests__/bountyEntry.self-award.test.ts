@@ -72,8 +72,11 @@ describe('upsertBountyEntryHandler', () => {
     );
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     // The fake returns userId whatever is selected; without it in the real select the guard never fires.
+    // entryLimit singles out the handler's own read: the visibility check also selects userId.
     expect(dbMock.dbRead.bounty.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ select: expect.objectContaining({ userId: true }) })
+      expect.objectContaining({
+        select: expect.objectContaining({ userId: true, entryLimit: true }),
+      })
     );
   });
 
