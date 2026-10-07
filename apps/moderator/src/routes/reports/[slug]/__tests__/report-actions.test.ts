@@ -15,18 +15,19 @@ const getResolvedPostReportIds = vi.fn(async () => [] as number[]);
 const removePlacement = vi.fn();
 const canAccess = vi.fn(() => true);
 
+const getReportedGame = vi.fn();
 vi.mock('$lib/server/reports.service', () => ({
   getReports,
   setReportStatus,
   updateReportNotes,
+  getReportedGame,
+  getGameMirrors: vi.fn(async () => []),
 }));
 vi.mock('$lib/server/moderation-board.service', () => ({ getResolvedPostReportIds }));
 vi.mock('$lib/server/user-actions.service', () => ({ removePlacement }));
-const getReportedGame = vi.fn();
 const delistGame = vi.fn();
 vi.mock('$lib/server/game-frame', async (importOriginal) => ({
   ...(await importOriginal<typeof GameFrame>()),
-  getReportedGame,
   delistGame,
 }));
 vi.mock('$lib/server/db', () => ({ dbRead: {}, dbWrite: {} }));

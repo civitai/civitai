@@ -1,9 +1,15 @@
 import { error, fail, redirect } from '@sveltejs/kit';
 import type { Actions, PageServerLoad } from './$types';
-import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
+import {
+  getReports,
+  setReportStatus,
+  updateReportNotes,
+  getGameMirrors,
+  getReportedGame,
+} from '$lib/server/reports.service';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
-import { delistGame, delistReason, getGameMirrors, getReportedGame } from '$lib/server/game-frame';
+import { delistGame, delistReason } from '$lib/server/game-frame';
 import { canAccess } from '$lib/server/access';
 import {
   DEFAULT_REPORT_REASONS,

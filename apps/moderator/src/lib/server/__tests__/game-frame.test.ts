@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const env: Record<string, string | undefined> = {};
 vi.mock('$env/dynamic/private', () => ({ env }));
-vi.mock('../db', () => ({ dbWrite: {}, dbRead: {} }));
 
 const { delistGame } = await import('../game-frame');
 
@@ -36,9 +35,24 @@ describe('delistGame', () => {
     expect(init.headers).toMatchObject({
       authorization: `Bearer ${TOKEN}`,
       'x-gf-mod-id': '7',
-      'x-gf-mod-name': 'mod?',
+      'x-gf-mod-name': 'mod-7',
     });
     expect(JSON.parse(String(init.body))).toEqual({ reason: input.reason, reportId: 991 });
+  });
+
+  it('passes a plain username through as the moderator name', async () => {
+    const fetchImpl = reply(200, { ok: true, affected: [], state: 'delisted' });
+    await delistGame({ ...input, moderator: { id: 7, username: 'jane_doe.2' } }, fetchImpl);
+    const [, init] = fetchImpl.mock.calls[0] as unknown as [URL, RequestInit];
+    expect(init.headers).toMatchObject({ 'x-gf-mod-name': 'jane_doe.2' });
+  });
+
+  it('does not count a 200 that is not Game Frame confirming the delist', async () => {
+    const page = vi.fn(async () => new Response('<html>maintenance</html>', { status: 200 }));
+    expect(await delistGame(input, page)).toMatchObject({ ok: false, status: 502 });
+    expect(await delistGame(input, reply(200, { ok: true, state: 'public' }))).toMatchObject({
+      ok: false,
+    });
   });
 
   it.each([

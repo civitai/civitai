@@ -54,14 +54,19 @@ const existingReport = (over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
+/** Prisma returns only the selected columns; a mock that ignores `select` hides a dropped field. */
+const pick = (row: Record<string, unknown>, select?: Record<string, boolean>) =>
+  select ? Object.fromEntries(Object.keys(select).map((k) => [k, row[k]])) : row;
+
 beforeEach(() => {
   vi.clearAllMocks();
   db.report.findFirst.mockResolvedValue(null);
   db.gameFrameReportReceipt.findUnique.mockResolvedValue(null);
   db.gameFrameGame.findUnique.mockResolvedValue(null);
   db.gameFrameGame.upsert.mockResolvedValue({ id: GAME_ID, stateAt: null });
-  db.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) =>
-    where.id === 404 ? null : { id: where.id, deletedAt: null }
+  db.user.findUnique.mockImplementation(
+    async ({ where, select }: { where: { id: number }; select?: Record<string, boolean> }) =>
+      where.id === 404 ? null : pick({ id: where.id, deletedAt: null }, select)
   );
   db.report.create.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
     id: 991,
@@ -446,6 +451,9 @@ describe('everything happens on the one transaction', () => {
   });
 
   const noWritesOutsideTx = () => {
+    expect(db.$executeRaw).not.toHaveBeenCalled();
+    expect(db.$executeRawUnsafe).not.toHaveBeenCalled();
+    expect(db.user.findUnique, 'dbWrite.user.findUnique').not.toHaveBeenCalled();
     for (const model of ['report', 'gameFrameGame', 'gameFrameReportReceipt'] as const)
       for (const method of ['create', 'update', 'upsert', 'findFirst', 'findUnique'])
         expect(db[model][method], `dbWrite.${model}.${method}`).not.toHaveBeenCalled();
@@ -490,17 +498,21 @@ describe('everything happens on the one transaction', () => {
     await file();
 
     expect(tx.$executeRawUnsafe).toHaveBeenCalledWith(`SET LOCAL lock_timeout = '3s'`);
+    // The timeout must be in force before the first wait.
+    expect(tx.$executeRawUnsafe.mock.invocationCallOrder[0]).toBeLessThan(
+      tx.$executeRaw.mock.invocationCallOrder[0]
+    );
     const locks = tx.$executeRaw.mock.calls.map((call) => {
       const [strings, ...values] = call as unknown as [TemplateStringsArray, ...unknown[]];
       return { sql: strings.join('?'), values };
     });
     expect(locks).toEqual([
       {
-        sql: expect.stringContaining('pg_advisory_xact_lock'),
+        sql: 'SELECT pg_advisory_xact_lock(?::int, hashtext(?))',
         values: [0x47460001, body().gfReportId],
       },
       {
-        sql: expect.stringContaining('pg_advisory_xact_lock'),
+        sql: 'SELECT pg_advisory_xact_lock(?::int, hashtext(?))',
         values: [0x47460002, 'kraken-cove'],
       },
     ]);
@@ -699,12 +711,53 @@ describe('reporters the site would refuse', () => {
     ['banned', { bannedAt: new Date() }],
     ['muted', { muted: true }],
   ])('sends a %s reporter back as unknown_user, filing nothing', async (_, flags) => {
-    db.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => ({
-      id: where.id,
-      deletedAt: null,
-      ...(where.id === 678 ? flags : {}),
-    }));
+    db.user.findUnique.mockImplementation(
+      async ({ where, select }: { where: { id: number }; select?: Record<string, boolean> }) =>
+        pick({ id: where.id, deletedAt: null, ...(where.id === 678 ? flags : {}) }, select)
+    );
     expect(await file()).toEqual({ ok: false, error: 'unknown_user' });
     expect(db.report.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('state pushes', () => {
+  it('runs on the transaction under the game lock, and drops an unknown author', async () => {
+    const tx = {
+      $executeRaw: vi.fn(async () => 0),
+      $executeRawUnsafe: vi.fn(async () => 0),
+      user: { findUnique: vi.fn(async () => null) },
+      gameFrameGame: {
+        findUnique: vi.fn(async () => ({ id: GAME_ID, stateAt: null })),
+        update: vi.fn(async () => ({})),
+      },
+    };
+    db.$transaction.mockImplementationOnce(async (cb: (client: unknown) => unknown) => cb(tx));
+
+    await applyGameFrameState({ ...body().game, authorUserId: 404, at: body().at } as never);
+
+    const [strings, ...values] = tx.$executeRaw.mock.calls[0] as unknown as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    expect(strings.join('?')).toBe('SELECT pg_advisory_xact_lock(?::int, hashtext(?))');
+    expect(values).toEqual([0x47460002, 'kraken-cove']);
+    expect(tx.gameFrameGame.update.mock.calls[0][0].data.userId).toBeNull();
+    expect(db.gameFrameGame.findUnique).not.toHaveBeenCalled();
+    expect(db.gameFrameGame.update).not.toHaveBeenCalled();
+    expect(db.user.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('the columns each guard reads are selected', () => {
+  it('selects stateAt wherever it compares against it, and the receipt reportId', async () => {
+    await file();
+    db.gameFrameGame.findUnique.mockResolvedValue({ id: GAME_ID, stateAt: null });
+    await applyGameFrameState({ ...body().game, at: body().at } as never);
+
+    expect(db.gameFrameGame.upsert.mock.calls[0][0].select).toMatchObject({ stateAt: true });
+    expect(db.gameFrameGame.findUnique.mock.calls[0][0].select).toMatchObject({ stateAt: true });
+    expect(db.gameFrameReportReceipt.findUnique.mock.calls[0][0].select).toMatchObject({
+      reportId: true,
+    });
   });
 });

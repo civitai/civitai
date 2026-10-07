@@ -1,49 +1,17 @@
 import { env } from '$env/dynamic/private';
-import { dbRead, dbWrite } from './db';
 
 const TIMEOUT_MS = 10_000;
-
-export type ReportedGame = { slug: string; reason: string; violation: string | null };
-
-/** The game a report is about, read through its join row. Null for a report that is not a game's. */
-export async function getReportedGame(reportId: number): Promise<ReportedGame | null> {
-  // The primary, not the replica: the moderator is acting on a row they just opened.
-  const row = await dbWrite
-    .selectFrom('Report as r')
-    .innerJoin('GameFrameGameReport as j', 'j.reportId', 'r.id')
-    .innerJoin('GameFrameGame as g', 'g.id', 'j.gameFrameGameId')
-    .select(['g.slug', 'r.reason', 'r.details'])
-    .where('r.id', '=', reportId)
-    .executeTakeFirst();
-  if (!row) return null;
-  const details = row.details as { violation?: unknown } | null;
-  return {
-    slug: row.slug,
-    reason: row.reason,
-    violation: typeof details?.violation === 'string' ? details.violation : null,
-  };
-}
-
-export type GameMirror = { id: number; title: string; visibility: string; official: boolean };
-
-/** What the mirror row says about each reported game, as of Game Frame's last push. */
-export async function getGameMirrors(ids: number[]): Promise<GameMirror[]> {
-  if (!ids.length) return [];
-  return dbRead
-    .selectFrom('GameFrameGame')
-    .select(['id', 'title', 'visibility', 'official'])
-    .where('id', 'in', ids)
-    .execute();
-}
 
 export type DelistOutcome =
   | { ok: true; affected: number }
   | { ok: false; status: number; message: string };
 
-/** HTTP header values must be printable ASCII; usernames need not be. */
-function headerSafe(value: string) {
-  return value.replace(/[^\x20-\x7e]/g, '?').slice(0, 64);
-}
+// Game Frame accepts `^[\p{L}\p{N}_.-]{1,64}$`; a legacy username outside it would be refused for good.
+const MOD_NAME_RE = /^[A-Za-z0-9_.-]{1,64}$/;
+const modName = (moderator: { id: number; username: string | null }) =>
+  moderator.username && MOD_NAME_RE.test(moderator.username)
+    ? moderator.username
+    : `mod-${moderator.id}`;
 
 /**
  * Asks Game Frame to delist a game (and its forks). Game Frame accepts the service token only
@@ -73,7 +41,7 @@ export async function delistGame(
           authorization: `Bearer ${token}`,
           'content-type': 'application/json',
           'x-gf-mod-id': String(input.moderator.id),
-          'x-gf-mod-name': headerSafe(input.moderator.username || `mod-${input.moderator.id}`),
+          'x-gf-mod-name': modName(input.moderator),
         },
         body: JSON.stringify({ reason: input.reason.slice(0, 500), reportId: input.reportId }),
         signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -86,13 +54,22 @@ export async function delistGame(
   }
 
   const body = (await res.json().catch(() => null)) as {
+    ok?: unknown;
+    state?: unknown;
     affected?: unknown;
     error?: unknown;
     message?: unknown;
   } | null;
 
+  // A 2xx that is not Game Frame's own answer (a proxy or maintenance page) must not action the report.
+  if (res.ok && body?.ok === true && body.state === 'delisted')
+    return { ok: true, affected: Array.isArray(body.affected) ? body.affected.length : 0 };
   if (res.ok)
-    return { ok: true, affected: Array.isArray(body?.affected) ? body.affected.length : 0 };
+    return {
+      ok: false,
+      status: 502,
+      message: 'Game Frame gave an unexpected answer. Nothing changed.',
+    };
   if (res.status === 403)
     return { ok: false, status: 502, message: 'Game Frame refused the delist (config).' };
   if (res.status === 404)
@@ -106,6 +83,6 @@ export async function delistGame(
   return { ok: false, status: 502, message: `Game Frame could not delist it: ${detail}` };
 }
 
-export function delistReason(game: ReportedGame, reportId: number) {
+export function delistReason(game: { reason: string; violation: string | null }, reportId: number) {
   return `Reported: ${game.violation ?? game.reason}; report #${reportId}`;
 }

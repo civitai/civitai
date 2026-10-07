@@ -158,10 +158,12 @@ describe('getMostReportedPage', () => {
         sql.includes('array_length(t."alsoreportedby", 1), 0) + 1'),
         sql.includes('make_interval(days'),
         sql.includes('i."blockedfor" is null'),
+        // Guest reports beyond the first live in details.guestCount, not alsoReportedBy.
+        sql.includes(`'guestcount'`),
       ].join()
     );
     expect(predicates[0]).toBe(predicates[1]);
-    expect(predicates[0]).toBe('true,true,true,true');
+    expect(predicates[0]).toBe('true,true,true,true,true');
   });
 
   it('pages inside the CTE, where the LIMIT already is', async () => {
@@ -208,6 +210,11 @@ describe('report rows link to what was reported', () => {
 });
 
 describe('the filtered queue', () => {
+  it("counts a game report's extra guests as reporters", async () => {
+    await service.getReports({ type: 'gameFrameGame', statuses: 'all', reasons: 'all' });
+    expect(emitted().some((sql) => sql.includes(`->>'guestCount'`))).toBe(true);
+  });
+
   it('compiles with every filter applied at once', async () => {
     await service.getReports({
       type: 'image',
