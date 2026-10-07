@@ -1183,7 +1183,7 @@ export default function ModelDetailsV2({
                             <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
                             <BlockUserButton as="menu-item" userId={model.user.id} />
-                            <HideModelButton as="menu-item" modelId={model.id} />
+                            <HideModelButton as="menu-item" model={model} />
                             <Menu.Item
                               leftSection={<IconTagOff size={14} stroke={1.5} />}
                               onClick={() =>
