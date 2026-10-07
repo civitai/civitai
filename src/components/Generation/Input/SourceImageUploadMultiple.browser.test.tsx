@@ -305,7 +305,13 @@ function PendingProbe() {
   return null;
 }
 
-function PendingHarness({ aspectRatios }: { aspectRatios?: `${number}:${number}`[] }) {
+function PendingHarness({
+  aspectRatios,
+  layout,
+}: {
+  aspectRatios?: `${number}:${number}`[];
+  layout?: 'default' | 'url-input';
+}) {
   const [value, setValue] = useState<ImageValue[]>([]);
   const onChange = (next: ImageValue[]) =>
     setValue((prev) => {
@@ -321,6 +327,7 @@ function PendingHarness({ aspectRatios }: { aspectRatios?: `${number}:${number}`
         onChange={onChange}
         max={1}
         aspectRatios={aspectRatios}
+        layout={layout}
       />
     </div>
   );
@@ -380,6 +387,8 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
     expect(gaps).toBe(0);
 
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    await sleep(300);
+    expect(pendingNow()).toBe(false);
   });
 
   test('a failed upload turns it off, and it stays off', async () => {
@@ -456,5 +465,22 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
 
     mocks.dialogTrigger.mock.calls[0][0].props.onCancel();
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
+  });
+  test('confirming a crop with nothing to upload turns it off', async () => {
+    // An already-uploaded image confirmed uncropped needs no upload, so nothing starts its card.
+    mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
+    renderWithProviders(<PendingHarness aspectRatios={['1:1']} layout="url-input" />);
+    await userEvent.fill(
+      page.getByPlaceholder('Add a file or provide a URL'),
+      'https://orchestration.civitai.com/source.jpg'
+    );
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    expect(pendingNow()).toBe(true);
+
+    const { onConfirm, images } = mocks.dialogTrigger.mock.calls[0][0].props;
+    await onConfirm([{ src: images[0].url }]);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
   });
 });
