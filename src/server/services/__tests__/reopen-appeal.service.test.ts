@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { reopenAppeal } from '~/server/services/report.service';
-import { AppealStatus } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 const mockUpdate = dbMock.dbWrite.appeal.update;
 
@@ -30,7 +30,15 @@ describe('reopenAppeal', () => {
   it('updates the row the owner already has instead of creating a second one', async () => {
     await reopen();
 
-    expect(updateArgs().where).toEqual({ id: 41 });
+    expect(updateArgs().where).toMatchObject({ id: 41 });
+  });
+
+  // Deliberate: image appeals are opened only by `createEntityAppeal`, which refuses an image under
+  // the moderator-only review flag. Dropping this filter lets a reopen put a Pending appeal beside it.
+  it('never reopens an image appeal', async () => {
+    await reopen();
+
+    expect(updateArgs().where).toEqual({ id: 41, entityType: { not: EntityType.Image } });
   });
 
   it('clears the prior resolution and reopens as Pending', async () => {

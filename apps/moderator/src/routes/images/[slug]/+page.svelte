@@ -14,6 +14,7 @@
   import AppealActions from './AppealActions.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { userLookupUrl } from '$lib/entity-url';
+  import { isFlagOnlyRemaining } from '$lib/image-review';
   import { reportDetailEntries } from '$lib/reports';
   import type { ActionData, PageData } from './$types';
 
@@ -51,6 +52,16 @@
   // Deduped: two selected reports on one image are two cards but one image, and the action would
   // otherwise be posted `5,5` and report twice the work it did.
   const selectedImageIds = $derived([...new Set(selectedItems.map((i) => i.id))].join(','));
+  // The images Accept and Remove act on: a card with only its review flag left takes neither.
+  const verdictImageIds = $derived(
+    [
+      ...new Set(
+        selectedItems
+          .filter((i) => !('ingestion' in i && 'needsReview' in i && isFlagOnlyRemaining(i)))
+          .map((i) => i.id)
+      ),
+    ].join(',')
+  );
   const selectedReportIds = $derived(
     selectedItems
       .map((i) => ('report' in i ? i.report.id : 0))
@@ -85,13 +96,15 @@
     // Same rule as the bulk bar: the card, not the image.
     const key = Number(formData.get('reportId') ?? formData.get('imageId'));
     const a = action.search;
-    const verdict = a.includes('accept')
-      ? acceptedVerdict
-      : a.includes('block')
-        ? 'Removed'
-        : formData.get('status') === 'Approved'
-          ? 'Approved'
-          : 'Rejected';
+    const verdict = a.includes('dismissFlag')
+      ? 'Flag dismissed'
+      : a.includes('accept')
+        ? acceptedVerdict
+        : a.includes('block')
+          ? 'Removed'
+          : formData.get('status') === 'Approved'
+            ? 'Approved'
+            : 'Rejected';
     acted.set(key, verdict);
     return () => acted.delete(key);
   });
@@ -384,9 +397,18 @@
           {/if}
         </div>
       {:else}
-        <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
+        <div class="flex flex-wrap gap-1">
+          <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
+          {#if isFlagOnlyRemaining(item)}<Badge class="bg-muted">Removed</Badge>{/if}
+        </div>
       {/if}
-      <ReviewActions {item} verdict={acted.get(keyOfItem(item))} {selected} {submit} />
+      <ReviewActions
+        {item}
+        dismissFlag={isFlagOnlyRemaining(item)}
+        verdict={acted.get(keyOfItem(item))}
+        {selected}
+        {submit}
+      />
       {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>
@@ -395,6 +417,7 @@
 <QueueSelectionBar
   {selected}
   imageIds={selectedImageIds}
+  {verdictImageIds}
   reportIds={selectedReportIds}
   submit={bulkSubmit}
   appeal={data.kind === 'appeal'}
