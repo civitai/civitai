@@ -559,6 +559,20 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
   });
 
   const LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
+  /**
+   * Every read fails, but only the first few settle: a regression that retried the read in a loop
+   * would otherwise spin the page (and the run) instead of failing the read-count check below.
+   */
+  const CAPPED_FAILURES = 5;
+  function failReadsCapped() {
+    let calls = 0;
+    mocks.getImageDimensions.mockImplementation(() =>
+      ++calls <= CAPPED_FAILURES
+        ? Promise.reject(new Error('Image failed to load'))
+        : new Promise(() => undefined)
+    );
+    return () => calls;
+  }
   const loadFailures = () =>
     mocks.reportApplicationError.mock.calls.map(([error, ctx]) => [
       (error as Error).message,
@@ -566,7 +580,7 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     ]);
 
   test('a picked file whose image cannot be read ends on an error card and frees the generator', async () => {
-    mocks.getImageDimensions.mockRejectedValue(new Error('Image failed to load'));
+    const reads = failReadsCapped();
     renderWithProviders(<PendingHarness />);
     await pickFiles(1);
 
@@ -577,10 +591,11 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     expect(loadFailures()).toEqual([
       ['source image prep failed: dims', 'picked-file image/jpeg <5MB Error'],
     ]);
+    expect(reads()).toBe(1);
   });
 
   test('a pasted url whose image cannot be read ends on an error card and frees the generator', async () => {
-    mocks.getImageDimensions.mockRejectedValue(new Error('Image failed to load'));
+    const reads = failReadsCapped();
     renderWithProviders(<PendingHarness layout="url-input" />);
     await userEvent.fill(
       page.getByPlaceholder('Add a file or provide a URL'),
@@ -593,6 +608,7 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
     expect(loadFailures()).toEqual([['source image prep failed: dims', 'url Error']]);
+    expect(reads()).toBe(1);
   });
 
   test('a data url whose dimensions are already cached is uploaded', async () => {
@@ -647,6 +663,8 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     uploads[0].reject(new Error(PRESIGN_ERROR));
 
     await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    // The second upload is the queued data url, not another start of the crop.
+    expect(vi.mocked(resizeImage)).toHaveBeenLastCalledWith(dataUrl, expect.anything());
   });
 
   test('cancelling a re-crop of an image already in the value does not reopen the modal', async () => {
@@ -716,6 +734,9 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     vi.mocked(resizeImage)
       .mockReset()
       .mockImplementation(async () => new Blob(['resized'], { type: 'image/png' }));
+    vi.mocked(imageToJpegBlob)
+      .mockReset()
+      .mockImplementation(async () => new Blob(['jpeg'], { type: 'image/jpeg' }));
   });
   afterEach(() => {
     vi.useRealTimers();
