@@ -139,6 +139,10 @@ export async function getLegendStatus(userId: number) {
   });
   const privacy = profile?.privacySettings as PrivacySettingsSchema | null | undefined;
   if (!isBadgeShownOnProfile(privacy, legend.milestone.cosmeticId)) return null;
+  return toLegendStatus(legend);
+}
+
+export function toLegendStatus(legend: { achievedAt: Date; seenAt: Date | null }) {
   const founding = !achievedAtIsObserved(legend);
   return { founding, since: founding ? null : legend.achievedAt };
 }

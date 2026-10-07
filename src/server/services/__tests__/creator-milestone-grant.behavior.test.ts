@@ -14,6 +14,7 @@ import { applyUserScoreUpdates, persistScoreBatch } from '~/server/jobs/update-u
 import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import {
   achievedAtIsObserved,
+  achievedAtIsObservedSql,
   backfillScoreTierBatch,
   grantMilestoneCosmeticsBatch,
   grantMilestones,
@@ -394,6 +395,31 @@ describe('achievedAtIsObserved on every grant path', () => {
     await addUser(ELIGIBLE, 600);
     await backfillScoreTierBatch(pg, { afterUserId: 0, limit: 10 });
     expect(achievedAtIsObserved(await rowOf(ELIGIBLE, 'score:spark'))).toBe(false);
+  });
+
+  it('agrees with its SQL form on every row shape', async () => {
+    await addUser(LATE, 4000);
+    await addUser(ELIGIBLE, 400);
+    const transitions = await applyUserScoreUpdates(pg, [
+      [String(LATE), { models: 3000 }],
+      [String(ELIGIBLE), { models: 600 }],
+    ]);
+    await grantScoreTierMilestones(pg, transitions);
+    await q(
+      `UPDATE "UserCreatorMilestone" SET "seenAt" = "achievedAt" + interval '1 day' WHERE "userId" = $1`,
+      [ELIGIBLE]
+    );
+    await addUser(DELETED, null);
+    await grantMilestones(pg, {
+      sql: `SELECT $1::int AS "userId", 'create:decoy' AS "milestoneKey", NULL::timestamp AS "achievedAt", false AS silent`,
+      params: [DELETED],
+    });
+    const rows = await q<{ achievedAt: Date; seenAt: Date | null; observed: boolean }>(
+      `SELECT "achievedAt", "seenAt", ${achievedAtIsObservedSql('ucm')} AS observed
+         FROM "UserCreatorMilestone" ucm`
+    );
+    expect(new Set(rows.map((row) => row.observed))).toEqual(new Set([true, false]));
+    for (const row of rows) expect(row.observed).toBe(achievedAtIsObserved(row));
   });
 
   it('follows the detector on the shared writer: its own date is observed, none is not', async () => {
