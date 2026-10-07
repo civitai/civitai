@@ -1,6 +1,6 @@
-import { createServer, type Server } from 'http';
+import { ClientRequest, createServer, type Server } from 'http';
 import type { AddressInfo } from 'net';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 // Imported by path: it runs under plain node and is never bundled.
 import {
@@ -49,14 +49,19 @@ describe('daemonFetch', () => {
     expect(missing).toMatchObject({ ok: false, status: 404 });
   });
 
-  // `fetch` gave up after undici's implicit 300s; `http.request` has no timeout of its own, so a
-  // daemon that accepts and never answers would hang a waiter forever without this.
   // Every cli.mjs and console.mjs daemon call uses this default. It stands in for fetch's implicit
   // 300s, so a shorter one makes a slow daemon fail calls that fetch would have waited out.
-  it('waits at least as long as fetch did by default', () => {
+  it('waits at least as long as fetch did by default', async () => {
     expect(DAEMON_TIMEOUT_MS).toBeGreaterThanOrEqual(300_000);
+
+    const armed = vi.spyOn(ClientRequest.prototype, 'setTimeout');
+    const base = await listen((_req, res) => res.end('{}'));
+    await daemonFetch(`${base}/`).finally(() => armed.mockRestore());
+    expect(armed).toHaveBeenCalledWith(DAEMON_TIMEOUT_MS, expect.any(Function));
   });
 
+  // `fetch` gave up after undici's implicit 300s; `http.request` has no timeout of its own, so a
+  // daemon that accepts and never answers would hang a waiter forever without this.
   it('rejects when the daemon accepts and never answers', { timeout: 5_000 }, async () => {
     const base = await listen(() => undefined);
 
