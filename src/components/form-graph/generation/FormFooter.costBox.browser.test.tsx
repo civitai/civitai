@@ -1,0 +1,191 @@
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { renderWithProviders } from '../../../../test/component-setup';
+import type * as WhatIfProviderModule from '~/components/form-graph/generation/WhatIfProvider';
+import type * as BuzzModule from '~/components/Buzz/useBuzz';
+import type * as ToursModule from '~/components/Tours/ToursProvider';
+import type * as GenerationProviderModule from '~/components/ImageGeneration/GenerationProvider';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
+import type { GenerationStore } from '~/components/form-graph/generation/store';
+
+/**
+ * The cost box beside Generate must spin only while an estimate is actually being fetched. When
+ * the form is invalid (or the selection is gate-blocked) the whatIf query is disabled, the cost
+ * stays 0, and the box used to spin until the form changed — read by users as "the upload spins
+ * forever". Generate must stay disabled in those states either way.
+ *
+ * The whatIf context is replaced with a fixture so each test sets exactly the state the footer
+ * reads; everything below it (the cost box, Generate) renders for real.
+ */
+
+type WhatIfFixture = {
+  isLoading: boolean;
+  isError: boolean;
+  canEstimateCost: boolean;
+  gateBlocked: boolean;
+  total: number;
+};
+
+const state = vi.hoisted(() => ({
+  whatIf: {
+    isLoading: false,
+    isError: false,
+    canEstimateCost: true,
+    gateBlocked: false,
+    total: 0,
+  } as {
+    isLoading: boolean;
+    isError: boolean;
+    canEstimateCost: boolean;
+    gateBlocked: boolean;
+    total: number;
+  },
+}));
+
+vi.mock('~/components/form-graph/generation/WhatIfProvider', async (orig) => ({
+  ...(await orig<typeof WhatIfProviderModule>()),
+  useWhatIfContext: () => ({
+    isLoading: state.whatIf.isLoading,
+    isError: state.whatIf.isError,
+    isSuccess: !state.whatIf.isLoading && !state.whatIf.isError,
+    error: null,
+    refetch: () => undefined,
+    canEstimateCost: state.whatIf.canEstimateCost,
+    gateBlocked: state.whatIf.gateBlocked,
+    data: { cost: { base: state.whatIf.total, total: state.whatIf.total }, ready: true },
+  }),
+}));
+
+// A balance well above any fixture cost, so "insufficient Buzz" never decides Generate's state.
+vi.mock('~/components/Buzz/useBuzz', async (orig) => ({
+  ...(await orig<typeof BuzzModule>()),
+  useQueryBuzz: () => ({
+    data: {
+      accounts: (['green', 'blue', 'yellow'] as const).map((type) => ({
+        type,
+        balance: 1_000_000,
+      })),
+    },
+    isLoading: false,
+  }),
+}));
+
+vi.mock('~/components/Tours/ToursProvider', async (orig) => ({
+  ...(await orig<typeof ToursModule>()),
+  useTourContext: () => ({
+    running: false,
+    activeTour: undefined,
+    helpers: undefined,
+    pauseTour: () => undefined,
+    setBlockedTarget: () => undefined,
+  }),
+}));
+
+vi.mock('~/components/ImageGeneration/GenerationProvider', async (orig) => ({
+  ...(await orig<typeof GenerationProviderModule>()),
+  useGenerationContext: <T,>(selector: (s: { canGenerate: boolean }) => T) =>
+    selector({ canGenerate: true }),
+}));
+
+// creatorComp off: no tips are added, so the displayed cost is exactly the fixture total.
+vi.mock('~/providers/FeatureFlagsProvider', async (orig) => ({
+  ...(await orig<typeof FeatureFlagsModule>()),
+  useFeatureFlags: () => ({ creatorComp: false, isGreen: true }),
+}));
+
+// eslint-disable-next-line import/first
+import {
+  ConnectedBuzzTypeSelector,
+  SubmitButton,
+} from '~/components/form-graph/generation/FormFooter';
+
+const store = { getSnapshot: () => ({ state: {} }) } as unknown as GenerationStore;
+
+function renderFooter(whatIf: WhatIfFixture) {
+  state.whatIf = whatIf;
+  return renderWithProviders(
+    <div>
+      <SubmitButton store={store} />
+      <ConnectedBuzzTypeSelector store={store} />
+    </div>
+  );
+}
+
+function costButton() {
+  const el = document.querySelector<HTMLButtonElement>('button[data-tour="gen:buzz"]');
+  if (!el) throw new Error('cost button not found');
+  return el;
+}
+
+const costSpinning = () => costButton().querySelector('.mantine-Button-loader') !== null;
+
+function generateButton() {
+  const label = Array.from(document.querySelectorAll('button')).find(
+    (b) => b.textContent?.trim() === 'Generate'
+  );
+  if (!label) throw new Error('Generate button not found');
+  return label;
+}
+
+const base: WhatIfFixture = {
+  isLoading: false,
+  isError: false,
+  canEstimateCost: true,
+  gateBlocked: false,
+  total: 0,
+};
+
+describe('FormFooter cost box', () => {
+  beforeEach(() => {
+    state.whatIf = { ...base };
+  });
+
+  test('invalid form: no spinner, a dash instead of a cost, Generate disabled', async () => {
+    renderFooter({ ...base, canEstimateCost: false });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(false);
+    expect(costButton().textContent).toContain('–');
+    expect(costButton().textContent).not.toContain('0');
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('invalid form while an image is still uploading: still no spinner, Generate disabled', async () => {
+    // The provider folds "images pending" into isLoading, but no estimate can be requested for an
+    // invalid form, so there is nothing for the cost box to wait on.
+    renderFooter({ ...base, canEstimateCost: false, isLoading: true });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(false);
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('gate-blocked selection: no spinner, Generate disabled', async () => {
+    renderFooter({ ...base, gateBlocked: true });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(false);
+    expect(costButton().textContent).toContain('–');
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('first estimate in flight: spinner shown, Generate disabled', async () => {
+    renderFooter({ ...base, isLoading: true });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(true);
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('re-estimate in flight over a known cost: spinner shown, Generate disabled', async () => {
+    // A non-zero cost, so the spinner can only come from the in-flight flag, not from "no cost yet".
+    renderFooter({ ...base, isLoading: true, total: 37 });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(true);
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('estimate settled: cost shown, no spinner, Generate enabled', async () => {
+    renderFooter({ ...base, total: 37 });
+    await vi.waitFor(() => costButton());
+    expect(costSpinning()).toBe(false);
+    expect(costButton().textContent).toContain('37');
+    expect(costButton().textContent).not.toContain('–');
+    expect(generateButton().disabled).toBe(false);
+  });
+});
