@@ -64,6 +64,17 @@ describe('a view link in NAVIGATION', () => {
     const models = pageAccessState().tree.find((n) => n.key === '/models');
     expect(models?.children.map((c) => c.label)).toEqual(['Minor Hash Matches']);
   });
+
+  it('opens the scam queue from Audit under the Generator Restrictions grant', () => {
+    applyGrants({ '/audit/generator-restrictions': ['moderator:reviewer'] });
+    expect(labelsUnder('/audit')).toEqual(['Generator Restrictions', 'Scam Restrictions']);
+    const scam = NAVIGATION.find((n) => n.path === '/audit')?.children?.find(
+      (c) => c.label === 'Scam Restrictions'
+    );
+    expect(scam && navHref(scam)).toBe('/audit/generator-restrictions?type=scam');
+    const audit = pageAccessState().tree.find((n) => n.key === '/audit');
+    expect(audit?.children.map((c) => c.label)).not.toContain('Scam Restrictions');
+  });
 });
 
 describe('the text-scan lab', () => {
