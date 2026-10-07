@@ -79,7 +79,6 @@ describe('Badges Earned shelf', () => {
     expect(text).not.toContain('First Model');
   });
 
-  // The server supplies art only for tiers today; milestone cosmetics (CJ 11) are what make this real.
   it('keeps a non-tier badge that has art', () => {
     expect(shelfText([{ ...firstModel, badgeUrl: 'https://example.test/badge.png' }])).toContain(
       'First Model'
@@ -91,6 +90,8 @@ describe('Badges Earned shelf', () => {
     const text = shelfText([badge({ achievedAt: null })]);
     expect(text).toContain('Earned');
     expect(text).toMatch(/Earned$/);
+    act(() => root?.unmount());
+    container?.remove();
     expect(shelfText([badge({})])).toMatch(/Earned Oct \d+, 2026/);
   });
 

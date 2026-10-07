@@ -31,9 +31,9 @@ const definitions = [
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function render(held: Map<string, Date | null>, followers = 87) {
+function render(held: Map<string, Date | null>, followers = 87, models = 3) {
   const activity = buildActivityProgress(definitions, held, {
-    models: 3,
+    models,
     articles: 0,
     downloads: 0,
     followers,
@@ -54,8 +54,11 @@ function render(held: Map<string, Date | null>, followers = 87) {
   return container;
 }
 
+// Exact name match: '5 Models' is a substring of '25 Models'.
 const tile = (el: HTMLElement, name: string) =>
-  [...el.querySelectorAll<HTMLElement>('[data-state]')].find((t) => t.textContent?.includes(name));
+  [...el.querySelectorAll<HTMLElement>('[data-state]')].find((t) =>
+    [...t.querySelectorAll('*')].some((node) => node.textContent === name)
+  );
 
 afterEach(() => {
   act(() => root?.unmount());
@@ -82,6 +85,13 @@ describe('Achievements section', () => {
   it('shows an undated grant as plain Earned', () => {
     const el = render(new Map([['create:models-1', null]]));
     expect(tile(el, 'First Model')?.textContent).toMatch(/Earned$/);
+  });
+
+  // A creator who unpublished after the grant keeps the badge; the next tier up is still the target.
+  it('keeps an earned milestone earned when the count has since dropped below it', () => {
+    const el = render(new Map([['create:models-1', null]]), 87, 0);
+    expect(tile(el, 'First Model')?.dataset.state).toBe('earned');
+    expect(tile(el, '5 Models')?.dataset.state).toBe('progress');
   });
 
   // Reached but not granted yet (the job runs nightly): neither earned nor the next target.

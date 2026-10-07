@@ -552,7 +552,8 @@ describe('journey progress values', () => {
     );
     await q(
       `INSERT INTO "ModelMetric" ("modelId", "userId", status, availability, "downloadCount") VALUES
-        (1, $1, 'Published', 'Public', 150),
+        (1, $1, 'Published', 'Public', 600),
+        (4, $1, 'Published', 'Public', 600),
         (2, $1, 'Published', 'Private', 5000),
         (3, $1, 'Draft', 'Public', 5000)`,
       [CREATOR]
@@ -567,7 +568,7 @@ describe('journey progress values', () => {
     expect(values).toEqual({
       models: 5,
       articles: 1,
-      downloads: 150,
+      downloads: 600,
       followers: 120,
       reactions: 1000,
     });

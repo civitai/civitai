@@ -1,7 +1,6 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
-import type { CSSProperties } from 'react';
-import { HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
+import { accentVar, HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
@@ -51,8 +50,6 @@ const measureCopy: Record<
 const accentOf = (measure: Measure) =>
   tracks.find((track) => (track.measures as readonly Measure[]).includes(measure))?.accent ??
   tracks[0].accent;
-
-const accentVar = (accent: string) => ({ '--cj-accent': accent } as CSSProperties);
 
 export function earnedLabel(achievedAt: Date | null) {
   return achievedAt ? `Earned ${formatDate(achievedAt)}` : 'Earned';

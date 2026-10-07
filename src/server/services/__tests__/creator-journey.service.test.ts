@@ -121,8 +121,18 @@ describe('earned dates', () => {
   // A silent grant with no moment of its own stamps achievedAt and seenAt together.
   it('withholds the date of a grant whose moment was never observed', async () => {
     const at = new Date('2026-10-07T01:20:00Z');
+    const followers = definition({
+      key: 'reach:followers-100',
+      track: 'reach',
+      threshold: 100,
+      hidden: false,
+    });
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? [followers] : [])) as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockClear();
     dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
-      { achievedAt: at, seenAt: at, milestone: definition({ key: 'reach:followers-100' }) },
+      { achievedAt: at, seenAt: at, milestone: followers },
       {
         achievedAt: new Date('2026-01-05'),
         seenAt: at,
@@ -130,11 +140,18 @@ describe('earned dates', () => {
       },
     ] as never);
 
-    const { earned } = await getCreatorJourney(1);
+    const { earned, activity } = await getCreatorJourney(1);
     expect(earned.map((badge) => [badge.key, badge.achievedAt])).toEqual([
       ['reach:followers-100', null],
       ['create:models-5', new Date('2026-01-05')],
     ]);
+    expect(activity.milestones).toEqual([
+      expect.objectContaining({ key: 'reach:followers-100', earned: true, achievedAt: null }),
+    ]);
+    // The mock returns seenAt whatever is selected; without it every row reads as observed.
+    expect(dbMock.dbRead.userCreatorMilestone.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ seenAt: true }) })
+    );
   });
 });
 
@@ -266,6 +283,7 @@ describe('activity badge art', () => {
   });
 
   it('selects the art through the definitions query', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockClear();
     serveDefinitions([]);
     await getCreatorJourney(1);
     const activityCall = dbMock.dbRead.creatorMilestone.findMany.mock.calls.find(
@@ -419,12 +437,13 @@ describe('getFirstPublishCard', () => {
 describe('buildActivityProgress', () => {
   const activity = (key: string, threshold: number) =>
     definition({ key, track: key.split(':')[0], threshold, hidden: false, name: key, hint: null });
+  // Out of threshold order: the definitions query has no orderBy.
   const definitions = [
-    activity('create:models-1', 1),
     activity('create:models-5', 5),
+    activity('create:models-1', 1),
     activity('create:articles-1', 1),
-    activity('reach:followers-100', 100),
     activity('reach:followers-1000', 1000),
+    activity('reach:followers-100', 100),
     activity('reach:reactions-1000', 1000),
     activity('score:spark', 500),
   ];

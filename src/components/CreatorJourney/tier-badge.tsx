@@ -1,5 +1,6 @@
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
+import type { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 
 export type BadgeState = 'earned' | 'next' | 'locked';
@@ -19,6 +20,8 @@ export const tierAccents: Record<string, string> = {
   'score:supernova': '#ae3ec9',
   'score:legend': '#e9c46a',
 };
+
+export const accentVar = (accent: string) => ({ '--cj-accent': accent } as CSSProperties);
 
 export function TierBadge({
   name,

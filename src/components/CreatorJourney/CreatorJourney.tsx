@@ -7,13 +7,17 @@ import {
   IconTrendingUp,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import type { CSSProperties } from 'react';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { CreatorAchievements, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { NextLink } from '~/components/NextLink/NextLink';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
-import { DEFAULT_ACCENT, TierBadge, tierAccents } from '~/components/CreatorJourney/tier-badge';
+import {
+  accentVar,
+  DEFAULT_ACCENT,
+  TierBadge,
+  tierAccents,
+} from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
@@ -40,8 +44,6 @@ import { trpc } from '~/utils/trpc';
 type Journey = RouterOutput['creatorJourney']['getMine'];
 const accentOf = (tier: CreatorScoreTier | null | undefined) =>
   (tier && tierAccents[tier.key]) ?? DEFAULT_ACCENT;
-
-const accentVar = (accent: string) => ({ '--cj-accent': accent } as CSSProperties);
 
 export function CreatorJourney() {
   const { data, isLoading } = trpc.creatorJourney.getMine.useQuery();

@@ -93,17 +93,27 @@ export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = 
 
 export type ActivityMeasure = 'models' | 'articles' | 'downloads' | 'followers' | 'reactions';
 
+export const publishedEntityMeasures = {
+  model: 'models',
+  article: 'articles',
+} as const satisfies Record<(typeof PUBLISHED_ENTITIES)[number], ActivityMeasure>;
+
+export const userMetricMeasures = {
+  followerCount: 'followers',
+  reactionCount: 'reactions',
+} as const satisfies Record<(typeof USER_METRICS)[number], ActivityMeasure>;
+
 /** What an activity milestone counts, as the journey page groups it. Null for score tiers. */
 export function activityMeasureOf(entry: MilestoneRegistryEntry): ActivityMeasure | null {
   switch (entry.detector) {
     case 'scoreSnapshot':
       return null;
     case 'publishedCount':
-      return entry.params.entity === 'model' ? 'models' : 'articles';
+      return publishedEntityMeasures[entry.params.entity];
     case 'modelDownloads':
       return 'downloads';
     case 'userMetric':
-      return entry.params.metric === 'followerCount' ? 'followers' : 'reactions';
+      return userMetricMeasures[entry.params.metric];
   }
 }
 
