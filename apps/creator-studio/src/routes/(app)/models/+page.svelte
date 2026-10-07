@@ -275,7 +275,7 @@
       : Math.max(0, data.caps.feePricingLimit - data.caps.pricingUsed)
   );
   // A version that already carries a price spends nothing when re-priced — mirrors the server's
-  // unpricedVersionIds, so editing stays possible even with the month's allowance used up.
+  // unpricedVersionIds. The server can still refuse a boosted licensed version a permanent gate.
   const alreadyPricedIds = $derived(
     new Set(
       view.models

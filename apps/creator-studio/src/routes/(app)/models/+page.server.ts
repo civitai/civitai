@@ -474,8 +474,7 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
 
-    // A version that already has its gate re-saves free even at the limit, so an edit never strands a
-    // creator. Moderators are NOT exempt.
+    // Moderators are NOT exempt.
     const priceState = permanent
       ? await versionPriceState(locals.user.id, [versionId.data])
       : { unpriced: [], feeOnly: [] };

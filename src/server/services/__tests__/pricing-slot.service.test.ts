@@ -695,20 +695,24 @@ describe('assertPricingAllowed', () => {
         await expect(convert()).rejects.toThrow(/licensing fees only/);
       });
 
-      it('resolves a tier passed as a thunk before applying the rule', async () => {
+      it.each([
+        ['silver', 'resolves'],
+        ['free', 'rejects'],
+      ])('applies the rule to a tier passed as a thunk (%s)', async (tier, outcome) => {
         mockPrimaryCount.mockResolvedValue(4 as never);
-        await expect(
-          assertPricingAllowed({
-            userId: 7,
-            wasPriced: true,
-            willBePriced: true,
-            addsGate: true,
-            hadGate: false,
-            entity,
-            tier: async () => 'silver',
-            userMeta: eligible,
-          })
-        ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        const result = assertPricingAllowed({
+          userId: 7,
+          wasPriced: true,
+          willBePriced: true,
+          addsGate: true,
+          hadGate: false,
+          entity,
+          tier: async () => tier,
+          userMeta: eligible,
+        });
+        if (outcome === 'resolves')
+          await expect(result).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        else await expect(result).rejects.toThrow(/licensing fees only/);
       });
 
       it('is free as before for a version that never spent a slot', async () => {

@@ -805,7 +805,7 @@ export function ModelVersionUpsertForm({
     enabled: showPaidAccessInput || showLicensingFeeBlock,
   });
   // A version that already carries a price is exempt, so the counter must not read "used up" while the
-  // edit in front of the creator is free.
+  // edit in front of the creator is free (a boosted licensed version gaining a gate aside).
   const allowanceState = pricingAllowance
     ? pricingAllowanceState({
         used: pricingAllowance.used,

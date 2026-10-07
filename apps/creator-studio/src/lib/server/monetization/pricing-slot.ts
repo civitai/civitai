@@ -28,21 +28,19 @@ import { cappedTier, type Membership } from '$lib/server/membership';
 
 export type PricingGateResult = { ok: true } | { ok: false; status: 400 | 403; error: string };
 
-// Which of `versionIds` carry NO price yet — no licensing fee and no permanent gate. These are the ones a
-// write would move from unpriced to priced, and so the only ones that spend eligibility or allowance.
-//
-// The ONE definition of that question for this app: the fee paths and both gate actions all call it.
-// The fee path used to ask `currentFee <= 0` instead, which charged a creator a second time for a
-// version they already sold through a gate, and refused it outright at a full month.
-//
-// Ownership is re-enforced here: the ids come from an owner-scoped read, but this decides a money rule.
 export async function unpricedVersionIds(userId: number, versionIds: number[]): Promise<number[]> {
   return (await versionPriceState(userId, versionIds)).unpriced;
 }
 
 /**
- * `unpriced` as unpricedVersionIds; `feeOnly` carry a licensing fee and no permanent gate — the ones a
- * gate write converts without spending a slot.
+ * `unpriced`: which of `versionIds` carry NO price yet — no licensing fee and no permanent gate. These
+ * are the ones a write would move from unpriced to priced, and so the only ones that spend eligibility
+ * or allowance. `feeOnly`: those with a licensing fee and no permanent gate, which a gate write converts
+ * without spending a slot.
+ *
+ * The ONE definition of that question for this app: the fee paths and both gate actions read it
+ * through here. Ownership is re-enforced: the ids come from an owner-scoped read, but this decides a
+ * money rule.
  */
 export async function versionPriceState(
   userId: number,
@@ -105,8 +103,11 @@ async function readFeeAllowanceBoost(userId: number, now: Date): Promise<number 
 }
 
 /** Slots spent this calendar month. Index-only on (ownerId, createdAt). */
-export async function countPricingSlotsThisMonth(ownerId: number): Promise<number> {
-  const row = await dbRead
+export async function countPricingSlotsThisMonth(
+  ownerId: number,
+  db: typeof dbRead = dbRead
+): Promise<number> {
+  const row = await db
     .selectFrom('PricingSlot')
     .select(({ fn }) => fn.countAll<string>().as('count'))
     .where('ownerId', '=', ownerId)
@@ -312,7 +313,7 @@ export async function assertGatePricingAllowed(
     const boost = await readFeeAllowanceBoost(userId, new Date());
     if (boost === 0) return { ok: true };
     const slotSpentThisMonth = await anySlotSpentThisMonth(feeOnly);
-    const used = await countPricingSlotsThisMonth(userId);
+    const used = await countPricingSlotsThisMonth(userId, dbWrite);
     if (gateConversionExceedsAllowance({ used, tier, boost, slotSpentThisMonth }))
       return { ok: false, status: 403, error: gateConversionMessage(used, tier) };
     return { ok: true };

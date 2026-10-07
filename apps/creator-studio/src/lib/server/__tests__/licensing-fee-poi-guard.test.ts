@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   boostDown: false,
   boostHangs: false,
   anySlotSpentThisMonth: true,
+  replicaSlotsUsed: null as number | null,
   slotSpentThisMonthFilters: [] as [string, string, unknown][],
 }));
 
@@ -62,7 +63,7 @@ vi.mock('$lib/server/db', () => {
       },
     });
 
-  const selectFrom = (table: string) => {
+  const selectFrom = (table: string, primary: boolean) => {
     if (table.startsWith('ModelVersion'))
       return chain({
         // Three reads hit this table with different aliases — ownedVersions selects `currentFee`,
@@ -93,10 +94,17 @@ vi.mock('$lib/server/db', () => {
       return chain({
         select: (selection: unknown) => {
           if (selection !== 'entityId')
-            return chain({ executeTakeFirst: async () => ({ count: String(state.slotsUsed) }) });
+            return chain({
+              executeTakeFirst: async () => ({
+                count: String(
+                  primary ? state.slotsUsed : (state.replicaSlotsUsed ?? state.slotsUsed)
+                ),
+              }),
+            });
+          // The replica has not seen this month's slots: the conversion check must ask the primary.
           const spent: Record<string, unknown> = {
             executeTakeFirst: async () =>
-              state.anySlotSpentThisMonth ? { entityId: 1 } : undefined,
+              primary && state.anySlotSpentThisMonth ? { entityId: 1 } : undefined,
           };
           spent.where = (column: string, op: string, value: unknown) => {
             state.slotSpentThisMonthFilters.push([column, op, value]);
@@ -144,13 +152,16 @@ vi.mock('$lib/server/db', () => {
   };
 
   const db = {
-    selectFrom,
+    selectFrom: (table: string) => selectFrom(table, true),
     updateTable: () => chain(update),
     insertInto,
     deleteFrom,
     transaction: () => ({ execute: async (cb: (trx: unknown) => unknown) => cb(db) }),
   };
-  return { dbRead: db, dbWrite: db };
+  return {
+    dbRead: { ...db, selectFrom: (table: string) => selectFrom(table, false) },
+    dbWrite: db,
+  };
 });
 
 const { setLicensingFee, bulkSetLicensingFee } = await import('../monetization/licensing-fee');
@@ -191,6 +202,7 @@ beforeEach(() => {
   state.boostDown = false;
   state.boostHangs = false;
   state.anySlotSpentThisMonth = true;
+  state.replicaSlotsUsed = null;
   state.slotSpentThisMonthFilters = [];
 });
 
@@ -667,6 +679,7 @@ describe('licensing-fee allowance boost', () => {
 
   it('refuses a gate on a licensed version once boost-funded slots are in use', async () => {
     state.slotsUsed = 4;
+    state.replicaSlotsUsed = 0;
 
     const result = await gate([licensed()]);
 
@@ -749,6 +762,18 @@ describe('licensing-fee allowance boost', () => {
     ]);
 
     expect(result).toMatchObject({ ok: false, status: 403 });
+  });
+
+  it('does not charge the licensed versions in a mixed selection', async () => {
+    state.slotsUsed = 1;
+
+    const result = await gate([
+      version({ id: 1 }),
+      version({ id: 2 }),
+      version({ id: 3, currentFee: 10 }),
+    ]);
+
+    expect(result).toEqual({ ok: true });
   });
 
   it('leaves a gate on a licensed version free for a creator with no grant', async () => {
