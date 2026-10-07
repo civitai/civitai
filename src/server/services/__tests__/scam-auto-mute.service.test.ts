@@ -195,6 +195,14 @@ describe('autoMuteScamAccount', () => {
     expect(m.runScamCleanup).toHaveBeenCalled();
   });
 
+  it('keeps the mute and its strike when recording the strike id on the case fails', async () => {
+    m.recordScamStrike.mockRejectedValueOnce(new Error('update failed'));
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: 77 });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'strike record failed', userRestrictionId: 5 })
+    );
+  });
+
   it('logs a failed strike with the case id and carries on', async () => {
     m.createStrike.mockRejectedValue(new Error('enum value missing'));
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: null });

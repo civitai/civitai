@@ -1228,7 +1228,7 @@ describe('resolveUserRestriction — scam rulings', () => {
       const voidCall = dbWrite.$queryRaw.mock.calls.find(([strings]) =>
         strings.join('?').includes('UPDATE "UserStrike"')
       );
-      expect(voidCall?.slice(1)).toEqual([MOD_ID, expect.any(String), [id]]);
+      expect(voidCall?.slice(1)).toEqual(['Voided', MOD_ID, expect.any(String), [id], 'Active']);
     });
 
     it('overturning a generation case leaves the mute while a scam case is open', async () => {

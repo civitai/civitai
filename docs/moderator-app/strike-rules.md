@@ -49,8 +49,9 @@ On the sum of `points` across strikes that are `Active` and not past `expiresAt`
 to *release*, never to re-apply — so a moderator's manual unmute is not undone by the next job run.
 
 **It ends only when** the points fall below 2 and the daily job releases the account (at a 365-day
-lifetime, up to a year), or when a moderator lifts it. Accepting the Terms never does, and neither
-does an open review case hold it back.
+lifetime, up to a year), or when a moderator lifts it. Accepting the Terms never does. An open review
+case does not hold it back, except a Pending scam case: its mute ends only with the ruling or a
+moderator's unmute.
 
 Voiding takes a strike's points back at once, so a void that drops the total below 2 releases the mute
 on the spot rather than waiting for the job. `createStrike` is the only caller that may mute, so only
@@ -77,7 +78,8 @@ lifetime over one 1-point strike that mutes nobody.
 - **Any moderator at the API level** — no extra permission, same bar as mute/unmute.
 - **In Mod Studio, every strike button also requires the `/users` page grant.**
 - Strikes issued by a person are classified `ManualModAction`.
-- **Automatic strikes are limited to 1 per user per day**; `ManualModAction` is exempt. A rate-limited
+- **Automatic strikes are limited to 1 per user per day**; `ManualModAction` and `Scam` (one per case
+  already) are exempt, and a voided strike does not count. A rate-limited
   strike returns "skipped", which Mod Studio surfaces as *"The strike was rate-limited and NOT
   issued."*
 - **The scam auto-mute issues one automatic `Scam` strike per new scam case**: 3 points, no expiry
@@ -193,7 +195,7 @@ nobody was asked to re-accept. `tos-prohibited-content-anchor.test.ts` fails if 
 | --- | --- | --- |
 | 17 | Does accepting the Terms lift a 2-point mute | no — decay or a moderator only |
 | 18 | Does a scam auto-mute issue a strike | yes — one `Scam` strike, 3 points, no expiry |
-| 19 | Does an open review case hold back a timed unmute or strike decay | no |
+| 19 | Does an open review case hold back a timed unmute or strike decay | no, except a Pending scam case |
 
 **Open:**
 

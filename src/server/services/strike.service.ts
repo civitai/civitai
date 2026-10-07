@@ -30,9 +30,13 @@ import { REVIEW_MUTE_POINTS, MUTE_POINTS } from '~/shared/constants/strike.const
 // Rate Limiting
 // ============================================================================
 
+// Uncapped: a moderator's own decision, and a scam case's strike, which the case's dedupe already
+// limits to one per case.
+const RATE_LIMIT_EXEMPT_REASONS: StrikeReason[] = [StrikeReason.ManualModAction, StrikeReason.Scam];
+
 /**
  * Check if an auto-strike should be skipped due to rate limiting.
- * Limits non-manual strikes to max 1 per day per user.
+ * Limits automatic strikes to max 1 per day per user; a voided one does not count.
  */
 export async function shouldRateLimitStrike(userId: number): Promise<boolean> {
   const [result] = await dbRead.$queryRaw<[{ count: bigint }]>`
@@ -40,7 +44,8 @@ export async function shouldRateLimitStrike(userId: number): Promise<boolean> {
     FROM "UserStrike"
     WHERE "userId" = ${userId}
       AND "createdAt" >= CURRENT_DATE
-      AND "reason" != ${StrikeReason.ManualModAction}::"StrikeReason"
+      AND "reason" != ALL(${RATE_LIMIT_EXEMPT_REASONS}::"StrikeReason"[])
+      AND "status" != ${StrikeStatus.Voided}::"StrikeStatus"
   `;
   return Number(result.count) >= 1;
 }
@@ -478,7 +483,15 @@ export async function evaluateStrikeEscalation(
             ? { metaPatch: { strikeFlaggedForReview: false } }
             : {}),
         });
-        if (!release.released) return { totalPoints, action: 'none', notify: false };
+        if (!release.released) {
+          // The case's mute stands, but the review flag the voided points raised goes.
+          if (release.reason === 'scam-case' && currentMeta.strikeFlaggedForReview)
+            await tx.user.update({
+              where: { id: userId },
+              data: { meta: { ...currentMeta, strikeFlaggedForReview: false } },
+            });
+          return { totalPoints, action: 'none', notify: false };
+        }
 
         return { totalPoints, action: 'unmuted', notify: true };
       }
@@ -582,8 +595,7 @@ export async function createStrike(
     throw new TRPCError({ code: 'NOT_FOUND', message: `User ${userId} not found` });
   }
 
-  // Rate limit check for non-manual strikes
-  if (reason !== StrikeReason.ManualModAction) {
+  if (!RATE_LIMIT_EXEMPT_REASONS.includes(reason)) {
     const shouldLimit = await shouldRateLimitStrike(userId);
     if (shouldLimit) {
       logToAxiom({

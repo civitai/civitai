@@ -33,15 +33,16 @@ import { createStrike } from '~/server/services/strike.service';
 import { strikeReasonPublicLabel } from '~/server/schema/strike.schema';
 import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
 import { StrikeReason } from '~/shared/utils/prisma/enums';
+import {
+  SCAM_STRIKE_EXPIRES_IN_DAYS,
+  SCAM_STRIKE_POINTS,
+} from '~/shared/constants/strike.constants';
 
 export { SCAM_AUTO_MUTE_MAX_ACCOUNT_AGE_DAYS };
 
 const SYSTEM_ACTOR_ID = constants.system.user.id;
 const MAX_REASON_CHARS = 300;
 const MAX_INTERNAL_NOTES_CHARS = 2000;
-const SCAM_STRIKE_POINTS = 3;
-// `expiresAt` is NOT NULL and every active-strike query filters on it, so "never" is a far date.
-const SCAM_STRIKE_EXPIRES_IN_DAYS = 100 * 365;
 
 export type ScamEvidence = {
   /** `text-scan:<EntityType>:<id>` or `clavata:<type>` */

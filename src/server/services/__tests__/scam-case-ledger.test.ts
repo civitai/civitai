@@ -106,7 +106,22 @@ describe('scam case ledger', () => {
       await closeScamCasesOpenedBefore(42, AT);
       const call = dbMock.dbWrite.$queryRaw.mock.calls[1];
       expect(sqlOf(call)).toContain('UPDATE "UserStrike" s');
-      expect(values(call)).toEqual([null, expect.any(String), [5]]);
+      expect(values(call)).toEqual(['Voided', null, expect.any(String), [5], 'Active']);
+    });
+
+    it("voids the closed cases' strikes on the transaction it is given", async () => {
+      const tx = {
+        $queryRaw: vi
+          .fn()
+          .mockResolvedValueOnce([{ id: 5 }])
+          .mockResolvedValueOnce([{ id: 77, userId: 42 }]),
+        $executeRaw: vi.fn(async () => 1),
+      };
+      expect(await closeScamCasesOpenedBefore(42, AT, tx as never)).toEqual([5]);
+      expect(sqlOf(tx.$queryRaw.mock.calls[1])).toContain('UPDATE "UserStrike" s');
+      expect(tx.$executeRaw).toHaveBeenCalledOnce();
+      expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('runs on the transaction it is given', async () => {
@@ -184,16 +199,31 @@ describe('scam case ledger', () => {
 
   describe('voidScamCaseStrikes', () => {
     it('voids only active strikes named by the cases, on the same account', async () => {
-      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 77 }]);
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 77, userId: 42 }]);
       expect(await voidScamCaseStrikes([5], { voidedBy: 3, reason: 'Overturned' })).toEqual([77]);
       const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
       const sql = sqlOf(call);
-      expect(sql).toContain(`SET status = 'Voided', "voidedAt" = now(), "voidedBy" = ?::int`);
-      expect(sql).toContain(`WHERE ur.id = ANY(?::int[]) AND ur.type = 'scam'`);
       expect(sql).toContain(
-        `s.id = (t->>'strikeId')::int AND s."userId" = ur."userId" AND s.status = 'Active'`
+        `SET status = ?::"StrikeStatus", "voidedAt" = now(), "voidedBy" = ?::int`
       );
-      expect(values(call)).toEqual([3, 'Overturned', [5]]);
+      expect(sql).toContain(`WHERE ur.id = ANY(?::int[]) AND ur.type = 'scam'`);
+      expect(sql).toContain(`s.id = (t->>'strikeId')::int AND s."userId" = ur."userId"`);
+      expect(values(call)).toEqual(['Voided', 3, 'Overturned', [5], 'Active']);
+    });
+
+    it('clears the review flag on the struck accounts the remaining points no longer justify', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 77, userId: 42 }]);
+      await voidScamCaseStrikes([5], { voidedBy: 3, reason: 'Overturned' });
+      const call = dbMock.dbWrite.$executeRaw.mock.calls[0];
+      expect(sqlOf(call)).toContain(`'{strikeFlaggedForReview}', 'false'::jsonb`);
+      expect(sqlOf(call)).toContain(`), 0) < ?`);
+      expect(values(call)).toEqual([[42], 'Active', 3]);
+    });
+
+    it('touches no account when nothing was voided', async () => {
+      dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+      await voidScamCaseStrikes([5], { voidedBy: 3, reason: 'Overturned' });
+      expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     });
 
     it('does not query for no cases', async () => {

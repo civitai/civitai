@@ -3,12 +3,26 @@ import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { restoreScamCase, type ScamCleanupRecord } from '~/server/services/scam-cleanup.service';
+import { REVIEW_MUTE_POINTS } from '~/shared/constants/strike.constants';
+import { StrikeStatus, UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 const MODERATOR_UNMUTE_ACTIVITIES = ['unmute', 'revokeTimedMute'];
 const SYSTEM_ACTOR_ID = constants.system.user.id;
 const SCAM_CASE_CLOSED_VOID_REASON = 'The account was unmuted, which closed its scam review.';
 
 type LedgerClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw' | 'userRestriction'>;
+
+/** A Pending scam case holds the account's mute until a moderator rules on it. */
+export async function hasPendingScamCase(
+  client: Pick<Prisma.TransactionClient, 'userRestriction'>,
+  userId: number
+) {
+  const open = await client.userRestriction.findFirst({
+    where: { userId, type: 'scam', status: UserRestrictionStatus.Pending },
+    select: { id: true },
+  });
+  return !!open;
+}
 
 export type ScamTriggerEntry = {
   category: 'scam';
@@ -101,8 +115,9 @@ export async function closeScamCasesOpenedBefore(
 }
 
 /**
- * Database-only, so it can run inside the transaction that closes the case. Escalation is not re-run:
- * the caller settles the mute itself in that same transaction.
+ * Database-only, so it can run inside the transaction that closes the case; the caller settles the
+ * mute itself. Writes the same void fields as `voidStrike` in `strike.service.ts` (keep the two in
+ * step), but sends no notice, and clears the review flag the voided points no longer justify.
  */
 export async function voidScamCaseStrikes(
   userRestrictionIds: number[],
@@ -110,14 +125,29 @@ export async function voidScamCaseStrikes(
   client: LedgerClient = dbWrite
 ) {
   if (!userRestrictionIds.length) return [];
-  const rows = await client.$queryRaw<{ id: number }[]>`
+  const rows = await client.$queryRaw<{ id: number; userId: number }[]>`
     UPDATE "UserStrike" s
-    SET status = 'Voided', "voidedAt" = now(), "voidedBy" = ${voidedBy}::int, "voidReason" = ${reason}
+    SET status = ${StrikeStatus.Voided}::"StrikeStatus", "voidedAt" = now(),
+        "voidedBy" = ${voidedBy}::int, "voidReason" = ${reason}
     FROM "UserRestriction" ur,
       jsonb_array_elements(CASE WHEN jsonb_typeof(ur.triggers) = 'array' THEN ur.triggers ELSE '[]'::jsonb END) t
     WHERE ur.id = ANY(${userRestrictionIds}::int[]) AND ur.type = 'scam'
-      AND s.id = (t->>'strikeId')::int AND s."userId" = ur."userId" AND s.status = 'Active'
-    RETURNING s.id
+      AND s.id = (t->>'strikeId')::int AND s."userId" = ur."userId"
+      AND s.status = ${StrikeStatus.Active}::"StrikeStatus"
+    RETURNING s.id, s."userId"
+  `;
+  if (!rows.length) return [];
+
+  const userIds = [...new Set(rows.map(({ userId }) => userId))];
+  await client.$executeRaw`
+    UPDATE "User" u
+    SET meta = jsonb_set(COALESCE(u.meta, '{}'::jsonb), '{strikeFlaggedForReview}', 'false'::jsonb)
+    WHERE u.id = ANY(${userIds}::int[])
+      AND (u.meta->>'strikeFlaggedForReview')::boolean IS TRUE
+      AND COALESCE((
+        SELECT SUM(points) FROM "UserStrike"
+        WHERE "userId" = u.id AND status = ${StrikeStatus.Active}::"StrikeStatus" AND "expiresAt" > now()
+      ), 0) < ${REVIEW_MUTE_POINTS}
   `;
   return rows.map(({ id }) => id);
 }

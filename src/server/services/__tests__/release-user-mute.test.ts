@@ -84,8 +84,32 @@ describe('releaseUserMute', () => {
     expect(m.invalidateSession).toHaveBeenCalledWith(USER, 'moderation');
   });
 
-  it('a system release lifts the mute despite an open case, and leaves the case queued', async () => {
-    dbMock.dbWrite.userRestriction.findFirst.mockResolvedValue({ id: 3 });
+  const openCase = (type: string) =>
+    dbMock.dbWrite.userRestriction.findFirst.mockImplementation(
+      async ({ where }: { where: { type?: string } }) =>
+        !where.type || where.type === type ? { id: 3 } : null
+    );
+
+  it('a system release never lifts a mute a Pending scam case holds', async () => {
+    openCase('scam');
+    expect(await releaseUserMute({ userId: USER, actorId: SYSTEM, updateSource: 't' })).toEqual({
+      released: false,
+      reason: 'scam-case',
+      closedCaseIds: [],
+    });
+    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
+    expect(m.trackModActivity).not.toHaveBeenCalled();
+  });
+
+  it('a moderator unmute still lifts a mute a Pending scam case holds', async () => {
+    openCase('scam');
+    expect(await releaseUserMute({ userId: USER, actorId: MOD, updateSource: 't' })).toMatchObject({
+      released: true,
+    });
+  });
+
+  it('a system release lifts the mute despite another open case, and leaves the case queued', async () => {
+    openCase('generation');
     expect(
       await releaseUserMute({ userId: USER, actorId: SYSTEM, updateSource: 't' })
     ).toMatchObject({ released: true, closedCaseIds: [] });

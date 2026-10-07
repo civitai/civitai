@@ -5,7 +5,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { userUpdateCounter } from '~/server/prom/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
-import { closeScamCasesOpenedBefore, restoreScamCases } from '~/server/services/scam-case-ledger';
+import {
+  closeScamCasesOpenedBefore,
+  hasPendingScamCase,
+  restoreScamCases,
+} from '~/server/services/scam-case-ledger';
 
 export type MuteReleaseActivity = 'unmute' | 'revokeTimedMute';
 
@@ -22,15 +26,16 @@ export type MuteReleaseArgs = {
 
 export type MuteRelease =
   | { released: true; closedCaseIds: number[]; user: Prisma.UserGetPayload<object> }
-  | { released: false; reason: 'not-found' | 'not-timed'; closedCaseIds: [] };
+  | { released: false; reason: 'not-found' | 'not-timed' | 'scam-case'; closedCaseIds: [] };
 
 /**
  * The database half of every unmute, for a caller already inside a transaction. It takes the account
  * row lock that a scam verdict takes before filing, so a verdict either sees this unmute or files
  * first and has its case closed here. Run `afterMuteReleased` once the transaction commits.
  *
- * Only a moderator's unmute closes open scam cases; a system release (an expiry, the strike engine)
- * leaves them in the queue for a ruling.
+ * Only a moderator's unmute closes open scam cases. A system release (an expiry, the strike engine)
+ * lifts its own mute despite other open cases, but never one a Pending scam case holds: that mute
+ * ends with the ruling.
  */
 export async function releaseMuteInTransaction(
   tx: Prisma.TransactionClient,
@@ -44,6 +49,8 @@ export async function releaseMuteInTransaction(
     return { released: false, reason: 'not-timed', closedCaseIds: [] };
 
   const byModerator = actorId > 0;
+  if (!byModerator && (await hasPendingScamCase(tx, userId)))
+    return { released: false, reason: 'scam-case', closedCaseIds: [] };
   const cleared = clearedMuteFields(locked.meta);
   const user = await tx.user.update({
     where: { id: userId },

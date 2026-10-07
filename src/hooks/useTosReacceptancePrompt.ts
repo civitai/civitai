@@ -7,6 +7,7 @@ import { trpc } from '~/utils/trpc';
 import { useAppContext } from '~/providers/AppProvider';
 import { showInfoNotification } from '~/utils/notifications';
 import { TOS_REACCEPTANCE_SECTION } from '~/server/common/tos-reacceptance';
+import { shouldPromptTosReacceptance, tosAcceptanceOutcome } from '~/hooks/tos-reacceptance-prompt';
 
 const TosModal = dynamic(() => import('~/components/ToSModal/TosModal'), { ssr: false });
 
@@ -41,9 +42,7 @@ export function useTosReacceptancePrompt() {
     return queryClient.getMutationCache().subscribe((event) => {
       if (event.type !== 'updated' || event.action.type !== 'error') return;
 
-      const data = (event.action.error as { data?: { tosReacceptRequired?: boolean } } | null)
-        ?.data;
-      if (!data?.tosReacceptRequired || acceptedRef.current) return;
+      if (!shouldPromptTosReacceptance(event.action.error, acceptedRef.current)) return;
 
       dialogStore.trigger({
         // Fixed id: the store de-dupes on it and defaults to `Date.now()`, so without this a second
@@ -57,15 +56,10 @@ export function useTosReacceptancePrompt() {
           contentHash: tosMeta.hash,
           scrollToId: TOS_REACCEPTANCE_SECTION,
           onAccepted: async () => {
-            const result = await acceptTos().catch(() => undefined);
-            if (!result?.accepted) return;
+            const outcome = tosAcceptanceOutcome(await acceptTos().catch(() => undefined));
+            if (!outcome.accepted) return;
             acceptedRef.current = true;
-            showInfoNotification({
-              title: 'Your account is still restricted',
-              message:
-                'Thanks for accepting. The restriction lifts automatically once your strike points drop, or when a moderator lifts it.',
-              autoClose: false,
-            });
+            showInfoNotification({ ...outcome.notice, autoClose: false });
           },
         },
       });
