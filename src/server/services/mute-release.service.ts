@@ -5,11 +5,8 @@ import { logToAxiom } from '~/server/logging/client';
 import { userUpdateCounter } from '~/server/prom/client';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { clearedMuteFields } from '~/server/services/mute-provenance';
-import {
-  closeScamCasesOpenedBefore,
-  hasPendingScamCase,
-  restoreScamCases,
-} from '~/server/services/scam-case-ledger';
+import { closeScamCasesOpenedBefore, restoreScamCases } from '~/server/services/scam-case-ledger';
+import { hasOtherPendingRestriction } from '~/server/services/user-restriction.service';
 
 export type MuteReleaseActivity = 'unmute' | 'revokeTimedMute';
 
@@ -49,7 +46,7 @@ export async function releaseMuteInTransaction(
     return { released: false, reason: 'not-timed', closedCaseIds: [] };
 
   const byModerator = actorId > 0;
-  if (!byModerator && (await hasPendingScamCase(tx, userId)))
+  if (!byModerator && (await hasOtherPendingRestriction(tx, userId, undefined, 'scam')))
     return { released: false, reason: 'scam-case', closedCaseIds: [] };
   const cleared = clearedMuteFields(locked.meta);
   const user = await tx.user.update({

@@ -1007,6 +1007,14 @@ describe('strike.service', () => {
       expect(mockDbWrite.$transaction).toHaveBeenCalled();
     });
 
+    it('hands the new strike to onCreated before escalation, which can still throw', async () => {
+      const onCreated = vi.fn(async () => undefined);
+      mockDbWrite.$transaction.mockRejectedValueOnce(new Error('deadlock'));
+
+      await expect(createStrike({ ...baseInput, onCreated })).rejects.toThrow('deadlock');
+      expect(onCreated).toHaveBeenCalledExactlyOnceWith(mockCreatedStrike);
+    });
+
     it('never rate-limits a Scam strike: a case issues at most one', async () => {
       mockDbRead.$queryRaw.mockReset();
       mockDbRead.$queryRaw.mockResolvedValue([{ count: 1 }]);

@@ -4,25 +4,13 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { restoreScamCase, type ScamCleanupRecord } from '~/server/services/scam-cleanup.service';
 import { REVIEW_MUTE_POINTS } from '~/shared/constants/strike.constants';
-import { StrikeStatus, UserRestrictionStatus } from '~/shared/utils/prisma/enums';
+import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
 
 const MODERATOR_UNMUTE_ACTIVITIES = ['unmute', 'revokeTimedMute'];
 const SYSTEM_ACTOR_ID = constants.system.user.id;
 const SCAM_CASE_CLOSED_VOID_REASON = 'The account was unmuted, which closed its scam review.';
 
 type LedgerClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw' | 'userRestriction'>;
-
-/** A Pending scam case holds the account's mute until a moderator rules on it. */
-export async function hasPendingScamCase(
-  client: Pick<Prisma.TransactionClient, 'userRestriction'>,
-  userId: number
-) {
-  const open = await client.userRestriction.findFirst({
-    where: { userId, type: 'scam', status: UserRestrictionStatus.Pending },
-    select: { id: true },
-  });
-  return !!open;
-}
 
 export type ScamTriggerEntry = {
   category: 'scam';
@@ -118,6 +106,9 @@ export async function closeScamCasesOpenedBefore(
  * Database-only, so it can run inside the transaction that closes the case; the caller settles the
  * mute itself. Writes the same void fields as `voidStrike` in `strike.service.ts` (keep the two in
  * step), but sends no notice, and clears the review flag the voided points no longer justify.
+ *
+ * Besides the strikes a case names, it voids an Active Scam strike no case names that landed between
+ * this case and the account's next one: a strike whose link to its case was never written.
  */
 export async function voidScamCaseStrikes(
   userRestrictionIds: number[],
@@ -129,15 +120,33 @@ export async function voidScamCaseStrikes(
     UPDATE "UserStrike" s
     SET status = ${StrikeStatus.Voided}::"StrikeStatus", "voidedAt" = now(),
         "voidedBy" = ${voidedBy}::int, "voidReason" = ${reason}
-    FROM "UserRestriction" ur,
-      jsonb_array_elements(CASE WHEN jsonb_typeof(ur.triggers) = 'array' THEN ur.triggers ELSE '[]'::jsonb END) t
+    FROM "UserRestriction" ur
     WHERE ur.id = ANY(${userRestrictionIds}::int[]) AND ur.type = 'scam'
-      AND s.id = (t->>'strikeId')::int AND s."userId" = ur."userId"
-      AND s.status = ${StrikeStatus.Active}::"StrikeStatus"
+      AND s."userId" = ur."userId" AND s.status = ${StrikeStatus.Active}::"StrikeStatus"
+      AND (
+        s.id IN (
+          SELECT (t->>'strikeId')::int
+          FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ur.triggers) = 'array' THEN ur.triggers ELSE '[]'::jsonb END) t
+        )
+        OR (
+          s.reason = ${StrikeReason.Scam}::"StrikeReason" AND s."createdAt" >= ur."createdAt"
+          AND NOT EXISTS (
+            SELECT 1 FROM "UserRestriction" o, jsonb_array_elements(CASE WHEN jsonb_typeof(o.triggers) = 'array' THEN o.triggers ELSE '[]'::jsonb END) ot
+            WHERE o."userId" = s."userId" AND o.type = 'scam' AND (ot->>'strikeId')::int = s.id
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "UserRestriction" later
+            WHERE later."userId" = ur."userId" AND later.type = 'scam'
+              AND later."createdAt" > ur."createdAt" AND later."createdAt" <= s."createdAt"
+          )
+        )
+      )
     RETURNING s.id, s."userId"
   `;
   if (!rows.length) return [];
 
+  // `evaluateStrikeEscalation`'s flag rule, with active points re-derived in SQL so it can run in the
+  // closing transaction; keep the active-strike predicate in step with strike.service.ts.
   const userIds = [...new Set(rows.map(({ userId }) => userId))];
   await client.$executeRaw`
     UPDATE "User" u

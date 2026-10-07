@@ -127,9 +127,11 @@ export async function resolveUserRestriction({
 
   let stillHeld = false;
   if (status === UserRestrictionStatus.Upheld) {
+    // An upheld mute is indefinite: an expiry left over from an earlier timed mute would let the
+    // timed-unmute job release it.
     await updateUserById({
       id: restriction.userId,
-      data: { mutedAt: new Date() },
+      data: { mutedAt: new Date(), muteExpiresAt: null },
       updateSource: effects.upheldSource,
     });
     // Cancel at period end (reversible) rather than waiting for the daily

@@ -137,6 +137,9 @@ const {
         }
       ),
     },
+    // Strike writes; nothing in a ruling should reach them except the overturn's raw void.
+    $executeRaw: vi.fn(async () => 0),
+    userStrike: { update: vi.fn(), updateMany: vi.fn() },
     keyValue: {
       findUnique: vi.fn(async () => ({ value: store.jobDate.getTime() })),
       upsert: vi.fn(async () => undefined),
@@ -1069,7 +1072,28 @@ describe('resolveUserRestriction — scam rulings', () => {
     });
     const sql = dbWrite.$queryRaw.mock.calls.map(([strings]) => strings.join('?'));
     expect(sql.some((q) => q.includes('UPDATE "UserStrike"'))).toBe(false);
+    expect(dbWrite.$executeRaw).not.toHaveBeenCalled();
+    expect(dbWrite.userStrike.update).not.toHaveBeenCalled();
+    expect(dbWrite.userStrike.updateMany).not.toHaveBeenCalled();
   });
+
+  it.each(['scam', 'generation'])(
+    'upholding a %s case clears a leftover mute expiry, so the timed-unmute job cannot lift it',
+    async (type) => {
+      store.users.set(USER_ID, makeUser(USER_ID, { muted: true }));
+      const id = fileCase(1, type);
+      await resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Upheld,
+        moderatorId: MOD_ID,
+      });
+      expect(dbWrite.user.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ mutedAt: expect.any(Date), muteExpiresAt: null }),
+        })
+      );
+    }
+  );
 
   it('upholding sets mutedAt and sends the scam notice', async () => {
     const id = fileScam();
@@ -1228,7 +1252,7 @@ describe('resolveUserRestriction — scam rulings', () => {
       const voidCall = dbWrite.$queryRaw.mock.calls.find(([strings]) =>
         strings.join('?').includes('UPDATE "UserStrike"')
       );
-      expect(voidCall?.slice(1)).toEqual(['Voided', MOD_ID, expect.any(String), [id], 'Active']);
+      expect(voidCall?.slice(1, 5)).toEqual(['Voided', MOD_ID, expect.any(String), [id]]);
     });
 
     it('overturning a generation case leaves the mute while a scam case is open', async () => {

@@ -118,7 +118,13 @@ beforeEach(() => {
   });
   m.appendScamTrigger.mockResolvedValue(1);
   m.runScamCleanup.mockResolvedValue(RECORD);
-  m.createStrike.mockResolvedValue({ id: 77 });
+  // As the real one does: the row lands, `onCreated` runs, then escalation.
+  m.createStrike.mockImplementation(
+    async ({ onCreated }: { onCreated?: (strike: { id: number }) => Promise<void> }) => {
+      await onCreated?.({ id: 77 });
+      return { id: 77 };
+    }
+  );
 });
 
 describe('autoMuteScamAccount', () => {
@@ -200,6 +206,23 @@ describe('autoMuteScamAccount', () => {
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: 77 });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'strike record failed', userRestrictionId: 5 })
+    );
+  });
+
+  it('links a strike whose escalation then failed, and says the strike landed', async () => {
+    m.createStrike.mockImplementationOnce(
+      async ({ onCreated }: { onCreated?: (strike: { id: number }) => Promise<void> }) => {
+        await onCreated?.({ id: 77 });
+        throw new Error('escalation deadlock');
+      }
+    );
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: 77 });
+    expect(m.recordScamStrike).toHaveBeenCalledWith(5, 0, 'wf-1', 77);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'strike issued, but escalation failed' })
+    );
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'strike failed' })
     );
   });
 

@@ -232,8 +232,12 @@ async function audit(userId: number, slot: Slot, source: string) {
   }).catch((error) => logError('audit failed', userId, source, error, slot.userRestrictionId));
 }
 
-/** `null` when no strike landed (the daily auto-strike cap, or a logged failure); the case stands. */
+/**
+ * `null` when no strike landed; the case stands either way. The strike is linked to its case as soon
+ * as the row exists, so a later failure cannot leave it out of reach of an overturn.
+ */
 async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slot) {
+  let landed: number | null = null;
   try {
     const strike = await createStrike({
       userId,
@@ -247,16 +251,24 @@ async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slo
         ),
       expiresInDays: SCAM_STRIKE_EXPIRES_IN_DAYS,
       notifyUser: false,
+      onCreated: async ({ id }) => {
+        landed = id;
+        await recordScamStrike(slot.userRestrictionId, slot.index, evidence.dedupeKey, id).catch(
+          (error) =>
+            logError('strike record failed', userId, evidence.source, error, slot.userRestrictionId)
+        );
+      },
     });
-    if (!strike) return null;
-    await recordScamStrike(slot.userRestrictionId, slot.index, evidence.dedupeKey, strike.id).catch(
-      (error) =>
-        logError('strike record failed', userId, evidence.source, error, slot.userRestrictionId)
-    );
-    return strike.id;
+    return strike?.id ?? null;
   } catch (error) {
-    await logError('strike failed', userId, evidence.source, error, slot.userRestrictionId);
-    return null;
+    await logError(
+      landed ? 'strike issued, but escalation failed' : 'strike failed',
+      userId,
+      evidence.source,
+      error,
+      slot.userRestrictionId
+    );
+    return landed;
   }
 }
 

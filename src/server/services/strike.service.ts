@@ -441,6 +441,8 @@ export async function evaluateStrikeEscalation(
               // What separates this from the scam auto-mute and the restriction mute, which also leave
               // `mutedAt` null. The ToS gate offers itself on THIS reason only.
               ...(mayLabelMute ? { muteReason: STRIKE_MUTE_REASON } : {}),
+              // The review flag goes once active points are under REVIEW_MUTE_POINTS; the same rule
+              // runs in the de-escalation branch below and in `voidScamCaseStrikes`.
               ...(currentMeta.strikeFlaggedForReview && totalPoints < REVIEW_MUTE_POINTS
                 ? { strikeFlaggedForReview: false }
                 : {}),
@@ -484,7 +486,8 @@ export async function evaluateStrikeEscalation(
             : {}),
         });
         if (!release.released) {
-          // The case's mute stands, but the review flag the voided points raised goes.
+          // The case's mute stands, but the review flag the voided points raised goes (the flag rule
+          // in the MUTE_POINTS tier above, and in `voidScamCaseStrikes`).
           if (release.reason === 'scam-case' && currentMeta.strikeFlaggedForReview)
             await tx.user.update({
               where: { id: userId },
@@ -561,13 +564,17 @@ export async function acceptTosAfterMute({
 
 /**
  * Create a new strike for a user.
- */
-/**
+ *
  * `notifyUser: false` is for a caller that sends its own notice for the event the strike is part of;
- * the strike's notification, email and escalation notice are all skipped.
+ * the strike's notification, email and escalation notice are all skipped. `onCreated` runs once the
+ * row exists and before anything that can throw, so a caller can link the strike to what caused it.
  */
 export async function createStrike(
-  input: CreateStrikeInput & { issuedBy?: number; notifyUser?: boolean }
+  input: CreateStrikeInput & {
+    issuedBy?: number;
+    notifyUser?: boolean;
+    onCreated?: (strike: { id: number }) => Promise<void>;
+  }
 ) {
   const {
     userId,
@@ -581,6 +588,7 @@ export async function createStrike(
     expiresInDays,
     issuedBy,
     notifyUser = true,
+    onCreated,
   } = input;
 
   const userArgs = { where: { id: userId }, select: { id: true } } as const;
@@ -627,6 +635,7 @@ export async function createStrike(
       issuedBy,
     },
   });
+  await onCreated?.(strike);
 
   // Deliberately not fatal: the strike row is already committed, so throwing here would report a
   // failure for a strike that landed — and a moderator retrying a manual strike issues a second one,
