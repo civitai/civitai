@@ -15,7 +15,7 @@ harness and differential suites are only in git history.
 
 ## 0. Read the lib's own guidance first
 
-`C:\work\form-graph\CLAUDE.md` carries the library's design invariants (one branch
+The form-graph library repo's own `CLAUDE.md` carries the library's design invariants (one branch
 combinator, sync resolution, wire-named computedKeys, the prepack-after-every-edit rule
 for `link:` consumers). Don't design against an imagined API.
 

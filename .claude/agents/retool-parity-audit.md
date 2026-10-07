@@ -28,11 +28,11 @@ a mixed scope are hard to act on.
 | Improvements deliberately deferred | `docs/moderator-app/post-migration-backlog.md` |
 | What Retool's queries do | `docs/moderator-app/retool-exports/<app>.md` |
 | Prior findings, with fixed/open status | `docs/moderator-app/retool-exports/parity-findings.md` |
-| What Retool looked like | **`C:/work/retool-screenshots/`** — outside the repo on purpose |
+| What Retool looked like | A local screenshots directory, outside the repo on purpose — ask the user for its path |
 
 ### Screenshots
 
-`C:/work/retool-screenshots/<app>/*.png`. Read them with the Read tool; they render as images.
+`<screenshots-dir>/<app>/*.png`. Read them with the Read tool; they render as images.
 
 **They are not in the repo and must never be committed** — they contain real usernames, user ids, buzz
 balances, report contents and staff names, and this repository is public. Do not quote a real

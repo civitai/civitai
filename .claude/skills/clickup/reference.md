@@ -117,9 +117,9 @@ Comments support two mention syntaxes. The pipeline (`lib/mentions.mjs`):
 4. **Inject** mention attributes (`{"text": "@DisplayName", "attributes": {"mention": userId}}`)
 
 Explicit `@[identifier]` supports:
-- **Partial name**: `@[justin]` → fuzzy matches "Justin Maier"
+- **Partial name**: `@[jane]` → fuzzy matches "Jane Doe"
 - **Email**: `@[jane@co.com]` → matches by email
-- **User ID**: `@[10620972]` → direct numeric ID
+- **User ID**: `@[12345678]` → direct numeric ID
 
 Bare `@Name` auto-detection:
 - Matches `@First Last` or `@First` against workspace members (case-insensitive)
@@ -335,7 +335,7 @@ node watch.mjs 868kjbyvu --on status,assignee
 node watch.mjs 868kjbyvu --timeout 3600 --interval 45 --state-file ./watch-latest.json
 
 # Target a specific account
-node watch.mjs 868kjbyvu --account justin
+node watch.mjs 868kjbyvu --account jane
 ```
 
 ### Flags
@@ -413,7 +413,7 @@ node query.mjs batch-create --file plan.json --json
       "ref": "design",
       "name": "Design system architecture",
       "description": "Create the high-level architecture document",
-      "assignee": "justin",
+      "assignee": "jane",
       "priority": "high",
       "status": "to do",
       "dueDate": "+7d",

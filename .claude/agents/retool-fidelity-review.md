@@ -31,7 +31,7 @@ The invoker names **one app**. Audit only that one.
 | Tracker claims, deliberate omissions | `.claude/skills/retool-migration/MIGRATIONS.md` |
 | The build | `apps/moderator/src/routes/...`, `apps/moderator/src/lib/server/*.service.ts` |
 | Prior findings and their status | `docs/moderator-app/retool-exports/parity-findings.md` |
-| What Retool looked like | `C:/work/retool-screenshots/<app>/*.png` — outside the repo on purpose |
+| What Retool looked like | `<screenshots-dir>/<app>/*.png`, a local directory outside the repo on purpose — ask the user for its path |
 
 Screenshots are readable with the Read tool. **They are never committed and you must not quote a real
 username, email, id or buzz balance in your report** — this repository is public. Describe the field,

@@ -317,7 +317,7 @@ against.
 `envModeSummary`, and the daemon log prints them next to `Env:` at start:
 
 ```
-Env: C:\Dev\Repos\work\wt-thing\.env
+Env: <repos-root>\worktrees\thing\.env
 Env modes: buzz=dev db=prod redis=dev search=dev signals=dev | always prod (no dev target): ...
 ```
 
@@ -788,7 +788,7 @@ Error [TurbopackInternalError]: failed to create junction point at ".next\dev\no
 Caused by: removal of existing symbolic link or junction point failed: The directory is not empty. (os error 145)
 ```
 
-Two independent blockers: `.next/dev/node_modules` holds junction points that don't survive a copy, and cache keys embed the absolute project path (~3,000 occurrences of `C:/Dev/Repos/work/model-share` in a single 253 MB segment), so most entries would miss even if it did start.
+Two independent blockers: `.next/dev/node_modules` holds junction points that don't survive a copy, and cache keys embed the absolute project path (~3,000 occurrences of the checkout's path in a single 253 MB segment), so most entries would miss even if it did start.
 
 A single `.next` shared by concurrent sessions is worse — two dev servers writing one LSM store corrupts it.
 
