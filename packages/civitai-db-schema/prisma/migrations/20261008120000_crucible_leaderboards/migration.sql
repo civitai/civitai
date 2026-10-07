@@ -1,14 +1,15 @@
--- Crucible leaderboards, step 1 of 2. Data rows, not schema. Apply by hand.
--- Staged as active = true, public = false: populated nightly but visible to moderators only.
--- Flip public per board once its rows have been checked, then apply
--- 20261008120001_crucible_leaderboard_badges (it inserts badges only for public boards).
--- Do not apply between 23:00 and 00:01 UTC: a board added after that night's prepare-leaderboard
--- run makes isLeaderboardPopulated fail, skipping every board's rank rebuild and cosmetics that night.
--- prepare-leaderboard picks the engine from the query text: keep the clickhouse_ CTE prefix on the
--- judges query, and keep the Postgres queries ending in a scores CTE with no final SELECT.
+-- Crucible leaderboards: judges, competitors, hosts. Data rows, not schema. Apply by hand.
+-- Inserted inactive and non-public. updateLegendsBoardResults scores every populated board whatever its
+-- public flag, so a board populated before review would hand out Legendary Nameplates. To go live, re-run
+-- each query read-only, then set active = true and public = true together. Badges come in a later migration.
+-- Do not go live between 23:00 and 00:05 UTC: prepare-leaderboard reads the active boards at 23:00, and a
+-- board activated after that has no rows when update-user-leaderboard-rank checks at 00:01.
+-- prepare-leaderboard picks the engine from the query text. The judges query must contain 'WITH ' and
+-- 'clickhouse_' (runs on ClickHouse); the Postgres queries must not contain 'clickhouse_' or
+-- 'image_scores AS', and must end in a `scores` CTE with no final SELECT (the job appends one).
 
 INSERT INTO "Leaderboard" (id, index, title, description, "scoringDescription", query, active, public)
-SELECT v.id, (SELECT max(index) FROM "Leaderboard") + v.ord, v.title, v.description, v.scoring, v.query, true, false
+SELECT v.id, (SELECT max(index) FROM "Leaderboard") + v.ord, v.title, v.description, v.scoring, v.query, false, false
 FROM (VALUES
   ('crucible-judges', 1, 'Crucible Judges',
    'Judges who keep coming back to judge crucibles',
@@ -60,7 +61,7 @@ $q$WITH crucibles AS (
 )$q$),
   ('crucible-hosts', 3, 'Crucible Hosts',
    'Hosts whose crucibles draw the most entrants',
-   E'√(entrants) × 10 per completed crucible\n---\nLast 30 days. An entrant counts once their account is 30 days old',
+   E'√(entrants) × 10 per completed crucible\n---\nLast 30 days. An entrant counts only if their account was at least 30 days old when they entered',
 $q$WITH crucibles AS (
   SELECT id, "userId" FROM "Crucible"
   WHERE status = 'Completed' AND "endAt" > now() - interval '30 days'
@@ -84,5 +85,5 @@ $q$WITH crucibles AS (
 ) AS v(id, ord, title, description, scoring, query)
 WHERE NOT EXISTS (SELECT 1 FROM "Leaderboard" l WHERE l.id = v.id);
 
--- Verify: three rows, active and not public.
+-- Verify: three rows, all inactive and non-public.
 -- SELECT id, index, active, public FROM "Leaderboard" WHERE id LIKE 'crucible-%';

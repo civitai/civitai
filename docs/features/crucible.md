@@ -59,7 +59,7 @@ The crucible welcome panel shows each entrant their Avg Finish and Prizes Won. A
 
 ## Leaderboards
 
-Three boards rank crucible activity over the last 30 days, refreshed nightly, with badges for the top 1, 3, 10 and 100:
+Three boards rank crucible activity over the last 30 days, refreshed nightly:
 
 - **Crucible Judges:** each crucible you judge adds 10 × √(your votes in it), counting up to 50 votes per crucible, so judging many crucibles beats piling votes into one.
 - **Crucible Competitors:** in each completed crucible with at least 5 placed entrants, 1 point for every entrant your best entry finished above.
