@@ -63,18 +63,36 @@ export const modelDownloadsSource = `SELECT mm."userId", mm."downloadCount" FROM
     WHERE mm.status = 'Published' AND mm.availability <> 'Private'`;
 
 // Gross: what buyers paid, before the platform cut and any reseller share. A cosmetic's sale goes to
-// its creator wherever it was bought; a pack's goes to the creator who built it. Two branches so a
-// per-user filter reaches an index on each side.
+// its creator wherever it was bought. A pack's price is split: each member another creator made is
+// credited to that creator at its recorded price, official members to nobody, and the rest to the
+// creator who built the pack.
+const packOthersSql = `SELECT pc."buzzTransactionId", pc."cosmeticId", pc."unitAmount", c."createdById"
+    FROM "UserCosmeticShopPurchaseCosmetic" pc
+    JOIN "Cosmetic" c ON c.id = pc."cosmeticId"`;
+
 export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchasedAt", p."buzzTransactionId" AS id,
       p."unitAmount" AS amount
     FROM "UserCosmeticShopPurchases" p
     JOIN "Cosmetic" c ON c.id = p."cosmeticId"
     WHERE NOT p.refunded AND c."createdById" IS NOT NULL
     UNION ALL
-    SELECT i."addedById", p."purchasedAt", p."buzzTransactionId", p."unitAmount"
+    SELECT i."addedById", p."purchasedAt", p."buzzTransactionId",
+      greatest(p."unitAmount" - coalesce((
+        SELECT sum(m."unitAmount") FROM (${packOthersSql}) m
+        WHERE m."buzzTransactionId" = p."buzzTransactionId"
+          AND m."createdById" IS DISTINCT FROM i."addedById"
+      ), 0), 0)
     FROM "UserCosmeticShopPurchases" p
     JOIN "CosmeticShopItem" i ON i.id = p."shopItemId"
-    WHERE NOT p.refunded AND p."cosmeticId" IS NULL AND i."addedById" IS NOT NULL`;
+    WHERE NOT p.refunded AND p."cosmeticId" IS NULL AND i."addedById" IS NOT NULL
+    UNION ALL
+    SELECT m."createdById", p."purchasedAt", m."buzzTransactionId" || ':' || m."cosmeticId",
+      m."unitAmount"
+    FROM (${packOthersSql}) m
+    JOIN "UserCosmeticShopPurchases" p ON p."buzzTransactionId" = m."buzzTransactionId"
+    JOIN "CosmeticShopItem" i ON i.id = p."shopItemId"
+    WHERE NOT p.refunded AND m."createdById" IS NOT NULL
+      AND m."createdById" IS DISTINCT FROM i."addedById"`;
 
 const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m}"`).join(', ')}
     FROM "UserMetric" um WHERE um.timeframe = 'AllTime'`;
@@ -91,8 +109,9 @@ export const activityValuesSql = `SELECT
       WHERE s."userId" = $1), 0)::int AS followers,
     coalesce((SELECT s."reactionCount" FROM (${userMetricSource}) s
       WHERE s."userId" = $1), 0)::int AS reactions,
-    coalesce((SELECT sum(s.amount) FROM (${shopSalesSource}) s WHERE s."userId" = $1), 0)::int
-      AS revenue`;
+    -- Clamped: a bigint sum past int range would otherwise fail the whole page.
+    least(coalesce((SELECT sum(s.amount) FROM (${shopSalesSource}) s WHERE s."userId" = $1), 0),
+      2147483647)::int AS revenue`;
 
 function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
   switch (entry.detector) {

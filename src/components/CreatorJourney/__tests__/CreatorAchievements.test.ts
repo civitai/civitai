@@ -28,6 +28,7 @@ const definitions = [
   definition('reach:followers-1000', 1000, '1k Followers'),
   definition('earn:shop-sales-100000', 100000, '100k Sales'),
   definition('earn:shop-sales-250000', 250000, '250k Sales'),
+  definition('earn:shop-sales-500000', 500000, '500k Sales'),
 ];
 
 let root: Root | undefined;
@@ -108,11 +109,17 @@ describe('Achievements section', () => {
 describe('Shop track', () => {
   it('shows gross sales in Buzz against each revenue threshold', () => {
     const el = render(new Map([['earn:shop-sales-100000', null]]), 87, 3, 120000);
-    expect([...el.querySelectorAll('*')].some((node) => node.textContent === 'Earn')).toBe(true);
-    expect(el.textContent).toContain('120,000 Buzz');
+    // The leaf: an empty track's container has the same text as its header.
+    const header = [...el.querySelectorAll<HTMLElement>('*')].find(
+      (node) => node.childElementCount === 0 && node.textContent === 'Earn'
+    );
+    const earnTrack = header?.parentElement;
+    expect(earnTrack && tile(earnTrack, '100k Sales')).toBeTruthy();
+    expect(earnTrack?.textContent).toContain('Sales120,000 Buzz');
     expect(tile(el, '100k Sales')?.dataset.state).toBe('earned');
     expect(tile(el, '250k Sales')?.dataset.state).toBe('progress');
     expect(tile(el, '250k Sales')?.textContent).toContain('120,000 / 250,000');
+    expect(tile(el, '500k Sales')?.textContent).toContain('500,000 Buzz in shop sales');
   });
 });
 
