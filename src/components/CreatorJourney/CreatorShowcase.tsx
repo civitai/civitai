@@ -50,7 +50,7 @@ export function CreatorShowcase() {
   );
 }
 
-function CreatorShowcaseView({
+export function CreatorShowcaseView({
   showcase: data,
   isLoading,
   supernovaArt,

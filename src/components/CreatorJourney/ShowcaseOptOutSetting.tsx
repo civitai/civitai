@@ -1,6 +1,7 @@
 import { Switch } from '@mantine/core';
 import { SettingRow, SettingsSection } from '~/components/Account/SettingsLayout';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
@@ -10,13 +11,20 @@ const SHOWCASE_OPT_OUT_DESCRIPTION =
 
 export function useShowcaseOptOut(options: { onHidden?: () => void } = {}) {
   const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
   const mutation = useMutateUserSettings({
     async onSuccess(_, { hideFromCreatorShowcase }) {
-      await Promise.all([
-        utils.creatorJourney.getShowcase.invalidate(),
-        utils.creatorJourney.getLegendStatus.invalidate(),
-      ]);
-      if (hideFromCreatorShowcase) options.onHidden?.();
+      if (hideFromCreatorShowcase) {
+        // The showcase reads a replica, so a refetch right after the write can still list the viewer.
+        const others = <T extends { user: { id: number } }>(rows: T[]) =>
+          rows.filter((row) => row.user.id !== currentUser?.id);
+        utils.creatorJourney.getShowcase.setData(
+          undefined,
+          (old) => old && { newSupernovas: others(old.newSupernovas), legends: others(old.legends) }
+        );
+        options.onHidden?.();
+      } else await utils.creatorJourney.getShowcase.invalidate();
+      await utils.creatorJourney.getLegendStatus.invalidate();
     },
   });
   return {
