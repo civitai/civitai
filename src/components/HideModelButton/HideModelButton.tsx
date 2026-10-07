@@ -10,13 +10,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isViewer } from '~/utils/is-viewer';
 import { showSuccessNotification } from '~/utils/notifications';
 
-export function HideModelButton({
-  modelId,
-  ownerUserId,
-  as = 'button',
-  onToggleHide,
-  ...props
-}: Props) {
+export function HideModelButton({ model, as = 'button', onToggleHide, ...props }: Props) {
+  const modelId = model.id;
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
 
@@ -39,7 +34,7 @@ export function HideModelButton({
     onToggleHide?.();
   };
 
-  if (isViewer(currentUser, ownerUserId)) return null;
+  if (isViewer(currentUser, model.user.id)) return null;
 
   return as === 'button' ? (
     <LoginRedirect reason="hide-content">
@@ -67,8 +62,7 @@ export function HideModelButton({
 }
 
 type Props = Omit<ButtonProps, 'onClick'> & {
-  modelId: number;
-  ownerUserId: number;
+  model: { id: number; user: { id: number } };
   as?: 'menu-item' | 'button';
   onToggleHide?: () => void;
 };

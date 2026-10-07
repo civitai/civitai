@@ -42,9 +42,9 @@ afterEach(() => {
   viewer.current = null;
 });
 
-function renderButton(props: { modelId: number; ownerUserId: number }) {
+function renderButton(model: { id: number; user: { id: number } }) {
   act(() => {
-    root.render(createElement(MantineProvider, null, createElement(HideModelButton, props)));
+    root.render(createElement(MantineProvider, null, createElement(HideModelButton, { model })));
   });
   return container.querySelector('button');
 }
@@ -52,15 +52,15 @@ function renderButton(props: { modelId: number; ownerUserId: number }) {
 describe('HideModelButton owner check', () => {
   it('renders nothing on the viewer’s own model', () => {
     viewer.current = { id: VIEWER_ID };
-    expect(renderButton({ modelId: 7, ownerUserId: VIEWER_ID })).toBeNull();
+    expect(renderButton({ id: 7, user: { id: VIEWER_ID } })).toBeNull();
   });
 
   it('renders the button on a stranger’s model whose id equals the viewer’s user id', () => {
     viewer.current = { id: VIEWER_ID };
-    expect(renderButton({ modelId: VIEWER_ID, ownerUserId: 99 })?.textContent).toBe('Hide');
+    expect(renderButton({ id: VIEWER_ID, user: { id: 99 } })?.textContent).toBe('Hide');
   });
 
   it('renders the button for a signed-out viewer', () => {
-    expect(renderButton({ modelId: 7, ownerUserId: VIEWER_ID })?.textContent).toBe('Hide');
+    expect(renderButton({ id: 7, user: { id: VIEWER_ID } })?.textContent).toBe('Hide');
   });
 });
