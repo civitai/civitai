@@ -556,6 +556,7 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
     mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
     mocks.dialogTrigger.mockReset();
+    vi.mocked(resizeImage).mockClear();
   });
 
   const LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
@@ -592,6 +593,77 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
       ['source image prep failed: dims', 'picked-file image/jpeg <5MB Error'],
     ]);
     expect(reads()).toBe(1);
+  });
+
+  async function pasteUrl(url: string) {
+    await userEvent.fill(page.getByPlaceholder('Add a file or provide a URL'), url);
+    await userEvent.keyboard('{Enter}');
+  }
+
+  test('a url pasted again after its read failed goes through the crop check before any upload', async () => {
+    const url = 'https://example.com/retried.jpg';
+    let reads = 0;
+    mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
+      if (src === url && ++reads === 1) throw new Error('Image failed to load');
+      return { width: 600, height: 2000 };
+    });
+    renderWithProviders(<PendingHarness layout="url-input" max={2} aspectRatios={['1:1']} />);
+    await pasteUrl(url);
+    await expect.element(page.getByText(LOAD_ERROR)).toBeVisible();
+
+    await pasteUrl(url);
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    expect(vi.mocked(resizeImage)).not.toHaveBeenCalled();
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(valueWrites.some((v) => v.some((img) => img.url === url))).toBe(false);
+  });
+
+  test('a url pasted again that still cannot be read ends on the same error, reported once per attempt', async () => {
+    const reads = failReadsCapped();
+    const url = 'https://example.com/still-broken.jpg';
+    renderWithProviders(<PendingHarness layout="url-input" max={2} />);
+    await pasteUrl(url);
+    await expect.element(page.getByText(LOAD_ERROR)).toBeVisible();
+
+    await pasteUrl(url);
+    await expect.poll(() => page.getByText(LOAD_ERROR).elements().length).toBe(2);
+    await expect.poll(loaderCount).toBe(0);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    expect(document.body.textContent).not.toContain('Image failed to load');
+    expect(vi.mocked(resizeImage)).not.toHaveBeenCalled();
+    expect(loadFailures()).toEqual([
+      ['source image prep failed: dims', 'url Error'],
+      ['source image prep failed: dims', 'url Error'],
+    ]);
+    expect(reads()).toBe(2);
+  });
+
+  test('a parent that re-renders on every pending change with a fresh value does not loop the reads', async () => {
+    function FreshValueParent() {
+      useImagesUploadingOrVerifying();
+      const [value, setValue] = useState<ImageValue[]>([]);
+      // Ignores an equal write, as the form store does; without that the input loops on any parent.
+      const onChange = (next: ImageValue[]) =>
+        setValue((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
+      return (
+        <div data-testid="source-images">
+          <ImageUploadMultipleInput value={[...value]} onChange={onChange} max={1} />
+        </div>
+      );
+    }
+    // Reads succeed, but past a cap they never settle, so a loop fails the count below instead of
+    // spinning the page.
+    let reads = 0;
+    mocks.getImageDimensions.mockImplementation(() =>
+      ++reads <= 10 ? Promise.resolve({ width: 1024, height: 1024 }) : new Promise(() => undefined)
+    );
+    renderWithProviders(<FreshValueParent />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    await sleep(2000);
+    // The pre-check read and the upload's own read.
+    // The pre-check, the upload's own read, and the read after re-encoding.
+    expect(reads).toBeLessThanOrEqual(3);
   });
 
   test('a pasted url whose image cannot be read ends on an error card and frees the generator', async () => {

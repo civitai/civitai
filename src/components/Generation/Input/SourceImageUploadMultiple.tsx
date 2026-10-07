@@ -746,10 +746,14 @@ export function SourceImageUploadMultiple({
 
   // Starts a queued card. Every update finds the card by id: two cards can share a url.
   async function handleUpload({ id, url }: UploadCard) {
+    // Both updates return the same array when the card is not in the expected state (removed, or
+    // already moved on), so they never hand the effects keyed on `uploads` a change that isn't one.
     setUploads((items) =>
-      items.map((x) =>
-        x.id === id && x.status === 'queued' ? { ...x, status: 'uploading' as const } : x
-      )
+      items.some((x) => x.id === id && x.status === 'queued')
+        ? items.map((x) =>
+            x.id === id && x.status === 'queued' ? { ...x, status: 'uploading' as const } : x
+          )
+        : items
     );
     // uploadOrchestratorImage marks `id` itself; tracked so an unmount mid-upload clears it too.
     trackedUploadingIdsRef.current.add(id);
@@ -760,8 +764,9 @@ export function SourceImageUploadMultiple({
       pickedFilesRef.current.get(url)
     );
     trackedUploadingIdsRef.current.delete(id);
-    setUploads((items) =>
-      items.map((x): ImagePreview => {
+    setUploads((items) => {
+      if (!items.some((x) => x.id === id && x.status === 'uploading')) return items;
+      return items.map((x): ImagePreview => {
         if (x.id !== id || x.status !== 'uploading') return x;
         if (response.blockedReason || !response.available || !response.url)
           return {
@@ -778,8 +783,8 @@ export function SourceImageUploadMultiple({
           height: response.height,
           id,
         };
-      })
-    );
+      });
+    });
   }
 
   // Open crop modal with already-dimensioned images. pending are the cards that
@@ -946,6 +951,17 @@ export function SourceImageUploadMultiple({
 
   // handle adding new urls or files — just show previews, effects handle the rest
   function handleChange(items: (string | File)[]) {
+    // A new pick of a url whose read failed before is a new attempt: it is read again and goes
+    // through the crop check like any pick (not started as "unreadable"), and a failure is reported.
+    const urls = new Set(items.filter((src): src is string => typeof src === 'string'));
+    if (urls.size) {
+      for (const url of urls) reportedLoadFailuresRef.current.delete(url);
+      setUnreadableUrls((prev) =>
+        [...urls].some((url) => prev.has(url))
+          ? new Set([...prev].filter((url) => !urls.has(url)))
+          : prev
+      );
+    }
     setUploads((prev) => [
       ...prev,
       ...items.map((src) => {
