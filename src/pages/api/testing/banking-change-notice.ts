@@ -16,7 +16,8 @@
  *                                 banned or deleted accounts. dryRun defaults to TRUE and returns the
  *                                 counts only; pass `"dryRun": false` to send. Each user is recorded
  *                                 before their email goes out, so re-running never emails anyone
- *                                 twice; a failed send is un-recorded and retried by the next run.
+ *                                 twice; a failed send is un-recorded and retried by the next run,
+ *                                 except `stuckUserIds`, whose un-recording failed: unmark those.
  *   send-test - {email, username?}  Send one copy to `email`. Not recorded, not audience-checked.
  *   sent      - {}                  How many users have been sent the notice
  *   unmark    - {userId}            Forget that one user was sent it, so the next run sends again

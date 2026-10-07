@@ -102,6 +102,7 @@ export async function sendBankingChangeNotice({
   let sent = 0;
   let skipped = 0;
   const failedUserIds: number[] = [];
+  const stuckUserIds: number[] = [];
   for (let i = 0; i < batch.length; i += batchSize) {
     await Promise.all(
       batch.slice(i, i + batchSize).map(async (user) => {
@@ -119,7 +120,7 @@ export async function sendBankingChangeNotice({
           sent++;
         } catch {
           failedUserIds.push(user.id);
-          await sysRedis.hDel(SENT_KEY, String(user.id)).catch(() => undefined);
+          await sysRedis.hDel(SENT_KEY, String(user.id)).catch(() => stuckUserIds.push(user.id));
         }
       })
     );
@@ -133,6 +134,8 @@ export async function sendBankingChangeNotice({
     skipped,
     failed: failedUserIds.length,
     failedUserIds,
+    // Failed AND still recorded as sent, so later runs skip them until they are unmarked.
+    stuckUserIds,
     remaining: pending.length - sent - skipped,
   };
 }

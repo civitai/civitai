@@ -124,11 +124,9 @@ describe('getBankingChangeNoticeAudience', () => {
   it('asks ClickHouse for creator-program bank transfers in the last 12 months, and Postgres for the program flag', async () => {
     await getBankingChangeNoticeAudience();
 
-    const bankSql = chQuery.mock.calls[0][0].join('?').replace(/\s+/g, ' ');
-    expect(bankSql).toContain('SELECT DISTINCT fromAccountId AS userId');
-    expect(bankSql).toContain("WHERE type = 'bank'");
-    expect(bankSql).toContain("AND toAccountType = 'creatorProgramBank'");
-    expect(bankSql).toContain('AND date >= now() - INTERVAL 12 MONTH');
+    expect(chQuery.mock.calls[0][0].join('?').replace(/\s+/g, ' ').trim()).toBe(
+      "SELECT DISTINCT fromAccountId AS userId FROM buzzTransactions WHERE type = 'bank' AND toAccountType = 'creatorProgramBank' AND date >= now() - INTERVAL 12 MONTH"
+    );
 
     const [flagStrings, flag] = dbMock.dbRead.$queryRaw.mock.calls[0];
     expect(flagStrings.join('?').replace(/\s+/g, ' ').trim()).toBe(
@@ -182,6 +180,10 @@ describe('sendBankingChangeNotice', () => {
     expect(first).toMatchObject({ sent: 3, failed: 0, remaining: 0 });
     expect(sentTo()).toEqual(['u1@example.com', 'u2@example.com', 'u3@example.com']);
     expect(redisMock.sysRedis.expireAt).toHaveBeenCalledTimes(1);
+    expect(redisMock.sysRedis.expireAt).toHaveBeenCalledWith(
+      'notices:banking-change-sent',
+      new Date('2027-03-01T00:00:00Z')
+    );
 
     sendMock.mockClear();
     const second = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 2 });
@@ -224,5 +226,16 @@ describe('sendBankingChangeNotice', () => {
     const second = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10 });
     expect(second).toMatchObject({ sent: 1 });
     expect(sentTo()).toEqual(['u2@example.com']);
+  });
+
+  it('reports a failed send whose release also failed as stuck, and finishes the run', async () => {
+    sendMock.mockImplementation(async ({ to }: { to: string }) => {
+      if (to === 'u2@example.com') throw new Error('rejected');
+    });
+    redisMock.sysRedis.hDel.mockRejectedValue(new Error('redis down'));
+
+    const result = await sendBankingChangeNotice({ dryRun: false, count: 50, batchSize: 10 });
+
+    expect(result).toMatchObject({ sent: 2, failedUserIds: [2], stuckUserIds: [2] });
   });
 });
