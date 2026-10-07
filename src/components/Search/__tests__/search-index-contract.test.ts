@@ -136,10 +136,8 @@ describe('the models index sort contract', () => {
   // `search-index-sync-models-reset` has run in one, its index has never heard of the attribute,
   // and any client that sorts on it gets `Attribute ... is not sortable` and the query 400s.
   //
-  // Today no client sorts on it: the resource-intent seed (`searchShortlistModels` in
-  // ~/server/services/resource-intent-matcher.service.ts) did until it became popularity-only,
-  // and now needs neither this attribute nor a filterable `insight.role`. 🔴 The first client
-  // that sorts on it again must check the target environment's index has it before shipping.
+  // Today no client sorts on it. 🔴 The first client that does must check the target
+  // environment's index has it before shipping.
   //
   // ⚠ `sortMetrics` is a separate attribute still waiting on a reset, for a different
   // reason, recorded at src/components/Search/parsers/model.parser.ts:21-24 (declared

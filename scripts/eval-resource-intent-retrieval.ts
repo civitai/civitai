@@ -138,9 +138,9 @@ export const popularityArm: RetrievalArm = async (criteria, opts) => {
 /**
  * The positive control: how many models-index documents carry a non-`none`
  * `insight.role`, so a total projection fault (every document written with a null role)
- * reads 0 here rather than as a null study result. ⚠️ Neither arm reads this field any
- * more — PURPOSE's labels come from `loadResourceInsights` — so a pass here does not show
- * the re-rank had labels to read; the identical-at-K diagnostic is what catches that.
+ * reads 0 here rather than as a null study result. ⚠️ Neither arm reads this field
+ * (PURPOSE's labels come from `loadResourceInsights`), so a pass here does not show the
+ * re-rank had labels to read; the identical-at-K diagnostic catches that.
  */
 export async function countLabeledIndexDocuments(): Promise<number> {
   const client = searchClient;

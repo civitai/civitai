@@ -260,16 +260,14 @@ export const modelsFilterableAttributes = [
   // adding them to ./sortable-attributes.ts. They are unordered categories, so a
   // `role:desc` would order alphabetically and read as meaningful ranking; Meilisearch
   // accepts a sort on any declared sortable attribute without complaint, so that mistake
-  // is silent. A purpose query wants an EQUALITY filter (`insight.role = "style"`), which
-  // is exactly what this list buys.
+  // is silent. A purpose query would want an EQUALITY filter (`insight.role = "style"`),
+  // which is exactly what this list buys.
   //
-  // 🔴 NO RUNTIME READER: nothing serving requests filters on either field. The
-  // resource-intent matcher (~/server/services/resource-intent-matcher.service.ts) used to
-  // filter `insight.role` for a purpose-first seed and now seeds by popularity alone,
-  // reading labels from Postgres. The one remaining reader is the offline M3 study's
+  // 🔴 NO RUNTIME READER: nothing serving requests filters on either field (the
+  // resource-intent matcher reads labels from Postgres). The one reader is the offline M3
   // positive control (`countLabeledIndexDocuments` in
-  // scripts/eval-resource-intent-retrieval.ts), which counts documents with a non-`none`
-  // role. A document only ACQUIRES these fields when it is rewritten, so a model whose
+  // scripts/eval-resource-intent-retrieval.ts); removing `insight.role` from this list makes
+  // it fail. A document only ACQUIRES these fields when it is rewritten, so a model whose
   // document predates its label carries a null role. ⚠️ A future filter that ANDs the role
   // with the ARRAY form `versions.baseModel IN [...]` inherits the cross-version caveat in
   // ./models.search-index.ts: the role may come from a version on a different base model

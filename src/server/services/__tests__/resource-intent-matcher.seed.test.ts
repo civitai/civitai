@@ -16,9 +16,9 @@ import type { SearchParams } from 'meilisearch';
  *     shows up as a change in the POOL and the RETURNED shortlist rather than only in a
  *     spelling.
  *
- * The fake index still understands the role clause and the quality sort of the previous
- * purpose-first seed, so a regression to that seed is graded on what it returns rather
- * than dying on an unsupported field. It throws on any other sort field, so it cannot
+ * The fake index also honours the role clause and the `insight.qualityScore` sort, so a
+ * seed that reintroduces either is graded on what it returns rather than dying on an
+ * unsupported field. It throws on any other sort field, so it cannot
  * silently ignore a key it was never taught. Its own controls are the first describe
  * block below.
  */
@@ -71,28 +71,19 @@ type FakeDoc = {
 };
 
 /** One single-version model; a label, when given, is projected the way the index does. */
-const docOf = (
-  modelId: number,
-  versionId: number,
-  thumbsUpCount: number,
-  label?: Label,
-  // Multi-version models: the versions, and which one the projected label came from.
-  multi?: { versions: FakeDoc['versions']; labelVersionId: number }
-) =>
+const docOf = (modelId: number, versionId: number, thumbsUpCount: number, label?: Label) =>
   ({
     id: modelId,
     name: `model-${modelId}`,
     type: 'LORA',
     metrics: { thumbsUpCount },
-    versions: multi?.versions ?? [
-      { id: versionId, name: 'v1', baseModel: BASE_MODEL, canGenerate: true },
-    ],
+    versions: [{ id: versionId, name: 'v1', baseModel: BASE_MODEL, canGenerate: true }],
     insight: label
       ? {
           qualityScore: label.qualityScore,
           role: label.role,
           styleFamily: label.styleFamily,
-          modelVersionId: multi?.labelVersionId ?? versionId,
+          modelVersionId: versionId,
         }
       : { qualityScore: null, role: null, styleFamily: null, modelVersionId: null },
   } satisfies FakeDoc);
@@ -315,7 +306,8 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
   // The labels still act — through the re-rank, on the popularity pool. Cap 4 -> a pool
   // of 8: 5601 (a confident label for another role and style) is the most popular, the
   // `clothing` + `anime_manga` model 3901 the least popular member. The re-rank moves
-  // 3901 to the head and 5601 to the tail.
+  // 3901 to the head and 5601 to the tail, out of the first four: a re-rank that promoted
+  // without demoting would return 560100 second.
   const reorderCell = () => {
     const agrees = {
       role: 'clothing',

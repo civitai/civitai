@@ -68,12 +68,12 @@ export async function executeGoldsetStudy({
   const coverage = await resolveEndpointCoverage();
 
   // The retrieval study's positive control runs next, before any vendor spend, and so
-  // also gates part one: a models index with no projected `insight.role` would turn
-  // the purpose arm into the popularity arm and the study into a silent null result.
+  // also gates part one. ⚠️ Neither arm reads `insight.role` any more (the re-rank reads
+  // labels from Postgres), so this only shows the labeling pass reached this index.
   const labeledIndexDocuments = await countLabeledIndexDocuments();
   if (labeledIndexDocuments < M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor) {
     throw new Error(
-      `[goldset] positive control FAILED: ${labeledIndexDocuments} models-index documents carry a non-none insight.role (floor ${M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor}). The purpose arm cannot differ from the popularity arm on this index; aborting before any vendor call.`
+      `[goldset] positive control FAILED: ${labeledIndexDocuments} models-index documents carry a non-none insight.role (floor ${M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor}). The labeling pass has not reached this index; aborting before any vendor call.`
     );
   }
 

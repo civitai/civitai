@@ -732,8 +732,9 @@ function fakeIndex(corpus: FakeDoc[]) {
   };
 }
 
-// Model 4 is the ONLY model labeled for `style`, and the least popular: the purpose arm
-// must seed it first, and a popularity arm that did no label ordering must keep it last.
+// Model 4 is the ONLY model labeled for `style`, and the least popular: the purpose arm's
+// re-rank must move it first, and a popularity arm that did no label ordering must keep it
+// last.
 const CORPUS = [
   doc(1, 900),
   doc(2, 800, { role: 'clothing', qualityScore: 0.9 }),
@@ -821,7 +822,7 @@ describe('the fake index — controls on the instrument', () => {
 });
 
 describe('runRetrievalArms — the two arms', () => {
-  it('🔴 the PURPOSE arm seeds the labeled match first; the POPULARITY arm keeps pure thumbs-up order', async () => {
+  it('🔴 the PURPOSE arm re-ranks the labeled match first; the POPULARITY arm keeps pure thumbs-up order', async () => {
     const [outcome] = await runRetrievalArms([row(1)], {
       stage1: stage1As('style'),
       armOpts: ARM_OPTS,

@@ -85,7 +85,7 @@ reads it to order the shortlist.
 `metrics.thumbsUpCount:desc`, `poolCap` documents wide. No role filter and no quality
 key — the labels act only through the ordering below.
 
-Why popularity alone. Two label-driven seeds were tried and both lost. A single
+Why popularity alone. Two label-driven seeds came before it. A single
 quality-first sort with no role filter ranked labeled models by quality regardless of
 purpose, so a busy type × baseModel cell filled the pool with labeled models for other
 purposes. Its replacement seeded by PURPOSE first (the filter AND
@@ -97,7 +97,8 @@ had actually attached. An offline replay of the study's 254 prompts then screene
 seed designs; the only one that tied popularity on hit@10 (26 vs 25) and led it on
 MRR@50 (0.050 vs 0.022) was this one — the popularity page alone, with the label
 ordering on top — and every design that put role-filtered documents into the pool
-lost. That is a screen, not a verdict; a v3 registration of the study grades it.
+lost. That is a screen, not a verdict: this seed is not yet graded, and a v3 registration
+of the study is planned to judge it.
 
 The seed reaches `applyInsightRanking` only as the tiebreak index.
 
@@ -514,7 +515,7 @@ confound the pre-registration states.
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
 - **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index projection** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. The matcher no longer reads any of them (its seed is popularity alone), so an index lacking those settings does not affect it; only the M3 positive control filters `insight.role`.
-- **M3:** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the resource-meaning layer's last closing clause, quoted in that section. Registration v2 judged the previous, purpose-first seed NOT MET; the popularity seed is graded by a later registration. Run it only once the seed it grades serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison).
+- **M3:** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the resource-meaning layer's last closing clause, quoted in that section. Registration v2 judged the previous, purpose-first seed NOT MET; the popularity seed is not yet graded. Run it only once the seed it grades serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison).
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.
   ⚠️ **The volume half is NOT affected, and the clause above is the reason:** the shadow write is unconditional, so rows/day tracks calls/day and is invariant to the miss rate. A volume reading stays trustworthy under this fault — do not discount it.
@@ -527,6 +528,7 @@ Unit suites (fixture-based, no external calls):
 
 - `src/server/services/ai/__tests__/jev.test.ts` — fail-closed parsing, model pin, timeout.
 - `src/server/services/__tests__/resource-intent-matcher.service.test.ts` — gates, determinism, cap, the label ordering, its two confidence floors, and the label-read fallback it reports.
+- `src/server/services/__tests__/resource-intent-matcher.seed.test.ts` — the popularity-only seed (one page, no role filter, no quality key) against an in-memory index, including that role matches which would fill the pool do not evict the popular models, and that the re-rank still reorders the pool.
 - `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.

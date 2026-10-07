@@ -45,14 +45,10 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  * Filter conventions mirror `resource-select.service.ts` (same index, same
  * meili-filter builder).
  *
- * 🔴 The candidate POOL IS SEEDED BY POPULARITY ALONE (`searchShortlistModels`: the gate
- * filter, sorted `metrics.thumbsUpCount:desc`), and the labels act only through
- * `applyInsightRanking` on that pool. Do not put role-filtered or quality-sorted documents
- * back into the seed: the M3 study (v2) found a purpose-first seed retrieved attached
- * models about half as often as popularity, because the role-matched page filled the pool
- * and evicted the popular model the user wanted, and an offline replay of its prompts
- * found every seed design that admitted role-filtered documents lost to this one
- * (docs/resource-intent-primitive.md).
+ * 🔴 The pool is seeded by popularity alone (`searchShortlistModels`); labels act only
+ * through `applyInsightRanking`. Do not put role-filtered or quality-sorted documents back
+ * into the seed: a role-filtered page fills the pool and evicts the popular model the user
+ * attached (M3 study v2, docs/resource-intent-primitive.md).
  */
 
 export type ResourceIntentCoverage = { next: boolean; member: boolean };
@@ -308,9 +304,8 @@ async function searchShortlistModels(
     // 🔴 Popularity ONLY: no role filter and no quality key — see this module's header.
     sort: ['metrics.thumbsUpCount:desc'],
     // One document per targeted version, no multiplier. A document can still expand to
-    // zero versions (the coverage and baseModel filters are nested-array matches); the
-    // width sweep behind this is in this function's history from before #5352, when it
-    // fetched this same page.
+    // zero versions (the coverage and baseModel filters are nested-array matches), so the
+    // pool can be narrower than `poolCap`.
     limit: poolCap,
   };
   try {
@@ -335,8 +330,8 @@ async function searchShortlistModels(
 
 /**
  * The candidate pool before any label is read, and the response cap it is later cut to.
- * Exported so the M3 study's POPULARITY arm (`scripts/eval-resource-intent-retrieval.ts`)
- * is this pool cut to `cap`: the two study arms then differ only by `applyInsightRanking`.
+ * Exported so the M3 POPULARITY arm (`scripts/eval-resource-intent-retrieval.ts`) reads
+ * this same pool; the two study arms then differ only by `applyInsightRanking`.
  */
 export async function seedResourceIntentPool(
   criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
