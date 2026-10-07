@@ -436,7 +436,7 @@ export function retrievalVerdict(e: {
   if (e.n < minScored) {
     return {
       verdict: 'VOID',
-      reason: `${e.n} prompts scored, under the ${minScored}-prompt scored-fraction floor carried from v2's sample design`,
+      reason: `${e.n} prompts scored, under the ${minScored}-prompt floor (the scored-fraction floor rule carried from v2)`,
     };
   }
   if (e.promotableScored / e.n < p.minPromotableFraction) {

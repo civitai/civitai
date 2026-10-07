@@ -342,7 +342,7 @@ describe('the pre-registration', () => {
         '            any follow-up is new work under a new registration, not a re-run.',
         '  VOID    — no verdict, if ANY of: a registered value was overridden (including the',
         '            100-prompt pilot); fewer than 1334 prompts scored (the scored-fraction',
-        "            floor carried from v2's sample design: 2000 drawn x 66.7%); infrastructure",
+        '            floor rule carried from v2: 2000 drawn x 66.7%); infrastructure',
         '            exclusions (stage-1 failure, arm error, label-read fallback) exceed 10%',
         '            of drawn prompts; or the positive control fails. VOID takes precedence over',
         '            both co-primaries.',
@@ -373,7 +373,7 @@ describe('the pre-registration', () => {
         "(the replay's planning value, not the pilot's) gives power for (ii) of 1.00.",
         'The margin: 0.02 is absolute against a hit@10 base rate of about 10-11% (v2: 11.3% for POPULARITY),',
         'so a relative loss of up to 18% — roughly one hit in five — would still pass (i).',
-        'The pilot re-measures the scored fraction and',
+        'The pilot rule, as registered: the pilot re-measures the scored fraction and',
         'both rates; a shortfall there means re-planning in a new commit, never after the run.',
       ],
       [
@@ -423,11 +423,38 @@ describe('the pre-registration', () => {
     expect(text.split('\n')[0]).toBe(
       'M3 RETRIEVAL PRE-REGISTRATION v3 (registered 2026-10-07, before any registered run)'
     );
-    // No old planning value survives outside the record's "planned"/"from" figures.
-    const outsideRecord = text.slice(0, text.indexOf('Re-plan (2026-10-07'));
+    // No old planning value survives outside the record's "planned"/"from" figures —
+    // before it or after it.
+    const recordStart = text.indexOf('Re-plan (2026-10-07');
+    const recordEndMarker = 'positive control and the registration date are unchanged.';
+    const recordEnd = text.indexOf(recordEndMarker);
+    expect(recordStart).toBeGreaterThan(-1);
+    expect(recordEnd).toBeGreaterThan(recordStart);
+    const outsideRecord =
+      text.slice(0, recordStart) + text.slice(recordEnd + recordEndMarker.length);
+    expect(outsideRecord).toContain('Known confound'); // the tail really is included
     // (Lookarounds, so `0.1000` in the se formula is not read as the old sample size.)
     expect(outsideRecord).not.toMatch(
       /(?<![\d.])(1000|667|822)(?![\d.])|(?<![\d.])5\.1%|13\.4%|best-of-18 screen\):/
+    );
+  });
+});
+
+describe('mrrSignTestPower — co-primary (ii) power, where it is not saturated', () => {
+  // Literals computed independently (Python, exact binomial and exact two-sided p).
+  it.each([
+    [110, 0.68, 0.9695510310011994], // the replaced design's 110 non-ties
+    [40, 0.68, 0.6010817059858157],
+    [40, 0.5, 0.01923865414210013], // no effect: only the up > down half of alpha
+    [0, 0.68, 0],
+  ])('%i non-ties at %f favouring PURPOSE → power %f', (nonTies, share, power) => {
+    expect(registrationModule.mrrSignTestPower(nonTies, share)).toBeCloseTo(power, 12);
+  });
+
+  it('plannedPower() uses it at the planning non-tie count', () => {
+    const p = M3_RETRIEVAL_PREREGISTRATION;
+    expect(registrationModule.plannedPower().mrrPower).toBe(
+      registrationModule.mrrSignTestPower(440, p.planning.mrrPurposeShare)
     );
   });
 });
@@ -844,7 +871,7 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
     expect(verdictOf(run({ ...bothHold, neither: 813 }))).toEqual({
       verdict: 'VOID',
       reason:
-        "1333 prompts scored, under the 1334-prompt scored-fraction floor carried from v2's sample design",
+        '1333 prompts scored, under the 1334-prompt floor (the scored-fraction floor rule carried from v2)',
     });
   });
 
@@ -911,7 +938,7 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
     expect(retrievalVerdict({ ...base, drawn: 1333, n: 1333, promotableScored: 1333 })).toEqual({
       verdict: 'VOID',
       reason:
-        "1333 prompts scored, under the 1334-prompt scored-fraction floor carried from v2's sample design",
+        '1333 prompts scored, under the 1334-prompt floor (the scored-fraction floor rule carried from v2)',
     });
   });
 });

@@ -494,14 +494,14 @@ v3 asks a new question of the popularity-seed matcher, in brief:
 
 The labeled/unlabeled breakdown is reported but never decisive.
 
-**Run the pilot first.** Before the registered run, run
-`--execute --retrieval-sample 100` — no new flags; the override stamps the report as not
-the registered run, so its verdict is VOID by construction. Its report prints the scored
-fraction, the hit@10 discordant rate and the MRR non-tie rate against the planning values,
-and only a pilot below them prints the re-plan banner. Re-plan, if needed, only in a new
-commit dated before the registered run, and say why in it. That has happened once (the
-2026-10-07 re-plan above); the planning values the report compares against are the
-re-planned ones.
+**The pilot has run.** The pilot is `--execute --retrieval-sample 100` — no new flags;
+the override stamps the report as not the registered run, so its verdict is VOID by
+construction. Its report prints the scored fraction, the hit@10 discordant rate and the
+MRR non-tie rate against the planning values, and only a pilot below them prints the
+re-plan banner. The rule is to re-plan only in a new commit dated before the registered
+run, and say why in it. v3's pilot ran, and its nuisance rates became the planning
+values in the one 2026-10-07 re-plan above. A report now compares against those
+re-planned values, so the registered run is what comes next.
 
 **Coverage must resolve as the endpoint's does, or the run does not happen.** Both arms
 filter on generation coverage from `coverageAudience(undefined)`, which reads Flipt through

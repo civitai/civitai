@@ -213,12 +213,11 @@ export function normalCdf(x: number): number {
  * - `minPromotableFraction`: the positive control on what PURPOSE actually reads — the
  *   share of scored prompts whose pool held at least one version the re-rank promotes.
  * - `planning`: power-planning inputs. Assumptions, not evidence; they decide nothing.
- *   `scored` (2000 drawn × the pilot's 80.0% scored), the hit@`primaryK` discordance
- *   `hitDiscordant` / `hitDiscordantOf` (8 of the pilot's 80 scored) and `mrrNonTieRate`
- *   (the pilot's 22 of 80) are the pilot's NUISANCE rates. `mrrPurposeShare` is the only
- *   effect-size input and is still the offline replay's planning value — the pilot's effect
- *   estimate is not used. `v2PopularityHitRate` sizes the margin sentence; `replayDesigns`
- *   / `replayPrompts` are the replay's provenance, quoted in the Selection sentence.
+ *   `scored`, `hitDiscordant` / `hitDiscordantOf` and `mrrNonTieRate` are the pilot's
+ *   NUISANCE rates (`replan.pilot`). `mrrPurposeShare`, the only effect-size input, is
+ *   still the offline replay's value — the pilot's effect estimate is not used.
+ *   `v2PopularityHitRate` sizes the margin sentence; `replayDesigns` / `replayPrompts`
+ *   are the replay's provenance, quoted in the Selection sentence.
  * - `replan`: the one re-plan, made 2026-10-07 before any registered run under the
  *   pilot rule the text states — the pilot's nuisance counts (`pilot`) and the values the
  *   re-plan replaced (`from`). Printed, never read by the verdict.
@@ -268,6 +267,25 @@ function nonInferiorityPowerAt(discordantRate: number, n: number): number {
 }
 
 /**
+ * Power of co-primary (ii): the probability that an exact two-sided sign test over
+ * `nonTies` prompts finds up > down at p < `alpha`, when each non-tie favours PURPOSE
+ * with probability `purposeShare`.
+ */
+export function mrrSignTestPower(nonTies: number, purposeShare: number): number {
+  const p = M3_RETRIEVAL_PREREGISTRATION;
+  let power = 0;
+  for (let up = 0; up <= nonTies; up++) {
+    const down = nonTies - up;
+    if (up > down && exactMcNemarP(up, down) < p.alpha) {
+      power += Math.exp(
+        logChoose(nonTies, up) + up * Math.log(purposeShare) + down * Math.log(1 - purposeShare)
+      );
+    }
+  }
+  return power;
+}
+
+/**
  * The planned power of each co-primary, derived from `planning` — plus, for the re-plan
  * record only, (i)'s power at the replaced sample size under the same pilot rates.
  */
@@ -285,17 +303,7 @@ export function plannedPower() {
   );
   const previousNonInferiorityPower = nonInferiorityPowerAt(hitDiscordantRate, previousScored);
   const mrrNonTies = Math.round(scored * mrrNonTieRate);
-  let mrrPower = 0;
-  for (let up = 0; up <= mrrNonTies; up++) {
-    const down = mrrNonTies - up;
-    if (up > down && exactMcNemarP(up, down) < p.alpha) {
-      mrrPower += Math.exp(
-        logChoose(mrrNonTies, up) +
-          up * Math.log(mrrPurposeShare) +
-          down * Math.log(1 - mrrPurposeShare)
-      );
-    }
-  }
+  const mrrPower = mrrSignTestPower(mrrNonTies, mrrPurposeShare);
   return {
     hitDiscordantRate,
     hitSe,
@@ -381,7 +389,7 @@ export function renderRetrievalPreregistration(): string {
     '            any follow-up is new work under a new registration, not a re-run.',
     `  VOID    — no verdict, if ANY of: a registered value was overridden (including the`,
     `            ${p.pilotSampleSize}-prompt pilot); fewer than ${p.voidIf.minScored} prompts scored (the scored-fraction`,
-    `            floor carried from v2's sample design: ${p.sampleSize} drawn x ${(
+    `            floor rule carried from v2: ${p.sampleSize} drawn x ${(
       (p.voidIf.minScored / p.sampleSize) *
       100
     ).toFixed(1)}%); infrastructure`,
@@ -456,7 +464,7 @@ export function renderRetrievalPreregistration(): string {
       (p.nonInferiorityMargin / p.planning.v2PopularityHitRate) *
       100
     ).toFixed(0)}% — roughly one hit in five — would still pass (i).`,
-    'The pilot re-measures the scored fraction and',
+    'The pilot rule, as registered: the pilot re-measures the scored fraction and',
     'both rates; a shortfall there means re-planning in a new commit, never after the run.',
     '',
     `Re-plan (${r.replannedOn}, once, before any registered run): only the VOID ${p.pilotSampleSize}-prompt pilot`,
