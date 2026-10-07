@@ -120,10 +120,13 @@ export async function resolveUserRestriction({
   if (restriction.status !== UserRestrictionStatus.Pending)
     throw throwBadRequestError('Restriction has already been resolved');
 
-  await dbWrite.userRestriction.update({
-    where: { id: userRestrictionId },
+  // Pending in the WHERE, not just the read above: two rulings racing on one case would otherwise
+  // both land, and an uphold overwriting an overturn re-mutes an account whose content was restored.
+  const ruled = await dbWrite.userRestriction.updateMany({
+    where: { id: userRestrictionId, status: UserRestrictionStatus.Pending },
     data: { status, resolvedAt: new Date(), resolvedBy: moderatorId, resolvedMessage },
   });
+  if (!ruled.count) throw throwBadRequestError('Restriction has already been resolved');
 
   let stillHeld = false;
   if (status === UserRestrictionStatus.Upheld) {

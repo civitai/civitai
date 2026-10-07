@@ -136,6 +136,21 @@ const {
           return { ...row };
         }
       ),
+      updateMany: vi.fn(
+        async ({
+          where,
+          data,
+        }: {
+          where: { id: number; status?: string };
+          data: Record<string, unknown>;
+        }) => {
+          const rows = store.restrictions.filter(
+            (r) => r.id === where.id && (where.status === undefined || r.status === where.status)
+          );
+          for (const row of rows) Object.assign(row, data);
+          return { count: rows.length };
+        }
+      ),
     },
     // Strike writes; nothing in a ruling should reach them except the overturn's raw void.
     $executeRaw: vi.fn(async () => 0),
@@ -742,6 +757,7 @@ describe('resolveUserRestriction — ruling scope', () => {
       // Nothing at all happened — checked rather than assumed, because the refusal is only worth
       // anything if it lands BEFORE the first write.
       expect(dbWrite.userRestriction.update).not.toHaveBeenCalled();
+      expect(dbWrite.userRestriction.updateMany).not.toHaveBeenCalled();
       expect(store.restrictions[0].status).toBe('Pending');
       expect(dbWrite.user.update).not.toHaveBeenCalled();
       expect(createNotification).not.toHaveBeenCalled();
@@ -1109,6 +1125,31 @@ describe('resolveUserRestriction — scam rulings', () => {
         data: expect.objectContaining({ muted: true, muteExpiresAt: null }),
       })
     );
+  });
+
+  it('a ruling that loses the race to another ruling writes nothing and refuses', async () => {
+    store.users.set(USER_ID, makeUser(USER_ID, { muted: false }));
+    const id = fileCase(1, 'generation');
+    // The read sees Pending; a concurrent overturn lands before this uphold's write.
+    const original = vi.mocked(dbWrite.userRestriction.findUnique).getMockImplementation()!;
+    vi.mocked(dbWrite.userRestriction.findUnique).mockImplementationOnce(async (args) => {
+      const row = await original(args as never);
+      store.restrictions.find((r) => r.id === id)!.status = UserRestrictionStatus.Overturned;
+      return row;
+    });
+
+    await expect(
+      resolveUserRestriction({
+        userRestrictionId: id,
+        status: UserRestrictionStatus.Upheld,
+        moderatorId: MOD_ID,
+      })
+    ).rejects.toThrow('Restriction has already been resolved');
+    expect(store.restrictions.find((r) => r.id === id)?.status).toBe(
+      UserRestrictionStatus.Overturned
+    );
+    expect(store.users.get(USER_ID)?.muted).toBe(false);
+    expect(dbWrite.user.update).not.toHaveBeenCalled();
   });
 
   it('upholding sets mutedAt and sends the scam notice', async () => {
