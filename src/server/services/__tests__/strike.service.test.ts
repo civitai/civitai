@@ -1217,97 +1217,34 @@ describe('strike.service', () => {
   // acceptTosAfterMute
   // ==========================================================================
   describe('acceptTosAfterMute', () => {
-    const strikeMuted = {
-      muted: true,
-      mutedAt: null,
-      meta: { muteReason: 'strike-escalation' },
-    };
-
-    function mockAcceptTransaction(user: any, pointsSum: number, { openCase = false } = {}) {
-      const { tx, userUpdate } = txClient(user, [[{ sum: pointsSum }]], { openCase });
-      mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
-      return { userUpdate };
-    }
-
-    it('records the acceptance and lifts the mute', async () => {
-      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2);
+    it('records the acceptance and never touches the mute', async () => {
+      const { userUpdate } = mockTransactionForEscalation(2, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: { muteReason: 'strike-escalation' },
+      });
 
       const result = await acceptTosAfterMute({ userId: 1 });
 
-      expect(result).toEqual({ unmuted: true });
+      expect(result).toEqual({ accepted: true });
       // The modal's own settings write is not awaited, so this call owns the acceptance record.
       expect(mockSetUserSetting).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ tosLastSeenDate: expect.any(Date) })
       );
-      expect(userUpdate).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
-      );
-      expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
+      expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+      expect(userUpdate).not.toHaveBeenCalled();
+      expect(mockRefreshSession).not.toHaveBeenCalled();
     });
 
     it('records against the domain the user accepted on', async () => {
-      mockAcceptTransaction(strikeMuted, 2);
-
       await acceptTosAfterMute({ userId: 1, domain: 'green' });
 
       expect(mockSetUserSetting).toHaveBeenCalledWith(
         1,
         expect.objectContaining({ tosGreenLastSeenDate: expect.any(Date) })
       );
-    });
-
-    it('refuses an account muted for something OTHER than strikes', async () => {
-      // 🔴 The exploit this closes: the mutation is `protectedProcedure`, so any signed-in account can
-      // call it. Without the reason check a spam bot the scam job muted unmutes itself by accepting
-      // the Terms — never being shown the modal is not a control.
-      const { userUpdate } = mockAcceptTransaction(
-        { muted: true, mutedAt: null, meta: { muteReason: 'auto-mute-scam' } },
-        2
-      );
-
-      const result = await acceptTosAfterMute({ userId: 1 });
-
-      expect(result).toEqual({ unmuted: false, reason: 'not-eligible' });
-      expect(userUpdate).not.toHaveBeenCalled();
-      expect(mockRefreshSession).not.toHaveBeenCalled();
-    });
-
-    it('refuses a moderator-set mute', async () => {
-      const { userUpdate } = mockAcceptTransaction(
-        { muted: true, mutedAt: new Date('2026-01-01'), meta: { muteReason: 'strike-escalation' } },
-        2
-      );
-
-      const result = await acceptTosAfterMute({ userId: 1 });
-
-      expect(result).toEqual({ unmuted: false, reason: 'moderator' });
-      expect(userUpdate).not.toHaveBeenCalled();
-    });
-
-    it('refuses the review tier — a moderator decides that one', async () => {
-      const { userUpdate } = mockAcceptTransaction(strikeMuted, 3);
-
-      const result = await acceptTosAfterMute({ userId: 1 });
-
-      expect(result).toEqual({ unmuted: false, reason: 'review' });
-      expect(userUpdate).not.toHaveBeenCalled();
-    });
-
-    it('decides on state read INSIDE the transaction, not before it', async () => {
-      // Pins the eligibility read to the transaction: reverted to a pre-transaction `dbRead` read,
-      // this decides on state that may already be stale.
-      const escalated = {
-        muted: true,
-        mutedAt: null,
-        meta: { muteReason: 'strike-escalation', strikeFlaggedForReview: true },
-      };
-      const { userUpdate } = mockAcceptTransaction(escalated, 3);
-
-      const result = await acceptTosAfterMute({ userId: 1 });
-
-      expect(result).toEqual({ unmuted: false, reason: 'review' });
-      expect(userUpdate).not.toHaveBeenCalled();
     });
   });
 

@@ -114,10 +114,6 @@ export const getMyStrikesHandler = async ({
   }
 };
 
-/**
- * The user accepting the Terms after a strike mute. Returns whether it actually released them, so the
- * client can tell "you are unblocked" from "a moderator is reviewing this" without a second call.
- */
 export const acceptTosAfterMuteHandler = async ({ ctx }: { ctx: ProtectedContext }) => {
   try {
     return await acceptTosAfterMute({ userId: ctx.user.id, domain: ctx.domain });
