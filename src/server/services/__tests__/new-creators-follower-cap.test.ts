@@ -32,13 +32,29 @@ beforeEach(() => {
   redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
 });
 
+// Whitespace-insensitive, so the assertions pin the clause and where it sits, not the indentation.
+const sql = () => emittedSql().replace(/\s+/g, ' ');
+
 describe('getNewCreatorUserIds follower cap', () => {
-  it('filters on follower count when maxFollowers is given', async () => {
-    const ids = await getNewCreatorUserIds({ entity: 'images', maxFollowers: 1000 });
+  // 500, not the production 1000, so a hard-coded threshold cannot pass.
+  it('filters on all-time follower count in the WHERE clause', async () => {
+    const ids = await getNewCreatorUserIds({ entity: 'images', maxFollowers: 500 });
 
     expect(ids).toEqual([1, 2]);
-    expect(emittedSql()).toMatch(/LEFT JOIN "UserMetric" um/);
-    expect(emittedSql()).toMatch(/COALESCE\(um\."followerCount", 0\) < \s*1000/);
+    // The whole ON clause: another timeframe makes the cap a near no-op (weekly gains), and no
+    // timeframe at all fans each creator out once per timeframe under the 200-row LIMIT.
+    expect(sql()).toContain(
+      `LEFT JOIN "UserMetric" um ON um."userId" = lr."userId" AND um.timeframe = 'AllTime' WHERE`
+    );
+    // In the WHERE, right before ORDER BY: inside the LEFT JOIN's ON it would filter nothing.
+    expect(sql()).toMatch(/\) AND COALESCE\(um\."followerCount", 0\) < 500 ORDER BY lr\.position/);
+  });
+
+  it('treats a cap of 0 as a cap, not as no cap', async () => {
+    await getNewCreatorUserIds({ entity: 'images', maxFollowers: 0 });
+
+    expect(sql()).toMatch(/COALESCE\(um\."followerCount", 0\) < 0 ORDER BY/);
+    expect(cacheKeysRead()).toEqual([expect.stringMatching(/:images-new:max-followers-0$/)]);
   });
 
   // The uncapped list backs the /images?newCreators=true browse feed, which Justin did not ask
@@ -46,7 +62,8 @@ describe('getNewCreatorUserIds follower cap', () => {
   it('leaves the uncapped browse-feed list unfiltered', async () => {
     await getNewCreatorUserIds({ entity: 'images' });
 
-    expect(emittedSql()).not.toMatch(/UserMetric|followerCount/);
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(sql()).not.toMatch(/UserMetric|followerCount/);
   });
 
   // Sharing a key would let whichever caller filled the cache first decide for the other for
@@ -54,10 +71,10 @@ describe('getNewCreatorUserIds follower cap', () => {
   // block would intermittently get them back.
   it('caches the capped list under its own key', async () => {
     await getNewCreatorUserIds({ entity: 'images' });
-    await getNewCreatorUserIds({ entity: 'images', maxFollowers: 1000 });
+    await getNewCreatorUserIds({ entity: 'images', maxFollowers: 500 });
 
     const [uncapped, capped] = cacheKeysRead();
     expect(uncapped).toMatch(/:images-new$/);
-    expect(capped).toMatch(/:images-new:max-followers-1000$/);
+    expect(capped).toMatch(/:images-new:max-followers-500$/);
   });
 });

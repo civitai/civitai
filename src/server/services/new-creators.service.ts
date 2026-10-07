@@ -67,7 +67,8 @@ export async function getNewCreatorUserIds({
   maxFollowers?: number;
 }): Promise<number[]> {
   const boardId = getNewCreatorBoardId(entity, domain);
-  const capSuffix = maxFollowers ? `:max-followers-${maxFollowers}` : '';
+  const capped = maxFollowers !== undefined;
+  const capSuffix = capped ? `:max-followers-${maxFollowers}` : '';
 
   return await fetchThroughCache(
     `${REDIS_KEYS.CACHES.NEW_CREATORS}:${boardId}${capSuffix}`,
@@ -81,7 +82,7 @@ export async function getNewCreatorUserIds({
         SELECT lr."userId"
         FROM "LeaderboardResult" lr
         ${
-          maxFollowers
+          capped
             ? Prisma.sql`LEFT JOIN "UserMetric" um ON um."userId" = lr."userId" AND um.timeframe = 'AllTime'`
             : Prisma.empty
         }
@@ -91,7 +92,7 @@ export async function getNewCreatorUserIds({
             (SELECT MAX(date) FROM "LeaderboardResult" WHERE "leaderboardId" = ${boardId})
           )
           ${
-            maxFollowers
+            capped
               ? Prisma.sql`AND COALESCE(um."followerCount", 0) < ${maxFollowers}`
               : Prisma.empty
           }

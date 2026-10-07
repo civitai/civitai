@@ -307,8 +307,10 @@ export function resolveFeedFetchLimit(limit?: number) {
 // "New & upcoming" blocks exist to show creators without an established following. Sorted by
 // reactions alone, the pool went to a handful of the board's biggest accounts (2026-10-07: 42
 // images from 15 of 200 creators, one holding 14), and the client's per-view cap only rotated
-// which two of theirs showed. So these blocks cap followers in the creator list and cap each
-// creator's share of the pool itself, not just of the view.
+// which two of theirs showed. So these blocks cap each creator's share of the pool itself, not
+// just of the view, and the images block caps followers in its creator list.
+// The models board (`new_creators`) applies the same < 1000 rule in its own Leaderboard.query SQL,
+// which lives in the database: retune both together.
 const NEW_CREATORS_MAX_FOLLOWERS = 1000;
 // Filling 42 at 2 per creator took the top 98 ranked images on 2026-10-07.
 const NEW_CREATORS_POOL_OVERFETCH = 3;
