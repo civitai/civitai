@@ -59,7 +59,7 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     { category: categoryFilter, sort: 'popular', limit: RELATED_LISTINGS_LIMIT + 1 },
     { enabled: canSeeStore && !!categoryFilter }
   );
-  // Not a cast: `listAvailable` is typed as app + sub-listing cards.
+  // Drops sub-listing cards: `AppListingCard` throws on them.
   const sameCategory = onlyListingCards(categoryQuery.data?.items ?? []);
 
   const wantTopUp =

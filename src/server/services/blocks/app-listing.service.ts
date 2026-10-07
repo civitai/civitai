@@ -1129,8 +1129,8 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * the literal key too, and the blocker is `cursor`: it is a free-form string of up to
  * `LISTING_CURSOR_MAX` characters, so lifting it out of the hash makes the redis keyspace
  * AND the `cache_name` metric label request-controlled and unbounded — exactly the
- * property the note at the bottom of this comment relies on. (`kind`, `category` and `sort` are closed enums and
- * `limit` is 1..50, so those four could be lifted; they would multiply the label
+ * property the note at the bottom of this comment relies on. (`kind`, `category` and
+ * `sort` are closed enums and `limit` is 1..50, so those four could be lifted; they would multiply the label
  * cardinality by their product, and they do not help while `cursor` stays hashed,
  * because `cursor` is the tuning room the collision is built out of.) Widening
  * `hashify` is the other alternative and it is global — see below.
@@ -1327,6 +1327,17 @@ export async function listAvailableListings(
       scope,
     });
 
+  // 1 = the cursor sits on a child row: children sort after their parent on the same key.
+  const cursorTb = isAppSubListingId(cursorId) ? 1 : 0;
+  // On the parents-only statement a child cursor means every parent on that sort key was
+  // already served (parents sort before their children), so it resumes strictly after the
+  // key. Comparing the parent id against an `asl_` id instead would serve such a parent
+  // twice, e.g. when the flag turns off or the tables are missing between two pages.
+  const parentKeyset =
+    cursorTb === 1
+      ? Prisma.sql`${sortKeyExpr} ${keysetCmp} ${cursorSortKey}::text`
+      : Prisma.sql`(${sortKeyExpr}, al.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)`;
+
   // 🔴 CACHED. Only the keyset ID PAGE is cached — the hydration below stays a live
   // read, exactly as `getPostsInfinite` (`~/server/services/post.service`) does it, so
   // a card's mutable projection fields are never served from two different ages.
@@ -1341,16 +1352,6 @@ export async function listAvailableListings(
   // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
   // no mutation to hang a bust on. It is NOT a redis-outage backstop: `queryCache` has no
   // fail-open, so a redis outage is a 500 on `/apps` and on `GET /api/v1/apps`.
-
-  const cursorTb = isAppSubListingId(cursorId) ? 1 : 0;
-  // On the parents-only statement a child cursor means every parent on that sort key was
-  // already served (parents sort before their children), so it resumes strictly after the
-  // key. Comparing the parent id against an `asl_` id instead would serve such a parent
-  // twice, e.g. when the flag turns off or the tables are missing between two pages.
-  const parentKeyset =
-    cursorTb === 1
-      ? Prisma.sql`${sortKeyExpr} ${keysetCmp} ${cursorSortKey}::text`
-      : Prisma.sql`(${sortKeyExpr}, al.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)`;
   const parentsOnlyPage = (levelFilter: Prisma.Sql) =>
     catalogPageCache(
       scope,

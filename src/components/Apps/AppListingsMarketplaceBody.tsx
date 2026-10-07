@@ -249,7 +249,6 @@ export function AppListingsMarketplaceBody() {
       // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
       // request-time zod error, not a bigger page.
       limit: 48,
-      // The only caller that renders `SubListingCard`s.
       includeSubListings: true,
     },
     {

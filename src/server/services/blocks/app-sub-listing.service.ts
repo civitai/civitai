@@ -461,6 +461,7 @@ async function writeSubListing(
       editRejectionReason: null,
       status: 'pending',
       statusReason: null,
+      // Restore keys on `approvedAt`; a stale stamp would let hide + restore skip re-review.
       approvedAt: null,
     });
     if (!written) return again();
@@ -649,10 +650,19 @@ export async function syncSubListingForSharedRow(
     // A store-hidden row is left hidden, but its version moves: a moderator restore that read
     // the shared row as live just before this change then fails its compare-and-set instead
     // of republishing an item the app has just removed.
-    await dbWrite.appSubListing.updateMany({
-      where: { ...where, status: 'hidden' },
-      data: { updatedAt: new Date() },
-    });
+    // Its own best-effort step: a failed touch must not stop the hide/withdraw below.
+    await dbWrite.appSubListing
+      .updateMany({ where: { ...where, status: 'hidden' }, data: { updatedAt: new Date() } })
+      .catch((err: unknown) => {
+        if (isMissingTableError(err)) throw err;
+        logToAxiom({
+          name: 'app-sub-listing-shared-sync-failed',
+          type: 'error',
+          message: err instanceof Error ? err.message : String(err),
+          appBlockId: args.appBlockId,
+          change: args.change,
+        }).catch(() => null);
+      });
     await transitionActive({
       where,
       data:

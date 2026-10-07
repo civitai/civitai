@@ -344,7 +344,7 @@ describe('upsertSubListing — status changes', () => {
       authorUserId: AUTHOR,
       status: 'pending',
     });
-    expect(write.appSubListing.create.mock.calls[0][0].data).not.toHaveProperty('approvedAt');
+    expect(write.appSubListing.create.mock.calls[0][0].data.approvedAt ?? null).toBeNull();
     // A pending row cannot be on the cached store page.
     expect(mockBust).not.toHaveBeenCalled();
   });
@@ -367,7 +367,7 @@ describe('upsertSubListing — status changes', () => {
       // republish must clear it, or a later hide + restore would skip review.
       expect(written).toHaveProperty('approvedAt', null);
     } else {
-      expect(written).not.toHaveProperty('approvedAt');
+      expect(written.approvedAt ?? null).toBeNull();
     }
     expect(mockBust).not.toHaveBeenCalled();
   });
@@ -697,14 +697,62 @@ describe('syncSubListingForSharedRow (in-app hooks)', () => {
     }
   );
 
-  it('is best-effort: a failure is logged, never thrown', async () => {
-    write.appSubListing.updateMany.mockRejectedValueOnce(new Error('db down'));
+  it.each([
+    ['the version touch', 0],
+    ['the hide transition', 1],
+  ])('is best-effort: a failure in %s is logged, never thrown', async (_l, failingCall) => {
+    let call = 0;
+    write.appSubListing.updateMany.mockImplementation(async () => {
+      if (call++ === failingCall) throw new Error('db down');
+      return { count: 1 };
+    });
     await expect(
       syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'k', change: 'hidden' })
     ).resolves.toBeUndefined();
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'app-sub-listing-shared-sync-failed' })
     );
+  });
+
+  it('a failed version touch does not stop the hide', async () => {
+    write.appSubListing.updateMany.mockRejectedValueOnce(new Error('db down'));
+    await syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'gen-1', change: 'hidden' });
+    const statuses = write.appSubListing.updateMany.mock.calls.map((c) => c[0].data.status);
+    expect(statuses).toEqual([undefined, 'hidden', 'hidden']);
+  });
+
+  // End to end against a stateful row: a restore that read the shared row as live, then lost
+  // the race to an in-app hide, must fail its compare-and-set.
+  it('a restore racing an in-app hide fails its compare-and-set', async () => {
+    const hidden = liveRow({ status: 'hidden' });
+    let version: Date = hidden.updatedAt;
+    write.appSubListing.findUnique.mockResolvedValueOnce(hidden);
+    write.appSubListing.updateMany.mockImplementation(
+      async (args: {
+        where: { status?: string; updatedAt?: { gte: Date; lt: Date } };
+        data: { updatedAt?: Date };
+      }) => {
+        if (args.where.status !== 'hidden') return { count: 0 };
+        const w = args.where.updatedAt;
+        if (w && !(version >= w.gte && version < w.lt)) return { count: 0 };
+        if (args.data.updatedAt) version = args.data.updatedAt;
+        return { count: 1 };
+      }
+    );
+    mockPoolQuery.mockImplementationOnce(async () => {
+      await syncSubListingForSharedRow({ appBlockId: 'apb_1', itemKey: 'gen-1', change: 'hidden' });
+      return { rows: [{ author_user_id: AUTHOR, hidden: false }] };
+    });
+    await expectError(
+      moderateSubListing({
+        input: { id: hidden.id, action: 'restore', version: VERSION },
+        moderatorId: 9,
+      }),
+      409,
+      'conflict'
+    );
+    // Positive control: the touch moved the version.
+    expect(version.getTime()).not.toBe(hidden.updatedAt.getTime());
   });
 });
 
