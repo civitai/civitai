@@ -2,11 +2,11 @@ import { dbRead } from '~/server/db/client';
 import { loadResourceInsights, modelInsightProjection } from '~/server/services/resource-insight';
 import {
   findResourceIntentCandidates,
-  seedResourceIntentPool,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
 import {
+  clampResourceIntentCap,
   RESOURCE_INTENT_SPEC_HASH,
   ROLE_MODEL_TYPES,
   type ResourceIntentAnswer,
@@ -111,6 +111,8 @@ export type RetrievalArmResult = {
   insightFallback: boolean;
   /** PURPOSE only: pool versions the re-rank promotes — the positive control's input. */
   promotableVersions?: number;
+  /** PURPOSE only: the whole pool it ranked, in seed order — POPULARITY's input. */
+  pool?: ResourceIntentShortlistEntry[];
 };
 
 export type RetrievalArm = (
@@ -118,20 +120,25 @@ export type RetrievalArm = (
   opts: RetrievalArmOpts
 ) => Promise<RetrievalArmResult>;
 
+/** POPULARITY is derived from PURPOSE's result, so the two arms cannot seed separately. */
+export type PopularityArm = (
+  purpose: RetrievalArmResult,
+  opts: RetrievalArmOpts
+) => RetrievalArmResult | Promise<RetrievalArmResult>;
+
 /** PURPOSE: the shipped matcher, untouched — popularity seed plus label re-rank. */
 export const purposeArm: RetrievalArm = (criteria, opts) =>
   findResourceIntentCandidates(criteria, opts);
 
 /**
- * POPULARITY: the matcher's own seed pool (`seedResourceIntentPool`) cut to the cap and
- * never handed to the label re-rank, so the only difference from PURPOSE is
- * `applyInsightRanking`.
+ * POPULARITY: the pool PURPOSE ranked, in seed order, cut to the same cap and never
+ * handed to the label re-rank. One seed per prompt, so the only difference from PURPOSE
+ * is `applyInsightRanking`.
  */
-export const popularityArm: RetrievalArm = async (criteria, opts) => {
-  if (criteria.role === 'none') return { entries: [], insightFallback: false };
-  const { cap, pool } = await seedResourceIntentPool(criteria, opts);
-  return { entries: pool.slice(0, cap), insightFallback: false };
-};
+export const popularityArm: PopularityArm = (purpose, opts) => ({
+  entries: (purpose.pool ?? []).slice(0, clampResourceIntentCap(opts.cap)),
+  insightFallback: false,
+});
 
 /**
  * Which of `modelIds` carry a label the index projection would write: the same
@@ -232,7 +239,7 @@ export async function runRetrievalArms(
     ) => Promise<{ intent: ResourceIntentAnswer; criteria: ResourceIntentCriteria } | null>;
     armOpts: RetrievalArmOpts;
     labeledModelIds: ReadonlySet<number>;
-    arms?: { purpose: RetrievalArm; popularity: RetrievalArm };
+    arms?: { purpose: RetrievalArm; popularity: PopularityArm };
   }
 ): Promise<RetrievalRowOutcome[]> {
   const arms = deps.arms ?? { purpose: purposeArm, popularity: popularityArm };
@@ -299,7 +306,7 @@ export async function runRetrievalArms(
     let popularity: RetrievalArmResult;
     try {
       purpose = await arms.purpose(criteria, deps.armOpts);
-      popularity = await arms.popularity(criteria, deps.armOpts);
+      popularity = await arms.popularity(purpose, deps.armOpts);
     } catch (error) {
       outcomes.push({
         imageId: row.imageId,
@@ -429,7 +436,7 @@ export function retrievalVerdict(e: {
   if (e.n < minScored) {
     return {
       verdict: 'VOID',
-      reason: `${e.n} prompts scored, under the ${minScored} the power calculation assumes`,
+      reason: `${e.n} prompts scored, under the ${minScored}-prompt scored-fraction floor carried from v2's sample design`,
     };
   }
   if (e.promotableScored / e.n < p.minPromotableFraction) {

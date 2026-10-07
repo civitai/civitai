@@ -212,7 +212,8 @@ export function normalCdf(x: number): number {
  * - `alpha`: co-primary (ii), the exact two-sided sign test on MRR@`secondaryK`.
  * - `minPromotableFraction`: the positive control on what PURPOSE actually reads — the
  *   share of scored prompts whose pool held at least one version the re-rank promotes.
- * - `planning`: power-planning inputs from an offline 254-prompt replay. Assumptions,
+ * - `planning`: power-planning inputs — the v2 registered run's scored count and
+ *   popularity hit rate, and the best-of-`replayDesigns` offline replay. Assumptions,
  *   not evidence; they decide nothing.
  */
 export const M3_RETRIEVAL_PREREGISTRATION = {
@@ -229,6 +230,8 @@ export const M3_RETRIEVAL_PREREGISTRATION = {
   minPromotableFraction: 0.1,
   planning: {
     scored: 822,
+    v2PopularityHitRate: 0.113,
+    replayDesigns: 18,
     replayPrompts: 254,
     replayHitDiscordant: 13,
     mrrNonTieRate: 0.134,
@@ -244,8 +247,12 @@ export function plannedPower() {
   const { scored, replayPrompts, replayHitDiscordant, mrrNonTieRate, mrrPurposeShare } = p.planning;
   const hitDiscordantRate = replayHitDiscordant / replayPrompts;
   // At a true difference of 0, se = sqrt(discordant rate / n).
+  const nonInferiorityPowerAt = (n: number) =>
+    1 - normalCdf(p.nonInferiorityZ - p.nonInferiorityMargin / Math.sqrt(hitDiscordantRate / n));
   const hitSe = Math.sqrt(hitDiscordantRate / scored);
-  const nonInferiorityPower = 1 - normalCdf(p.nonInferiorityZ - p.nonInferiorityMargin / hitSe);
+  const nonInferiorityPower = nonInferiorityPowerAt(scored);
+  const floorHitSe = Math.sqrt(hitDiscordantRate / p.voidIf.minScored);
+  const nonInferiorityPowerAtFloor = nonInferiorityPowerAt(p.voidIf.minScored);
   const mrrNonTies = Math.round(scored * mrrNonTieRate);
   let mrrPower = 0;
   for (let up = 0; up <= mrrNonTies; up++) {
@@ -258,7 +265,15 @@ export function plannedPower() {
       );
     }
   }
-  return { hitDiscordantRate, hitSe, nonInferiorityPower, mrrNonTies, mrrPower };
+  return {
+    hitDiscordantRate,
+    hitSe,
+    nonInferiorityPower,
+    floorHitSe,
+    nonInferiorityPowerAtFloor,
+    mrrNonTies,
+    mrrPower,
+  };
 }
 
 /**
@@ -283,6 +298,14 @@ export function renderRetrievalPreregistration(): string {
     'seeds from the popularity page alone, and the label re-rank is the only place the',
     'labels act. v3 asks a new question of that matcher; it is not a re-run of v2.',
     '',
+    `Selection: this matcher and this decision rule were chosen from an offline`,
+    `${p.planning.replayPrompts}-prompt replay that screened ${p.planning.replayDesigns} seed x ranker designs and kept the only one that`,
+    `tied popularity on hit@${k} and led it on MRR@${k2}. The planning figures below come from`,
+    `that same best-of-${p.planning.replayDesigns} screen and are therefore optimistic.`,
+    '',
+    "Scope: v3 judges THIS design under THIS rule. A v3 MET does not revise v2's binding NOT",
+    'MET on whether the purpose-first seed beats popularity.',
+    '',
     'Question: does the shipped matcher (PURPOSE arm: popularity seed + label re-rank) do at',
     `least as well as the popularity seed alone (POPULARITY arm) on hit@${k}, while ranking`,
     'attached resources higher?',
@@ -302,8 +325,8 @@ export function renderRetrievalPreregistration(): string {
     `Arms: identical criteria, browsingLevel (all levels), coverage (the anonymous audience,`,
     `resolved as the endpoint does and printed in the report) and cap (${p.cap}).`,
     'PURPOSE = findResourceIntentCandidates (popularity seed + label re-rank). POPULARITY =',
-    'seedResourceIntentPool cut to the cap, with no label ordering: the same pool, so the',
-    'arms differ only by the re-rank.',
+    'the pool that same call ranked, cut to the cap, with no label ordering. One seed per',
+    'prompt, so the arms share one pool and differ only by the re-rank.',
     '',
     'Co-primary. BOTH must hold for MET (intersection-union; alpha is not split):',
     `  (i)  Non-inferiority on hit@${k}, margin ${p.nonInferiorityMargin} absolute. n = scored prompts,`,
@@ -321,7 +344,11 @@ export function renderRetrievalPreregistration(): string {
     '  NOT MET — either does not. The closing clause is judged not met for this matcher;',
     '            any follow-up is new work under a new registration, not a re-run.',
     `  VOID    — no verdict, if ANY of: a registered value was overridden (including the`,
-    `            ${p.pilotSampleSize}-prompt pilot); fewer than ${p.voidIf.minScored} prompts scored; infrastructure`,
+    `            ${p.pilotSampleSize}-prompt pilot); fewer than ${p.voidIf.minScored} prompts scored (the scored-fraction`,
+    `            floor carried from v2's sample design: ${p.sampleSize} drawn x ${(
+      (p.voidIf.minScored / p.sampleSize) *
+      100
+    ).toFixed(1)}%); infrastructure`,
     `            exclusions (stage-1 failure, arm error, label-read fallback) exceed ${(
       p.voidIf.maxInfraExclusionFraction * 100
     ).toFixed(0)}%`,
@@ -335,8 +362,9 @@ export function renderRetrievalPreregistration(): string {
       0
     )}% of scored prompts have at least one pool version`,
     'the re-rank promotes — a ResourceInsight label at or above the promote-confidence',
-    'floor that agrees with the request on role or style family. That is what PURPOSE',
-    'reads; without it the re-rank has nothing to act on and the arms cannot differ.',
+    'floor that agrees with the request on role or style family. Without one the re-rank',
+    'can still demote, but has nothing it could promote — and ranking attached resources',
+    'HIGHER is what the question asks of it.',
     '',
     `No identical-head rule: v2 voided a run whose arms returned the same first ${k} model ids`,
     'on every scored prompt. The arms now differ only by the re-rank, which moves nothing',
@@ -353,21 +381,38 @@ export function renderRetrievalPreregistration(): string {
     'Excluded and counted, never scored: a stage-1 failure, role = none, no in-role',
     'attachment, either arm erroring, and a PURPOSE label read that fell back.',
     '',
-    'Power (planning assumptions from an offline 254-prompt replay, NOT evidence):',
+    `Power (planning assumptions, NOT evidence; optimistic, from the best-of-${p.planning.replayDesigns} screen):`,
     `hit@${k} discordance ${p.planning.replayHitDiscordant} of ${p.planning.replayPrompts} = ${pct(
       power.hitDiscordantRate
-    )}; at a planning n of ${p.planning.scored} scored,`,
-    `se = sqrt(${power.hitDiscordantRate.toFixed(4)} / ${
+    )}. The planning n is ${p.planning.scored} scored: the scored count of the v2`,
+    `registered run (${p.planning.scored} of ${p.sampleSize} drawn), i.e. the yield expected at the same sample design.`,
+    `There se = sqrt(${power.hitDiscordantRate.toFixed(4)} / ${
       p.planning.scored
     }) = ${power.hitSe.toFixed(
       4
     )}, so power for (i) at a true difference of 0 is ${power.nonInferiorityPower.toFixed(2)}.`,
+    `At the ${p.voidIf.minScored} floor se = ${power.floorHitSe.toFixed(
+      4
+    )} and that power is ${power.nonInferiorityPowerAtFloor.toFixed(
+      2
+    )}: a binding NOT MET from a run scoring between ${p.voidIf.minScored} and ${
+      p.planning.scored
+    }`,
+    'prompts is lower-powered than planned.',
     `MRR@${k2} non-ties ${pct(p.planning.mrrNonTieRate)} of scored (${power.mrrNonTies} of ${
       p.planning.scored
     }) with ${pct(p.planning.mrrPurposeShare)} favouring PURPOSE`,
-    `gives power for (ii) of ${power.mrrPower.toFixed(
-      2
-    )}. The pilot re-measures the scored fraction and`,
+    `gives power for (ii) of ${power.mrrPower.toFixed(2)}.`,
+    `The margin: ${
+      p.nonInferiorityMargin
+    } is absolute against a hit@${k} base rate of about 10-11% (v2: ${pct(
+      p.planning.v2PopularityHitRate
+    )} for POPULARITY),`,
+    `so a relative loss of up to ${(
+      (p.nonInferiorityMargin / p.planning.v2PopularityHitRate) *
+      100
+    ).toFixed(0)}% — roughly one hit in five — would still pass (i).`,
+    'The pilot re-measures the scored fraction and',
     'both rates; a shortfall there means re-planning in a new commit, never after the run.',
     '',
     'Known confound: people attach popular models, so attached-resource gold is biased',

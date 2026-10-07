@@ -67,6 +67,7 @@ const {
   inRoleGold,
   loadLabeledModelIds,
   popularityArm,
+  purposeArm,
   mrrSignTest,
   nonInferiority,
   rankedModelIds,
@@ -202,6 +203,8 @@ describe('the pre-registration', () => {
       minPromotableFraction: 0.1,
       planning: {
         scored: 822,
+        v2PopularityHitRate: 0.113,
+        replayDesigns: 18,
         replayPrompts: 254,
         replayHitDiscordant: 13,
         mrrNonTieRate: 0.134,
@@ -292,7 +295,8 @@ describe('the pre-registration', () => {
         '  NOT MET — either does not. The closing clause is judged not met for this matcher;',
         '            any follow-up is new work under a new registration, not a re-run.',
         '  VOID    — no verdict, if ANY of: a registered value was overridden (including the',
-        '            100-prompt pilot); fewer than 667 prompts scored; infrastructure',
+        '            100-prompt pilot); fewer than 667 prompts scored (the scored-fraction',
+        "            floor carried from v2's sample design: 1000 drawn x 66.7%); infrastructure",
         '            exclusions (stage-1 failure, arm error, label-read fallback) exceed 10%',
         '            of drawn prompts; or the positive control fails. VOID takes precedence over',
         '            both co-primaries.',
@@ -300,7 +304,9 @@ describe('the pre-registration', () => {
       [
         'Positive control: VOID if fewer than 10% of scored prompts have at least one pool version',
         'the re-rank promotes — a ResourceInsight label at or above the promote-confidence',
-        'floor that agrees with the request on role or style family.',
+        'floor that agrees with the request on role or style family. Without one the re-rank',
+        'can still demote, but has nothing it could promote — and ranking attached resources',
+        'HIGHER is what the question asks of it.',
       ],
       [
         'No identical-head rule: v2 voided a run whose arms returned the same first 10 model ids',
@@ -311,11 +317,30 @@ describe('the pre-registration', () => {
         'The count is printed as a diagnostic only, so it can neither void nor bias a run;',
       ],
       [
-        'Power (planning assumptions from an offline 254-prompt replay, NOT evidence):',
-        'hit@10 discordance 13 of 254 = 5.1%; at a planning n of 822 scored,',
-        'se = sqrt(0.0512 / 822) = 0.0079, so power for (i) at a true difference of 0 is 0.81.',
+        'Power (planning assumptions, NOT evidence; optimistic, from the best-of-18 screen):',
+        'hit@10 discordance 13 of 254 = 5.1%. The planning n is 822 scored: the scored count of the v2',
+        'registered run (822 of 1000 drawn), i.e. the yield expected at the same sample design.',
+        'There se = sqrt(0.0512 / 822) = 0.0079, so power for (i) at a true difference of 0 is 0.81.',
+        'At the 667 floor se = 0.0088 and that power is 0.74: a binding NOT MET from a run scoring between 667 and 822',
+        'prompts is lower-powered than planned.',
         'MRR@50 non-ties 13.4% of scored (110 of 822) with 68.0% favouring PURPOSE',
         'gives power for (ii) of 0.97.',
+        'The margin: 0.02 is absolute against a hit@10 base rate of about 10-11% (v2: 11.3% for POPULARITY),',
+        'so a relative loss of up to 18% — roughly one hit in five — would still pass (i).',
+      ],
+      [
+        'Selection: this matcher and this decision rule were chosen from an offline',
+        '254-prompt replay that screened 18 seed x ranker designs and kept the only one that',
+        'tied popularity on hit@10 and led it on MRR@50. The planning figures below come from',
+        'that same best-of-18 screen and are therefore optimistic.',
+        '',
+        "Scope: v3 judges THIS design under THIS rule. A v3 MET does not revise v2's binding NOT",
+        'MET on whether the purpose-first seed beats popularity.',
+      ],
+      [
+        'PURPOSE = findResourceIntentCandidates (popularity seed + label re-rank). POPULARITY =',
+        'the pool that same call ranked, cut to the cap, with no label ordering. One seed per',
+        'prompt, so the arms share one pool and differ only by the re-rank.',
       ],
     ]) {
       expect(text).toContain(block.join('\n'));
@@ -735,7 +760,8 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
     expect(verdictOf(run({ ...bothHold, neither: 407 })).verdict).toBe('MET');
     expect(verdictOf(run({ ...bothHold, neither: 406 }))).toEqual({
       verdict: 'VOID',
-      reason: '666 prompts scored, under the 667 the power calculation assumes',
+      reason:
+        "666 prompts scored, under the 667-prompt scored-fraction floor carried from v2's sample design",
     });
   });
 
@@ -980,24 +1006,53 @@ describe('runRetrievalArms — the two arms', () => {
     expect(evaluateRetrieval([outcome]).primary).toMatchObject({ b: 0, c: 0 });
   });
 
-  it('🔴 the POPULARITY arm never reads labels and never asks for a quality sort or a role filter', async () => {
-    await runRetrievalArms([row(1)], {
+  it('🔴 the POPULARITY arm reads nothing itself — no labels and no index — only the pool PURPOSE hands it', async () => {
+    const pool = [10, 20, 30].map((versionId) => ({
+      versionId,
+      modelId: versionId / 10,
+      modelName: 'm',
+      versionName: 'v',
+      baseModel: BASE_MODEL,
+      modelType: 'LORA',
+      thumbsUpCount: 1,
+    }));
+    const [outcome] = await runRetrievalArms([row(1)], {
       stage1: stage1As('style'),
-      armOpts: ARM_OPTS,
+      armOpts: { ...ARM_OPTS, cap: 2 },
       labeledModelIds: new Set(),
       arms: {
-        purpose: async () => ({ entries: [], insightFallback: false }),
+        purpose: async () => ({ entries: [], insightFallback: false, pool }),
         popularity: popularityArm,
       },
     });
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
-    const calls = searchCalls();
-    expect(calls).toHaveLength(1);
-    expect(calls[0].sort).toEqual(['metrics.thumbsUpCount:desc']);
-    expect(String(calls[0].filter)).not.toContain('insight.');
+    expect(searchCalls()).toHaveLength(0);
+    // The pool PURPOSE ranked, in seed order, cut to the cap.
+    expect(outcome).toMatchObject({ status: 'scored', popularityModelIds: [1, 2] });
   });
 
-  it('🔴 both arms search under the SAME gate filter, derived from the same criteria', async () => {
+  it('🔴 ONE seed per prompt: POPULARITY is the pool PURPOSE ranked, and the index is hit once', async () => {
+    // A second seed call would return a DIFFERENT pool, so two seeds are visible.
+    const pools = [
+      [CORPUS[0], CORPUS[1], CORPUS[2], CORPUS[3]],
+      [CORPUS[2], CORPUS[0]],
+    ];
+    let call = 0;
+    searchWithSignal.mockImplementation(async () => {
+      const hits = pools[Math.min(call, pools.length - 1)];
+      call++;
+      return { hits, estimatedTotalHits: hits.length };
+    });
+    const [outcome] = await runRetrievalArms([row(1)], {
+      stage1: stage1As('style'),
+      armOpts: ARM_OPTS,
+      labeledModelIds: new Set(),
+    });
+    expect(outcome).toMatchObject({ status: 'scored', popularityModelIds: [1, 2, 3, 4] });
+    expect(searchCalls()).toHaveLength(1);
+  });
+
+  it('🔴 the one seed both arms share searches under the gate filter derived from the criteria', async () => {
     await runRetrievalArms([row(1)], {
       stage1: stage1As('style'),
       armOpts: ARM_OPTS,
@@ -1009,13 +1064,10 @@ describe('runRetrievalArms — the two arms', () => {
       browsingLevel: ARM_OPTS.browsingLevel,
       coverage: COVERAGE,
     });
-    // One seed page per arm, identical.
-    expect(searchCalls().map((c) => c.filter)).toEqual([gate, gate]);
-    expect(searchCalls().map((c) => c.sort)).toEqual([
-      ['metrics.thumbsUpCount:desc'],
-      ['metrics.thumbsUpCount:desc'],
-    ]);
-    expect(searchCalls().map((c) => c.limit)).toEqual([100, 100]);
+    // One seed page per prompt, shared by both arms.
+    expect(searchCalls().map((c) => c.filter)).toEqual([gate]);
+    expect(searchCalls().map((c) => c.sort)).toEqual([['metrics.thumbsUpCount:desc']]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([100]);
   });
 
   it('caps both arms at the same response width, out of the same pool width', async () => {
@@ -1026,7 +1078,7 @@ describe('runRetrievalArms — the two arms', () => {
       labeledModelIds: new Set(),
     });
     expect(outcome).toMatchObject({ purposeModelIds: [4, 1], popularityModelIds: [1, 2] });
-    expect(searchCalls().map((c) => c.limit)).toEqual([4, 4]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([4]);
   });
 
   it('the POPULARITY arm expands versions like the matcher: requested baseModel only, one model once', async () => {
@@ -1039,7 +1091,7 @@ describe('runRetrievalArms — the two arms', () => {
       doc(8, 5),
     ]);
     const criteria = compileCriteria(intentFor('style'), BASE_MODEL);
-    const { entries } = await popularityArm(criteria, ARM_OPTS);
+    const { entries } = await popularityArm(await purposeArm(criteria, ARM_OPTS), ARM_OPTS);
     expect(entries.map((e) => e.versionId)).toEqual([72, 73, 80]);
     expect(rankedModelIds(entries)).toEqual([7, 8]);
   });
@@ -1070,8 +1122,9 @@ describe('runRetrievalArms — the two arms', () => {
     expect(await outcomesFor(undefined, 5)).toMatchObject({ status: 'scored', promotable: false });
   });
 
-  it('hands both arms the identical criteria and options objects', async () => {
-    const purpose = vi.fn(async () => ({ entries: [], insightFallback: false }));
+  it("hands PURPOSE the criteria and options, and POPULARITY the same options plus PURPOSE's own result", async () => {
+    const purposeResult = { entries: [], insightFallback: false };
+    const purpose = vi.fn(async () => purposeResult);
     const popularity = vi.fn(async () => ({ entries: [], insightFallback: false }));
     await runRetrievalArms([row(1)], {
       stage1: stage1As('clothing'),
@@ -1082,11 +1135,8 @@ describe('runRetrievalArms — the two arms', () => {
     expect(purpose).toHaveBeenCalledTimes(1);
     expect(popularity).toHaveBeenCalledTimes(1);
     const [pCriteria, pOpts] = purpose.mock.calls[0] as unknown as [ResourceIntentCriteria, object];
-    const [qCriteria, qOpts] = popularity.mock.calls[0] as unknown as [
-      ResourceIntentCriteria,
-      object
-    ];
-    expect(qCriteria).toBe(pCriteria);
+    const [qInput, qOpts] = popularity.mock.calls[0] as unknown as [object, object];
+    expect(qInput).toBe(purposeResult);
     expect(qOpts).toBe(pOpts);
     expect(pCriteria).toMatchObject({ role: 'clothing', baseModel: BASE_MODEL });
     expect(pOpts).toEqual(ARM_OPTS);
@@ -1526,7 +1576,7 @@ describe('main — the --execute gate', () => {
     });
     // Control: the two coverages really produce different filters, so this can tell them apart.
     expect(resolvedGate).not.toBe(defaultGate);
-    expect(searchCalls().map((c) => c.filter)).toEqual([resolvedGate, resolvedGate]);
+    expect(searchCalls().map((c) => c.filter)).toEqual([resolvedGate]);
   });
 
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
@@ -1589,8 +1639,8 @@ describe('main — the --execute gate', () => {
     expect(gate).toContain(
       `nsfwLevel IN [${Flags.instanceToArray(allBrowsingLevelsFlag).join(', ')}]`
     );
-    expect(searchCalls().map((c) => c.filter)).toEqual([gate, gate]);
-    expect(searchCalls().map((c) => c.limit)).toEqual([100, 100]);
+    expect(searchCalls().map((c) => c.filter)).toEqual([gate]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([100]);
 
     const report = log.mock.calls.map((call) => String(call[0])).join('\n');
     // Part one: the first ceil(2/2) = 1 matched row + no unmatched rows.

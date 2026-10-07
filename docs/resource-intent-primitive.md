@@ -443,9 +443,9 @@ layer's last closing clause: *"the M3 gold-set study shows the purpose-query arm
 beating the popularity arm on its pre-registered metric"*; v3 reads that clause as the two
 co-primaries below. Per sampled prompt it runs
 stage 1, then both arms with the same criteria, `browsingLevel`, coverage and cap.
-PURPOSE is `findResourceIntentCandidates` itself. POPULARITY is the matcher's own seed
-pool (`seedResourceIntentPool`) cut to the cap and never handed to the label re-rank, so
-the two arms differ only by `applyInsightRanking`. Neither arm calls stage 3.
+PURPOSE is `findResourceIntentCandidates` itself. POPULARITY is the pool that same call
+ranked (returned as `pool`), cut to the cap and never handed to the label re-rank: one seed
+per prompt, so the two arms differ only by `applyInsightRanking`. Neither arm calls stage 3.
 
 **The pre-registration lives in code, not here:** `M3_RETRIEVAL_PREREGISTRATION` in
 `scripts/eval-resource-intent-registration.ts`, rendered as text by

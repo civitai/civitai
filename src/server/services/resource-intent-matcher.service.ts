@@ -328,12 +328,8 @@ async function searchShortlistModels(
   }
 }
 
-/**
- * The candidate pool before any label is read, and the response cap it is later cut to.
- * Exported so the M3 POPULARITY arm (`scripts/eval-resource-intent-retrieval.ts`) reads
- * this same pool; the two study arms then differ only by `applyInsightRanking`.
- */
-export async function seedResourceIntentPool(
+/** The candidate pool before any label is read, and the response cap it is later cut to. */
+async function seedResourceIntentPool(
   criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
   opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
 ): Promise<{ cap: number; pool: ResourceIntentShortlistEntry[] }> {
@@ -385,6 +381,11 @@ export type ResourceIntentMatchResult = {
    * fallback, where no label was read. The M3 study's positive control reads it.
    */
   promotableVersions: number;
+  /**
+   * The whole pool this call ranked, in seed order. The M3 study's POPULARITY arm is this
+   * pool cut to the cap, so the two arms share one seed.
+   */
+  pool: ResourceIntentShortlistEntry[];
 };
 
 export async function findResourceIntentCandidates(
@@ -395,8 +396,9 @@ export async function findResourceIntentCandidates(
     cap: number;
   }
 ): Promise<ResourceIntentMatchResult> {
-  if (criteria.role === 'none')
-    return { entries: [], insightFallback: false, promotableVersions: 0 };
+  if (criteria.role === 'none') {
+    return { entries: [], insightFallback: false, promotableVersions: 0, pool: [] };
+  }
   const { cap, pool } = await seedResourceIntentPool(criteria, opts);
 
   let insights: Map<number, ResourceIntentInsight>;
@@ -428,7 +430,7 @@ export async function findResourceIntentCandidates(
       },
       'temp-search'
     ).catch(() => undefined);
-    return { entries: pool.slice(0, cap), insightFallback: true, promotableVersions: 0 };
+    return { entries: pool.slice(0, cap), insightFallback: true, promotableVersions: 0, pool };
   }
   return {
     entries: applyInsightRanking(pool, insights, criteria).slice(0, cap),
@@ -437,5 +439,6 @@ export async function findResourceIntentCandidates(
       const insight = insights.get(entry.versionId);
       return insight !== undefined && insightBucket(insight, criteria) > 0;
     }).length,
+    pool,
   };
 }
