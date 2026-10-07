@@ -78,33 +78,11 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
             id,
           }).catch();
 
-          let skipped = false;
-          try {
-            if (includesCTE && query.includes('clickhouse_')) {
-              skipped = (await clickhouseLeaderboardPopulation(context)) === false;
-            } else if (includesCTE && query.includes('image_scores AS')) {
-              if (!imageRange) imageRange = await getImageRange();
-              skipped = (await imageLeaderboardPopulation(context, imageRange)) === false;
-            } else {
-              if (includesCTE && !query.includes('scores'))
-                throw new Error('Query must include scores CTE');
-              await defaultLeadboardPopulation(context);
-            }
-          } catch (e) {
-            const error = e as Error;
-            logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
-            throw e;
-          }
-
-          // A skipped board has no rows; marking it would pass the populated gate and let
-          // cosmetic revocation strip every holder.
-          if (skipped) {
-            log(`Leaderboard ${id} - Skipped, ClickHouse unavailable`);
-            logToAxiom({ type: 'leaderboard-skipped', id }).catch();
-            return;
-          }
-
-          await markLeaderboardPopulated(id, addDays);
+          const populated = await populateLeaderboard(context, async () => {
+            if (!imageRange) imageRange = await getImageRange();
+            return imageRange;
+          });
+          if (!populated) return;
 
           log(`Leaderboard ${id} - Done - ${(Date.now() - start) / 1000}s`);
           logToAxiom({
@@ -125,6 +103,44 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
     throw error;
   }
 });
+
+/**
+ * Populate one board and mark it populated. Resolves `false` when the board was skipped.
+ * `getRange` is only called for image-score boards.
+ */
+export async function populateLeaderboard(
+  context: LeaderboardContext,
+  getRange: () => Promise<[number, number]>
+): Promise<boolean> {
+  const { id, query, includesCTE, addDays = 0 } = context;
+  let skipped = false;
+  try {
+    if (includesCTE && query.includes('clickhouse_')) {
+      skipped = (await clickhouseLeaderboardPopulation(context)) === false;
+    } else if (includesCTE && query.includes('image_scores AS')) {
+      skipped = (await imageLeaderboardPopulation(context, await getRange())) === false;
+    } else {
+      if (includesCTE && !query.includes('scores'))
+        throw new Error('Query must include scores CTE');
+      await defaultLeadboardPopulation(context);
+    }
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({ type: 'leaderboard-error', id, message: error.message }).catch();
+    throw e;
+  }
+
+  // A skipped board has no rows; marking it would pass the populated gate and let
+  // cosmetic revocation strip every holder.
+  if (skipped) {
+    log(`Leaderboard ${id} - Skipped, ClickHouse unavailable`);
+    logToAxiom({ type: 'leaderboard-skipped', id }).catch();
+    return false;
+  }
+
+  await markLeaderboardPopulated(id, addDays);
+  return true;
+}
 
 /**
  * Record that a board finished populating, and for which date.
