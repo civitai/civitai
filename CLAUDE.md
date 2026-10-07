@@ -6,7 +6,7 @@ where it loads on demand:
 - applies to some files only → a `.claude/rules/*.md` with `paths:` frontmatter
 - setup and how-to → `docs/dev/`; feature behaviour → `docs/features/`; a procedure → a skill
 - why a rule exists, incident history → the commit message or PR body
-- a personal preference (worktrees, review habits, voice) → your `CLAUDE.local.md` or
+- a personal preference (whether you use worktrees, review habits, voice) → your `CLAUDE.local.md` or
   `~/.claude/CLAUDE.md`, never a committed file
 
 `no-claude-md-bloat` caps this file at 150 lines; move content out rather than raising the cap.
@@ -123,7 +123,8 @@ anything committed counts as disclosed and must be fixed and rotated.
    automated gate. Required when you moved a file, renamed a script or command, retired an env var, or
    completed a tracked item.
 
-**Every change to `main` goes through a PR** — never push to `main` directly.
+**Every change to `main` goes through a PR** — never push to `main` directly. The one exception is the
+version-bump commit a release script pushes (see Releases above).
 
 **Never stack PRs.** Base every PR on the integration branch (`main` or a `feat/...` branch), never on
 another open PR's branch — a squash-merged parent doesn't retarget the child, and its changes go missing.
