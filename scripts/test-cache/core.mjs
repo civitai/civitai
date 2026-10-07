@@ -248,9 +248,10 @@ function listTree(abs) {
 }
 
 // The package.json files carry `exports` maps, and a symlinked workspace package resolves through
-// them — the lockfile does not record `exports`. Their `version` is left out: every release bumps one,
-// and keying on it threw away every record in every worktree several times a day. A test that reads a
-// manifest itself is still keyed on its whole content, through keyFor.
+// them — the lockfile does not record `exports`. Their `version` and `scripts` are left out: releases and
+// new convention guards edit them most days, and keying on them threw away every record in every
+// worktree each time. A test that reads a manifest itself is still keyed on its whole content, through
+// keyFor.
 export function manifestFingerprint(root, rel) {
   let text;
   try {
@@ -264,7 +265,10 @@ export function manifestFingerprint(root, rel) {
   } catch {
     return `file:${sha(text)}`;
   }
-  if (pkg && typeof pkg === 'object' && !Array.isArray(pkg)) delete pkg.version;
+  if (pkg && typeof pkg === 'object' && !Array.isArray(pkg)) {
+    delete pkg.version;
+    delete pkg.scripts;
+  }
   return `manifest:${sha(JSON.stringify(pkg))}`;
 }
 

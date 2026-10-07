@@ -192,9 +192,10 @@ describe('the key', () => {
   });
 });
 
-// Every release bumps a `version` in one of these manifests, and when the salt saw it every record in
-// every worktree stopped matching: the first queued run after each release ran ~2,500 files instead
-// of ~250. If you are about to put `version` back in the salt, that is what it costs.
+// Every release bumps a `version` in one of these manifests, and every new convention guard edits the
+// root `scripts`. When the salt saw either, every record in every worktree stopped matching: the first
+// queued run after each release ran ~2,500 files instead of ~250. If you are about to put either back
+// in the salt, that is what it costs.
 describe('the salt and the workspace manifests', () => {
   const manifests = ['package.json', 'apps/app/package.json', 'packages/pkg/package.json'];
   const setup = () => {
@@ -217,6 +218,14 @@ describe('the salt and the workspace manifests', () => {
     const root = setup();
     const before = globalSalt(root, 'v');
     edit(root, rel, (pkg) => (pkg.version = '1.0.1'));
+    expect(globalSalt(root, 'v')).toBe(before);
+  });
+
+  it.each(manifests)('ignores an edit to the scripts in %s', (rel) => {
+    const root = setup();
+    edit(root, rel, (pkg) => (pkg.scripts = { test: 'vitest' }));
+    const before = globalSalt(root, 'v');
+    edit(root, rel, (pkg) => (pkg.scripts = { test: 'vitest', 'test:lint-rules': 'vitest run x' }));
     expect(globalSalt(root, 'v')).toBe(before);
   });
 

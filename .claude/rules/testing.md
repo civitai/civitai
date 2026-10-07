@@ -42,7 +42,7 @@ When the dev-server queue has the cache on (`cli.mjs test config --cache on`), a
 ```
 
 - A random ~5% of unchanged files run anyway. If one fails, the cache mispredicted (a false skip) and trips itself off (`TRIPPED.json` in the cache dir) until a human looks.
-- Environment variables are not part of the cache key.
+- Environment variables are not part of the cache key, and neither are `package.json` `scripts` or `version`: a change to how a script invokes vitest (its flags) does not invalidate anything. A test that reads a `package.json` is still keyed on the whole file.
 - Never on in CI; a run that filters files (filename, directory, substring) is never trimmed. Code: `scripts/test-cache/`.
 
 ## Where handler tests go
