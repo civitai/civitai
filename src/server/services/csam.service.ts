@@ -17,6 +17,7 @@ import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';
 import stream, { Readable } from 'stream';
+import type { ReadableStream as NodeReadableStream } from 'stream/web';
 import { Upload } from '@aws-sdk/lib-storage';
 import ncmecCaller from '~/server/http/ncmec/ncmec.caller';
 import * as z from 'zod';
@@ -643,7 +644,7 @@ async function getTrainingDataZipStream({
   if (!response.ok) throw new Error(`no training data exists for model version: ${versionId}`);
   if (!response.body) throw new Error(`no response body for model version: ${versionId}`);
   // Convert Web ReadableStream to Node.js Readable stream
-  return Readable.fromWeb(response.body as import('stream/web').ReadableStream);
+  return Readable.fromWeb(response.body as NodeReadableStream);
 }
 
 function uploadStream({
