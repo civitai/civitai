@@ -102,7 +102,8 @@ describe('bulkAccept', () => {
     );
 
     expect(result).toMatchObject({ status: 409 });
-    expect(JSON.stringify(result)).toContain(`Not done: ${REFUSED},`);
+    expect(JSON.stringify(result)).toContain(`): ${REFUSED}.`);
+    expect(JSON.stringify(result)).toContain('No report was moved.');
     expect(acceptImage).toHaveBeenCalledTimes(2);
     expect(setReportStatus).not.toHaveBeenCalled();
   });
