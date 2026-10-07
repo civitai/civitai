@@ -325,3 +325,33 @@ describe('getResourceData — preview image honours the viewer browsing level', 
     expect(await previewFor([X_VIDEO, BLOCKED], 1 | 2)).toBeUndefined();
   });
 });
+
+describe('getResourceData — tipsEnabled from the owner flags in the cached row', () => {
+  async function resourceFor(owner: { userId: number; userFlags?: number | null }) {
+    const row = dbRow();
+    queryRawMock.mockResolvedValue([{ ...row, model: { ...row.model, ...owner } }]);
+    const [resource] = await getResourceData([VERSION_ID], { user: MOD });
+    return resource;
+  }
+
+  it('is true for an ordinary creator', async () => {
+    expect((await resourceFor({ userId: 777, userFlags: 0 })).tipsEnabled).toBe(true);
+  });
+
+  it('is false when the owner has DisablePayout', async () => {
+    expect((await resourceFor({ userId: 777, userFlags: 1 })).tipsEnabled).toBe(false);
+  });
+
+  it('is false for a system-owned (-1) version', async () => {
+    expect((await resourceFor({ userId: -1, userFlags: 0 })).tipsEnabled).toBe(false);
+  });
+
+  it('treats a cache entry without owner flags as eligible', async () => {
+    expect((await resourceFor({ userId: 777 })).tipsEnabled).toBe(true);
+  });
+
+  it('does not send the owner flags to the client', async () => {
+    const resource = await resourceFor({ userId: 777, userFlags: 1 });
+    expect(resource.model).not.toHaveProperty('userFlags');
+  });
+});
