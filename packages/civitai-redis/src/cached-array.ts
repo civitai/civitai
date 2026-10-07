@@ -102,10 +102,10 @@ export type CacheBuilderDeps = {
      * Miss-fill lookups that per-process coalescing (PR #5488) would have JOINED instead of
      * running: the id was registered by another fetch in THIS process (same cache) whose lookup
      * started under MISS_FILL_JOIN_MAX_MS ago and has not settled with its writes, it is not a
-     * debounce-marker id, and no bust/invalidate/refresh/update detached it since. A slight upper
-     * bound: an originator here stays registered while it also looks up and writes the ids it would
-     * have joined, and writes values then markers in sequence, so its entries live a little longer
-     * than in #5488. Measurement only: the lookup and its writes still happen. Cross-process
+     * debounce-marker id, and no bust/invalidate/refresh/update detached it since. An upper
+     * bound (the excess is unmeasured): an originator here stays registered while it also looks up
+     * and writes the ids it would have joined, and writes values then markers in sequence, so its
+     * entries live longer than in #5488 — the more so the larger its combined batch. Measurement only: the lookup and its writes still happen. Cross-process
      * duplicates are not visible here.
      */
     missWouldJoin(cacheName: string, count: number): void;
@@ -160,7 +160,7 @@ const UPDATE_LOCK_TTL = 5;
 /**
  * A registered lookup at least this old is not counted as joinable (and is replaced). Mirrors
  * IN_FLIGHT_JOIN_MAX_MS in the coalescing proposal (#5488) so missWouldJoin counts what it would
- * join; change both together (the metric's HELP deliberately does not restate the number).
+ * join; change both together.
  */
 const MISS_FILL_JOIN_MAX_MS = 10_000;
 type MissFillEntry = { startedAt: number };

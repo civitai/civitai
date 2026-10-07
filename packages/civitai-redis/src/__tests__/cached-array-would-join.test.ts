@@ -35,7 +35,7 @@ function build({ parkSets = false, staleWhileRevalidate = true } = {}) {
       mGet: vi.fn(
         async (keys: RedisKeyTemplateCache[]): Promise<unknown[]> => keys.map(() => null)
       ),
-      set: vi.fn(async (key: RedisKeyTemplateCache) => {
+      set: vi.fn(async (key: RedisKeyTemplateCache): Promise<string | null> => {
         sets.push(key);
         if (parkSets) {
           const gate = deferred();
@@ -107,6 +107,7 @@ function build({ parkSets = false, staleWhileRevalidate = true } = {}) {
     total,
     parked,
     nextRead,
+    redis,
   };
 }
 
@@ -165,6 +166,7 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
     await Promise.all([a, b]);
 
     expect(t.total()).toBe(1);
+    expect(t.lookupFn).toHaveBeenCalledTimes(2);
     expect(t.sets).toEqual([`${KEY}:6`, `${KEY}:6`]);
   });
 
@@ -352,6 +354,9 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
     const a = t.cache.fetch([8]);
     await t.parked(1);
     await t.cache.bust(8);
+    // The stub's mGet ignores bust's marker, so b reads a plain miss: the race where b's read
+    // landed before the marker did, the one window in which this detach changes the count (a b
+    // that read the marker would be a debounce id and never join anyway).
     const b = t.cache.fetch([8]);
     await t.parked(2);
     t.gates.forEach((g) => g.resolve());
@@ -372,16 +377,24 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
     await t.parked(2);
     expect(t.total()).toBe(1);
 
+    // A live entry whose XX write Redis refuses: update reports false, the fill stays joinable.
+    t.nextRead({ id: 8, cachedAt: new Date() });
+    t.redis.packed.set.mockResolvedValueOnce(null);
+    expect(await t.cache.update(8, (row) => row)).toBe(false);
+    const d = t.cache.fetch([8]);
+    await t.parked(3);
+    expect(t.total()).toBe(2);
+
     // A live entry is rewritten: update reports true and detaches the fill.
     t.nextRead({ id: 8, cachedAt: new Date() });
     expect(await t.cache.update(8, (row) => row)).toBe(true);
     const c = t.cache.fetch([8]);
-    await t.parked(3);
-    expect(t.total()).toBe(1);
+    await t.parked(4);
+    expect(t.total()).toBe(2);
 
     t.gates.forEach((g) => g.resolve());
-    await Promise.all([a, b, c]);
-    expect(t.lookupFn).toHaveBeenCalledTimes(3);
+    await Promise.all([a, b, d, c]);
+    expect(t.lookupFn).toHaveBeenCalledTimes(4);
   });
 
   it('a throwing metrics sink does not fail the fetch', async () => {
