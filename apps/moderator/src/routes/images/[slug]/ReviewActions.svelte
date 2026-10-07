@@ -5,6 +5,7 @@
   import ImageCardModTools from './ImageCardModTools.svelte';
   import TosDeleteButton from './TosDeleteButton.svelte';
   import VerdictBadge from './VerdictBadge.svelte';
+  import { Button } from '@civitai/ui/components/ui/button/index.js';
 
   let {
     item,
@@ -26,8 +27,8 @@
     /** Which queue this is. Not inferred from `reportId`: they agree only by accident today, and a
      *  second report-carrying call site would then label the same gesture two different ways. */
     reported?: boolean;
-    /** The image is already removed and only its review flag is left to rule on, so Remove is
-     *  replaced by clearing the flag. Removing again would notify the uploader a second time. */
+    /** The image is removed and only its review flag is left (`isFlagOnlyRemaining`), so clearing
+     *  the flag is the only verdict offered. */
     dismissFlag?: boolean;
     verdict: string | undefined;
     selected: SvelteSet<string | number>;
@@ -47,6 +48,7 @@
     nsfwLevel={item.nsfwLevel}
     minor={item.minor}
     poi={item.poi}
+    rating={!dismissFlag}
   />
   <!-- A selected card loses its own verdict buttons: pressing Accept there acted on the one image
        while the moderator believed it applied to the batch. -->
@@ -54,6 +56,13 @@
     <span class="text-xs text-primary">
       In selection — {acceptLabel.toLowerCase()} or remove it from the bar below.
     </span>
+  {:else if dismissFlag}
+    <form method="POST" action="?/dismissFlag" use:enhance={submit}>
+      <input type="hidden" name="imageId" value={item.id} />
+      <Button type="submit" variant="outline" size="sm" class="text-amber-400 hover:text-amber-300">
+        Dismiss flag, keep removed
+      </Button>
+    </form>
   {:else}
     <div class="flex flex-wrap gap-1.5">
       <form method="POST" action="?/accept" use:enhance={submit}>
@@ -78,23 +87,11 @@
           </button>
         </form>
       {/if}
-      {#if dismissFlag}
-        <form method="POST" action="?/dismissFlag" use:enhance={submit}>
-          <input type="hidden" name="imageId" value={item.id} />
-          <button
-            type="submit"
-            class="{button} border-amber-600/40 text-amber-400 hover:bg-amber-500/10"
-          >
-            Dismiss flag, keep removed
-          </button>
-        </form>
-      {:else}
-        <TosDeleteButton
-          action="?/block"
-          {submit}
-          hidden={reportId ? { imageId: item.id, reportId } : { imageId: item.id }}
-        />
-      {/if}
+      <TosDeleteButton
+        action="?/block"
+        {submit}
+        hidden={reportId ? { imageId: item.id, reportId } : { imageId: item.id }}
+      />
     </div>
   {/if}
 {/if}

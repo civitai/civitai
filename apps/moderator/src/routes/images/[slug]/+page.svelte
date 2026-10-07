@@ -14,6 +14,7 @@
   import AppealActions from './AppealActions.svelte';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { userLookupUrl } from '$lib/entity-url';
+  import { isFlagOnlyRemaining } from '$lib/image-review';
   import { reportDetailEntries } from '$lib/reports';
   import type { ActionData, PageData } from './$types';
 
@@ -51,13 +52,12 @@
   // Deduped: two selected reports on one image are two cards but one image, and the action would
   // otherwise be posted `5,5` and report twice the work it did.
   const selectedImageIds = $derived([...new Set(selectedItems.map((i) => i.id))].join(','));
-  // An image that is already removed is only left with its review flag; removing it again would
-  // notify the uploader a second time.
-  const removableImageIds = $derived(
+  // The images Accept and Remove act on: a card with only its review flag left takes neither.
+  const verdictImageIds = $derived(
     [
       ...new Set(
         selectedItems
-          .filter((i) => !(data.view === 'csam' && 'ingestion' in i && i.ingestion === 'Blocked'))
+          .filter((i) => !('ingestion' in i && 'needsReview' in i && isFlagOnlyRemaining(i)))
           .map((i) => i.id)
       ),
     ].join(',')
@@ -399,12 +399,12 @@
       {:else}
         <div class="flex flex-wrap gap-1">
           <Badge class="w-fit bg-rose-600/20 font-semibold text-rose-500">CSAM — flagged for review</Badge>
-          {#if item.ingestion === 'Blocked'}<Badge class="bg-muted">Removed</Badge>{/if}
+          {#if isFlagOnlyRemaining(item)}<Badge class="bg-muted">Removed</Badge>{/if}
         </div>
       {/if}
       <ReviewActions
         {item}
-        dismissFlag={data.view === 'csam' && item.ingestion === 'Blocked'}
+        dismissFlag={isFlagOnlyRemaining(item)}
         verdict={acted.get(keyOfItem(item))}
         {selected}
         {submit}
@@ -417,7 +417,7 @@
 <QueueSelectionBar
   {selected}
   imageIds={selectedImageIds}
-  {removableImageIds}
+  {verdictImageIds}
   reportIds={selectedReportIds}
   submit={bulkSubmit}
   appeal={data.kind === 'appeal'}

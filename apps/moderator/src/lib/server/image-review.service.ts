@@ -3,7 +3,7 @@ import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import type { MediaType } from '$lib/media/edge-url';
-import type { ImageReviewType } from '$lib/image-review';
+import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 
 export type ReviewTag = { id: number; name: string; nsfwLevel: number };
 
@@ -171,12 +171,10 @@ export async function getReviewQueueTags(
     .execute();
 }
 
-// A block keeps the moderator-only flag, so that queue (and its count) must also list Blocked images,
-// or they would be held with no way to reach them.
-const BLOCKED_LISTED_QUEUE = 'csam' satisfies ImageReviewType;
-
+// A block keeps that flag, so its queue (and its count) must also list Blocked images, or they would
+// be held with no way to reach them.
 function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Blocked')[] {
-  return needsReview === BLOCKED_LISTED_QUEUE ? ['Scanned', 'Blocked'] : ['Scanned'];
+  return needsReview === FLAG_KEPT_THROUGH_BLOCK ? ['Scanned', 'Blocked'] : ['Scanned'];
 }
 
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
@@ -190,7 +188,7 @@ export async function getImageReviewCounts(): Promise<Record<string, number>> {
     .where((eb) =>
       eb.or([
         eb('ingestion', '=', 'Scanned'),
-        eb.and([eb('needsReview', '=', BLOCKED_LISTED_QUEUE), eb('ingestion', '=', 'Blocked')]),
+        eb.and([eb('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK), eb('ingestion', '=', 'Blocked')]),
       ])
     )
     .groupBy('needsReview')

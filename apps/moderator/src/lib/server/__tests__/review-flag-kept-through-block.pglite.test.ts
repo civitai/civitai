@@ -12,9 +12,10 @@ import { pgliteDialect } from './abuse-detection-pglite.harness';
 // PGlite boots a WASM Postgres; under a full parallel run that alone can pass the default hook budget.
 vi.setConfig({ hookTimeout: 60_000 });
 
-const { dbHandle, recordModActivity } = vi.hoisted(() => ({
+const { dbHandle, recordModActivity, applyBlockSideEffects } = vi.hoisted(() => ({
   dbHandle: { current: null as unknown },
   recordModActivity: vi.fn(async () => undefined),
+  applyBlockSideEffects: vi.fn(async () => undefined),
 }));
 
 vi.mock('../db', () => ({
@@ -28,7 +29,7 @@ vi.mock('../db', () => ({
   },
 }));
 vi.mock('../image-moderation-effects', () => ({
-  applyBlockSideEffects: vi.fn(async () => undefined),
+  applyBlockSideEffects,
   applyAcceptSideEffects: vi.fn(async () => undefined),
   applyVisibilitySideEffects: vi.fn(async () => undefined),
   refundAppealFee: vi.fn(async () => undefined),
@@ -43,7 +44,7 @@ vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
-const { blockImage, dismissReviewFlag, resolveImageAppeal } = await import(
+const { acceptImage, blockImage, dismissReviewFlag, resolveImageAppeal } = await import(
   '../image-moderation.service'
 );
 
@@ -61,8 +62,10 @@ CREATE TABLE "Image" (
   "postId" INTEGER,
   "userId" INTEGER,
   "updatedAt" TIMESTAMP(3),
-  "nsfwLevel" INTEGER NOT NULL DEFAULT 0
+  "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE
 );
+CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
 CREATE TABLE "Appeal" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER NOT NULL,
@@ -93,6 +96,7 @@ beforeAll(async () => {
 
 beforeEach(async () => {
   recordModActivity.mockClear();
+  applyBlockSideEffects.mockClear();
   await db.exec(`TRUNCATE "Image", "Appeal", "User"`);
   await db.query(
     `INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel") VALUES
@@ -135,6 +139,29 @@ describe('blockImage', () => {
     await blockImage({ imageId: FLAGGED, userId: 2 });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+  });
+});
+
+// Removed with only the flag left: the flag's own queue lists it, and must not undo the removal.
+describe('an image removed with only the review flag left', () => {
+  it('is not put back live by accepting it', async () => {
+    await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 });
+
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  it('is accepted like any other image while it is still live', async () => {
+    await acceptImage({ imageId: FLAGGED, userId: 2 });
+
+    expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
+  });
+
+  it('is not removed a second time', async () => {
+    await blockImage({ imageId: FLAGGED_REMOVED, userId: 2 });
+
+    expect(applyBlockSideEffects).not.toHaveBeenCalled();
+    expect(recordModActivity).not.toHaveBeenCalled();
   });
 });
 

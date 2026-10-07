@@ -258,6 +258,23 @@ describe('setTosViolationHandler', () => {
     expect(await strandedAppeals()).toEqual([]);
     expect((await imageRow(APPEALED)).ingestion).toBe('Blocked');
   });
+
+  it('still clears another review flag', async () => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      nsfwLevel: 4,
+      userId: 8,
+      postId: null,
+      pHash: null,
+      post: null,
+    } as never);
+
+    await setTosViolationHandler({
+      input: { id: FLAGGED },
+      ctx: { user: { id: 2, isModerator: true }, ip: '127.0.0.1', track: { images: vi.fn() } },
+    } as never);
+
+    expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
+  });
 });
 
 describe('reportCsamImages', () => {

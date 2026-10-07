@@ -13,6 +13,7 @@ import {
 } from './image-moderation-effects';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
+import { FLAG_KEPT_THROUGH_BLOCK, isFlagOnlyRemaining } from '$lib/image-review';
 
 const BLOCKED_REASON_MODERATED = 'moderated';
 
@@ -61,7 +62,9 @@ export async function acceptImage({
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
       : sql`"metadata" - 'ruleId' - 'ruleReason'`;
 
-  await dbWrite
+  // Refused in the statement itself, not off the replica read above: an image removed with only the
+  // flag left must not come back live through the flag's own queue.
+  const { numUpdatedRows } = await dbWrite
     .updateTable('Image')
     .set({
       needsReview: null,
@@ -81,7 +84,14 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
-    .execute();
+    .where((eb) =>
+      eb.or([
+        eb('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK),
+        eb('ingestion', '!=', 'Blocked'),
+      ])
+    )
+    .executeTakeFirst();
+  if (!numUpdatedRows) return;
 
   // update_nsfw_levels_new skips nsfwLevelLocked rows, so without this a rating-locked Blocked image would
   // stay hidden after unblock. Clear the lock + zero the level so the recompute below restores the real one.
@@ -147,6 +157,7 @@ export async function blockImage({
     .selectFrom('Image')
     .select([
       'needsReview',
+      'ingestion',
       'pHash',
       'blockedFor',
       'postId',
@@ -156,13 +167,16 @@ export async function blockImage({
     ])
     .where('id', '=', imageId)
     .executeTakeFirst();
-  if (!img) return;
+  // Already removed: blocking again would only notify the uploader a second time.
+  if (!img || isFlagOnlyRemaining(img)) return;
 
   await dbWrite
     .updateTable('Image')
     .set({
       // The moderator-only review flag survives a block: only its own queue or a filed report clears it.
-      needsReview: sql<string | null>`CASE WHEN "needsReview" = 'csam' THEN 'csam' END`,
+      needsReview: sql<
+        string | null
+      >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,
@@ -211,7 +225,7 @@ export async function dismissReviewFlag({
     .updateTable('Image')
     .set({ needsReview: null })
     .where('id', '=', imageId)
-    .where('needsReview', '=', 'csam')
+    .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('ingestion', '=', 'Blocked')
     .executeTakeFirst();
   if (!numUpdatedRows) return false;
@@ -238,7 +252,7 @@ async function keepPendingAppealFlag(imageId: number) {
     .updateTable('Image')
     .set({ needsReview: 'appeal' })
     .where('id', '=', imageId)
-    .where('needsReview', 'is distinct from', 'csam')
+    .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
     .where((eb) =>
       eb.exists(
         eb
@@ -400,7 +414,7 @@ export async function resolveImageAppeal({
       .updateTable('Image')
       .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
       .where('id', '=', imageId)
-      .where('needsReview', 'is distinct from', 'csam')
+      .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .execute();
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
@@ -409,7 +423,7 @@ export async function resolveImageAppeal({
       .updateTable('Image')
       .set({ needsReview: null })
       .where('id', '=', imageId)
-      .where('needsReview', 'is distinct from', 'csam')
+      .where('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK)
       .execute();
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }

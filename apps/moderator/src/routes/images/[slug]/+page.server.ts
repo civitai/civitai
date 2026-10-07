@@ -21,7 +21,7 @@ import { setReportStatus } from '$lib/server/reports.service';
 import { getActorMeta } from '$lib/server/request-meta';
 import { getModel3DsByThumbnailImageIds, unpublishModel3d } from '$lib/server/model3d.service';
 import { ReportStatus } from '$lib/reports';
-import { IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
+import { FLAG_KEPT_THROUGH_BLOCK, IMAGE_VIEW_SLUGS, type ImageViewSlug } from '$lib/image-review';
 import { violationInputSchema } from '$lib/violations';
 import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -197,7 +197,9 @@ export const actions: Actions = {
     return { success: true, imageId };
   },
 
-  dismissFlag: async ({ request, locals }) => {
+  // Only from the flag's own queue: the page gate is per path, and every queue posts to this route.
+  dismissFlag: async ({ request, locals, params }) => {
+    if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
     if (!imageId) return fail(400, { error: 'Missing image id.' });

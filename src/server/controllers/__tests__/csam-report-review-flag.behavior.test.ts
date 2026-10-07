@@ -55,11 +55,13 @@ vi.mock('~/server/services/report.service', async (importOriginal) => ({
 const OWNER = 8;
 const OTHER_OWNER = 9;
 const PRIOR_REPORT_OWNER = 10;
+const EXPIRED_HOLD_OWNER = 11;
 
 const OWNED = 61;
 const OTHER_OWNERS = 62;
 const UNBLOCKED_HELD = 63;
 const OTHER_FLAG = 64;
+const EXPIRED_HOLD = 65;
 
 let pg: PGlite;
 
@@ -77,7 +79,8 @@ beforeAll(async () => {
       id serial PRIMARY KEY,
       "userId" int,
       "reportSentAt" timestamp(3),
-      "archivedAt" timestamp(3)
+      "archivedAt" timestamp(3),
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
   `);
 });
@@ -91,11 +94,15 @@ beforeEach(async () => {
       (${OWNED}, ${OWNER}, 'Scanned', 'csam'),
       (${OTHER_OWNERS}, ${OTHER_OWNER}, 'Blocked', 'csam'),
       (${UNBLOCKED_HELD}, ${PRIOR_REPORT_OWNER}, 'Scanned', 'csam'),
-      (${OTHER_FLAG}, ${OWNER}, 'Blocked', 'appeal');
+      (${OTHER_FLAG}, ${OWNER}, 'Blocked', 'appeal'),
+      (${EXPIRED_HOLD}, ${EXPIRED_HOLD_OWNER}, 'Blocked', 'csam');
     -- A report on the other owner that has finished: it holds nothing.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
       (${OTHER_OWNER}, now(), now()),
       (${PRIOR_REPORT_OWNER}, NULL, NULL);
+    -- Still open but older than the hold ceiling, so the purge no longer honours it.
+    INSERT INTO "CsamReport" ("userId", "createdAt") VALUES
+      (${EXPIRED_HOLD_OWNER}, now() - interval '31 days');
   `);
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
@@ -147,13 +154,30 @@ describe('fileCsamReport', () => {
     expect(await flag(UNBLOCKED_HELD)).toBe('csam');
   });
 
+  // A new report on an owner whose open report is past the hold ceiling: the flag is all that still
+  // holds the image, so it must not come off.
+  it('keeps the flag when the owner hold has run out', async () => {
+    await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
+
+    expect(await flag(EXPIRED_HOLD)).toBe('csam');
+  });
+
+  it('keeps the flag when the report updates an open report past the hold ceiling', async () => {
+    // As `createCsamReport` does for an unsent report: the row is rewritten, its createdAt is not.
+    createCsamReport.mockImplementationOnce(async () => undefined);
+
+    await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
+
+    expect(await flag(EXPIRED_HOLD)).toBe('csam');
+  });
+
   it('leaves any other flag alone', async () => {
     await report(OWNER, [OTHER_FLAG]);
 
     expect(await flag(OTHER_FLAG)).toBe('appeal');
   });
 
-  it('keeps the flag when removing the account fails', async () => {
+  it('fails loudly with the flag still on when removing the account fails', async () => {
     softDeleteUser.mockRejectedValueOnce(new Error('connection lost'));
 
     await expect(report(OWNER, [OWNED])).rejects.toThrow('connection lost');
@@ -161,7 +185,7 @@ describe('fileCsamReport', () => {
     expect(await flag(OWNED)).toBe('csam');
   });
 
-  it('keeps the flag when filing the report fails', async () => {
+  it('fails loudly with the flag still on when filing the report fails', async () => {
     createCsamReport.mockRejectedValueOnce(new Error('connection lost'));
 
     await expect(report(OWNER, [OWNED])).rejects.toThrow('connection lost');

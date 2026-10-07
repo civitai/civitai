@@ -8,7 +8,7 @@
   let {
     selected,
     imageIds,
-    removableImageIds,
+    verdictImageIds,
     reportIds,
     submit,
     appeal,
@@ -18,8 +18,9 @@
     selected: SvelteSet<string | number>;
     /** Comma-separated, resolved by the page — a card key is a report id on the reported queue. */
     imageIds: string;
-    /** The subset Remove acts on. */
-    removableImageIds: string;
+    /** The subset Accept, Remove and the rating tools act on; the rest have only their review flag
+     *  left, which is dismissed per card. */
+    verdictImageIds: string;
     reportIds: string;
     submit: SubmitFunction;
     /** Appeals resolve rather than accept, and their images are `Blocked` (so: no rating). */
@@ -30,14 +31,11 @@
   } = $props();
 
   const count = $derived(selected.size);
-  // Cards, like every other label here, unless some selected cards are not removable.
-  const removableCount = $derived(
-    removableImageIds === imageIds
-      ? count
-      : removableImageIds
-        ? removableImageIds.split(',').length
-        : 0
+  // Cards, like every other label here, unless some selected cards take no verdict.
+  const verdictCount = $derived(
+    verdictImageIds === imageIds ? count : verdictImageIds ? verdictImageIds.split(',').length : 0
   );
+  const skipped = $derived(count - verdictCount);
   const acceptLabel = $derived(reported ? 'Unaction' : 'Accept');
 </script>
 
@@ -56,38 +54,48 @@
       <!-- Keyed on the selection: the tools and the reason picker hold what was set locally, and that
            state belongs to the batch it was set on, not to the next one.
            `null` throughout — a batch has no single current rating or flag to show as active. -->
-      {#key imageIds}
-        <ImageCardModTools {imageIds} nsfwLevel={null} minor={null} poi={null} rating={!appeal} />
-      {/key}
+      {#if skipped > 0}
+        <span class="text-xs text-dark-2">{skipped} already removed: dismiss those on their cards</span>
+      {/if}
+
+      {#if verdictCount}
+        {#key verdictImageIds}
+          <ImageCardModTools
+            imageIds={verdictImageIds}
+            nsfwLevel={null}
+            minor={null}
+            poi={null}
+            rating={!appeal}
+          />
+        {/key}
+      {/if}
 
       <div class="ml-auto flex flex-wrap gap-2">
         {#if appeal}
-          {@render bulkButton('?/bulkResolveAppeal', `Approve ${count}`, 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10', { status: 'Approved' })}
-          {@render bulkButton('?/bulkResolveAppeal', `Reject ${count}`, 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10', { status: 'Rejected' })}
-        {:else}
-          {@render bulkButton('?/bulkAccept', `${acceptLabel} ${count}`, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
+          {@render bulkButton('?/bulkResolveAppeal', imageIds, `Approve ${count}`, 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10', { status: 'Approved' })}
+          {@render bulkButton('?/bulkResolveAppeal', imageIds, `Reject ${count}`, 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10', { status: 'Rejected' })}
+        {:else if verdictCount}
+          {@render bulkButton('?/bulkAccept', verdictImageIds, `${acceptLabel} ${verdictCount}`, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
           {#if minorQueue}
-            {@render bulkButton('?/bulkAccept', `Accept ${count} + clear minor`, 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
+            {@render bulkButton('?/bulkAccept', verdictImageIds, `Accept ${verdictCount} + clear minor`, 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
           {/if}
-          {#if removableCount}
-            {#key removableImageIds}
-              <TosDeleteButton
-                action="?/bulkBlock"
-                {submit}
-                label={`Remove ${removableCount}`}
-                hidden={{ imageIds: removableImageIds, reportIds }}
-              />
-            {/key}
-          {/if}
+          {#key verdictImageIds}
+            <TosDeleteButton
+              action="?/bulkBlock"
+              {submit}
+              label={`Remove ${verdictCount}`}
+              hidden={{ imageIds: verdictImageIds, reportIds }}
+            />
+          {/key}
         {/if}
       </div>
     </div>
   </div>
 {/if}
 
-{#snippet bulkButton(action: string, label: string, cls: string, extra: Record<string, string> = {})}
+{#snippet bulkButton(action: string, ids: string, label: string, cls: string, extra: Record<string, string> = {})}
   <form method="POST" {action} use:enhance={submit}>
-    <input type="hidden" name="imageIds" value={imageIds} />
+    <input type="hidden" name="imageIds" value={ids} />
     <input type="hidden" name="reportIds" value={reportIds} />
     {#each Object.entries(extra) as [k, v] (k)}
       <input type="hidden" name={k} value={v} />

@@ -38,9 +38,18 @@ export async function clearReviewFlagsOnBlock(imageIds: number[]): Promise<void>
 }
 
 /**
+ * Ceiling on the purge hold an open report places on its owner's blocked images, measured from the
+ * owner's oldest open report, not from the block: the send/archive pipeline has no retry limit, so
+ * a report nobody finishes would otherwise hold them forever, and clocking it from the block would
+ * shrink each report's budget by however old the block already was.
+ */
+export const CSAM_HOLD_MAX_DAYS = 30;
+
+/**
  * Once a report is filed, the purge hold keyed on the owner's open report takes over from the
- * moderator-only flag. Cleared only where that hold already covers the image, so a report that
- * does not hold it (no owner on the report, another account's image) leaves the flag on.
+ * moderator-only flag. Cleared only where that hold covers the image right now, so a report that
+ * does not hold it (no owner on the report, another account's image, an owner whose hold has
+ * already run out) leaves the flag on. Mirrors the hold in `remove-blocked-images`.
  */
 export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promise<number> {
   if (!imageIds.length) return 0;
@@ -54,6 +63,12 @@ export async function releaseReviewFlagsToReportHold(imageIds: number[]): Promis
         SELECT 1 FROM "CsamReport" c
         WHERE c."userId" = i."userId"
           AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "CsamReport" c
+        WHERE c."userId" = i."userId"
+          AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+          AND c."createdAt" <= now() - ${CSAM_HOLD_MAX_DAYS} * interval '1 day'
       )
   `;
 }
