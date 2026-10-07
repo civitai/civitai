@@ -2,9 +2,8 @@ import { Skeleton, Text, Title } from '@mantine/core';
 import { IconCalendarCheck, IconCrown, IconSparkles } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import { legendStatusLabel } from '~/components/CreatorJourney/legend-status';
+import { legendStatusLabel, showcaseMonthLabel } from '~/components/CreatorJourney/legend-status';
 import { accentVar, TierBadge, tierAccents } from '~/components/CreatorJourney/tier-badge';
-import { NextLink } from '~/components/NextLink/NextLink';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
@@ -12,7 +11,7 @@ import {
   SpotlightSurface,
 } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { Username } from '~/components/User/Username';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { UserAvatar, UserProfileLink } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -39,7 +38,7 @@ export function CreatorShowcase() {
   );
 }
 
-export function CreatorShowcaseView({
+function CreatorShowcaseView({
   showcase: data,
   isLoading,
   supernovaArt,
@@ -51,7 +50,7 @@ export function CreatorShowcaseView({
   legendArt?: string | null;
 }) {
   const currentUser = useCurrentUser();
-  const month = formatDate(new Date(), 'MMMM', true);
+  const month = showcaseMonthLabel(new Date());
 
   return (
     <div className="flex flex-col gap-10">
@@ -73,7 +72,7 @@ export function CreatorShowcaseView({
             empty={`No new Supernovas yet in ${month}. The next one could be you.`}
           >
             {data.newSupernovas.map(({ user, achievedAt }) => (
-              <CreatorCard
+              <ShowcaseCreatorCard
                 key={user.id}
                 user={user}
                 accent={SUPERNOVA.accent}
@@ -94,7 +93,7 @@ export function CreatorShowcaseView({
             empty="No Legends yet. The first one will be remembered here."
           >
             {data.legends.map(({ user, founding, since }) => (
-              <CreatorCard
+              <ShowcaseCreatorCard
                 key={user.id}
                 user={user}
                 accent={LEGEND.accent}
@@ -238,7 +237,7 @@ function ShowcaseSection({
   );
 }
 
-function CreatorCard({
+function ShowcaseCreatorCard({
   user,
   accent,
   isViewer,
@@ -269,14 +268,12 @@ function CreatorCard({
         }}
       />
       {isViewer && (
-        <div className="absolute inset-x-2 top-2 flex items-center justify-between">
-          <span
-            className="rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white"
-            style={{ background: 'var(--cj-accent)' }}
-          >
-            You
-          </span>
-        </div>
+        <span
+          className="absolute left-2 top-2 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white"
+          style={{ background: 'var(--cj-accent)' }}
+        >
+          You
+        </span>
       )}
       <div
         className="relative rounded-full p-[3px] shadow-[0_0_18px_color-mix(in_srgb,var(--cj-accent)_45%,transparent)] group-hover/card:shadow-[0_0_30px_color-mix(in_srgb,var(--cj-accent)_75%,transparent)] motion-safe:transition-[box-shadow,transform] motion-safe:duration-300 motion-safe:group-hover/card:scale-105"
@@ -284,12 +281,11 @@ function CreatorCard({
       >
         <UserAvatar user={user} avatarSize={72} radius="xl" linkToProfile withHoverCard={false} />
       </div>
-      <NextLink
-        href={`/user/${user.username}`}
-        className="relative flex min-w-0 max-w-full justify-center text-inherit no-underline"
-      >
-        <Username {...user} size="md" badgeSize={20} />
-      </NextLink>
+      <div className="relative flex min-w-0 max-w-full justify-center [&_a]:text-inherit [&_a]:no-underline">
+        <UserProfileLink user={user} linkToProfile>
+          <Username {...user} size="md" badgeSize={20} />
+        </UserProfileLink>
+      </div>
       <div className="mt-auto flex w-full flex-col items-center gap-2">
         <SpotlightDivider />
         <div

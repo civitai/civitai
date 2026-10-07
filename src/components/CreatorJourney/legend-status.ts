@@ -13,3 +13,8 @@ export function legendStatusLabel(status: {
         `Legend since ${formatDate(status.since, 'MMMM YYYY', true)}`;
   return status.oneOf ? `${label} · one of ${numberWithCommas(status.oneOf)}` : label;
 }
+
+/** The showcase lists the UTC month's Supernovas, so the heading names the UTC month too. */
+export function showcaseMonthLabel(now: Date) {
+  return formatDate(now, 'MMMM', true);
+}

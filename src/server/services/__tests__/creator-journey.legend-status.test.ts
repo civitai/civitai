@@ -8,7 +8,7 @@ vi.mock('~/server/services/creator-showcase.service', async (importOriginal) => 
 
 import type * as CreatorShowcase from '~/server/services/creator-showcase.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
-import { legendStatusLabel } from '~/components/CreatorJourney/legend-status';
+import { legendStatusLabel, showcaseMonthLabel } from '~/components/CreatorJourney/legend-status';
 import { getLegendStatus } from '~/server/services/creator-journey.service';
 
 const GRANTED = new Date('2026-10-20T03:00:00Z');
@@ -143,6 +143,20 @@ describe('legendStatusLabel', () => {
       expect(legendStatusLabel({ founding: false, since: new Date('2027-03-01T00:30:00Z') })).toBe(
         'Legend since March 2027'
       );
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
+  });
+});
+
+describe('showcaseMonthLabel', () => {
+  // Same zone pin as above. The list is the UTC month's, so a viewer behind UTC must not see last month's name.
+  it('names the UTC month, not the viewer local one', () => {
+    const tz = process.env.TZ;
+    process.env.TZ = 'America/Los_Angeles';
+    try {
+      expect(showcaseMonthLabel(new Date('2026-11-01T03:00:00Z'))).toBe('November');
     } finally {
       if (tz === undefined) delete process.env.TZ;
       else process.env.TZ = tz;
