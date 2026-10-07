@@ -395,8 +395,7 @@ export const CACHE_MODES = ['off', 'shadow', 'on'];
 export const cacheReporterPath = (worktree) =>
   join(worktree, 'scripts', 'test-cache', 'reporter.mjs');
 
-// The key definition is the DAEMON's copy, so a fix to it reaches every tree when this checkout
-// pulls. A tree older than scripts/test-cache/load-core.mjs ignores it and keys with its own.
+// See scripts/test-cache/load-core.mjs.
 export const sharedCacheCorePath = fileURLToPath(
   new URL('../../../../scripts/test-cache/core.mjs', import.meta.url)
 );
@@ -466,9 +465,9 @@ export function defaultStartRun({
         CIVITAI_TEST_QUEUE: '0',
         // Read by the worktree's vitest config, sequencer, tracker and reporter alike.
         CIVITAI_TEST_CACHE: RUN_KINDS[normalizeKind(kind)].resultCache ? cacheMode : 'off',
-        ...(resultCache && existsSync(sharedCacheCorePath)
-          ? { CIVITAI_TEST_CACHE_CORE: sharedCacheCorePath }
-          : {}),
+        // Set or cleared, never inherited: a cached run's own children would otherwise pass it on.
+        CIVITAI_TEST_CACHE_CORE:
+          resultCache && existsSync(sharedCacheCorePath) ? sharedCacheCorePath : undefined,
       },
       // The same fd twice: one file description, one shared offset, so the two streams append in
       // the order they were actually written. See createOutputCapture.

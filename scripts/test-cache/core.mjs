@@ -33,6 +33,17 @@ export const MODES = ['off', 'shadow', 'on'];
 export const RECORDS_PER_TEST = 8;
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+// Read once, at load: the daemon's checkout can pull mid-run, and a record must be salted with the
+// code that made it, not with whatever is on disk when the run ends.
+const LOADED_CORE = (() => {
+  try {
+    return createHash('sha256')
+      .update(readFileSync(fileURLToPath(import.meta.url)))
+      .digest('hex');
+  } catch {
+    return 'missing';
+  }
+})();
 
 // Inputs every test depends on that no import edge or file read records. This cache's own code is
 // among them: a fix to how reads are captured must invalidate everything recorded without it.
@@ -45,8 +56,7 @@ const GLOBAL_INPUTS = [
   'tsconfig.json',
 ];
 const WORKSPACE_DIRS = ['packages', 'apps'];
-// core.mjs is hashed where it was loaded from, which the queue may point at another checkout; the
-// rest always run from the tree under test.
+// core.mjs may come from the daemon's checkout (load-core.mjs); these always run from the tree.
 const OWN_CODE = ['fs-tracker.mjs', 'sequencer.mjs', 'reporter.mjs', 'load-core.mjs'];
 
 // Named once because TWO rules need the same list, and a second copy is how the bare-specifier
@@ -298,7 +308,7 @@ export function globalSalt(root, vitestVersion, fingerprint = makeFingerprinter(
     }
   };
   const own = [
-    hash('core.mjs', join(HERE, 'core.mjs')),
+    `core.mjs:${LOADED_CORE}`,
     ...OWN_CODE.map((f) => hash(f, join(root, 'scripts', 'test-cache', f))),
   ];
   return sha(

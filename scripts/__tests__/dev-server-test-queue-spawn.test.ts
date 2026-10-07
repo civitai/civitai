@@ -224,6 +224,10 @@ describe('result cache on queued runs', () => {
   const argvOf = (call: number) => spawn.mock.calls[call][1] as string[];
   const envOf = (call: number) =>
     (spawn.mock.calls[call][2] as { env: Record<string, string> }).env;
+  // What a queued cache-on run of THIS file inherits; without it the env assertions below pass or
+  // fail depending on how the suite was launched.
+  beforeEach(() => vi.stubEnv('CIVITAI_TEST_CACHE_CORE', '/inherited/core.mjs'));
+  afterEach(() => vi.unstubAllEnvs());
   // The repo's own tree, so the reporter file really exists and the argv is not vacuously empty.
   const worktree = process.cwd();
   const reporter = cacheReporterPath(worktree);
@@ -273,8 +277,6 @@ describe('result cache on queued runs', () => {
     expect(envOf(0).CIVITAI_TEST_CACHE_CORE).toBeUndefined();
   });
 
-  // Every tree keys with the daemon's core.mjs, so a fix to it reaches them all when this checkout
-  // pulls, without each tree rebasing.
   it("points a cached run at the daemon's own key definition", () => {
     start({ cacheMode: 'on' });
     expect(envOf(0).CIVITAI_TEST_CACHE_CORE).toBe(resolve(__dirname, '../test-cache/core.mjs'));

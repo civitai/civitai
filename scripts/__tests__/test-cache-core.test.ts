@@ -327,6 +327,37 @@ describe('which key definition a run uses', () => {
     );
   });
 
+  const copyCore = (marker: string) => {
+    const path = join(dir(), 'core.mjs');
+    writeFileSync(path, ownCore + marker);
+    return path;
+  };
+
+  it('salts with the core that was loaded, so two different cores never share a record', async () => {
+    const root = dir();
+    const a = await loadCore({ CIVITAI_TEST_CACHE_CORE: copyCore('// a') });
+    const b = await loadCore({ CIVITAI_TEST_CACHE_CORE: copyCore('// b') });
+    expect(a.globalSalt(root, 'v')).not.toBe(b.globalSalt(root, 'v'));
+  });
+
+  // A record written at the end of a run must name the code that ran, even if the daemon's checkout
+  // pulled a new core.mjs in the meantime.
+  it('ignores a core.mjs rewritten after it was loaded', async () => {
+    const root = dir();
+    const path = copyCore('// c');
+    const loaded = await loadCore({ CIVITAI_TEST_CACHE_CORE: path });
+    const before = loaded.globalSalt(root, 'v');
+    writeFileSync(path, ownCore + '// pulled mid-run');
+    expect(loaded.globalSalt(root, 'v')).toBe(before);
+  });
+
+  // Importing core.mjs directly makes the shared core silently inert; nothing else would go red.
+  it.each(['sequencer.mjs', 'reporter.mjs'])('%s loads core through load-core.mjs', (f) => {
+    const src = readFileSync(resolve(__dirname, '../test-cache', f), 'utf8');
+    expect(src).toContain("from './load-core.mjs'");
+    expect(src).not.toMatch(/from '\.\/core\.mjs'/);
+  });
+
   // The tracker, sequencer and reporter always run from the tree, wherever core.mjs came from, so
   // the salt must hash the tree's copies of them.
   it("changes the salt when the tree's reporter changes", () => {
