@@ -3,6 +3,7 @@ import { crucibleDetailSelect } from '~/server/selectors/crucible.selector';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
   getAverageFinishTopPercent,
+  getCrucibleJudgingBadge,
   getCreatorFinish,
   baseModelMakesMediaType,
   canSeeCrucibleEntryDetails,
@@ -670,5 +671,32 @@ describe('getAverageFinishTopPercent', () => {
   it('rounds to the nearest percent', () => {
     const firstOfEight = { rank: 1, field: 8 };
     expect(getAverageFinishTopPercent([firstOfEight, firstOfEight, firstOfEight])).toBe(13);
+  });
+});
+
+describe('getCrucibleJudgingBadge', () => {
+  it('shows nothing until the viewer has judged the crucible', () => {
+    expect(getCrucibleJudgingBadge(undefined)).toBeNull();
+    expect(
+      getCrucibleJudgingBadge({ judged: false, available: true, votesUsedUp: false })
+    ).toBeNull();
+  });
+
+  it('says judging is available while pairs are left', () => {
+    expect(
+      getCrucibleJudgingBadge({ judged: true, available: true, votesUsedUp: false })
+    ).toMatchObject({ kind: 'available', label: 'Judging available' });
+  });
+
+  it('says caught up once the votes are used up', () => {
+    expect(
+      getCrucibleJudgingBadge({ judged: true, available: false, votesUsedUp: true })
+    ).toMatchObject({ kind: 'caughtUp', label: 'Caught up' });
+  });
+
+  it('shows nothing when no pairs are left only because entries are hidden', () => {
+    expect(
+      getCrucibleJudgingBadge({ judged: true, available: false, votesUsedUp: false })
+    ).toBeNull();
   });
 });

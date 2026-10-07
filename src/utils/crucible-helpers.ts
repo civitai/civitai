@@ -1,3 +1,4 @@
+import type { CrucibleJudgingStatus } from '~/server/schema/crucible.schema';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import { CrucibleIngestionStatus, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { getBaseModelConfig } from '~/shared/constants/basemodel.constants';
@@ -495,4 +496,16 @@ export function getCrucibleRatings(nsfwLevel: number): string[] {
 
 export function getCrucibleRatingLabel(nsfwLevel: number): string {
   return getCrucibleRatings(nsfwLevel).join(' / ');
+}
+
+export type CrucibleJudgingBadge = { kind: 'available' | 'caughtUp'; label: string; color: string };
+
+/** Only for crucibles the viewer has judged: on any other, every pair is still open. */
+export function getCrucibleJudgingBadge(
+  judging: Pick<CrucibleJudgingStatus, 'judged' | 'available' | 'votesUsedUp'> | undefined
+): CrucibleJudgingBadge | null {
+  if (!judging?.judged) return null;
+  if (judging.available) return { kind: 'available', label: 'Judging available', color: 'green' };
+  if (judging.votesUsedUp) return { kind: 'caughtUp', label: 'Caught up', color: 'gray' };
+  return null;
 }

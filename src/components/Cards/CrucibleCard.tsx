@@ -1,5 +1,5 @@
 import { Badge, Skeleton, Text } from '@mantine/core';
-import { IconClockHour4, IconFlame } from '@tabler/icons-react';
+import { IconCheck, IconClockHour4, IconFlame, IconGavel } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import cardClasses from '~/components/Cards/Cards.module.css';
@@ -8,9 +8,11 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import type { CrucibleJudgingStatus } from '~/server/schema/crucible.schema';
 import { Currency, CrucibleStatus } from '~/shared/utils/prisma/enums';
 import {
   CRUCIBLE_PRIZE_BUZZ_TYPE,
+  getCrucibleJudgingBadge,
   getCrucibleStatusBadge,
   getCrucibleTotalPrizePool,
   getCrucibleUrl,
@@ -46,6 +48,7 @@ type CrucibleCardData = {
     entries: number;
   };
   paidEntryCount: number;
+  judging?: CrucibleJudgingStatus;
 };
 
 export function CrucibleCard({ data }: { data: CrucibleCardData }) {
@@ -61,6 +64,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
     image,
     _count,
     paidEntryCount,
+    judging,
   } = data;
   const entryCount = _count.entries ?? 0;
   const prizePool = getCrucibleTotalPrizePool({ entryFee, paidEntryCount, seededPrizePool });
@@ -68,6 +72,7 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
   const now = useMemo(() => new Date(), []);
 
   const statusBadge = getCrucibleStatusBadge(status, { startAt, endAt }, now);
+  const judgingBadge = getCrucibleJudgingBadge(judging);
 
   return (
     <AspectRatioImageCard
@@ -90,19 +95,39 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
           : undefined
       }
       header={
-        <div className="flex w-full items-center justify-end gap-1">
-          <Badge
-            className={cardClasses.chip}
-            color={statusBadge.color}
-            variant="filled"
-            radius="xl"
-            px={8}
-            h={26}
-            fw="bold"
-          >
-            {statusBadge.label}
-          </Badge>
-          <CrucibleContextMenu crucible={{ id, userId: user.id }} position="bottom-end" />
+        <div className="flex w-full items-center justify-between gap-1">
+          {judgingBadge ? (
+            <Badge
+              className={cardClasses.chip}
+              color={judgingBadge.color}
+              variant="filled"
+              radius="xl"
+              px={8}
+              h={26}
+              fw="bold"
+              leftSection={
+                judgingBadge.kind === 'available' ? <IconGavel size={14} /> : <IconCheck size={14} />
+              }
+            >
+              {judgingBadge.label}
+            </Badge>
+          ) : (
+            <span />
+          )}
+          <div className="flex items-center gap-1">
+            <Badge
+              className={cardClasses.chip}
+              color={statusBadge.color}
+              variant="filled"
+              radius="xl"
+              px={8}
+              h={26}
+              fw="bold"
+            >
+              {statusBadge.label}
+            </Badge>
+            <CrucibleContextMenu crucible={{ id, userId: user.id }} position="bottom-end" />
+          </div>
         </div>
       }
       footerGradient
