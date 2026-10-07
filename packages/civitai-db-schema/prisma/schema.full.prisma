@@ -5004,6 +5004,8 @@ model CreatorMilestone {
   cosmeticId   Int?
   cosmetic     Cosmetic?              @relation(fields: [cosmeticId], references: [id], onDelete: SetNull)
   sortOrder      Int                        @default(0)
+  // Read only by the grant job's raw SQL. Kept out of the Prisma client so no Prisma read returns it.
+  detector       Json? // @no-type
   achievements   UserCreatorMilestone[]
   extraCosmetics CreatorMilestoneCosmetic[]
 }

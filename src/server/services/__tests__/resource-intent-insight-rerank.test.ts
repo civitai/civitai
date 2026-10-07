@@ -96,7 +96,7 @@ const genResource = (id: number) => ({
   air: `air:${id}`,
 });
 
-// Served to both seed pages alike, so after the merge's dedupe this is the seed order.
+// Served as the seed page, so this is the seed order.
 const SEED_HITS = [hitFor(8801, 81001, 94), hitFor(8802, 82002, 57), hitFor(8803, 83003, 19)];
 
 beforeEach(() => {

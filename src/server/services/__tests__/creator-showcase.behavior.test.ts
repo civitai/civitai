@@ -122,7 +122,7 @@ beforeAll(async () => {
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, muted boolean NOT NULL DEFAULT false,
       "deletedAt" timestamp(3), "bannedAt" timestamp(3),
-      "excludeFromLeaderboards" boolean NOT NULL DEFAULT false);
+      "excludeFromLeaderboards" boolean NOT NULL DEFAULT false, settings jsonb DEFAULT '{}');
     CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
       "expiresAt" timestamp(3) NOT NULL);
@@ -354,6 +354,11 @@ describe('cached candidates, live standing', () => {
       'leaderboard-excluded',
       () => q(`UPDATE "User" SET "excludeFromLeaderboards" = true WHERE id = $1`, [GOOD]),
     ],
+    [
+      'opting out',
+      () =>
+        q(`UPDATE "User" SET settings = '{"hideFromCreatorShowcase": true}' WHERE id = $1`, [GOOD]),
+    ],
   ])('drops a Legend newly %s while the candidate list is cached', async (_, change) => {
     await addUser(GOOD);
     await addUser(OTHER);
@@ -375,6 +380,20 @@ describe('cached candidates, live standing', () => {
 
     expect(await getLegendStatus(GOOD, { pg, now: NOW })).toMatchObject({ oneOf: null });
     expect(redisMock.redis.setNxKeepTtlWithEx).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a creator whose opt-out is off or never set', async () => {
+    await addUser(GOOD);
+    await addUser(OTHER);
+    await addUser(MUTED);
+    for (const id of [GOOD, OTHER, MUTED]) await grant(id, 'score:legend', LAST_MONTH);
+    await q(`UPDATE "User" SET settings = '{"hideFromCreatorShowcase": false}' WHERE id = $1`, [
+      GOOD,
+    ]);
+    await q(`UPDATE "User" SET settings = NULL WHERE id = $1`, [OTHER]);
+
+    const { legends } = await getCreatorShowcase({ pg, now: NOW });
+    expect(legends.map(({ user }) => user.id)).toEqual([GOOD, MUTED, OTHER]);
   });
 
   it('moves "this month" at the UTC month boundary while the candidate list is cached', async () => {

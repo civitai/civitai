@@ -16,6 +16,9 @@ export enum FLIPT_FEATURE_FLAGS {
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
   // The same for the public REST images endpoint, apart so either can be rolled back alone.
   FEED_SERVICE_REST_IMAGES = 'feed-service-rest-images',
+  // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
+  // missing, a hub stays on Meilisearch while every other shape follows the flag above.
+  FEED_SERVICE_HUBS = 'feed-service-hubs',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',

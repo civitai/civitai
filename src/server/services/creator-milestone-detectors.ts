@@ -1,3 +1,4 @@
+import type { AugmentedPool } from '~/server/db/db-helpers';
 import type { MilestoneRegistryEntry } from '~/server/services/creator-milestone-registry';
 import {
   creatorMilestoneRegistry,
@@ -6,13 +7,7 @@ import {
 
 type ActivityEntry = Exclude<MilestoneRegistryEntry, { detector: 'scoreSnapshot' }>;
 
-/**
- * One set-based query per group of keys that share a detector, params, launch date and silence. It
- * selects "userId", "milestoneKey" and "achievedAt" (NULL when the moment is unknown) for every key
- * a user has reached but does not hold. `keys` and `users` are SQL placeholders; `users` narrows the
- * scan to those user ids, and NULL means everyone.
- */
-export type MilestoneDetectorGroup = {
+type DetectorGroupBase = {
   id: string;
   /** The group's identity without its silence, so toggling silence keeps one watermark row. */
   watermarkId: string;
@@ -21,8 +16,32 @@ export type MilestoneDetectorGroup = {
   silent: boolean;
   /** Whether "achievedAt" is the real moment. Without it, a crossing cannot be dated. */
   timed: boolean;
+  /** Anything beyond the keys and thresholds that changes what the group grants. */
+  fingerprint?: string;
+};
+
+/**
+ * One set-based query per group of keys that share a detector, params, launch date and silence. It
+ * selects "userId", "milestoneKey" and "achievedAt" (NULL when the moment is unknown) for every key
+ * a user has reached but does not hold. `keys` and `users` are SQL placeholders; `users` narrows the
+ * scan to those user ids, and NULL means everyone.
+ */
+export type SqlDetectorGroup = DetectorGroupBase & {
   sql: (placeholders: { keys: string; users: string }) => string;
 };
+
+export type MilestoneCandidateRow = {
+  userId: number;
+  milestoneKey: string;
+  achievedAt: Date | null;
+};
+
+/** A group whose candidates are found once, on the read pool, and only inserted on the writer. */
+export type RowDetectorGroup = DetectorGroupBase & {
+  candidates: (readPg: AugmentedPool) => Promise<MilestoneCandidateRow[]>;
+};
+
+export type MilestoneDetectorGroup = SqlDetectorGroup | RowDetectorGroup;
 
 const notHeld = (user: string) => `NOT EXISTS (
     SELECT 1 FROM "UserCreatorMilestone" held
@@ -43,6 +62,38 @@ const publishedSources = {
 export const modelDownloadsSource = `SELECT mm."userId", mm."downloadCount" FROM "ModelMetric" mm
     WHERE mm.status = 'Published' AND mm.availability <> 'Private'`;
 
+// Gross: what buyers paid, before the platform cut and any reseller share. A cosmetic's sale goes to
+// its creator wherever it was bought. A pack's price is split: each member another creator made is
+// credited to that creator at its recorded price, official members to nobody, and the rest to the
+// creator who built the pack.
+const packOthersSql = `SELECT pc."buzzTransactionId", pc."cosmeticId", pc."unitAmount", c."createdById"
+    FROM "UserCosmeticShopPurchaseCosmetic" pc
+    JOIN "Cosmetic" c ON c.id = pc."cosmeticId"`;
+
+export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchasedAt", p."buzzTransactionId" AS id,
+      p."unitAmount" AS amount
+    FROM "UserCosmeticShopPurchases" p
+    JOIN "Cosmetic" c ON c.id = p."cosmeticId"
+    WHERE NOT p.refunded AND c."createdById" IS NOT NULL
+    UNION ALL
+    SELECT i."addedById", p."purchasedAt", p."buzzTransactionId",
+      greatest(p."unitAmount" - coalesce((
+        SELECT sum(m."unitAmount") FROM (${packOthersSql}) m
+        WHERE m."buzzTransactionId" = p."buzzTransactionId"
+          AND m."createdById" IS DISTINCT FROM i."addedById"
+      ), 0), 0)
+    FROM "UserCosmeticShopPurchases" p
+    JOIN "CosmeticShopItem" i ON i.id = p."shopItemId"
+    WHERE NOT p.refunded AND p."cosmeticId" IS NULL AND i."addedById" IS NOT NULL
+    UNION ALL
+    SELECT m."createdById", p."purchasedAt", m."buzzTransactionId" || ':' || m."cosmeticId",
+      m."unitAmount"
+    FROM (${packOthersSql}) m
+    JOIN "UserCosmeticShopPurchases" p ON p."buzzTransactionId" = m."buzzTransactionId"
+    JOIN "CosmeticShopItem" i ON i.id = p."shopItemId"
+    WHERE NOT p.refunded AND m."createdById" IS NOT NULL
+      AND m."createdById" IS DISTINCT FROM i."addedById"`;
+
 const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m}"`).join(', ')}
     FROM "UserMetric" um WHERE um.timeframe = 'AllTime'`;
 
@@ -57,9 +108,12 @@ export const activityValuesSql = `SELECT
     coalesce((SELECT s."followerCount" FROM (${userMetricSource}) s
       WHERE s."userId" = $1), 0)::int AS followers,
     coalesce((SELECT s."reactionCount" FROM (${userMetricSource}) s
-      WHERE s."userId" = $1), 0)::int AS reactions`;
+      WHERE s."userId" = $1), 0)::int AS reactions,
+    -- Clamped: a bigint sum past int range would otherwise fail the whole page.
+    least(coalesce((SELECT sum(s.amount) FROM (${shopSalesSource}) s WHERE s."userId" = $1), 0),
+      2147483647)::int AS revenue`;
 
-function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
+function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
   switch (entry.detector) {
     // The Nth item still published is dated by its own publishedAt.
     case 'publishedCount':
@@ -92,14 +146,29 @@ function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
           ON m.key = ANY(${keys}::text[]) AND um."${entry.params.metric}" >= m.threshold
         WHERE (${users}::int[] IS NULL OR um."userId" = ANY(${users}::int[]))
           AND ${notHeld('um."userId"')}`;
+    // Dated by the sale that carried the running total across the threshold.
+    case 'shopRevenue':
+      return ({ keys, users }) => `
+        SELECT r."userId", m.key AS "milestoneKey", r."purchasedAt" AS "achievedAt"
+        FROM (
+          SELECT s."userId", s."purchasedAt", s.amount,
+            sum(s.amount) OVER (
+              PARTITION BY s."userId" ORDER BY s."purchasedAt", s.id ROWS UNBOUNDED PRECEDING
+            ) AS total
+          FROM (${shopSalesSource}) s
+          WHERE (${users}::int[] IS NULL OR s."userId" = ANY(${users}::int[]))
+        ) r
+        JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[])
+          AND r.total >= m.threshold AND r.total - r.amount < m.threshold
+        WHERE ${notHeld('r."userId"')}`;
   }
 }
 
 /** The registry's activity keys, grouped so each group is one query. Score tiers run in their own job. */
 export function activityDetectorGroups(
   registry: Record<string, MilestoneRegistryEntry> = creatorMilestoneRegistry
-): MilestoneDetectorGroup[] {
-  const groups = new Map<string, MilestoneDetectorGroup>();
+): SqlDetectorGroup[] {
+  const groups = new Map<string, SqlDetectorGroup>();
   for (const [key, entry] of Object.entries(registry)) {
     if (entry.detector === 'scoreSnapshot') continue;
     const watermarkId = [
@@ -117,7 +186,7 @@ export function activityDetectorGroups(
         keys: [key],
         launchedAt: entry.launchedAt,
         silent: !!entry.silent,
-        timed: entry.detector === 'publishedCount',
+        timed: entry.detector === 'publishedCount' || entry.detector === 'shopRevenue',
         sql: detectorSql(entry),
       });
   }

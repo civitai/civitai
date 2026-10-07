@@ -37,9 +37,10 @@ import { promisify } from 'util';
  *   - `fetchThroughCache` — always the `{ data, cachedAt }` WRAPPER OBJECT.
  *   - `createCachedArray` / `createCachedObject` (`compress: true`) — every value it
  *     writes is a record: `{ ...result, cachedAt }`, the negative marker
- *     `{ [idKey]: id, notFound: true, cachedAt }`, and the debounce marker
- *     `{ [idKey]: id, debounce: true }`. `lookupFn` is typed `T extends object`, so a
- *     scalar cannot reach the write path.
+ *     `{ [idKey]: id, notFound: true, cachedAt }` (fetch writes it uncompressed;
+ *     invalidate() rewrites it compressed), and the debounce marker
+ *     `{ [idKey]: id, debounce: true }`.
+ *     `lookupFn` is typed `T extends object`, so a scalar cannot reach the write path.
  *
  * Do NOT enable `compress` for a caller that stores a bare scalar (a positive-fixint
  * 0x01 would be ambiguous with the sentinel).
@@ -127,14 +128,14 @@ export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer
 
 /**
  * Return the raw msgpack Buffer to feed to `unpack()`, transparently handling both the
- * brotli-sentinel-prefixed (new) and raw-msgpack (legacy) on-disk formats.
+ * brotli-sentinel-prefixed and raw-msgpack on-disk formats.
  *
  * Only the compress-aware read path calls this — see the SENTINEL SCOPE note above for
  * why the first-byte sentinel check is collision-free there.
  *
  * `onTiming` (optional) is called ONLY when a brotli-decompress actually ran, and records elapsed
  * time as this caller sees it — threadpool queue wait AND event-loop delay included; see
- * PackedCodecTimer. The legacy
+ * PackedCodecTimer. The
  * raw-msgpack passthrough deliberately records NOTHING: it is a sentinel check and a return,
  * not a codec call, and mixing those near-zero samples into the `decompress` histogram would
  * drag the quantiles toward "the cost of not decompressing" — a number that answers no

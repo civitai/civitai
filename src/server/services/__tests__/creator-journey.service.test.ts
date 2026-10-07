@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
   buildActivityProgress,
+  buildSecretMilestones,
   getCreatorJourney,
   getCreatorScoreLadder,
   getFirstPublishCard,
@@ -22,8 +23,8 @@ const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[
 
 describe('maskUnearnedMilestone', () => {
   it('masks a hidden milestone the viewer has not earned, keeping only its hint', () => {
-    expect(maskUnearnedMilestone(definition(), false)).toMatchObject({
-      key: 'hidden:unranked',
+    expect(maskUnearnedMilestone(definition(), false, 'slot-3')).toMatchObject({
+      key: 'hidden:slot-3',
       name: '???',
       description: null,
       hint: 'Someone builds on your work',
@@ -31,18 +32,20 @@ describe('maskUnearnedMilestone', () => {
   });
 
   it('reveals it once earned', () => {
-    expect(maskUnearnedMilestone(definition(), true).name).toBe('Remixed');
+    expect(maskUnearnedMilestone(definition(), true, 'slot').name).toBe('Remixed');
   });
 
   // The `hidden` TRACK is a grouping label; only the per-row flag masks.
   it('does not mask a row in the hidden track whose flag is off', () => {
-    expect(maskUnearnedMilestone(definition({ hidden: false }), false).name).toBe('Remixed');
+    expect(maskUnearnedMilestone(definition({ hidden: false }), false, 'slot').name).toBe(
+      'Remixed'
+    );
   });
 
   it('masks a flagged row in any track', () => {
-    expect(maskUnearnedMilestone(definition({ track: 'score', threshold: 500 }), false).name).toBe(
-      '???'
-    );
+    expect(
+      maskUnearnedMilestone(definition({ track: 'score', threshold: 500 }), false, 'slot').name
+    ).toBe('???');
   });
 });
 
@@ -164,7 +167,7 @@ describe('getCreatorScoreLadder', () => {
     // The key carries the name by convention (`score:spark` is Spark), so it is masked too.
     expect((await getCreatorScoreLadder()).tiers).toEqual([
       {
-        key: 'hidden:777',
+        key: 'hidden:tier-0',
         name: '???',
         threshold: 777,
         hint: 'Someone builds on your work',
@@ -290,6 +293,61 @@ describe('activity badge art', () => {
       ([args]) => args?.where?.key
     );
     expect(activityCall?.[0]).toMatchObject({ select: { cosmetic: { select: { data: true } } } });
+  });
+});
+
+describe('hidden milestones', () => {
+  const secret = {
+    ...definition({ key: 'test:opaque1', threshold: 42, hint: 'Look up' }),
+    name: 'Stargazer',
+    cosmetic: { data: { url: 'stargazer-art' } },
+    // Whatever a read hands back, the masked shape is built field by field.
+    detector: { type: 'query', sql: 'SELECT 1' },
+  };
+
+  it('shows an unearned one as its hint and nothing that tells it apart', () => {
+    expect(buildSecretMilestones([secret, secret], new Map())).toEqual([
+      {
+        key: 'hidden:secret-0',
+        name: '???',
+        description: null,
+        hint: 'Look up',
+        badgeUrl: null,
+        earned: false,
+        achievedAt: null,
+      },
+      expect.objectContaining({ key: 'hidden:secret-1', name: '???' }),
+    ]);
+  });
+
+  it('reveals an earned one', () => {
+    const at = new Date('2026-10-01');
+    expect(buildSecretMilestones([secret], new Map([['test:opaque1', at]]))).toEqual([
+      {
+        key: 'test:opaque1',
+        name: 'Stargazer',
+        description: 'Someone remixed your model.',
+        hint: 'Look up',
+        badgeUrl: 'stargazer-art',
+        earned: true,
+        achievedAt: at,
+      },
+    ]);
+  });
+
+  it('reads hidden rows outside the score and activity sections, with the shared select', async () => {
+    dbMock.dbRead.creatorMilestone.findMany.mockClear();
+    await getCreatorJourney(1);
+    const secretCall = dbMock.dbRead.creatorMilestone.findMany.mock.calls.find(
+      ([args]) => args?.where?.hidden === true
+    )?.[0];
+    expect(secretCall?.where).toMatchObject({
+      track: { not: 'score' },
+      key: { notIn: expect.arrayContaining(['create:models-1', 'reach:followers-100']) },
+    });
+    expect(Object.keys(secretCall?.select ?? {}).sort()).toEqual(
+      ['cosmetic', 'description', 'hidden', 'hint', 'key', 'name', 'threshold', 'track'].sort()
+    );
   });
 });
 

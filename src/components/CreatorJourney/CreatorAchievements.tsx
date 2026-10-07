@@ -21,6 +21,7 @@ const tracks = [
     accent: '#f59f00',
     measures: ['downloads', 'followers', 'reactions'],
   },
+  { key: 'earn', title: 'Earn', accent: '#7950f2', measures: ['revenue'] },
 ] as const satisfies ReadonlyArray<{
   key: string;
   title: string;
@@ -45,6 +46,11 @@ const measureCopy: Record<
   },
   followers: { label: 'Followers', current: (n) => numberWithCommas(n), unit: 'followers' },
   reactions: { label: 'Reactions', current: (n) => numberWithCommas(n), unit: 'reactions' },
+  revenue: {
+    label: 'Sales',
+    current: (n) => `${numberWithCommas(n)} Buzz`,
+    unit: 'Buzz in shop sales',
+  },
 };
 
 const accentOf = (measure: Measure) =>
@@ -211,7 +217,7 @@ function MilestoneBadge({
   );
 }
 
-function Hexagon({ label, state, size }: { label: string; state: TileState; size: number }) {
+export function Hexagon({ label, state, size }: { label: string; state: TileState; size: number }) {
   return (
     <div
       aria-hidden

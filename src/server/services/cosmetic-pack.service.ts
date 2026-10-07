@@ -318,7 +318,11 @@ export const computePackPayouts = ({
       // not charged for it either — see the purchase path.
       m.createdById !== buyerId
   );
-  const snapshotTotal = payable.reduce((sum, m) => sum + m.floorAmount, 0);
+  // A platform cosmetic in a creator's pack is priced as a foreign member (it is
+  // not `isOwn`), so its share of the price is the bank's. Left out of this
+  // split, it fell into the remainder and paid the pack creator for it.
+  const official = members.filter((m) => m.createdById == null && packCreatorId != null);
+  const snapshotTotal = [...payable, ...official].reduce((sum, m) => sum + m.floorAmount, 0);
 
   // The floor is checked against LIVE list prices while payouts run off the
   // SNAPSHOT, so the two can diverge: a member re-priced down lets the pack be
@@ -329,11 +333,13 @@ export const computePackPayouts = ({
   const scale = snapshotTotal > packPrice && snapshotTotal > 0 ? packPrice / snapshotTotal : 1;
 
   let foreignTotal = 0;
+  const attributed = new Map<number, number>();
 
   for (const member of payable) {
     // Floored per member, so scaling can only ever round in the platform's
     // favour and the total stays inside the price.
     const basis = scale === 1 ? member.floorAmount : Math.floor(member.floorAmount * scale);
+    attributed.set(member.cosmeticId, Math.max(0, basis));
     if (basis <= 0) continue;
     foreignTotal += basis;
     // A member is resold by the pack creator only when a resale row exists for
@@ -374,14 +380,49 @@ export const computePackPayouts = ({
     }
   }
 
-  const remainder = Math.max(0, packPrice - foreignTotal);
+  // Rounded up per member, the opposite of the payout basis, so a scaling crumb
+  // lands with the bank rather than in the pack creator's remainder. Capped at
+  // what the price has left, so the attributions never sum past it.
+  let officialTotal = 0;
+  for (const member of official) {
+    const basis = scale === 1 ? member.floorAmount : Math.ceil(member.floorAmount * scale);
+    const share = Math.max(0, Math.min(basis, packPrice - foreignTotal - officialTotal));
+    attributed.set(member.cosmeticId, share);
+    officialTotal += share;
+  }
+
+  const remainder = Math.max(0, packPrice - foreignTotal - officialTotal);
+
+  // The rest of the price is the pack creator's, spread over their own members
+  // by snapshot weight so a member's row says what it actually sold for.
+  const own = members.filter((m) => m.createdById === packCreatorId);
+  const ownWeight = own.reduce((sum, m) => sum + m.floorAmount, 0);
+  for (const member of own)
+    attributed.set(
+      member.cosmeticId,
+      ownWeight > 0 ? Math.floor((member.floorAmount / ownWeight) * remainder) : 0
+    );
+
   // Not paid to the buyer: a pack creator buying their own pack is not charged
   // for their own portion (see computePackAmountDue), so there is nothing to pay
   // back — and paying it would book a Sell crediting them for a sale they funded.
   const packCreatorAmount =
     packCreatorId && packCreatorId !== buyerId ? computeCreatorShopSplit(remainder).creatorPool : 0;
 
-  return { components, foreignTotal, remainder, packCreatorAmount, scaled: scale !== 1 };
+  return {
+    components,
+    /**
+     * cosmeticId → the part of `packPrice` this member was sold for. Sums to at
+     * most `packPrice`. A member the buyer authored is absent: it was neither
+     * charged for nor delivered.
+     */
+    attributed,
+    foreignTotal,
+    officialTotal,
+    remainder,
+    packCreatorAmount,
+    scaled: scale !== 1,
+  };
 };
 
 /**
@@ -538,16 +579,13 @@ export const purchaseCosmeticPack = async ({
         },
       });
 
-      const { components } = computePackPayouts({
+      const { attributed } = computePackPayouts({
         packPrice: amountCharged,
         packCreatorId: shopItem.addedById,
         members,
         buyerId: userId,
         resaleShareByCosmeticId,
       });
-      const attributedByCosmetic = new Map<number, number>();
-      for (const member of members) attributedByCosmetic.set(member.cosmeticId, member.floorAmount);
-      for (const c of components) attributedByCosmetic.set(c.cosmeticId, c.unitAmount);
 
       // A row is what getPackMembers counts into a member's `soldCount`, which
       // its own listing's `availableQuantity` then refuses against. A withheld
@@ -557,7 +595,9 @@ export const purchaseCosmeticPack = async ({
         data: paidFor.map((m) => ({
           buzzTransactionId: transactionId,
           cosmeticId: m.cosmeticId,
-          unitAmount: attributedByCosmetic.get(m.cosmeticId) ?? m.floorAmount,
+          // Never the snapshot: on a scaled sale that over-credits the member's
+          // creator, and the rows then sum past what the buyer paid.
+          unitAmount: attributed.get(m.cosmeticId) ?? 0,
         })),
       });
 

@@ -1,7 +1,10 @@
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { userBasicCache } from '~/server/redis/caches';
-import { milestoneGrantableUserSql } from '~/server/services/creator-milestone-exclusions';
+import {
+  milestoneShowableUserSql,
+  toUtcTimestamp,
+} from '~/server/services/creator-milestone-exclusions';
 import { CacheTTL } from '~/server/common/constants';
 import {
   achievedAtIsObserved,
@@ -27,9 +30,6 @@ type ShowcaseCandidate = {
 };
 
 type ShowcaseRow = Omit<ShowcaseCandidate, 'achievedMonth'>;
-
-/** `timestamp(3)` columns hold UTC wall time, so compare against a zoneless UTC literal. */
-const toUtcTimestamp = (date: Date) => date.toISOString().replace('T', ' ').replace('Z', '');
 
 const utcMonth = (now: Date) => now.toISOString().slice(0, 7);
 
@@ -60,11 +60,7 @@ async function getShowcaseCandidates(pg: AugmentedPool, now: Date) {
   return query.result();
 }
 
-/**
- * Which of `userIds` are in good standing, with their privacy settings. That is stricter than the
- * grant filter: muted, metric-suppressed, actively struck and leaderboard-excluded accounts keep their
- * badges but are not showcased.
- */
+/** Which of `userIds` may be showcased, with their privacy settings: showable and not opted out. */
 async function getShowcaseStanding(
   pg: AugmentedPool,
   userIds: number[],
@@ -79,14 +75,8 @@ async function getShowcaseStanding(
     FROM "User" u
     LEFT JOIN "UserProfile" p ON p."userId" = u.id
     WHERE u.id = ANY($1::int[])
-      AND ${milestoneGrantableUserSql('u')}
-      AND NOT u.muted
-      AND NOT u."excludeFromLeaderboards"
-      AND u.id <> ALL($2::int[])
-      AND NOT EXISTS (
-        SELECT 1 FROM "UserStrike" s
-        WHERE s."userId" = u.id AND s.status = 'Active' AND s."expiresAt" > $3::timestamp
-      )
+      AND ${milestoneShowableUserSql('u', { excludedUserIds: '$2', now: '$3' })}
+      AND u.settings -> 'hideFromCreatorShowcase' IS DISTINCT FROM 'true'::jsonb
     `,
     [userIds, excludedUserIds, toUtcTimestamp(now)]
   );

@@ -1,4 +1,3 @@
-import { uniqBy } from 'lodash-es';
 import type { SearchParams } from 'meilisearch';
 
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
@@ -44,48 +43,12 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  *   - the hard-coded `celebrity` tag exclusion
  *
  * Filter conventions mirror `resource-select.service.ts` (same index, same
- * meili-filter builder) — but NOT the same sort any more: see below.
+ * meili-filter builder).
  *
- * 🔴 The candidate POOL IS SEEDED BY THE REQUESTED PURPOSE FIRST, then by popularity
- * (`searchShortlistModels`). Up to two pages over the same gate filter, merged purpose
- * page first:
- *   - PURPOSE: the gate filter AND `insight.role = <criteria.role>`, sorted
- *     `insight.qualityScore:desc` then `metrics.thumbsUpCount:desc`;
- *   - POPULARITY: the gate filter alone, sorted `metrics.thumbsUpCount:desc` — the
- *     pre-insight seed. Fetched ONLY when the purpose page came back short of the pool
- *     width, and then it fills whatever the purpose page left empty.
- * Duplicates (a purpose hit that is also popular) keep their purpose-page position.
- *
- * Why not one sort. The previous seed was a single sort, quality first and thumbs
- * second, with no role filter, so it ordered labeled models by quality REGARDLESS of
- * what they are for. In a busy type x baseModel cell the labeled models of other
- * purposes outnumber the pool width, so that seed returned almost none for the
- * requested purpose (measured figures: docs/resource-intent-primitive.md), and the
- * re-rank cannot recover from it — it only permutes the pool it is handed.
- *
- * Inside the purpose page every hit carries a quality score — `role` and `qualityScore`
- * are projected together from one label row, or are both null — so there
- * `metrics.thumbsUpCount:desc` is only a tiebreak between equal scores. A role with few
- * labeled matches simply yields a short purpose page, and the popularity page fills the
- * rest of the pool.
- *
- * ⚠️ KNOWN LIMITATION — the purpose page cannot filter on label CONFIDENCE. The index
- * carries the role of each model's best-scoring version among those that cleared
- * `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` when the document was written
- * (`modelInsightProjection`), but not the confidence itself; projecting it means
- * rewriting every document (a full index reset). So a role match at the bare floor is
- * seeded exactly like a confident one. Nor is the pooled version always the one the
- * role was projected from: a model's other versions, a row re-labelled since the
- * document was written, or a floor moved since, can each reach `insightBucket` with a
- * label that does not agree or sits below the floor for its direction — and the re-rank
- * then leaves it neutral or demotes it as for any other candidate. 🔴 A NEUTRAL one keeps
- * its seed position within the neutral bucket, though: such a version (say an unlabeled
- * version on the requested base model, of a model whose role came from a version on
- * another) sorts ahead of every unlabeled, neutral or demoted fill candidate — but a fill
- * version promoted on role OR on style family alone still outranks it.
- *
- * `applyInsightRanking` permutes the pool it is handed and tiebreaks on the seed index
- * (the merged purpose-then-popularity order).
+ * 🔴 The pool is seeded by popularity alone (`searchShortlistModels`); labels act only
+ * through `applyInsightRanking`. Do not put role-filtered or quality-sorted documents back
+ * into the seed: a role-filtered page fills the pool and evicts the popular model the user
+ * attached (M3 study v2, docs/resource-intent-primitive.md).
  */
 
 export type ResourceIntentCoverage = { next: boolean; member: boolean };
@@ -110,10 +73,10 @@ export type ResourceIntentShortlistEntry = {
  * the work bound as well as the lookahead) but it means the widening is a
  * property of the DEFAULT cap of 50, not of every request.
  *
- * `clampResourceIntentCap` is therefore the ONE bound on the pool and on each seed
+ * `clampResourceIntentCap` is therefore the ONE bound on the pool and on the seed
  * page's `limit` below — raising `RESOURCE_INTENT_MAX_SHORTLIST` to widen responses
- * also raises this re-rank's work bound, and the fetch bound with it (up to two
- * pages). A second ceiling here was deleted for being unreachable while that
+ * also raises this re-rank's work bound, and the fetch bound with it. A second
+ * ceiling here was deleted for being unreachable while that
  * constant stays under it; if it is ever raised past Meilisearch's own
  * `maxTotalHits`, a page silently truncates and the ceiling has to come back.
  */
@@ -271,16 +234,13 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
  * versions carry a label", and that argument is RETRACTED — not because the figure
  * is wrong, but because it is the rate over a population this function never sees.
  * It is corpus-wide (~1%: 9,900 labeled of ~0.94M eligible versions). The pool
- * handed to this function is NOT a corpus sample. Its purpose-seeded head is
- * labeled by construction: every model there was matched on a projected
- * `insight.role` (see `searchShortlistModels`), although a matched model's OTHER
- * versions may carry no row. Its popularity-filled tail is a top-by-thumbs-up page,
- * and the labeled set IS the catalogue's high-usage head — the lowest
- * `generationCount` among labeled versions is 46,798 — so coverage there runs
- * ~30-45x the corpus rate: 33.3% of the versions of the top 100 models by thumbs-up
- * (350 of 1,050), and ~45% restricted to the LoRA family (236 of 522). Those two
- * figures were measured on popularity-ordered populations, before the purpose-first
- * seed existed, so they describe the tail and say nothing about the pool as a whole.
+ * handed to this function is NOT a corpus sample: it is a top-by-thumbs-up page (see
+ * `searchShortlistModels`), and the labeled set IS the catalogue's high-usage head —
+ * the lowest `generationCount` among labeled versions is 46,798 — so coverage there
+ * runs ~30-45x the corpus rate: 33.3% of the versions of the top 100 models by
+ * thumbs-up (350 of 1,050), and ~45% restricted to the LoRA family (236 of 522). Those
+ * two figures were measured on popularity-ordered populations without the gate filter,
+ * so they approximate a pool rather than measure one.
  * ⚠️ Provenance, because none of this is reproducible from the tree: measured
  * against the primary Postgres database by the reviewer who raised the retraction
  * and twice independently by auditors, NOT by anything in this change. The queries
@@ -332,67 +292,22 @@ export function applyInsightRanking(
     .map(({ entry }) => entry);
 }
 
-/**
- * The two seed pages `searchShortlistModels` fetches, as data so the query shape is
- * testable without a search backend. See this module's header for why there are two.
- *
- * 🔴 `insight.role` is FILTERED here and never sorted: it is filterable-only by design
- * (`~/server/search-index/filterable-attributes.ts`). Both pages share `limit`; the
- * merge truncates their union to the same width.
- */
-export function buildResourceIntentSeedQueries({
-  filter,
-  role,
-  poolCap,
-}: {
-  filter: string | null;
-  role: ResourceIntentRole;
-  poolCap: number;
-}): { purpose: SearchParams; popularity: SearchParams } {
-  return {
-    purpose: {
-      filter: and(filter, eq('insight.role', role)) ?? undefined,
-      // Quality first; thumbs only tiebreaks, since every hit on this page carries a
-      // score (role and score are projected from one row, or are both null).
-      sort: ['insight.qualityScore:desc', 'metrics.thumbsUpCount:desc'],
-      limit: poolCap,
-    },
-    popularity: {
-      filter: filter ?? undefined,
-      // 🔴 Popularity ONLY — no quality key. A quality-first sort here re-creates the
-      // defect the purpose page exists to fix: in a busy cell the fill would again be
-      // labeled-by-quality models for OTHER purposes, ahead of every unlabeled one.
-      sort: ['metrics.thumbsUpCount:desc'],
-      limit: poolCap,
-    },
-  };
-}
-
-/**
- * Merge the two seed pages: purpose hits first, then popularity hits, each in its
- * own order, deduped by MODEL id (a model on both pages keeps its purpose-page
- * position), truncated to `poolCap` documents — the same document width the single
- * seed page had, so `expandShortlist` is handed a pool bounded as before.
- */
-export function mergeSeedHits(
-  purpose: readonly ModelSearchIndexRecord[],
-  popularity: readonly ModelSearchIndexRecord[],
+/** No search client ⇒ no hits. */
+async function searchShortlistModels(
+  filter: string | null,
   poolCap: number
-): ModelSearchIndexRecord[] {
-  // `uniqBy` keeps the FIRST occurrence, which is what gives the purpose page precedence.
-  return uniqBy([...purpose, ...popularity], 'id').slice(0, poolCap);
-}
-
-/**
- * Exported so the M3 POPULARITY arm (`scripts/eval-resource-intent-retrieval.ts`), which
- * issues the popularity page alone, reaches the index through this code and not a copy.
- * No search client ⇒ no hits.
- */
-export async function searchResourceIntentSeedPage(
-  request: SearchParams
 ): Promise<ModelSearchIndexRecord[]> {
   const client = searchClient;
   if (!client) return [];
+  const request: SearchParams = {
+    filter: filter ?? undefined,
+    // 🔴 Popularity ONLY: no role filter and no quality key — see this module's header.
+    sort: ['metrics.thumbsUpCount:desc'],
+    // One document per targeted version, no multiplier. A document can still expand to
+    // zero versions (the coverage and baseModel filters are nested-array matches), so the
+    // pool can be narrower than `poolCap`.
+    limit: poolCap,
+  };
   try {
     const results = await withMeiliResourceSelect(
       (searchSignal) =>
@@ -413,45 +328,11 @@ export async function searchResourceIntentSeedPage(
   }
 }
 
-async function searchShortlistModels(
-  filter: string | null,
-  role: ResourceIntentRole,
-  poolCap: number
-): Promise<ModelSearchIndexRecord[]> {
-  // 🔴 Each page asks for `poolCap` documents — one per targeted version, no multiplier.
-  // A document USUALLY expands to at least one matching version, but not always: the
-  // coverage and baseModel filters are nested-array matches, so a document can match on
-  // two different versions and expand to zero. The merged pool is at most `poolCap`
-  // documents. The FETCH is one page (≤ poolCap documents) when the purpose page comes
-  // back full, and two sequential pages (≤ 2 x poolCap documents, two round trips) when it
-  // comes back short — so an index that is slow but answering can hold the seed for up to
-  // 2 x MEILI_RESOURCE_SELECT_TIMEOUT_MS (20s at the 10s default). Whether this width still fills the pool under the purpose-first
-  // order has not been re-swept.
-  const { purpose, popularity } = buildResourceIntentSeedQueries({ filter, role, poolCap });
-  // One call per page rather than a multi-search: nothing in this repo wraps
-  // `multiSearch` with the undelivered-body guard `searchWithSignal` carries. Either
-  // page failing fails the seed — there is deliberately no popularity-only fallback, so
-  // an index that cannot answer the purpose page fails loudly.
-  const purposeHits = await searchResourceIntentSeedPage(purpose);
-  // The fill is requested at the full width, not `poolCap - purpose.length`: the merge
-  // drops popularity hits already on the purpose page, so a narrower page could underfill.
-  if (purposeHits.length >= poolCap) {
-    return mergeSeedHits(purposeHits, [], poolCap);
-  }
-  const popularityHits = await searchResourceIntentSeedPage(popularity);
-  return mergeSeedHits(purposeHits, popularityHits, poolCap);
-}
-
-/**
- * What `findResourceIntentCandidates` derives from the criteria before it searches:
- * the response cap, the pool width, the baseModel list and the gate filter. Exported
- * so the M3 study's POPULARITY arm derives them through this one function and can
- * never drift from the endpoint on any of the four.
- */
-export function resolveResourceIntentSeedPlan(
+/** The candidate pool before any label is read, and the response cap it is later cut to. */
+async function seedResourceIntentPool(
   criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
   opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
-): { cap: number; poolCap: number; baseModels: string[] | null; filter: string | null } {
+): Promise<{ cap: number; pool: ResourceIntentShortlistEntry[] }> {
   const cap = clampResourceIntentCap(opts.cap);
   const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
   const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
@@ -461,7 +342,9 @@ export function resolveResourceIntentSeedPlan(
     browsingLevel: opts.browsingLevel,
     coverage: opts.coverage,
   });
-  return { cap, poolCap, baseModels, filter };
+  const hits = await searchShortlistModels(filter, poolCap);
+  const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
+  return { cap, pool };
 }
 
 /**
@@ -480,7 +363,7 @@ export type ResourceIntentMatchResult = {
   entries: ResourceIntentShortlistEntry[];
   /**
    * `true` ⇒ the `ResourceInsight` read FAILED on this call and `entries` is the
-   * seed order (purpose page, then popularity fill), with no per-version label
+   * seed (popularity) order, with no per-version label
    * ordering applied.
    *
    * `false` is the narrow claim that no such failure happened — NOT that the
@@ -492,6 +375,17 @@ export type ResourceIntentMatchResult = {
    * slice, and nothing about an ordering that ran with nothing to order.
    */
   insightFallback: boolean;
+  /**
+   * Pool versions whose label the re-rank PROMOTES (agrees on role or style family, at or
+   * above the promote floor). `0` ⇒ the ordering had nothing to promote — including on a
+   * fallback, where no label was read. The M3 study's positive control reads it.
+   */
+  promotableVersions: number;
+  /**
+   * The whole pool this call ranked, in seed order. The M3 study's POPULARITY arm is this
+   * pool cut to the cap, so the two arms share one seed.
+   */
+  pool: ResourceIntentShortlistEntry[];
 };
 
 export async function findResourceIntentCandidates(
@@ -502,14 +396,10 @@ export async function findResourceIntentCandidates(
     cap: number;
   }
 ): Promise<ResourceIntentMatchResult> {
-  if (criteria.role === 'none') return { entries: [], insightFallback: false };
-  const { cap, poolCap, baseModels, filter } = resolveResourceIntentSeedPlan(criteria, opts);
-  const hits = await searchShortlistModels(filter, criteria.role, poolCap);
-  const pool = expandShortlist(hits, {
-    baseModels,
-    coverage: opts.coverage,
-    cap: poolCap,
-  });
+  if (criteria.role === 'none') {
+    return { entries: [], insightFallback: false, promotableVersions: 0, pool: [] };
+  }
+  const { cap, pool } = await seedResourceIntentPool(criteria, opts);
 
   let insights: Map<number, ResourceIntentInsight>;
   try {
@@ -540,10 +430,15 @@ export async function findResourceIntentCandidates(
       },
       'temp-search'
     ).catch(() => undefined);
-    return { entries: pool.slice(0, cap), insightFallback: true };
+    return { entries: pool.slice(0, cap), insightFallback: true, promotableVersions: 0, pool };
   }
   return {
     entries: applyInsightRanking(pool, insights, criteria).slice(0, cap),
     insightFallback: false,
+    promotableVersions: pool.filter((entry) => {
+      const insight = insights.get(entry.versionId);
+      return insight !== undefined && insightBucket(insight, criteria) > 0;
+    }).length,
+    pool,
   };
 }

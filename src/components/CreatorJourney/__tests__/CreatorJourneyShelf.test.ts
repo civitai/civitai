@@ -34,6 +34,7 @@ const journey = (earned: Earned[]) =>
     tiers: [],
     earned,
     activity: { milestones: [], closestNext: null },
+    secrets: [],
   } as unknown as Journey);
 
 let root: Root | undefined;

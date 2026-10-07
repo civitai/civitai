@@ -38,17 +38,22 @@ const FORBIDDEN_IN_DRY_RUN = ['src/server/db/client.ts', 'src/server/meilisearch
 
 /**
  * The deliberate-amendment guard for the CURRENT registration: the sha256 of the
- * pre-registration text the dry run prints. Literal-line tests pin the decision rule,
- * the verdict block, the confound and the power assumption; nothing else pins the Sample,
+ * pre-registration text the dry run prints. Literal-line tests pin the co-primaries, the
+ * verdict block, the control and the power statement; nothing else pins the Sample,
  * Stage 1, Gold and Arms paragraphs, so this hash does. It is meant to be UPDATED ON
  * PURPOSE, in the same commit that amends the registration (and before any run under
- * it) — never to make an accidental change pass. Current value: v2 (the live-Flipt
- * abort, the coverage line, the History recording both pilots, and "before any registered
- * run"; power assumption unchanged from v1), taken from the dry run's own stdout in the
- * commit that amended it. Previous: v1,
+ * it) — never to make an accidental change pass. Current value: v3 (registered
+ * 2026-10-07: the popularity-seed matcher, the two co-primaries, the promotable-label
+ * positive control, identical heads as a diagnostic only), taken from the dry run's own
+ * stdout in the commit that registered it. Previous: v2,
+ * `2ad9ecdaf6810d60fac1c073b76013156e5457ad7ddc6de248d50be82a17c467` (0ae482a241); v1,
  * `0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3` (c8bc91037f).
  */
 const REGISTERED_PREREGISTRATION_SHA256 =
+  'fbedfe4b7b6fd5b46fbfa0dc1baa9721599f723a1f0f84e2a656f1f9a16e0b28';
+
+/** v2's text as registered — the record `renderRetrievalPreregistrationV2` must still print. */
+const V2_PREREGISTRATION_SHA256 =
   '2ad9ecdaf6810d60fac1c073b76013156e5457ad7ddc6de248d50be82a17c467';
 
 function exampleEnv(): Record<string, string> {
@@ -72,6 +77,15 @@ function withoutPrismaEngine(env: NodeJS.ProcessEnv): Record<string, string> {
 }
 
 describe('eval-resource-intent-goldset under tsx (the real entry point)', () => {
+  it('🔴 registration v2 is still recorded byte-for-byte as registered', async () => {
+    const { renderRetrievalPreregistrationV2 } = await import(
+      '../eval-resource-intent-registration'
+    );
+    expect(createHash('sha256').update(renderRetrievalPreregistrationV2()).digest('hex')).toBe(
+      V2_PREREGISTRATION_SHA256
+    );
+  });
+
   it('🔴 the dry run loads no database or search client, needs no Prisma engine, prints the queries and the pre-registration, and exits 0', async () => {
     const { renderRetrievalPreregistration } = await import('../eval-resource-intent-registration');
     const traceDir = mkdtempSync(path.join(os.tmpdir(), 'm3-dry-run-trace-'));
