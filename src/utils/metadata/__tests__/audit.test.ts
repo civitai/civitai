@@ -6,22 +6,30 @@ import {
   includesMinor,
   includesPoi,
 } from '~/utils/metadata/audit';
+import { includesInappropriate as modUtilsIncludesInappropriate } from '@civitai/mod-utils/prompt-audit';
 
 // The stated-age heuristic was removed deliberately. Talk to a maintainer before restoring it.
 describe('the prompt audit runs no stated-age heuristic', () => {
-  it('an age in a benign prompt does not block generation', () => {
-    expect(auditPromptEnriched('an 8 year old oak tree in a field')).toEqual({
-      blockedFor: [],
-      triggers: [],
-      success: true,
-    });
+  const prompt = 'an 8 year old oak tree in a field';
+
+  it('auditPromptEnriched', () => {
+    expect(auditPromptEnriched(prompt)).toEqual({ blockedFor: [], triggers: [], success: true });
   });
 
-  it('an age in an image prompt does not block the upload', () => {
-    expect(auditMetaData({ prompt: 'portrait of a woman, thirty-five years old' }, true)).toEqual({
-      blockedFor: [],
-      success: true,
-    });
+  it('auditMetaData', () => {
+    expect(auditMetaData({ prompt }, true)).toEqual({ blockedFor: [], success: true });
+  });
+
+  it('includesMinor', () => {
+    expect(includesMinor(prompt)).toBeFalsy();
+  });
+
+  it('includesInappropriate', () => {
+    expect(includesInappropriate({ prompt }, true)).toBe(false);
+  });
+
+  it('includesInappropriate in @civitai/mod-utils', () => {
+    expect(modUtilsIncludesInappropriate({ prompt }, true)).toBe(false);
   });
 });
 
