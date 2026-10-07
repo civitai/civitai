@@ -255,6 +255,7 @@ async function settleExpiredBounty({
               AND own.currency = ${currency}::"Currency"
               AND own."awardedToId" IS NULL
           )
+          AND be."userId" IS DISTINCT FROM ${userId}
         GROUP BY be.id, be."userId", bes."reactionCountAllTime"
         ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
       `;

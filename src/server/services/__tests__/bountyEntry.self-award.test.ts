@@ -73,6 +73,14 @@ describe('upsertBountyEntryHandler', () => {
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
+  it('lets the owner edit an entry that already exists', async () => {
+    await upsertBountyEntryHandler({
+      input: { ...input, id: ENTRY_ID },
+      ctx: ctxFor(OWNER_ID),
+    }).catch(() => null);
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+  });
+
   it('reaches the entry-limit check for anyone else', async () => {
     await expect(upsertBountyEntryHandler({ input, ctx: ctxFor(ENTRANT_ID) })).rejects.toThrow(
       'You have reached the maximum number of entries for this bounty'
