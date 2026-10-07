@@ -31,7 +31,11 @@ import {
   getUserBuzzAccount,
   refundTransaction,
 } from '~/server/services/buzz.service';
-import { getBankableAmount } from '~/server/services/creator-program-bankable';
+import {
+  getBankableAmount,
+  getBankableLedger,
+  withBankedThisMonth,
+} from '~/server/services/creator-program-bankable';
 import { createNotification } from '~/server/services/notification.service';
 import { getHighestPaidTierSubscription } from '~/server/services/subscriptions.service';
 import { subscriptionProductMetadataSchema } from '~/server/schema/subscriptions.schema';
@@ -77,6 +81,7 @@ type UserCapCacheItem = {
   definition: CapDefinition;
   peakEarning: { month: Date; earned: number };
   cap: number;
+  countsCompensation: boolean;
 };
 
 const getBankAccountType = (_buzzType?: BuzzSpendType): BuzzCreatorProgramType => {
@@ -118,8 +123,8 @@ const createUserCapCache = () => {
       // A system-minted `tip` is a support credit, not an earning, so it must not raise a cap.
       // From the cutover, generation `compensation` is excluded to match
       // BANKABLE_EARNING_PREDICATE_SQL; before it, caps must not drop ahead of the announced date.
-      const peakEarningTypes =
-        new Date() < BANKABLE_CUTOVER ? `'compensation', 'licenseFee'` : `'licenseFee'`;
+      const countsCompensation = new Date() < BANKABLE_CUTOVER;
+      const peakEarningTypes = countsCompensation ? `'compensation', 'licenseFee'` : `'licenseFee'`;
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
@@ -152,7 +157,7 @@ const createUserCapCache = () => {
 
           const cap = getCapForDefinition(definition, peakEarning.earned);
 
-          return [s.userId, { id: s.userId, definition, peakEarning, cap }];
+          return [s.userId, { id: s.userId, definition, peakEarning, cap, countsCompensation }];
         })
       );
     },
@@ -170,7 +175,13 @@ export function getUserCapCache() {
 
 export async function getBankCap(userId: number) {
   const cache = getUserCapCache();
-  return cache.fetch(userId);
+  const caps = await cache.fetch(userId);
+  // A cap cached before the cutover can outlive the rollover job's flush by up to its TTL.
+  if (caps[userId] && caps[userId].countsCompensation !== false && new Date() >= BANKABLE_CUTOVER) {
+    await cache.bust(userId);
+    return cache.fetch(userId);
+  }
+  return caps;
 }
 
 export function getMonthAccount(month?: Date) {
@@ -178,32 +189,39 @@ export function getMonthAccount(month?: Date) {
   return Number(dayjs(month).format('YYYYMM'));
 }
 
-export async function getBankedBalance(userId: number) {
+async function fetchBankedPerType(userId: number) {
   const monthAccount = getMonthAccount();
   const bankAccountType = getBankAccountType();
-
-  const perType = await fetchThroughCache(
-    `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
-    async () => {
-      const results = await Promise.all(
-        buzzBankTypes.map(async (buzzType) => {
-          const result = await getCounterPartyBuzzTransactions({
-            accountId: monthAccount,
-            accountType: bankAccountType,
-            counterPartyAccountId: userId,
-            counterPartyAccountType: buzzType,
-          });
-          return { buzzType, total: result.totalBalance ?? 0 };
-        })
-      );
-
-      return Object.fromEntries(results.map((r) => [r.buzzType, r.total])) as Record<
-        (typeof buzzBankTypes)[number],
-        number
-      >;
-    },
-    { ttl: CacheTTL.day }
+  const results = await Promise.all(
+    buzzBankTypes.map(async (buzzType) => {
+      const result = await getCounterPartyBuzzTransactions({
+        accountId: monthAccount,
+        accountType: bankAccountType,
+        counterPartyAccountId: userId,
+        counterPartyAccountType: buzzType,
+      });
+      return { buzzType, total: result.totalBalance ?? 0 };
+    })
   );
+
+  return Object.fromEntries(results.map((r) => [r.buzzType, r.total])) as Record<
+    (typeof buzzBankTypes)[number],
+    number
+  >;
+}
+
+/**
+ * Pass `fresh` wherever the total decides how much Buzz moves: the cache can serve a total from
+ * before the last deposit while another reader is refreshing it.
+ */
+export async function getBankedBalance(userId: number, { fresh = false } = {}) {
+  const perType = fresh
+    ? await fetchBankedPerType(userId)
+    : await fetchThroughCache(
+        `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
+        () => fetchBankedPerType(userId),
+        { ttl: CacheTTL.day }
+      );
 
   const total = Object.values(perType).reduce((sum, v) => sum + v, 0);
   const capData = (await getBankCap(userId))[userId];
@@ -218,10 +236,15 @@ export async function getBankedBalance(userId: number) {
 /** For display. `bankBuzz` reads the bankable amount itself so a ClickHouse failure blocks it. */
 export async function getBanked(userId: number) {
   const balance = await getBankedBalance(userId);
-  const bankable = await getBankableAmount(userId, balance.total).catch((error: Error) => {
+  const ledger = await fetchThroughCache(
+    `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}`,
+    () => getBankableLedger(userId),
+    { ttl: CacheTTL.sm }
+  ).catch((error: Error) => {
     handleLogError(error, 'creator-program:bankable-amount');
     return null;
   });
+  const bankable = ledger && withBankedThisMonth(ledger, balance.total);
 
   return { ...balance, bankable };
 }
@@ -508,7 +531,7 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
   const deposited = await withDistributedLock(
     { key: `creator-program:bank:${userId}`, ttl: 30, autoRenew: true, maxRetries: 0 },
     async () => {
-      const banked = await getBankedBalance(userId);
+      const banked = await getBankedBalance(userId, { fresh: true });
       if (banked.cap.cap < banked.total + amount) amount = banked.cap.cap - banked.total;
       const bankable = await getBankableAmount(userId, banked.total);
       if (bankable) {
@@ -536,8 +559,8 @@ export async function bankBuzz(userId: number, amount: number, buzzType: BuzzSpe
       return true;
     }
   );
-  if (!deposited)
-    throw throwBadRequestError('Another deposit is already in progress. Try again in a moment.');
+  // Null also means Redis could not take the lock, not only that another deposit holds it.
+  if (!deposited) throw throwBadRequestError("Couldn't start your deposit. Try again in a moment.");
 
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
@@ -565,7 +588,7 @@ export async function extractBuzz(userId: number) {
   else if (new Date() > phases.extraction[1]) throw new Error('Extraction phase is closed');
 
   // Get banked amounts across all types
-  const banked = await getBankedBalance(userId);
+  const banked = await getBankedBalance(userId, { fresh: true });
   if (banked.total <= 0) return;
 
   // Calculate extraction fee on combined total

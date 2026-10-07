@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterAll, afterEach, beforeAll } from 'vitest';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
@@ -107,6 +108,7 @@ vi.mock('~/server/utils/errorHandling', async (importOriginal) => ({
 import {
   bankBuzz,
   extractBuzz,
+  getBankCap,
   getBanked,
   getCompensationPool,
   getCreatorRequirements,
@@ -130,6 +132,7 @@ const defaultCap = {
   definition: { tier: 'silver' as const, limit: 1000000, percentOfPeakEarning: 1.25 },
   peakEarning: { month: new Date(), earned: 500000 },
   cap: 625000,
+  countsCompensation: false,
 };
 
 function mockUser(overrides: Record<string, any> = {}) {
@@ -489,8 +492,24 @@ describe('bankBuzz', () => {
       mockBankableLedger({ snapshot: 30000, earned: 10000 });
       redisMock.redis.set.mockResolvedValueOnce(null);
 
-      await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow(/already in progress/);
+      await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow(/Couldn't start your deposit/);
       expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
+    });
+
+    // The display path can leave a total from before the last deposit in the cache.
+    it('clamps against the live banked total, not a stale cached one', async () => {
+      mockBankableLedger({ snapshot: 5_000_000, earned: 0 });
+      mockFetchThroughCache.mockImplementation(async (key: string, fn: () => Promise<any>) =>
+        key === `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}` ? { green: 0, yellow: 0 } : fn()
+      );
+      mockGetCounterPartyBuzzTransactions.mockReset();
+      mockBankedAmounts(0, 600000);
+
+      await bankBuzz(userId, 100000, 'yellow');
+
+      expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({ amount: defaultCap.cap - 600000, type: TransactionType.Bank })
+      );
     });
 
     it('refuses to bank when the bankable amount cannot be read', async () => {
@@ -602,6 +621,63 @@ describe('after the bankable-amount cutover, with ClickHouse failing', () => {
   });
 });
 
+describe('getBanked after the bankable-amount cutover', () => {
+  beforeEach(() => {
+    vi.setSystemTime(new Date('2026-12-15T12:00:00Z'));
+    mockCapCache();
+    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
+      const sql = parts.join('');
+      if (sql.includes('AS balance')) return [{ balance: '30000' }];
+      return [{ earned: '10000', consumed: '0' }];
+    });
+  });
+  afterEach(() => {
+    vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+  });
+
+  it('nets deposits made this month from a briefly cached ledger', async () => {
+    mockBankedAmounts(0, 5000);
+
+    const result = await getBanked(userId);
+
+    expect(result.bankable).toEqual({ snapshot: 30000, earned: 10000, consumed: 0, remaining: 35000 });
+    expect(mockFetchThroughCache).toHaveBeenCalledWith(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}`,
+      expect.any(Function),
+      { ttl: CacheTTL.sm }
+    );
+  });
+});
+
+describe('getBankCap', () => {
+  afterEach(() => {
+    vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+  });
+
+  it('refills a cap cached before the cutover once the cutover has passed', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    mockCachedObject.fetch
+      .mockResolvedValueOnce({ [userId]: { ...defaultCap, countsCompensation: true } })
+      .mockResolvedValueOnce({ [userId]: { ...defaultCap, cap: 100000 } });
+
+    const caps = await getBankCap(userId);
+
+    expect(mockCachedObject.bust).toHaveBeenCalledWith(userId);
+    expect(caps[userId].cap).toBe(100000);
+  });
+
+  it('keeps a compensation-inclusive cap before the cutover', async () => {
+    mockCachedObject.fetch.mockResolvedValueOnce({
+      [userId]: { ...defaultCap, countsCompensation: true },
+    });
+
+    const caps = await getBankCap(userId);
+
+    expect(mockCachedObject.bust).not.toHaveBeenCalled();
+    expect(caps[userId].cap).toBe(defaultCap.cap);
+  });
+});
+
 describe('extractBuzz', () => {
   beforeEach(() => {
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
@@ -636,6 +712,19 @@ describe('extractBuzz', () => {
     expect(yellowExtract).toBeDefined();
     expect(yellowExtract![0].amount).toBe(50000);
     expect(yellowExtract![0].fromAccountType).toBe('creatorProgramBank');
+  });
+
+  it('extracts the live banked total, not a stale cached one', async () => {
+    mockFetchThroughCache.mockImplementation(async (key: string, fn: () => Promise<any>) =>
+      key === `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}` ? { green: 0, yellow: 0 } : fn()
+    );
+    mockBankedAmounts(0, 50000);
+
+    await extractBuzz(userId);
+
+    expect(mockCreateBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ type: TransactionType.Extract, amount: 50000 })
+    );
   });
 
   it('does nothing when no buzz is banked', async () => {

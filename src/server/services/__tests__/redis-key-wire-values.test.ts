@@ -15,6 +15,7 @@ describe('redis key wire values', () => {
       CAPS: 'packed:caches:creator-program:caps',
       CASH: 'packed:caches:creator-program:cash',
       BANKED: 'packed:caches:creator-program:banked',
+      BANKABLE: 'packed:caches:creator-program:bankable',
       PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
       POOL_VALUE: 'packed:caches:creator-program:pool-value',
       POOL_SIZE: 'packed:caches:creator-program:pool-size',

@@ -367,9 +367,10 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
         <p className="font-bold">How your Peak Earning Month is picked</p>
         <p>
           We take your best month of licensing fees and Buzz other people spent on your work, in the
-          last {PEAK_EARNING_WINDOW} <span className="font-bold">completed</span> months. Until{' '}
-          {formatDate(BANKABLE_CUTOVER, 'MMMM D, YYYY', true)} it also counts generation
-          compensation. Tips and rewards do not set your peak.
+          last {PEAK_EARNING_WINDOW} <span className="font-bold">completed</span> months. From{' '}
+          {formatDate(BANKABLE_CUTOVER, 'MMMM D, YYYY', true)}, generation compensation no longer
+          counts toward your peak, including for earlier months. Tips and rewards do not set your
+          peak.
         </p>
         <ul className="list-disc pl-4">
           <li>

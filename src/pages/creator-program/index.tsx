@@ -748,11 +748,11 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
   },
   {
     q: 'How is my Banking Cap calculated?',
-    a: `Your Cap is your Peak Earning Month multiplied by your membership tier's percentage, up to that tier's ceiling where it has one. Your Peak Earning Month is the single best month of licensing fees and Buzz other people spent on your work that you have had in the last ${PEAK_EARNING_WINDOW} completed months. Until ${formatDate(
+    a: `Your Cap is your Peak Earning Month multiplied by your membership tier's percentage, up to that tier's ceiling where it has one. Your Peak Earning Month is the single best month of licensing fees and Buzz other people spent on your work that you have had in the last ${PEAK_EARNING_WINDOW} completed months. From ${formatDate(
       BANKABLE_CUTOVER,
       'MMMM D, YYYY',
       true
-    )} it also counts generation compensation. Tips and rewards do not set your peak. Tiers with a fixed Cap stay at that number, and every member has a minimum Cap of ${abbreviateNumber(
+    )}, generation compensation no longer counts toward your peak, including for earlier months. Tips and rewards do not set your peak. Tiers with a fixed Cap stay at that number, and every member has a minimum Cap of ${abbreviateNumber(
       MIN_CAP
     )} Buzz, however small their peak.`,
   },

@@ -93,6 +93,16 @@ describe('getBankableAmount', () => {
     expect(result?.remaining).toBe(0);
   });
 
+  it('recomputes a stored snapshot that is not a number', async () => {
+    sysRedis.hGet.mockResolvedValue('garbage');
+    mockLedger({ snapshot: 50_000, earned: 0, consumed: 0 });
+
+    const result = await getBankableAmount(userId, 0, afterSettle);
+
+    expect(result?.snapshot).toBe(50_000);
+    expect(result?.remaining).toBe(50_000);
+  });
+
   it('uses a stored snapshot instead of recomputing it', async () => {
     sysRedis.hGet.mockResolvedValue('70000');
     mockLedger({ snapshot: 999_999, earned: 0, consumed: 0 });
@@ -149,9 +159,15 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
     expect(BANKABLE_EARNING_PREDICATE_SQL).not.toContain('compensation');
   });
 
-  it('counts licence fees, donations, shop sales and bounties from anyone', () => {
+  it('counts licence fees, donations, shop sales, bounties and app author fees from anyone', () => {
     expect(BANKABLE_EARNING_PREDICATE_SQL).toMatch(
-      /^\(\s*type IN \('licenseFee', 'donation', 'sell', 'bounty'\)\n/
+      /^\(\s*type IN \('licenseFee', 'donation', 'sell', 'bounty', 'appAuthorFee', '28'\)\n/
+    );
+  });
+
+  it('counts app author fees recorded before they had their own type', () => {
+    expect(BANKABLE_EARNING_PREDICATE_SQL).toMatch(
+      /\n\s*OR \(type = 'fee' AND description LIKE 'App author fee%'\)\n/
     );
   });
 

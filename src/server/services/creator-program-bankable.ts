@@ -23,20 +23,27 @@ const placementEarningDescriptionsSql = Object.values(PLACEMENT_LEDGER_TEXT)
 /**
  * Transactions that raise a creator's bankable amount. Excludes generation `compensation` (which
  * also carries generation tips), purchased Buzz, and system-minted tips.
+ *
+ * App Blocks author fees read as `'28'` in ClickHouse, and as `fee` + 'App author fee…' before
+ * they had their own type (see `TransactionType.AppAuthorFee`).
  */
 export const BANKABLE_EARNING_PREDICATE_SQL = `(
-  type IN ('licenseFee', 'donation', 'sell', 'bounty')
+  type IN ('licenseFee', 'donation', 'sell', 'bounty', 'appAuthorFee', '28')
   OR (type IN ('purchase', 'tip') AND fromAccountId != 0)
   OR (type = 'fee' AND description IN (${placementEarningDescriptionsSql}))
+  OR (type = 'fee' AND description LIKE 'App author fee%')
 )`;
 
-export type BankableAmount = {
+export type BankableLedger = {
   /** Yellow + green balance at the cutover. */
   snapshot: number;
   /** Bankable earnings since the cutover. */
   earned: number;
   /** Closed months since the cutover: banked, minus extracted, plus extraction fees. */
   consumed: number;
+};
+
+export type BankableAmount = BankableLedger & {
   /** What may still be banked this month, before the tier cap. Never negative. */
   remaining: number;
 };
@@ -47,7 +54,8 @@ async function getCutoverSnapshot(userId: number, now: Date) {
   const stored = decodeRedisString(
     await sysRedis.hGet(REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT, String(userId))
   );
-  if (stored != null) return Number(stored);
+  const storedSnapshot = stored == null ? NaN : Number(stored);
+  if (Number.isFinite(storedSnapshot)) return storedSnapshot;
 
   // Separate scans per column: one OR across fromAccountId and toAccountId measured ~10x slower.
   const [row] = await clickhouse.$query<{ balance: number }>`
@@ -75,17 +83,13 @@ async function getCutoverSnapshot(userId: number, now: Date) {
 }
 
 /**
- * The creator's bankable amount, or `null` before the cutover or without ClickHouse (only the
- * tier cap applies then).
- *
- * `bankedThisMonth` comes from the Buzz service rather than ClickHouse so a deposit made seconds
- * ago is already counted; closed months are read from ClickHouse, which has caught up by then.
+ * The ClickHouse half of the bankable amount, or `null` before the cutover or without ClickHouse
+ * (only the tier cap applies then). This month's deposits are not in it: see `withBankedThisMonth`.
  */
-export async function getBankableAmount(
+export async function getBankableLedger(
   userId: number,
-  bankedThisMonth: number,
   now = new Date()
-): Promise<BankableAmount | null> {
+): Promise<BankableLedger | null> {
   if (now < BANKABLE_CUTOVER || !clickhouse) return null;
 
   const monthStart = dayjs.utc(now).startOf('month').toDate();
@@ -114,9 +118,29 @@ export async function getBankableAmount(
     `,
   ]);
 
-  const earned = Number(sums?.earned ?? 0);
-  const consumed = Number(sums?.consumed ?? 0);
-  const remaining = Math.max(0, snapshot + earned - consumed - bankedThisMonth);
+  return { snapshot, earned: Number(sums?.earned ?? 0), consumed: Number(sums?.consumed ?? 0) };
+}
 
-  return { snapshot, earned, consumed, remaining };
+/**
+ * `bankedThisMonth` comes from the Buzz service rather than ClickHouse so a deposit made seconds
+ * ago is already counted; closed months are read from ClickHouse, which has caught up by then.
+ */
+export function withBankedThisMonth(
+  ledger: BankableLedger,
+  bankedThisMonth: number
+): BankableAmount {
+  const remaining = Math.max(
+    0,
+    ledger.snapshot + ledger.earned - ledger.consumed - bankedThisMonth
+  );
+  return { ...ledger, remaining };
+}
+
+export async function getBankableAmount(
+  userId: number,
+  bankedThisMonth: number,
+  now = new Date()
+): Promise<BankableAmount | null> {
+  const ledger = await getBankableLedger(userId, now);
+  return ledger && withBankedThisMonth(ledger, bankedThisMonth);
 }

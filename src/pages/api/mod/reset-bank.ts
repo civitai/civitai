@@ -57,7 +57,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
     if (userId) {
       // Get user's current balance across all types
-      const userBanked = await getBankedBalance(userId);
+      const userBanked = await getBankedBalance(userId, { fresh: true });
       const totalToExtract = userBanked.total;
 
       if (totalToExtract > 0) {
