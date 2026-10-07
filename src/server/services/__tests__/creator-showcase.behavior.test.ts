@@ -71,12 +71,14 @@ beforeAll(async () => {
     CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
       "expiresAt" timestamp(3) NOT NULL);
+    CREATE TABLE "UserProfile" ("userId" int PRIMARY KEY, "privacySettings" jsonb);
   `);
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "UserCreatorMilestone", "UserStrike", "User";`);
+  await holder.db.exec(`TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User";
+    UPDATE "CreatorMilestone" SET "cosmeticId" = NULL;`);
 });
 
 describe('good standing', () => {
@@ -103,6 +105,35 @@ describe('good standing', () => {
 
   it('drops the metric-suppressed account only when it is on the list', async () => {
     expect(ids((await showcase([])).legends)).toContain(SUPPRESSED);
+  });
+});
+
+describe('badge privacy', () => {
+  const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
+    q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
+      userId,
+      JSON.stringify(settings),
+    ]);
+
+  beforeEach(async () => {
+    const { rows } = await q(`INSERT INTO "Cosmetic" DEFAULT VALUES RETURNING id`);
+    await q(`UPDATE "CreatorMilestone" SET "cosmeticId" = $1 WHERE key = 'score:legend'`, [
+      (rows[0] as { id: number }).id,
+    ]);
+    for (const id of [GOOD, MUTED, STRUCK]) {
+      await addUser(id);
+      await grant(id, 'score:legend', LAST_MONTH);
+    }
+  });
+
+  it('leaves out a Legend who hides the Legend badge or all badges, not one hiding another', async () => {
+    const [{ cosmeticId }] = (
+      await q(`SELECT "cosmeticId" FROM "CreatorMilestone" WHERE key = 'score:legend'`)
+    ).rows as { cosmeticId: number }[];
+    await setPrivacy(MUTED, { hiddenBadgeIds: [cosmeticId] });
+    await setPrivacy(STRUCK, { showBadges: false });
+    await setPrivacy(GOOD, { hiddenBadgeIds: [cosmeticId + 1] });
+    expect(ids((await showcase()).legends)).toEqual([GOOD]);
   });
 });
 

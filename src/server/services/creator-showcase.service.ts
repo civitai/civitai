@@ -5,11 +5,20 @@ import { SYSTEM_USER_ID } from '~/server/services/creator-milestone-exclusions';
 import { toLegendStatus } from '~/server/services/creator-journey.service';
 import { achievedAtIsObserved } from '~/server/services/creator-milestone-grant.service';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
+import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
+import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
 
 const SUPERNOVA = 'score:supernova';
 const LEGEND = 'score:legend';
 
-type ShowcaseRow = { userId: number; milestoneKey: string; achievedAt: Date; seenAt: Date | null };
+type ShowcaseRow = {
+  userId: number;
+  milestoneKey: string;
+  achievedAt: Date;
+  seenAt: Date | null;
+  badgeId: number | null;
+  privacySettings: PrivacySettingsSchema | null;
+};
 
 /** `timestamp(3)` columns hold UTC wall time, so compare against a zoneless UTC literal. */
 const toUtcTimestamp = (date: Date) => date.toISOString().replace('T', ' ').replace('Z', '');
@@ -19,7 +28,7 @@ const utcMonthStart = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now
 /**
  * Every Legend, and the Supernovas granted this month, held by creators in good standing. That is
  * stricter than the grant filter: muted, metric-suppressed and actively struck accounts keep their
- * badges but are not showcased.
+ * badges but are not showcased. An owner who hides the tier's badge, or all badges, is left out too.
  */
 export async function getShowcaseRows(
   pg: AugmentedPool,
@@ -27,9 +36,12 @@ export async function getShowcaseRows(
 ) {
   const query = await pg.cancellableQuery<ShowcaseRow>(
     `
-    SELECT ucm."userId", ucm."milestoneKey", ucm."achievedAt", ucm."seenAt"
+    SELECT ucm."userId", ucm."milestoneKey", ucm."achievedAt", ucm."seenAt",
+      m."cosmeticId" AS "badgeId", p."privacySettings"
     FROM "UserCreatorMilestone" ucm
     JOIN "User" u ON u.id = ucm."userId"
+    JOIN "CreatorMilestone" m ON m.key = ucm."milestoneKey"
+    LEFT JOIN "UserProfile" p ON p."userId" = u.id
     WHERE (
         ucm."milestoneKey" = $1
         OR (ucm."milestoneKey" = $2 AND ucm."achievedAt" >= $3::timestamp)
@@ -47,7 +59,9 @@ export async function getShowcaseRows(
     `,
     [LEGEND, SUPERNOVA, toUtcTimestamp(utcMonthStart(now)), excludedUserIds, toUtcTimestamp(now)]
   );
-  const rows = await query.result();
+  const rows = (await query.result()).filter((row) =>
+    isBadgeShownOnProfile(row.privacySettings, row.badgeId)
+  );
   return {
     // A Supernova granted silently this month (the launch backfill) did not cross this month.
     newSupernovas: rows
@@ -72,7 +86,10 @@ export async function getCreatorShowcase() {
   };
 
   return {
-    newSupernovas: newSupernovas.map((row) => ({ user: withUser(row), achievedAt: row.achievedAt })),
+    newSupernovas: newSupernovas.map((row) => ({
+      user: withUser(row),
+      achievedAt: row.achievedAt,
+    })),
     legends: legends.map((row) => ({ user: withUser(row), ...toLegendStatus(row) })),
   };
 }
