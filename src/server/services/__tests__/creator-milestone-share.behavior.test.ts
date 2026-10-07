@@ -213,6 +213,10 @@ describe('milestone share card', () => {
     await grant(CREATOR, 'supernova');
     mocks.flagOn.mockResolvedValue(false);
     expect(await card()).toBeNull();
+    // The public, un-flagged profile check must refuse too.
+    expect(
+      await isMilestoneShareable({ userId: CREATOR, slug: 'supernova' }, { pg, now: NOW })
+    ).toBe(false);
   });
 
   it('falls back for muted, actively struck and metric-suppressed owners', async () => {
