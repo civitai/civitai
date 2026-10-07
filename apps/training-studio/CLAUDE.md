@@ -43,7 +43,7 @@ enters the flow.
 - **Live training over signals** (step/checkpoint; near-real-time possible). Generate/Publish operate
   off the **workflow ID / AIR**, not a `ModelVersion`.
 - **AI-Toolkit only** (Kohya stays in the in-app trainer). Trigger word is **model-dependent** (large/
-  video models can't train it — confirm per model before enforcing).
+  video models can't train it — check per model before enforcing).
 
 ## Model catalog
 

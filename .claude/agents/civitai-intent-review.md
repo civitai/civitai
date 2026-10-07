@@ -17,9 +17,8 @@ Findings only — you never apply a fix.
 
 ## The intent doc
 
-Where intent docs live is each developer's choice, so the repo does not name it. Look for an
-`INTENT_DIR: <absolute path>` line in your loaded instructions; if there is none, read the primary
-checkout's `CLAUDE.local.md`, which a worktree does not have:
+Read the intent directory from an `INTENT_DIR: <absolute path>` line in your loaded instructions, or
+else from the primary checkout's `CLAUDE.local.md` (a worktree has none):
 
 ```bash
 cat "$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")/CLAUDE.local.md"

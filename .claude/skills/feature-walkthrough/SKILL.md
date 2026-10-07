@@ -192,9 +192,9 @@ What makes these read well:
 A link with no framing gets opened last. Say what it is in one line, then what you want back —
 "three things I'd like your call on, last section" beats "let me know your thoughts".
 
-If it goes out over chat under someone's own name, write it in their voice rather than like a release
-note: a walkthrough in memo voice is worse than one they wrote in a hurry. Read a few of their own
-messages in that thread before drafting, weighting their own messages over any an agent already sent.
+If it goes out over chat under someone's own name, write it in their voice, not a release note's: a
+walkthrough in memo voice is worse than one they wrote in a hurry. Before drafting, read messages they
+wrote themselves in that thread, not ones an agent sent for them.
 
 Sending on someone's behalf is outward-facing: confirm the recipient before sending, and report
 exactly who received it.

@@ -98,8 +98,8 @@ Account management commands:
 
 ```bash
 node query.mjs accounts                          # List all accounts
-node query.mjs switch-account jane             # Change default
-node query.mjs add-account jane --token pk_... # Add account
+node query.mjs switch-account jane               # Change default
+node query.mjs add-account jane --token pk_...   # Add account
 node query.mjs remove-account old-account        # Remove account
 ```
 
