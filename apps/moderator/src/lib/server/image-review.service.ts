@@ -1,6 +1,7 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
+import { takePage } from './keyset-page';
 import type { MediaType } from '$lib/media/edge-url';
 import type { ImageReviewType } from '$lib/image-review';
 
@@ -49,7 +50,7 @@ export async function getImageReviewQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: ImageReviewItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .leftJoin('Post as p', 'p.id', 'i.postId')
@@ -116,8 +117,7 @@ export async function getImageReviewQueue({
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.id);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.id);
 
   const ids = rows.map((r) => r.id);
   const tagsByImage = new Map<number, ReviewTag[]>();
@@ -218,7 +218,7 @@ export async function getReportedImageQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: ReportedImageItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .innerJoin('ImageReport as imgr', 'imgr.imageId', 'i.id')
@@ -252,8 +252,7 @@ export async function getReportedImageQueue({
     .limit(limit + 1)
     .execute();
 
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) nextCursor = Number(rows.pop()?.reportId);
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.reportId);
 
   const items: ReportedImageItem[] = rows.map((r) => ({
     id: r.id,
@@ -321,7 +320,7 @@ export async function getAppealImageQueue({
   cursor?: number;
   limit: number;
 }): Promise<{ items: AppealImageItem[]; nextCursor?: number }> {
-  const rows = await dbRead
+  const fetched = await dbRead
     .selectFrom('Image as i')
     .innerJoin('User as u', 'u.id', 'i.userId')
     .innerJoinLateral(
@@ -390,13 +389,7 @@ export async function getAppealImageQueue({
     .limit(limit + 1)
     .execute();
 
-  // The cursor is exclusive, so it is the last row SHOWN: taking it from the popped extra row skipped
-  // that row at every page boundary.
-  let nextCursor: number | undefined;
-  if (limit && rows.length > limit) {
-    rows.pop();
-    nextCursor = rows.at(-1)?.appealId;
-  }
+  const { items: rows, nextCursor } = takePage(fetched, limit, (r) => r.appealId);
 
   const ids = rows.map((r) => r.id);
   const tosByImage = new Map<number, string>();

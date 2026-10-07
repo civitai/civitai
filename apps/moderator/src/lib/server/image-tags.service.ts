@@ -1,5 +1,6 @@
 import { sql } from '@civitai/db/kysely';
 import { dbRead } from './db';
+import { takePage } from './keyset-page';
 import { recordModActivity } from './mod-activity';
 import { upsertTagsOnImageNew } from './tags-on-image.service';
 import { NsfwLevel } from '@civitai/shared';
@@ -39,7 +40,7 @@ export async function getImageTagReviewQueue({
   // here to narrow to Moderation type: that forces a per-tag scan of TagsOnImageNew_tagId_idx over
   // millions of rows (55s+). needsReview is only ever set on Moderation tags anyway, and the tag fetch
   // below re-filters by type.
-  const { rows: images } = await sql<Omit<ImageTagReviewItem, 'tags'>>`
+  const { rows: fetched } = await sql<Omit<ImageTagReviewItem, 'tags'>>`
     WITH reviewable AS MATERIALIZED (
       SELECT DISTINCT "imageId"
       FROM "TagsOnImageNew"
@@ -57,8 +58,7 @@ export async function getImageTagReviewQueue({
     LIMIT ${limit + 1}
   `.execute(dbRead);
 
-  let nextCursor: number | undefined;
-  if (limit && images.length > limit) nextCursor = images.pop()?.id;
+  const { items: images, nextCursor } = takePage(fetched, limit, (i) => i.id);
 
   const ids = images.map((i) => i.id);
   const tagsByImage = new Map<number, ImageTagReviewTag[]>();
