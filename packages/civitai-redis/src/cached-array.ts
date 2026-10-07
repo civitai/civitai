@@ -99,11 +99,14 @@ export type CacheBuilderDeps = {
     failOpenDegraded(cacheName: string): void;
     failOpenOriginFetch(cacheName: string, count: number): void;
     /**
-     * Miss-fill lookups that per-process coalescing (draft PR #5488) would have JOINED instead of
+     * Miss-fill lookups that per-process coalescing (PR #5488) would have JOINED instead of
      * running: the id was registered by another fetch in THIS process (same cache) whose lookup
      * started under MISS_FILL_JOIN_MAX_MS ago and has not settled with its writes, it is not a
-     * debounce-marker id, and no bust/invalidate/refresh/update detached it since. Measurement only:
-     * the lookup and its writes still happen. Cross-process duplicates are not visible here.
+     * debounce-marker id, and no bust/invalidate/refresh/update detached it since. A slight upper
+     * bound: an originator here stays registered while it also looks up and writes the ids it would
+     * have joined, and writes values then markers in sequence, so its entries live a little longer
+     * than in #5488. Measurement only: the lookup and its writes still happen. Cross-process
+     * duplicates are not visible here.
      */
     missWouldJoin(cacheName: string, count: number): void;
   };
@@ -157,7 +160,7 @@ const UPDATE_LOCK_TTL = 5;
 /**
  * A registered lookup at least this old is not counted as joinable (and is replaced). Mirrors
  * IN_FLIGHT_JOIN_MAX_MS in the coalescing proposal (#5488) so missWouldJoin counts what it would
- * join; change both together.
+ * join; change both together (the metric's HELP deliberately does not restate the number).
  */
 const MISS_FILL_JOIN_MAX_MS = 10_000;
 type MissFillEntry = { startedAt: number };
@@ -196,7 +199,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     const notFoundPackedOptions = { compress: false } as const;
     // Ids whose miss-fill this process originated and has not finished writing. Only originators
     // register (a would-be joiner does not), as in #5488. Unbounded like degradedIdInFlight: every
-    // entry is removed when its fetch's lookup and writes settle.
+    // entry is removed when its fetch's lookup and writes settle; a lookup that never settles keeps
+    // its ids (as degradedIdInFlight keeps its promise), though past the window they are not counted.
     const missFillInFlight = new Map<number, MissFillEntry>();
     // Holds the FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
     // byte-identical to what the Redis path returns and needs no further decoration.

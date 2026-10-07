@@ -3,9 +3,10 @@ import { createCacheBuilders, type CacheBuilderDeps } from '../cached-array';
 import type { RedisKeyTemplateCache } from '../client';
 
 /**
- * `missWouldJoin` counts miss-fill lookups that per-process coalescing (draft PR #5488) would have
- * joined instead of running. It is a MEASUREMENT: every test here also asserts that the lookup and
- * its writes still happen, so the counter cannot be satisfied by a change that starts coalescing.
+ * `missWouldJoin` counts miss-fill lookups that per-process coalescing (PR #5488) would have joined
+ * instead of running. It is a MEASUREMENT: every fetch test also asserts how many lookups ran (and
+ * the core cases that both writes landed), so the counter cannot be satisfied by a change that
+ * starts coalescing.
  *
  * The redis client is a stub whose mGet misses unless a test overrides one call, so every fetch
  * reaches lookupFn. Overlap is forced with a lookupFn that parks until the test releases it.
@@ -25,7 +26,7 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
-function build({ parkSets = false } = {}) {
+function build({ parkSets = false, staleWhileRevalidate = true } = {}) {
   const sets: string[] = [];
   // With parkSets, every SET parks on its own gate, holding the fetch in its write phase.
   const setGates: ReturnType<typeof deferred>[] = [];
@@ -77,7 +78,13 @@ function build({ parkSets = false } = {}) {
     await gate.promise;
     return Object.fromEntries(ids.map((id) => [id, { id }])) as Record<string, Row>;
   });
-  const cache = createCachedArray<Row>({ key: KEY, idKey: 'id', lookupFn, ttl: 60 });
+  const cache = createCachedArray<Row>({
+    key: KEY,
+    idKey: 'id',
+    lookupFn,
+    ttl: 60,
+    staleWhileRevalidate,
+  });
   // A second cache from the SAME builders, to pin that the registry is per cache.
   const otherCache = createCachedArray<Row>({ key: KEY2, idKey: 'id', lookupFn, ttl: 60 });
   const total = () => joins.reduce((n, [, c]) => n + c, 0);
@@ -261,11 +268,11 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
 
   it('a debounce-marker id never joins', async () => {
     const t = build();
-    // Markers outside the 10 s debounce window (an hour old), so both fetches look up AND write.
-    const oldMarker = { id: 2, debounce: true, cachedAt: new Date(Date.now() - 3_600_000) };
-    t.nextRead(oldMarker);
+    // The marker exactly as bust() writes it (no cachedAt), so both fetches look up AND write.
+    const marker = { id: 2, debounce: true };
+    t.nextRead(marker);
     const a = t.cache.fetch([2]);
-    t.nextRead(oldMarker);
+    t.nextRead(marker);
     const b = t.cache.fetch([2]);
     await t.parked(2);
     t.gates.forEach((g) => g.resolve());
@@ -278,20 +285,26 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
 
   it('a debounce-marker id outside the debounce window still registers for later fetches', async () => {
     const t = build();
-    t.nextRead({ id: 2, debounce: true, cachedAt: new Date(Date.now() - 3_600_000) });
+    t.nextRead({ id: 2, debounce: true }); // as bust() writes it
     const a = t.cache.fetch([2]);
+    await t.parked(1); // a registers before b looks
     const b = t.cache.fetch([2]); // plain miss
     await t.parked(2);
     t.gates.forEach((g) => g.resolve());
     await Promise.all([a, b]);
 
     expect(t.total()).toBe(1);
+    expect(t.lookupFn).toHaveBeenCalledTimes(2);
   });
 
   it('an id inside the debounce window (dontCache) is not registered, so nothing joins it', async () => {
+    // Dormant today: bust() writes its marker without cachedAt, so no production marker is ever
+    // inside the window (true on main and in #5488 alike). Pinned so the rule still mirrors #5488
+    // if markers start carrying cachedAt.
     const t = build();
     t.nextRead({ id: 2, debounce: true, cachedAt: new Date() });
     const a = t.cache.fetch([2]);
+    await t.parked(1); // a has passed the registration point before b looks
     const b = t.cache.fetch([2]); // plain miss
     await t.parked(2);
     t.gates.forEach((g) => g.resolve());
@@ -303,7 +316,7 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
     expect(t.sets).toEqual([`${KEY}:2`]);
   });
 
-  it('bust() detaches an in-flight miss-fill: a fetch after it is not a join', async () => {
+  it('bust() on an SWR cache (invalidate) detaches an in-flight miss-fill', async () => {
     const t = build();
     const a = t.cache.fetch([8]);
     await t.parked(1);
@@ -331,6 +344,44 @@ describe('createCachedArray — would-be-join counter (mirrors #5488)', () => {
     await Promise.all([a, b]);
 
     expect(t.total()).toBe(0);
+    expect(t.lookupFn).toHaveBeenCalledTimes(3); // a, refresh, b
+  });
+
+  it('bust() on a non-SWR cache (debounce marker) detaches an in-flight miss-fill', async () => {
+    const t = build({ staleWhileRevalidate: false });
+    const a = t.cache.fetch([8]);
+    await t.parked(1);
+    await t.cache.bust(8);
+    const b = t.cache.fetch([8]);
+    await t.parked(2);
+    t.gates.forEach((g) => g.resolve());
+    await Promise.all([a, b]);
+
+    expect(t.total()).toBe(0);
+    expect(t.lookupFn).toHaveBeenCalledTimes(2);
+  });
+
+  it('update() detaches only after a successful write', async () => {
+    const t = build();
+    const a = t.cache.fetch([8]);
+    await t.parked(1);
+
+    // Nothing to correct (the read misses): update reports false and leaves the fill joinable.
+    expect(await t.cache.update(8, (row) => row)).toBe(false);
+    const b = t.cache.fetch([8]);
+    await t.parked(2);
+    expect(t.total()).toBe(1);
+
+    // A live entry is rewritten: update reports true and detaches the fill.
+    t.nextRead({ id: 8, cachedAt: new Date() });
+    expect(await t.cache.update(8, (row) => row)).toBe(true);
+    const c = t.cache.fetch([8]);
+    await t.parked(3);
+    expect(t.total()).toBe(1);
+
+    t.gates.forEach((g) => g.resolve());
+    await Promise.all([a, b, c]);
+    expect(t.lookupFn).toHaveBeenCalledTimes(3);
   });
 
   it('a throwing metrics sink does not fail the fetch', async () => {

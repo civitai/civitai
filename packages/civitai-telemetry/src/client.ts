@@ -464,7 +464,7 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
 // cache_type would be summed into hit-ratio totals twice.
 export const cacheMissWouldJoinCounter = registerCounterWithLabels({
   name: 'cache_miss_would_join_total',
-  help: 'createCachedArray miss-fill lookups that per-process coalescing would have joined instead (same rule: originator registered under 10s ago and still filling, not a debounce-marker id, not detached by a mutation), by cache name. Measurement only; cross-process duplicates are not counted',
+  help: 'createCachedArray miss-fill lookups that per-process coalescing (the PR #5488 join rule) would have joined instead of running, by cache name. Measurement only; cross-process duplicates are not counted',
   labelNames: ['cache_name'] as const,
 });
 
