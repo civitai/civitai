@@ -42,20 +42,24 @@ On the sum of `points` across strikes that are `Active` and not past `expiresAt`
 | Total active points | What happens |
 | --- | --- |
 | 1 | Nothing. A single strike never mutes. |
-| **2** | Muted, and asked to re-read the Terms (§9). Accepting does not lift the mute. |
+| **2** | Muted, and asked to re-read and accept the Terms (§9). |
 | **3+** | Muted, flagged for moderator review. A person decides whether it becomes a ban. |
 
 **The mute is applied only when a strike is issued.** Voiding, expiry and the daily sweep re-evaluate
 to *release*, never to re-apply — so a moderator's manual unmute is not undone by the next job run.
 
-**It ends only when** the points fall below 2 and the daily job releases the account (at a 365-day
-lifetime, up to a year), or when a moderator lifts it. Accepting the Terms never does. An open review
-case does not hold it back, except a Pending scam case: its mute ends only with the ruling or a
-moderator's unmute.
+**It ends in one of two ways:**
+
+- the user accepts the Terms (§9) — the early exit, offered at 2 points only;
+- their points fall below 2 and the daily job releases them — the backstop, which at a 365-day
+  lifetime means up to a year.
+
+An open review case does not hold either back, except a Pending scam case: its mute ends only with
+the ruling or a moderator's unmute.
 
 Voiding takes a strike's points back at once, so a void that drops the total below 2 releases the mute
-on the spot rather than waiting for the job. `createStrike` is the only caller that may mute, so only
-a NEW strike can apply one again.
+on the spot rather than waiting for the job. Nothing re-mutes an account that has accepted:
+`createStrike` is the only caller that may mute, so only a NEW strike can apply one again.
 
 **Strike escalation never touches a mute a moderator set** — not lifted, not extended, expiry left
 alone. `mutedAt` is the discriminator: a person's decision sets it, every automatic path leaves it
@@ -94,7 +98,7 @@ lifetime over one 1-point strike that mutes nobody.
 | Strike issued | "You have received a strike: *(description)*." Adds the point count when > 1. | Yes |
 | Strike voided | "A strike on your account has been removed: *(void reason)*." | No |
 | Strike expired | "A strike on your account has expired…" | No |
-| Muted at 2 points | "It will be lifted automatically once your strike points drop below 2." | No |
+| Muted at 2 points | "Review and accept our Terms of Service to lift it — you will be asked the next time you try to post or comment." | No |
 | Muted at 3+ | "…and is pending review." | No |
 | Unmuted | "Your account mute has been lifted…" | No |
 
@@ -126,8 +130,10 @@ carries a marker, and the client opens the Terms at **§9.6** — the prohibited
 of strikes come from. Browsing is untouched: the user is asked at the moment they try to act, rather
 than the whole site being gated up front.
 
-Accepting records the acceptance and never lifts the mute; the client then says the account is still
-restricted and stops re-opening the Terms for the rest of the page session.
+Accepting lifts the mute and refreshes the session, so they are unblocked immediately. The mutation
+re-checks eligibility inside its own write transaction and can refuse — a moderator's mute, a Pending
+scam case on the same account, or a third strike landing mid-call — in which case the client says so
+rather than closing silently.
 
 **Who gets the offer — and who deliberately does not:**
 
@@ -139,7 +145,9 @@ restricted and stops re-opening the Terms for the rest of the page session.
 | Moderator's mute | no — never liftable by ticking a box |
 
 Strike mutes stamp `meta.muteReason = 'strike-escalation'`, which is what tells them from the other
-automatic mutes (all of which also leave `mutedAt` null).
+automatic mutes (all of which also leave `mutedAt` null). The acceptance endpoint runs the **same**
+predicate as the guard, because it is callable directly by any signed-in account — suppressing the
+modal is not a control.
 
 Coverage is every tRPC mutation behind `guardedProcedure`, which includes generation —
 `orchestratorGuardedProcedure` extends it. Prompt auditing is a second, independent gate on the same
@@ -193,13 +201,13 @@ nobody was asked to re-accept. `tos-prohibited-content-anchor.test.ts` fails if 
 
 | # | Question | Answer |
 | --- | --- | --- |
-| 17 | Does accepting the Terms lift a 2-point mute | no — decay or a moderator only |
-| 18 | Does a scam auto-mute issue a strike | yes — one `Scam` strike, 3 points, no expiry |
-| 19 | Does an open review case hold back a timed unmute or strike decay | no, except a Pending scam case |
+| 17 | Does a scam auto-mute issue a strike | yes — one `Scam` strike, 3 points, no expiry |
+| 18 | Does an open review case hold back a timed unmute or strike decay | no, except a Pending scam case |
 
 **Open:**
 
 - **Should the main app's ban modal get a comment-removal toggle?** It has none, so a `SpamBot` ban
   issued there leaves the spam comments up. Comment removal is Mod Studio only.
 - **Seb has not seen the final model.** He answered while the rule was "accepting is the only way
-  out"; it is now "decay or a moderator", plus no auto-ban and no prompt at 3 points.
+  out"; it is now "accepting early, expiry as the backstop", plus no auto-ban and no prompt at 3
+  points.

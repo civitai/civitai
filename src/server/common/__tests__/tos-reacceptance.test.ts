@@ -8,8 +8,9 @@ import {
 /**
  * Who gets offered the Terms instead of a bare "your account has been restricted".
  *
- * Three things must stay true, and none of them typechecks: a moderator's mute gets no prompt; a mute
- * applied for something OTHER than strikes gets no prompt; and neither does the review tier.
+ * Three things must stay true, and none of them typechecks: a moderator's mute is never liftable by
+ * ticking a box; a mute applied for something OTHER than strikes must not be releasable by accepting
+ * the Terms; and the review tier gets nothing, because there is nothing the user can do about it.
  */
 const strikeMute = {
   muted: true,

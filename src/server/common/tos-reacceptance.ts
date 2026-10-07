@@ -6,7 +6,7 @@ export { TOS_PROHIBITED_CONTENT_ID as TOS_REACCEPTANCE_SECTION } from '~/compone
 /**
  * Stamped on `meta.muteReason` when strike escalation mutes an account. The scam auto-mute and the
  * generation-restriction mute also leave `mutedAt` null, so without this the gate would offer the
- * Terms to accounts muted for something else entirely.
+ * Terms — and release on acceptance — to accounts muted for something else entirely.
  */
 export const STRIKE_MUTE_REASON = 'strike-escalation';
 
@@ -15,7 +15,8 @@ type MuteState = { muted?: boolean | null; mutedAt?: Date | string | null };
 /**
  * Cheap first pass, from the session alone: could this mute possibly be one the gate covers?
  *
- * `mutedAt` set means a moderator decided it, so it gets no prompt. Everything else needs the account's reason and point total, which the session does not carry — see
+ * `mutedAt` set means a moderator decided it, and a person's mute is never liftable by ticking a box.
+ * Everything else needs the account's reason and point total, which the session does not carry — see
  * `tosReacceptanceOffer`.
  */
 export function couldAwaitTosReacceptance(user: MuteState | null | undefined): boolean {
@@ -23,10 +24,11 @@ export function couldAwaitTosReacceptance(user: MuteState | null | undefined): b
 }
 
 /**
- * Whether to offer the Terms to this muted account, given what only the database knows. Accepting
- * records the acceptance; it never lifts the mute.
+ * Whether to offer the Terms to this muted account, given what only the database knows.
  *
- * Two points exactly. At three the account is queued for a moderator to decide on a ban.
+ * Two points exactly. At three the account is queued for a moderator to decide on a ban, and there is
+ * nothing for the user to do — showing them a document they can accept to no effect would be worse
+ * than the plain refusal.
  *
  * The reason check is what keeps the offer off a scam auto-mute or a generation restriction, which
  * also leave `mutedAt` null.
