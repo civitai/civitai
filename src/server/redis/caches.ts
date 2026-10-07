@@ -1369,11 +1369,12 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
   // Brotli-compress every value at rest (see #4588). image-meta is the ELASTIC component of the
   // cache — its resident set swings ~5x under load and is what drives the cluster to its memory
   // cap — and its values are prompt/generation-parameter text, i.e. highly repetitive. Measured on
-  // 336 real values sampled AT A PEAK: 3.09x, 67.6% of bytes saved. The original "under 2% of app
-  // CPU" estimate did not account for musl's per-call cost of allocating brotli's default 4 MiB
-  // window — ~4x the CPU per compress on our alpine image, mostly kernel time on the libuv
-  // threadpool. compressPacked now sizes the window to the value, which removes that cost at the
-  // same ratio. The codec is async, so it never blocks the event loop.
+  // 336 real values sampled AT A PEAK: 3.09x, 67.6% of bytes saved. Its "under 2% of app CPU"
+  // estimate did not account for musl's per-call cost of allocating brotli's default 4 MiB window:
+  // ~4x the CPU per ~3 KB compress on our alpine image, mostly kernel time on the libuv threadpool.
+  // compressPacked bounds that by sizing the window to the value (see packedBrotliWindowBits); no
+  // app-level CPU share has been re-measured since. The codec is async, so it never blocks the
+  // event loop.
   //
   // ALL values, not a size threshold: measured, `> 4 KiB` saves only 47.5% of the prefix's bytes
   // against 67.6% for everything — the ~20pp difference is the difference between clearing the cap

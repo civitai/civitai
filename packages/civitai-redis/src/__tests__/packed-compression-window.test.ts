@@ -11,11 +11,7 @@ import {
 
 const brotliCompress = promisify(zlib.brotliCompress);
 
-/**
- * The window a brotli stream was ENCODED with, read from its header (RFC 7932 §9.1) — the
- * produced bytes, not the helper that chose the parameter, so a regression anywhere between the
- * helper and the encoder call shows up here.
- */
+/** Reads the window from the produced stream header (RFC 7932 §9.1), not from the helper. */
 function readStreamWindowBits(stream: Buffer): number {
   let bitPos = 0;
   const readBits = (count: number) => {
@@ -96,7 +92,11 @@ describe('packed brotli window sizing', () => {
   it('packedBrotliWindowBits covers the input, clamped to [10, 22]', () => {
     expect(packedBrotliWindowBits(0)).toBe(10);
     expect(packedBrotliWindowBits(900)).toBe(10);
+    expect(packedBrotliWindowBits(1_023)).toBe(10);
+    expect(packedBrotliWindowBits(1_024)).toBe(11);
     expect(packedBrotliWindowBits(1_500)).toBe(11);
+    expect(packedBrotliWindowBits(4_095)).toBe(12);
+    expect(packedBrotliWindowBits(4_096)).toBe(13);
     expect(packedBrotliWindowBits(3_000)).toBe(12);
     expect(packedBrotliWindowBits(358 * 1024)).toBe(19);
     expect(packedBrotliWindowBits(3_000_000)).toBe(22);
