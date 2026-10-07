@@ -130,21 +130,6 @@ export function resolveCacheExpiry(
 }
 
 /**
- * Per-(pod, cache-key, id) single-flight map for the DEGRADED (cluster-read-failed) origin fetch.
- *
- * WHY: when a CLUSTER read rejects, fetch fails open to a direct origin (DB) fetch instead of 500ing.
- * But hot consumers pass PER-FEED-PAGE id lists, so under a full wedge each distinct page would be a
- * separate origin call → a read flood ∝ (pages × concurrency × pods): a Redis problem turned into a DB
- * thundering-herd. This map dedups at INDIVIDUAL-ID granularity, so per-(key, pod) DB load is bounded
- * by the count of DISTINCT concurrent ids rather than the number of distinct id-sets. Entries are
- * deleted as soon as their promise settles (success OR error), so it never leaks under a sustained
- * wedge. REACHED ONLY on the redis-read-FAILED path — it cannot affect healthy-path latency.
- *
- * Scoped PER BUILDER, not per module: the map is keyed `${key}:${id}`, so two builders holding caches
- * with the same `key` but different `lookupFn`s would otherwise hand each other's rows back during a
- * degraded fetch.
- */
-/**
  * How long a healthy-path miss-fill lookup may be JOINED by later fetches (see missInFlight). Past
  * this a lookup is presumed stuck, so a fetch originates its own instead of waiting on it — which
  * also bounds how old a lookup a joiner can be handed. Generous next to a normal lookup.
@@ -158,6 +143,21 @@ const UPDATE_LOCK_TTL = 5;
 
 export function createCacheBuilders(deps: CacheBuilderDeps) {
   const { redis, metrics, logFailOpen, logRefreshError, log, clearByPattern } = deps;
+  /**
+   * Per-(pod, cache-key, id) single-flight map for the DEGRADED (cluster-read-failed) origin fetch.
+   *
+   * WHY: when a CLUSTER read rejects, fetch fails open to a direct origin (DB) fetch instead of 500ing.
+   * But hot consumers pass PER-FEED-PAGE id lists, so under a full wedge each distinct page would be a
+   * separate origin call → a read flood ∝ (pages × concurrency × pods): a Redis problem turned into a DB
+   * thundering-herd. This map dedups at INDIVIDUAL-ID granularity, so per-(key, pod) DB load is bounded
+   * by the count of DISTINCT concurrent ids rather than the number of distinct id-sets. Entries are
+   * deleted as soon as their promise settles (success OR error), so it never leaks under a sustained
+   * wedge. REACHED ONLY on the redis-read-FAILED path — it cannot affect healthy-path latency.
+   *
+   * Scoped PER BUILDER, not per module: the map is keyed `${key}:${id}`, so two builders holding caches
+   * with the same `key` but different `lookupFn`s would otherwise hand each other's rows back during a
+   * degraded fetch.
+   */
   const degradedIdInFlight = new Map<string, Promise<unknown>>();
 
   function createCachedArray<T extends object>({
@@ -219,17 +219,14 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
     }
 
-    // Per-process single-flight for fetch's healthy miss-fill: id -> the in-flight lookup for it. A
-    // fetch that misses Redis for an id already being looked up awaits that lookup instead of calling
-    // lookupFn and writing the same value again; only the originating fetch writes. Per cache
-    // instance, not per builder like degradedIdInFlight, so two caches never share rows. An entry is
-    // removed once its originator's lookup AND write are done (or the lookup failed, which rejects
-    // only the fetches awaiting it). Per process only: other processes still each fill the same id.
+    // Per-process single-flight for fetch's healthy miss-fill: id -> in-flight lookup. A fetch that
+    // misses an id already being looked up awaits it instead of looking up and writing again; only
+    // the originator writes. Per cache instance (unlike degradedIdInFlight), so two caches never
+    // share rows. Other processes still each fill the same id.
     const missInFlight = new Map<string, InFlightLookup<T>>();
 
     // Writes one lookup's results: a value SET for each found id (unless dontCache/dontCacheFn), an NX
-    // notFound marker for each missing id when cacheNotFound. Every packed.set is CALLED before this
-    // returns, so every value is encoded synchronously here. Never rejects: the lookup already
+    // notFound marker for each missing id when cacheNotFound. Never rejects: the lookup already
     // SUCCEEDED, and a CLUSTER WRITE failure must NOT turn a good origin fetch into a 500 — it is
     // swallowed best-effort (the entry just isn't cached this pass).
     function writeLookedUp(
@@ -466,8 +463,9 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
 
         // An entry older than IN_FLIGHT_JOIN_MAX_MS is not joined: a lookup that has not settled by
         // then is treated as stuck and this fetch originates (and registers) a fresh one. A
-        // debounce-marker id never joins (an in-flight lookup may predate the bust) but does
-        // register, so later fetches join its fresher lookup instead of the older one.
+        // debounce-marker id never joins (an in-flight lookup may predate the bust). Unless it is
+        // inside the debounce window (dontCache, below) it does register, so later fetches join its
+        // fresher lookup instead of the older one.
         const joined = new Map<number, Promise<T | undefined>>();
         const toLookup: number[] = [];
         const startedAt = Date.now();
@@ -488,8 +486,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             }
             return dbResults;
           })();
-          // The writes are STARTED before any fetch is handed a record: packed.set encodes its value
-          // synchronously, so nothing a fetch's appendFn later does to a record (including its
+          // The writes are STARTED before any fetch is handed a record: packed.set msgpack-packs its
+          // value synchronously (before any await), so nothing a fetch's appendFn later does to a record (including its
           // nested objects, which the per-fetch clone below shares) can reach Redis.
           const persisted = lookedUp.then((dbResults) => ({
             dbResults,
@@ -498,6 +496,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           owned = persisted.then((r) => r.dbResults);
           const done = persisted.then((r) => r.written);
           ownWritten = done;
+          const registered: [string, InFlightLookup<T>][] = [];
           for (const id of toLookup) {
             // Not registered: its originator won't cache it, so a fetch that joined it would leave
             // the entry unfilled where its own lookup would have filled it.
@@ -508,20 +507,25 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
               startedAt,
             };
             missInFlight.set(mapKey, entry);
+            registered.push([mapKey, entry]);
             // Only keeps an id nobody joined from surfacing an unhandledRejection; the rejection
             // itself reaches this fetch via `await owned` and each joiner via its await of `value`.
             void entry.value.catch(() => undefined);
-            // Removed once the lookup AND its write are done, not when the lookup settles: a fetch
-            // whose GET lands while the value is still being encoded and written would otherwise
-            // miss, find nothing in flight, and redo both. Also on a rejected lookup. The `===`
-            // guard keeps this from removing a newer entry for the id (registered after
-            // forgetLocal detached this one, past IN_FLIGHT_JOIN_MAX_MS, or off a debounce marker).
-            void done
-              .catch(() => undefined)
-              .finally(() => {
-                if (missInFlight.get(mapKey) === entry) missInFlight.delete(mapKey);
-              });
           }
+          // Entries are removed once the lookup AND its write are done, not when the lookup settles:
+          // a fetch whose GET lands while the value is still being packed and written would
+          // otherwise miss, find nothing in flight, and redo both. Also on a rejected lookup (the
+          // .catch also keeps that rejection of `done` from going unhandled; it reaches this fetch
+          // via `await owned`). One callback per batch, not per id. The `===` guard keeps this from
+          // removing a newer entry for an id (registered after forgetLocal detached this one, past
+          // IN_FLIGHT_JOIN_MAX_MS, or off a debounce marker).
+          void done
+            .catch(() => undefined)
+            .finally(() => {
+              for (const [mapKey, entry] of registered) {
+                if (missInFlight.get(mapKey) === entry) missInFlight.delete(mapKey);
+              }
+            });
         }
 
         // A joined lookup that failed rejects this fetch — it was waiting on that lookup — but only
@@ -530,8 +534,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           owned ?? ({} as Record<string, T>),
           Promise.allSettled([...joined].map(async ([id, p]) => [id, await p] as const)),
         ]);
-        // As before coalescing: a fetch returns only once its own writes have landed (or failed
-        // open). writeLookedUp never rejects.
+        // A fetch returns only after its own writes land (or fail open); writeLookedUp never rejects.
         if (ownWritten) await ownWritten;
         const joinedById = new Map<number, T | undefined>();
         for (const s of joinedSettled) {
@@ -554,8 +557,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
           // mutates top-level fields in place.
           results.add({ ...raw } as T);
         }
-        // Joined ids are reported under their own cache_type so the coalescing is visible; the
-        // total across both types is what 'cachedArray' alone counted before coalescing existed.
+        // Joined ids get their own cache_type; total misses = cachedArray + cachedArrayJoined.
         if (ownMisses > 0) metrics.miss(key, 'cachedArray', ownMisses);
         if (joinedMisses > 0) metrics.miss(key, 'cachedArrayJoined', joinedMisses);
       }
@@ -653,11 +655,11 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const ids = Array.isArray(id) ? id : [id];
       // This fromWrite lookup calls lookupFn directly, so it never joins a read-path lookup, and
       // forgetLocal detaches in-flight read lookups for these ids, so a later fetch in THIS process
-      // originates its own rather than joining one begun before the write. That is not a post-write
-      // read (a read-path lookup can still lag the write). Other processes are not reached: a fetch
+      // originates its own rather than joining one begun before the write. This does not make that
+      // later lookup read post-write data; it can still lag the write. Other processes are not reached: a fetch
       // there that misses Redis before this refresh's SET lands can join a lookup begun up to
       // IN_FLIGHT_JOIN_MAX_MS earlier, and that lookup's own unlocked SET can land on top of this
-      // one's, as it could before coalescing.
+      // one's.
       forgetLocal(ids);
 
       try {

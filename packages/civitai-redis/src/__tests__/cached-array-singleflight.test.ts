@@ -74,7 +74,7 @@ vi.mock('redis', () => {
 });
 
 import { createCacheBuilders, type CachedLookupOptions } from '../cached-array';
-import { createCacheRedis } from '../client';
+import { createCacheRedis, REDIS_KEYS } from '../client';
 import type { RedisKeyTemplateCache } from '../client';
 
 const redis = createCacheRedis();
@@ -364,7 +364,11 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     const y = cache.fetch([1]); // joins id 1
     await untilGets(4);
     fast.open();
-    await y; // y's appendFn has run on the nested object it shares with x's record
+    // y's appendFn has now run on the nested object it shares with x's record. What x RETURNS
+    // shares that nested object too (the per-fetch clone is shallow, as on every path in this
+    // module, whose appendFns assign top-level or idempotent fields); this test pins only that
+    // nothing decorated reaches redis.
+    await y;
     slow.open();
     await Promise.all([w, x]);
 
@@ -396,7 +400,9 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     const b = cache.fetch([8]);
     // b reads (and brotli-decodes) the marker, so wait on the outcome itself: a second lookup.
     // Joining instead never produces it, and this times out red rather than passing.
-    await vi.waitFor(() => expect(lookupFn, 'lookups for id 8').toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(lookupFn, 'lookups for id 8').toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    });
     g.open();
     await Promise.all([a, b]);
     expect(lookedUpIds(lookupFn)).toEqual([8, 8]);
@@ -416,7 +422,9 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     await untilGets(1);
     await cache.bust(12); // invalidate: mGet sees no entry, rewrites nothing
     const b = cache.fetch([12]);
-    await vi.waitFor(() => expect(lookupFn, 'lookups for id 12').toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(lookupFn, 'lookups for id 12').toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    });
     g.open();
     await Promise.all([a, b]);
   });
@@ -451,8 +459,8 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     expect(lookupB).toHaveBeenCalledTimes(1);
   });
 
-  // Regression (perf review): the entry must outlive the lookup until the originator's write has
-  // landed, or a fetch whose GET falls in between redoes the lookup and the write.
+  // Regression: red before coalescing (id 10 looked up and SET twice). The entry must outlive the
+  // lookup until the originator's write has landed, or a GET in between redoes both.
   it('a fetch that misses while the originator is still writing joins instead of re-filling', async () => {
     const lookupFn = vi.fn<Lookup>(async (ids) =>
       Object.fromEntries(ids.map((id) => [id, { id, v: `row-${id}` }]))
@@ -475,8 +483,8 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     }
   });
 
-  // Regression (correctness review): a fetch that joined a lookup which then FAILED rejects, but
-  // its OWN lookup is still written, so its other ids are not lost.
+  // Invariant guard: a fetch that joined a lookup which then FAILED rejects, but the ids it looked
+  // up itself are still written.
   it("a failed joined lookup still lets the joiner's own ids be written", async () => {
     const bad = gate();
     const lookupFn = vi.fn<Lookup>(async (ids) => {
@@ -494,11 +502,11 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     await expect(b, 'fetch that joined the failed lookup').rejects.toThrow('db down');
     expect(setsFor(21), "b's own id was written").toHaveLength(1);
     expect(await cache.fetch([21])).toEqual({ '21': { id: 21, v: 'row-21' } });
-    expect(lookupFn).toHaveBeenCalledTimes(2); // 21 served from redis
+    expect(lookupFn).toHaveBeenCalledTimes(2);
   });
 
-  // Regression (correctness review): a lookup that never settles must not block its ids for the
-  // life of the process — past IN_FLIGHT_JOIN_MAX_MS a fetch originates its own.
+  // Invariant guard (green before coalescing too): past IN_FLIGHT_JOIN_MAX_MS a fetch originates
+  // its own lookup instead of joining a stuck one.
   it('a stuck lookup is not joined forever', async () => {
     const never = new Promise<void>(() => undefined);
     let calls = 0;
@@ -554,6 +562,98 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  /** A debounce marker INSIDE its window, as a bust that stamps cachedAt would write it. */
+  const writeFreshDebounceMarker = (id: number) =>
+    redis.packed.set(
+      `${KEY}:${id}` as RedisKeyTemplateCache,
+      { id, debounce: true, cachedAt: new Date() },
+      { EX: 10 },
+      { compress: true }
+    );
+
+  // Guard: a lookup for ids that are all inside a debounce window registers nothing, and its
+  // rejection must still be handled (an unhandled rejection kills the process).
+  it('a failed lookup of only debounce-window ids rejects cleanly', async () => {
+    const lookupFn = vi.fn<Lookup>(async () => {
+      throw new Error('db down');
+    });
+    const cache = buildCache(lookupFn, { staleWhileRevalidate: false });
+    await writeFreshDebounceMarker(50);
+    await expect(cache.fetch([50])).rejects.toThrow('db down');
+  });
+
+  // Guard: a debounce-window id is not registered, so nobody joins a lookup whose result will not
+  // be cached.
+  it('a lookup for a debounce-window id is not joined', async () => {
+    const g = gate();
+    const lookupFn = vi.fn<Lookup>(async (ids) => {
+      await g.promise;
+      return Object.fromEntries(ids.map((id) => [id, { id, v: `row-${id}` }]));
+    });
+    const cache = buildCache(lookupFn, { staleWhileRevalidate: false });
+    await writeFreshDebounceMarker(51);
+    const a = cache.fetch([51]);
+    await vi.waitFor(() => expect(lookupFn).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    store.delete(`${KEY}:51`); // marker expired: b misses outright
+    const b = cache.fetch([51]);
+    await vi.waitFor(() => expect(lookupFn, 'lookups for id 51').toHaveBeenCalledTimes(2), {
+      timeout: 3000,
+    });
+    g.open();
+    await Promise.all([a, b]);
+  });
+
+  // Guard on the lower side of the age cap: a lookup just under IN_FLIGHT_JOIN_MAX_MS is joined.
+  it('a lookup just under the age cap is still joined', async () => {
+    const g = gate();
+    const lookupFn = vi.fn<Lookup>(async (ids) => {
+      await g.promise;
+      return Object.fromEntries(ids.map((id) => [id, { id, v: `row-${id}` }]));
+    });
+    const cache = buildCache(lookupFn);
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const a = cache.fetch([52]);
+      await untilGets(1);
+      vi.setSystemTime(Date.now() + 9_000);
+      const b = cache.fetch([52]);
+      await untilGets(2);
+      g.open();
+      await Promise.all([a, b]);
+      expect(lookupFn, 'lookups for id 52').toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Guard: a fetch whose joined lookup fails still releases its own revalidate locks before it
+  // rejects, so the stale id it won is not left locked for the lock's TTL.
+  it('a failed joined lookup still releases the joiner’s revalidate locks', async () => {
+    const bad = gate();
+    const lookupFn = vi.fn<Lookup>(async (ids) => {
+      if (ids.includes(53)) await bad.promise; // rejected below
+      return Object.fromEntries(ids.map((id) => [id, { id, v: `row-${id}` }]));
+    });
+    const cache = buildCache(lookupFn);
+    // id 54 is stale (cachedAt past the 3600s ttl) so the fetch takes its revalidate lock.
+    await redis.packed.set(
+      `${KEY}:54` as RedisKeyTemplateCache,
+      { id: 54, v: 'stale', cachedAt: new Date(Date.now() - 3601 * 1000) },
+      { EX: 7200 },
+      { compress: true }
+    );
+    const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${KEY}:54`;
+
+    const a = cache.fetch([53]);
+    await untilGets(1);
+    const b = cache.fetch([53, 54]); // joins 53, wins the lock on 54
+    await vi.waitFor(() => expect(store.has(lockKey), 'lock taken').toBe(true), { timeout: 3000 });
+    bad.fail(new Error('db down'));
+    await expect(a).rejects.toThrow('db down');
+    await expect(b).rejects.toThrow('db down');
+    expect(store.has(lockKey), 'revalidate lock released').toBe(false);
   });
 
   it('reports joined misses under their own cache_type, keeping the total', async () => {
