@@ -481,14 +481,18 @@ v3 asks a new question of the popularity-seed matcher, in brief:
 - **Power** comes from the 100-prompt pilot's nuisance rates — 80 of 100 drawn scored,
   hit@10 discordance 8 of 80 (10.0%), MRR non-ties 22 of 80 (27.5%) — at a planning n of
   1600 scored (2000 drawn × 80%): ≈ 0.81 for (i), ≈ 1.00 for (ii). At the 1334 scored
-  floor, power for (i) is ≈ 0.75. The one effect-size input, 68% of MRR non-ties
+  floor, power for (i) is ≈ 0.75. Those figures for (i) hold only at the pilot's point
+  estimate of 8/80. The exact (Clopper-Pearson) 95% interval for that discordance is
+  4.4%–18.8%, and across it power for (i) runs from ≈ 0.98 down to ≈ 0.58 at 1600 scored,
+  and from ≈ 0.97 down to ≈ 0.52 at the floor. The text computes the interval from the pilot
+  counts. The one effect-size input, 68% of MRR non-ties
   favouring PURPOSE, is still the planning value from the best-of-18 offline 254-prompt
   replay that selected this design, so it is optimistic; the pilot's effect estimate was
   not used. The text derives all of these from the constants.
 - **Re-planned once, 2026-10-07, before any registered run.** The registration as first
   committed planned 1000 drawn (667 scored floor, planning n 822, discordance 13 of 254 =
   5.1%, non-ties 13.4%). The pilot measured 80.0% scored, 10.0% discordance and 27.5%
-  non-ties; at those rates 1000 drawn scores ~800 and power for (i) falls to ≈ 0.56. Under
+  non-ties; at those point estimates 1000 drawn scores ~800 and power for (i) falls to ≈ 0.56. Under
   the registration's own pilot rule the sample was re-planned to 2000 drawn from those
   nuisance rates alone; the registration text carries the dated record.
 

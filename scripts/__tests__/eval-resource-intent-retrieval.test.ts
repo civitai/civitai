@@ -369,6 +369,9 @@ describe('the pre-registration', () => {
         'There se = sqrt(0.1000 / 1600) = 0.0079, so power for (i) at a true difference of 0 is 0.81.',
         'At the 1334 floor se = 0.0087 and that power is 0.75: a binding NOT MET from a run scoring between 1334 and 1600',
         'prompts is lower-powered than planned.',
+        "That 0.81 holds only at the pilot's point estimate of 8 of 80. The exact (Clopper-Pearson)",
+        '95% interval for that rate is 4.4% to 18.8%; across it, power for (i) runs from 0.98 down',
+        'to 0.58 at 1600 scored, and from 0.97 down to 0.52 at the 1334 floor.',
         "MRR@50 non-ties 27.5% of scored (the pilot's 22 of 80; 440 of 1600) with 68.0% favouring PURPOSE",
         "(the replay's planning value, not the pilot's) gives power for (ii) of 1.00.",
         'The margin: 0.02 is absolute against a hit@10 base rate of about 10-11% (v2: 11.3% for POPULARITY),',
@@ -405,7 +408,7 @@ describe('the pre-registration', () => {
         'Re-plan (2026-10-07, once, before any registered run): only the VOID 100-prompt pilot',
         'has run under v3. It measured a scored fraction of 80.0% (planned 82.2%), a hit@10',
         'discordance of 10.0% (planned 13 of 254 = 5.1%) and an MRR@50 non-tie rate of 27.5%',
-        '(planned 13.4%). At those rates 1000 drawn scores ~800 and power for (i) is 0.56, so under the',
+        '(planned 13.4%). At those point estimates 1000 drawn scores ~800 and power for (i) is 0.56, so under the',
         'pilot rule above the sample was re-planned in a new commit:',
         '  sample 1000 -> 2000 drawn; VOID floor 667 -> 1334 scored (the same 66.7% scored-fraction rule);',
         '  planning n 822 -> 1600 scored; hit@10 discordance 5.1% -> 10.0%; MRR@50 non-tie rate 13.4% -> 27.5%.',
@@ -436,6 +439,42 @@ describe('the pre-registration', () => {
     // (Lookarounds, so `0.1000` in the se formula is not read as the old sample size.)
     expect(outsideRecord).not.toMatch(
       /(?<![\d.])(1000|667|822)(?![\d.])|(?<![\d.])5\.1%|13\.4%|best-of-18 screen\):/
+    );
+  });
+});
+
+describe('the planning discordance is a pilot ESTIMATE — its interval is disclosed', () => {
+  // Literals computed independently: Python bisection on the exact binomial tails, and
+  // cross-checked against scipy's beta quantiles (agreeing to the last digit shown).
+  it.each([
+    [8, 80, 0.04417094015362904, 0.18756510746343164], // the pilot's hit@10 discordance
+    [22, 80, 0.1810376385570387, 0.3862434208444091],
+    [0, 10, 0, 0.3084971078187607], // k = 0: lower bound is exactly 0
+    [10, 10, 0.6915028921812392, 1], // k = n: upper bound is exactly 1
+  ])('exact two-sided Clopper-Pearson at 0.05: %i of %i → [%f, %f]', (k, n, lower, upper) => {
+    const ci = registrationModule.clopperPearson(k, n, 0.05);
+    expect(ci.lower).toBeCloseTo(lower, 9);
+    expect(ci.upper).toBeCloseTo(upper, 9);
+  });
+
+  it('🔴 plannedPower() derives the interval from the pilot counts and gives (i) power at its bounds', () => {
+    const power = registrationModule.plannedPower();
+    expect(power.hitDiscordantCi.lower).toBeCloseTo(0.04417094015362904, 9);
+    expect(power.hitDiscordantCi.upper).toBeCloseTo(0.18756510746343164, 9);
+    // At the LOW discordance bound se shrinks, so power is HIGHER; at the high bound, lower.
+    expect(power.nonInferiorityPowerAtCiLower).toBeCloseTo(0.9846702217965003, 6); // 1600
+    expect(power.nonInferiorityPowerAtCiLowerFloor).toBeCloseTo(0.9664257229197633, 6); // 1334
+    expect(power.nonInferiorityPowerAtCiUpper).toBeCloseTo(0.5801198832163839, 6); // 1600
+    expect(power.nonInferiorityPowerAtCiUpperFloor).toBeCloseTo(0.5166218473200506, 6); // 1334
+  });
+
+  it('🔴 the Power paragraph says ~0.81 holds only at the point estimate, with the interval and power range', () => {
+    expect(renderRetrievalPreregistration()).toContain(
+      [
+        "That 0.81 holds only at the pilot's point estimate of 8 of 80. The exact (Clopper-Pearson)",
+        '95% interval for that rate is 4.4% to 18.8%; across it, power for (i) runs from 0.98 down',
+        'to 0.58 at 1600 scored, and from 0.97 down to 0.52 at the 1334 floor.',
+      ].join('\n')
     );
   });
 });

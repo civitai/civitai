@@ -261,6 +261,36 @@ export const M3_RETRIEVAL_PREREGISTRATION = {
   pilotSampleSize: 100,
 } as const;
 
+/** P(X <= k) for X ~ Binomial(n, p), 0 < p < 1, summed in log space. */
+function binomialCdf(k: number, n: number, prob: number): number {
+  let sum = 0;
+  for (let i = 0; i <= k; i++) {
+    sum += Math.exp(logChoose(n, i) + i * Math.log(prob) + (n - i) * Math.log(1 - prob));
+  }
+  return sum;
+}
+
+/**
+ * The exact (Clopper-Pearson) two-sided 1 - `alpha` interval for a binomial proportion
+ * k / n: lower solves P(X >= k) = alpha / 2, upper solves P(X <= k) = alpha / 2, each by
+ * bisection (both tails are monotone in p). k = 0 gives lower 0; k = n gives upper 1.
+ */
+export function clopperPearson(k: number, n: number, alpha: number) {
+  const solve = (tooHigh: (prob: number) => boolean) => {
+    let lo = 0;
+    let hi = 1;
+    for (let i = 0; i < 100; i++) {
+      const mid = (lo + hi) / 2;
+      if (tooHigh(mid)) hi = mid;
+      else lo = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  const lower = k === 0 ? 0 : solve((prob) => 1 - binomialCdf(k - 1, n, prob) >= alpha / 2);
+  const upper = k === n ? 1 : solve((prob) => binomialCdf(k, n, prob) <= alpha / 2);
+  return { lower, upper };
+}
+
 /** One-sided non-inferiority power at a true difference of 0: se = sqrt(discordant rate / n). */
 function nonInferiorityPowerAt(discordantRate: number, n: number): number {
   const p = M3_RETRIEVAL_PREREGISTRATION;
@@ -303,6 +333,19 @@ export function plannedPower() {
     (p.replan.from.sampleSize * p.replan.pilot.scored) / p.pilotSampleSize
   );
   const previousNonInferiorityPower = nonInferiorityPowerAt(hitDiscordantRate, previousScored);
+  // The planning discordance is an estimate from the pilot's counts; (i)'s power at the
+  // bounds of its exact 95% interval. A LOWER rate means a smaller se, so HIGHER power.
+  const hitDiscordantCi = clopperPearson(p.replan.pilot.hitDiscordant, p.replan.pilot.scored, 0.05);
+  const nonInferiorityPowerAtCiLower = nonInferiorityPowerAt(hitDiscordantCi.lower, scored);
+  const nonInferiorityPowerAtCiLowerFloor = nonInferiorityPowerAt(
+    hitDiscordantCi.lower,
+    p.voidIf.minScored
+  );
+  const nonInferiorityPowerAtCiUpper = nonInferiorityPowerAt(hitDiscordantCi.upper, scored);
+  const nonInferiorityPowerAtCiUpperFloor = nonInferiorityPowerAt(
+    hitDiscordantCi.upper,
+    p.voidIf.minScored
+  );
   const mrrNonTies = Math.round(scored * mrrNonTieRate);
   const mrrPower = mrrSignTestPower(mrrNonTies, mrrPurposeShare);
   return {
@@ -313,6 +356,11 @@ export function plannedPower() {
     nonInferiorityPowerAtFloor,
     previousScored,
     previousNonInferiorityPower,
+    hitDiscordantCi,
+    nonInferiorityPowerAtCiLower,
+    nonInferiorityPowerAtCiLowerFloor,
+    nonInferiorityPowerAtCiUpper,
+    nonInferiorityPowerAtCiUpperFloor,
     mrrNonTies,
     mrrPower,
   };
@@ -448,6 +496,19 @@ export function renderRetrievalPreregistration(): string {
       p.planning.scored
     }`,
     'prompts is lower-powered than planned.',
+    `That ${power.nonInferiorityPower.toFixed(2)} holds only at the pilot's point estimate of ${
+      r.pilot.hitDiscordant
+    } of ${r.pilot.scored}. The exact (Clopper-Pearson)`,
+    `95% interval for that rate is ${pct(power.hitDiscordantCi.lower)} to ${pct(
+      power.hitDiscordantCi.upper
+    )}; across it, power for (i) runs from ${power.nonInferiorityPowerAtCiLower.toFixed(2)} down`,
+    `to ${power.nonInferiorityPowerAtCiUpper.toFixed(2)} at ${
+      p.planning.scored
+    } scored, and from ${power.nonInferiorityPowerAtCiLowerFloor.toFixed(
+      2
+    )} down to ${power.nonInferiorityPowerAtCiUpperFloor.toFixed(2)} at the ${
+      p.voidIf.minScored
+    } floor.`,
     `MRR@${k2} non-ties ${pct(p.planning.mrrNonTieRate)} of scored (the pilot's ${
       r.pilot.mrrNonTies
     } of ${r.pilot.scored}; ${power.mrrNonTies} of ${p.planning.scored}) with ${pct(
@@ -477,7 +538,9 @@ export function renderRetrievalPreregistration(): string {
     } of ${r.from.hitDiscordantOf} = ${pct(
       r.from.hitDiscordant / r.from.hitDiscordantOf
     )}) and an MRR@${k2} non-tie rate of ${pct(r.pilot.mrrNonTies / r.pilot.scored)}`,
-    `(planned ${pct(r.from.mrrNonTieRate)}). At those rates ${r.from.sampleSize} drawn scores ~${
+    `(planned ${pct(r.from.mrrNonTieRate)}). At those point estimates ${
+      r.from.sampleSize
+    } drawn scores ~${
       power.previousScored
     } and power for (i) is ${power.previousNonInferiorityPower.toFixed(2)}, so under the`,
     'pilot rule above the sample was re-planned in a new commit:',
