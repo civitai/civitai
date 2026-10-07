@@ -11,8 +11,8 @@
  *
  * Actions:
  *   grant   - {userIds, amount?}  Grant `amount` (default and max FEE_ALLOWANCE_BOOST_MAX) extra
- *                                 licensing-fee slots to each user. Load the ids from a file; re-running
- *                                 overwrites the amount for those ids.
+ *                                 licensing-fee slots to each user without a grant. Load the ids from a
+ *                                 file. An existing grant is left as is; revoke it first to change it.
  *   get     - {userId}            The stored grant and the boost it resolves to right now
  *   revoke  - {userId}            Remove one user's grant
  *   count   - {}                  How many users hold a grant
@@ -60,13 +60,15 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     case 'grant': {
       if (new Date() >= FEE_ALLOWANCE_BOOST_ENDS_AT)
         return res.status(400).json({ error: 'The boost window has closed.' });
-      const fields = Object.fromEntries(
-        [...new Set(input.userIds)].map((id) => [String(id), String(input.amount)])
+      const ids = [...new Set(input.userIds)];
+      const added = await Promise.all(
+        ids.map((id) => sysRedis.hSetNX(KEY, String(id), String(input.amount)))
       );
-      await sysRedis.hSet(KEY, fields);
       await sysRedis.expireAt(KEY, FEE_ALLOWANCE_BOOST_ENDS_AT);
+      const granted = added.filter(Boolean).length;
       return res.status(200).json({
-        granted: Object.keys(fields).length,
+        granted,
+        alreadyGranted: ids.length - granted,
         amount: input.amount,
         endsAt: FEE_ALLOWANCE_BOOST_ENDS_AT,
       });

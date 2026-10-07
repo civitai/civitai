@@ -51,7 +51,7 @@ export const FEE_ALLOWANCE_BOOST_ENDS_AT = new Date('2026-11-01T00:00:00Z');
 
 /**
  * The boost a creator holds at `now`: their stored grant clamped to the maximum, or 0 once the window
- * closes. The date check here is what ends it — nothing deletes the grant list.
+ * closes. This date check is the cutoff; the key's Redis expiry is only cleanup.
  */
 export function feeAllowanceBoost(granted: unknown, now: Date = new Date()): number {
   if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
@@ -61,8 +61,8 @@ export function feeAllowanceBoost(granted: unknown, now: Date = new Date()): num
 }
 
 /**
- * The limit a NEW price is checked against. The boost only widens a licensing fee: a write that adds a
- * permanent paid-access gate stays on the tier allowance, so the boost never makes gates easier to set.
+ * The limit a NEW price is checked against. The boost widens only a licensing fee; a write adding a
+ * permanent paid-access gate stays on the tier allowance.
  */
 export function pricingLimitFor({
   tier,
@@ -77,9 +77,8 @@ export function pricingLimitFor({
   return addsGate ? base : base + boost;
 }
 
-/** Appended wherever the boosted fee limit is shown. */
 export function feeAllowanceBoostNote(boost: number): string {
-  return boost > 0 ? `includes ${boost} extra for licensing fees through October 31` : '';
+  return boost > 0 ? `includes ${boost} extra for licensing fees through October 31 (UTC)` : '';
 }
 
 /**
@@ -171,7 +170,7 @@ export function pricingAllowanceMessage(used: number, limit: number, tierLabel?:
 
 /**
  * The refusal for a write checked against `pricingLimitFor`. A boosted creator refused a paid-access
- * gate has room left for fees, so the message has to say the extra slots are fee-only.
+ * gate may still have fee room, so say the extra slots are fee-only.
  */
 export function pricingLimitMessage({
   used,
@@ -189,8 +188,8 @@ export function pricingLimitMessage({
   const base = pricingAllowanceMessage(used, limit, tierLabel);
   if (boost <= 0) return base;
   return addsGate
-    ? `${base} Your ${boost} extra slots through October 31 cover licensing fees only, not paid access.`
-    : `${base} This includes your ${boost} extra licensing-fee slots through October 31.`;
+    ? `${base} Your ${boost} extra slots through October 31 (UTC) cover licensing fees only, not paid access.`
+    : `${base} This includes your ${boost} extra licensing-fee slots through October 31 (UTC).`;
 }
 
 /** What the creator's allowance looks like right now, for every counter and gate in either UI. */

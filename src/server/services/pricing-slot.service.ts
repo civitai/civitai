@@ -272,7 +272,7 @@ export type PricingWriteCheck = {
   wasPriced: boolean;
   /** Whether it will carry one after. */
   willBePriced: boolean;
-  /** Whether it will carry a permanent paid-access gate after. Such a write gets no fee boost. */
+  /** Whether this write leaves a permanent paid-access gate. Such a write gets no fee boost. */
   addsGate: boolean;
   /**
    * The owner's tier, or a thunk resolving it. Pass the thunk from a hot write path: `getCapTier` is

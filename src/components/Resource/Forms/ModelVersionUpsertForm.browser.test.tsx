@@ -18,7 +18,7 @@ const mutateAsync = vi.hoisted(() =>
 );
 
 const allowance = vi.hoisted(() => ({
-  data: { used: 0, limit: 3 } as Record<string, unknown>,
+  data: { used: 0, baseLimit: 3 } as Record<string, unknown>,
 }));
 
 /**
@@ -321,13 +321,13 @@ beforeEach(() => {
   mutateAsync.mockClear();
   flags.current = { licensingFee: true, earlyAccessModel: false };
   currentUser.value = { id: 1, tier: 'free', isModerator: false, meta: {} };
-  allowance.data = { used: 0, limit: 3 };
+  allowance.data = { used: 0, baseLimit: 3 };
   licensingRoots.respond = () => NO_ROOTS;
 });
 
 describe('ModelVersionUpsertForm — the monetization eligibility floor', () => {
   test('takes the charge switch away from a creator below it, and says why', async () => {
-    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
     renderForm();
 
     await expect.element(page.getByText(/Creator Score of 10,000/)).toBeInTheDocument();
@@ -336,7 +336,7 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
 
   // The floor is not a permission level — it states who may sell here, so a moderator meets it too.
   test('is not waived for a moderator', async () => {
-    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
     currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
     renderForm();
 
@@ -346,7 +346,7 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
   // Absent while the query is in flight. Failing closed here would disable the switch under the cursor
   // of every eligible creator for as long as the request takes.
   test('leaves the switch alone until the answer arrives', async () => {
-    allowance.data = { used: 0, limit: 3 };
+    allowance.data = { used: 0, baseLimit: 3 };
     renderForm();
 
     await expect.element(chargeSwitch()).toBeEnabled();
@@ -355,7 +355,7 @@ describe('ModelVersionUpsertForm — the monetization eligibility floor', () => 
   // Editing a price the version already carries is exempt from the floor, so the controls stay usable
   // for a creator whose score has since fallen below it.
   test('does not lock a creator out of a version that already charges', async () => {
-    allowance.data = { used: 0, limit: 3, eligibility: belowFloor };
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
     renderChargingForm();
 
     await expect.element(chargeSwitch()).toBeEnabled();

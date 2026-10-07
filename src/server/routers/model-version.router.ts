@@ -136,8 +136,8 @@ export const modelVersionRouter = router({
     ]);
     return {
       used,
-      /** The licensing-fee limit, boost included. A paid-access gate is held to `baseLimit`. */
-      limit: finiteOrNull(pricingLimitFor({ tier, boost: feeBoost, addsGate: false })),
+      /** A paid-access gate is held to `baseLimit`. */
+      feeLimit: finiteOrNull(pricingLimitFor({ tier, boost: feeBoost, addsGate: false })),
       baseLimit: finiteOrNull(monthlyPricingAllowance(tier)),
       feeBoost,
       eligibility: pricingEligibility(score),

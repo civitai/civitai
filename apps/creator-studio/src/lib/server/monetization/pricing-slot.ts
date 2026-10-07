@@ -56,15 +56,18 @@ export async function unpricedVersionIds(userId: number, versionIds: number[]): 
 }
 
 /**
- * Extra licensing-fee slots granted to this creator — the main app's getFeeAllowanceBoost, read from
- * the same hash. Fails to 0 so an outage never touches the tier allowance.
+ * Mirrors the main app's getFeeAllowanceBoost over the same hash. Fails to 0 so an outage never touches
+ * the tier allowance.
  */
+const BOOST_READ_TIMEOUT_MS = 1000;
+
 export async function getFeeAllowanceBoost(userId: number, now: Date = new Date()): Promise<number> {
   if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
   try {
-    const granted = await getSysRedis().hGet<string>(
-      REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST,
-      String(userId)
+    const granted = await withTimeoutFallback(
+      getSysRedis().hGet<string>(REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST, String(userId)),
+      BOOST_READ_TIMEOUT_MS,
+      null
     );
     return feeAllowanceBoost(granted, now);
   } catch (error) {

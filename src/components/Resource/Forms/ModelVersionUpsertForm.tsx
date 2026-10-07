@@ -809,10 +809,20 @@ export function ModelVersionUpsertForm({
   const allowanceState = pricingAllowance
     ? pricingAllowanceState({
         used: pricingAllowance.used,
-        limit: pricingAllowance.limit,
+        limit: pricingAllowance.baseLimit,
         exempt: hasExistingCharge,
       })
     : null;
+  // Held to baseLimit above, which is what a paid-access gate is enforced against; only a licensing fee
+  // may spend the boost.
+  const feeAllowanceState =
+    pricingAllowance && pricingAllowance.feeBoost > 0
+      ? pricingAllowanceState({
+          used: pricingAllowance.used,
+          limit: pricingAllowance.feeLimit,
+          exempt: hasExistingCharge,
+        })
+      : null;
   // Not waived for moderators, and not applied to a version that already charges. Absent while the
   // query is in flight, so the control stays enabled rather than flickering shut; the server refuses anyway.
   const eligibility = pricingAllowance?.eligibility;
@@ -1241,8 +1251,10 @@ export function ModelVersionUpsertForm({
                       <Group gap={6}>
                         <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
                           {formatPricingAllowance(allowanceState)}
-                          {pricingAllowance?.feeBoost
-                            ? ` · ${feeAllowanceBoostNote(pricingAllowance.feeBoost)}`
+                          {feeAllowanceState && pricingAllowance
+                            ? ` · licensing fees: ${feeAllowanceState.used} of ${
+                                feeAllowanceState.limit
+                              }, ${feeAllowanceBoostNote(pricingAllowance.feeBoost)}`
                             : ''}
                           {hasExistingCharge ? ' · editing this one is free' : ''}
                         </Text>
@@ -1279,10 +1291,21 @@ export function ModelVersionUpsertForm({
                     <Alert
                       color="yellow"
                       icon={<IconAlertTriangle size={18} />}
-                      title="You've priced all this month's versions"
+                      title={
+                        feeAllowanceState && !feeAllowanceState.atLimit
+                          ? "You've used this month's paid-access allowance"
+                          : "You've priced all this month's versions"
+                      }
                       mb="sm"
                     >
                       <Text size="sm">{PRICING_SLOT_EXPLAINER}</Text>
+                      {feeAllowanceState && !feeAllowanceState.atLimit && (
+                        <Text size="sm" mt={4}>
+                          You can still add a licensing fee: your extra slots cover{' '}
+                          {feeAllowanceState.remaining} more this month. They don&apos;t cover
+                          permanent paid access.
+                        </Text>
+                      )}
                       {showPaidAccessInput && canChooseTimed && (
                         <Text size="sm" mt={4}>
                           You can still put this version on a timed Early Access window — that

@@ -112,6 +112,13 @@ Every creator gets the same fee ceiling — `maxLicensingFeeCeiling`, 100 per ge
 video model. Paid access has no ceiling at all. What a tier buys is **allowance**:
 `monthlyPricingAllowance` — free 3, bronze 10, silver 25, gold unlimited.
 
+**Until 2026-11-01T00:00Z, granted creators may set more licensing fees than their tier allows.**
+`pricingLimitFor` adds a per-creator boost (`feeAllowanceBoost`, at most `FEE_ALLOWANCE_BOOST_MAX`,
+read from a system-Redis hash loaded by `src/pages/api/testing/fee-allowance-boost.ts`) to the tier
+allowance for a write that adds only a fee. A write adding a permanent gate is held to the tier
+allowance, so both apps' `assertPricingAllowed` take `addsGate`. Boosted fees spend ordinary slots, and
+the boost ends by the date check in `feeAllowanceBoost`, not by deleting the grant list.
+
 **A lapse cannot change any price, but it lowers the allowance immediately.** `getCapTier` reads live
 subscription state at write time, and `incomplete`/`past_due`/`unpaid` all count as lapsed, so a
 membership ending mid-month drops that month's allowance to free's from that moment — in the main app.
@@ -328,8 +335,8 @@ affirmation check on that path is owner-scoped, matching `resolveRightsAffirmati
 
 Four rules have **two implementations each**, because Creator Studio's fee and gate writes are direct
 SQL that never reaches the service layer: the fee ceiling (`assertMonetizationWrite` vs the spoke's
-`licensing-fee.ts`), the eligibility floor and the allowance (`pricing-slot.service.ts` vs the spoke's
-`pricing-slot.ts`), and slot release — `versionHasTransacted`/`releasePricingSlot` against
+`licensing-fee.ts`), the eligibility floor and the allowance, fee boost included (`pricing-slot.service.ts` vs the
+spoke's `pricing-slot.ts`), and slot release — `versionHasTransacted`/`releasePricingSlot` against
 `releasableVersionIds`/`releasePricingSlots`, each with its own ClickHouse query over
 `orchestration.resourceCompensations`. Keep each pair in step — a divergence makes the spoke a way
 around whichever rule it drops, which is the same failure the POI guard has already had here.
