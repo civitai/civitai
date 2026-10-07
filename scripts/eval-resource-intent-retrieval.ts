@@ -604,7 +604,7 @@ export function renderRetrievalReport(
   const nonTieRate = scored ? (mrr.up + mrr.down) / scored : null;
   const planned = {
     scoredFraction: p.planning.scored / p.sampleSize,
-    discordantRate: p.planning.replayHitDiscordant / p.planning.replayPrompts,
+    discordantRate: p.planning.hitDiscordant / p.planning.hitDiscordantOf,
     nonTieRate: p.planning.mrrNonTieRate,
   };
   const belowPlanning =

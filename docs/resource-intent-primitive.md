@@ -467,8 +467,8 @@ v3 asks a new question of the popularity-seed matcher, in brief:
   (ii) superiority on MRR@50 — an exact two-sided sign test over prompts whose reciprocal
   rank differs, holds iff up > down AND p < 0.05. Otherwise **NOT MET**.
 - **VOID** takes precedence: a registered value was overridden (the pilot included),
-  fewer than 667 prompts scored, infrastructure exclusions above 10% of drawn prompts, or
-  the positive control fails.
+  fewer than 1334 prompts scored (2000 drawn × 66.7%), infrastructure exclusions above 10%
+  of drawn prompts, or the positive control fails.
 - **Positive control** — on what PURPOSE actually reads: VOID if fewer than 10% of scored
   prompts had at least one pool version the re-rank promotes (a `ResourceInsight` label at
   or above the promote floor agreeing on role or style family). The matcher reports that
@@ -478,11 +478,19 @@ v3 asks a new question of the popularity-seed matcher, in brief:
   prompt's top 10; the arms now differ only by the re-rank, so identical heads are expected
   on most prompts (as a proxy: reciprocal ranks @50 tied on 220 of the offline replay's 254
   prompts), and the count is printed without deciding anything.
-- **Power** comes from planning assumptions taken from the same best-of-18 offline
-  254-prompt replay that selected this design, so they are optimistic (hit@10 discordance
-  13 of 254; MRR non-ties 13.4%, 68% favouring PURPOSE), at a planning n of 822 scored —
-  the v2 registered run's scored count: ≈ 0.81 for (i), ≈ 0.97 for (ii). At the 667
-  scored floor, power for (i) is ≈ 0.74. The text derives all three from the constants.
+- **Power** comes from the 100-prompt pilot's nuisance rates — 80 of 100 drawn scored,
+  hit@10 discordance 8 of 80 (10.0%), MRR non-ties 22 of 80 (27.5%) — at a planning n of
+  1600 scored (2000 drawn × 80%): ≈ 0.81 for (i), ≈ 1.00 for (ii). At the 1334 scored
+  floor, power for (i) is ≈ 0.75. The one effect-size input, 68% of MRR non-ties
+  favouring PURPOSE, is still the planning value from the best-of-18 offline 254-prompt
+  replay that selected this design, so it is optimistic; the pilot's effect estimate was
+  not used. The text derives all of these from the constants.
+- **Re-planned once, 2026-10-07, before any registered run.** The registration as first
+  committed planned 1000 drawn (667 scored floor, planning n 822, discordance 13 of 254 =
+  5.1%, non-ties 13.4%). The pilot measured 80.0% scored, 10.0% discordance and 27.5%
+  non-ties; at those rates 1000 drawn scores ~800 and power for (i) falls to ≈ 0.56. Under
+  the registration's own pilot rule the sample was re-planned to 2000 drawn from those
+  nuisance rates alone; the registration text carries the dated record.
 
 The labeled/unlabeled breakdown is reported but never decisive.
 
@@ -491,7 +499,9 @@ The labeled/unlabeled breakdown is reported but never decisive.
 the registered run, so its verdict is VOID by construction. Its report prints the scored
 fraction, the hit@10 discordant rate and the MRR non-tie rate against the planning values,
 and only a pilot below them prints the re-plan banner. Re-plan, if needed, only in a new
-commit dated before the registered run, and say why in it.
+commit dated before the registered run, and say why in it. That has happened once (the
+2026-10-07 re-plan above); the planning values the report compares against are the
+re-planned ones.
 
 **Coverage must resolve as the endpoint's does, or the run does not happen.** Both arms
 filter on generation coverage from `coverageAudience(undefined)`, which reads Flipt through

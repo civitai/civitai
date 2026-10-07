@@ -212,9 +212,16 @@ export function normalCdf(x: number): number {
  * - `alpha`: co-primary (ii), the exact two-sided sign test on MRR@`secondaryK`.
  * - `minPromotableFraction`: the positive control on what PURPOSE actually reads — the
  *   share of scored prompts whose pool held at least one version the re-rank promotes.
- * - `planning`: power-planning inputs — the v2 registered run's scored count and
- *   popularity hit rate, and the best-of-`replayDesigns` offline replay. Assumptions,
- *   not evidence; they decide nothing.
+ * - `planning`: power-planning inputs. Assumptions, not evidence; they decide nothing.
+ *   `scored` (2000 drawn × the pilot's 80.0% scored), the hit@`primaryK` discordance
+ *   `hitDiscordant` / `hitDiscordantOf` (8 of the pilot's 80 scored) and `mrrNonTieRate`
+ *   (the pilot's 22 of 80) are the pilot's NUISANCE rates. `mrrPurposeShare` is the only
+ *   effect-size input and is still the offline replay's planning value — the pilot's effect
+ *   estimate is not used. `v2PopularityHitRate` sizes the margin sentence; `replayDesigns`
+ *   / `replayPrompts` are the replay's provenance, quoted in the Selection sentence.
+ * - `replan`: the one re-plan, made 2026-10-07 before any registered run under the
+ *   pilot rule the text states — the pilot's nuisance counts (`pilot`) and the values the
+ *   re-plan replaced (`from`). Printed, never read by the verdict.
  */
 export const M3_RETRIEVAL_PREREGISTRATION = {
   version: 3,
@@ -224,35 +231,59 @@ export const M3_RETRIEVAL_PREREGISTRATION = {
   alpha: 0.05,
   nonInferiorityMargin: 0.02,
   nonInferiorityZ: 1.645,
-  sampleSize: 1000,
+  sampleSize: 2000,
   sampleDays: 30,
   cap: RESOURCE_INTENT_DEFAULT_LIMIT,
   minPromotableFraction: 0.1,
   planning: {
-    scored: 822,
+    scored: 1600,
+    hitDiscordant: 8,
+    hitDiscordantOf: 80,
+    mrrNonTieRate: 0.275,
+    mrrPurposeShare: 0.68,
     v2PopularityHitRate: 0.113,
     replayDesigns: 18,
     replayPrompts: 254,
-    replayHitDiscordant: 13,
-    mrrNonTieRate: 0.134,
-    mrrPurposeShare: 0.68,
   },
-  voidIf: { minScored: 667, maxInfraExclusionFraction: 0.1 },
+  replan: {
+    replannedOn: '2026-10-07',
+    pilot: { scored: 80, hitDiscordant: 8, mrrNonTies: 22 },
+    from: {
+      sampleSize: 1000,
+      minScored: 667,
+      planningScored: 822,
+      hitDiscordant: 13,
+      hitDiscordantOf: 254,
+      mrrNonTieRate: 0.134,
+    },
+  },
+  voidIf: { minScored: 1334, maxInfraExclusionFraction: 0.1 },
   pilotSampleSize: 100,
 } as const;
 
-/** The planned power of each co-primary, derived from `planning` alone. */
+/** One-sided non-inferiority power at a true difference of 0: se = sqrt(discordant rate / n). */
+function nonInferiorityPowerAt(discordantRate: number, n: number): number {
+  const p = M3_RETRIEVAL_PREREGISTRATION;
+  return 1 - normalCdf(p.nonInferiorityZ - p.nonInferiorityMargin / Math.sqrt(discordantRate / n));
+}
+
+/**
+ * The planned power of each co-primary, derived from `planning` — plus, for the re-plan
+ * record only, (i)'s power at the replaced sample size under the same pilot rates.
+ */
 export function plannedPower() {
   const p = M3_RETRIEVAL_PREREGISTRATION;
-  const { scored, replayPrompts, replayHitDiscordant, mrrNonTieRate, mrrPurposeShare } = p.planning;
-  const hitDiscordantRate = replayHitDiscordant / replayPrompts;
-  // At a true difference of 0, se = sqrt(discordant rate / n).
-  const nonInferiorityPowerAt = (n: number) =>
-    1 - normalCdf(p.nonInferiorityZ - p.nonInferiorityMargin / Math.sqrt(hitDiscordantRate / n));
+  const { scored, hitDiscordant, hitDiscordantOf, mrrNonTieRate, mrrPurposeShare } = p.planning;
+  const hitDiscordantRate = hitDiscordant / hitDiscordantOf;
   const hitSe = Math.sqrt(hitDiscordantRate / scored);
-  const nonInferiorityPower = nonInferiorityPowerAt(scored);
+  const nonInferiorityPower = nonInferiorityPowerAt(hitDiscordantRate, scored);
   const floorHitSe = Math.sqrt(hitDiscordantRate / p.voidIf.minScored);
-  const nonInferiorityPowerAtFloor = nonInferiorityPowerAt(p.voidIf.minScored);
+  const nonInferiorityPowerAtFloor = nonInferiorityPowerAt(hitDiscordantRate, p.voidIf.minScored);
+  // The design the re-plan replaced, at the pilot's rates: what (i) would have had.
+  const previousScored = Math.round(
+    (p.replan.from.sampleSize * p.replan.pilot.scored) / p.pilotSampleSize
+  );
+  const previousNonInferiorityPower = nonInferiorityPowerAt(hitDiscordantRate, previousScored);
   const mrrNonTies = Math.round(scored * mrrNonTieRate);
   let mrrPower = 0;
   for (let up = 0; up <= mrrNonTies; up++) {
@@ -271,6 +302,8 @@ export function plannedPower() {
     nonInferiorityPower,
     floorHitSe,
     nonInferiorityPowerAtFloor,
+    previousScored,
+    previousNonInferiorityPower,
     mrrNonTies,
     mrrPower,
   };
@@ -284,6 +317,7 @@ export function renderRetrievalPreregistration(): string {
   const p = M3_RETRIEVAL_PREREGISTRATION;
   const k = p.primaryK;
   const k2 = p.secondaryK;
+  const r = p.replan;
   const power = plannedPower();
   const pct = (v: number) => `${(v * 100).toFixed(1)}%`;
   return [
@@ -300,8 +334,10 @@ export function renderRetrievalPreregistration(): string {
     '',
     `Selection: this matcher and this decision rule were chosen from an offline`,
     `${p.planning.replayPrompts}-prompt replay that screened ${p.planning.replayDesigns} seed x ranker designs and kept the only one that`,
-    `tied popularity on hit@${k} and led it on MRR@${k2}. The planning figures below come from`,
-    `that same best-of-${p.planning.replayDesigns} screen and are therefore optimistic.`,
+    `tied popularity on hit@${k} and led it on MRR@${k2}. The MRR@${k2} purpose share in the planning`,
+    `figures below (${pct(p.planning.mrrPurposeShare)}) comes from that same best-of-${
+      p.planning.replayDesigns
+    } screen and is therefore optimistic.`,
     '',
     "Scope: v3 judges THIS design under THIS rule. A v3 MET does not revise v2's binding NOT",
     'MET on whether the purpose-first seed beats popularity.',
@@ -381,11 +417,15 @@ export function renderRetrievalPreregistration(): string {
     'Excluded and counted, never scored: a stage-1 failure, role = none, no in-role',
     'attachment, either arm erroring, and a PURPOSE label read that fell back.',
     '',
-    `Power (planning assumptions, NOT evidence; optimistic, from the best-of-${p.planning.replayDesigns} screen):`,
-    `hit@${k} discordance ${p.planning.replayHitDiscordant} of ${p.planning.replayPrompts} = ${pct(
-      power.hitDiscordantRate
-    )}. The planning n is ${p.planning.scored} scored: the scored count of the v2`,
-    `registered run (${p.planning.scored} of ${p.sampleSize} drawn), i.e. the yield expected at the same sample design.`,
+    `Power (planning assumptions, NOT evidence; from the ${p.pilotSampleSize}-prompt pilot's nuisance rates, re-planned ${r.replannedOn}):`,
+    `hit@${k} discordance ${p.planning.hitDiscordant} of ${
+      p.planning.hitDiscordantOf
+    } pilot-scored = ${pct(power.hitDiscordantRate)}. The planning n is ${
+      p.planning.scored
+    } scored: ${p.sampleSize} drawn x the`,
+    `pilot's scored fraction (${r.pilot.scored} of ${p.pilotSampleSize} = ${pct(
+      r.pilot.scored / p.pilotSampleSize
+    )}).`,
     `There se = sqrt(${power.hitDiscordantRate.toFixed(4)} / ${
       p.planning.scored
     }) = ${power.hitSe.toFixed(
@@ -399,10 +439,14 @@ export function renderRetrievalPreregistration(): string {
       p.planning.scored
     }`,
     'prompts is lower-powered than planned.',
-    `MRR@${k2} non-ties ${pct(p.planning.mrrNonTieRate)} of scored (${power.mrrNonTies} of ${
-      p.planning.scored
-    }) with ${pct(p.planning.mrrPurposeShare)} favouring PURPOSE`,
-    `gives power for (ii) of ${power.mrrPower.toFixed(2)}.`,
+    `MRR@${k2} non-ties ${pct(p.planning.mrrNonTieRate)} of scored (the pilot's ${
+      r.pilot.mrrNonTies
+    } of ${r.pilot.scored}; ${power.mrrNonTies} of ${p.planning.scored}) with ${pct(
+      p.planning.mrrPurposeShare
+    )} favouring PURPOSE`,
+    `(the replay's planning value, not the pilot's) gives power for (ii) of ${power.mrrPower.toFixed(
+      2
+    )}.`,
     `The margin: ${
       p.nonInferiorityMargin
     } is absolute against a hit@${k} base rate of about 10-11% (v2: ${pct(
@@ -414,6 +458,35 @@ export function renderRetrievalPreregistration(): string {
     ).toFixed(0)}% — roughly one hit in five — would still pass (i).`,
     'The pilot re-measures the scored fraction and',
     'both rates; a shortfall there means re-planning in a new commit, never after the run.',
+    '',
+    `Re-plan (${r.replannedOn}, once, before any registered run): only the VOID ${p.pilotSampleSize}-prompt pilot`,
+    `has run under v3. It measured a scored fraction of ${pct(
+      r.pilot.scored / p.pilotSampleSize
+    )} (planned ${pct(r.from.planningScored / r.from.sampleSize)}), a hit@${k}`,
+    `discordance of ${pct(r.pilot.hitDiscordant / r.pilot.scored)} (planned ${
+      r.from.hitDiscordant
+    } of ${r.from.hitDiscordantOf} = ${pct(
+      r.from.hitDiscordant / r.from.hitDiscordantOf
+    )}) and an MRR@${k2} non-tie rate of ${pct(r.pilot.mrrNonTies / r.pilot.scored)}`,
+    `(planned ${pct(r.from.mrrNonTieRate)}). At those rates ${r.from.sampleSize} drawn scores ~${
+      power.previousScored
+    } and power for (i) is ${power.previousNonInferiorityPower.toFixed(2)}, so under the`,
+    'pilot rule above the sample was re-planned in a new commit:',
+    `  sample ${r.from.sampleSize} -> ${p.sampleSize} drawn; VOID floor ${r.from.minScored} -> ${
+      p.voidIf.minScored
+    } scored (the same ${pct(p.voidIf.minScored / p.sampleSize)} scored-fraction rule);`,
+    `  planning n ${r.from.planningScored} -> ${
+      p.planning.scored
+    } scored; hit@${k} discordance ${pct(r.from.hitDiscordant / r.from.hitDiscordantOf)} -> ${pct(
+      power.hitDiscordantRate
+    )}; MRR@${k2} non-tie rate ${pct(r.from.mrrNonTieRate)} -> ${pct(p.planning.mrrNonTieRate)}.`,
+    `Only the pilot's nuisance rates (scored fraction, hit@${k} discordance, MRR@${k2} non-tie`,
+    "rate) were used. The pilot's effect estimate — the direction or size of either",
+    `co-primary — was NOT used; the MRR@${k2} purpose share stays at its planning value ${pct(
+      p.planning.mrrPurposeShare
+    )}.`,
+    'The question, the arms, both co-primaries, the margin, alpha, the other VOID rules, the',
+    'positive control and the registration date are unchanged.',
     '',
     'Known confound: people attach popular models, so attached-resource gold is biased',
     'TOWARD the POPULARITY arm. A MET verdict is therefore conservative. A NOT MET verdict',

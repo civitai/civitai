@@ -187,8 +187,8 @@ describe('mrrSignTest — co-primary (ii): up > down AND exact two-sided p < 0.0
 // ---------------------------------------------------------------------------
 
 describe('the pre-registration', () => {
-  it('pins the registered v3 values', () => {
-    expect(PREREGISTERED_RUN_PARAMS).toEqual({ sampleSize: 1000, sampleDays: 30 });
+  it('pins the registered v3 values, as re-planned from the pilot', () => {
+    expect(PREREGISTERED_RUN_PARAMS).toEqual({ sampleSize: 2000, sampleDays: 30 });
     expect(M3_RETRIEVAL_PREREGISTRATION).toEqual({
       version: 3,
       registeredOn: '2026-10-07',
@@ -197,22 +197,68 @@ describe('the pre-registration', () => {
       alpha: 0.05,
       nonInferiorityMargin: 0.02,
       nonInferiorityZ: 1.645,
-      sampleSize: 1000,
+      sampleSize: 2000,
       sampleDays: 30,
       cap: 50,
       minPromotableFraction: 0.1,
       planning: {
-        scored: 822,
+        scored: 1600,
+        hitDiscordant: 8,
+        hitDiscordantOf: 80,
+        mrrNonTieRate: 0.275,
+        mrrPurposeShare: 0.68,
         v2PopularityHitRate: 0.113,
         replayDesigns: 18,
         replayPrompts: 254,
-        replayHitDiscordant: 13,
-        mrrNonTieRate: 0.134,
-        mrrPurposeShare: 0.68,
       },
-      voidIf: { minScored: 667, maxInfraExclusionFraction: 0.1 },
+      replan: {
+        replannedOn: '2026-10-07',
+        pilot: { scored: 80, hitDiscordant: 8, mrrNonTies: 22 },
+        from: {
+          sampleSize: 1000,
+          minScored: 667,
+          planningScored: 822,
+          hitDiscordant: 13,
+          hitDiscordantOf: 254,
+          mrrNonTieRate: 0.134,
+        },
+      },
+      voidIf: { minScored: 1334, maxInfraExclusionFraction: 0.1 },
       pilotSampleSize: 100,
     });
+  });
+
+  it('🔴 the planning inputs are the pilot NUISANCE counts, and the floor keeps the 66.7% rule', () => {
+    const p = M3_RETRIEVAL_PREREGISTRATION;
+    const { pilot } = p.replan;
+    // Scored fraction: 2000 drawn x 80 of 100.
+    expect((p.sampleSize * pilot.scored) / p.pilotSampleSize).toBe(p.planning.scored);
+    // Discordance: 8 of the pilot's 80 scored.
+    expect([p.planning.hitDiscordant, p.planning.hitDiscordantOf]).toEqual([
+      pilot.hitDiscordant,
+      pilot.scored,
+    ]);
+    // Non-ties: the pilot's 22 of 80.
+    expect(pilot.mrrNonTies / pilot.scored).toBe(p.planning.mrrNonTieRate);
+    // The one effect-size input is NOT the pilot's: it stays at the replay planning value.
+    expect(p.planning.mrrPurposeShare).toBe(0.68);
+    // The VOID floor carries v2's 66.7% scored-fraction rule to the new sample size.
+    expect(Math.ceil(p.sampleSize * 0.667)).toBe(p.voidIf.minScored);
+    expect(Math.ceil(p.replan.from.sampleSize * 0.667)).toBe(p.replan.from.minScored);
+  });
+
+  it('🔴 plannedPower() at the re-planned design — literals computed independently (Python, exact erf)', () => {
+    const power = registrationModule.plannedPower();
+    expect(power.hitDiscordantRate).toBe(0.1);
+    expect(power.hitSe).toBeCloseTo(0.007905694150420948, 12); // sqrt(0.1 / 1600)
+    expect(power.nonInferiorityPower).toBeCloseTo(0.8118737135859404, 6); // at 1600 scored
+    expect(power.floorHitSe).toBeCloseTo(0.0086580897858956, 12); // sqrt(0.1 / 1334)
+    expect(power.nonInferiorityPowerAtFloor).toBeCloseTo(0.7469678312438305, 6); // at 1334
+    // The design the re-plan replaced, at the pilot's rates: 1000 drawn -> 800 scored.
+    expect(power.previousScored).toBe(800);
+    expect(power.previousNonInferiorityPower).toBeCloseTo(0.5571922706005663, 6);
+    expect(power.mrrNonTies).toBe(440); // round(1600 x 0.275)
+    expect(power.mrrPower).toBeCloseTo(0.9999999952137537, 6);
   });
 
   it('🔴 keeps registration v2 recorded, unchanged', () => {
@@ -261,7 +307,7 @@ describe('the pre-registration', () => {
     expect(preregistrationOverrides(PREREGISTERED_RUN_PARAMS)).toEqual([]);
     expect(
       preregistrationOverrides({ ...PREREGISTERED_RUN_PARAMS, sampleSize: 100, sampleDays: 7 })
-    ).toEqual(['sampleSize: 1000 -> 100', 'sampleDays: 30 -> 7']);
+    ).toEqual(['sampleSize: 2000 -> 100', 'sampleDays: 30 -> 7']);
   });
 
   it('🔴 states v3: history with the binding v2 verdict, both co-primaries, the verdicts, the control, the power', () => {
@@ -295,8 +341,8 @@ describe('the pre-registration', () => {
         '  NOT MET — either does not. The closing clause is judged not met for this matcher;',
         '            any follow-up is new work under a new registration, not a re-run.',
         '  VOID    — no verdict, if ANY of: a registered value was overridden (including the',
-        '            100-prompt pilot); fewer than 667 prompts scored (the scored-fraction',
-        "            floor carried from v2's sample design: 1000 drawn x 66.7%); infrastructure",
+        '            100-prompt pilot); fewer than 1334 prompts scored (the scored-fraction',
+        "            floor carried from v2's sample design: 2000 drawn x 66.7%); infrastructure",
         '            exclusions (stage-1 failure, arm error, label-read fallback) exceed 10%',
         '            of drawn prompts; or the positive control fails. VOID takes precedence over',
         '            both co-primaries.',
@@ -317,22 +363,24 @@ describe('the pre-registration', () => {
         'The count is printed as a diagnostic only, so it can neither void nor bias a run;',
       ],
       [
-        'Power (planning assumptions, NOT evidence; optimistic, from the best-of-18 screen):',
-        'hit@10 discordance 13 of 254 = 5.1%. The planning n is 822 scored: the scored count of the v2',
-        'registered run (822 of 1000 drawn), i.e. the yield expected at the same sample design.',
-        'There se = sqrt(0.0512 / 822) = 0.0079, so power for (i) at a true difference of 0 is 0.81.',
-        'At the 667 floor se = 0.0088 and that power is 0.74: a binding NOT MET from a run scoring between 667 and 822',
+        "Power (planning assumptions, NOT evidence; from the 100-prompt pilot's nuisance rates, re-planned 2026-10-07):",
+        'hit@10 discordance 8 of 80 pilot-scored = 10.0%. The planning n is 1600 scored: 2000 drawn x the',
+        "pilot's scored fraction (80 of 100 = 80.0%).",
+        'There se = sqrt(0.1000 / 1600) = 0.0079, so power for (i) at a true difference of 0 is 0.81.',
+        'At the 1334 floor se = 0.0087 and that power is 0.75: a binding NOT MET from a run scoring between 1334 and 1600',
         'prompts is lower-powered than planned.',
-        'MRR@50 non-ties 13.4% of scored (110 of 822) with 68.0% favouring PURPOSE',
-        'gives power for (ii) of 0.97.',
+        "MRR@50 non-ties 27.5% of scored (the pilot's 22 of 80; 440 of 1600) with 68.0% favouring PURPOSE",
+        "(the replay's planning value, not the pilot's) gives power for (ii) of 1.00.",
         'The margin: 0.02 is absolute against a hit@10 base rate of about 10-11% (v2: 11.3% for POPULARITY),',
         'so a relative loss of up to 18% — roughly one hit in five — would still pass (i).',
+        'The pilot re-measures the scored fraction and',
+        'both rates; a shortfall there means re-planning in a new commit, never after the run.',
       ],
       [
         'Selection: this matcher and this decision rule were chosen from an offline',
         '254-prompt replay that screened 18 seed x ranker designs and kept the only one that',
-        'tied popularity on hit@10 and led it on MRR@50. The planning figures below come from',
-        'that same best-of-18 screen and are therefore optimistic.',
+        'tied popularity on hit@10 and led it on MRR@50. The MRR@50 purpose share in the planning',
+        'figures below (68.0%) comes from that same best-of-18 screen and is therefore optimistic.',
         '',
         "Scope: v3 judges THIS design under THIS rule. A v3 MET does not revise v2's binding NOT",
         'MET on whether the purpose-first seed beats popularity.',
@@ -347,6 +395,39 @@ describe('the pre-registration', () => {
     }
     expect(text).not.toMatch(
       /purpose-first seed \+ label re-rank|filters on insight\.role|abort before any vendor call unless/
+    );
+  });
+
+  it('🔴 states the dated re-plan record: once, before any registered run, nuisance rates only, old -> new', () => {
+    const text = renderRetrievalPreregistration();
+    expect(text).toContain(
+      [
+        'Re-plan (2026-10-07, once, before any registered run): only the VOID 100-prompt pilot',
+        'has run under v3. It measured a scored fraction of 80.0% (planned 82.2%), a hit@10',
+        'discordance of 10.0% (planned 13 of 254 = 5.1%) and an MRR@50 non-tie rate of 27.5%',
+        '(planned 13.4%). At those rates 1000 drawn scores ~800 and power for (i) is 0.56, so under the',
+        'pilot rule above the sample was re-planned in a new commit:',
+        '  sample 1000 -> 2000 drawn; VOID floor 667 -> 1334 scored (the same 66.7% scored-fraction rule);',
+        '  planning n 822 -> 1600 scored; hit@10 discordance 5.1% -> 10.0%; MRR@50 non-tie rate 13.4% -> 27.5%.',
+        "Only the pilot's nuisance rates (scored fraction, hit@10 discordance, MRR@50 non-tie",
+        "rate) were used. The pilot's effect estimate — the direction or size of either",
+        'co-primary — was NOT used; the MRR@50 purpose share stays at its planning value 68.0%.',
+        'The question, the arms, both co-primaries, the margin, alpha, the other VOID rules, the',
+        'positive control and the registration date are unchanged.',
+      ].join('\n')
+    );
+    // The record follows the pilot rule it invokes, and the registration date is unchanged.
+    expect(text.indexOf('Re-plan (2026-10-07')).toBeGreaterThan(
+      text.indexOf('a shortfall there means re-planning in a new commit')
+    );
+    expect(text.split('\n')[0]).toBe(
+      'M3 RETRIEVAL PRE-REGISTRATION v3 (registered 2026-10-07, before any registered run)'
+    );
+    // No old planning value survives outside the record's "planned"/"from" figures.
+    const outsideRecord = text.slice(0, text.indexOf('Re-plan (2026-10-07'));
+    // (Lookarounds, so `0.1000` in the se formula is not read as the old sample size.)
+    expect(outsideRecord).not.toMatch(
+      /(?<![\d.])(1000|667|822)(?![\d.])|(?<![\d.])5\.1%|13\.4%|best-of-18 screen\):/
     );
   });
 });
@@ -631,7 +712,7 @@ describe('evaluateRetrieval', () => {
       'VOID — infrastructure exclusions 3 of 9 drawn exceed 10%.',
       'Scored prompts where both arms returned the same first 10 model ids in the same order: 1 of 4. A diagnostic only — the arms differ only by the re-rank, so identical heads are expected on most prompts; it never voids a run.',
       // 4 of 9 drawn scored; (2 + 1) / 4 discordant; (2 + 1) / 4 MRR non-ties.
-      'Planning assumptions — scored fraction: 44.4% of drawn (planned 82.2%); hit@10 discordant rate: 75.0% (planned 5.1%); MRR@50 non-tie rate: 75.0% (planned 13.4%).',
+      'Planning assumptions — scored fraction: 44.4% of drawn (planned 80.0%); hit@10 discordant rate: 75.0% (planned 10.0%); MRR@50 non-tie rate: 75.0% (planned 27.5%).',
     ]) {
       expect(report).toContain(line);
     }
@@ -716,29 +797,30 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
   const verdictOf = (rows: Outcome[], params = PREREGISTERED_RUN_PARAMS) =>
     evaluateRetrieval(rows, params).verdict;
 
-  // 700 scored. (i): b = c = 10, lower = -0.0105 > -0.02. (ii): up 50, down 10, p = 1.62e-7.
-  const bothHold = { p: 10, q: 10, up: 40, tie: 200, neither: 440 };
-  // (i) fails: b 10, c 40, lower = -0.0593. (ii) holds: up 110, down 40, p = 9.56e-9.
-  const onlyMrr = { p: 10, q: 40, up: 100, tie: 200, neither: 350 };
-  // (i) holds as in bothHold; (ii) fails: up = down = 10.
-  const onlyNonInferiority = { p: 10, q: 10, tie: 200, neither: 480 };
-  // Both fail: (i) as in onlyMrr; (ii) up 10, down 40.
-  const neitherHolds = { p: 10, q: 40, tie: 200, neither: 450 };
+  // Registered-size runs: 1400 scored, above the 1334 floor. Literals computed independently
+  // (Python). (i): b = c = 20, lower = -0.0074 > -0.02. (ii): up 100, down 20, p = 5.51e-14.
+  const bothHold = { p: 20, q: 20, up: 80, tie: 400, neither: 880 };
+  // (i) fails: b 20, c 80, lower = -0.0545. (ii) holds: up 220, down 80, p = 2.87e-16.
+  const onlyMrr = { p: 20, q: 80, up: 200, tie: 400, neither: 700 };
+  // (i) holds as in bothHold; (ii) fails: up = down = 20.
+  const onlyNonInferiority = { p: 20, q: 20, tie: 400, neither: 960 };
+  // Both fail: (i) as in onlyMrr; (ii) up 20, down 80.
+  const neitherHolds = { p: 20, q: 80, tie: 400, neither: 900 };
 
   it('🔴 the four combinations of the co-primaries: MET only when BOTH hold', () => {
     expect(verdictOf(run(bothHold))).toEqual({
       verdict: 'MET',
       reason:
-        '(i) non-inferiority holds (lower bound -0.0105 vs -0.02); (ii) MRR@50 superiority holds (up 50, down 10, p 1.62e-7)',
+        '(i) non-inferiority holds (lower bound -0.0074 vs -0.02); (ii) MRR@50 superiority holds (up 100, down 20, p 5.51e-14)',
     });
     expect(verdictOf(run(onlyMrr))).toEqual({
       verdict: 'NOT MET',
       reason:
-        '(i) non-inferiority does not hold (lower bound -0.0593 vs -0.02); (ii) MRR@50 superiority holds (up 110, down 40, p 9.56e-9); the question is closed as not delivered for this matcher',
+        '(i) non-inferiority does not hold (lower bound -0.0545 vs -0.02); (ii) MRR@50 superiority holds (up 220, down 80, p 2.87e-16); the question is closed as not delivered for this matcher',
     });
     expect(verdictOf(run(onlyNonInferiority)).verdict).toBe('NOT MET');
     expect(verdictOf(run(onlyNonInferiority)).reason).toContain(
-      '(i) non-inferiority holds (lower bound -0.0105 vs -0.02); (ii) MRR@50 superiority does not hold (up 10, down 10, p 1.00)'
+      '(i) non-inferiority holds (lower bound -0.0074 vs -0.02); (ii) MRR@50 superiority does not hold (up 20, down 20, p 1.00)'
     );
     expect(verdictOf(run(neitherHolds)).verdict).toBe('NOT MET');
   });
@@ -748,7 +830,7 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
     expect(e.nonInferiority.holds && e.mrr.holds).toBe(true);
     expect(e.verdict).toEqual({
       verdict: 'VOID',
-      reason: 'not the registered run (overridden: sampleSize: 1000 -> 100)',
+      reason: 'not the registered run (overridden: sampleSize: 2000 -> 100)',
     });
   });
 
@@ -756,40 +838,41 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
     expect(verdictOf([])).toEqual({ verdict: 'VOID', reason: 'no prompt scored' });
   });
 
-  it('🔴 VOID below the minimum scored n — 667 is judged, 666 is not', () => {
-    expect(verdictOf(run({ ...bothHold, neither: 407 })).verdict).toBe('MET');
-    expect(verdictOf(run({ ...bothHold, neither: 406 }))).toEqual({
+  it('🔴 VOID below the minimum scored n — 1334 is judged, 1333 is not', () => {
+    // At 1334: b = c = 20, lower = -0.0078, still holds — so MET is reached, not voided.
+    expect(verdictOf(run({ ...bothHold, neither: 814 })).verdict).toBe('MET');
+    expect(verdictOf(run({ ...bothHold, neither: 813 }))).toEqual({
       verdict: 'VOID',
       reason:
-        "666 prompts scored, under the 667-prompt scored-fraction floor carried from v2's sample design",
+        "1333 prompts scored, under the 1334-prompt scored-fraction floor carried from v2's sample design",
     });
   });
 
-  it('🔴 VOID when infrastructure exclusions exceed 10% of drawn — 100 of 1000 is judged, 101 is not', () => {
-    expect(verdictOf(run({ ...bothHold, neither: 640, infra: [34, 33, 33] })).verdict).toBe('MET');
-    expect(verdictOf(run({ ...bothHold, neither: 639, infra: [34, 34, 33] }))).toEqual({
+  it('🔴 VOID when infrastructure exclusions exceed 10% of drawn — 200 of 2000 is judged, 201 is not', () => {
+    expect(verdictOf(run({ ...bothHold, neither: 1280, infra: [67, 67, 66] })).verdict).toBe('MET');
+    expect(verdictOf(run({ ...bothHold, neither: 1279, infra: [67, 67, 67] }))).toEqual({
       verdict: 'VOID',
-      reason: 'infrastructure exclusions 101 of 1000 drawn exceed 10%',
+      reason: 'infrastructure exclusions 201 of 2000 drawn exceed 10%',
     });
   });
 
-  it('🔴 the positive control: VOID under 10% of scored prompts with a promotable pool version — 70 of 700 passes, 69 does not', () => {
-    expect(verdictOf(run({ ...bothHold, unpromotable: 630 })).verdict).toBe('MET');
-    expect(verdictOf(run({ ...bothHold, unpromotable: 631 }))).toEqual({
+  it('🔴 the positive control: VOID under 10% of scored prompts with a promotable pool version — 140 of 1400 passes, 139 does not', () => {
+    expect(verdictOf(run({ ...bothHold, unpromotable: 1260 })).verdict).toBe('MET');
+    expect(verdictOf(run({ ...bothHold, unpromotable: 1261 }))).toEqual({
       verdict: 'VOID',
       reason:
-        'positive control failed: 69 of 700 scored prompts had a pool version the re-rank promotes, under 10%',
+        'positive control failed: 139 of 1400 scored prompts had a pool version the re-rank promotes, under 10%',
     });
     // It overrides a run whose co-primaries would both hold.
-    expect(verdictOf(run({ ...bothHold, unpromotable: 700 })).verdict).toBe('VOID');
+    expect(verdictOf(run({ ...bothHold, unpromotable: 1400 })).verdict).toBe('VOID');
   });
 
   it('🔴 identical heads on EVERY scored prompt do not VOID a v3 run', () => {
-    // 700 prompts, both arms the same list and both hit: (i) holds (b = c = 0, bound 0),
+    // 1400 prompts, both arms the same list and both hit: (i) holds (b = c = 0, bound 0),
     // (ii) has no non-ties, so the verdict is NOT MET — reached, not voided.
-    const identical = run({ tie: 700 });
+    const identical = run({ tie: 1400 });
     const e = evaluateRetrieval(identical);
-    expect(e.identicalAtPrimaryK).toBe(700);
+    expect(e.identicalAtPrimaryK).toBe(1400);
     expect(e.nonInferiority).toMatchObject({ lower: 0, holds: true });
     expect(e.verdict.verdict).toBe('NOT MET');
   });
@@ -809,21 +892,27 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
   it('is a pure mapping over the evaluation fields', () => {
     const base = {
       overrides: [],
-      drawn: 700,
+      drawn: 1400,
       excluded: { stage1_failed: 0, arm_error: 0, insight_fallback: 0 },
-      n: 700,
-      promotableScored: 700,
+      n: 1400,
+      promotableScored: 1400,
       nonInferiority: { lower: -0.01, holds: true },
       mrr: { up: 50, down: 10, p: 0.001, holds: true },
     };
     expect(retrievalVerdict(base).verdict).toBe('MET');
-    expect(retrievalVerdict({ ...base, promotableScored: 69 }).verdict).toBe('VOID');
+    expect(retrievalVerdict({ ...base, promotableScored: 139 }).verdict).toBe('VOID');
     expect(
       retrievalVerdict({ ...base, nonInferiority: { lower: -0.03, holds: false } }).verdict
     ).toBe('NOT MET');
     expect(
-      retrievalVerdict({ ...base, excluded: { ...base.excluded, insight_fallback: 71 } }).verdict
+      retrievalVerdict({ ...base, excluded: { ...base.excluded, insight_fallback: 141 } }).verdict
     ).toBe('VOID');
+    // The scored floor is a field of the mapping too: 1333 scored is VOID.
+    expect(retrievalVerdict({ ...base, drawn: 1333, n: 1333, promotableScored: 1333 })).toEqual({
+      verdict: 'VOID',
+      reason:
+        "1333 prompts scored, under the 1334-prompt scored-fraction floor carried from v2's sample design",
+    });
   });
 });
 
@@ -1435,7 +1524,7 @@ describe('main — the --execute gate', () => {
     const warned = warn.mock.calls.map((call) => String(call[0])).join('\n');
     expect(warned).toContain('OVERRIDE the pre-registration');
     expect(warned).toContain('its verdict is VOID');
-    for (const fragment of ['sampleSize: 1000 -> 100', 'sampleDays: 30 -> 7']) {
+    for (const fragment of ['sampleSize: 2000 -> 100', 'sampleDays: 30 -> 7']) {
       expect(warned).toContain(fragment);
     }
   });
@@ -1615,13 +1704,13 @@ describe('main — the --execute gate', () => {
     expect(result).toBe('ok');
 
     // ONE matched query (part one's prefix and part two share it) + one unmatched. The
-    // matched draw is sized for the LARGER consumer: window 30 days, 1000 rows.
+    // matched draw is sized for the LARGER consumer: window 30 days, 2000 rows.
     expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(2);
     const [matchedQuery, unmatchedQuery] = dbMock.dbRead.$queryRaw.mock.calls.map(
       (call) => call[0] as unknown as { sql: string; values: unknown[] }
     );
     expect(matchedQuery.sql).toContain('WITH sampled AS');
-    expect(matchedQuery.values).toEqual([30, 1000]);
+    expect(matchedQuery.values).toEqual([30, 2000]);
     expect(unmatchedQuery.values).toEqual([30, 1]);
     // Stage 1: part one with no baseModel, part two with the checkpoint's — each
     // exactly the endpoint's own request.
