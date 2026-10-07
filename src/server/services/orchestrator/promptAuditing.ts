@@ -49,6 +49,7 @@ const GREEN_SFW_REDIRECT =
 
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
+const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
 const RESET_MARKER = '__RESET__';
 
 function getBlockedPromptsKey(userId: number) {
@@ -169,7 +170,13 @@ async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> 
   );
   return entries
     .filter((e) => e !== RESET_MARKER)
-    .map((entry) => JSON.parse(entry) as BlockedPromptEntry);
+    .map((entry) => {
+      const parsed = JSON.parse(entry) as BlockedPromptEntry;
+      // Lists seeded from ClickHouse before the tracker stopped writing this placeholder for an
+      // absent negative prompt still carry it for up to BLOCKED_PROMPTS_TTL.
+      if (parsed.negativePrompt === LEGACY_MISSING_NEGATIVE_PROMPT) parsed.negativePrompt = '';
+      return parsed;
+    });
 }
 
 /**
@@ -462,8 +469,8 @@ async function reportProhibitedRequest(options: {
   if (track) {
     try {
       await track.prohibitedRequest({
-        prompt: prompt ?? '{error capturing prompt}',
-        negativePrompt: negativePrompt ?? '{error capturing negativePrompt}',
+        prompt: prompt ?? '',
+        negativePrompt: negativePrompt ?? '',
         source,
         remixOfId,
         inputImages,

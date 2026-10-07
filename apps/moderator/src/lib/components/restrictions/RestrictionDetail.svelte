@@ -70,7 +70,8 @@
     // The SERVER's count, not `selected.size`: the action re-reads the restriction and drops any
     // trigger that no longer exists, so what was ticked and what was saved can differ.
     onSuccess: (data) => {
-      toast.success(`Flagged ${data?.savedCount ?? selected.size} suspicious`);
+      const count = data?.savedCount ?? selected.size;
+      toast.success(`Flagged ${count} as false ${count === 1 ? 'positive' : 'positives'}`);
       selected.clear();
     },
   });
@@ -137,7 +138,7 @@
             <input type="hidden" name="key" value={key} />
           {/each}
           <Button type="submit" size="sm" variant="outline" disabled={flag.submitting}>
-            Flag {selected.size} suspicious
+            Flag {selected.size} as false {selected.size === 1 ? 'positive' : 'positives'}
           </Button>
         </form>
       {/if}
