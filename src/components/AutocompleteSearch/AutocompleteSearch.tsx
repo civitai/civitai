@@ -58,6 +58,7 @@ import { withSearchBrowsingScope } from '~/components/Search/SearchBrowsingScope
 import { buildAutocompleteBaseFilters } from '~/components/AutocompleteSearch/autocomplete-filters';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import { emptyMeiliResults, emptySearchClient } from '~/components/Search/emptySearchClient';
+import { resolveSearchTarget } from '~/components/Search/search-target';
 import {
   buildSearchPageUrl,
   checkAIR,
@@ -147,7 +148,13 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // already said.
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
-  const searchTarget = targetData.find((t) => t.value === currentSection)?.value ?? 'models';
+  // While image search is off, `/images` defaults the header search to Models rather than to a
+  // target that can only show the maintenance notice. A pick from the selector is not routed
+  // through this, so choosing Images explicitly still shows that notice.
+  const searchTarget = resolveSearchTarget(
+    targetData.find((t) => t.value === currentSection)?.value ?? 'models',
+    features
+  );
   useEffect(() => {
     // A navigation is not the switch the carry exists for. The input's blur handler empties the
     // visible text WITHOUT emptying the carrier (a blur is how you reach the category selector at
@@ -155,12 +162,13 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
     // again — in the next section they land in.
     //
     // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the line
-    // above collapses every first path segment outside `targetData` to `'models'`, so `/` →
-    // `/models/123/slug`, or any move between two such paths, leaves it unchanged and this never
-    // runs. The other explicit discard is `blurAndDiscardCarriedText`, on submit and on Escape;
-    // separately, emptying the input discards through the setter. Together they narrow the window
-    // rather than closing it, and the remainder is deliberate: text blurred away and then left
-    // alone survives in the carrier until the next pick from the selector re-seeds it.
+    // above collapses every first path segment outside `targetData` to `'models'` (and `images`
+    // too while image search is off), so `/` → `/models/123/slug`, or any move between two such
+    // paths, leaves it unchanged and this never runs. The other explicit discard is
+    // `blurAndDiscardCarriedText`, on submit and on Escape; separately, emptying the input
+    // discards through the setter. Together they narrow the window rather than closing it, and
+    // the remainder is deliberate: text blurred away and then left alone survives in the carrier
+    // until the next pick from the selector re-seeds it.
     carriedSearchText.current = '';
     setTargetIndex(searchTarget);
   }, [searchTarget]);

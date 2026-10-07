@@ -1,0 +1,79 @@
+import { describe, expect, test, vi } from 'vitest';
+import { page } from 'vitest/browser';
+
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
+
+/**
+ * The banner shows on ANY image-feed failure, so its copy must not blame a particular backend.
+ * Each state's text is pinned whole: a word-level check ("no 'search'") is walkable by rewording.
+ */
+
+// The page's text, minus the `<style>` blocks MantineProvider injects (their CSS is textContent too).
+const visibleText = () => {
+  const body = document.body.cloneNode(true) as HTMLElement;
+  body.querySelectorAll('style, script').forEach((node) => node.remove());
+  return (body.textContent ?? '').replace(/\s+/g, ' ').trim();
+};
+
+describe('SearchRetryBanner copy', () => {
+  test('gave-up state: neutral copy, and Try again still retries', async () => {
+    const onRetry = vi.fn();
+    renderWithProviders(
+      <SearchRetryBanner delayMs={60_000} attempt={4} maxAttempts={3} onRetry={onRetry} />
+    );
+
+    const button = page.getByRole('button', { name: 'Try again' });
+    await expect.element(button).toBeInTheDocument();
+    expect(visibleText()).toBe(
+      'Unable to load more images right now' +
+        'Images are taking longer than usual to load. Try again in a moment.' +
+        'Try again'
+    );
+
+    await button.click();
+    expect(onRetry).toHaveBeenCalledTimes(1);
+  });
+
+  // A delay far beyond the test's budget, so the countdown can never fire and take the state away.
+  test('retrying state (initial load): neutral copy', async () => {
+    renderWithProviders(
+      <SearchRetryBanner
+        delayMs={600_000}
+        attempt={1}
+        maxAttempts={3}
+        onRetry={() => undefined}
+        isInitialLoad
+      />
+    );
+
+    await expect.element(page.getByText("Couldn't load images yet")).toBeInTheDocument();
+    expect(visibleText()).toBe(
+      "Couldn't load images yet" +
+        "We'll keep trying automatically." +
+        'Retrying in 600s · Attempt 1 of 3'
+    );
+  });
+
+  test('slow state (more images): neutral copy', async () => {
+    renderWithProviders(
+      <SearchRetryBanner
+        delayMs={600_000}
+        attempt={1}
+        maxAttempts={3}
+        onRetry={() => undefined}
+        slow
+      />
+    );
+
+    await expect
+      .element(page.getByText('More images are taking longer than usual'))
+      .toBeInTheDocument();
+    expect(visibleText()).toBe(
+      'More images are taking longer than usual' +
+        "We'll keep trying automatically." +
+        'Retrying in 600s · Attempt 1 of 3'
+    );
+  });
+});

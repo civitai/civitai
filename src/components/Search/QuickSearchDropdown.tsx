@@ -41,6 +41,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { ComicsSearchItem } from '~/components/AutocompleteSearch/renderItems/comics';
 import { emptySearchClient } from '~/components/Search/emptySearchClient';
+import { resolveSearchTarget } from '~/components/Search/search-target';
 import { IMAGE_SEARCH_MAINTENANCE_MESSAGE } from '~/components/Search/ImageSearchMaintenance';
 import classes from './QuickSearchDropdown.module.scss';
 import { truncate } from 'lodash-es';
@@ -183,7 +184,16 @@ const QuickSearchDropdownInner = ({
   // deselect one: Mantine's single-select is deselectable, so `onChange` can hand the change
   // handler `null`, and a bare `'models'` fallback would then move a `supportedIndexes={['users']}`
   // picker onto the models index.
-  const fallbackIndex = startingIndex ?? props.supportedIndexes?.[0] ?? 'models';
+  //
+  // The default also goes through `resolveSearchTarget`, so a caller defaulting to Images while
+  // image search is off starts on Models instead — but only when it supports Models, which keeps
+  // the clamp above intact. No caller defaults to Images today; this keeps the two dropdowns on
+  // one rule rather than two.
+  const fallbackIndex = resolveSearchTarget(
+    startingIndex ?? props.supportedIndexes?.[0] ?? 'models',
+    features,
+    props.supportedIndexes
+  );
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>(fallbackIndex);
   const handleTargetChange = (value: SearchIndexKey | null) => {
     setTargetIndex(value ?? fallbackIndex);
@@ -212,7 +222,8 @@ const QuickSearchDropdownInner = ({
   // Not the same set as the one `fallbackIndex` above falls back into: that one stops at
   // `supportedIndexes` and is deliberately NOT narrowed by flag, so a flag-disabled
   // `startingIndex` reaches `targetIndex` and the `value` expression blanks the label rather than
-  // the fallback rewriting the target.
+  // the fallback rewriting the target. The one rewrite is `resolveSearchTarget`'s, keyed on
+  // `imageSearch` rather than on any of the offering flags here.
   const enabledTargets = (props.supportedIndexes ?? [])
     .filter(
       (value) =>
