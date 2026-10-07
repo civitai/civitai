@@ -53,14 +53,11 @@ export type CachedLookupOptions<T extends object> = {
   // Opt-in brotli compression of the packed value at rest (sentinel-tagged). Enable only for caches
   // whose values are LARGE and repetitive enough to pay the codec — most per-id values are tiny.
   //
-  // 🔴 SYMMETRY IS THE WHOLE CONTRACT: this flag is threaded to EVERY redis.packed READ this
-  // builder performs (fetch's mGet, invalidate's mGet, update's mGet) and to every write except
-  // the not-found marker (the value write, bust's debounce marker, invalidate's, refresh's and
-  // update's rewrites). A key written compressed but read via the general msgpack path throws →
-  // the entry is EVICTED and the read reports a miss, i.e. a permanent miss+evict loop rather than
-  // a visible error. If you add a new redis.packed READ to this module you MUST pass
-  // `{ compress }` to it. The not-found marker is deliberately written uncompressed: every read
-  // above is compress-aware, and that decode passes a non-sentinel value straight to msgpack.
+  // 🔴 Every redis.packed READ in this builder must pass `{ compress }` (via packedOptions): a
+  // compressed value read through the general msgpack path throws → the entry is EVICTED and
+  // reported as a miss — a silent permanent miss+evict loop. Writes may skip compression (fetch's
+  // not-found marker does): the compress-aware read passes any non-sentinel value straight to
+  // msgpack. invalidate() rewrites whatever it read, markers included, compressed.
   //
   // Back-compat is free in BOTH directions: the compress-aware read is sentinel-discriminated, so
   // legacy uncompressed entries written before the flag was flipped still decode. No key-bust or
@@ -102,9 +99,9 @@ export type CacheBuilderDeps = {
     failOpenDegraded(cacheName: string): void;
     failOpenOriginFetch(cacheName: string, count: number): void;
     /**
-     * Ids whose miss-fill lookup was started while another fetch in THIS process was already
-     * looking up the same id (same cache instance). Measurement only: the duplicate lookup and its
-     * writes still happen. Cross-process duplicates are not visible here.
+     * Ids whose miss-fill lookup was started while another fetch in THIS process was still filling
+     * the same id (its lookup or its writes; same cache instance). Measurement only: the duplicate
+     * lookup and its writes still happen. Cross-process duplicates are not visible here.
      */
     missConcurrentDuplicate(cacheName: string, count: number): void;
   };
@@ -157,9 +154,11 @@ const UPDATE_LOCK_TTL = 5;
 
 /**
  * Bounds on the per-cache in-flight miss-fill registry (see `missFillInFlight` in
- * createCachedArray). An entry older than MAX_AGE is not treated as in flight, and nothing new is
- * registered while the registry holds MAX_ENTRIES — so a lookup that never settles can neither
- * grow it without bound nor inflate the count forever. Both only affect the measurement.
+ * createCachedArray). An entry older than MAX_AGE is not treated as in flight. At MAX_ENTRIES the
+ * registry first drops entries older than MAX_AGE, then registers nothing new — so a lookup that
+ * never settles can neither grow it without bound nor inflate the count forever. Both only affect
+ * the measurement; ids not registered at the cap are not counted, so the metric can read low when
+ * more than MAX_ENTRIES ids are being filled at once.
  */
 const MISS_FILL_IN_FLIGHT_MAX_AGE_MS = 30_000;
 const MISS_FILL_IN_FLIGHT_MAX_ENTRIES = 50_000;
@@ -186,24 +185,20 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     localMaxBytes,
     compress = false,
   }: CachedLookupOptions<T>) {
-    // Resolved ONCE and passed to every redis.packed read/write below. Keeping a single object
-    // (rather than re-spelling `{ compress }` per call site) makes the symmetry contract in
-    // CachedLookupOptions.compress mechanically obvious: one binding, nine consumers.
+    // Resolved ONCE and passed to every redis.packed call below except the not-found marker's
+    // (notFoundPackedOptions), so no READ can miss the compress flag.
     // `cacheName` rides along on the same binding: it is the `cache_name` label on the codec
     // duration histogram, and `key` is exactly the value this module already reports to
     // metrics.hit/miss as cache_name — one scheme, not two. Bounded by construction (it is the
     // cache prefix, not `${key}:${id}`), and observational only.
     const packedOptions = { compress, cacheName: key } as const;
-    // The not-found marker is written UNCOMPRESSED even on a `compress: true` cache: it is a tiny
-    // map (nothing to gain) written with NX, so most of those writes are rejected and the codec
-    // work was wasted. Every read of this cache goes through the compress-aware decode, which
-    // passes a value whose first byte is not the brotli sentinel straight to msgpack — and a
-    // marker is a map, whose first byte is never the sentinel. See ./packed-compression.
-    const notFoundPackedOptions = { compress: false, cacheName: key } as const;
-    // Ids whose miss-fill lookup is in flight in THIS process, for the missConcurrentDuplicate
-    // metric only — nothing reads it to change what is looked up, returned or written.
-    // `holders` counts the fetches currently looking the id up, so the first one settling does not
-    // hide the id from a third while the second is still in flight.
+    // Not-found markers skip compression even on a compress:true cache: a tiny map gains nothing,
+    // and the compress-aware read passes a non-sentinel value (a msgpack map never starts with
+    // 0x01) straight to msgpack. See ./packed-compression.
+    const notFoundPackedOptions = { compress: false } as const;
+    // Per-process in-flight miss-fill ids, read only by trackMissFill. `holders` counts concurrent
+    // fillers so the first to settle doesn't hide the id from a third while the second is still in
+    // flight.
     const missFillInFlight = new Map<number, MissFillEntry>();
     // Holds the FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
     // byte-identical to what the Redis path returns and needs no further decoration.
@@ -247,20 +242,29 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       for (const id of ids) localCache.delete(id);
     }
 
-    // Register `ids` as about to be looked up and report how many of them another fetch in this
-    // process is already looking up. Returns the release to call once this fetch's lookup AND its
-    // writes have settled. Measurement only — the caller looks up and writes every id regardless.
+    // Registers `ids` and reports how many are already in flight. Call the returned release only
+    // after this fetch's writes settle, so a fetch overlapping the write phase still counts.
     function trackMissFill(ids: Iterable<number>): () => void {
       const now = Date.now();
       const mine: [number, MissFillEntry][] = [];
       let duplicates = 0;
+      let swept = false;
       for (const id of ids) {
         const existing = missFillInFlight.get(id);
         if (existing && now - existing.startedAt < MISS_FILL_IN_FLIGHT_MAX_AGE_MS) {
           duplicates++;
           existing.holders++;
           mine.push([id, existing]);
-        } else if (existing || missFillInFlight.size < MISS_FILL_IN_FLIGHT_MAX_ENTRIES) {
+          continue;
+        }
+        if (!existing && !swept && missFillInFlight.size >= MISS_FILL_IN_FLIGHT_MAX_ENTRIES) {
+          // At the cap: drop entries from lookups that never settled, once per call.
+          swept = true;
+          for (const [staleId, entry] of missFillInFlight)
+            if (now - entry.startedAt >= MISS_FILL_IN_FLIGHT_MAX_AGE_MS)
+              missFillInFlight.delete(staleId);
+        }
+        if (existing || missFillInFlight.size < MISS_FILL_IN_FLIGHT_MAX_ENTRIES) {
           // A stale entry is replaced; its owner's release only touches the entry it registered.
           const entry = { startedAt: now, holders: 1 };
           missFillInFlight.set(id, entry);

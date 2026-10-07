@@ -10,9 +10,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * WHY THIS FILE DRIVES THE REAL CLIENT: the hazard here is a SEAM, not a component. The flag has
  * to be symmetric across TWO modules — `cached-array.ts` must pass `{ compress }` to every one of
  * its `redis.packed` reads and to every write but the (deliberately uncompressed) notFound marker,
- * AND `client.ts`'s `packed.mGet` must actually honour
- * it (before #4588 it could not — only `packed.get` took the option, and `createCachedArray` reads
- * exclusively through `mGet`). A test that mocks `redis.packed` proves neither half: it would pass
+ * AND `client.ts`'s `packed.mGet` must actually honour it (before #4588 it could not — only
+ * `packed.get` took the option, and `createCachedArray` reads exclusively through `mGet`). A test that mocks `redis.packed` proves neither half: it would pass
  * against a client whose mGet ignores the flag entirely, which is the exact production defect —
  * a compressed value decoded on the general msgpack path throws, the entry is EVICTED, and the
  * read reports a MISS. Permanent miss+evict loop, no error anywhere.
@@ -197,7 +196,7 @@ describe('createCachedObject { compress: true } — write path', () => {
     const isMapMarker = (raw[0] >= 0x80 && raw[0] <= 0x8f) || raw[0] === 0xde || raw[0] === 0xdf;
     expect(isMapMarker, `first byte 0x${raw[0].toString(16)}`).toBe(true);
     expect(unpack(raw)).toMatchObject({ id: 7, notFound: true });
-    // Found value: still compressed exactly as before.
+    // Found value: compressed.
     expect(stored(8)![0]).toBe(PACKED_BROTLI_SENTINEL);
 
     // The negative cache must be READABLE through the compressed path, or every miss re-queries
@@ -409,10 +408,8 @@ describe('SEAM LEDGER: every redis.packed call site in cached-array.ts is compre
     expect(notShared[0].args).toMatch(/\bnotFoundPackedOptions\b/);
   });
 
-  it('notFoundPackedOptions is uncompressed and keeps the codec cache_name', () => {
-    expect(src).toMatch(
-      /const notFoundPackedOptions = \{ compress: false, cacheName: key \} as const;/
-    );
+  it('notFoundPackedOptions is uncompressed', () => {
+    expect(src).toMatch(/const notFoundPackedOptions = \{ compress: false \} as const;/);
   });
 
   // `cacheName: key` joined the binding when the codec duration histogram landed. It is pinned in

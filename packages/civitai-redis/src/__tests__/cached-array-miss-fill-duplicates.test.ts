@@ -179,17 +179,65 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     now.mockReturnValue(1_000_000 + 31_000);
     const later = t.cache.fetch([3]);
     await t.parked(2);
-    t.gates.forEach((g) => g.resolve());
-    await Promise.all([stuck, later]);
-
     expect(t.total()).toBe(0);
-    expect(t.lookupFn).toHaveBeenCalledTimes(2);
+
+    // The stuck lookup settling must not drop `later`'s entry: a third fetch is still a duplicate.
+    t.gates[0].resolve();
+    await stuck;
+    const third = t.cache.fetch([3]);
+    await t.parked(3);
+    t.gates[1].resolve();
+    t.gates[2].resolve();
+    await Promise.all([later, third]);
+
+    expect(t.total()).toBe(1);
+    expect(t.lookupFn).toHaveBeenCalledTimes(3);
+  });
+
+  it('at the entry cap nothing new is registered, until stale entries are swept', async () => {
+    const t = build();
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    // One parked fetch fills the registry to exactly its cap (50,000 ids).
+    const big = t.cache.fetch(Array.from({ length: 50_000 }, (_, i) => i + 1));
+    await t.parked(1);
+
+    // At the cap: id 60001 is not registered, so a concurrent pair cannot see each other.
+    const a = t.cache.fetch([60_001]);
+    const b = t.cache.fetch([60_001]);
+    await t.parked(3);
+    t.gates[1].resolve();
+    t.gates[2].resolve();
+    await Promise.all([a, b]);
+    expect(t.total()).toBe(0);
+
+    // Past the age cap the big lookup's entries are stale; reaching the cap sweeps them, so the
+    // next pair registers again and counts 1.
+    now.mockReturnValue(1_000_000 + 31_000);
+    const c = t.cache.fetch([60_002]);
+    const d = t.cache.fetch([60_002]);
+    await t.parked(5);
+    expect(t.total()).toBe(1);
+    t.gates[3].resolve();
+    t.gates[4].resolve();
+    await Promise.all([c, d]);
+
+    // The big fetch looks up in 10k chunks, each parking on a new gate: release them as they come.
+    let settled = false;
+    void big.then(() => (settled = true));
+    while (!settled) {
+      t.gates.forEach((g) => g.resolve());
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    expect(t.lookupFn).toHaveBeenCalledTimes(9); // 5 chunks + a, b, c, d
   });
 
   it('a throwing metrics sink does not fail the fetch', async () => {
     const lookupFn = vi.fn(async (ids: number[]) =>
       Object.fromEntries(ids.map((id) => [id, { id }]))
     );
+    const sink = vi.fn(() => {
+      throw new Error('sink broke');
+    });
     const gate = deferred();
     const slowLookup = vi.fn(async (ids: number[]) => {
       await gate.promise;
@@ -208,9 +256,7 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
         revalidate: () => undefined,
         failOpenDegraded: () => undefined,
         failOpenOriginFetch: () => undefined,
-        missConcurrentDuplicate: () => {
-          throw new Error('sink broke');
-        },
+        missConcurrentDuplicate: sink,
       },
       logFailOpen: () => undefined,
       logRefreshError: () => undefined,
@@ -223,5 +269,7 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     await vi.waitFor(() => expect(slowLookup).toHaveBeenCalledTimes(2));
     gate.resolve();
     await expect(Promise.all([a, b])).resolves.toEqual([[{ id: 1 }], [{ id: 1 }]]);
+    // Reachability: the throwing sink really ran.
+    expect(sink).toHaveBeenCalledTimes(1);
   });
 });
