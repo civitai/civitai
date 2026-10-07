@@ -542,10 +542,10 @@ export async function evaluateStrikeEscalation(
  * Writes the acceptance timestamp ITSELF: the modal fires its own settings write without awaiting it,
  * so acceptance is not guaranteed recorded by the time this returns.
  *
- * The release re-reads and re-decides INSIDE a write transaction. Deciding on the replica and then
- * writing by id alone loses whatever happened in between — a third strike landing mid-call would have
- * its `strikeFlaggedForReview` erased by a stale `meta` write, leaving the account unmuted at three
- * points and absent from the review queue.
+ * The release reads and decides INSIDE a write transaction that first locks the account row, the row
+ * strike escalation writes. Deciding on the replica, or before the lock, loses whatever happened in
+ * between — a third strike landing mid-call would have its `strikeFlaggedForReview` erased by a stale
+ * `meta` write, leaving the account unmuted at three points and absent from the review queue.
  */
 export async function acceptTosAfterMute({
   userId,
@@ -566,6 +566,8 @@ export async function acceptTosAfterMute({
 
   const result = await dbWrite.$transaction(
     async (tx): Promise<{ unmuted: boolean; reason?: string }> => {
+      // Locked before anything is read, so a strike landing mid-call waits and is counted.
+      await tx.$queryRaw`SELECT 1 FROM "User" WHERE id = ${userId} FOR UPDATE`;
       const user = await tx.user.findUnique({
         where: { id: userId },
         select: { muted: true, mutedAt: true, meta: true },

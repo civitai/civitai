@@ -1299,7 +1299,7 @@ describe('strike.service', () => {
     ) {
       const { tx, userUpdate } = txClient(user, [[{ sum: pointsSum }]], { openCase });
       mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
-      return { userUpdate };
+      return { tx, userUpdate };
     }
 
     it('records the acceptance and lifts the mute', async () => {
@@ -1386,6 +1386,20 @@ describe('strike.service', () => {
 
       expect(result).toEqual({ unmuted: false, reason: 'review' });
       expect(userUpdate).not.toHaveBeenCalled();
+    });
+
+    it('locks the account row before it reads the mute or the points', async () => {
+      const { tx } = mockAcceptTransaction(strikeMuted, 2);
+
+      await acceptTosAfterMute({ userId: 1 });
+
+      const [first, second] = tx.$queryRaw.mock.calls.map(sqlOf);
+      expect(first).toContain('FROM "User" WHERE id =');
+      expect(first).toContain('FOR UPDATE');
+      expect(second).toContain('SUM(points)');
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.user.findUnique.mock.invocationCallOrder[0]
+      );
     });
 
     it('decides on state read INSIDE the transaction, not before it', async () => {

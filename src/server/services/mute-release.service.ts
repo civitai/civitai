@@ -45,6 +45,8 @@ export async function releaseMuteInTransaction(
   if (onlyIfTimed && !locked.muteExpiresAt)
     return { released: false, reason: 'not-timed', closedCaseIds: [] };
 
+  // System callers (expiry, strike engine, ToS acceptance) must pass the system user id: a session
+  // user's id here would read as a moderator and bypass the scam-case gate.
   const byModerator = actorId > 0;
   if (!byModerator && (await hasOtherPendingRestriction(tx, userId, undefined, 'scam')))
     return { released: false, reason: 'scam-case', closedCaseIds: [] };

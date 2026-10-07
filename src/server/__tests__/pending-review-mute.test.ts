@@ -1095,6 +1095,22 @@ describe('resolveUserRestriction — scam rulings', () => {
     }
   );
 
+  it('upholding re-mutes an account whose mute was lifted while the case was Pending', async () => {
+    store.users.set(USER_ID, makeUser(USER_ID, { muted: false }));
+    const id = fileCase(1, 'generation');
+    await resolveUserRestriction({
+      userRestrictionId: id,
+      status: UserRestrictionStatus.Upheld,
+      moderatorId: MOD_ID,
+    });
+    expect(store.users.get(USER_ID)).toMatchObject({ muted: true, mutedAt: expect.any(Date) });
+    expect(dbWrite.user.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ muted: true, muteExpiresAt: null }),
+      })
+    );
+  });
+
   it('upholding sets mutedAt and sends the scam notice', async () => {
     const id = fileScam();
     await resolveUserRestriction({
