@@ -88,6 +88,20 @@ describe('user.claimCosmetic', () => {
     expect(createUserCosmetic).toHaveBeenCalledWith({
       data: { userId: USER_ID, cosmeticId: CLAIM_ID },
     });
+    expect(mockRefreshOwnedStickerCache).toHaveBeenCalledWith([USER_ID]);
+    expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: USER_ID, action: 'Update' }]);
+  });
+
+  it('refuses a cosmetic the caller already owns', async () => {
+    dbMock.dbRead.userCosmetic.findFirst.mockResolvedValue({
+      userId: USER_ID,
+      cosmeticId: CLAIM_ID,
+    });
+
+    await expect(caller().claimCosmetic({ id: CLAIM_ID })).rejects.toMatchObject({
+      code: 'CONFLICT',
+    });
+    expect(createUserCosmetic).not.toHaveBeenCalled();
   });
 
   it('refuses a Claim-source cosmetic the caller is not eligible for', async () => {
