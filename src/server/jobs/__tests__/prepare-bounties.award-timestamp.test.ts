@@ -71,6 +71,7 @@ const lockedBounty = { complete: false, refunded: false };
 
 const BOUNTY_ID = 4321;
 const WINNER_ENTRY_ID = 99;
+const OWNER_ID = 1;
 
 const jobNamed = (name: string) => {
   const job = (bountyJobs as unknown as { name: string; cron: string; run: () => unknown }[]).find(
@@ -94,9 +95,9 @@ describe('prepare-bounties auto-award', () => {
       .mockResolvedValueOnce([
         {
           id: BOUNTY_ID,
-          userId: 1,
+          userId: OWNER_ID,
           name: 'Test bounty',
-          user: { id: 1, email: 'owner@example.com' },
+          user: { id: OWNER_ID, email: 'owner@example.com' },
         },
       ])
       .mockResolvedValue([]);
@@ -149,7 +150,26 @@ describe('prepare-bounties auto-award', () => {
     expect(winnerQuery).toContain('AND be."userId" IS NOT NULL');
   });
 
-  it('refunds instead when no entry has an author to pay', async () => {
+  it("never picks the owner's entry or one funded by its own author's unawarded pledge", async () => {
+    await runPrepareBounties();
+
+    const winnerCall = mockDbWrite.$queryRaw.mock.calls.find(([strings]) =>
+      (strings as TemplateStringsArray).join('').includes('FROM "BountyEntry" be')
+    );
+    expect(winnerCall).toBeDefined();
+    const [strings, ...values] = winnerCall as [TemplateStringsArray, ...unknown[]];
+
+    expect(strings.join('?').replace(/\s+/g, ' ')).toContain(
+      'WHERE be."bountyId" = ? AND be."userId" IS NOT NULL ' +
+        'AND NOT EXISTS ( SELECT 1 FROM "BountyBenefactor" own ' +
+        'WHERE own."bountyId" = ? AND own."userId" = be."userId" ' +
+        'AND own.currency = ?::"Currency" AND own."awardedToId" IS NULL ) ' +
+        'AND be."userId" IS DISTINCT FROM ? GROUP BY'
+    );
+    expect(values).toEqual(['BUZZ', BOUNTY_ID, BOUNTY_ID, 'BUZZ', OWNER_ID]);
+  });
+
+  it('refunds supporters when the winner query returns no entry', async () => {
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = strings.join('');
       if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];

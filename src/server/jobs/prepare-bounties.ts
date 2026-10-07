@@ -248,6 +248,14 @@ async function settleExpiredBounty({
         LEFT JOIN "BountyEntryStat" bes on bes."bountyEntryId" = be.id
         LEFT JOIN "BountyBenefactor" bb ON bb."awardedToId" = be.id AND bb.currency = ${currency}::"Currency"
         WHERE be."bountyId" = ${id} AND be."userId" IS NOT NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM "BountyBenefactor" own
+            WHERE own."bountyId" = ${id}
+              AND own."userId" = be."userId"
+              AND own.currency = ${currency}::"Currency"
+              AND own."awardedToId" IS NULL
+          )
+          AND be."userId" IS DISTINCT FROM ${userId}
         GROUP BY be.id, be."userId", bes."reactionCountAllTime"
         ORDER BY "awardedUnitAmount" DESC, "reactionCountAllTime" DESC, be.id ASC LIMIT 1
       `;

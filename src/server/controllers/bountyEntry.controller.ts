@@ -118,10 +118,17 @@ export const upsertBountyEntryHandler = async ({
     await assertBountyVisible({ bountyId: input.bountyId }, ctx.user);
     const bounty = await getBountyById({
       id: input.bountyId,
-      select: { complete: true, entryLimit: true, entries: { select: { userId: true } } },
+      select: {
+        userId: true,
+        complete: true,
+        entryLimit: true,
+        entries: { select: { userId: true } },
+      },
     });
     if (!bounty) throw throwNotFoundError('Bounty not found');
     if (bounty.complete) throw throwBadRequestError('Bounty is already complete');
+    if (!input.id && bounty.userId === userId)
+      throw throwBadRequestError('You cannot submit entries to your own bounty.');
 
     // if the current user has more entries than allowed, throw an error
     if (
