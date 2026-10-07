@@ -180,5 +180,14 @@ export const accumulatePlaybackMs = ({
   return watchedMs + deltaMs;
 };
 
+/** How far past the watch cap a clip may run and still play to its end rather than stop at the cap. */
+export const CRUCIBLE_PLAY_TO_END_TOLERANCE = 0.35;
+
+export const playsToEnd = (durationSeconds: number | null, capSeconds: number) =>
+  capSeconds > 0 &&
+  durationSeconds != null &&
+  durationSeconds > capSeconds &&
+  durationSeconds <= capSeconds * (1 + CRUCIBLE_PLAY_TO_END_TOLERANCE);
+
 /** Bounds how far one judge can move a single entry. */
 export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;

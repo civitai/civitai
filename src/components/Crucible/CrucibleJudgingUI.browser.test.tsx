@@ -764,6 +764,66 @@ describe('CrucibleJudgingUI — sequenced preview', () => {
     await vi.waitFor(() => expect(playheads.get(srcOf(1))).toBeLessThan(1));
     expect(label('left')).toMatch(/^Watch \d+s more/);
   });
+
+  // 4.04s against a 3s rule: inside the 35% tolerance, and the cap is reached on the fourth click
+  // while the playhead only wraps on the fifth.
+  const PAST_CAP_CLIP_SECONDS = 4.04;
+
+  test('a clip a little past the rule plays on to its end, without delaying the vote', async () => {
+    const { pause } = spies();
+    clipDurations.set(srcOf(2), PAST_CAP_CLIP_SECONDS);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 4);
+    await advance(1, 4);
+
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+    await afterPassiveEffects();
+    expect(sidesCalledOn(pause)).not.toContain('right');
+
+    await advance(1, 1);
+
+    await vi.waitFor(() => expect(sidesCalledOn(pause)).toContain('right'));
+  });
+
+  test('the right clip waits for a left clip a little past the rule to finish', async () => {
+    const { play, pause } = spies();
+    clipDurations.set(srcOf(1), PAST_CAP_CLIP_SECONDS);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 4);
+    await vi.waitFor(() => expect(label('left')).toMatch(/^Vote/));
+    await afterPassiveEffects();
+    expect(sidesCalledOn(play)).not.toContain('right');
+    expect(sidesCalledOn(pause)).not.toContain('left');
+
+    await advance(0, 1);
+
+    await vi.waitFor(() => expect(sidesCalledOn(play)).toContain('right'));
+    expect(sidesCalledOn(pause)).toContain('left');
+  });
+
+  test('a skip to the end of a clip a little past the rule unlocks nothing', async () => {
+    // Negative control: within the tolerance, a wrap ends playback; it never stands in for the rule.
+    spies();
+    clipDurations.set(srcOf(1), PAST_CAP_CLIP_SECONDS);
+    playheads.set(srcOf(1), 3.9);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} minViewSeconds={3} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await advance(0, 1);
+
+    await vi.waitFor(() => expect(playheads.get(srcOf(1))).toBeLessThan(1));
+    expect(label('left')).toMatch(/^Watch \d+s more/);
+  });
 });
 
 describe('CrucibleJudgingUI — hotkeys', () => {
