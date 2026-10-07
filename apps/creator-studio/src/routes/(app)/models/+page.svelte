@@ -39,6 +39,7 @@
     PRICING_SLOT_EXPLAINER,
     capMediaType,
     formatPricingAllowance,
+    feeAllowanceBoostNote,
     pricingAllowanceState,
     pricingFloorMessage,
     type CapTier,
@@ -133,6 +134,9 @@
     pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.pricingLimit })
   );
   const permAtCap = $derived(allowance.atLimit);
+  const feeAllowance = $derived(
+    pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.feePricingLimit })
+  );
   const eaAtCap = $derived(
     data.caps.earlyAccessCap > 0 && data.caps.earlyAccessUsed >= data.caps.earlyAccessCap
   );
@@ -264,6 +268,11 @@
     data.caps.pricingLimit === null
       ? Infinity
       : Math.max(0, data.caps.pricingLimit - data.caps.pricingUsed)
+  );
+  const remainingFeeSlots = $derived(
+    data.caps.feePricingLimit === null
+      ? Infinity
+      : Math.max(0, data.caps.feePricingLimit - data.caps.pricingUsed)
   );
   // A version that already carries a price spends nothing when re-priced — mirrors the server's
   // unpricedVersionIds, so editing stays possible even with the month's allowance used up.
@@ -516,6 +525,13 @@
         <span class="text-dark-2" title={PRICING_SLOT_EXPLAINER}>
           · licensing fees and permanent paid access
         </span>
+        {#if data.caps.feeBoost > 0 && data.caps.feePricingLimit !== null}
+          <span class="font-medium text-white" data-testid="fee-allowance-boost">
+            · {feeAllowance.used} of {feeAllowance.limit} for licensing fees ({feeAllowanceBoostNote(
+              data.caps.feeBoost
+            )})
+          </span>
+        {/if}
         {#if !allowance.unlimited}
           <CapUpsell
             used={allowance.used}
@@ -763,6 +779,7 @@
   needsAffirmation={selectionNeedsAffirmation}
   pricingSlotsLeft={remainingPricingSlots - newSlotsUsed + selected.size}
   pricingSlotsRemaining={remainingPricingSlots}
+  feeSlotsRemaining={remainingFeeSlots}
 />
 
 <!-- Dimmed rather than emptied while a search settles: replacing results with a spinner makes every

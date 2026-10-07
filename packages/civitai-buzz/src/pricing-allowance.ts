@@ -43,6 +43,46 @@ export function monthlyPricingAllowance(tier: string | null | undefined): number
 }
 
 /**
+ * Extra licensing-fee slots granted to Creator Program bankers ahead of the November 2026 banking
+ * change. Granted per creator; the grant list lives in system Redis and is read by both apps.
+ */
+export const FEE_ALLOWANCE_BOOST_MAX = 100;
+export const FEE_ALLOWANCE_BOOST_ENDS_AT = new Date('2026-11-01T00:00:00Z');
+
+/**
+ * The boost a creator holds at `now`: their stored grant clamped to the maximum, or 0 once the window
+ * closes. The date check here is what ends it — nothing deletes the grant list.
+ */
+export function feeAllowanceBoost(granted: unknown, now: Date = new Date()): number {
+  if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
+  const value = typeof granted === 'string' ? Number(granted) : granted;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return Math.min(FEE_ALLOWANCE_BOOST_MAX, Math.max(0, Math.floor(value)));
+}
+
+/**
+ * The limit a NEW price is checked against. The boost only widens a licensing fee: a write that adds a
+ * permanent paid-access gate stays on the tier allowance, so the boost never makes gates easier to set.
+ */
+export function pricingLimitFor({
+  tier,
+  boost,
+  addsGate,
+}: {
+  tier: string | null | undefined;
+  boost: number;
+  addsGate: boolean;
+}): number {
+  const base = monthlyPricingAllowance(tier);
+  return addsGate ? base : base + boost;
+}
+
+/** Appended wherever the boosted fee limit is shown. */
+export function feeAllowanceBoostNote(boost: number): string {
+  return boost > 0 ? `includes ${boost} extra for licensing fees through October 31` : '';
+}
+
+/**
  * Whether an entity already carries a price, and so is exempt from both rules. The single definition of
  * that question — a timed early-access window is not a price.
  */
@@ -127,6 +167,30 @@ export function capTierLabel(tier: string | null | undefined): string | undefine
 export function pricingAllowanceMessage(used: number, limit: number, tierLabel?: string): string {
   const tier = tierLabel ? ` on ${tierLabel}` : '';
   return `You have priced ${used} of ${limit} model versions this month${tier}. ${PRICING_SLOT_EXPLAINER} Upgrade your membership to price more, or wait until next month.`;
+}
+
+/**
+ * The refusal for a write checked against `pricingLimitFor`. A boosted creator refused a paid-access
+ * gate has room left for fees, so the message has to say the extra slots are fee-only.
+ */
+export function pricingLimitMessage({
+  used,
+  limit,
+  boost,
+  addsGate,
+  tierLabel,
+}: {
+  used: number;
+  limit: number;
+  boost: number;
+  addsGate: boolean;
+  tierLabel?: string;
+}): string {
+  const base = pricingAllowanceMessage(used, limit, tierLabel);
+  if (boost <= 0) return base;
+  return addsGate
+    ? `${base} Your ${boost} extra slots through October 31 cover licensing fees only, not paid access.`
+    : `${base} This includes your ${boost} extra licensing-fee slots through October 31.`;
 }
 
 /** What the creator's allowance looks like right now, for every counter and gate in either UI. */

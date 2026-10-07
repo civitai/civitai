@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { increaseDate } from '~/utils/date-helpers';
 
 const { mockBust, mockBustFetchThrough, mockCacheFetch } = vi.hoisted(() => ({
@@ -29,6 +29,7 @@ import {
   writePaidAccessForModelVersion,
 } from '~/server/services/paid-access.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { REDIS_KEYS } from '~/server/redis/client';
 
 const mockDbWrite = dbMock.dbWrite;
@@ -373,6 +374,44 @@ describe('assertMonetizationWrite', () => {
         userMeta: ELIGIBLE,
       })
     ).rejects.toThrow(/priced 3 of 3 model versions this month on Free/);
+  });
+
+  describe('a creator holding the licensing-fee boost', () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+      redisMock.sysRedis.hGet.mockResolvedValue('100' as never);
+      mockSlotCount.mockResolvedValue(3);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+    });
+
+    it('may set a new licensing fee past the tier allowance', async () => {
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          licensingFee: 10,
+          storedLicensingFee: 0,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+    });
+
+    it('may not add permanent paid access past it, even alongside a fee', async () => {
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          paidAccess: { permanent: true, terms: {} } as never,
+          licensingFee: 10,
+          storedLicensingFee: 0,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).rejects.toThrow(/licensing fees only/);
+    });
   });
 
   it('never blocks gold — its allowance is unlimited, so no count is even read', async () => {

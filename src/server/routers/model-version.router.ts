@@ -1,6 +1,12 @@
-import { finiteOrNull, monthlyPricingAllowance, pricingEligibility } from '@civitai/buzz';
+import {
+  finiteOrNull,
+  monthlyPricingAllowance,
+  pricingEligibility,
+  pricingLimitFor,
+} from '@civitai/buzz';
 import {
   countPricingSlotsThisMonth,
+  getFeeAllowanceBoost,
   getCreatorScore,
   listPricingSlots,
 } from '~/server/services/pricing-slot.service';
@@ -122,14 +128,18 @@ const isVersionOwnerOrModerator = ownershipGuard({ authorizeInputModelId: false 
 
 export const modelVersionRouter = router({
   getPricingAllowance: protectedProcedure.query(async ({ ctx }) => {
-    const [tier, used, score] = await Promise.all([
+    const [tier, used, score, feeBoost] = await Promise.all([
       getCapTier(ctx.user.id),
       countPricingSlotsThisMonth(ctx.user.id),
       getCreatorScore(ctx.user.id),
+      getFeeAllowanceBoost(ctx.user.id),
     ]);
     return {
       used,
-      limit: finiteOrNull(monthlyPricingAllowance(tier)),
+      /** The licensing-fee limit, boost included. A paid-access gate is held to `baseLimit`. */
+      limit: finiteOrNull(pricingLimitFor({ tier, boost: feeBoost, addsGate: false })),
+      baseLimit: finiteOrNull(monthlyPricingAllowance(tier)),
+      feeBoost,
       eligibility: pricingEligibility(score),
     };
   }),

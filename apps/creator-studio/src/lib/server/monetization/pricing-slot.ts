@@ -3,13 +3,18 @@ import {
   MONETIZATION_MIN_CREATOR_SCORE,
   capTierLabel,
   exceedsAllowance,
+  feeAllowanceBoost,
+  FEE_ALLOWANCE_BOOST_ENDS_AT,
   gatePrices,
   monthlyPricingAllowance,
-  pricingAllowanceMessage,
   pricingFloorMessage,
+  pricingLimitFor,
+  pricingLimitMessage,
   pricingMonthStart,
 } from '@civitai/buzz';
+import { REDIS_SYS_KEYS } from '@civitai/redis';
 import { getClickhouse } from '$lib/server/clickhouse';
+import { getSysRedis } from '$lib/server/redis';
 import { withTimeoutFallback } from '$lib/server/timeout';
 import { dbRead, dbWrite } from '$lib/server/db';
 import { getTotalScore } from '$lib/server/creator-score';
@@ -48,6 +53,24 @@ export async function unpricedVersionIds(userId: number, versionIds: number[]): 
     .where('m.deletedAt', 'is', null)
     .execute();
   return rows.filter((r) => Number(r.fee ?? 0) <= 0 && r.gated == null).map((r) => r.id);
+}
+
+/**
+ * Extra licensing-fee slots granted to this creator — the main app's getFeeAllowanceBoost, read from
+ * the same hash. Fails to 0 so an outage never touches the tier allowance.
+ */
+export async function getFeeAllowanceBoost(userId: number, now: Date = new Date()): Promise<number> {
+  if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
+  try {
+    const granted = await getSysRedis().hGet<string>(
+      REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST,
+      String(userId)
+    );
+    return feeAllowanceBoost(granted, now);
+  } catch (error) {
+    console.error('fee allowance boost read failed', error);
+    return 0;
+  }
 }
 
 /** Slots spent this calendar month. Index-only on (ownerId, createdAt). */
@@ -234,11 +257,13 @@ export async function releasePricingSlots(
 /**
  * Refuse prices the creator may not set. `newlyPricedCount` is how many versions this write moves from
  * unpriced to priced — editing or clearing an existing price is exempt from both rules and passes zero.
+ * `addsGate` is true for a permanent paid-access write, which gets no licensing-fee boost.
  */
 export async function assertPricingAllowed(
   userId: number,
   membership: Membership,
-  newlyPricedCount: number
+  newlyPricedCount: number,
+  { addsGate }: { addsGate: boolean }
 ): Promise<PricingGateResult> {
   if (newlyPricedCount <= 0) return { ok: true };
 
@@ -249,17 +274,26 @@ export async function assertPricingAllowed(
     return { ok: false, status: 403, error: pricingFloorMessage() };
 
   const tier = cappedTier(membership);
-  const limit = monthlyPricingAllowance(tier);
-  if (!Number.isFinite(limit)) return { ok: true };
+  if (!Number.isFinite(monthlyPricingAllowance(tier))) return { ok: true };
 
-  const used = await countPricingSlotsThisMonth(userId);
+  const [used, boost] = await Promise.all([
+    countPricingSlotsThisMonth(userId),
+    getFeeAllowanceBoost(userId),
+  ]);
+  const limit = pricingLimitFor({ tier, boost, addsGate });
   // Counted for the whole batch: a bulk write is all-or-nothing, so it is refused rather than
   // half-applied. At count=1 this is the same test the single-version paths make.
   if (exceedsAllowance(used, limit, newlyPricedCount))
     return {
       ok: false,
       status: 403,
-      error: pricingAllowanceMessage(used, limit, capTierLabel(tier)),
+      error: pricingLimitMessage({
+        used,
+        limit,
+        boost,
+        addsGate,
+        tierLabel: capTierLabel(tier),
+      }),
     };
 
   return { ok: true };

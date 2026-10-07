@@ -609,14 +609,22 @@ export async function assertMonetizationWrite({
     licensingFee: storedLicensingFee,
     hasPermanentGate: hadPermanentGate,
   });
+  const willHavePermanentGate =
+    paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent;
   const willBePriced = isAlreadyPriced({
     // Collapsing absent and null reads a gate removal as a version that still charges.
     licensingFee: licensingFee !== undefined ? licensingFee : storedLicensingFee,
-    hasPermanentGate:
-      paidAccess === undefined ? hadPermanentGate : paidAccess !== null && !!paidAccess.permanent,
+    hasPermanentGate: willHavePermanentGate,
   });
 
-  return assertPricingAllowed({ userId: ownerId, wasPriced, willBePriced, tier, userMeta });
+  return assertPricingAllowed({
+    userId: ownerId,
+    wasPriced,
+    willBePriced,
+    addsGate: willHavePermanentGate,
+    tier,
+    userMeta,
+  });
 }
 
 /**

@@ -92,6 +92,7 @@ import {
   formatPricingAllowance,
   monetizationLimits,
   pricingAllowanceState,
+  feeAllowanceBoostNote,
   ratioToFee,
   resolveCapTier,
   seedFeeRatio,
@@ -1240,6 +1241,9 @@ export function ModelVersionUpsertForm({
                       <Group gap={6}>
                         <Text size="xs" c={allowanceState.atLimit ? 'yellow.5' : 'dimmed'}>
                           {formatPricingAllowance(allowanceState)}
+                          {pricingAllowance?.feeBoost
+                            ? ` · ${feeAllowanceBoostNote(pricingAllowance.feeBoost)}`
+                            : ''}
                           {hasExistingCharge ? ' · editing this one is free' : ''}
                         </Text>
                         <Popover width={320} withArrow withinPortal shadow="sm">
@@ -1261,7 +1265,7 @@ export function ModelVersionUpsertForm({
                         {!allowanceState.unlimited && (
                           <CapUpsell
                             used={allowanceState.used}
-                            limit={pricingAllowance?.limit ?? Infinity}
+                            limit={pricingAllowance?.baseLimit ?? Infinity}
                             capTier={feeCapTier}
                           />
                         )}
@@ -1288,7 +1292,7 @@ export function ModelVersionUpsertForm({
                       <Box mt="xs">
                         <CapUpsell
                           used={allowanceState.used}
-                          limit={pricingAllowance?.limit ?? Infinity}
+                          limit={pricingAllowance?.baseLimit ?? Infinity}
                           capTier={feeCapTier}
                           expanded
                         />

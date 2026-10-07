@@ -1799,6 +1799,10 @@ export const REDIS_SYS_KEYS = {
     // Fixed-window submission counter for in-product feedback — `system:feedback:rate-limit:${userId}`.
     RATE_LIMIT: 'system:feedback:rate-limit',
   },
+  PRICING: {
+    // Hash of userId → extra licensing-fee slots (see FEE_ALLOWANCE_BOOST_* in @civitai/buzz).
+    FEE_ALLOWANCE_BOOST: 'system:pricing:fee-allowance-boost',
+  },
   COLLECTION_AI_REVIEW: {
     // Failed review attempts per item — `system:collection-ai-review:attempts:${collectionItemId}`.
     ATTEMPTS: 'system:collection-ai-review:attempts',

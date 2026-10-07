@@ -238,7 +238,9 @@ export async function setLicensingFee(
   // "Has none" means no fee AND no permanent gate — `currentFee` alone would charge a creator a second
   // time for a version they already sell, and refuse it outright at a full month.
   const newlyPricedIds = normalized == null ? [] : await unpricedVersionIds(userId, [versionId]);
-  const gate = await assertPricingAllowed(userId, membership, newlyPricedIds.length);
+  const gate = await assertPricingAllowed(userId, membership, newlyPricedIds.length, {
+    addsGate: false,
+  });
   if (!gate.ok) return gate;
 
   const needsAffirmation = normalized != null && !owned[0].affirmed;
@@ -390,7 +392,9 @@ export async function bulkSetLicensingFee(
           userId,
           owned.map((v) => v.id)
         );
-  const gate = await assertPricingAllowed(userId, membership, newlyPricedIds.length);
+  const gate = await assertPricingAllowed(userId, membership, newlyPricedIds.length, {
+    addsGate: false,
+  });
   if (!gate.ok) return gate;
 
   const toAffirm = normalized == null ? [] : owned.filter((v) => !v.affirmed).map((v) => v.id);

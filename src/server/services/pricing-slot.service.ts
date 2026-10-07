@@ -5,16 +5,20 @@ import {
   capTierLabel,
   clearsLastPrice,
   exceedsAllowance,
+  feeAllowanceBoost,
+  FEE_ALLOWANCE_BOOST_ENDS_AT,
   gatePrices,
   isAlreadyPriced,
   monthlyPricingAllowance,
-  pricingAllowanceMessage,
   pricingFloorMessage,
+  pricingLimitFor,
+  pricingLimitMessage,
   pricingMonthStart,
 } from '@civitai/buzz';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
 import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
@@ -36,6 +40,25 @@ export async function countPricingSlotsThisMonth(ownerId: number): Promise<numbe
   return dbRead.pricingSlot.count({
     where: { ownerId, createdAt: { gte: pricingMonthStart() } },
   });
+}
+
+/**
+ * Extra licensing-fee slots granted to this creator. Fails to 0: an outage costs a boosted creator
+ * their extra slots for its duration, never anyone their tier allowance.
+ */
+export async function getFeeAllowanceBoost(userId: number, now: Date = new Date()): Promise<number> {
+  if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
+  try {
+    const granted = await withSysReadDeadline(
+      sysRedis.hGet<string>(REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST, String(userId))
+    );
+    return feeAllowanceBoost(granted, now);
+  } catch (error) {
+    logToAxiom({ type: 'error', name: 'fee-allowance-boost-read', error, userId }).catch(
+      () => undefined
+    );
+    return 0;
+  }
 }
 
 /**
@@ -246,6 +269,8 @@ export type PricingWriteCheck = {
   wasPriced: boolean;
   /** Whether it will carry one after. */
   willBePriced: boolean;
+  /** Whether it will carry a permanent paid-access gate after. Such a write gets no fee boost. */
+  addsGate: boolean;
   /**
    * The owner's tier, or a thunk resolving it. Pass the thunk from a hot write path: `getCapTier` is
    * three uncached queries against the primary, and the tier is only read once a write turns out to
@@ -273,6 +298,7 @@ export async function assertPricingAllowed({
   userId,
   wasPriced,
   willBePriced,
+  addsGate,
   tier,
   userMeta,
 }: PricingWriteCheck): Promise<PricingWriteOutcome> {
@@ -285,11 +311,22 @@ export async function assertPricingAllowed({
     throw throwBadRequestError(pricingFloorMessage(score));
 
   const resolvedTier = typeof tier === 'function' ? await tier() : tier;
-  const limit = monthlyPricingAllowance(resolvedTier);
-  if (Number.isFinite(limit)) {
-    const used = await countPricingSlotsThisMonth(userId);
+  if (Number.isFinite(monthlyPricingAllowance(resolvedTier))) {
+    const [used, boost] = await Promise.all([
+      countPricingSlotsThisMonth(userId),
+      getFeeAllowanceBoost(userId),
+    ]);
+    const limit = pricingLimitFor({ tier: resolvedTier, boost, addsGate });
     if (exceedsAllowance(used, limit))
-      throw throwBadRequestError(pricingAllowanceMessage(used, limit, capTierLabel(resolvedTier)));
+      throw throwBadRequestError(
+        pricingLimitMessage({
+          used,
+          limit,
+          boost,
+          addsGate,
+          tierLabel: capTierLabel(resolvedTier),
+        })
+      );
   }
 
   return { spendsSlot: true, releasesSlot: false };

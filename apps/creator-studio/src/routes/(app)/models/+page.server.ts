@@ -42,6 +42,7 @@ import { canSetGenerationOnlyFresh } from '$lib/server/generation-only';
 import {
   assertPricingAllowed,
   countPricingSlotsThisMonth,
+  getFeeAllowanceBoost,
   listPricingSlots,
   recordPricingSlots,
   unpricedVersionIds,
@@ -51,6 +52,7 @@ import {
   earlyAccessQuantityForScore,
   monthlyPricingAllowance,
   pricingEligibility,
+  pricingLimitFor,
 } from '$lib/monetization/paid-access';
 
 // --- input schemas: every load/action input is zod-validated ---
@@ -70,7 +72,7 @@ const firstError = (e: z.ZodError) => e.issues[0]?.message ?? 'Invalid input.';
 export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => {
   const { membership } = await parent();
 
-  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots] =
+  const [view, modelsScore, pricingUsed, earlyAccessUsed, creatorScore, pricingSlots, feeBoost] =
     await Promise.all([
       getModelsView(locals.user, url, cookies),
       resolveTotalScore(
@@ -86,6 +88,7 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
         cookies.get(TEST_CREATOR_SCORE_COOKIE)
       ),
       listPricingSlots(locals.user.id),
+      getFeeAllowanceBoost(locals.user.id),
     ]);
 
   // Query-independent, so they stay out of getModelsView: the creator's own sale windows and the
@@ -94,6 +97,11 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
     ? await Promise.all([getCreatorSales(locals.user.id), getSaleLimitOverrides()])
     : [[], {}];
   const pricingLimit = monthlyPricingAllowance(cappedTier(membership));
+  const feePricingLimit = pricingLimitFor({
+    tier: cappedTier(membership),
+    boost: feeBoost,
+    addsGate: false,
+  });
   return {
     ...view,
     creatorScore,
@@ -110,6 +118,8 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       pricingUsed,
       pricingSlots,
       pricingLimit: Number.isFinite(pricingLimit) ? pricingLimit : null,
+      feePricingLimit: Number.isFinite(feePricingLimit) ? feePricingLimit : null,
+      feeBoost,
       // The SIMULATED score, deliberately: the moderator score simulator exists to preview what a
       // creator at a given score sees. What it never moves is the write, which re-reads the real one.
       pricingFloor: pricingEligibility(modelsScore),
@@ -262,7 +272,9 @@ export const actions: Actions = {
       ? await unpricedVersionIds(locals.user.id, versionIds.data)
       : [];
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length, {
+        addsGate: true,
+      });
       if (!gate.ok) return fail(gate.status, { paidAccess: true, error: gate.error });
     }
 
@@ -474,7 +486,9 @@ export const actions: Actions = {
       ? await unpricedVersionIds(locals.user.id, [versionId.data])
       : [];
     {
-      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length);
+      const gate = await assertPricingAllowed(locals.user.id, membership, newlyPricedIds.length, {
+        addsGate: true,
+      });
       if (!gate.ok) return fail(gate.status, { versionId: versionId.data, error: gate.error });
     }
 

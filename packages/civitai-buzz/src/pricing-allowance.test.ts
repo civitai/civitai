@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { MONETIZATION_MIN_CREATOR_SCORE, minCreatorScoreForSale } from './paid-access';
 import {
   EARLY_ACCESS_NOT_COUNTED,
+  FEE_ALLOWANCE_BOOST_ENDS_AT,
+  FEE_ALLOWANCE_BOOST_MAX,
+  feeAllowanceBoost,
+  pricingLimitFor,
+  pricingLimitMessage,
   PRICING_SLOT_EXPLAINER,
   exceedsAllowance,
   formatPricingAllowance,
@@ -199,5 +204,52 @@ describe('refusal messages', () => {
   it('both say an existing price is unaffected', () => {
     expect(pricingFloorMessage()).toMatch(/already set/);
     expect(pricingAllowanceMessage(3, 3)).toMatch(/already set/);
+  });
+});
+
+describe('feeAllowanceBoost', () => {
+  const during = new Date('2026-10-15T12:00:00Z');
+
+  it('honours a grant until the window closes, and nothing from that instant on', () => {
+    const lastMs = new Date(FEE_ALLOWANCE_BOOST_ENDS_AT.getTime() - 1);
+    expect(feeAllowanceBoost('100', lastMs)).toBe(100);
+    expect(feeAllowanceBoost('100', FEE_ALLOWANCE_BOOST_ENDS_AT)).toBe(0);
+    expect(FEE_ALLOWANCE_BOOST_ENDS_AT.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+  });
+
+  it('caps a stored grant at the maximum', () => {
+    expect(FEE_ALLOWANCE_BOOST_MAX).toBe(100);
+    expect(feeAllowanceBoost('250', during)).toBe(100);
+    expect(feeAllowanceBoost(40, during)).toBe(40);
+  });
+
+  it.each([null, undefined, '', 'abc', -5, NaN, {}])('reads %s as no grant', (stored) => {
+    expect(feeAllowanceBoost(stored, during)).toBe(0);
+  });
+});
+
+describe('pricingLimitFor', () => {
+  it('adds the boost to a licensing fee only', () => {
+    expect(pricingLimitFor({ tier: 'free', boost: 100, addsGate: false })).toBe(103);
+    expect(pricingLimitFor({ tier: 'free', boost: 100, addsGate: true })).toBe(3);
+    expect(pricingLimitFor({ tier: 'silver', boost: 0, addsGate: false })).toBe(25);
+  });
+
+  it('leaves an unlimited tier unlimited', () => {
+    expect(pricingLimitFor({ tier: 'gold', boost: 100, addsGate: false })).toBe(Infinity);
+  });
+});
+
+describe('pricingLimitMessage', () => {
+  it('tells a boosted creator refused a gate that the extra slots are fee-only', () => {
+    expect(
+      pricingLimitMessage({ used: 3, limit: 3, boost: 100, addsGate: true, tierLabel: 'Free' })
+    ).toContain('cover licensing fees only, not paid access');
+  });
+
+  it('is the plain allowance message without a boost', () => {
+    expect(pricingLimitMessage({ used: 3, limit: 3, boost: 0, addsGate: true })).toBe(
+      pricingAllowanceMessage(3, 3)
+    );
   });
 });
