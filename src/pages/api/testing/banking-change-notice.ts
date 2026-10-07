@@ -21,11 +21,14 @@
  *   sent      - {}                  How many users have been sent the notice
  *   unmark    - {userId}            Forget that one user was sent it, so the next run sends again
  *
+ * Both send actions refuse to run on a server with no email transport configured.
+ *
  * Preview the HTML at /api/testing/email/bankingChangeNotice?token=$WEBHOOK_TOKEN
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
+import { isEmailConfigured } from '~/server/email/client';
 import { bankingChangeNoticeEmail } from '~/server/email/templates/bankingChangeNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { sendBankingChangeNotice } from '~/server/services/banking-change-notice.service';
@@ -38,7 +41,7 @@ const schema = z.discriminatedUnion('action', [
     action: z.literal('send'),
     dryRun: z.boolean().default(true),
     count: z.coerce.number().int().min(1).max(1000).default(50),
-    batchSize: z.coerce.number().int().min(1).max(50).default(10),
+    batchSize: z.coerce.number().int().min(1).max(50).default(25),
   }),
   z.object({
     action: z.literal('send-test'),
@@ -59,6 +62,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     case 'send':
       return res.status(200).json(await sendBankingChangeNotice(input));
     case 'send-test': {
+      if (!isEmailConfigured())
+        return res.status(503).json({ error: 'Email is not configured on this server' });
       await bankingChangeNoticeEmail.send({ to: input.email, username: input.username });
       return res.status(200).json({ sent: input.email });
     }

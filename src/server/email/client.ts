@@ -24,6 +24,8 @@ const client = shouldConnect
     })
   : null;
 
+export const isEmailConfigured = () => !!client;
+
 export async function sendEmail({
   to,
   cc,

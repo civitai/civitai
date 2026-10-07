@@ -1,6 +1,7 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { isEmailConfigured } from '~/server/email/client';
 import { bankingChangeNoticeEmail } from '~/server/email/templates/bankingChangeNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { getValidCreatorMembershipMap } from '~/server/services/creator-membership.service';
@@ -95,6 +96,8 @@ export async function sendBankingChangeNotice({
     alreadySent: alreadySent.size,
   };
   if (dryRun) return { dryRun: true, ...summary, wouldSend: batch.length };
+  // sendEmail returns without sending when there is no transport, which would record users as sent.
+  if (!isEmailConfigured()) throw new Error('Email is not configured on this server');
 
   let sent = 0;
   let skipped = 0;
@@ -115,8 +118,8 @@ export async function sendBankingChangeNotice({
           });
           sent++;
         } catch {
-          await sysRedis.hDel(SENT_KEY, String(user.id));
           failedUserIds.push(user.id);
+          await sysRedis.hDel(SENT_KEY, String(user.id)).catch(() => undefined);
         }
       })
     );

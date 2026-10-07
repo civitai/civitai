@@ -1,3 +1,4 @@
+import { escape as escapeHtml } from 'he';
 import { unified } from 'unified';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -17,28 +18,28 @@ type BankingChangeNoticeData = {
   username: string;
 };
 
-const processor = unified()
-  .use(remarkParse)
-  .use(remarkGfm)
-  .use(remarkBreaks)
-  .use(remarkRehype)
-  .use(rehypeStringify);
-
 const cell = 'border: 1px solid #ddd; padding: 8px; text-align: left; vertical-align: top;';
 
-const escapeHtml = (value: string) =>
-  value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-
 // Email clients drop <style> blocks, so the table and images are styled inline.
+const noticeHtml = String(
+  unified()
+    .use(remarkParse)
+    .use(remarkGfm)
+    .use(remarkBreaks)
+    .use(remarkRehype)
+    .use(rehypeStringify)
+    .processSync(BANKING_CHANGE_NOTICE_MARKDOWN)
+)
+  .replace(/<table>/g, '<table style="border-collapse: collapse; width: 100%;">')
+  .replace(/<th>/g, `<th style="${cell}">`)
+  .replace(/<td>/g, `<td style="${cell}">`)
+  .replace(/<img /g, '<img style="max-width: 100%; height: auto;" ')
+  .replace(/<h2>/g, '<h2 style="font-size: 18px; margin: 24px 0 8px;">');
+
 export function getBankingChangeNoticeHtml(username: string) {
   const baseUrl = getBaseUrl();
-  return String(processor.processSync(BANKING_CHANGE_NOTICE_MARKDOWN))
+  return noticeHtml
     .replace(/(src|href)="\//g, (_, attr: string) => `${attr}="${baseUrl}/`)
-    .replace(/<table>/g, '<table style="border-collapse: collapse; width: 100%;">')
-    .replace(/<th>/g, `<th style="${cell}">`)
-    .replace(/<td>/g, `<td style="${cell}">`)
-    .replace(/<img /g, '<img style="max-width: 100%; height: auto;" ')
-    .replace(/<h2>/g, '<h2 style="font-size: 18px; margin: 24px 0 8px;">')
     .replace(/\{username\}/g, () => escapeHtml(username));
 }
 
