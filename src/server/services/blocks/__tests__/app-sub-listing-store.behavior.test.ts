@@ -118,10 +118,17 @@ dbMock.dbWrite.appSubListing.updateMany.mockImplementation(
       values.push(v);
       return `${snake(k)} = $${values.length}`;
     });
-    const where = Object.entries(args.where).map(([k, v]) => {
-      if (v === null) return `${snake(k)} IS NULL`;
+    const where = Object.entries(args.where).flatMap(([k, v]) => {
+      if (v === null) return [`${snake(k)} IS NULL`];
+      // The compare-and-set's millisecond window: `{ gte, lt }`.
+      if (v && typeof v === 'object' && !(v instanceof Date)) {
+        return Object.entries(v as Record<string, unknown>).map(([op, bound]) => {
+          values.push(bound);
+          return `${snake(k)} ${op === 'gte' ? '>=' : '<'} $${values.length}`;
+        });
+      }
       values.push(v);
-      return `${snake(k)} = $${values.length}`;
+      return [`${snake(k)} = $${values.length}`];
     });
     const res = await holder.db.query(
       `UPDATE app_sub_listings SET ${set.join(', ')} WHERE ${where.join(' AND ')}`,
@@ -539,5 +546,28 @@ describe('store catalog with sub-listings, executed', () => {
       })
     ).rejects.toMatchObject({ status: 409, code: 'conflict' });
     expect(childIds(await page())).toEqual([CHILD_B]);
+  });
+
+  it('a row whose updated_at Postgres wrote at microsecond precision can still be moderated', async () => {
+    // No truncation: the column default and hand edits write microseconds, which a JS Date
+    // cannot carry, so the compare-and-set must not demand an exact match.
+    await holder.db.exec(`
+      UPDATE app_sub_listings
+         SET status = 'pending',
+             updated_at = date_trunc('milliseconds', clock_timestamp()) + interval '357 microseconds'
+       WHERE id = '${CHILD_A}'`);
+    const { rows } = await holder.db.query<{ us: number }>(
+      `SELECT (extract(microseconds FROM updated_at)::int % 1000) AS us FROM app_sub_listings WHERE id = $1`,
+      [CHILD_A]
+    );
+    // Positive control: the fixture really carries sub-millisecond digits.
+    expect(rows[0].us).toBe(357);
+    await expect(
+      moderateSubListing({
+        input: { id: CHILD_A, action: 'approve', version: await versionOf(CHILD_A) },
+        moderatorId: OWNER,
+      })
+    ).resolves.toMatchObject({ status: 'approved' });
+    expect(childIds(await page()).sort()).toEqual([CHILD_A, CHILD_B]);
   });
 });

@@ -18,7 +18,6 @@ export const moderateSubListingSchema = z.object({
   id: z.string().min(1).max(64),
   action: z.enum(SUB_LISTING_MOD_ACTIONS),
   reason: z.string().trim().max(APP_SUB_LISTING_REASON_MAX).optional(),
-  /** The `version` the queue row carried. */
   version: z.string().datetime(),
 });
 export type ModerateSubListingInput = z.infer<typeof moderateSubListingSchema>;

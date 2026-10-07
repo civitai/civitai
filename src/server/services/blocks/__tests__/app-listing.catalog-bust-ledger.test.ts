@@ -523,9 +523,8 @@ const LEDGER = [
   // for a write that may still roll back. The bust is one helper called by each path after
   // its own write is durable, so there is still exactly ONE bust site in this file.
   'src/server/services/blocks/app-listing-visibility-write.service.ts::bustCatalogAfterVisibilityWrite',
-  // App Store sub-listings: the union arm of the cached statement reads `s.status`, the
-  // child's rating and its title / approved_at (sort keys). The one helper every sub-listing
-  // writer calls when an approved row enters, leaves or changes.
+  // App Store sub-listings: every sub-listing writer calls this helper when an approved row
+  // enters, leaves or changes.
   'src/server/services/blocks/app-sub-listing.service.ts::bustCatalog',
   // Catalog membership + the live-parent scalar writes.
   'src/server/services/blocks/offsite-listing.service.ts::applyApprovedRevision',

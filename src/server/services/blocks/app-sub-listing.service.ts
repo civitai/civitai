@@ -81,6 +81,21 @@ async function bustCatalog() {
   await bustAppListingCatalogCache().catch(() => undefined);
 }
 
+/**
+ * The compare-and-set predicate for a row as read. `updated_at` is microsecond precision in the
+ * database but a JS Date carries milliseconds, so the match is on the millisecond the read saw;
+ * an exact match would never succeed for a value Postgres itself wrote (the column default, a
+ * hand edit).
+ */
+function unchangedSince(row: { id: string; status: string; updatedAt: Date }) {
+  const ms = row.updatedAt.getTime();
+  return {
+    id: row.id,
+    status: row.status,
+    updatedAt: { gte: new Date(ms), lt: new Date(ms + 1) },
+  } satisfies Prisma.AppSubListingWhereInput;
+}
+
 // Control and format characters (bidi overrides, zero-width joiners, soft hyphens): invisible
 // text that can disguise what a title says.
 const INVISIBLE_RE = /[\p{Cc}\p{Cf}]/gu;
@@ -339,10 +354,7 @@ export async function upsertSubListing(args: {
   }
 }
 
-type WriteOutcome = UpsertSubListingResult & {
-  /** The write changed what the cached store id page can contain. */
-  catalogAffected: boolean;
-};
+type WriteOutcome = UpsertSubListingResult & { catalogAffected: boolean };
 
 const MAX_WRITE_ATTEMPTS = 3;
 
@@ -413,7 +425,7 @@ async function writeSubListing(
   // moderator action landing between the read and the write is never overwritten.
   const casUpdate = async (data: Prisma.AppSubListingUncheckedUpdateManyInput) => {
     const { count } = await dbWrite.appSubListing.updateMany({
-      where: { id: existing.id, status: existing.status, updatedAt: existing.updatedAt },
+      where: unchangedSince(existing),
       data: { ...data, updatedAt: new Date() },
     });
     return count > 0;
@@ -486,12 +498,14 @@ async function transitionActive(args: {
   data: Prisma.AppSubListingUncheckedUpdateManyInput;
 }): Promise<number> {
   const data = { ...args.data, updatedAt: new Date() };
-  const approved = await dbWrite.appSubListing.updateMany({
-    where: { ...args.where, status: 'approved' },
-    data,
-  });
+  // Pending first: a row approved between the two statements is then caught by the second,
+  // because nothing moves an approved row back to pending.
   const pending = await dbWrite.appSubListing.updateMany({
     where: { ...args.where, status: 'pending' },
+    data,
+  });
+  const approved = await dbWrite.appSubListing.updateMany({
+    where: { ...args.where, status: 'approved' },
     data,
   });
   if (approved.count > 0) await bustCatalog();
@@ -777,7 +791,9 @@ export async function moderateSubListing(args: {
         data = { status: 'approved', approvedAt: now, statusReason: null, ...stamp };
         break;
       case 'hide':
-        if (status === 'hidden') throw invalid();
+        // A withdrawn item is the author's to bring back; hiding it would let a restore
+        // republish it over their withdraw.
+        if (status !== 'pending' && status !== 'approved') throw invalid();
         data = { status: 'hidden', statusReason: reason || null, ...CLEAR_PENDING, ...stamp };
         break;
       case 'restore':
@@ -811,12 +827,15 @@ export async function moderateSubListing(args: {
     // Compare-and-set on the row as read, so two moderators acting at once, or an author edit
     // landing between the read and the write, cannot both apply.
     const { count } = await dbWrite.appSubListing.updateMany({
-      where: { id, status: row.status, updatedAt: row.updatedAt },
+      where: unchangedSince(row),
       data,
     });
     if (count === 0) throw stale();
     const nextStatus = (data.status as AppSubListingStatus | undefined) ?? status;
-    if (status === 'approved' || nextStatus === 'approved') await bustCatalog();
+    // A rejected edit changes no live column, so the cached page is still right.
+    if ((status === 'approved' || nextStatus === 'approved') && action !== 'reject-edit') {
+      await bustCatalog();
+    }
     return {
       id,
       status: nextStatus,

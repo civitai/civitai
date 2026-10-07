@@ -42,13 +42,15 @@ app's shared storage, is not hidden and was authored by the caller; a title (1â€
 (â‰¤140) that pass cleaning and the shared text-safety check; an image the caller owns; a `subPath`
 of one to four `[A-Za-z0-9_-]` segments; and a rating no less mature than the parent's (unset
 inherits it). Limits: 30/hour and 100/day per user per parent, `max_per_author` active items,
-8 KB body. While the tables are absent the endpoints answer 503.
+8 KB body. While the tables are absent the endpoints answer 503. An upsert that keeps losing a
+race with a concurrent moderator action answers 409 (`conflict`) after three attempts.
 
 The scope is sensitive (manifests must justify it), consent-exempt (the checks above are the
 gate) and never minted for dev, tunnel or review tokens.
 
 An in-app author withdraw of the shared row withdraws the store item, and a moderator hide or
-delete of the shared row hides it, from the server and best-effort.
+delete of the shared row hides it (an item already withdrawn stays withdrawn), from the server
+and best-effort.
 
 ## Store read path
 
@@ -56,9 +58,12 @@ delete of the shared row hides it, from the server and best-effort.
 per viewer in `appListings.listAvailable`). With it, the keyset runs over the union of listings
 and approved children. Both arms apply `storeEligibilityWhere` to the **parent** row, so a child
 is visible only when its parent is; the child arm adds the parent switch, its own status, an
-approved backing block and the maturity gate on its own rating. A parent sorts before its
+approved backing block, an author who is not banned or deleted, and the maturity gate on its
+own rating. A parent sorts before its
 children on equal sort keys. Cards render the live columns, the stricter of the two ratings, and
-the item image only when it is cleared for the viewer (otherwise the parent's cover). A missing
+the item image only when it is cleared for the viewer (otherwise the parent's cover); hydration
+re-checks the item's status and its author, so a change after the page was cached hides the card
+on the next render. A missing
 table falls back to parents only. The public `GET /api/v1/apps` catalog never includes them.
 
 Opening a sub-card records the parent's `App_Open` event with `subListingId` added.
