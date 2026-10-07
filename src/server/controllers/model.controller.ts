@@ -191,6 +191,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -1244,7 +1245,10 @@ export const getDownloadCommandHandler = async ({
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file, versionFiles: files });
-    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName, {
+      caller: 'link',
+      actor: resolveActorFor(ctx.user),
+    });
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -1279,8 +1283,12 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
-            .url,
+          url: (
+            await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName, {
+              caller: 'link',
+              actor: resolveActorFor(ctx.user),
+            })
+          ).url,
         },
       });
     }

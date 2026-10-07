@@ -710,7 +710,10 @@ export async function importWildcardModelVersion(
   //    so streaming isn't worth the complexity here.
   let downloadInfo;
   try {
-    downloadInfo = await resolveDownloadUrl(primary.id, primary.url, primary.name);
+    downloadInfo = await resolveDownloadUrl(primary.id, primary.url, primary.name, {
+      caller: 'wildcard',
+      actor: 'internal',
+    });
   } catch (e) {
     return {
       status: 'failed',
