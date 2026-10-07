@@ -84,16 +84,13 @@ describe('releaseUserMute', () => {
     expect(m.invalidateSession).toHaveBeenCalledWith(USER, 'moderation');
   });
 
-  it('a system release waits while any case is open and changes nothing', async () => {
-    dbMock.dbWrite.userRestriction.findFirst.mockResolvedValueOnce({ id: 3 });
-    expect(await releaseUserMute({ userId: USER, actorId: SYSTEM, updateSource: 't' })).toEqual({
-      released: false,
-      reason: 'open-case',
-      closedCaseIds: [],
-    });
-    expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
-    expect(m.trackModActivity).not.toHaveBeenCalled();
-    expect(m.restoreScamCases).not.toHaveBeenCalled();
+  it('a system release lifts the mute despite an open case, and leaves the case queued', async () => {
+    dbMock.dbWrite.userRestriction.findFirst.mockResolvedValue({ id: 3 });
+    expect(
+      await releaseUserMute({ userId: USER, actorId: SYSTEM, updateSource: 't' })
+    ).toMatchObject({ released: true, closedCaseIds: [] });
+    expect(dbMock.dbWrite.user.update).toHaveBeenCalled();
+    expect(m.closeScamCasesOpenedBefore).not.toHaveBeenCalled();
   });
 
   it('a system release with no open case clears the mute but closes no scam hold', async () => {

@@ -587,7 +587,7 @@ export async function acceptTosAfterMute({
         userId,
         actorId: constants.system.user.id,
       });
-      if (!release.released) return { unmuted: false, reason: 'pending-review' };
+      if (!release.released) return { unmuted: false, reason: release.reason };
       return { unmuted: true };
     }
   );

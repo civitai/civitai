@@ -683,7 +683,7 @@ describe('strike.service', () => {
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
     });
 
-    it('<2 points, strike-muted, but a review case is open: keeps the mute', async () => {
+    it('<2 points, strike-muted, and a review case is open: still unmutes', async () => {
       const { userUpdate } = mockTransactionForEscalation(
         1,
         {
@@ -696,9 +696,10 @@ describe('strike.service', () => {
 
       const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
-      expect(result).toEqual({ totalPoints: 1, action: 'none' });
-      expect(userUpdate).not.toHaveBeenCalled();
-      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(result).toEqual({ totalPoints: 1, action: 'unmuted' });
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
+      );
     });
 
     it('<2 points, flagged AND accepted since: unmutes and clears flag', async () => {
@@ -1245,16 +1246,6 @@ describe('strike.service', () => {
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
     });
 
-    it('refuses while a review case is open, even for a strike mute', async () => {
-      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2, { openCase: true });
-
-      const result = await acceptTosAfterMute({ userId: 1 });
-
-      expect(result).toEqual({ unmuted: false, reason: 'pending-review' });
-      expect(userUpdate).not.toHaveBeenCalled();
-      expect(mockRefreshSession).not.toHaveBeenCalled();
-    });
-
     it('records against the domain the user accepted on', async () => {
       mockAcceptTransaction(strikeMuted, 2);
 
@@ -1347,7 +1338,7 @@ describe('strike.service', () => {
       expect(mockInvalidateSession).toHaveBeenCalledWith(100, 'moderation');
     });
 
-    it("keeps a moderator's lapsed timed mute while a review case is open", async () => {
+    it("releases a moderator's lapsed timed mute even while a review case is open", async () => {
       mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 100 }]);
       const { tx, userUpdate } = txClient(
         { muted: true, mutedAt: new Date(), muteExpiresAt: new Date(0), meta: {} },
@@ -1356,8 +1347,10 @@ describe('strike.service', () => {
       );
       mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
 
-      expect(await processTimedUnmutes()).toEqual({ unmutedCount: 0 });
-      expect(userUpdate).not.toHaveBeenCalled();
+      expect(await processTimedUnmutes()).toEqual({ unmutedCount: 1 });
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
+      );
     });
 
     it('asks for both kinds of mute, by the predicate each needs', async () => {
