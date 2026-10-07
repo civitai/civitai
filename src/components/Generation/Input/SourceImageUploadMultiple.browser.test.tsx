@@ -212,6 +212,19 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
     expect(loaderCount()).toBe(0);
   });
 
+  test('the same URL added twice at once, uploads fail: each card uploads once', async () => {
+    renderWithProviders(<Harness layout="url-input" />);
+
+    await submitUrl('https://example.com/a.jpg');
+    await submitUrl('https://example.com/a.jpg');
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    await settleOneByOne('reject');
+
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(2);
+    await expect.poll(() => page.getByText(PRESIGN_ERROR).elements().length).toBe(2);
+    expect(loaderCount()).toBe(0);
+  });
+
   test('the same URL added twice at once, uploads succeed: each card uploads once', async () => {
     renderWithProviders(<Harness layout="url-input" />);
 
@@ -233,6 +246,7 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
     await vi.waitFor(() => expect(uploads).toHaveLength(2));
     uploads[0].settled = true;
     uploads[0].reject(new Error(PRESIGN_ERROR));
+    // Exactly one error: a by-url update would turn both cards into errors here.
     await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
     await settleOneByOne('resolve');
 
@@ -242,16 +256,28 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
     expect(loaderCount()).toBe(0);
   });
 
-  test('a queued card shows the Loader and holds the generator', async () => {
-    // Dimensions never resolve, so the card stays queued.
-    mocks.getImageDimensions.mockReturnValue(new Promise(() => undefined));
+  // Invariant guard: an image that has not started uploading already held the generator before
+  // the queued state existed.
+  test('a queued card shows the Loader and holds the generator until its upload starts', async () => {
+    let resolveDims: (dims: { width: number; height: number }) => void = () => undefined;
+    // The dimension check (the one that passes options) stays pending, so the card stays queued.
+    mocks.getImageDimensions.mockImplementation((_src: unknown, options?: unknown) =>
+      options
+        ? new Promise((resolve) => (resolveDims = resolve))
+        : Promise.resolve({ width: 1024, height: 1024 })
+    );
     renderWithProviders(<Harness />);
     await pickFiles(1);
 
     await expect.poll(loaderCount).toBe(1);
     // What `useImagesUploadingOrVerifying` reads to hold the cost estimate and submit.
-    const { uploading, verifying } = useImagesUploadingStore.getState();
-    expect(uploading.length + verifying.length).toBeGreaterThan(0);
+    expect(useImagesUploadingStore.getState().verifying).toHaveLength(1);
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+
+    resolveDims({ width: 1024, height: 1024 });
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    await settleOneByOne('reject');
+    await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
+    expect(loaderCount()).toBe(0);
   });
 });
