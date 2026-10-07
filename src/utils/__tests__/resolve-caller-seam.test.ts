@@ -23,21 +23,33 @@ import { describe, expect, it } from 'vitest';
  * resolve is recorded as `threaded` and its callers are pinned in the second
  * table instead.
  *
- * The ledger finds calls by NAME, so a call under another name would be
- * invisible to it. The alias gate below closes the routes to one: importing a
- * guarded function under a different local name (`{ resolveDownloadUrl as rdu }`),
- * renaming it in a destructure (`{ resolveDownloadUrl: rdu } = await import(…)`),
- * and calling it through a computed key on a namespace or dynamic import of its
- * module (`dw[k](…)`, `(await import(…))[k](…)`). A plain member call
- * (`dw.resolveDownloadUrl(`) keeps the name and is counted by the ledger.
+ * The ledger finds calls by NAME, so a call under another name is invisible to
+ * it. What guarantees the attribution is PRESENT at every call, whatever its
+ * shape, is the type: `ResolveOptions` makes it required. This file's job is the
+ * narrower one of catching a WRONG caller, and the alias gate below catches only
+ * these spellings of a renamed call:
+ * - an aliased import: `import { resolveDownloadUrl as rdu }`
+ * - a renamed destructure: `const { resolveDownloadUrl: rdu } = await import(…)`
+ * - a computed key directly on a namespace import: `dw[k](…)`
+ * - a computed key directly on a parenthesised dynamic import:
+ *   `(await import(…))[k](…)`
+ * A plain member call (`dw.resolveDownloadUrl(`) keeps the name and is counted by
+ * the ledger.
  *
- * Known limits, both needing deliberate indirection rather than an ordinary edit:
- * - A guarded function passed around as a value (`const f = resolveDownloadUrl;
- *   f(…)`, or handed to a helper) is not followed.
- * - Comments are stripped with string-unaware regexes, so a string literal
+ * Known limits (each passes this suite; measured):
+ * - a cast or optional chain before the computed key: `(dw as any)[k](…)`,
+ *   `dw?.[k](…)`
+ * - a dynamic import bound to a variable, then indexed:
+ *   `const m = await import(…); (m as any)[k](…)`, or `.then((m) => m[k](…))`
+ * - a renamed destructure with a default: `{ resolveDownloadUrl: rdu = x }`
+ * - a guarded function passed around as a value (`const f = resolveDownloadUrl;
+ *   f(…)`, or handed to a helper)
+ * - comments are stripped with string-unaware regexes, so a string literal
  *   containing `/*` (a glob) followed later by `*\/` could hide code between
  *   them. An EXISTING call site hidden that way fails the ledger loudly; only a
  *   newly added one in such a file could slip past.
+ * Every one needs deliberate indirection, and every one still has to pass a
+ * type-checked attribution.
  */
 
 const SRC = path.resolve(__dirname, '../..');
@@ -144,13 +156,27 @@ describe('storage-resolver attribution call-site ledger', () => {
   // The ledgers match by name; this is what makes "by name" complete.
   it('no file reaches a guarded function under another name', () => {
     const violations: string[] = [];
+    const examined: string[] = [];
     for (const file of walk(SRC)) {
       const raw = readFileSync(file, 'utf8');
       if (!GUARDED.some((n) => raw.includes(n)) && !/delivery-worker|file\.service/.test(raw))
         continue;
-      for (const v of aliasViolationsIn(raw))
-        violations.push(`${path.relative(SRC, file).split(path.sep).join('/')}: ${v}`);
+      const rel = path.relative(SRC, file).split(path.sep).join('/');
+      examined.push(rel);
+      for (const v of aliasViolationsIn(raw)) violations.push(`${rel}: ${v}`);
     }
+    // Positive control for the pre-filter: a filter that skips everything would
+    // report no violations. `file.service.ts` both defines a guarded function and
+    // imports the resolver module; `bountyEntry.service.ts` imports
+    // `file.service` WITHOUT naming a guarded function, so it is examined only
+    // because the filter admits a file matching EITHER test, not just both.
+    expect(examined, 'the alias gate pre-filter skipped a known importer').toEqual(
+      expect.arrayContaining([
+        'server/services/file.service.ts',
+        'server/services/bountyEntry.service.ts',
+      ])
+    );
+    expect(examined.length, 'the alias gate examined too few files').toBeGreaterThanOrEqual(30);
     expect(
       violations,
       'a guarded resolve function is reached under a name the call-site ledger cannot see; ' +
