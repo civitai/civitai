@@ -27,6 +27,7 @@ describe('getLegendStatus', () => {
       where: { userId_milestoneKey: { userId: 7, milestoneKey: 'score:legend' } },
       select: { achievedAt: true, seenAt: true, milestone: { select: { cosmeticId: true } } },
     });
+    expect(dbMock.dbRead.userProfile.findUnique).not.toHaveBeenCalled();
   });
 
   // Justin's call (2026-10-06): a Legend whose crossing nobody observed, such as everyone the launch

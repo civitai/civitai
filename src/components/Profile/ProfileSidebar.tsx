@@ -55,6 +55,7 @@ import { openUserProfileEditModal } from '~/components/Dialog/triggers/user-prof
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useBuzzCurrencyConfig } from '../Currency/useCurrencyConfig';
 import { LegendStatusLine } from '~/components/CreatorJourney/LegendStatusLine';
+import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
 import { useAvailableBuzz } from '../Buzz/useAvailableBuzz';
 
 const mapSize: Record<
@@ -150,8 +151,7 @@ export function ProfileSidebar({ username, className }: { username: string; clas
   // highlighted picks (their own section) and the others. Hidden wins over
   // highlighted if stale data ever has a badge in both lists.
   const privacy = profile.privacySettings as PrivacySettingsSchema | null | undefined;
-  const hiddenSet = new Set(privacy?.hiddenBadgeIds ?? []);
-  const visibleBadges = badges.filter((b) => !hiddenSet.has(b.id));
+  const visibleBadges = badges.filter((b) => isBadgeShownOnProfile(privacy, b.id));
   const highlightedBadgeIds = privacy?.highlightedBadgeIds ?? [];
   const highlightedSet = new Set(highlightedBadgeIds);
   const highlightedBadges = highlightedBadgeIds
