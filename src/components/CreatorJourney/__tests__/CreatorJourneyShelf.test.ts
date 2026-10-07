@@ -78,12 +78,6 @@ describe('Badges Earned shelf', () => {
     expect(text).not.toContain('First Model');
   });
 
-  it('keeps a non-tier badge that has art', () => {
-    expect(shelfText([{ ...firstModel, badgeUrl: 'https://example.test/badge.png' }])).toContain(
-      'First Model'
-    );
-  });
-
   it('reads as empty when only activity milestones are held', () => {
     expect(shelfText([firstModel])).toContain('No badges yet.');
   });

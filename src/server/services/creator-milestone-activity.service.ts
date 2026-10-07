@@ -8,8 +8,11 @@ import { grantMilestones } from '~/server/services/creator-milestone-grant.servi
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
-/** The last run of a detector group that granted everything it found, and whether grants were flag-gated then. */
-export type ActivityWatermark = { at: number; gated: boolean };
+/**
+ * The last run of a detector group that granted everything it found, whether grants were flag-gated
+ * then, and the definitions it ran against.
+ */
+export type ActivityWatermark = { at: number; gated: boolean; definitions: string };
 
 export type ActivityWatermarkStore = {
   get: (groupKey: string) => Promise<ActivityWatermark | null>;
@@ -18,18 +21,20 @@ export type ActivityWatermarkStore = {
 
 export type MilestoneDefinitionRow = { key: string; threshold: number | null };
 
+export const watermarkKeyFor = (group: Pick<MilestoneDetectorGroup, 'id'>) =>
+  `creator-milestones:watermark:${group.id}`;
+
 /**
- * Adding or removing a key, or changing a threshold, changes this, so the group starts over with a
- * silent run rather than announcing everyone the change newly qualifies.
+ * Adding or removing a key, or changing a threshold, changes this. A watermark recorded against other
+ * definitions is no watermark, so the group starts over with a silent run rather than announcing
+ * everyone the change newly qualifies. It lives in the value, not the key, so reverting a change
+ * cannot revive an old row.
  */
-export const watermarkKeyFor = (
-  group: MilestoneDetectorGroup,
-  definitions: MilestoneDefinitionRow[]
-) =>
-  `creator-milestones:watermark:${group.id}:${definitions
+export const definitionsFingerprint = (definitions: MilestoneDefinitionRow[]) =>
+  definitions
     .map((d) => `${d.key}=${d.threshold}`)
     .sort()
-    .join(',')}`;
+    .join(',');
 
 /**
  * The earliest achievedAt that is announced, or null when nothing in this run is. A run can only
@@ -92,8 +97,11 @@ export async function runActivityGroup(
   const missing = group.keys.filter((key) => !definitions.some((d) => d.key === key));
   if (missing.length) throw new Error(`No CreatorMilestone row for ${missing.join(', ')}`);
 
-  const watermarkKey = watermarkKeyFor(group, definitions);
-  const announceFrom = announceFromFor(group, await store.get(watermarkKey), gated);
+  const watermarkKey = watermarkKeyFor(group);
+  const fingerprint = definitionsFingerprint(definitions);
+  const stored = await store.get(watermarkKey);
+  const previous = stored?.definitions === fingerprint ? stored : null;
+  const announceFrom = announceFromFor(group, previous, gated);
 
   const candidateQuery = await readPg.cancellableQuery<{ userId: number }>(
     `SELECT DISTINCT c."userId" FROM (${group.sql({ keys: '$1', users: '$2' })}) c`,
@@ -127,7 +135,7 @@ export async function runActivityGroup(
     await notify(fresh);
   }
 
-  await store.set(watermarkKey, { at: now.getTime(), gated });
+  await store.set(watermarkKey, { at: now.getTime(), gated, definitions: fingerprint });
   return { candidates: candidates.length, audience: users.length, granted, announced };
 }
 

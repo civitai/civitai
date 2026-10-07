@@ -16,9 +16,17 @@ const log = createLogger('grant-creator-milestones');
 export const keyValueWatermarkStore: ActivityWatermarkStore = {
   get: async (key) => {
     const row = await dbWrite.keyValue.findUnique({ where: { key } });
-    const value = row?.value as { at?: unknown; gated?: unknown } | null | undefined;
-    if (typeof value?.at !== 'number' || typeof value.gated !== 'boolean') return null;
-    return { at: value.at, gated: value.gated };
+    const value = row?.value as
+      | { at?: unknown; gated?: unknown; definitions?: unknown }
+      | null
+      | undefined;
+    if (
+      typeof value?.at !== 'number' ||
+      typeof value.gated !== 'boolean' ||
+      typeof value.definitions !== 'string'
+    )
+      return null;
+    return { at: value.at, gated: value.gated, definitions: value.definitions };
   },
   set: async (key, watermark) => {
     await dbWrite.keyValue.upsert({

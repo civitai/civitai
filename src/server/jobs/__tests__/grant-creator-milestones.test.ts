@@ -5,30 +5,12 @@ const mocks = vi.hoisted(() => ({
   runActivityGroup: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof DbClient>()),
-  dbWrite: {
-    keyValue: {
-      findUnique: async ({ where }: { where: { key: string } }) =>
-        mocks.kv.has(where.key) ? { key: where.key, value: mocks.kv.get(where.key) } : null,
-      upsert: async ({
-        where,
-        create,
-        update,
-      }: {
-        where: { key: string };
-        create: { value: unknown };
-        update: { value: unknown };
-      }) => mocks.kv.set(where.key, mocks.kv.has(where.key) ? update.value : create.value),
-    },
-  },
-}));
 vi.mock('~/server/services/creator-milestone-activity.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ActivityService>()),
   runActivityGroup: mocks.runActivityGroup,
 }));
 
-import type * as DbClient from '~/server/db/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as ActivityService from '~/server/services/creator-milestone-activity.service';
 import {
   grantCreatorMilestones,
@@ -40,21 +22,38 @@ import { activityDetectorGroups } from '~/server/services/creator-milestone-dete
 beforeEach(() => {
   mocks.kv.clear();
   mocks.runActivityGroup.mockReset();
+  dbMock.dbWrite.keyValue.findUnique.mockImplementation(
+    async ({ where }: { where: { key: string } }) =>
+      mocks.kv.has(where.key) ? { key: where.key, value: mocks.kv.get(where.key) } : null
+  );
+  dbMock.dbWrite.keyValue.upsert.mockImplementation(
+    async ({
+      where,
+      create,
+      update,
+    }: {
+      where: { key: string };
+      create: { value: unknown };
+      update: { value: unknown };
+    }) => mocks.kv.set(where.key, mocks.kv.has(where.key) ? update.value : create.value)
+  );
 });
 
 // The production store is what decides whether a watermark exists. A get that invents one announces
 // every publish since launch; a round trip that loses it silences every run for good.
 describe('keyValueWatermarkStore', () => {
   it('reads back what it wrote', async () => {
-    await keyValueWatermarkStore.set('k', { at: 1234, gated: false });
-    expect(await keyValueWatermarkStore.get('k')).toEqual({ at: 1234, gated: false });
+    const watermark = { at: 1234, gated: false, definitions: 'create:models-1=1' };
+    await keyValueWatermarkStore.set('k', watermark);
+    expect(await keyValueWatermarkStore.get('k')).toEqual(watermark);
   });
 
   it.each([
     ['a missing row', undefined],
     ['a bare job-date number', 1234],
-    ['a stringly time', { at: '1234', gated: false }],
-    ['no gated flag', { at: 1234 }],
+    ['a stringly time', { at: '1234', gated: false, definitions: 'x' }],
+    ['no gated flag', { at: 1234, definitions: 'x' }],
+    ['no definitions', { at: 1234, gated: false }],
   ])('reads %s as no watermark', async (_, value) => {
     if (value !== undefined) mocks.kv.set('k', value);
     expect(await keyValueWatermarkStore.get('k')).toBeNull();
@@ -72,6 +71,22 @@ describe('memoizedAudience', () => {
 });
 
 describe('grant-creator-milestones', () => {
+  // Flag membership changes between nights; a memo that outlived its run would keep telling users who left.
+  it('evaluates the audience afresh on every run', async () => {
+    const seen: unknown[] = [];
+    mocks.runActivityGroup.mockImplementation(
+      async (_: unknown, deps: { audienceAmong: unknown }) => {
+        seen.push(deps.audienceAmong);
+        return {};
+      }
+    );
+    await grantCreatorMilestones.run({} as never).result;
+    await grantCreatorMilestones.run({} as never).result;
+    const groups = activityDetectorGroups().length;
+    expect(new Set(seen.slice(0, groups)).size).toBe(1);
+    expect(seen[0]).not.toBe(seen[groups]);
+  });
+
   const run = () =>
     grantCreatorMilestones.run({} as never).result as Promise<Record<string, unknown> | undefined>;
 

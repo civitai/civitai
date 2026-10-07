@@ -10,6 +10,7 @@ import {
   announceFromFor,
   previewActivityGrants,
   runActivityGroup,
+  definitionsFingerprint,
   watermarkKeyFor,
 } from '~/server/services/creator-milestone-activity.service';
 import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
@@ -46,10 +47,13 @@ const groupFor = (key: string) => {
   if (!group) throw new Error(`no group for ${key}`);
   return group;
 };
-const MODELS = groupFor('create:models-1');
-const ARTICLES = groupFor('create:articles-1');
+// Registered silent until the Achievements section ships (see the pin below), so the announcing
+// rules are exercised on announced copies of the real groups.
+const announced = (group: MilestoneDetectorGroup) => ({ ...group, silent: false });
+const MODELS = announced(groupFor('create:models-1'));
+const ARTICLES = announced(groupFor('create:articles-1'));
 const DOWNLOADS = groupFor('reach:downloads-100');
-const FOLLOWERS = groupFor('reach:followers-100');
+const FOLLOWERS = announced(groupFor('reach:followers-100'));
 
 const AFTER_LAUNCH = new Date('2026-11-01T00:00:00Z');
 
@@ -62,25 +66,36 @@ function memoryStore(initial: Record<string, ActivityWatermark> = {}) {
   return { store, rows };
 }
 
-async function storedKeyFor(group: MilestoneDetectorGroup) {
+async function fingerprintFor(group: MilestoneDetectorGroup) {
   const definitions = await q<{ key: string; threshold: number | null }>(
     `SELECT key, threshold FROM "CreatorMilestone" WHERE key = ANY($1::text[])`,
     [group.keys]
   );
-  return watermarkKeyFor(group, definitions);
+  return definitionsFingerprint(definitions);
 }
+
+type PreviousRun = Omit<ActivityWatermark, 'definitions'> & { definitions?: string };
 
 async function run(
   group: MilestoneDetectorGroup,
   {
-    watermark = null as ActivityWatermark | null,
+    watermark = null as PreviousRun | null,
     gated = false,
     audience = null as number[] | null,
     now = AFTER_LAUNCH,
     chunkSize = undefined as number | undefined,
   } = {}
 ) {
-  const { store, rows } = memoryStore(watermark ? { [await storedKeyFor(group)]: watermark } : {});
+  const { store, rows } = memoryStore(
+    watermark
+      ? {
+          [watermarkKeyFor(group)]: {
+            definitions: await fingerprintFor(group),
+            ...watermark,
+          },
+        }
+      : {}
+  );
   const notified: MilestoneGrant[] = [];
   const result = await runActivityGroup(group, {
     readPg: pg,
@@ -240,7 +255,7 @@ describe('download and user-metric detectors', () => {
  * breaks.
  */
 describe('announcing', () => {
-  const yesterday = (gated = false): ActivityWatermark => ({
+  const yesterday = (gated = false): PreviousRun => ({
     at: new Date('2026-10-31T00:00:00Z').getTime(),
     gated,
   });
@@ -318,7 +333,9 @@ describe('announcing', () => {
   it('records the run, and a second run grants and announces nothing', async () => {
     await addModels(CREATOR, ['2026-10-31 12:00']);
     const first = await run(MODELS, { watermark: yesterday() });
-    expect([...first.rows.values()]).toEqual([{ at: AFTER_LAUNCH.getTime(), gated: false }]);
+    expect([...first.rows.values()]).toEqual([
+      { at: AFTER_LAUNCH.getTime(), gated: false, definitions: await fingerprintFor(MODELS) },
+    ]);
     const second = await run(MODELS, { watermark: yesterday() });
     expect(second.result.granted).toBe(0);
     expect(second.notified).toEqual([]);
@@ -412,22 +429,53 @@ describe('announceFromFor', () => {
   });
 });
 
-describe('watermark key', () => {
+describe('watermark definitions', () => {
   const rows = [
     { key: 'create:models-1', threshold: 1 },
     { key: 'create:models-5', threshold: 5 },
   ];
 
-  it('changes when a key joins a group, so the enlarged group starts with a silent run', () => {
-    expect(watermarkKeyFor(MODELS, [...rows, { key: 'create:models-50', threshold: 50 }])).not.toBe(
-      watermarkKeyFor(MODELS, rows)
+  it('fingerprints the keys and thresholds a run used, so adding a key or moving a threshold changes it', () => {
+    const base = definitionsFingerprint(rows);
+    expect(definitionsFingerprint([...rows, { key: 'create:models-50', threshold: 50 }])).not.toBe(
+      base
+    );
+    expect(definitionsFingerprint([rows[0], { key: 'create:models-5', threshold: 4 }])).not.toBe(
+      base
     );
   });
 
-  it('changes when a threshold moves, so newly qualifying users are not announced as crossings', () => {
-    expect(watermarkKeyFor(MODELS, [rows[0], { key: 'create:models-5', threshold: 4 }])).not.toBe(
-      watermarkKeyFor(MODELS, rows)
-    );
+  it('does not depend on the order Postgres returns the rows in', () => {
+    expect(definitionsFingerprint([...rows].reverse())).toBe(definitionsFingerprint(rows));
+  });
+
+  // Keyed by group, not by definitions, so reverting a threshold cannot pick up a weeks-old row.
+  it('treats a watermark recorded against other definitions as none, so the run is silent', async () => {
+    await addModels(CREATOR, ['2026-10-31 12:00']);
+    const { notified, rows: stored } = await run(MODELS, {
+      watermark: {
+        at: new Date('2026-10-31T00:00:00Z').getTime(),
+        gated: false,
+        definitions: 'other',
+      },
+    });
+    expect(notified).toEqual([]);
+    expect(await held(CREATOR)).toEqual([
+      { key: 'create:models-1', seen: true, at: '2026-10-31 12:00' },
+    ]);
+    expect([...stored.values()][0]).toMatchObject({ definitions: await fingerprintFor(MODELS) });
+  });
+});
+
+/**
+ * 🔴 Shipping these announced before the journey page can show them sends people to a page where the
+ * milestone does not appear. The Achievements section's PR turns this off; flipping it renames each
+ * group's watermark, so the first announced run is silent.
+ */
+describe('activity milestones before the Achievements section', () => {
+  it('registers every activity group silent', () => {
+    expect(groups.filter((group) => !group.silent).map((group) => group.id)).toEqual([]);
+    expect(groups.length).toBeGreaterThan(0);
   });
 });
 
