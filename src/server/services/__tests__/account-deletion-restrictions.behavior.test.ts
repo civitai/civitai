@@ -49,6 +49,9 @@ const rows = async (userId: number) =>
       [userId]
     )
   ).rows;
+const isMuted = async (userId: number) =>
+  (await db.query<{ muted: boolean }>(`SELECT muted FROM "User" WHERE id = $1`, [userId])).rows[0]
+    .muted;
 const statuses = async (userId: number) =>
   Object.fromEntries((await rows(userId)).map((r) => [r.id, r.status]));
 
@@ -63,11 +66,15 @@ beforeAll(async () => {
       "resolvedAt" timestamp, "resolvedBy" int, "resolvedMessage" text,
       "updatedAt" timestamp NOT NULL
     );
+    CREATE TABLE "User" (id int PRIMARY KEY, muted boolean NOT NULL);
   `);
 });
 
 beforeEach(async () => {
-  await db.exec(`TRUNCATE "UserRestriction";`);
+  await db.exec(`
+    TRUNCATE "UserRestriction", "User";
+    INSERT INTO "User" VALUES (${DELETED}, true), (${BYSTANDER}, false);
+  `);
   dbMock.dbWrite.$executeRaw.mockImplementation(
     async (strings: TemplateStringsArray, ...values: unknown[]) => {
       const sql = Prisma.sql(strings, ...values);
@@ -130,13 +137,14 @@ describe('reopenGenerationRestrictionsOfRestoredAccount', () => {
     await insert(`
       (1, ${DELETED}, 'generation', 'AccountDeleted', ${constants.system.user.id}, '${LONG_AGO}'),
       (2, ${DELETED}, 'generation', 'Upheld', ${MODERATOR}, '${LONG_AGO}'),
-      (3, ${BYSTANDER}, 'generation', 'AccountDeleted', ${constants.system.user.id}, '${LONG_AGO}')
+      (3, ${BYSTANDER}, 'generation', 'AccountDeleted', ${constants.system.user.id}, '${LONG_AGO}'),
+      (4, ${DELETED}, 'scam', 'AccountDeleted', ${constants.system.user.id}, '${LONG_AGO}')
     `);
     await db.exec(`UPDATE "UserRestriction" SET "resolvedAt" = now(), "resolvedMessage" = 'x'`);
 
-    expect(await reopenGenerationRestrictionsOfRestoredAccount(DELETED)).toBe(1);
+    await reopenGenerationRestrictionsOfRestoredAccount(DELETED);
 
-    const [reopened, ruled] = await rows(DELETED);
+    const [reopened, ruled, scam] = await rows(DELETED);
     expect(reopened).toEqual(
       expect.objectContaining({
         id: 1,
@@ -150,7 +158,29 @@ describe('reopenGenerationRestrictionsOfRestoredAccount', () => {
     expect(ruled).toEqual(
       expect.objectContaining({ id: 2, status: 'Upheld', resolvedBy: MODERATOR })
     );
+    // Generation only, whatever else a backfill may have closed: a reopened scam case skips the
+    // one-Pending-scam-case index check and the scam ledger's own close.
+    expect(scam.status).toBe('AccountDeleted');
     expect(await statuses(BYSTANDER)).toEqual({ 3: 'AccountDeleted' });
+  });
+
+  // An overturn of another case, ruled while this one was closed, lifts the mute without seeing it.
+  it('re-mutes an account it reopens a case on', async () => {
+    await db.exec(`UPDATE "User" SET muted = false WHERE id = ${DELETED}`);
+    await insert(`(1, ${DELETED}, 'generation', 'AccountDeleted', -1, '${LONG_AGO}')`);
+
+    await reopenGenerationRestrictionsOfRestoredAccount(DELETED);
+
+    expect(await isMuted(DELETED)).toBe(true);
+    expect(await isMuted(BYSTANDER)).toBe(false);
+  });
+
+  it('leaves the mute alone when there is nothing to reopen', async () => {
+    await insert(`(1, ${BYSTANDER}, 'generation', 'Upheld', ${MODERATOR}, '${LONG_AGO}')`);
+
+    await reopenGenerationRestrictionsOfRestoredAccount(BYSTANDER);
+
+    expect(await isMuted(BYSTANDER)).toBe(false);
   });
 
   it('round-trips: a delete then a restore leaves the case as it was', async () => {

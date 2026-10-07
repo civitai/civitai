@@ -280,13 +280,22 @@ export async function closeGenerationRestrictionsOfDeletedAccount(userId: number
   `;
 }
 
-/** Deletion leaves the mute on, so a restored account's closed cases go back in the queue. */
+/**
+ * Puts a restored account's closed cases back in the queue. Re-mutes too, as `claimPendingReviewMute`
+ * does: the mute can have been lifted while the account was deleted (an overturn of another case no
+ * longer sees this one), and a Pending case must never sit on an unmuted account.
+ */
 export async function reopenGenerationRestrictionsOfRestoredAccount(userId: number) {
   return dbWrite.$executeRaw`
-    UPDATE "UserRestriction"
-    SET status = 'Pending', "resolvedAt" = NULL, "resolvedBy" = NULL, "resolvedMessage" = NULL,
-        "updatedAt" = now()
-    WHERE "userId" = ${userId} AND type = 'generation' AND status = 'AccountDeleted'
+    WITH reopened AS (
+      UPDATE "UserRestriction"
+      SET status = 'Pending', "resolvedAt" = NULL, "resolvedBy" = NULL, "resolvedMessage" = NULL,
+          "updatedAt" = now()
+      WHERE "userId" = ${userId} AND type = 'generation' AND status = 'AccountDeleted'
+      RETURNING id
+    )
+    UPDATE "User" SET muted = true
+    WHERE id = ${userId} AND NOT muted AND EXISTS (SELECT 1 FROM reopened)
   `;
 }
 
