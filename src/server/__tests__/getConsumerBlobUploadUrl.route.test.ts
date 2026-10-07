@@ -68,8 +68,18 @@ describe('GET /api/orchestrator/getConsumerBlobUploadUrl', () => {
     expect((await call()).status).toBe(429);
   });
 
-  it.each([500, 503])('reports an upstream %i as a 502, not a denial', async (status) => {
-    upstream(status);
+  it.each([500, 503])('reports an upstream %i as a generic 502, not a denial', async (status) => {
+    upstream(status, { detail: 'internal detail' });
+    expect(await call()).toEqual({ status: 502, body: 'Failed to get upload URL' });
+  });
+
+  it('reports an upstream 404 as a 400', async () => {
+    upstream(404, { detail: 'Not found' });
+    expect(await call()).toEqual({ status: 400, body: 'Not found' });
+  });
+
+  it('reports a request that got no response as a 502', async () => {
+    getConsumerBlobUploadUrl.mockResolvedValueOnce({ data: undefined, error: undefined });
     expect((await call()).status).toBe(502);
   });
 

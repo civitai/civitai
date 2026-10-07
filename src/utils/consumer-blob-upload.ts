@@ -20,7 +20,8 @@ const SUPPORTED_CONTENT_TYPES = [
 ] as const;
 const PRESIGN_TIMEOUT_MS = 15_000;
 // Silence allowed after the body is sent. Long because the orchestrator processes the media inside
-// the POST and cancels that work when the client aborts, so a short window fails slow uploads.
+// the POST and cancels that work when the client aborts, so a short window kills uploads it is
+// still processing.
 const RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const MAX_ATTEMPTS = 2;
 

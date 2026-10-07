@@ -89,7 +89,7 @@ const fetchMock = vi.fn((url: string, init?: RequestInit) => {
         )
       );
     if (presignMode === 'unavailable-once' && presignCount === 1)
-      return Promise.resolve({ ok: false, status: 503, headers: new Headers() });
+      return Promise.resolve({ ok: false, status: 502, headers: new Headers() });
     if (presignMode === 'throttle-once' && presignCount === 1)
       return Promise.resolve({
         ok: false,
@@ -240,6 +240,8 @@ describe('uploadConsumerBlob', () => {
     expect(kinds()).toEqual(['consumer blob upload failed: http-503']);
   });
 
+  // Parsing only: cross-origin, a browser exposes Retry-After only if the upload host lists it in
+  // Access-Control-Expose-Headers.
   it('retries a throttled upload after its Retry-After', async () => {
     const result = track(uploadConsumerBlob(jpeg()));
     await vi.advanceTimersByTimeAsync(0);
@@ -274,7 +276,7 @@ describe('uploadConsumerBlob', () => {
     await vi.advanceTimersByTimeAsync(0);
 
     expect(result.value).toEqual({ id: 'b1' });
-    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-503']);
+    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-502']);
   });
 
   it('retries a throttled presign after its Retry-After', async () => {

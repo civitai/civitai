@@ -18,7 +18,11 @@ export default OrchestratorEndpoint(
       const result = await getConsumerBlobUploadUrlService({ token });
       return res.status(200).json(result);
     } catch (e) {
-      return res.status(presignErrorStatus(e)).send((e as Error).message);
+      const status = presignErrorStatus(e);
+      // Only the 4xx texts are written for the user; an upstream failure's may not be.
+      return res
+        .status(status)
+        .send(status === 502 ? 'Failed to get upload URL' : (e as Error).message);
     }
   },
   ['GET']

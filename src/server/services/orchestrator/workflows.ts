@@ -759,7 +759,7 @@ function orchestratorErrorMessage(error: unknown) {
 }
 
 /** Maps a failed orchestrator write onto the app's errors, so every paid call fails the same way. */
-function throwOrchestratorFailure({
+export function throwOrchestratorFailure({
   error,
   response,
   message,
