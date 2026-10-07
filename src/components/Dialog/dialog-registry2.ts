@@ -99,6 +99,9 @@ export const dialogs = dialogFactory({
   'crucible-submit-entry': {
     component: dynamic(() => import('~/components/Crucible/CrucibleSubmitEntryModal')),
   },
+  'banking-change-notice': {
+    component: dynamic(() => import('~/components/Buzz/CreatorProgramV2/BankingChangeNoticeModal')),
+  },
 });
 
 export type DialogRegistry = typeof dialogs;

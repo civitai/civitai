@@ -61,6 +61,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { BankingChangeNoticeAlert } from '~/components/Buzz/CreatorProgramV2/BankingChangeNoticeAlert';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -151,6 +152,8 @@ export const CreatorProgramV2 = () => {
           <Anchor href="/creator-program">Learn more</Anchor>
         </div>
       </div>
+
+      {hasOnboardedInProgram && <BankingChangeNoticeAlert />}
 
       {!hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">

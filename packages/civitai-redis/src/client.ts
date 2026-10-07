@@ -2134,6 +2134,10 @@ export const REDIS_SYS_KEYS = {
     MODEL_METRIC_AFFECTED: 'index-updates:model-metric-affected',
     MODEL_METRIC_LAST_FLUSH: 'index-updates:model-metric-last-flush',
   },
+  NOTICES: {
+    // Hash of userId → sent-at ISO time; a field is claimed before its email goes out.
+    BANKING_CHANGE_SENT: 'notices:banking-change-sent',
+  },
   QUEUES: {
     BUCKETS: 'queues:buckets',
     SEEN_IMAGES: 'queues:seen-images',
