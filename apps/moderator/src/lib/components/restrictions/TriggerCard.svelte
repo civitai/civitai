@@ -34,7 +34,7 @@
             id="flag-{trigger.key}"
             bind:checked={() => selected, () => onToggle(trigger.key)}
           />
-          <Label for="flag-{trigger.key}" class="font-normal text-dark-0">Flag as suspicious</Label>
+          <Label for="flag-{trigger.key}" class="font-normal text-dark-0">Flag as false positive</Label>
         </div>
       {/if}
 
