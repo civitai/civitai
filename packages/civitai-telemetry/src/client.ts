@@ -462,9 +462,9 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
 });
 // Separate counter, not a cache_type on cache_miss_total: these ids are also counted there, so a
 // cache_type would be summed into hit-ratio totals twice.
-export const cacheMissConcurrentDuplicateCounter = registerCounterWithLabels({
-  name: 'cache_miss_concurrent_duplicate_total',
-  help: 'createCachedArray miss-fill lookups for an id another fetch in this process was still filling (lookup or write), by cache name; cross-process duplicates are not counted',
+export const cacheMissWouldJoinCounter = registerCounterWithLabels({
+  name: 'cache_miss_would_join_total',
+  help: 'createCachedArray miss-fill lookups that per-process coalescing would have joined instead (same rule: originator registered under 10s ago and still filling, not a debounce-marker id, not detached by a mutation), by cache name. Measurement only; cross-process duplicates are not counted',
   labelNames: ['cache_name'] as const,
 });
 

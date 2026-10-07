@@ -99,11 +99,13 @@ export type CacheBuilderDeps = {
     failOpenDegraded(cacheName: string): void;
     failOpenOriginFetch(cacheName: string, count: number): void;
     /**
-     * Ids whose miss-fill lookup was started while another fetch in THIS process was still filling
-     * the same id (its lookup or its writes; same cache instance). Measurement only: the duplicate
-     * lookup and its writes still happen. Cross-process duplicates are not visible here.
+     * Miss-fill lookups that per-process coalescing (draft PR #5488) would have JOINED instead of
+     * running: the id was registered by another fetch in THIS process (same cache) whose lookup
+     * started under MISS_FILL_JOIN_MAX_MS ago and has not settled with its writes, it is not a
+     * debounce-marker id, and no bust/invalidate/refresh/update detached it since. Measurement only:
+     * the lookup and its writes still happen. Cross-process duplicates are not visible here.
      */
-    missConcurrentDuplicate(cacheName: string, count: number): void;
+    missWouldJoin(cacheName: string, count: number): void;
   };
   /** Structured log for a fail-open Redis degradation (the app's logSysRedisFailOpen). */
   logFailOpen(
@@ -153,18 +155,12 @@ export function resolveCacheExpiry(
 const UPDATE_LOCK_TTL = 5;
 
 /**
- * Bounds on the per-cache in-flight miss-fill registry (see `missFillInFlight` in
- * createCachedArray). An entry older than MAX_AGE is not treated as in flight. At MAX_ENTRIES it
- * first drops entries older than MAX_AGE (skipped until its oldest entry can have gone stale,
- * so a full registry of fresh entries is not re-scanned on every fetch) and, if still full,
- * registers no new ids — so a lookup that never settles can neither grow it without bound nor
- * inflate the count forever. Both only affect the measurement: a concurrent fetch of an id left
- * unregistered at the cap is not counted, so the metric can read low when more than MAX_ENTRIES
- * ids are being filled at once.
+ * A registered lookup at least this old is not counted as joinable (and is replaced). Mirrors
+ * IN_FLIGHT_JOIN_MAX_MS in the coalescing proposal (#5488) so missWouldJoin counts what it would
+ * join; change both together.
  */
-const MISS_FILL_IN_FLIGHT_MAX_AGE_MS = 30_000;
-const MISS_FILL_IN_FLIGHT_MAX_ENTRIES = 50_000;
-type MissFillEntry = { startedAt: number; holders: number };
+const MISS_FILL_JOIN_MAX_MS = 10_000;
+type MissFillEntry = { startedAt: number };
 
 export function createCacheBuilders(deps: CacheBuilderDeps) {
   const { redis, metrics, logFailOpen, logRefreshError, log, clearByPattern } = deps;
@@ -198,12 +194,10 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // and the compress-aware read passes a non-sentinel value (a msgpack map never starts with
     // 0x01) straight to msgpack. See ./packed-compression.
     const notFoundPackedOptions = { compress: false } as const;
-    // `holders` counts concurrent fillers so the first to settle doesn't hide the id from a third
-    // while the second is still in flight.
+    // Ids whose miss-fill this process originated and has not finished writing. Only originators
+    // register (a would-be joiner does not), as in #5488. Unbounded like degradedIdInFlight: every
+    // entry is removed when its fetch's lookup and writes settle.
     const missFillInFlight = new Map<number, MissFillEntry>();
-    // Earliest time a sweep at the cap can find a stale entry: the oldest survivor of the last
-    // sweep turns stale then.
-    let missFillNextSweepAt = 0;
     // Holds the FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
     // byte-identical to what the Redis path returns and needs no further decoration.
     // Driven with get/set rather than its wrapping .fetch — the access pattern here is a batch mGet,
@@ -238,60 +232,52 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       }
     }
 
-    // Drop these ids from THIS pod's L1 on a local bust/refresh/invalidate. Does NOT fix cross-pod
-    // staleness (inherent + accepted); it closes the self-pod window where the pod that just processed
-    // a mutation would otherwise keep serving its own pre-mutation copy for localTtl.
+    // Drop these ids from THIS pod's L1 on a local bust/refresh/invalidate/update. Does NOT fix
+    // cross-pod staleness (inherent + accepted); it closes the self-pod window where the pod that just
+    // processed a mutation would otherwise keep serving its own pre-mutation copy for localTtl.
+    // Also detaches their in-flight miss-fills, as #5488 does: a fetch after the mutation would
+    // originate its own lookup there, not join one that may have read the pre-mutation row.
     function dropLocal(ids: number[]) {
+      for (const id of ids) missFillInFlight.delete(id);
       if (!localCache) return;
       for (const id of ids) localCache.delete(id);
     }
 
-    // Registers `ids` and reports how many are already in flight. Call the returned release only
-    // after this fetch's writes settle, so a fetch overlapping the write phase still counts.
-    function trackMissFill(ids: Iterable<number>): () => void {
+    // Counts the ids #5488 would join, and registers the ones it would originate. Call the
+    // returned release only after this fetch's writes settle: #5488 keeps an entry joinable through
+    // its originator's write.
+    function trackMissFill(
+      ids: Iterable<number>,
+      debounced: Set<number>,
+      dontCache: Set<number>
+    ): () => void {
       const now = Date.now();
-      const mine: [number, MissFillEntry][] = [];
-      let duplicates = 0;
+      const registered: [number, MissFillEntry][] = [];
+      let joins = 0;
       for (const id of ids) {
-        const existing = missFillInFlight.get(id);
-        if (existing && now - existing.startedAt < MISS_FILL_IN_FLIGHT_MAX_AGE_MS) {
-          duplicates++;
-          existing.holders++;
-          mine.push([id, existing]);
+        // A debounce-marker id never joins: an in-flight lookup may predate the bust.
+        const entry = debounced.has(id) ? undefined : missFillInFlight.get(id);
+        if (entry && now - entry.startedAt < MISS_FILL_JOIN_MAX_MS) {
+          joins++;
           continue;
         }
-        if (
-          !existing &&
-          missFillInFlight.size >= MISS_FILL_IN_FLIGHT_MAX_ENTRIES &&
-          now >= missFillNextSweepAt
-        ) {
-          // At the cap: sweep entries older than MAX_AGE.
-          let oldest = now;
-          for (const [staleId, entry] of missFillInFlight) {
-            if (now - entry.startedAt >= MISS_FILL_IN_FLIGHT_MAX_AGE_MS)
-              missFillInFlight.delete(staleId);
-            else oldest = Math.min(oldest, entry.startedAt);
-          }
-          missFillNextSweepAt = oldest + MISS_FILL_IN_FLIGHT_MAX_AGE_MS;
-        }
-        if (existing || missFillInFlight.size < MISS_FILL_IN_FLIGHT_MAX_ENTRIES) {
-          // A stale entry is replaced; its owner's release only touches the entry it registered.
-          const entry = { startedAt: now, holders: 1 };
-          missFillInFlight.set(id, entry);
-          mine.push([id, entry]);
-        }
+        // Not registered inside the debounce window: that lookup is not cached, so #5488 does not
+        // let anyone join it.
+        if (dontCache.has(id)) continue;
+        const mine = { startedAt: now };
+        missFillInFlight.set(id, mine);
+        registered.push([id, mine]);
       }
-      if (duplicates > 0) {
+      if (joins > 0) {
         // A metrics sink that throws must not fail the read this is only observing.
         try {
-          metrics.missConcurrentDuplicate(key, duplicates);
+          metrics.missWouldJoin(key, joins);
         } catch {}
       }
       return () => {
-        for (const [id, entry] of mine) {
-          entry.holders--;
-          if (entry.holders <= 0 && missFillInFlight.get(id) === entry) missFillInFlight.delete(id);
-        }
+        // Spares a newer entry for the id (after a detach, or past the join window).
+        for (const [id, mine] of registered)
+          if (missFillInFlight.get(id) === mine) missFillInFlight.delete(id);
       };
     }
 
@@ -406,6 +392,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
       const cacheMisses = new Set<number>();
       const dontCache = new Set<number>();
+      const debounced = new Set<number>();
       const toRevalidate: Record<number, T> = {};
       const ttlExpiry = new Date(Date.now() - ttl * 1000);
       const locks = new Set<RedisKeyTemplateCache>();
@@ -415,6 +402,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         if (cached) {
           if (cached.notFound) continue;
           if (cached.debounce) {
+            debounced.add(id);
             if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
             cacheMisses.add(id);
             continue;
@@ -475,7 +463,7 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
 
         // finally: a throwing lookupFn must not leave its ids registered as in flight.
-        const releaseMissFill = trackMissFill(cacheMisses);
+        const releaseMissFill = trackMissFill(cacheMisses, debounced, dontCache);
         try {
           const dbResults: Record<string, T> = {};
           const lookupBatches = chunk([...cacheMisses], 10000);

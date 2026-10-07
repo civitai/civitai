@@ -111,7 +111,7 @@ function buildCache(
     revalidate: () => undefined,
     failOpenDegraded: () => undefined,
     failOpenOriginFetch: () => undefined,
-    missConcurrentDuplicate: () => undefined,
+    missWouldJoin: () => undefined,
   };
   const { createCachedObject } = createCacheBuilders({
     redis,

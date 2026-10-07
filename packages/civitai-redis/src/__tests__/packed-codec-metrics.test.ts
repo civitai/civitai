@@ -228,7 +228,7 @@ describe('packed codec metrics — labels and wiring', () => {
         revalidate: noop,
         failOpenDegraded: noop,
         failOpenOriginFetch: noop,
-        missConcurrentDuplicate: noop,
+        missWouldJoin: noop,
       },
       logFailOpen: noop,
       logRefreshError: noop,
