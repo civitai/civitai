@@ -263,9 +263,8 @@ export const modelsFilterableAttributes = [
   // which is exactly what this list buys.
   //
   // 🔴 NO READER: nothing filters on either field — the resource-intent matcher and the
-  // M3 study both read labels from Postgres. Kept pending a separate decision on the
-  // `insight.*` index settings. A document only ACQUIRES these fields when it is rewritten, so a model whose
-  // document predates its label carries a null role. ⚠️ A future filter that ANDs the role
+  // M3 study both read labels from Postgres. A document only ACQUIRES these fields when it
+  // is rewritten, so a model whose document predates its label carries a null role. ⚠️ A future filter that ANDs the role
   // with the ARRAY form `versions.baseModel IN [...]` inherits the cross-version caveat in
   // ./models.search-index.ts: the role may come from a version on a different base model
   // than the versions it then expands to.

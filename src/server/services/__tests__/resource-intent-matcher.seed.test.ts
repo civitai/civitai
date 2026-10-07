@@ -399,6 +399,32 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
     expect(promotableVersions).toBe(1);
   });
 
+  it('promotableVersions counts the POOL, not the returned slice', async () => {
+    const agrees = {
+      role: 'clothing',
+      styleFamily: 'anime_manga',
+      qualityScore: 0.5,
+      confidence: 0.9,
+    };
+    busyCell([], {
+      docs: [docOf(3901, 390100, 9600, agrees), docOf(3902, 390200, 9590, agrees)],
+      labels: [
+        [390100, agrees],
+        [390200, agrees],
+      ],
+    });
+
+    // cap 1 -> a pool of 2: both promote, one is returned.
+    const { entries, promotableVersions } = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 1,
+    });
+
+    expect(entries).toHaveLength(1);
+    expect(promotableVersions).toBe(2);
+  });
+
   it('🔴 a failing seed page fails the seed', async () => {
     searchWithSignal.mockRejectedValue(new Error('page failed'));
 

@@ -50,7 +50,7 @@ const FORBIDDEN_IN_DRY_RUN = ['src/server/db/client.ts', 'src/server/meilisearch
  * `0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3` (c8bc91037f).
  */
 const REGISTERED_PREREGISTRATION_SHA256 =
-  '2b880ebabd14107adea3a6adcfff9d6aa9c552aca82bc183389f869c26a86b32';
+  '4cba3f4a8bf8b6bcf28e839be21754682af0815121c834e54fd552d58ae9452d';
 
 /** v2's text as registered — the record `renderRetrievalPreregistrationV2` must still print. */
 const V2_PREREGISTRATION_SHA256 =

@@ -36,7 +36,7 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. No-ops without `--execute`. Samples the gold and grades stage-1 agreement, then runs the retrieval comparison below. |
-| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, exact McNemar), the MET / NOT MET / VOID verdict and its report. |
+| `scripts/eval-resource-intent-retrieval.ts`              | M3 two-arm retrieval comparison: the PURPOSE and POPULARITY arms, the metric math (hit@K, MRR, the non-inferiority bound, the MRR sign test), the MET / NOT MET / VOID verdict and its report. |
 | `scripts/eval-resource-intent-registration.ts`           | M3's registration: the pre-registered constants and text, and the committed gold-set queries. No database or search client, so the dry run is hermetic. |
 | `scripts/eval-resource-intent-goldset-execute.ts`         | The `--execute` half of the runner (replica, index, vendor), loaded only under `--execute`. |
 
@@ -93,7 +93,7 @@ purposes. Its replacement seeded by PURPOSE first (the filter AND
 short). Registration v2 of the M3 study judged that seed NOT MET: it retrieved attached
 models about half as often as popularity alone. A separate 254-prompt diagnostic
 (2026-10-06) found why: in 204 of 254 requests (~80%) the role-filtered page filled the
-pool on its own and evicted the popular model the user had actually attached. An offline replay of the study's 254 prompts then screened 18
+pool on its own and evicted the popular model the user had actually attached. An offline 254-prompt replay then screened 18
 seed designs; the only one that tied popularity on hit@10 (26 vs 25) and led it on
 MRR@50 (0.050 vs 0.022) was this one — the popularity page alone, with the label
 ordering on top — and every design that put role-filtered documents into the pool
@@ -440,7 +440,8 @@ says how many drawn rows a stage-1 failure skipped.
 
 **Part two** (`scripts/eval-resource-intent-retrieval.ts`) grades the resource-meaning
 layer's last closing clause: *"the M3 gold-set study shows the purpose-query arm
-beating the popularity arm on its pre-registered metric"*. Per sampled prompt it runs
+beating the popularity arm on its pre-registered metric"*; v3 reads that clause as the two
+co-primaries below. Per sampled prompt it runs
 stage 1, then both arms with the same criteria, `browsingLevel`, coverage and cap.
 PURPOSE is `findResourceIntentCandidates` itself. POPULARITY is the matcher's own seed
 pool (`seedResourceIntentPool`) cut to the cap and never handed to the label re-rank, so
@@ -475,9 +476,9 @@ v3 asks a new question of the popularity-seed matcher, in brief:
   any more.
 - **Identical heads are a diagnostic only.** v2 voided a run whose arms matched on every
   prompt's top 10; the arms now differ only by the re-rank, so identical heads are expected
-  on most prompts (reciprocal ranks tied on 220 of 254 in the offline replay), and the
-  count is printed without deciding anything.
-- **Power** comes from planning assumptions taken from an offline replay of v2's prompts
+  on most prompts (as a proxy: reciprocal ranks @50 tied on 220 of the offline replay's 254
+  prompts), and the count is printed without deciding anything.
+- **Power** comes from planning assumptions taken from an offline 254-prompt replay
   (hit@10 discordance 13 of 254; MRR non-ties 13.4%, 68% favouring PURPOSE) at a planning
   n of 822 scored: ≈ 0.81 for (i), ≈ 0.97 for (ii). They are assumptions, not evidence;
   the text derives both from the constants.
@@ -519,7 +520,7 @@ confound the pre-registration states.
 ## Rollout
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
-- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index projection** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. The matcher no longer reads any of them (its seed is popularity alone), so an index lacking those settings does not affect it, and nothing else reads them either; they are left in place pending a separate decision.
+- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index projection** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. The matcher no longer reads any of them (its seed is popularity alone), so an index lacking those settings does not affect it, and nothing else reads them either; they are left in place.
 - **M3:** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the resource-meaning layer's last closing clause, quoted in that section. Registration v2 judged the previous, purpose-first seed NOT MET; registration v3 grades the popularity seed and has not been run. Run it only once the seed it grades serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison).
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.

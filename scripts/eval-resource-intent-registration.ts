@@ -2,8 +2,9 @@ import { Prisma } from '@prisma/client';
 import { RESOURCE_INTENT_DEFAULT_LIMIT } from '~/server/schema/resource-intent.schema';
 
 /**
- * M3's registration: the pre-registered constants, the text built from them, and the
- * committed gold-set queries — everything the dry run prints, and nothing else.
+ * M3's registration: the pre-registered constants, the text built from them, the pure
+ * statistics that text and the verdict share, v2's superseded record, and the committed
+ * gold-set queries.
  *
  * 🔴 KEEP THIS MODULE FREE OF DATABASE AND SEARCH CLIENTS. The dry run
  * (`scripts/eval-resource-intent-goldset.ts` without `--execute`) imports only this, so it
@@ -211,7 +212,7 @@ export function normalCdf(x: number): number {
  * - `alpha`: co-primary (ii), the exact two-sided sign test on MRR@`secondaryK`.
  * - `minPromotableFraction`: the positive control on what PURPOSE actually reads — the
  *   share of scored prompts whose pool held at least one version the re-rank promotes.
- * - `planning`: power-planning inputs from an offline replay of v2's prompts. Assumptions,
+ * - `planning`: power-planning inputs from an offline 254-prompt replay. Assumptions,
  *   not evidence; they decide nothing.
  */
 export const M3_RETRIEVAL_PREREGISTRATION = {
@@ -242,7 +243,7 @@ export function plannedPower() {
   const p = M3_RETRIEVAL_PREREGISTRATION;
   const { scored, replayPrompts, replayHitDiscordant, mrrNonTieRate, mrrPurposeShare } = p.planning;
   const hitDiscordantRate = replayHitDiscordant / replayPrompts;
-  // b = c at a true difference of 0, so se = sqrt((b + c) / n) / sqrt(n).
+  // At a true difference of 0, se = sqrt(discordant rate / n).
   const hitSe = Math.sqrt(hitDiscordantRate / scored);
   const nonInferiorityPower = 1 - normalCdf(p.nonInferiorityZ - p.nonInferiorityMargin / hitSe);
   const mrrNonTies = Math.round(scored * mrrNonTieRate);
@@ -340,7 +341,8 @@ export function renderRetrievalPreregistration(): string {
     `No identical-head rule: v2 voided a run whose arms returned the same first ${k} model ids`,
     'on every scored prompt. The arms now differ only by the re-rank, which moves nothing',
     'on a prompt whose pool holds no label it promotes or demotes, so identical heads are',
-    'expected on most prompts (reciprocal ranks tied on 220 of 254 in the offline replay).',
+    'expected on most prompts. (The offline replay is a proxy, not a count of identical',
+    "heads: the arms' reciprocal ranks @50 tied on 220 of its 254 prompts.)",
     'The count is printed as a diagnostic only, so it can neither void nor bias a run; the',
     'positive control is what catches a re-rank with nothing to act on.',
     '',
@@ -351,7 +353,7 @@ export function renderRetrievalPreregistration(): string {
     'Excluded and counted, never scored: a stage-1 failure, role = none, no in-role',
     'attachment, either arm erroring, and a PURPOSE label read that fell back.',
     '',
-    "Power (planning assumptions from an offline replay of v2's prompts, NOT evidence):",
+    'Power (planning assumptions from an offline 254-prompt replay, NOT evidence):',
     `hit@${k} discordance ${p.planning.replayHitDiscordant} of ${p.planning.replayPrompts} = ${pct(
       power.hitDiscordantRate
     )}; at a planning n of ${p.planning.scored} scored,`,
