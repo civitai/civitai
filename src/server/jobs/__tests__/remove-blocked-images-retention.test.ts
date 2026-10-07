@@ -374,6 +374,25 @@ describe('remove-blocked-images retention clock', () => {
     expect(result.csamHeld).toBe(0);
   });
 
+  // Neither mock evaluates these, so they are pinned here. Dropping the ingestion predicate puts
+  // every flagged image on the site, blocked or not, into the batch's notIn list; reading from
+  // the replica misses a flag set inside the lag window.
+  it('reads the review hold from the primary, Blocked images only', async () => {
+    await runJob();
+
+    const isHoldSql = (s: string) => s.includes('"needsReview" IN');
+    const sqlOf = (calls: unknown[][]) =>
+      calls.map((c) => (c[0] as TemplateStringsArray).join('?'));
+    const onWrite = sqlOf(mockDbWrite.$queryRaw.mock.calls).filter(isHoldSql);
+    const onRead = sqlOf(mockDbRead.$queryRaw.mock.calls).filter(isHoldSql);
+
+    expect(onRead).toEqual([]);
+    expect(onWrite).toHaveLength(1);
+    expect(onWrite[0]).toMatch(
+      /WHERE "needsReview" IN \('appeal', 'csam'\)\s+AND ingestion = 'Blocked'::"ImageIngestionStatus"\s*$/
+    );
+  });
+
   it('holds appealed and CSAM-flagged images side by side', async () => {
     appealedIds.push(7);
     csamFlaggedIds.push(8);

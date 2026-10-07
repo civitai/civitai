@@ -3,8 +3,9 @@ import { dbWrite } from '~/server/db/client';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 /**
- * The appeals queue lists images by `needsReview = 'appeal'`, and the blocked-image purge spares only
- * those rows. So while an Appeal is Pending the flag must stay, whatever else rewrites the image.
+ * The appeals queue lists images by `needsReview = 'appeal'`, and the blocked-image purge spares
+ * Blocked images by that flag. So while an Appeal is Pending the flag must stay, whatever else
+ * rewrites the image.
  */
 
 export async function getPendingAppealImageIds(imageIds: number[]): Promise<Set<number>> {

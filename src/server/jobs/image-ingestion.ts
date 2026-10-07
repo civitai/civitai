@@ -583,10 +583,9 @@ export const removeBlockedImages = createJob(
         ).map((x) => x.id)
       : [];
 
-    // A pending review decides this image's fate. An appeal: approval unblocks it, rejection
-    // clears needsReview and the next run deletes it; purging it first strands the Appeal as
-    // Pending forever. A CSAM flag: held until a moderator resolves it, since the CsamReport
-    // hold above only starts once a report is filed.
+    // A pending review decides this image's fate, so it is held until a moderator resolves it.
+    // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
+    // strands the Appeal as Pending forever.
     // dbWrite for the same replica-lag reason as the CSAM lookup above.
     const reviewHeldRows = await dbWrite.$queryRaw<{ id: number; needsReview: string }[]>`
       SELECT id, "needsReview" FROM "Image"
