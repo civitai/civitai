@@ -93,8 +93,8 @@ export type PackedCodecTimer = (op: 'compress' | 'decompress', seconds: number) 
 /**
  * Brotli window (log2 bytes) about as large as the input, clamped to brotli's minimum and to its
  * DEFAULT (22) rather than its maximum (24), so values of 4 MiB and up keep the window they always
- * had. A larger window buys no extra matches. Values between ~1 KiB and 4 MiB get a smaller window
- * than before: same ratio and compress CPU, possibly slightly slower decode at the large end.
+ * had. A larger window buys no extra matches. Smaller values get a smaller window than before:
+ * same ratio and compress CPU, possibly slightly slower decode at the large end.
  */
 export function packedBrotliWindowBits(byteLength: number): number {
   const { BROTLI_MIN_WINDOW_BITS, BROTLI_DEFAULT_WINDOW } = zlib.constants;
