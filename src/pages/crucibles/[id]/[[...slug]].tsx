@@ -51,6 +51,7 @@ import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
@@ -139,8 +140,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const { data: judgingProgress } = trpc.crucible.getJudgingProgress.useQuery(
     { crucibleId: id, browsingLevel },
     {
+      // Guarded procedure: a muted or unverified viewer gets FORBIDDEN.
       enabled:
         !!currentUser &&
+        !currentUser.muted &&
+        !requiresEmailVerification(currentUser) &&
         crucible?.status === CrucibleStatus.Active &&
         (!crucible.endAt || new Date(crucible.endAt) > new Date()),
       staleTime: 0,

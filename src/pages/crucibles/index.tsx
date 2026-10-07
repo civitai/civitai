@@ -14,6 +14,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { env } from '~/env/client';
 import { useCrucibleFilters } from '~/components/Crucible/crucible.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 function CruciblesPage() {
@@ -35,7 +36,9 @@ function CruciblesPage() {
             <Title order={1}>Crucible Discovery</Title>
             {currentUser && (
               <Group gap="sm">
-                <CrucibleJudgeNextButton />
+                {!currentUser.muted && !requiresEmailVerification(currentUser) && (
+                  <CrucibleJudgeNextButton />
+                )}
                 <Button
                   component={Link}
                   href="/crucibles/create"

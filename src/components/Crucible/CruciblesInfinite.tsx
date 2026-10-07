@@ -11,6 +11,7 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconTrophy, IconPlus, IconSearch } from '@tabler/icons-react';
+import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
 import Link from 'next/link';
 import { useEffect, useMemo } from 'react';
@@ -54,7 +55,7 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
     { crucibleIds: openIds, browsingLevel },
     {
       enabled: !!currentUser && openIds.length > 0,
-      keepPreviousData: true,
+      placeholderData: keepPreviousData,
       staleTime: 0,
       refetchOnMount: 'always',
     }
