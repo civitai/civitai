@@ -19,7 +19,7 @@ import { promisify } from 'util';
  * WINDOW SIZED TO THE VALUE: at brotli's default 22-bit (4 MiB) window, a one-shot compress spends
  * most of its CPU in the kernel under musl (the node:24-alpine base) — several times the CPU of a
  * window sized to the input, at the same ratio. The encoder allocates its window per call.
- * Do not drop BROTLI_PARAM_LGWIN; see packedBrotliWindowBits. Decoding is unaffected: the decoder
+ * Do not drop BROTLI_PARAM_LGWIN; see packedBrotliWindowBits. Decoding stays compatible: the decoder
  * reads the window from each stream's header, so values written with the old window still decode.
  *
  * On-disk format for a compressed value is a single SENTINEL prefix byte (0x01 = brotli)
