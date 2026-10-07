@@ -44,9 +44,8 @@ vi.mock('../tags-on-image.service', () => ({ upsertTagsOnImageNew: vi.fn() }));
 vi.mock('../mod-activity', () => ({ recordModActivity }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
-const { acceptImage, blockImage, dismissReviewFlag, resolveImageAppeal } = await import(
-  '../image-moderation.service'
-);
+const { acceptImage, blockImage, dismissReviewFlag, FlagOnlyRemovedError, resolveImageAppeal } =
+  await import('../image-moderation.service');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -144,11 +143,20 @@ describe('blockImage', () => {
 
 // Removed with only the flag left: the flag's own queue lists it, and must not undo the removal.
 describe('an image removed with only the review flag left', () => {
-  it('is not put back live by accepting it', async () => {
-    await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 });
+  it('is not put back live by accepting it, and the refusal reaches the caller', async () => {
+    await expect(acceptImage({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toBeInstanceOf(
+      FlagOnlyRemovedError
+    );
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
     expect(recordModActivity).not.toHaveBeenCalled();
+  });
+
+  // The main app's Unblock is an explicit decision to restore it, and must still work.
+  it('is restored by an explicit unblock', async () => {
+    await acceptImage({ imageId: FLAGGED_REMOVED, userId: 2, restoreRemoved: true });
+
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: null, ingestion: 'Scanned' });
   });
 
   it('is accepted like any other image while it is still live', async () => {

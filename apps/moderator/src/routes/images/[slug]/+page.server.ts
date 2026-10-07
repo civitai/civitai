@@ -14,6 +14,7 @@ import {
   blockImage,
   closedAppellants,
   dismissReviewFlag,
+  FlagOnlyRemovedError,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
@@ -37,6 +38,9 @@ const querySchema = z.object({
 });
 
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
+
+const FLAG_ONLY_REFUSAL =
+  'Removed with only the review flag left: dismiss that flag on the card, or unblock the image. Reload.';
 
 /** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
  *  guarantees the value is one of the enum's. Returns the refusal message on a bad value, like the
@@ -162,7 +166,13 @@ export const actions: Actions = {
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
     const reportId = form.get('reportId') ? Number(form.get('reportId')) : undefined;
 
-    await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
+    try {
+      await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
+    } catch (e) {
+      if (e instanceof FlagOnlyRemovedError)
+        return fail(409, { error: FLAG_ONLY_REFUSAL, imageId });
+      throw e;
+    }
     if (reportId)
       await setReportStatus({
         id: reportId,
@@ -303,13 +313,30 @@ export const actions: Actions = {
     const imageIds = parseIds(form.get('imageIds'));
     const reportIds = parseIds(form.get('reportIds'));
     const removeMinorFlag = form.get('removeMinorFlag') === 'true';
+    const refused: number[] = [];
     // Emails only the appeals this request closed, once per appellant instead of per image.
     const closed = await Promise.all(
       imageIds.map((imageId) =>
-        acceptImage({ imageId, removeMinorFlag, userId: locals.user.id, deferAppealEmail: true })
+        acceptImage({
+          imageId,
+          removeMinorFlag,
+          userId: locals.user.id,
+          deferAppealEmail: true,
+        }).catch((e) => {
+          if (!(e instanceof FlagOnlyRemovedError)) throw e;
+          refused.push(imageId);
+          return undefined;
+        })
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), true);
+    // Which report belongs to which image is not posted, so a partial batch moves no report.
+    if (refused.length)
+      return fail(409, {
+        error: `Accepted ${imageIds.length - refused.length} of ${
+          imageIds.length
+        }. ${FLAG_ONLY_REFUSAL} Not accepted: ${refused.join(', ')}.`,
+      });
     await Promise.all(
       reportIds.map((id) =>
         setReportStatus({ id, status: ReportStatus.Unactioned, userId: locals.user.id })

@@ -50,19 +50,20 @@
     poi={item.poi}
     rating={!dismissFlag}
   />
-  <!-- A selected card loses its own verdict buttons: pressing Accept there acted on the one image
-       while the moderator believed it applied to the batch. -->
-  {#if selected.has(reportId ?? item.id)}
-    <span class="text-xs text-primary">
-      In selection — {acceptLabel.toLowerCase()} or remove it from the bar below.
-    </span>
-  {:else if dismissFlag}
+  <!-- Dismiss is per card only, so it stays on the card even while the card is selected. -->
+  {#if dismissFlag}
     <form method="POST" action="?/dismissFlag" use:enhance={submit}>
       <input type="hidden" name="imageId" value={item.id} />
       <Button type="submit" variant="outline" size="sm" class="text-amber-400 hover:text-amber-300">
         Dismiss flag, keep removed
       </Button>
     </form>
+  {:else if selected.has(reportId ?? item.id)}
+    <!-- A selected card loses its own verdict buttons: pressing Accept there acted on the one image
+         while the moderator believed it applied to the batch. -->
+    <span class="text-xs text-primary">
+      In selection — {acceptLabel.toLowerCase()} or remove it from the bar below.
+    </span>
   {:else}
     <div class="flex flex-wrap gap-1.5">
       <form method="POST" action="?/accept" use:enhance={submit}>

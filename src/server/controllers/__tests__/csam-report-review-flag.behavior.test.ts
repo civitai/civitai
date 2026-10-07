@@ -56,12 +56,18 @@ const OWNER = 8;
 const OTHER_OWNER = 9;
 const PRIOR_REPORT_OWNER = 10;
 const EXPIRED_HOLD_OWNER = 11;
+const NEAR_CEILING_OWNER = 12;
+const INSIDE_MARGIN_OWNER = 13;
+const PAST_MARGIN_OWNER = 14;
 
 const OWNED = 61;
 const OTHER_OWNERS = 62;
 const UNBLOCKED_HELD = 63;
 const OTHER_FLAG = 64;
 const EXPIRED_HOLD = 65;
+const NEAR_CEILING = 66;
+const INSIDE_MARGIN = 67;
+const PAST_MARGIN = 68;
 
 let pg: PGlite;
 
@@ -95,14 +101,21 @@ beforeEach(async () => {
       (${OTHER_OWNERS}, ${OTHER_OWNER}, 'Blocked', 'csam'),
       (${UNBLOCKED_HELD}, ${PRIOR_REPORT_OWNER}, 'Scanned', 'csam'),
       (${OTHER_FLAG}, ${OWNER}, 'Blocked', 'appeal'),
-      (${EXPIRED_HOLD}, ${EXPIRED_HOLD_OWNER}, 'Blocked', 'csam');
+      (${EXPIRED_HOLD}, ${EXPIRED_HOLD_OWNER}, 'Blocked', 'csam'),
+      (${NEAR_CEILING}, ${NEAR_CEILING_OWNER}, 'Blocked', 'csam'),
+      (${INSIDE_MARGIN}, ${INSIDE_MARGIN_OWNER}, 'Blocked', 'csam'),
+      (${PAST_MARGIN}, ${PAST_MARGIN_OWNER}, 'Blocked', 'csam');
     -- A report on the other owner that has finished: it holds nothing.
     INSERT INTO "CsamReport" ("userId", "reportSentAt", "archivedAt") VALUES
       (${OTHER_OWNER}, now(), now()),
       (${PRIOR_REPORT_OWNER}, NULL, NULL);
     -- Still open but older than the hold ceiling, so the purge no longer honours it.
     INSERT INTO "CsamReport" ("userId", "createdAt") VALUES
-      (${EXPIRED_HOLD_OWNER}, now() - interval '31 days');
+      (${EXPIRED_HOLD_OWNER}, now() - interval '31 days'),
+      (${NEAR_CEILING_OWNER}, now() - interval '29.9 days'),
+      -- Either side of the release margin: 30 - 7 = 23 days.
+      (${INSIDE_MARGIN_OWNER}, now() - interval '22 days 23 hours'),
+      (${PAST_MARGIN_OWNER}, now() - interval '23 days 1 hour');
   `);
   dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
@@ -169,6 +182,26 @@ describe('fileCsamReport', () => {
     await report(EXPIRED_HOLD_OWNER, [EXPIRED_HOLD]);
 
     expect(await flag(EXPIRED_HOLD)).toBe('csam');
+  });
+
+  // Deliberate: the flag stays unless the hold has REPORT_HOLD_RELEASE_MARGIN_DAYS left, so a report
+  // filed against a nearly lapsed hold cannot be what lets the purge through hours later.
+  it('keeps the flag when the owner hold is about to run out', async () => {
+    await report(NEAR_CEILING_OWNER, [NEAR_CEILING]);
+
+    expect(await flag(NEAR_CEILING)).toBe('csam');
+  });
+
+  it('clears the flag when the hold has more than the margin left', async () => {
+    await report(INSIDE_MARGIN_OWNER, [INSIDE_MARGIN]);
+
+    expect(await flag(INSIDE_MARGIN)).toBeNull();
+  });
+
+  it('keeps the flag when the hold has less than the margin left', async () => {
+    await report(PAST_MARGIN_OWNER, [PAST_MARGIN]);
+
+    expect(await flag(PAST_MARGIN)).toBe('csam');
   });
 
   it('leaves any other flag alone', async () => {

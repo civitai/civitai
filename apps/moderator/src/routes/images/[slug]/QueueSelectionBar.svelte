@@ -51,13 +51,13 @@
         Clear
       </button>
 
+      {#if skipped > 0}
+        <span class="text-xs text-dark-2">{skipped} already removed: dismiss each on its card</span>
+      {/if}
+
       <!-- Keyed on the selection: the tools and the reason picker hold what was set locally, and that
            state belongs to the batch it was set on, not to the next one.
            `null` throughout — a batch has no single current rating or flag to show as active. -->
-      {#if skipped > 0}
-        <span class="text-xs text-dark-2">{skipped} already removed: dismiss those on their cards</span>
-      {/if}
-
       {#if verdictCount}
         {#key verdictImageIds}
           <ImageCardModTools

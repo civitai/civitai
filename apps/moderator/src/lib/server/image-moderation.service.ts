@@ -13,7 +13,7 @@ import {
 } from './image-moderation-effects';
 import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
-import { FLAG_KEPT_THROUGH_BLOCK, isFlagOnlyRemaining } from '$lib/image-review';
+import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 
 const BLOCKED_REASON_MODERATED = 'moderated';
 
@@ -36,16 +36,27 @@ const recompute = async (imageId: number) => {
   await invalidateThumbnails(imageId);
 };
 
+/** An accept refused because the image is removed with only the review flag left. */
+export class FlagOnlyRemovedError extends Error {
+  constructor(readonly imageId: number) {
+    super(`Image ${imageId} is removed with only its review flag left`);
+  }
+}
+
 export async function acceptImage({
   imageId,
   removeMinorFlag = false,
   userId,
   deferAppealEmail = false,
+  restoreRemoved = false,
 }: {
   imageId: number;
   removeMinorFlag?: boolean;
   userId: number;
   deferAppealEmail?: boolean;
+  /** An explicit unblock. Review queues leave it off, so an image removed with only the review flag
+   *  left cannot come back live from one; they throw `FlagOnlyRemovedError` instead. */
+  restoreRemoved?: boolean;
 }): Promise<ClosedAppeal | undefined> {
   const img = await dbRead
     .selectFrom('Image')
@@ -62,8 +73,7 @@ export async function acceptImage({
       ? sql`(COALESCE("metadata", '{}'::jsonb) - 'ruleId' - 'ruleReason') || '{"remixSourceReviewed": true}'::jsonb`
       : sql`"metadata" - 'ruleId' - 'ruleReason'`;
 
-  // Refused in the statement itself, not off the replica read above: an image removed with only the
-  // flag left must not come back live through the flag's own queue.
+  // Refused in the statement itself, not off the replica read above.
   const { numUpdatedRows } = await dbWrite
     .updateTable('Image')
     .set({
@@ -84,14 +94,16 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
-    .where((eb) =>
-      eb.or([
-        eb('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK),
-        eb('ingestion', '!=', 'Blocked'),
-      ])
+    .$if(!restoreRemoved, (qb) =>
+      qb.where((eb) =>
+        eb.or([
+          eb('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK),
+          eb('ingestion', '!=', 'Blocked'),
+        ])
+      )
     )
     .executeTakeFirst();
-  if (!numUpdatedRows) return;
+  if (!numUpdatedRows) throw new FlagOnlyRemovedError(imageId);
 
   // update_nsfw_levels_new skips nsfwLevelLocked rows, so without this a rating-locked Blocked image would
   // stay hidden after unblock. Clear the lock + zero the level so the recompute below restores the real one.
@@ -157,7 +169,6 @@ export async function blockImage({
     .selectFrom('Image')
     .select([
       'needsReview',
-      'ingestion',
       'pHash',
       'blockedFor',
       'postId',
@@ -167,10 +178,9 @@ export async function blockImage({
     ])
     .where('id', '=', imageId)
     .executeTakeFirst();
-  // Already removed: blocking again would only notify the uploader a second time.
-  if (!img || isFlagOnlyRemaining(img)) return;
+  if (!img) return;
 
-  await dbWrite
+  const { numUpdatedRows } = await dbWrite
     .updateTable('Image')
     .set({
       // The moderator-only review flag survives a block: only its own queue or a filed report clears it.
@@ -192,7 +202,16 @@ export async function blockImage({
           : sql`"metadata" - ${ACCOUNT_DELETION_PRIOR_INGESTION_KEY}::text - ${ACCOUNT_DELETION_PRIOR_BLOCKED_FOR_KEY}::text`,
     })
     .where('id', '=', imageId)
-    .execute();
+    // Already removed with only the review flag left: blocking again would only notify the uploader a
+    // second time. Decided here, not off the replica read above.
+    .where((eb) =>
+      eb.or([
+        eb('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK),
+        eb('ingestion', '!=', 'Blocked'),
+      ])
+    )
+    .executeTakeFirst();
+  if (!numUpdatedRows) return;
   await keepPendingAppealFlag(imageId);
   await invalidateThumbnails(imageId, [img.parentId]);
 
