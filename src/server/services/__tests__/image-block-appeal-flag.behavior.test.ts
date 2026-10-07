@@ -163,6 +163,7 @@ beforeEach(async () => {
 
 const { handleBlockImages, reportCsamImages } = await import('~/server/services/image.service');
 const { setTosViolationHandler } = await import('~/server/controllers/image.controller');
+const { resolveEntityAppeal } = await import('~/server/services/report.service');
 
 /** Pending image appeals the queue cannot see: the closing condition of the ticket, as a query. */
 const strandedAppeals = async () =>
@@ -260,5 +261,77 @@ describe('reportCsamImages', () => {
 
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(refundTransaction).not.toHaveBeenCalled();
+  });
+
+  // An appeal that commits while the report is being made, just before the flag lands. The flag
+  // has to be written before the appeals are closed, or this one survives it.
+  it('closes an appeal that lands just before the flag', async () => {
+    await holder.db.exec(`DELETE FROM "Appeal" WHERE "entityId" = ${APPEALED}`);
+    const flag = updateMany('Image');
+    dbMock.dbWrite.image.updateMany.mockImplementation((async (args: any) => {
+      if (args.data?.needsReview === 'csam')
+        await holder.db.exec(
+          `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${APPEALED}, 'Pending')`
+        );
+      return flag(args);
+    }) as never);
+
+    await reportCsamImages({ imageIds: [APPEALED], user: moderator });
+
+    expect(await strandedAppeals()).toEqual([]);
+    expect((await imageRow(APPEALED)).needsReview).toBe('csam');
+  });
+
+  it('does not leave the flag behind when closing the appeals fails', async () => {
+    // A real transaction on the stand-in, so a write that is not inside it survives the rollback.
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (cb: (tx: unknown) => unknown) => {
+      await holder.db.exec('BEGIN');
+      try {
+        const result = await cb(dbMock.dbWrite);
+        await holder.db.exec('COMMIT');
+        return result;
+      } catch (e) {
+        await holder.db.exec('ROLLBACK');
+        throw e;
+      }
+    }) as never);
+    dbMock.dbWrite.appeal.updateMany.mockRejectedValueOnce(new Error('connection lost'));
+
+    await expect(reportCsamImages({ imageIds: [APPEALED], user: moderator })).rejects.toThrow(
+      'connection lost'
+    );
+
+    expect((await imageRow(APPEALED)).needsReview).toBe('appeal');
+  });
+
+  it('leaves no pending appeal whose resolution could clear the flag', async () => {
+    // The shared claim fake returns every row now in the target status; here it must return only
+    // the rows this claim moved out of Pending, as Prisma does.
+    dbMock.dbWrite.appeal.updateManyAndReturn.mockImplementation(
+      (async ({ where, data }: any) =>
+        (
+          await holder.db.query(
+            `UPDATE "Appeal" SET status = $3 WHERE "entityId" = ANY($1) AND "entityType" = $2
+             AND status = 'Pending'
+           RETURNING id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId"`,
+            [where.entityId.in, where.entityType, data.status]
+          )
+        ).rows) as never
+    );
+    // A resolution that did reach the image would write it here, so the flag's survival is observed.
+    dbMock.dbWrite.image.update.mockImplementation((async ({ where, data }: any) => {
+      await updateMany('Image')({ where: { id: where.id }, data });
+      return { postId: null, pHash: null };
+    }) as never);
+    await reportCsamImages({ imageIds: [APPEALED], user: moderator });
+
+    await resolveEntityAppeal({
+      ids: [APPEALED],
+      entityType: 'Image',
+      status: 'Rejected',
+      userId: 2,
+    } as never);
+
+    expect((await imageRow(APPEALED)).needsReview).toBe('csam');
   });
 });

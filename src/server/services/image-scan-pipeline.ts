@@ -334,6 +334,7 @@ export async function loadImageForScan(imageId: number) {
       nsfwLevel: true,
       ingestion: true,
       blockedFor: true,
+      needsReview: true,
     },
   });
 
@@ -626,6 +627,13 @@ export async function resolveScanOutcome({
     }
   }
 
+  // This review flag outranks an appeal and is only ever lifted by a moderator, never by a scan. The
+  // SET re-checks the stored value for a flag that lands after the image was loaded.
+  if (image.needsReview === 'csam') {
+    toUpdate.needsReview = 'csam';
+    reviewKey = 'csam';
+  }
+
   await dbWrite.$executeRaw`
     UPDATE "Image"
     SET
@@ -634,7 +642,8 @@ export async function resolveScanOutcome({
       "ingestion" = ${toUpdate.ingestion as string}::"ImageIngestionStatus",
       "blockedFor" = ${(toUpdate.blockedFor as string) ?? null},
       "nsfwLevel" = ${toUpdate.nsfwLevel as number},
-      "needsReview" = ${(toUpdate.needsReview as string) ?? null},
+      "needsReview" = CASE WHEN "needsReview" = 'csam' THEN 'csam'
+        ELSE ${(toUpdate.needsReview as string) ?? null} END,
       "minor" = ${(toUpdate.minor as boolean) ?? false},
       "poi" = ${(toUpdate.poi as boolean) ?? false},
       "scannedAt" = ${(toUpdate.scannedAt as Date) ?? null},

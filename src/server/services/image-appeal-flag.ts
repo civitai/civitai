@@ -29,6 +29,7 @@ export async function keepPendingAppealFlags(imageIds: number[]): Promise<void> 
     SET "needsReview" = 'appeal'
     WHERE i.id IN (${Prisma.join(imageIds)})
       AND i."needsReview" IS DISTINCT FROM 'appeal'
+      AND i."needsReview" IS DISTINCT FROM 'csam'
       AND EXISTS (
         SELECT 1 FROM "Appeal" a
         WHERE a."entityType" = 'Image' AND a."entityId" = i.id AND a."status" = 'Pending'

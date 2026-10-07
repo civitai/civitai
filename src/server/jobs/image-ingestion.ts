@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -551,6 +552,28 @@ const CSAM_HOLD_MAX_DAYS = 30;
  */
 export const MODERATOR_TAKEDOWN_ACTIVITIES = ['review', 'bulkRemove'] as const;
 
+/**
+ * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
+ * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it.
+ * `reportHoldExpiredUserIds` are the owners this run already decided to purge despite an open
+ * report, past `CSAM_HOLD_MAX_DAYS`. Only valid on a statement over an unaliased "Image".
+ */
+export function purgeHoldGuard(reportHoldExpiredUserIds: number[]) {
+  return Prisma.sql`
+    "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    AND "Image"."needsReview" IS DISTINCT FROM 'csam'
+    AND (
+      "Image"."userId" = ANY(${reportHoldExpiredUserIds}::int[])
+      OR NOT EXISTS (
+        SELECT 1 FROM "CsamReport" c
+        WHERE c."userId" = "Image"."userId"
+          AND (c."reportSentAt" IS NULL OR c."archivedAt" IS NULL)
+      )
+    )
+  `;
+}
+
 export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
@@ -662,8 +685,9 @@ export const removeBlockedImages = createJob(
       return true;
     });
 
-    // Only the images actually being destroyed this run, so the alert can't over-report an
-    // expired hold whose images fell outside the batch or turned out to be stale.
+    // Only the images this run is about to delete, so the alert can't list an expired hold whose
+    // images fell outside the batch or turned out to be stale. The DELETE's own guard may still keep
+    // one; the returned count is of what was actually deleted.
     const expiredUserIdSet = new Set(expiredUserIds);
     const holdExpiredDeletions = imagesToDelete.filter((img) => expiredUserIdSet.has(img.userId));
 
@@ -829,15 +853,21 @@ export const removeBlockedImages = createJob(
     };
     const takedowns = takedownCandidateIds.filter(isTakedown);
     const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
+    const onlyWhere = purgeHoldGuard(expiredUserIds);
+    const deleted: number[] = [];
     if (takedowns.length > 0) {
-      await deleteImages(takedowns, true, { retractPublicBlobs: true });
+      const rows = await deleteImages(takedowns, true, { retractPublicBlobs: true, onlyWhere });
+      deleted.push(...rows.map((x) => x.id));
     }
     if (deletedWithoutRetraction.length > 0) {
-      await deleteImages(deletedWithoutRetraction, true);
+      const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
+      deleted.push(...rows.map((x) => x.id));
     }
+    const deletedSet = new Set(deleted);
+    const heldAtDelete = takedownCandidateIds.filter((id) => !deletedSet.has(id));
 
-    // Remove processed and stale entries from queue
-    const idsToRemove = [...imagesToDelete.map((x) => x.id), ...staleIds];
+    // Remove processed and stale entries from queue. Anything the guard kept stays queued.
+    const idsToRemove = [...deleted, ...staleIds];
     if (idsToRemove.length > 0) {
       await dbWrite.$executeRaw`
       DELETE FROM "JobQueue"
@@ -848,17 +878,18 @@ export const removeBlockedImages = createJob(
     }
 
     return {
-      deleted: imagesToDelete.length,
+      deleted: deleted.length,
+      heldAtDelete: heldAtDelete.length,
       // Reported separately so the two populations are legible in the job's own output: the
       // second number is deletions that deliberately left the shared stored object alone. It is
       // NOT "account deletions" — it is everything with no moderator takedown on record, which is
       // account deletions plus every automated block plus every whole-library block.
-      retracted: takedowns.length,
-      deletedWithoutRetraction: deletedWithoutRetraction.length,
+      retracted: takedowns.filter((id) => deletedSet.has(id)).length,
+      deletedWithoutRetraction: deletedWithoutRetraction.filter((id) => deletedSet.has(id)).length,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
-      csamHoldExpired: holdExpiredDeletions.length,
+      csamHoldExpired: holdExpiredDeletions.filter((x) => deletedSet.has(x.id)).length,
       appealHeld: appealHeld.length,
       csamReviewHeld: csamReviewHeld.length,
     };

@@ -831,7 +831,13 @@ export async function queueReplacedImageDeletion(ids: number[]) {
 export async function deleteImages(
   ids: number[],
   updatePosts = true,
-  { retractPublicBlobs = false }: PurgeResizeCacheRetraction = {}
+  {
+    retractPublicBlobs = false,
+    onlyWhere,
+  }: PurgeResizeCacheRetraction & {
+    /** Extra condition on the DELETE itself; ids it excludes are skipped and not returned. */
+    onlyWhere?: Prisma.Sql;
+  } = {}
 ) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
@@ -854,6 +860,7 @@ export async function deleteImages(
     >`
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(ids)})
+        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
@@ -7204,24 +7211,29 @@ export async function reportCsamImages({
   ip?: string;
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
-  // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and the
-  // uploader is not told.
-  await dbWrite.appeal.updateMany({
-    where: {
-      entityType: EntityType.Image,
-      entityId: { in: imageIds },
-      status: AppealStatus.Pending,
-    },
-    data: {
-      status: AppealStatus.Rejected,
-      resolvedBy: user.id,
-      resolvedAt: new Date(),
-      internalNotes: 'Closed by CSAM report',
-    },
-  });
-  await dbWrite.image.updateMany({
-    where: { id: { in: imageIds } },
-    data: { needsReview: 'csam' },
+  // Flag first: an appeal that starts after this is refused by createEntityAppeal, and one that
+  // committed before it is closed below. One transaction, so a failed close cannot leave the flag
+  // beside a still-pending appeal.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: { needsReview: 'csam' },
+    });
+    // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
+    // the uploader is not told.
+    await tx.appeal.updateMany({
+      where: {
+        entityType: EntityType.Image,
+        entityId: { in: imageIds },
+        status: AppealStatus.Pending,
+      },
+      data: {
+        status: AppealStatus.Rejected,
+        resolvedBy: user.id,
+        resolvedAt: new Date(),
+        internalNotes: 'Closed by CSAM report',
+      },
+    });
   });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },

@@ -72,6 +72,7 @@ const {
   heldUsers,
   appealedIds,
   csamFlaggedIds,
+  withoutModActivity,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
   const sqlLog: string[] = [];
@@ -80,6 +81,8 @@ const {
   const heldUsers: { userId: number; oldestReport: Date }[] = [];
   const appealedIds: number[] = [];
   const csamFlaggedIds: number[] = [];
+  // Images whose block has no moderator takedown on record, so they take the non-retracting call.
+  const withoutModActivity: number[] = [];
   const mockEnv = {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
@@ -104,7 +107,9 @@ const {
     // below, which would otherwise answer it with Image rows.
     if (sql.includes('FROM "ModActivity"')) {
       const ids = (values[0] as number[]) ?? [];
-      return MOD_ACTIVITY.filter((m) => ids.includes(m.entityId));
+      return MOD_ACTIVITY.filter(
+        (m) => ids.includes(m.entityId) && !withoutModActivity.includes(m.entityId)
+      );
     }
     // Blocked images belonging to the still-held users.
     if (sql.includes('"userId" = ANY')) {
@@ -122,6 +127,7 @@ const {
     heldUsers,
     appealedIds,
     csamFlaggedIds,
+    withoutModActivity,
     mockEnv,
     mockDbRead: {
       jobQueue: {
@@ -141,7 +147,9 @@ const {
         return 0;
       }),
     },
-    mockDeleteImages: vi.fn(async () => undefined),
+    mockDeleteImages: vi.fn(async (ids: number[], ..._rest: unknown[]) =>
+      ids.map((id) => ({ id }))
+    ),
     mockLogToAxiom: vi.fn(),
   };
 });
@@ -158,12 +166,13 @@ vi.mock('~/server/utils/concurrency-helpers', () => ({ limitConcurrency: vi.fn(a
 vi.mock('~/env/other', () => ({ isProd: true }));
 vi.mock('~/env/server', () => ({ env: mockEnv }));
 
-import { removeBlockedImages } from '~/server/jobs/image-ingestion';
+import { purgeHoldGuard, removeBlockedImages } from '~/server/jobs/image-ingestion';
 
 const ctx = {} as Parameters<typeof removeBlockedImages.run>[0];
 async function runJob() {
   return (await removeBlockedImages.run(ctx).result) as Partial<{
     deleted: number;
+    heldAtDelete: number;
     staleRemoved: number;
     waitingForRetention: number;
     csamHeld: number;
@@ -196,6 +205,7 @@ beforeEach(() => {
   heldUsers.length = 0;
   appealedIds.length = 0;
   csamFlaggedIds.length = 0;
+  withoutModActivity.length = 0;
   heldUsers.push(
     { userId: HELD_USER, oldestReport: RECENT },
     { userId: STRANDED_USER, oldestReport: OLD_REPORT }
@@ -407,5 +417,67 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(deletedIds()).toContain(8);
     expect(result.csamReviewHeld).toBe(0);
+  });
+
+  // The guard's own semantics are pinned against Postgres in
+  // remove-blocked-images-hold-guard.behavior.test.ts; this pins that the job hands it over.
+  it('re-checks its holds on the delete, exempting only the report holds it expired', async () => {
+    await runJob();
+
+    const onlyWhere = deleteOptions()?.onlyWhere as { sql: string; values: unknown[] } | undefined;
+    expect(onlyWhere?.sql).toBe(purgeHoldGuard([]).sql);
+    expect(onlyWhere?.values).toEqual([[STRANDED_USER]]);
+  });
+
+  it('guards the non-retracting delete as well as the takedown one', async () => {
+    withoutModActivity.push(1);
+    await runJob();
+
+    const guards = mockDeleteImages.mock.calls.map(
+      (c) => (c[2] as { onlyWhere?: { sql: string; values: unknown[] } } | undefined)?.onlyWhere
+    );
+    expect(guards).toHaveLength(2);
+    for (const guard of guards) {
+      expect(guard?.sql).toBe(purgeHoldGuard([]).sql);
+      expect(guard?.values).toEqual([[STRANDED_USER]]);
+    }
+  });
+
+  it('keeps the queue row of an image a hold kept at delete time', async () => {
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 1).map((id) => ({ id }))
+    );
+    const result = await runJob();
+
+    expect(deletedIds()).toContain(1);
+    expect(queuePruneIds()).not.toContain(1);
+    expect(queuePruneIds()).toContain(6);
+    expect(result).toMatchObject({
+      deleted: deletedIds().length - 1,
+      heldAtDelete: 1,
+      retracted: deletedIds().length - 1,
+    });
+  });
+
+  // The returned counts are of images the DELETE removed, not of the candidates it was given.
+  it('counts an expired-hold image the guard kept as not purged', async () => {
+    mockDeleteImages.mockImplementationOnce(async (ids: number[]) =>
+      ids.filter((id) => id !== 6).map((id) => ({ id }))
+    );
+    const result = await runJob();
+
+    expect(deletedIds()).toContain(6);
+    expect(result).toMatchObject({ csamHoldExpired: 0, heldAtDelete: 1 });
+  });
+
+  it('counts a kept image on the non-retracting call as not deleted', async () => {
+    withoutModActivity.push(1);
+    mockDeleteImages
+      .mockImplementationOnce(async (ids: number[]) => ids.map((id) => ({ id })))
+      .mockImplementationOnce(async () => []);
+    const result = await runJob();
+
+    expect(mockDeleteImages.mock.calls[1]?.[0]).toEqual([1]);
+    expect(result).toMatchObject({ deletedWithoutRetraction: 0, heldAtDelete: 1 });
   });
 });

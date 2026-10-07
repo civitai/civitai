@@ -63,7 +63,7 @@ import {
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
-import { APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
+import { APPEAL_ALREADY_PENDING, IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -744,13 +744,16 @@ export async function createEntityAppeal({
   try {
     const appeal = await dbWrite.$transaction(async (tx) => {
       switch (entityType) {
-        case EntityType.Image:
-          // Update entity with needsReview = appeal
-          await tx.image.update({
-            where: { id: entityId },
-            data: { needsReview: 'appeal' },
-          });
+        case EntityType.Image: {
+          // The handler refuses any flagged image off a replica read. This re-checks only the
+          // moderator-only flag, under the row lock, so one set in between is never overwritten.
+          const updated = await tx.$executeRaw`
+            UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
+            WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
+          `;
+          if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
           break;
+        }
         default:
           // Do nothing
           break;

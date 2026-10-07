@@ -47,6 +47,8 @@ const DECIDED = 43;
 const VISIBLE = 44;
 const LEGACY = 45;
 const BLOCKED_ONLY = 46;
+const CSAM_BLOCKED = 47;
+const CSAM_SCANNED = 48;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -117,7 +119,9 @@ beforeEach(async () => {
       (${DECIDED}, 'Blocked', 'moderated', 32, NULL),
       (${VISIBLE}, 'Scanned', NULL, 1, 'appeal'),
       (${LEGACY}, 'Scanned', 'moderated', 4, 'appeal'),
-      (${BLOCKED_ONLY}, 'Blocked', NULL, 4, 'appeal');
+      (${BLOCKED_ONLY}, 'Blocked', NULL, 4, 'appeal'),
+      (${CSAM_BLOCKED}, 'Blocked', 'moderated', 32, 'csam'),
+      (${CSAM_SCANNED}, 'Scanned', NULL, 1, 'csam');
     -- FLAGGED shares its id with a post's appeal; DECIDED's own appeal is already closed.
     INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
       ('Image', ${APPEALED}, 'Pending'),
@@ -130,12 +134,13 @@ beforeEach(async () => {
 });
 
 type ScanFields = { ingestion: string; nsfwLevel: number; blockedFor: string | null };
+type LoadedFields = ScanFields & { needsReview: string | null };
 
 /** The image as `loadImageForScan` would hand it over, read from the stand-in row. */
-const scanImage = async (id: number, over: Partial<ScanFields> = {}) => {
+const scanImage = async (id: number, over: Partial<LoadedFields> = {}) => {
   const row = (
-    await holder.db.query<ScanFields>(
-      `SELECT ingestion, "nsfwLevel", "blockedFor" FROM "Image" WHERE id = $1`,
+    await holder.db.query<LoadedFields>(
+      `SELECT ingestion, "nsfwLevel", "blockedFor", "needsReview" FROM "Image" WHERE id = $1`,
       [id]
     )
   ).rows[0];
@@ -270,6 +275,52 @@ describe('a rescan that blocks an image under appeal', () => {
       ingestion: 'Blocked',
       blockedFor: 'prompt',
       nsfwLevel: 32,
+    });
+  });
+});
+
+describe('a rescan of an image carrying the moderator-only review flag', () => {
+  it.each([
+    ['a blocked image', CSAM_BLOCKED],
+    ['a visible image', CSAM_SCANNED],
+  ])('keeps the flag on %s', async (_, id) => {
+    const outcome = await scan(id);
+
+    expect(outcome.reviewKey).toBe('csam');
+    expect((await imageRow(id)).needsReview).toBe('csam');
+  });
+
+  it('keeps the flag over a pending appeal', async () => {
+    await holder.db.exec(
+      `INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES ('Image', ${CSAM_BLOCKED}, 'Pending')`
+    );
+
+    const outcome = await scan(CSAM_BLOCKED);
+
+    expect(outcome.reviewKey).toBe('csam');
+    expect(await imageRow(CSAM_BLOCKED)).toMatchObject({
+      needsReview: 'csam',
+      ingestion: 'Blocked',
+    });
+  });
+
+  it('keeps a flag that landed after the image was loaded', async () => {
+    const loaded = await scanImage(CSAM_SCANNED, { needsReview: null });
+
+    await resolveScanOutcome({ image: loaded, workflowId: 'wf', prompt: 'a landscape' });
+
+    expect((await imageRow(CSAM_SCANNED)).needsReview).toBe('csam');
+  });
+
+  it('keeps the flag when the scan blocks the image', async () => {
+    holder.tagLevel = 16;
+    vi.mocked(auditMetaData).mockReturnValue({ success: false, blockedFor: ['prompt'] } as never);
+
+    await scan(CSAM_SCANNED);
+
+    expect(await imageRow(CSAM_SCANNED)).toMatchObject({
+      needsReview: 'csam',
+      ingestion: 'Blocked',
     });
   });
 });

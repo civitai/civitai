@@ -28,7 +28,12 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getAppealRefusal, isAppealableImage, isAppealableModel3D } from '~/shared/utils/appeal';
+import {
+  getAppealRefusal,
+  IMAGE_NOT_APPEALABLE,
+  isAppealableImage,
+  isAppealableModel3D,
+} from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
@@ -101,8 +106,7 @@ export async function createEntityAppealHandler({
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
-        if (!isAppealableImage(image))
-          throw throwBadRequestError('Only an image blocked by moderators can be appealed');
+        if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
       }
       case EntityType.Model3D:
