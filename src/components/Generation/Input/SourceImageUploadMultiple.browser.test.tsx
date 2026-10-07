@@ -613,6 +613,7 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
 
     await pasteUrl(url);
     await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    await sleep(300);
     expect(vi.mocked(resizeImage)).not.toHaveBeenCalled();
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
     expect(valueWrites.some((v) => v.some((img) => img.url === url))).toBe(false);
@@ -638,11 +639,47 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     expect(reads()).toBe(2);
   });
 
+  test('an abandoned upload settling after its card was removed does not re-run the dimension check', async () => {
+    // An image already in the value that can't be read is re-read whenever the card list changes,
+    // so its read count shows whether the settle produced a change.
+    // Loadable, so its preview stays; only the (mocked) dimension read fails.
+    const existing = await loadableImageUrl();
+    mocks.getImageDimensions.mockImplementation(async (src: unknown) => {
+      if (src === existing) throw new Error('Image failed to load');
+      return { width: 1024, height: 1024 };
+    });
+    renderWithProviders(
+      <PendingHarness max={2} initialValue={[{ url: existing, width: 1024, height: 1024 }]} />
+    );
+    const readsOfExisting = () =>
+      mocks.getImageDimensions.mock.calls.filter(([src]) => src === existing).length;
+    await vi.waitFor(() => expect(readsOfExisting()).toBeGreaterThan(0));
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    const close = await vi.waitFor(() => {
+      const els = document.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="source-images"] button.mantine-ActionIcon-root:has(.tabler-icon-x)'
+      );
+      const last = els[els.length - 1];
+      if (!last) throw new Error('remove button not found');
+      return last;
+    });
+    await userEvent.click(close);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    await sleep(300);
+
+    const before = readsOfExisting();
+    uploads[0].reject(new Error(PRESIGN_ERROR));
+    await sleep(300);
+    expect(readsOfExisting()).toBe(before);
+  });
+
   test('a parent that re-renders on every pending change with a fresh value does not loop the reads', async () => {
     function FreshValueParent() {
       useImagesUploadingOrVerifying();
       const [value, setValue] = useState<ImageValue[]>([]);
-      // Ignores an equal write, as the form store does; without that the input loops on any parent.
+      // Ignores an equal write. The form-graph store does the same (its snapshot diff hands back the
+      // previous value for a deep-equal write); a parent that doesn't makes the input loop, on main too.
       const onChange = (next: ImageValue[]) =>
         setValue((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
       return (
@@ -661,7 +698,6 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
     await pickFiles(1);
     await vi.waitFor(() => expect(uploads).toHaveLength(1));
     await sleep(2000);
-    // The pre-check read and the upload's own read.
     // The pre-check, the upload's own read, and the read after re-encoding.
     expect(reads).toBeLessThanOrEqual(3);
   });
