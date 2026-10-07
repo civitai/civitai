@@ -4,5 +4,3 @@ export const TABS = [
   { value: 'pending', label: 'Pending review' },
   { value: 'auto', label: 'Auto-flagged' },
 ] as const;
-
-export type MinorQueueTab = (typeof TABS)[number]['value'];

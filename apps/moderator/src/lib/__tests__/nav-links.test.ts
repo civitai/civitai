@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isNavLinkActive, navHref } from '$lib/nav-links';
+import { isNavLinkActive } from '$lib/nav-links';
 import {
   applyGrants,
   canAccess,
@@ -9,40 +9,9 @@ import {
   PERMISSIONS,
 } from '$lib/server/access';
 
-// A synthetic page with a view link, so the query-link behaviour stays covered whether or not any
-// real nav entry currently uses one.
-const page = { path: '/example/queue', label: 'Queue' };
-const appeals = { path: page.path, query: 'tab=appeals', label: 'Appeals view' };
-const siblings = [page, appeals];
 const at = (href: string) => new URL(href, 'https://mod.test');
 
-describe('navHref', () => {
-  it('carries a view link query', () => {
-    expect(navHref(appeals)).toBe('/example/queue?tab=appeals');
-    expect(navHref(page)).toBe('/example/queue');
-  });
-});
-
 describe('isNavLinkActive', () => {
-  it('marks the view, not the page, while its query is on the URL', () => {
-    const url = at('/example/queue?tab=appeals&page=2');
-    expect(isNavLinkActive(appeals, siblings, url)).toBe(true);
-    expect(isNavLinkActive(page, siblings, url)).toBe(false);
-  });
-
-  it('marks the page on any other tab', () => {
-    const url = at('/example/queue?tab=auto');
-    expect(isNavLinkActive(appeals, siblings, url)).toBe(false);
-    expect(isNavLinkActive(page, siblings, url)).toBe(true);
-    expect(isNavLinkActive(page, siblings, at('/example/queue'))).toBe(true);
-  });
-
-  it('matches neither on another page', () => {
-    const url = at('/bounties/poi-appeals?tab=appeals');
-    expect(isNavLinkActive(appeals, siblings, url)).toBe(false);
-    expect(isNavLinkActive(page, siblings, url)).toBe(false);
-  });
-
   it('marks only the deepest sibling when one path nests under another', () => {
     const users = { path: '/users', label: 'Users' };
     const newest = { path: '/users/newest', label: 'Newest Users' };

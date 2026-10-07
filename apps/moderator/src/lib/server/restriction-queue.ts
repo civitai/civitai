@@ -76,16 +76,22 @@ export async function restrictionQueueLoad(
 // makes no such decision. `resolve` and `ban` call `unwiredRuling` because they hand the row to a verdict
 // path that only some types have. `flagSuspicious` does not, and should not: it copies selected
 // triggers into the shared suspicious-match list, writes nothing to the account, and tells the user
-// nothing. A prompt worth flagging is worth flagging whatever queue it was raised in; scam triggers
-// are excluded because they are not prompts.
-async function restrictionById(id: number): Promise<RestrictionRow | null> {
+// nothing. Scam triggers are excluded because they are not prompts.
+//
+// 🔴 The page's own `types` are enforced on the row afterwards: pages are granted separately, so a role
+// holding one queue must not rule on, ban from or flag from the other's rows by posting an id.
+async function restrictionById(
+  id: number,
+  types: readonly RestrictionType[]
+): Promise<RestrictionRow | null> {
   const { items } = await getGenerationRestrictions({
     page: 1,
     limit: 1,
     type: 'any',
     restrictionId: id,
   });
-  return items[0] ?? null;
+  const row = items[0];
+  return row && (types as readonly string[]).includes(row.type) ? row : null;
 }
 
 /**
@@ -113,7 +119,7 @@ function unwiredRuling(row: RestrictionRow): string | null {
   return unwiredRulingReason(row.type);
 }
 
-export const restrictionActions: Actions = {
+export const restrictionActions = (types: readonly RestrictionType[]): Actions => ({
   resolve: async ({ request, locals }) => {
     const input = parseForm(
       z.object({
@@ -126,7 +132,7 @@ export const restrictionActions: Actions = {
 
     // Owner read from the restriction, never the form: this id is what the ModActivity row names, so a
     // posted one lets the audit trail record an account that was never acted on.
-    const row = await restrictionById(input.userRestrictionId);
+    const row = await restrictionById(input.userRestrictionId, types);
     if (!row) return fail(404, { error: 'Restriction not found.' });
     const unwired = unwiredRuling(row);
     if (unwired) return fail(400, { error: unwired });
@@ -152,7 +158,7 @@ export const restrictionActions: Actions = {
     if (unexplained) return fail(400, { error: unexplained });
 
     // The account banned is the restriction's owner, not whoever the form named.
-    const row = await restrictionById(input.userRestrictionId);
+    const row = await restrictionById(input.userRestrictionId, types);
     if (!row) return fail(404, { error: 'Restriction not found.' });
     // Checked BEFORE the ban, not just before the resolve: this action bans and then rules, and a ban
     // that landed against a restriction that cannot be resolved leaves exactly the stranded Pending row
@@ -202,7 +208,7 @@ export const restrictionActions: Actions = {
     const keys = new Set(form.getAll('key').map(String));
     if (!keys.size) return fail(400, { error: 'Nothing selected.' });
 
-    const row = await restrictionById(id.data);
+    const row = await restrictionById(id.data, types);
     if (!row) return fail(404, { error: 'Restriction not found.' });
 
     const matches = row.triggers
@@ -221,4 +227,4 @@ export const restrictionActions: Actions = {
     const saved = await saveSuspiciousMatches(matches, locals.user.id);
     return { success: true, savedCount: saved };
   },
-};
+});

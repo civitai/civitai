@@ -4,4 +4,4 @@ import { restrictionActions, restrictionQueueLoad } from '$lib/server/restrictio
 export const load: PageServerLoad = ({ url }) =>
   restrictionQueueLoad(url, { types: ['scam'], fallback: 'scam' });
 
-export const actions: Actions = restrictionActions;
+export const actions: Actions = restrictionActions(['scam']);

@@ -9,7 +9,6 @@
 
   import {
     RESTRICTION_TYPE_LABELS,
-    RESTRICTION_TYPE as RESTRICTION_TYPE_DEFAULT,
     type RestrictionType,
   } from '$lib/restriction-types';
 
@@ -18,8 +17,14 @@
     status,
     type,
     types,
-  }: { q: string; status: string; type: RestrictionType; types?: readonly RestrictionType[] } =
-    $props();
+    fallbackType,
+  }: {
+    q: string;
+    status: string;
+    type: RestrictionType;
+    types?: readonly RestrictionType[];
+    fallbackType: RestrictionType;
+  } = $props();
 
   // Same staging as the other filter bars: rulings reload the page, and a mirrored prop would clear a
   // search the moderator had typed but not yet submitted.
@@ -70,7 +75,7 @@
            `page`/`selected` because both name a row in the set being replaced. -->
       <Select.Root
         type="single"
-        bind:value={() => type, (v) => navigate({ type: v ?? RESTRICTION_TYPE_DEFAULT })}
+        bind:value={() => type, (v) => navigate({ type: v ?? fallbackType })}
       >
         <Select.Trigger id="restriction-type" class="mt-1 w-40">
           {RESTRICTION_TYPE_LABELS[type]}

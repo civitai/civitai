@@ -8,12 +8,16 @@ const { getGenerationRestrictions } = vi.hoisted(() => ({
 vi.mock('$lib/server/user-restriction.service', () => ({
   getGenerationRestrictions,
   saveSuspiciousMatches: vi.fn(),
-  unwiredRulingReason: vi.fn(),
+  unwiredRulingReason: vi.fn(() => null),
+}));
+const { resolveRestriction, setBanned } = vi.hoisted(() => ({
+  resolveRestriction: vi.fn(),
+  setBanned: vi.fn(),
 }));
 vi.mock('$lib/server/user-actions.service', () => ({
   banConfirmed: vi.fn(),
-  resolveRestriction: vi.fn(),
-  setBanned: vi.fn(),
+  resolveRestriction,
+  setBanned,
 }));
 
 const { load, actions } = await import('../+page.server');
@@ -47,5 +51,43 @@ describe('users/scam-restrictions load', () => {
 
   it('offers the same actions as the generator queue', () => {
     expect(Object.keys(actions!).sort()).toEqual(['ban', 'flagSuspicious', 'resolve']);
+  });
+});
+
+describe('users/scam-restrictions actions — queue scope', () => {
+  const event = (fields: Record<string, string>) => {
+    const data = new FormData();
+    for (const [k, v] of Object.entries(fields)) data.append(k, v);
+    return {
+      request: { formData: async () => data },
+      locals: { user: { id: 7 }, grants: { 'audit.ban.execute': true } },
+    } as never;
+  };
+  const row = (type: string) => ({ id: 5, userId: 42, type, triggers: [] });
+
+  it('refuses a generation restriction id on every action', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [row('generation')], totalCount: 1 });
+
+    const results = (await Promise.all([
+      actions!.resolve!(event({ userRestrictionId: '5', status: 'Upheld' })),
+      actions!.ban!(event({ userRestrictionId: '5' })),
+      actions!.flagSuspicious!(event({ userRestrictionId: '5', key: '5-0' })),
+    ])) as { status: number }[];
+
+    expect(results.map((r) => r.status)).toEqual([404, 404, 404]);
+    expect(resolveRestriction).not.toHaveBeenCalled();
+    expect(setBanned).not.toHaveBeenCalled();
+  });
+
+  it('resolves a scam restriction', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [row('scam')], totalCount: 1 });
+    resolveRestriction.mockResolvedValue({ ok: true });
+
+    const result = await actions!.resolve!(event({ userRestrictionId: '5', status: 'Overturned' }));
+
+    expect(result).toEqual({ success: true });
+    expect(resolveRestriction).toHaveBeenCalledWith(
+      expect.objectContaining({ userRestrictionId: 5, status: 'Overturned', userId: 42 })
+    );
   });
 });

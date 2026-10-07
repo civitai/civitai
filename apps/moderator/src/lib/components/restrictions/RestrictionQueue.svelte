@@ -26,7 +26,12 @@
   };
 
   // `types` is the type picker's options; a queue fixed to one type omits it and shows no picker.
-  let { data, types }: { data: QueueData; types?: readonly RestrictionType[] } = $props();
+  let {
+    data,
+    types,
+    fallbackType,
+  }: { data: QueueData; types?: readonly RestrictionType[]; fallbackType?: RestrictionType } =
+    $props();
 
   const selectHref = (id: number) => urlWith(page.url, { selected: id });
   const pageHref = (n: number) => urlWith(page.url, { page: n, selected: null });
@@ -50,7 +55,7 @@
 </script>
 
 
-<RestrictionFilters q={data.q} status={data.status} type={data.type} {types} />
+<RestrictionFilters q={data.q} status={data.status} type={data.type} {types} fallbackType={fallbackType ?? data.type} />
 
 <!-- A fixed-width pane here does not stack below `lg`; pinned by
      `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`. -->

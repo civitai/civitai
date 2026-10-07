@@ -43,7 +43,7 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
-  import { isNavLinkActive, isPathActive, navHref } from '$lib/nav-links';
+  import { isNavLinkActive, isPathActive } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -160,7 +160,7 @@
                       </CollapsibleTrigger>
                       <CollapsibleContent>
                         <SidebarMenuSub>
-                          {#each item.children as childLink (navHref(childLink) ?? childLink.label)}
+                          {#each item.children as childLink (childLink.path ?? childLink.label)}
                             {@const cnt = countFor(childLink.countKey)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
@@ -170,7 +170,7 @@
                                   <a
                                     href={childLink.external
                                       ? `${data.civitaiUrl}${childLink.path}`
-                                      : navHref(childLink)}
+                                      : childLink.path}
                                     target={childLink.external ? '_blank' : undefined}
                                     rel={childLink.external ? 'noreferrer' : undefined}
                                     {...props}

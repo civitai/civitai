@@ -139,9 +139,10 @@
   };
 
   // Cached server-side and fetched here: the Pending count alone is ~10s, which is not a price to pay
-  // on every page render to label three tabs.
+  // on every page render to label two tabs. The appeals page has no tabs, so it skips the fetch.
   let counts = $state<{ pending: number; auto: number; appeals: number } | null>(null);
   $effect(() => {
+    if (!data.tabs) return;
     fetch('/api/minor-queue-counts')
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => (counts = d))

@@ -30,8 +30,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { SvelteMap } from 'svelte/reactivity';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
-  import { navHref } from '$lib/nav-links';
-  import { sidebarCounts } from '$lib/sidebar-counts.svelte';
+    import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
   import { FormState } from '$lib/form-state.svelte';
   import type { ActionData, PageData } from './$types';
@@ -260,7 +259,7 @@
 
   const sections = $derived.by(() => {
     const toItem = (link: (typeof data.nav)[number]): Item => ({
-      path: navHref(link) as string,
+      path: link.path as string,
       label: link.label,
       informational: link.informational,
       // `?? null`, not `?? 0`: a key the counts endpoint omitted is one it could not measure, and 0
