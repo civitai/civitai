@@ -7,6 +7,7 @@
   import type { ResolutionSubject } from '@civitai/shared/resolution-reasons';
   import {
     RESOLUTION_NOTE_MAX_LENGTH,
+    reasonRequiresNote,
     resolutionReasonsFor,
     type ResolutionVerdict,
   } from '@civitai/shared/resolution-reasons';
@@ -64,8 +65,8 @@
       rows={2}
       maxlength={RESOLUTION_NOTE_MAX_LENGTH}
       bind:value={note}
-      required={reason === 'other'}
-      placeholder={reason === 'other'
+      required={reasonRequiresNote(reason)}
+      placeholder={reasonRequiresNote(reason)
         ? 'Say why (required for Other). Never shown to the user.'
         : 'Internal note (optional). Never shown to the user.'}
     />

@@ -20,7 +20,10 @@
   // Used by the `generics=` attribute above, which ESLint cannot see.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   import type { ResolutionSubject } from '@civitai/shared/resolution-reasons';
-  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
+  import {
+    resolutionReasonError,
+    type ResolutionVerdict,
+  } from '@civitai/shared/resolution-reasons';
   import type { RulingChoice } from '$lib/ruling-choices';
   import ResolutionReasonFields from './ResolutionReasonFields.svelte';
 
@@ -56,6 +59,9 @@
   } = $props();
 
   const chosen = $derived(choices.find((c) => c.verdict === draft.verdict));
+  const unrecordable = $derived(
+    chosen ? resolutionReasonError(subject, chosen.verdict, draft.reason, draft.note) : null
+  );
 
   // A reason and note are written for one verdict; a switch must not carry them to the other.
   const choose = (verdict: Verdict) => {
@@ -99,7 +105,7 @@
           type="submit"
           {size}
           variant={chosen.variant}
-          disabled={disabled || !draft.reason}
+          disabled={disabled || !!unrecordable}
         >
           {chosen.confirmLabel}
         </Button>

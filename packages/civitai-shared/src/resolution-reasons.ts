@@ -122,6 +122,10 @@ export function resolutionReasonLabel(value: string | null | undefined): string 
   return value;
 }
 
+export function reasonRequiresNote(reason: string | null | undefined): boolean {
+  return reason === OTHER.value;
+}
+
 /**
  * Why a reason/note pair cannot be recorded for this verdict, or null when it can. A reason is
  * required, must belong to the verdict (an uphold reason on an overturn is a mislabel, not a
@@ -136,7 +140,7 @@ export function resolutionReasonError<S extends ResolutionSubject>(
   if (!reason) return 'Pick a reason for this ruling.';
   if (!resolutionReasonsFor(subject, verdict).some((r) => r.value === reason))
     return `"${reason}" is not a reason for ${verdict}.`;
-  if (reason === OTHER.value && !note?.trim()) return 'Add a note when the reason is Other.';
+  if (reasonRequiresNote(reason) && !note?.trim()) return 'Add a note when the reason is Other.';
   if (note && note.length > RESOLUTION_NOTE_MAX_LENGTH)
     return `The note is longer than ${RESOLUTION_NOTE_MAX_LENGTH} characters.`;
   return null;

@@ -14,7 +14,7 @@
   import ResolutionReasonFields from '$lib/components/ResolutionReasonFields.svelte';
   import RulingForm from '$lib/components/RulingForm.svelte';
   import { RESTRICTION_RULING_CHOICES } from '$lib/ruling-choices';
-  import { resolutionReasonLabel } from '@civitai/shared/resolution-reasons';
+  import { reasonRequiresNote, resolutionReasonLabel } from '@civitai/shared/resolution-reasons';
   import TriggerCard from './TriggerCard.svelte';
   import StatusBadge from './StatusBadge.svelte';
 
@@ -150,7 +150,7 @@
           enhancer={ban.enhance}
           busy={ban.submitting}
           canConfirm={!!banReason}
-          noteRequired={banReason === 'other'}
+          noteRequired={reasonRequiresNote(banReason)}
           onCancel={toggleBan}
         >
           {#snippet hidden()}
@@ -167,7 +167,7 @@
                 showNote={false}
                 bind:reason={banReason}
               />
-              {#if banReason === 'other'}
+              {#if reasonRequiresNote(banReason)}
                 <p class="mt-1 text-xs text-amber-300">
                   Other needs an internal note below saying why; it is recorded on the ruling too.
                 </p>
