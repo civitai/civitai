@@ -9,12 +9,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *
  * WHY THIS FILE DRIVES THE REAL CLIENT: the hazard here is a SEAM, not a component. The flag has
  * to be symmetric across TWO modules — `cached-array.ts` must pass `{ compress }` to every one of
- * its `redis.packed` reads and to every write but the (deliberately uncompressed) notFound marker,
+ * its `redis.packed` reads and to every write but fetch's (deliberately uncompressed) notFound marker,
  * AND `client.ts`'s `packed.mGet` must actually honour it (before #4588 it could not — only
  * `packed.get` took the option, and `createCachedArray` reads exclusively through `mGet`).
  * A test that mocks `redis.packed` proves neither half: it would pass against a client whose mGet
  * ignores the flag entirely, which is the exact production defect — a compressed value decoded
- * on the general msgpack path throws, the entry is EVICTED, and the read reports a MISS. Permanent miss+evict loop, no error anywhere.
+ * on the general msgpack path throws, the entry is EVICTED, and the read reports a MISS.
+ * Permanent miss+evict loop, no error anywhere.
  *
  * So the only thing faked here is the TRANSPORT: `redis`'s client factory is replaced by an
  * in-memory server holding raw Buffers. Everything above the socket — `createCacheRedis`,
@@ -208,19 +209,19 @@ describe('createCachedObject { compress: true } — write path', () => {
     expect(store.has(`${KEY}:7`)).toBe(true);
   });
 
-  it('back-compat: a notFound marker written the OLD way (compressed) still reads as a negative hit', async () => {
+  it('a COMPRESSED notFound marker (as invalidate() rewrites it) still reads as a negative hit', async () => {
     const lookupFn = vi.fn(async () => ({} as Record<string, Row>));
     const { cache } = buildCache({ compress: true }, lookupFn);
-    const legacy = await compressPacked(
+    const compressedMarker = await compressPacked(
       Buffer.from(pack({ id: 11, notFound: true, cachedAt: new Date() }))
     );
-    expect(legacy[0]).toBe(PACKED_BROTLI_SENTINEL);
-    store.set(`${KEY}:11`, legacy);
+    expect(compressedMarker[0]).toBe(PACKED_BROTLI_SENTINEL);
+    store.set(`${KEY}:11`, compressedMarker);
 
     const got = await cache.fetch([11]);
     expect(got['11']).toBeUndefined();
     expect(lookupFn).not.toHaveBeenCalled();
-    expect(stored(11)!.equals(legacy)).toBe(true);
+    expect(stored(11)!.equals(compressedMarker)).toBe(true);
   });
 });
 

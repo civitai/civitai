@@ -57,7 +57,7 @@ export type CachedLookupOptions<T extends object> = {
   // compressed value read through the general msgpack path throws → the entry is EVICTED and
   // reported as a miss — a silent permanent miss+evict loop. Writes may skip compression (fetch's
   // not-found marker does): the compress-aware read passes any non-sentinel value straight to
-  // msgpack. invalidate() rewrites whatever it read, markers included, compressed.
+  // msgpack. invalidate() rewrites the records and not-found markers it reads, compressed.
   //
   // Back-compat is free in BOTH directions: the compress-aware read is sentinel-discriminated, so
   // legacy uncompressed entries written before the flag was flipped still decode. No key-bust or
@@ -155,10 +155,10 @@ const UPDATE_LOCK_TTL = 5;
 /**
  * Bounds on the per-cache in-flight miss-fill registry (see `missFillInFlight` in
  * createCachedArray). An entry older than MAX_AGE is not treated as in flight. At MAX_ENTRIES it
- * first drops entries older than MAX_AGE (skipped until its oldest entry can have gone stale, so a
- * full registry of fresh entries is not re-scanned on every fetch) and, if still full, registers no new ids — so a
- * lookup that never settles can neither grow it without bound nor inflate the count forever. Both
- * only affect the measurement: a concurrent fetch of an id left unregistered at the cap is not
+ * first drops entries older than MAX_AGE (skipped until its oldest entry can have gone stale,
+ * so a full registry of fresh entries is not re-scanned on every fetch) and, if still full,
+ * registers no new ids — so a lookup that never settles can neither grow it without bound nor
+ * inflate the count forever. Both only affect the measurement: a concurrent fetch of an id left unregistered at the cap is not
  * counted, so the metric can read low when more than MAX_ENTRIES ids are being filled at once.
  */
 const MISS_FILL_IN_FLIGHT_MAX_AGE_MS = 30_000;
