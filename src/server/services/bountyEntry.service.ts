@@ -249,6 +249,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         select: { userId: true },
         where: { awardedToId: null, bountyId: entry.bountyId },
       });
+      // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
       await tx.bounty.update({
         where: { id: entry.bountyId },
         data: {

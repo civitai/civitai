@@ -233,11 +233,13 @@ async function audit(userId: number, slot: Slot, source: string) {
 }
 
 /**
- * `null` when no strike landed; the case stands either way. The strike is linked to its case as soon
- * as the row exists, so a later failure cannot leave it out of reach of an overturn.
+ * `null` when no live strike resulted; the case stands either way. The strike is linked to its case
+ * as soon as the row exists, so a later failure cannot leave it out of reach of an overturn. A case
+ * overturned before that link voids the strike at once; escalation then counts nothing for it.
  */
 async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slot) {
   let landed: number | null = null;
+  let voided = false;
   try {
     const strike = await createStrike({
       userId,
@@ -253,12 +255,35 @@ async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slo
       notifyUser: false,
       onCreated: async ({ id }) => {
         landed = id;
-        await linkScamStrike(slot.userRestrictionId, slot.index, evidence.dedupeKey, id).catch(
-          (error) =>
-            logError('strike record failed', userId, evidence.source, error, slot.userRestrictionId)
-        );
+        voided = await linkScamStrike(
+          slot.userRestrictionId,
+          slot.index,
+          evidence.dedupeKey,
+          id
+        ).catch(async (error) => {
+          await logError(
+            'strike record failed',
+            userId,
+            evidence.source,
+            error,
+            slot.userRestrictionId
+          );
+          return false;
+        });
       },
     });
+    if (strike && voided) {
+      await logToAxiom({
+        name: 'scam-auto-mute',
+        type: 'info',
+        message: 'strike voided: its case was overturned before the strike landed',
+        userId,
+        source: evidence.source,
+        userRestrictionId: slot.userRestrictionId,
+        strikeId: strike.id,
+      }).catch(() => undefined);
+      return null;
+    }
     return strike?.id ?? null;
   } catch (error) {
     await logError(

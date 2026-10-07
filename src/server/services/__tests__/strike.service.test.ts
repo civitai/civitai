@@ -720,6 +720,23 @@ describe('strike.service', () => {
       );
     });
 
+    it('sums only Active, unexpired strikes, so a strike voided as it landed counts for nothing', async () => {
+      const { queryRaw } = mockTransactionForEscalation(0, {
+        muted: false,
+        muteExpiresAt: null,
+        meta: {},
+      });
+
+      expect(await evaluateStrikeEscalation(1, { allowMute: true })).toEqual({
+        totalPoints: 0,
+        action: 'none',
+      });
+      const [strings, ...values] = queryRaw.mock.calls[0];
+      expect((strings as string[]).join('?')).toContain('"status" = ?::"StrikeStatus"');
+      expect((strings as string[]).join('?')).toContain('"expiresAt" > NOW()');
+      expect(values).toContain(StrikeStatus.Active);
+    });
+
     it('a voided Scam strike never lifts the mute its Pending case holds, but drops the review flag', async () => {
       const { userUpdate } = mockTransactionForEscalation(
         0,

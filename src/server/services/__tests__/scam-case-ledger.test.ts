@@ -16,6 +16,7 @@ const {
   closeScamCasesOpenedBefore,
   restoreScamCases,
   lastModeratorUnmuteAt,
+  linkScamStrike,
   recordScamCleanup,
   scamTextSeenBefore,
   scamVerdictActioned,
@@ -182,6 +183,28 @@ describe('scam case ledger', () => {
     expect(sqlOf(call)).toContain(`SET triggers = jsonb_set(triggers, ARRAY[?, ?], ?::jsonb)`);
     expect(sqlOf(call)).toContain(`WHERE id = ? AND triggers -> ?::int ->> 'dedupeKey' = ?`);
     expect(values(call)).toEqual(['2', 'cleanup', JSON.stringify(record), 5, 2, 'wf-1']);
+  });
+
+  describe('linkScamStrike', () => {
+    it('locks the case row before it writes the link', async () => {
+      const tx = {
+        $queryRaw: vi.fn(async () => [{ status: 'Pending' }]),
+        $executeRaw: vi.fn(async () => 1),
+      };
+      dbMock.dbWrite.$transaction.mockImplementationOnce(async (cb: (t: unknown) => unknown) =>
+        cb(tx)
+      );
+
+      expect(await linkScamStrike(5, 2, 'wf-1', 77)).toBe(false);
+
+      const [lock] = tx.$queryRaw.mock.calls;
+      expect(sqlOf(lock)).toContain('SELECT status FROM "UserRestriction" WHERE id = ? FOR UPDATE');
+      expect(values(lock)).toEqual([5]);
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.$executeRaw.mock.invocationCallOrder[0]
+      );
+      expect(sqlOf(tx.$executeRaw.mock.calls[0])).toContain('SET triggers = jsonb_set');
+    });
   });
 
   describe('voidScamCaseStrikes', () => {

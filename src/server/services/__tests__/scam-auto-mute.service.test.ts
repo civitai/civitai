@@ -21,7 +21,7 @@ const m = vi.hoisted(() => ({
   closeScamCasesOpenedBefore: vi.fn(async (): Promise<number[]> => []),
   appendScamTrigger: vi.fn(),
   recordScamCleanup: vi.fn(async () => undefined),
-  linkScamStrike: vi.fn(async () => undefined),
+  linkScamStrike: vi.fn(async () => false),
   restoreScamCases: vi.fn(async () => undefined),
   createStrike: vi.fn(),
 }));
@@ -223,6 +223,19 @@ describe('autoMuteScamAccount', () => {
     );
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ message: 'strike failed' })
+    );
+  });
+
+  it('reports no live strike when its case was overturned before the strike landed', async () => {
+    m.linkScamStrike.mockResolvedValueOnce(true);
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: null });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        message: 'strike voided: its case was overturned before the strike landed',
+        strikeId: 77,
+        userRestrictionId: 5,
+      })
     );
   });
 

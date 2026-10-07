@@ -1236,6 +1236,10 @@ export async function settleBountyPayout(
 }
 
 /**
+ * Invariant: once an award is recorded, its `awardedAt` marks and `payoutWinnerUserId` are cleared
+ * only here. Clearing them anywhere else would let an award that was paid but not yet stamped
+ * settled be refunded as well.
+ *
  * The moderator override for a recorded award no retry can pay: it has no winner, or no supporter is
  * marked as awarding it. The award becomes a refund to its supporters, and the caller may delete once
  * this returns true. If the refund also fails, the supporter rows are logged before the delete

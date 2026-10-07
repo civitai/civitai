@@ -259,6 +259,7 @@ async function settleExpiredBounty({
       return { kind: 'refund' as const, currency, poiHidden: false };
     }
 
+    // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
     await tx.$executeRawUnsafe(`
         UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
       `);
