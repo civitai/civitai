@@ -35,6 +35,7 @@ import {
   updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import { keepPendingAppealFlags } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -230,6 +231,7 @@ export const setTosViolationHandler = async ({
         updatedAt: new Date(),
       },
     });
+    await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
 
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on
