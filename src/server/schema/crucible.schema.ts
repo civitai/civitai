@@ -310,6 +310,19 @@ export const getJudgingProgressSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export type CrucibleJudgingStatus = {
+  crucibleId: number;
+  judged: boolean;
+  available: boolean;
+  votesUsedUp: boolean;
+};
+
+export type GetJudgingStatusesSchema = z.infer<typeof getJudgingStatusesSchema>;
+export const getJudgingStatusesSchema = z.object({
+  crucibleIds: z.array(z.number().int()).min(1).max(100),
+  browsingLevel: z.number().int().min(0).optional(),
+});
+
 export const getJudgingPairSchema = z.object({
   crucibleId: z.number(),
   // Entry IDs to exclude from pair selection (e.g., recently skipped entries)

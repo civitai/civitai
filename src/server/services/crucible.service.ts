@@ -47,6 +47,7 @@ import type {
   RemoveCrucibleEntrySchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
+import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
 import {
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
@@ -2608,6 +2609,60 @@ export const getJudgingProgress = async ({
   // Fewer than two visible entries also counts zero pairs, but that is the browsing level
   // hiding entries, not this judge's votes running out.
   return { remainingPairs, votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2 };
+};
+
+/** What the crucible cards show a judge: whether each open crucible still has pairs for them. */
+export const getJudgingStatuses = async ({
+  crucibleIds,
+  browsingLevel,
+  userId,
+  isGreen = false,
+  isModerator = false,
+  blockedByUserIds,
+}: GetJudgingStatusesSchema & {
+  userId: number;
+  isGreen?: boolean;
+  isModerator?: boolean;
+  blockedByUserIds?: number[];
+}): Promise<CrucibleJudgingStatus[]> => {
+  const crucibles = await dbRead.crucible.findMany({
+    where: {
+      id: { in: crucibleIds },
+      status: CrucibleStatus.Active,
+      // Status lags the clock until finalize-crucibles runs.
+      OR: [{ endAt: null }, { endAt: { gt: new Date() } }],
+    },
+    select: {
+      id: true,
+      userId: true,
+      textNsfw: true,
+      nsfwLevel: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
+    },
+  });
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
+  const open = crucibles.filter(
+    (crucible) =>
+      !isCrucibleHiddenByScan(crucible, viewer) &&
+      !isCrucibleOffSite(crucible, viewer) &&
+      !isCrucibleBlockedForViewer(crucible, viewer)
+  );
+
+  const counts = await countJudgingPairs({
+    crucibleIds: open.map(({ id }) => id),
+    userId,
+    viewerLevel: getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel }),
+  });
+  return open.map(({ id }) => {
+    const { remainingPairs, visibleEntries, judged } = counts.get(id)!;
+    return {
+      crucibleId: id,
+      judged,
+      available: remainingPairs > 0,
+      votesUsedUp: remainingPairs === 0 && visibleEntries >= 2,
+    };
+  });
 };
 
 type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };

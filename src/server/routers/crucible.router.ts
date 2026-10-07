@@ -18,6 +18,7 @@ import {
   getMinVotesToPlaceHandler,
   getRequiredModelsHandler,
   getJudgingProgressHandler,
+  getJudgingStatusesHandler,
   getUserActiveCruciblesHandler,
   getUserCrucibleStatsHandler,
   submitEntryHandler,
@@ -35,6 +36,7 @@ import {
   getCrucibleByIdSchema,
   getCrucibleRequiredModelsSchema,
   getJudgingProgressSchema,
+  getJudgingStatusesSchema,
   getCruciblesInfiniteSchema,
   getFeaturedCrucibleSchema,
   getJudgesCountSchema,
@@ -125,6 +127,13 @@ export const crucibleRouter = router({
     .use(rateLimit({ limit: 120, period: 60 }))
     .input(getJudgingProgressSchema)
     .query(getJudgingProgressHandler),
+
+  // protectedProcedure: a read on the feed, so a muted user must not get FORBIDDEN here.
+  getJudgingStatuses: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .input(getJudgingStatusesSchema)
+    .query(getJudgingStatusesHandler),
 
   submitVote: guardedProcedure
     .use(isFlagProtected('crucible'))

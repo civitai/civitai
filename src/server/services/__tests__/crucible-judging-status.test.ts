@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock, redisMock } from '~/__tests__/mocks';
-import { countJudgingPairs } from '~/server/services/crucible.service';
+import { countJudgingPairs, getJudgingStatuses } from '~/server/services/crucible.service';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
 import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY as CAP } from '~/shared/constants/crucible.constants';
 
 const JUDGE = 42;
@@ -79,5 +80,86 @@ describe('countJudgingPairs', () => {
 
     expect(counts.size).toBe(0);
     expect(queryRaw).not.toHaveBeenCalled();
+  });
+});
+
+const findMany = dbMock.dbRead.crucible.findMany;
+const crucibleRow = (id: number, extra: Record<string, unknown> = {}) => ({
+  id,
+  userId: 555,
+  nsfwLevel: 1,
+  textNsfw: false,
+  ingestion: 'Scanned',
+  image: { ingestion: 'Scanned' },
+  ...extra,
+});
+
+describe('getJudgingStatuses', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    judgeState({});
+  });
+
+  it('reports available, caught up and never judged', async () => {
+    findMany.mockResolvedValue([crucibleRow(1), crucibleRow(2), crucibleRow(3)]);
+    queryRaw.mockResolvedValue(entries({ 1: [10, 11, 12], 2: [20, 21], 3: [30, 31] }));
+    judgeState({
+      1: { voted: ['10:11'], votes: { 10: 1, 11: 1 } },
+      2: { voted: ['20:21'], votes: { 20: 1, 21: 1 } },
+    });
+
+    const statuses = await getJudgingStatuses({ crucibleIds: [1, 2, 3], userId: JUDGE });
+
+    expect(statuses).toEqual([
+      { crucibleId: 1, judged: true, available: true, votesUsedUp: false },
+      { crucibleId: 2, judged: true, available: false, votesUsedUp: true },
+      { crucibleId: 3, judged: false, available: true, votesUsedUp: false },
+    ]);
+  });
+
+  it('does not call a judge caught up when their browsing level hides the entries', async () => {
+    findMany.mockResolvedValue([crucibleRow(1)]);
+    queryRaw.mockResolvedValue(entries({ 1: [10] }));
+    judgeState({ 1: { voted: ['10:11'], votes: { 10: 1, 11: 1 } } });
+
+    const [status] = await getJudgingStatuses({ crucibleIds: [1], userId: JUDGE });
+
+    expect(status).toMatchObject({ judged: true, available: false, votesUsedUp: false });
+  });
+
+  it('asks only for active crucibles that have not ended', async () => {
+    findMany.mockResolvedValue([]);
+
+    await getJudgingStatuses({ crucibleIds: [1], userId: JUDGE });
+
+    expect(findMany.mock.calls[0][0].where).toMatchObject({
+      id: { in: [1] },
+      status: CrucibleStatus.Active,
+      OR: [{ endAt: null }, { endAt: { gt: expect.any(Date) } }],
+    });
+  });
+
+  it('omits crucibles the viewer may not see', async () => {
+    findMany.mockResolvedValue([
+      crucibleRow(1, { ingestion: 'Pending' }), // under scan
+      crucibleRow(2, { userId: 777 }), // host blocked the viewer
+      crucibleRow(3),
+    ]);
+    queryRaw.mockResolvedValue(entries({ 3: [30, 31] }));
+
+    const statuses = await getJudgingStatuses({
+      crucibleIds: [1, 2, 3],
+      userId: JUDGE,
+      blockedByUserIds: [777],
+    });
+
+    expect(statuses.map((s) => s.crucibleId)).toEqual([3]);
+  });
+
+  // R (4) is not in CRUCIBLE_SFW_LEVELS (PG and PG13 only).
+  it('omits crucibles that are not on site for a green viewer', async () => {
+    findMany.mockResolvedValue([crucibleRow(1, { nsfwLevel: 4 })]);
+
+    expect(await getJudgingStatuses({ crucibleIds: [1], userId: JUDGE, isGreen: true })).toEqual([]);
   });
 });
