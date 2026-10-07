@@ -14,6 +14,16 @@ import { promisify } from 'util';
  * of tensors → multi-MB `tensors[]`; the safetensors header read is capped at 64 MiB,
  * measured ~36 ms compress / ~5 ms decompress) does NOT block the Node event loop. The
  * call sites in redis/client.ts set/get are already async and simply `await` these.
+ * Off-loop is not free, though: the threadpool's CPU is still the pod's CPU.
+ *
+ * WINDOW SIZED TO THE VALUE: every compress is a one-shot encoder, so it allocates its window
+ * buffers fresh. At brotli's default 22-bit (4 MiB) window that allocation is large enough that
+ * musl (our node:24-alpine base) serves it straight from the kernel, page-faulted and zeroed on
+ * every call. Measured with process.cpuUsage() on node:24-alpine3.22 over ~3 KB
+ * generation-metadata values: 0.75–1.0 ms CPU per compress, ~83% of it system time, vs 0.19 ms
+ * with the window sized to the input (same ratio, byte-exact round trip) and 0.11 ms for the
+ * default window on glibc. See packedBrotliWindowBits. Decoding is unaffected: the decoder reads
+ * the window from each stream's header, so values written with the old window still decode.
  *
  * On-disk format for a compressed value is a single SENTINEL prefix byte (0x01 = brotli)
  * followed by the brotli stream of the msgpack-packed Buffer.
@@ -84,6 +94,22 @@ const brotliDecompress = promisify(zlib.brotliDecompress);
 export type PackedCodecTimer = (op: 'compress' | 'decompress', seconds: number) => void;
 
 /**
+ * Smallest brotli window (log2 bytes) that covers the whole input, clamped to brotli's minimum
+ * and to its DEFAULT (22) rather than its maximum (24), so large values keep the window they
+ * always had. A window larger than the input buys no extra matches — the ratio is unchanged.
+ *
+ * Trade-off at the large end: ~358 KiB tensor-metadata gets 19 bits instead of 22 — same ratio and
+ * compress CPU, but decompress measured ~0.5 → ~0.9 ms; that cache is read rarely enough not to matter.
+ */
+export function packedBrotliWindowBits(byteLength: number): number {
+  const { BROTLI_MIN_WINDOW_BITS, BROTLI_DEFAULT_WINDOW } = zlib.constants;
+  return Math.min(
+    BROTLI_DEFAULT_WINDOW,
+    Math.max(BROTLI_MIN_WINDOW_BITS, Math.ceil(Math.log2(byteLength + 1)))
+  );
+}
+
+/**
  * Brotli-compress an already-msgpack-packed Buffer and prepend the sentinel byte.
  *
  * `onTiming` (optional) receives the elapsed time of the compress call as this caller sees it —
@@ -96,6 +122,7 @@ export async function compressPacked(packed: Buffer, onTiming?: PackedCodecTimer
     params: {
       [zlib.constants.BROTLI_PARAM_QUALITY]: PACKED_BROTLI_QUALITY,
       [zlib.constants.BROTLI_PARAM_SIZE_HINT]: packed.length,
+      [zlib.constants.BROTLI_PARAM_LGWIN]: packedBrotliWindowBits(packed.length),
     },
   });
   onTiming?.('compress', (performance.now() - startedAt) / 1000);
