@@ -13,7 +13,6 @@ import {
   buildAppOpenRecentBlockIdsSql,
   computeAppListingMetricUpdates,
   computeAppOpenCounts,
-  escapeClickhouseString,
   fetchAppOpenCounts,
   fetchRecentlyOpenedBlockIds,
   selectAffectedApprovedListings,
@@ -22,6 +21,7 @@ import {
   type AppOpenCountRow,
   type AppOpenEvent,
 } from '~/server/metrics/appListing.metrics.sql';
+import { escapeClickhouseString } from '~/server/clickhouse/escape';
 
 /**
  * W13 — AppListingMetric install + open (PLAY) ROLLUP job.

@@ -34,6 +34,8 @@
 // file's ownership contract exists to prevent. Do not cite this exception for them.
 // ---------------------------------------------------------------------------
 
+import { escapeClickhouseString } from '~/server/clickhouse/escape';
+
 /**
  * The ClickHouse `actions.type` value the run-page SSR resolver emits per on-site
  * app launch. Deliberately a bare string rather than an import from the tracker's
@@ -261,20 +263,6 @@ export const APP_LISTING_METRIC_UPSERT_SQL = `
 // ---------------------------------------------------------------------------
 
 /**
- * Escape a value for a single-quoted ClickHouse string literal.
- *
- * These ids come from Postgres (`apb_<ULID>`), so in practice nothing needs
- * escaping — but `ctx.ch.$query`'s template interpolation does NOT quote or escape
- * string values, so building an `IN (...)` list by hand without this would be an
- * injection surface the moment an id shape changes. Escaping (rather than
- * rejecting) is deliberate: rejecting an id would drop it from the count map, and
- * a missing entry is written as a 0 — silent data loss instead of a wrong query.
- */
-export function escapeClickhouseString(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-}
-
-/**
  * app_block_ids with at least one `App_Open` event since `sinceIso`.
  *
  * This is the affected-set discovery half: Postgres cannot see a play (no row of
@@ -389,6 +377,7 @@ export const APP_OPEN_COUNT_QUERY_MARKER = 'sum(dailyActors)';
  * entry as 0 (which is what the upsert's COALESCE does).
  */
 export function buildAppOpenCountSql(appBlockIds: string[]): string {
+  // Escape, never reject: a dropped id gets no row, and a missing row is written as 0.
   const inList = appBlockIds.map((id) => `'${escapeClickhouseString(id)}'`).join(', ');
   return `
     SELECT appBlockId, ${APP_OPEN_COUNT_QUERY_MARKER} AS openCount

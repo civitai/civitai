@@ -34,6 +34,8 @@ import {
 import {
   getBankableAmount,
   getBankableLedger,
+  PEAK_EARNING_PREDICATE_SQL,
+  PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
   withBankedThisMonth,
 } from '~/server/services/creator-program-bankable';
 import { createNotification } from '~/server/services/notification.service';
@@ -120,21 +122,18 @@ const createUserCapCache = () => {
           END DESC;
       `);
 
-      // A system-minted `tip` is a support credit, not an earning, so it must not raise a cap.
-      // From the cutover, generation `compensation` is excluded to match
-      // BANKABLE_EARNING_PREDICATE_SQL; before it, caps must not drop ahead of the announced date.
+      // Pool forecasts and buzz.service's `earnedCache` still count generation compensation.
       const countsCompensation = new Date() < BANKABLE_CUTOVER;
-      const peakEarningTypes = countsCompensation ? `'compensation', 'licenseFee'` : `'licenseFee'`;
+      const peakEarningPredicate = countsCompensation
+        ? PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL
+        : PEAK_EARNING_PREDICATE_SQL;
       const peakEarnings = await clickhouse.$query<{ id: number; month: Date; earned: number }>`
         SELECT
           toAccountId as id,
           toStartOfMonth(date) as month,
           SUM(amount) as earned
         FROM buzzTransactions
-        WHERE (
-          (type IN (${peakEarningTypes}))
-          OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
-        )
+        WHERE ${peakEarningPredicate}
         AND toAccountType IN (${buzzBankTypesSql})
         AND toAccountId IN (${ids})
         AND toStartOfMonth(date) >= toStartOfMonth(subtractMonths(now(), ${PEAK_EARNING_WINDOW}))
@@ -235,15 +234,17 @@ export async function getBankedBalance(userId: number, { fresh = false } = {}) {
 
 /** For display. `bankBuzz` reads the bankable amount itself so a ClickHouse failure blocks it. */
 export async function getBanked(userId: number) {
-  const balance = await getBankedBalance(userId);
-  const ledger = await fetchThroughCache(
-    `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}`,
-    () => getBankableLedger(userId),
-    { ttl: CacheTTL.sm }
-  ).catch((error: Error) => {
-    handleLogError(error, 'creator-program:bankable-amount');
-    return null;
-  });
+  const [balance, ledger] = await Promise.all([
+    getBankedBalance(userId),
+    fetchThroughCache(
+      `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}`,
+      () => getBankableLedger(userId),
+      { ttl: CacheTTL.sm }
+    ).catch((error: Error) => {
+      handleLogError(error, 'creator-program:bankable-amount');
+      return null;
+    }),
+  ]);
   const bankable = ledger && withBankedThisMonth(ledger, balance.total);
 
   return { ...balance, bankable };

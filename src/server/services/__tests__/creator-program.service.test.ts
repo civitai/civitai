@@ -4,6 +4,10 @@ import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { BANKABLE_CUTOVER, MIN_CREATOR_SCORE } from '~/shared/constants/creator-program.constants';
 import { TransactionType, buzzBankTypes } from '~/shared/constants/buzz.constants';
+import {
+  PEAK_EARNING_PREDICATE_SQL,
+  PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL,
+} from '~/server/services/creator-program-bankable';
 
 // ── Hoisted mocks ──────────────────────────────────────────────────────────────
 const {
@@ -213,18 +217,20 @@ describe('userCapCache peak-earning query', () => {
   });
 
   it('still counts generation compensation before the bankable-amount cutover', async () => {
-    const { sql } = await runLookup([userId]);
+    const { sql, result } = await runLookup([userId]);
 
-    expect(sql).toMatch(/\(type IN \('compensation', 'licenseFee'\)\)/);
+    expect(sql).toContain(`WHERE ${PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL}\n`);
+    expect(result[userId].countsCompensation).toBe(true);
   });
 
   it('stops counting generation compensation from the cutover', async () => {
     vi.setSystemTime(BANKABLE_CUTOVER);
     try {
-      const { sql } = await runLookup([userId]);
+      const { sql, result } = await runLookup([userId]);
 
-      expect(sql).toMatch(/\(type IN \('licenseFee'\)\)/);
+      expect(sql).toContain(`WHERE ${PEAK_EARNING_PREDICATE_SQL}\n`);
       expect(sql).not.toContain('compensation');
+      expect(result[userId].countsCompensation).toBe(false);
     } finally {
       vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
     }
@@ -493,6 +499,42 @@ describe('bankBuzz', () => {
       );
     });
 
+    it('reads the balance and the bankable amount inside a per-user lock', async () => {
+      mockBankableLedger({ snapshot: 30000, earned: 10000 });
+
+      await bankBuzz(userId, 10000, 'yellow');
+
+      const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:creator-program:bank:${userId}`;
+      const { set, eval: evalScript } = redisMock.redis;
+      const acquire = set.mock.calls.findIndex(([key]: [string]) => key === lockKey);
+      const release = evalScript.mock.calls.findIndex(
+        ([script, opts]: [string, { keys: string[] }]) =>
+          script.includes('"del"') && opts.keys[0] === lockKey
+      );
+      expect(acquire, 'lock acquired under the per-user key').toBeGreaterThanOrEqual(0);
+      expect(release, 'lock released under the per-user key').toBeGreaterThanOrEqual(0);
+      const acquiredAt = set.mock.invocationCallOrder[acquire];
+      const releasedAt = evalScript.mock.invocationCallOrder[release];
+
+      const bankableReads = mockClickhouse.$query.mock.calls.flatMap(([parts], i) =>
+        (parts as string[]).join('').includes('AS consumed')
+          ? [mockClickhouse.$query.mock.invocationCallOrder[i]]
+          : []
+      );
+      const reads = {
+        balance: mockGetCounterPartyBuzzTransactions.mock.invocationCallOrder,
+        bankable: bankableReads,
+        deposit: mockCreateBuzzTransaction.mock.invocationCallOrder,
+      };
+      for (const [name, orders] of Object.entries(reads)) {
+        expect(orders.length, `${name} was read`).toBeGreaterThan(0);
+        expect(
+          orders.filter((order) => order < acquiredAt || order > releasedAt),
+          `${name} outside the lock`
+        ).toEqual([]);
+      }
+    });
+
     it('refuses a deposit while another one for the same user holds the lock', async () => {
       mockBankableLedger({ snapshot: 30000, earned: 10000 });
       redisMock.redis.set.mockResolvedValueOnce(null);
@@ -673,6 +715,29 @@ describe('getBanked after the bankable-amount cutover', () => {
       expect.any(Function),
       { ttl: CacheTTL.sm }
     );
+  });
+
+  it('reads the ledger without waiting for the banked balance', async () => {
+    let releaseBalance!: () => void;
+    const balanceGate = new Promise<void>((resolve) => (releaseBalance = resolve));
+    mockGetCounterPartyBuzzTransactions.mockImplementation(async () => {
+      await balanceGate;
+      return { counterPartyAccountType: 'yellow', totalBalance: 0 };
+    });
+
+    const banked = getBanked(userId);
+    try {
+      await vi.waitFor(() =>
+        expect(mockFetchThroughCache).toHaveBeenCalledWith(
+          `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}`,
+          expect.any(Function),
+          expect.anything()
+        )
+      );
+    } finally {
+      releaseBalance();
+      await banked;
+    }
   });
 
   // Only the ledger is cached: a deposit must show up in `remaining` without waiting it out.
