@@ -3,11 +3,7 @@ import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
 
-/**
- * Paging through each keyset queue reaches every item exactly once. Each of these queues pages with an
- * exclusive predicate, so its cursor must be the last row shown: a cursor taken from the look-ahead row
- * skipped one item at every page boundary, and an item that is never shown is never reviewed.
- */
+/** Paging through each keyset queue reaches every item exactly once. */
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
@@ -26,9 +22,10 @@ const { getImageReviewQueue, getReportedImageQueue } = await import('../image-re
 const { getComicReviewQueue } = await import('../comic-review.service');
 const { getImagesPendingIngestion, getIngestionErrorImages } = await import('../ingestion.service');
 const { getImageTagReviewQueue } = await import('../image-tags.service');
+const { getImageRatingRequests } = await import('../image-rating-review.service');
 
 const SCHEMA = `
-CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked');
+CREATE TYPE "ImageIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Error', 'Blocked', 'PendingManualAssignment');
 CREATE TABLE "User" (
   "id" INTEGER PRIMARY KEY, "username" TEXT, "image" TEXT,
   "deletedAt" TIMESTAMP(3), "bannedAt" TIMESTAMP(3)
@@ -46,6 +43,7 @@ CREATE TABLE "Image" (
   "minor" BOOLEAN NOT NULL DEFAULT FALSE,
   "poi" BOOLEAN NOT NULL DEFAULT FALSE,
   "acceptableMinor" BOOLEAN NOT NULL DEFAULT FALSE,
+  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT FALSE,
   "blockedFor" TEXT,
   "tosViolation" BOOLEAN NOT NULL DEFAULT FALSE,
   "ingestion" "ImageIngestionStatus" NOT NULL DEFAULT 'Scanned',
@@ -79,6 +77,10 @@ CREATE TABLE "TagsOnImageDetails" (
 );
 CREATE TABLE "TagsOnImageVote" ("imageId" INTEGER, "tagId" INTEGER, "vote" INTEGER);
 CREATE TABLE "ImageTagForReview" ("imageId" INTEGER, "tagId" INTEGER);
+CREATE TABLE "ImageRatingRequest" (
+  "imageId" INTEGER, "weight" INTEGER, "nsfwLevel" INTEGER, "status" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT now()
+);
 INSERT INTO "User" ("id", "username") VALUES (7, 'uploader');
 `;
 
@@ -189,5 +191,15 @@ describe('keyset queues reach every item exactly once', () => {
     const seen = await walk((cursor) => getImageTagReviewQueue({ cursor, limit }));
 
     expect(seen).toEqual(NEWEST_FIRST);
+  });
+
+  it.each(LIMITS)('image rating request queue at %i per page', async (limit) => {
+    await insertImages(`"nsfwLevel"`, () => `1`);
+    for (const id of IMAGE_IDS)
+      await db.exec(`INSERT INTO "ImageRatingRequest" VALUES (${id}, 3, 4, 'Pending', now())`);
+
+    const seen = await walk((cursor) => getImageRatingRequests({ cursor, limit }));
+
+    expect(seen).toEqual(IMAGE_IDS);
   });
 });
