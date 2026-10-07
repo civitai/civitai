@@ -904,3 +904,19 @@ describe('the clearance reaches the element', () => {
  * that positions the draft in a viewport-realistic place and a deterministic
  * way to drive a second measure.
  */
+
+describe('previewing without the controls', () => {
+  test('hides the toolbar and the Place button, and brings them back', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    const remove = page.getByRole('button', { name: 'Remove this sticker' });
+    await expect.element(remove).toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(remove).not.toBeVisible();
+    await expect.element(page.getByRole('button', { name: 'Place' })).not.toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(remove).toBeVisible();
+  });
+});
