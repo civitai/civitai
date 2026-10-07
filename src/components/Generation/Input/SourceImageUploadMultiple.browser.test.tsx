@@ -53,10 +53,15 @@ const PRESIGN_ERROR = 'Failed to get upload URL';
 type Deferred = { resolve: (v: unknown) => void; reject: (e: Error) => void; settled: boolean };
 let uploads: Deferred[] = [];
 
-function Harness(props: { max?: number; aspectRatios?: `${number}:${number}`[] }) {
+function Harness(props: {
+  max?: number;
+  aspectRatios?: `${number}:${number}`[];
+  layout?: 'default' | 'url-input';
+}) {
   const [value, setValue] = useState<ImageValue[]>([]);
   // Ignores a write equal to the current value, as the form store does (it diffs field values with
-  // deepEqual). The input re-emits an empty value on every render while nothing has completed.
+  // deepEqual). Without it the input's empty-value write (a new `[]` each time nothing has
+  // completed) re-renders it forever.
   const onChange = (next: ImageValue[]) =>
     setValue((prev) => (JSON.stringify(prev) === JSON.stringify(next) ? prev : next));
   return (
@@ -94,14 +99,24 @@ async function loadableImageUrl() {
   return URL.createObjectURL(blob);
 }
 
-/** Settles uploads one at a time, oldest first, letting each outcome render before the next. */
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * Settles uploads one at a time, oldest first, letting each outcome render before the next. Stops
+ * only once no new upload has started for 500ms, so a late re-upload is settled and counted too.
+ */
 async function settleOneByOne(outcome: 'reject' | 'resolve') {
-  while (pending().length) {
+  for (;;) {
     const upload = pending()[0];
+    if (!upload) {
+      await sleep(500);
+      if (!pending().length) return;
+      continue;
+    }
     upload.settled = true;
     if (outcome === 'reject') upload.reject(new Error(PRESIGN_ERROR));
     else upload.resolve({ url: await loadableImageUrl(), available: true });
-    await new Promise((r) => setTimeout(r, 100));
+    await sleep(100);
   }
 }
 
@@ -167,6 +182,32 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
     await vi.waitFor(() => expect(uploads).toHaveLength(1));
     await settleOneByOne('reject');
 
+    await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
+    expect(loaderCount()).toBe(0);
+  });
+
+  test('a URL can be uploaded again after its failed card is removed', async () => {
+    renderWithProviders(<Harness layout="url-input" />);
+    const submitUrl = async () => {
+      await userEvent.fill(
+        page.getByPlaceholder('Add a file or provide a URL'),
+        'https://example.com/a.jpg'
+      );
+      await userEvent.keyboard('{Enter}');
+    };
+
+    await submitUrl();
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    await settleOneByOne('reject');
+    await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
+    document
+      .querySelector<HTMLButtonElement>('[data-testid="source-images"] .mantine-Card-root button')!
+      .click();
+    await expect.element(page.getByText(PRESIGN_ERROR)).not.toBeInTheDocument();
+
+    await submitUrl();
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    await settleOneByOne('reject');
     await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
     expect(loaderCount()).toBe(0);
   });
