@@ -2198,6 +2198,7 @@ export const REDIS_SYS_KEYS = {
   },
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
+    BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
   },
   NEW_ORDER: {
     EXP: 'new-order:exp',
@@ -2687,6 +2688,7 @@ const REDIS_KEYS_UNPREFIXED = {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',
     BANKED: 'packed:caches:creator-program:banked',
+    BANKABLE: 'packed:caches:creator-program:bankable',
     PREV_MONTH_STATS: 'packed:caches:creator-program:prev-month-stats',
     POOL_VALUE: 'packed:caches:creator-program:pool-value',
     POOL_SIZE: 'packed:caches:creator-program:pool-size',

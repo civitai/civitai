@@ -70,7 +70,7 @@ for built vs planned. The pattern is clear: the Studio owns the **controls + ins
 | **Turn Buzz into real earnings** | The headline — convert earned Buzz to cash | Program (main app) |
 | **Bank your Buzz** | Bank Yellow/Green Buzz into the monthly Compensation Pool | Buzz dashboard (main app) |
 | **Claim your share / withdraw cash** | Withdraw during the 3-day Extraction Phase via the payment partner (Tipalti) | Buzz dashboard (main app) |
-| **Bankable Buzz sources** | Early Access, Tips, Generator Compensation can all be banked | Program mechanic (main app) |
+| **Bankable Buzz sources** | Licensing fees, Early Access/paid access, user tips, donations, sales, bounties (from Nov 2026, generation compensation no longer counts) | Program mechanic (main app) |
 | **Tier-scaled banking cap** | Higher membership tiers (Silver/Gold) raise the monthly bank cap | Membership + program (main app) |
 | **Requirements** | Active Civitai membership **+** creator score ≥ 40,000 | Gate (shared) |
 

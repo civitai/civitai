@@ -511,7 +511,11 @@ const BankBuzzCard = () => {
   };
 
   const remainingCap = banked?.cap?.cap ? banked.cap.cap - banked.total : 0;
-  const maxBankable = Math.min(remainingCap, buzzAccount.balance ?? 0);
+  const maxBankable = Math.min(
+    remainingCap,
+    banked?.bankable?.remaining ?? Infinity,
+    buzzAccount.balance ?? 0
+  );
 
   if (isLoading) {
     return (
@@ -620,6 +624,12 @@ const BankBuzzCard = () => {
         >
           Max
         </Button>
+        {banked?.bankable && (
+          <p className="text-xs text-dimmed">
+            Bankable Buzz left: {numberWithCommas(banked.bankable.remaining)}. Generation
+            compensation no longer counts toward banking.
+          </p>
+        )}
 
         <div className="mb-2 flex items-center gap-2">
           <p className="text-sm">
