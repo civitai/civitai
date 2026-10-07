@@ -6,6 +6,7 @@ import {
   isCivitaiOrigin,
   buildPostLoginRedirect,
 } from '../redirect';
+import { SAFE_RETURN_PATHS, UNSAFE_RETURN_PATHS } from './return-path-cases';
 
 const u = (qs: string) => new URL(`https://auth.civitai.com/login${qs}`);
 const civitai = { isAllowedOrigin: (o: string) => o.includes('civitai') };
@@ -96,6 +97,59 @@ describe('buildPostLoginRedirect', () => {
   it('does not duplicate an existing sync-account', () => {
     expect(buildPostLoginRedirect('/dash?sync-account=red', 'green', ORIGIN, civitai)).toBe(
       '/dash?sync-account=red'
+    );
+  });
+});
+
+describe('same-origin path validation (shared case table)', () => {
+  it.each(UNSAFE_RETURN_PATHS)('isSafeReturnTarget refuses: %s', (_name, raw) => {
+    expect(isSafeReturnTarget(raw, { isAllowedOrigin: isCivitaiOrigin })).toBe(false);
+  });
+
+  // allowAllOrigins (dev) opens absolute http(s) URLs only: a path must still pass the same-origin rule,
+  // and any other scheme is still refused. Only the two http(s) rows are excluded here.
+  it.each(UNSAFE_RETURN_PATHS.filter(([, raw]) => !/^https?:\/\//.test(raw)))(
+    'isSafeReturnTarget refuses with allowAllOrigins: %s',
+    (_name, raw) => {
+      expect(isSafeReturnTarget(raw, { allowAllOrigins: true })).toBe(false);
+    }
+  );
+
+  it.each(UNSAFE_RETURN_PATHS)(
+    'buildPostLoginRedirect collapses to / without sync: %s',
+    (_name, raw) => {
+      expect(buildPostLoginRedirect(raw, null, ORIGIN, civitai)).toBe('/');
+    }
+  );
+
+  it.each(UNSAFE_RETURN_PATHS)(
+    'buildPostLoginRedirect collapses to / with sync: %s',
+    (_name, raw) => {
+      expect(buildPostLoginRedirect(raw, 'green', ORIGIN, civitai)).toBe('/?sync-account=green');
+    }
+  );
+
+  it.each(SAFE_RETURN_PATHS)('isSafeReturnTarget keeps: %s', (_name, raw) => {
+    expect(isSafeReturnTarget(raw, civitai)).toBe(true);
+  });
+
+  it.each(SAFE_RETURN_PATHS)(
+    'buildPostLoginRedirect keeps without sync: %s',
+    (_name, raw, expected) => {
+      expect(buildPostLoginRedirect(raw, null, ORIGIN, civitai)).toBe(expected);
+    }
+  );
+
+  it('returns the normalised path, not the raw input', () => {
+    expect(buildPostLoginRedirect('/a/../b', null, ORIGIN, civitai)).toBe('/b');
+    expect(buildPostLoginRedirect('/a/../b', 'green', ORIGIN, civitai)).toBe(
+      '/b?sync-account=green'
+    );
+  });
+
+  it('keeps query and fragment when re-attaching sync', () => {
+    expect(buildPostLoginRedirect('/a/b?c=1#d', 'green', ORIGIN, civitai)).toBe(
+      '/a/b?c=1&sync-account=green#d'
     );
   });
 });
