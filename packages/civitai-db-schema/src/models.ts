@@ -697,6 +697,8 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appSubListingsAuthored?: AppSubListing[];
+  appSubListingsModerated?: AppSubListing[];
   appCollaboratorSeats?: AppCollaborator[];
   appCollaboratorInvitesSent?: AppCollaborator[];
   appOwnershipEventsActed?: AppOwnershipEvent[];
@@ -1587,6 +1589,8 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  appSubListingImages?: AppSubListing[];
+  appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
@@ -2194,6 +2198,8 @@ export interface AppListing {
   collaborators?: AppCollaborator[];
   ownershipEvents?: AppOwnershipEvent[];
   ownershipTransfers?: AppOwnershipTransfer[];
+  subListings?: AppSubListing[];
+  subListingParent?: AppSubListingParent | null;
 }
 
 export interface AppListingScreenshot {
@@ -2289,6 +2295,50 @@ export interface AppListingModerationEvent {
   before: JsonValue | null;
   after: JsonValue | null;
   createdAt: Date;
+}
+
+export interface AppSubListingParent {
+  parentListingId: string;
+  parentListing?: AppListing;
+  enabled: boolean;
+  autoApprove: boolean;
+  maxPerAuthor: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppSubListing {
+  id: string;
+  serialId: number;
+  parentListingId: string;
+  parentListing?: AppListing;
+  itemKey: string;
+  itemSource: string;
+  authorUserId: number;
+  author?: User;
+  title: string;
+  tagline: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  subPath: string;
+  contentRating: string | null;
+  pendingTitle: string | null;
+  pendingTagline: string | null;
+  pendingImageId: number | null;
+  pendingImage?: Image | null;
+  pendingSubPath: string | null;
+  pendingContentRating: string | null;
+  pendingSubmittedAt: Date | null;
+  editRejectionReason: string | null;
+  status: string;
+  statusReason: string | null;
+  moderatedById: number | null;
+  moderatedBy?: User | null;
+  moderatedAt: Date | null;
+  approvedAt: Date | null;
+  openCount: number;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface AppReviewAgentReport {
