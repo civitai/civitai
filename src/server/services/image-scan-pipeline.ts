@@ -51,6 +51,7 @@ import {
   updateModel3DNsfwLevelForThumbnailImage,
 } from '~/server/services/nsfwLevels.service';
 import { getImagesModRules, queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { getPendingAppealImageIds } from '~/server/services/image-appeal-flag';
 import { signalClient } from '~/utils/signal-client';
 import { addImageToQueue } from '~/server/services/games/new-order.service';
 import { logToAxiom } from '~/server/logging/client';
@@ -605,6 +606,17 @@ export async function resolveScanOutcome({
         reason: modRule.ruleReason,
         log,
       });
+    }
+  }
+
+  // The appeal is the open decision on this image's block: a scan may tighten it, never lift it.
+  if ((await getPendingAppealImageIds([image.id])).size) {
+    toUpdate.needsReview = 'appeal';
+    reviewKey = 'appeal';
+    if (toUpdate.ingestion !== ImageIngestionStatus.Blocked) {
+      toUpdate.ingestion = ImageIngestionStatus.Blocked;
+      toUpdate.blockedFor = BlockedReason.Moderated;
+      toUpdate.nsfwLevel = NsfwLevel.Blocked;
     }
   }
 

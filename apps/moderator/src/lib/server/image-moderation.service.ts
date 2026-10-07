@@ -161,7 +161,12 @@ export async function blockImage({
   await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: null,
+      // The appeals queue reads this flag and the blocked-image purge spares only flagged rows, so a
+      // block from another queue must not take it off an image whose appeal is still Pending.
+      needsReview: sql<string | null>`CASE WHEN EXISTS (
+        SELECT 1 FROM "Appeal" a
+        WHERE a."entityType" = 'Image' AND a."entityId" = "Image".id AND a."status" = 'Pending'
+      ) THEN 'appeal' END`,
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,

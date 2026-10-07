@@ -14,6 +14,7 @@ import {
   filterViewableModelVersions,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
+import { keepPendingAppealFlags } from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -1054,16 +1055,18 @@ export async function handleBlockImages({
     const invalidateExistence = invalidateManyImageExistence(ids);
 
     await Promise.all([
-      dbWrite.image.updateMany({
-        where: { id: { in: ids } },
-        data: {
-          needsReview: null,
-          ingestion: 'Blocked',
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: BlockedReason.Moderated,
-          updatedAt: new Date(),
-        },
-      }),
+      dbWrite.image
+        .updateMany({
+          where: { id: { in: ids } },
+          data: {
+            needsReview: null,
+            ingestion: 'Blocked',
+            nsfwLevel: NsfwLevel.Blocked,
+            blockedFor: BlockedReason.Moderated,
+            updatedAt: new Date(),
+          },
+        })
+        .then(() => keepPendingAppealFlags(ids)),
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
       invalidateExistence,
@@ -7178,6 +7181,21 @@ export async function reportCsamImages({
   ip?: string;
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
+  // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and the
+  // uploader is not told.
+  await dbWrite.appeal.updateMany({
+    where: {
+      entityType: EntityType.Image,
+      entityId: { in: imageIds },
+      status: AppealStatus.Pending,
+    },
+    data: {
+      status: AppealStatus.Rejected,
+      resolvedBy: user.id,
+      resolvedAt: new Date(),
+      internalNotes: 'Closed by CSAM report',
+    },
+  });
   await dbWrite.image.updateMany({
     where: { id: { in: imageIds } },
     data: { needsReview: 'csam' },
