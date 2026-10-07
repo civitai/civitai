@@ -22,4 +22,10 @@ describe('getBankingChangeNoticeHtml', () => {
     expect(html).toContain('<table style="border-collapse: collapse; width: 100%;">');
     expect(html).toMatch(/<td style="[^"]+">New generation compensation<\/td>/);
   });
+
+  it('indents every list by a 20px margin instead of the client default', () => {
+    const lists = html.match(/<(ul|ol)[ >][^>]*>?/g) ?? [];
+    expect(lists.length).toBeGreaterThan(0);
+    for (const list of lists) expect(list).toMatch(/style="margin: 8px 0 8px 20px; padding: 0;"/);
+  });
 });

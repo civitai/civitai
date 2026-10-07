@@ -1,5 +1,4 @@
-export const BANKING_CHANGE_NOTICE_SUBJECT =
-  'Starting November 1: what changes about banking your Buzz';
+export const BANKING_CHANGE_NOTICE_SUBJECT = 'Banking changes on November 1';
 
 // Approved copy: change it only with sign-off. `{username}` is filled per reader; root-relative
 // links and image paths are made absolute for email.
