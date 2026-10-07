@@ -4,9 +4,9 @@ import type { RedisKeyTemplateCache } from '../client';
 
 /**
  * `missConcurrentDuplicate` counts miss-fill lookups for an id that another fetch in the same
- * process is still filling (lookup or write). It is a MEASUREMENT: every test here also asserts that the
- * duplicate lookup and its writes still happen, so the counter cannot be satisfied by a change
- * that starts coalescing.
+ * process is still filling (lookup or write). It is a MEASUREMENT: every test here also asserts
+ * that the duplicate lookup and its writes still happen, so the counter cannot be satisfied by a
+ * change that starts coalescing.
  *
  * The redis client is a stub whose mGet always misses, so every fetch reaches lookupFn. Overlap is
  * forced with a lookupFn that parks until the test releases it.
@@ -247,6 +247,9 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     const registryScans = () =>
       iterate.mock.contexts.filter((m) => (m as Map<unknown, unknown>).size >= 50_000).length;
 
+    // The first scan runs 10 s after the big fetch registered, so the next sweep is due when the
+    // big fetch's entries turn stale (+30 s), not 30 s after this scan (+40 s).
+    now.mockReturnValue(1_000_000 + 10_000);
     // At the cap: id 60001 is not registered, so a concurrent pair cannot see each other.
     const a = t.cache.fetch([60_001]);
     const b = t.cache.fetch([60_001]);
@@ -258,16 +261,22 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
     // Every entry is fresh, so only the first fetch at the cap scans; b does not re-scan.
     expect(registryScans()).toBe(1);
 
-    // Past the age cap the big lookup's entries are stale; reaching the cap sweeps them, so the
-    // next pair registers again and counts 1.
+    // Past the age cap the big lookup's entries are stale. A stale entry for the SAME id is
+    // replaced even while the registry is full (no sweep needed), so this pair counts 1.
     now.mockReturnValue(1_000_000 + 31_000);
-    const c = t.cache.fetch([60_002]);
-    const d = t.cache.fetch([60_002]);
+    const e = t.cache.fetch([1]);
+    const f = t.cache.fetch([1]);
     await t.parked(5);
     expect(t.total()).toBe(1);
-    t.gates[3].resolve();
-    t.gates[4].resolve();
-    await Promise.all([c, d]);
+
+    // e/f stay parked, so the registry is still exactly full. A NEW id at the cap triggers the
+    // sweep of the stale entries, so it registers and counts 1.
+    const c = t.cache.fetch([60_002]);
+    const d = t.cache.fetch([60_002]);
+    await t.parked(7);
+    expect(t.total()).toBe(2);
+    for (const i of [3, 4, 5, 6]) t.gates[i].resolve();
+    await Promise.all([e, f, c, d]);
 
     // The big fetch looks up in 10k chunks, each parking on a new gate: release them as they come.
     let settled = false;
@@ -278,7 +287,7 @@ describe('createCachedArray — concurrent duplicate miss-fill counter', () => {
       await new Promise((r) => setTimeout(r, 0));
     }
     await big;
-    expect(t.lookupFn).toHaveBeenCalledTimes(9); // 5 chunks + a, b, c, d
+    expect(t.lookupFn).toHaveBeenCalledTimes(11); // 5 chunks + a, b, e, f, c, d
   });
 
   it('a throwing metrics sink does not fail the fetch', async () => {
