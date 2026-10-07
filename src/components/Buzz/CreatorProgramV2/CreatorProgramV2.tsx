@@ -80,6 +80,7 @@ import {
   getExtractionFee,
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
+import { getBankableBreakdown } from '~/shared/utils/creator-program.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   MIN_CREATOR_SCORE,
@@ -515,11 +516,11 @@ const BankBuzzCard = () => {
   };
 
   const remainingCap = banked?.cap?.cap ? banked.cap.cap - banked.total : 0;
-  const maxBankable = Math.min(
-    remainingCap,
-    banked?.bankable?.remaining ?? Infinity,
-    buzzAccount.balance ?? 0
-  );
+  const maxBankable = getBankableBreakdown({
+    balance: buzzAccount.balance ?? 0,
+    bankableRemaining: banked?.bankable?.remaining ?? Infinity,
+    capRemaining: remainingCap,
+  }).bankableNow;
 
   if (isLoading) {
     return (
@@ -632,7 +633,8 @@ const BankBuzzCard = () => {
           <BankableBuzzMeter
             balance={accounts.reduce((sum, account) => sum + (account.balance ?? 0), 0)}
             bankableRemaining={banked.bankable.remaining}
-            capRemaining={remainingCap}
+            capRemaining={hasActiveMembership && banked.cap?.cap ? remainingCap : null}
+            onOpenInfo={() => dialogStore.trigger({ component: CreatorProgramCapsInfoModal })}
           />
         )}
 

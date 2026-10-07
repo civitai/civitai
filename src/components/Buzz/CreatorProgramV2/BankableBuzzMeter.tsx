@@ -1,8 +1,6 @@
-import { Progress, Tooltip } from '@mantine/core';
+import { ColorSwatch, Progress, Tooltip } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { CreatorProgramCapsInfoModal } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
 import { getBankableBreakdown } from '~/shared/utils/creator-program.utils';
@@ -14,24 +12,28 @@ export function BankableBuzzMeter({
   balance,
   bankableRemaining,
   capRemaining,
+  onOpenInfo,
 }: {
   balance: number;
   bankableRemaining: number;
-  capRemaining: number;
+  /** `null` when nothing can be banked at all: no active membership, or no cap. */
+  capRemaining: number | null;
+  onOpenInfo: () => void;
 }) {
   const { bankableNow, overCap, notBankable, limitedBy } = getBankableBreakdown({
     balance,
     bankableRemaining,
-    capRemaining,
+    capRemaining: capRemaining ?? Infinity,
   });
   const cutover = formatDate(BANKABLE_CUTOVER, 'MMM D', true);
   const segments = [
     {
       key: 'now',
-      label: 'Bankable this month',
+      label: capRemaining === null ? 'Bankable' : 'Bankable this month',
       value: bankableNow,
       color: 'lime.6',
-      description: 'You can bank this now.',
+      description:
+        capRemaining === null ? 'Bankable with an active membership.' : 'You can bank this now.',
     },
     {
       key: 'over-cap',
@@ -58,7 +60,7 @@ export function BankableBuzzMeter({
           color="gray"
           variant="subtle"
           aria-label="What counts as bankable"
-          onClick={() => dialogStore.trigger({ component: CreatorProgramCapsInfoModal })}
+          onClick={onOpenInfo}
         >
           <IconInfoCircle size={14} />
         </LegacyActionIcon>
@@ -86,11 +88,10 @@ export function BankableBuzzMeter({
               <Tooltip key={segment.key} label={segment.description} withArrow multiline w={220}>
                 <li className="flex items-center justify-between gap-2 text-xs">
                   <span className="flex items-center gap-1.5">
-                    <span
-                      className="size-2 shrink-0 rounded-full"
-                      style={{
-                        backgroundColor: `var(--mantine-color-${segment.color.replace('.', '-')})`,
-                      }}
+                    <ColorSwatch
+                      color={`var(--mantine-color-${segment.color.replace('.', '-')})`}
+                      size={8}
+                      radius="xl"
                     />
                     {segment.label}
                   </span>
@@ -105,7 +106,9 @@ export function BankableBuzzMeter({
       )}
 
       <p className="text-xs">
-        {bankableNow > 0 ? (
+        {capRemaining === null ? (
+          'An active membership is required to bank Buzz.'
+        ) : bankableNow > 0 ? (
           <>
             You can bank up to{' '}
             <span className="inline-flex items-center font-bold">

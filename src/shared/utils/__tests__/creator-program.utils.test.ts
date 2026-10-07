@@ -117,6 +117,27 @@ describe('getBankableBreakdown', () => {
     ).toEqual({ bankableNow: 30_000, overCap: 0, notBankable: 0, limitedBy: 'bankable' });
   });
 
+  it('is limited by the bankable amount when it equals the cap room', () => {
+    expect(
+      getBankableBreakdown({ balance: 100_000, bankableRemaining: 50_000, capRemaining: 50_000 })
+    ).toEqual({ bankableNow: 50_000, overCap: 0, notBankable: 50_000, limitedBy: 'bankable' });
+  });
+
+  it('blames the bankable amount, not the cap, when both are used up', () => {
+    expect(
+      getBankableBreakdown({ balance: 50_000, bankableRemaining: 0, capRemaining: 0 })
+    ).toEqual({ bankableNow: 0, overCap: 0, notBankable: 50_000, limitedBy: 'bankable' });
+  });
+
+  it('treats a negative bankable amount or balance as none', () => {
+    expect(
+      getBankableBreakdown({ balance: 50_000, bankableRemaining: -10_000, capRemaining: 100_000 })
+    ).toEqual({ bankableNow: 0, overCap: 0, notBankable: 50_000, limitedBy: 'bankable' });
+    expect(
+      getBankableBreakdown({ balance: -5_000, bankableRemaining: 10_000, capRemaining: 100_000 })
+    ).toEqual({ bankableNow: 0, overCap: 0, notBankable: 0, limitedBy: 'bankable' });
+  });
+
   it('treats a used-up cap as no room rather than negative room', () => {
     expect(
       getBankableBreakdown({ balance: 50_000, bankableRemaining: 50_000, capRemaining: -10_000 })
