@@ -2,8 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
-
-/** Paging through each keyset queue reaches every item exactly once. */
+import { walkPages } from './keyset-walk';
 
 const { dbHandle } = vi.hoisted(() => ({ dbHandle: { current: null as unknown } }));
 
@@ -105,20 +104,7 @@ const insertImages = async (columns: string, values: (id: number, n: number) => 
     await db.exec(`INSERT INTO "Image" ("id", ${columns}) VALUES (${id}, ${values(id, n)})`);
 };
 
-type Page = { items: { id: number }[]; nextCursor?: number };
-
-const walk = async (fetchPage: (cursor: number | undefined) => Promise<Page>) => {
-  const seen: number[] = [];
-  let cursor: number | undefined;
-  // Bounded so a cursor that never advances fails on the assertion instead of hanging the run.
-  for (let page = 0; page < 10; page++) {
-    const result = await fetchPage(cursor);
-    seen.push(...result.items.map((i) => i.id));
-    if (result.nextCursor == null) break;
-    cursor = result.nextCursor;
-  }
-  return seen;
-};
+const walk = walkPages<number>;
 
 const LIMITS = [1, 2, 3, 4];
 

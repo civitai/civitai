@@ -20,8 +20,15 @@ type ChRow = { imageId: number; originalLevel: number; createdAt: string };
 const encodeCursor = (r: ChRow) => `${r.createdAt}|${r.imageId}`;
 
 export function parseDownleveledCursor(cursor: string): { at: string; id: number } | undefined {
-  const match = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|(\d+)$/.exec(cursor);
-  return match ? { at: match[1], id: Number(match[2]) } : undefined;
+  const match = /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})\|(\d{1,10})$/.exec(cursor);
+  if (!match) return undefined;
+  const [, at, rawId] = match;
+  const id = Number(rawId);
+  // Out-of-range values match the shape but fail ClickHouse's typed parameters, which is a 500.
+  const date = new Date(`${at.replace(' ', 'T')}Z`);
+  if (id > 0xffffffff || Number.isNaN(date.getTime())) return undefined;
+  if (date.toISOString().slice(0, 19) !== at.replace(' ', 'T')) return undefined;
+  return { at, id };
 }
 
 // originalLevel = the level before the KoNO downlevel.

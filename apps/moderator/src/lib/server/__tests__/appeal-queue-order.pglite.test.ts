@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { walkPages } from './keyset-walk';
 
 /**
  * The appeals queue is worked oldest APPEAL first, and paging through it reaches every appeal.
@@ -88,18 +89,8 @@ afterEach(async () => {
   await db.close();
 });
 
-const walk = async (limit: number) => {
-  const seen: number[] = [];
-  let cursor: number | undefined;
-  // Bounded so a cursor that never advances fails on the assertion below instead of hanging.
-  for (let page = 0; page < 10; page++) {
-    const result = await getAppealImageQueue({ browsingLevel: 1, cursor, limit });
-    seen.push(...result.items.map((i) => i.id));
-    if (result.nextCursor == null) break;
-    cursor = result.nextCursor;
-  }
-  return seen;
-};
+const walk = (limit: number) =>
+  walkPages((cursor?: number) => getAppealImageQueue({ browsingLevel: 1, cursor, limit }));
 
 describe('appeal queue order', () => {
   it('serves the oldest appeal first, not the newest image', async () => {

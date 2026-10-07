@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { walkPages } from './keyset-walk';
 
 /**
- * The downleveled queue pages through a ClickHouse table whose `createdAt` is whole seconds, and on
- * prod one second holds 15,736 rows (2026-10-07). Paging must get past such a second.
+ * The downleveled queue pages through a ClickHouse table whose `createdAt` is whole seconds, and one
+ * second can hold thousands of rows. Paging must get past such a second.
  *
  * ClickHouse is faked: the fake applies whichever cursor predicate the query was given, so this pins
  * the cursor the service hands back. The SQL text that predicate stands for is pinned separately below.
@@ -34,7 +35,8 @@ vi.mock('../clickhouse', () => ({
             r.createdAt < String(p.cursorAt) ||
             (r.createdAt === p.cursorAt && r.imageId < Number(p.cursorId))
         );
-      // The pre-fix predicate, `createdAt <= {cursor:String}`, so a revert is observable here.
+      // The pre-fix predicate, `createdAt <= {cursor:String}`, so a revert fails the way prod did:
+      // stuck inside the tied second rather than restarting from the top.
       if (p.cursor != null) rows = rows.filter((r) => r.createdAt <= String(p.cursor));
       rows = rows.sort(newestFirst).slice(0, Number(p.lim));
       return { json: async () => rows };
@@ -82,18 +84,8 @@ beforeEach(() => {
   ch.queries.length = 0;
 });
 
-const walk = async (limit: number) => {
-  const seen: number[] = [];
-  let cursor: string | undefined;
-  // Bounded: a cursor stuck inside one second must fail the assertion, not hang the run.
-  for (let page = 0; page < 12; page++) {
-    const result = await getDownleveledImages({ cursor, limit });
-    seen.push(...result.items.map((i) => i.id));
-    if (result.nextCursor == null) break;
-    cursor = result.nextCursor;
-  }
-  return seen;
-};
+const walk = (limit: number) =>
+  walkPages((cursor?: string) => getDownleveledImages({ cursor, limit }));
 
 describe('downleveled queue paging', () => {
   it.each([1, 2, 3, 4])(
@@ -115,14 +107,21 @@ describe('downleveled queue paging', () => {
 describe('parseDownleveledCursor', () => {
   it('reads the cursor the service writes', () => {
     expect(parseDownleveledCursor(`${TIED_SECOND}|503`)).toEqual({ at: TIED_SECOND, id: 503 });
+    expect(parseDownleveledCursor(`${TIED_SECOND}|4294967295`)?.id).toBe(4294967295);
   });
 
   // A bookmarked pre-fix cursor (a bare timestamp) or a hand-edited one restarts at the first page
   // rather than reaching ClickHouse as a malformed parameter.
-  it.each([TIED_SECOND, `${TIED_SECOND}|`, `${TIED_SECOND}|12a`, `x|1`, `${TIED_SECOND}|1|2`])(
-    'ignores %j',
-    (cursor) => {
-      expect(parseDownleveledCursor(cursor)).toBeUndefined();
-    }
-  );
+  it.each([
+    TIED_SECOND,
+    `${TIED_SECOND}|`,
+    `${TIED_SECOND}|12a`,
+    `x|1`,
+    `${TIED_SECOND}|1|2`,
+    `${TIED_SECOND}|4294967296`,
+    `2026-13-45 99:99:99|1`,
+    `2026-02-30 00:00:00|1`,
+  ])('ignores %j', (cursor) => {
+    expect(parseDownleveledCursor(cursor)).toBeUndefined();
+  });
 });
