@@ -11,6 +11,7 @@ import type { ReactNode } from 'react';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
 import { CreatorAchievements, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
+import { CreatorSecrets } from '~/components/CreatorJourney/CreatorSecrets';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { tierRewards } from '~/components/CreatorJourney/tier-rewards';
 import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
@@ -176,6 +177,8 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
       </Stack>
 
       <CreatorAchievements activity={journey.activity} />
+
+      <CreatorSecrets secrets={journey.secrets} />
 
       <Stack gap="sm">
         <Title order={2} size="h3">

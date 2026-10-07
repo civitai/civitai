@@ -56,6 +56,7 @@ const journey = ({
       achievedAt: new Date('2026-10-06T00:00:00Z'),
     })),
     activity: { milestones: [], closestNext: null },
+    secrets: [],
   } as unknown as Journey);
 
 let root: Root | undefined;
