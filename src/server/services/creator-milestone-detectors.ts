@@ -62,6 +62,20 @@ const publishedSources = {
 export const modelDownloadsSource = `SELECT mm."userId", mm."downloadCount" FROM "ModelMetric" mm
     WHERE mm.status = 'Published' AND mm.availability <> 'Private'`;
 
+// Gross: what buyers paid, before the platform cut and any reseller share. A cosmetic's sale goes to
+// its creator wherever it was bought; a pack's goes to the creator who built it. Two branches so a
+// per-user filter reaches an index on each side.
+export const shopSalesSource = `SELECT c."createdById" AS "userId", p."purchasedAt", p."buzzTransactionId" AS id,
+      p."unitAmount" AS amount
+    FROM "UserCosmeticShopPurchases" p
+    JOIN "Cosmetic" c ON c.id = p."cosmeticId"
+    WHERE NOT p.refunded AND c."createdById" IS NOT NULL
+    UNION ALL
+    SELECT i."addedById", p."purchasedAt", p."buzzTransactionId", p."unitAmount"
+    FROM "UserCosmeticShopPurchases" p
+    JOIN "CosmeticShopItem" i ON i.id = p."shopItemId"
+    WHERE NOT p.refunded AND p."cosmeticId" IS NULL AND i."addedById" IS NOT NULL`;
+
 const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m}"`).join(', ')}
     FROM "UserMetric" um WHERE um.timeframe = 'AllTime'`;
 
@@ -76,7 +90,9 @@ export const activityValuesSql = `SELECT
     coalesce((SELECT s."followerCount" FROM (${userMetricSource}) s
       WHERE s."userId" = $1), 0)::int AS followers,
     coalesce((SELECT s."reactionCount" FROM (${userMetricSource}) s
-      WHERE s."userId" = $1), 0)::int AS reactions`;
+      WHERE s."userId" = $1), 0)::int AS reactions,
+    coalesce((SELECT sum(s.amount) FROM (${shopSalesSource}) s WHERE s."userId" = $1), 0)::int
+      AS revenue`;
 
 function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
   switch (entry.detector) {
@@ -111,6 +127,21 @@ function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
           ON m.key = ANY(${keys}::text[]) AND um."${entry.params.metric}" >= m.threshold
         WHERE (${users}::int[] IS NULL OR um."userId" = ANY(${users}::int[]))
           AND ${notHeld('um."userId"')}`;
+    // Dated by the sale that carried the running total across the threshold.
+    case 'shopRevenue':
+      return ({ keys, users }) => `
+        SELECT r."userId", m.key AS "milestoneKey", r."purchasedAt" AS "achievedAt"
+        FROM (
+          SELECT s."userId", s."purchasedAt", s.amount,
+            sum(s.amount) OVER (
+              PARTITION BY s."userId" ORDER BY s."purchasedAt", s.id ROWS UNBOUNDED PRECEDING
+            ) AS total
+          FROM (${shopSalesSource}) s
+          WHERE (${users}::int[] IS NULL OR s."userId" = ANY(${users}::int[]))
+        ) r
+        JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[])
+          AND r.total >= m.threshold AND r.total - r.amount < m.threshold
+        WHERE ${notHeld('r."userId"')}`;
   }
 }
 
@@ -136,7 +167,7 @@ export function activityDetectorGroups(
         keys: [key],
         launchedAt: entry.launchedAt,
         silent: !!entry.silent,
-        timed: entry.detector === 'publishedCount',
+        timed: entry.detector === 'publishedCount' || entry.detector === 'shopRevenue',
         sql: detectorSql(entry),
       });
   }

@@ -109,7 +109,7 @@ export type ActivityValues = Record<ActivityMeasure, number>;
 
 async function getActivityValues(userId: number): Promise<ActivityValues> {
   const [row] = await dbRead.$queryRawUnsafe<ActivityValues[]>(activityValuesSql, userId);
-  return row ?? { models: 0, articles: 0, downloads: 0, followers: 0, reactions: 0 };
+  return row ?? { models: 0, articles: 0, downloads: 0, followers: 0, reactions: 0, revenue: 0 };
 }
 
 /**

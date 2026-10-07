@@ -26,18 +26,21 @@ const definitions = [
   definition('create:models-25', 25, '25 Models'),
   definition('reach:followers-100', 100, '100 Followers'),
   definition('reach:followers-1000', 1000, '1k Followers'),
+  definition('earn:shop-sales-100000', 100000, '100k Sales'),
+  definition('earn:shop-sales-250000', 250000, '250k Sales'),
 ];
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function render(held: Map<string, Date | null>, followers = 87, models = 3) {
+function render(held: Map<string, Date | null>, followers = 87, models = 3, revenue = 0) {
   const activity = buildActivityProgress(definitions, held, {
     models,
     articles: 0,
     downloads: 0,
     followers,
     reactions: 0,
+    revenue,
   });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -102,6 +105,17 @@ describe('Achievements section', () => {
   });
 });
 
+describe('Shop track', () => {
+  it('shows gross sales in Buzz against each revenue threshold', () => {
+    const el = render(new Map([['earn:shop-sales-100000', null]]), 87, 3, 120000);
+    expect([...el.querySelectorAll('*')].some((node) => node.textContent === 'Earn')).toBe(true);
+    expect(el.textContent).toContain('120,000 Buzz');
+    expect(tile(el, '100k Sales')?.dataset.state).toBe('earned');
+    expect(tile(el, '250k Sales')?.dataset.state).toBe('progress');
+    expect(tile(el, '250k Sales')?.textContent).toContain('120,000 / 250,000');
+  });
+});
+
 describe('Achievements badge art', () => {
   it('shows the milestone art once it has some, the numbered hex until then', () => {
     const withArt = [{ ...definitions[0], cosmetic: { data: { url: 'first-model-art' } } }];
@@ -111,6 +125,7 @@ describe('Achievements badge art', () => {
       downloads: 0,
       followers: 0,
       reactions: 0,
+      revenue: 0,
     });
     container = document.createElement('div');
     document.body.appendChild(container);

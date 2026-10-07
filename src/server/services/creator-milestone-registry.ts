@@ -16,6 +16,7 @@ type DetectorParams = {
   publishedCount: { entity: (typeof PUBLISHED_ENTITIES)[number] };
   modelDownloads: Record<string, never>;
   userMetric: { metric: (typeof USER_METRICS)[number] };
+  shopRevenue: Record<string, never>;
 };
 
 export type MilestoneDetector = keyof DetectorParams;
@@ -32,6 +33,7 @@ export type MilestoneRegistryEntry = {
 
 const SCORE_TIERS_LAUNCHED_AT = new Date('2026-10-06T00:00:00Z');
 const ACTIVITY_LAUNCHED_AT = new Date('2026-10-07T00:00:00Z');
+const SHOP_LAUNCHED_AT = new Date('2026-10-08T00:00:00Z');
 
 const scoreTier = (): MilestoneRegistryEntry => ({
   detector: 'scoreSnapshot',
@@ -57,6 +59,12 @@ const userMetric = (metric: (typeof USER_METRICS)[number]): MilestoneRegistryEnt
   detector: 'userMetric',
   params: { metric },
   launchedAt: ACTIVITY_LAUNCHED_AT,
+});
+
+const shopRevenue = (): MilestoneRegistryEntry => ({
+  detector: 'shopRevenue',
+  params: {},
+  launchedAt: SHOP_LAUNCHED_AT,
 });
 
 export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = {
@@ -89,9 +97,21 @@ export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = 
   'reach:reactions-10000': userMetric('reactionCount'),
   'reach:reactions-100000': userMetric('reactionCount'),
   'reach:reactions-1000000': userMetric('reactionCount'),
+
+  'earn:shop-sales-100000': shopRevenue(),
+  'earn:shop-sales-250000': shopRevenue(),
+  'earn:shop-sales-500000': shopRevenue(),
+  'earn:shop-sales-1000000': shopRevenue(),
+  'earn:shop-sales-2000000': shopRevenue(),
 };
 
-export type ActivityMeasure = 'models' | 'articles' | 'downloads' | 'followers' | 'reactions';
+export type ActivityMeasure =
+  | 'models'
+  | 'articles'
+  | 'downloads'
+  | 'followers'
+  | 'reactions'
+  | 'revenue';
 
 export const publishedEntityMeasures = {
   model: 'models',
@@ -114,6 +134,8 @@ export function activityMeasureOf(entry: MilestoneRegistryEntry): ActivityMeasur
       return 'downloads';
     case 'userMetric':
       return userMetricMeasures[entry.params.metric];
+    case 'shopRevenue':
+      return 'revenue';
   }
 }
 
