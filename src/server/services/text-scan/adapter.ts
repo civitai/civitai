@@ -1,7 +1,7 @@
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
 import {
   getTextScanMode,
-  TEXT_SCAN_FLAG_KEY,
+  TEXT_SCAN_ENTITY_TYPES,
   textScanEmEntityType,
 } from '~/server/services/text-scan/mode';
 import { getTextScanProfile } from '~/server/services/text-scan/profiles';
@@ -28,7 +28,7 @@ export function createTextScanShadowAdapter(entityType: TextScanEntityType): Mod
 
 export function textScanShadowAdapters() {
   return Object.fromEntries(
-    (Object.keys(TEXT_SCAN_FLAG_KEY) as TextScanEntityType[]).map((entityType) => [
+    TEXT_SCAN_ENTITY_TYPES.map((entityType) => [
       textScanEmEntityType(entityType, 'shadow'),
       createTextScanShadowAdapter(entityType),
     ])

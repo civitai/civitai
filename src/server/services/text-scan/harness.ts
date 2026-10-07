@@ -6,7 +6,7 @@ import { internalOrchestratorClient } from '~/server/services/orchestrator/clien
 import { evaluateTextScan } from '~/server/services/text-scan/evaluate';
 import { findChatCompletionStep, parseTextScanStep } from '~/server/services/text-scan/parse';
 import type { ChatCompletionStepLike } from '~/server/services/text-scan/parse';
-import { textScanEmEntityType } from '~/server/services/text-scan/mode';
+import { readTextScanRollouts, textScanEmEntityType } from '~/server/services/text-scan/mode';
 import { getTextScanProfile, isTextScanEntityType } from '~/server/services/text-scan/profiles';
 import '~/server/services/text-scan/profiles/index';
 import {
@@ -17,6 +17,7 @@ import {
   insertTextScanPrompt,
   MissingTextScanPromptError,
   setTextScanConfig,
+  setTextScanRollout,
   subjectTextLength,
   TEXT_SCAN_PROMPT_KEY,
 } from '~/server/services/text-scan/prompt';
@@ -37,6 +38,7 @@ export const TEXT_SCAN_HARNESS_ACTIONS = [
   'getPrompts',
   'putPrompt',
   'putConfig',
+  'putModes',
   'scanEntity',
   'batchEntities',
   'sampleShadow',
@@ -144,6 +146,19 @@ export const textScanHarnessSchema = z.discriminatedUnion('action', [
         thinking: z.boolean().optional(),
       })
       .refine((c) => Object.keys(c).length > 0, 'empty config patch'),
+  }),
+  z.object({
+    action: z.literal('putModes'),
+    moderatorId: moderatorId.optional(),
+    entityType,
+    /** `null` turns the entity type off. */
+    rollout: z
+      .strictObject({
+        shadow: z.number().int().min(0).max(100),
+        active: z.number().int().min(0).max(100).default(0),
+      })
+      .nullable(),
+    allowActive: z.boolean().default(false),
   }),
   z.object({
     action: z.literal('scanEntity'),
@@ -612,7 +627,11 @@ export async function runTextScanHarnessAction(
 ): Promise<TextScanHarnessResult> {
   switch (input.action) {
     case 'getPrompts': {
-      const [active, config] = await Promise.all([getActiveTextScanPrompts(), getTextScanConfig()]);
+      const [active, config, modes] = await Promise.all([
+        getActiveTextScanPrompts(),
+        getTextScanConfig(),
+        readTextScanRollouts(),
+      ]);
       const history = input.history
         ? await dbRead.textScanPrompt.findMany({
             where: { key: input.history },
@@ -620,7 +639,7 @@ export async function runTextScanHarnessAction(
             take: input.limit,
           })
         : undefined;
-      return { kind: 'json', body: { active, config, history } };
+      return { kind: 'json', body: { active, config, modes, history } };
     }
 
     case 'putPrompt': {
@@ -635,6 +654,15 @@ export async function runTextScanHarnessAction(
     case 'putConfig': {
       const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
       return { kind: 'json', body: await setTextScanConfig(input.config, { moderatorId: id }) };
+    }
+
+    case 'putModes': {
+      const id = requireModeratorId(actor.moderatorId ?? input.moderatorId);
+      const modes = await setTextScanRollout(input.entityType, input.rollout, {
+        moderatorId: id,
+        allowActive: input.allowActive,
+      });
+      return { kind: 'json', body: { modes } };
     }
 
     case 'scanEntity': {

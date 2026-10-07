@@ -13,6 +13,8 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 import { createReport } from '~/server/services/report.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
 import { autoMuteScamAccount } from '~/server/services/scam-auto-mute.service';
+import { getTextScanOwnedClavataKeys } from '~/server/services/text-scan/clavata-cutover';
+import { clavataVerdict, logScanVerdict } from '~/server/services/text-scan/verdict-log';
 import type { ScamCleanup } from '~/server/services/scam-cleanup.service';
 import { getBlocklists, type ModWordBlocklist } from '~/server/utils/moderation-utils';
 import type { EntityType } from '~/shared/utils/prisma/enums';
@@ -252,12 +254,19 @@ async function getPolicies() {
   return policies ? (JSON.parse(policies) as RedisPolicyType) : ({} as RedisPolicyType);
 }
 
-async function getDisabledEntities() {
-  const policies = await sysRedis.hGet(
-    REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
-    REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
-  );
-  return policies ? (JSON.parse(policies) as RedisDisabledType) : ({} as RedisDisabledType);
+export async function getDisabledEntities() {
+  const [policies, owned] = await Promise.all([
+    sysRedis.hGet(
+      REDIS_SYS_KEYS.ENTITY_MODERATION.BASE,
+      REDIS_SYS_KEYS.ENTITY_MODERATION.KEYS.ENTITIES
+    ),
+    getTextScanOwnedClavataKeys(),
+  ]);
+  const disabled = policies
+    ? (JSON.parse(policies) as RedisDisabledType)
+    : ({} as RedisDisabledType);
+  for (const key of owned) disabled[key as AllModKeys] = false;
+  return disabled;
 }
 
 function getPolicyFor(entity: AllModKeys, policies: RedisPolicyType) {
@@ -345,7 +354,20 @@ const runClavata = async ({
         const onlyNSFW = item.matches?.length === 1 && item.matches[0] === 'NSFW';
         const allowedNSFWTypes: AllModKeys[] = ['Bounty', 'Model'];
 
-        if (item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type))) {
+        const skipped = item.result === 'FALSE' || (onlyNSFW && !allowedNSFWTypes.includes(type));
+        // Clean results too: they are the only record that Clavata passed this text.
+        void logScanVerdict(
+          clavataVerdict({
+            entityType: type,
+            entityId: metadata.id,
+            userId: metadata.userId,
+            result: item.result,
+            matches: item.matches,
+            skipped,
+          })
+        );
+
+        if (skipped) {
           if (deleteJob) await deleteFromJobQueue(type as QueueKeys, [metadata.id]);
           continue;
         }

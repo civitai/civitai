@@ -2323,6 +2323,18 @@ export const REDIS_SYS_KEYS = {
       Structure: json string, get/set ({ "model"?: string, "maxInputChars"?: number, "thinking"?: boolean })
      */
     CONFIG: 'system:text-scan:config',
+    /*
+      Use: per-entity-type rollout of text scan (text-scan harness `putModes`). A missing field is off.
+      Structure: hset, field = entity type (e.g. "Model"), value = json { "shadow": 0-100, "active": 0-100 }
+        (percent of entity ids in each mode; active wins)
+     */
+    MODES: 'system:text-scan:modes',
+    /*
+      Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
+        Clavata job skips them only while the `text-scan` Flipt kill switch is on.
+      Structure: set of Clavata keys
+     */
+    CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
   },
   CONTENT: {
     /*

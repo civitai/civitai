@@ -1,27 +1,89 @@
-import { FLIPT_FEATURE_FLAGS, getFliptVariant } from '~/server/flipt/client';
+import { createHash } from 'crypto';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import type { TextScanEntityType, TextScanMode } from '~/server/services/text-scan/types';
+import { createTtlMemo } from '~/server/utils/ttl-memoize';
 
-// Enum KEYS, not values: read at module scope, the enum breaks every suite that hand-lists a
-// `~/server/flipt/client` mock without it, and this module is in model.service's import graph.
-export const TEXT_SCAN_FLAG_KEY = {
-  Model: 'TEXT_SCAN_MODEL',
-  Article: 'TEXT_SCAN_ARTICLE',
-  Post: 'TEXT_SCAN_POST',
-  Bounty: 'TEXT_SCAN_BOUNTY',
-  BountyEntry: 'TEXT_SCAN_BOUNTY_ENTRY',
-  Challenge: 'TEXT_SCAN_CHALLENGE',
-  ChatMessage: 'TEXT_SCAN_CHAT',
-  Comment: 'TEXT_SCAN_COMMENT',
-  CommentV2: 'TEXT_SCAN_COMMENT_V2',
-  ResourceReview: 'TEXT_SCAN_RESOURCE_REVIEW',
-  User: 'TEXT_SCAN_USER',
-  UserProfile: 'TEXT_SCAN_USER_PROFILE',
-  Crucible: 'TEXT_SCAN_CRUCIBLE',
-  Collection: 'TEXT_SCAN_COLLECTION',
-} as const satisfies Record<TextScanEntityType, keyof typeof FLIPT_FEATURE_FLAGS>;
+export const TEXT_SCAN_ENTITY_TYPES = [
+  'Model',
+  'Article',
+  'Post',
+  'Bounty',
+  'BountyEntry',
+  'Challenge',
+  'ChatMessage',
+  'Comment',
+  'CommentV2',
+  'ResourceReview',
+  'User',
+  'UserProfile',
+  'Crucible',
+  'Collection',
+] as const satisfies readonly TextScanEntityType[];
 
-export function textScanFlag(entityType: TextScanEntityType): FLIPT_FEATURE_FLAGS {
-  return FLIPT_FEATURE_FLAGS[TEXT_SCAN_FLAG_KEY[entityType]];
+/**
+ * Per entity type, the percentage of entity ids in each mode. An id's bucket (0–99) is fixed, so
+ * raising a percentage only adds ids. `active` is checked first: `{ shadow: 100, active: 10 }` is
+ * 10% active and the other 90% shadow.
+ */
+export type TextScanRollout = { shadow: number; active: number };
+export type TextScanRollouts = Partial<Record<TextScanEntityType, TextScanRollout>>;
+
+export const ROLLOUT_CACHE_MS = 15_000;
+
+function percent(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value)
+    ? Math.min(100, Math.max(0, Math.floor(value)))
+    : 0;
+}
+
+export function parseTextScanRollout(raw: string | null | undefined): TextScanRollout | undefined {
+  if (!raw) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as Partial<Record<keyof TextScanRollout, unknown>> | null;
+    if (!parsed || typeof parsed !== 'object') return undefined;
+    return { shadow: percent(parsed.shadow), active: percent(parsed.active) };
+  } catch {
+    return undefined;
+  }
+}
+
+/** Uncached read, for writers and the harness; scans go through `getTextScanMode`. */
+export async function readTextScanRollouts(): Promise<TextScanRollouts> {
+  const raw = await withSysReadDeadline(sysRedis.hGetAll(REDIS_SYS_KEYS.TEXT_SCAN.MODES));
+  const rollouts: TextScanRollouts = {};
+  for (const entityType of TEXT_SCAN_ENTITY_TYPES) {
+    const rollout = parseTextScanRollout(raw?.[entityType]);
+    if (rollout) rollouts[entityType] = rollout;
+  }
+  return rollouts;
+}
+
+// Not the default `Date.now` reference, which is captured once and would ignore a faked clock.
+const getTextScanRollouts = createTtlMemo(readTextScanRollouts, ROLLOUT_CACHE_MS, () => Date.now());
+
+export function resetTextScanRolloutCache() {
+  getTextScanRollouts.clear();
+}
+
+export function textScanBucket(entityType: TextScanEntityType, entityId: number) {
+  return createHash('sha256').update(`${entityType}:${entityId}`).digest().readUInt32BE(0) % 100;
+}
+
+export function modeForBucket(rollout: TextScanRollout | undefined, bucket: number): TextScanMode {
+  if (!rollout) return 'off';
+  if (bucket < rollout.active) return 'active';
+  if (bucket < rollout.shadow) return 'shadow';
+  return 'off';
+}
+
+/** The Flipt kill switch. Read inside a call: hand-written flipt mocks often omit the enum. */
+export async function isTextScanEnabled() {
+  try {
+    return await isFlipt(FLIPT_FEATURE_FLAGS.TEXT_SCAN);
+  } catch {
+    return false;
+  }
 }
 
 export async function getTextScanMode(
@@ -29,8 +91,9 @@ export async function getTextScanMode(
   entityId: number
 ): Promise<TextScanMode> {
   try {
-    const variant = await getFliptVariant(textScanFlag(entityType), String(entityId));
-    return variant === 'shadow' || variant === 'active' ? variant : 'off';
+    if (!(await isTextScanEnabled())) return 'off';
+    const rollouts = await getTextScanRollouts();
+    return modeForBucket(rollouts[entityType], textScanBucket(entityType, entityId));
   } catch {
     return 'off';
   }

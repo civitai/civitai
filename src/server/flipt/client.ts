@@ -99,23 +99,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
-  // Text scan, one variant flag per entity: variant `shadow` scans and records only,
-  // `active` also applies actions, anything else (incl. unknown flag / Flipt down) is off.
-  // Evaluated with entityId = the scanned entity's id, so percentage rollouts are sticky.
-  TEXT_SCAN_MODEL = 'text-scan-model',
-  TEXT_SCAN_ARTICLE = 'text-scan-article',
-  TEXT_SCAN_POST = 'text-scan-post',
-  TEXT_SCAN_BOUNTY = 'text-scan-bounty',
-  TEXT_SCAN_BOUNTY_ENTRY = 'text-scan-bounty-entry',
-  TEXT_SCAN_CHALLENGE = 'text-scan-challenge',
-  TEXT_SCAN_CHAT = 'text-scan-chat',
-  TEXT_SCAN_COMMENT = 'text-scan-comment',
-  TEXT_SCAN_COMMENT_V2 = 'text-scan-comment-v2',
-  TEXT_SCAN_RESOURCE_REVIEW = 'text-scan-resource-review',
-  TEXT_SCAN_USER = 'text-scan-user',
-  TEXT_SCAN_USER_PROFILE = 'text-scan-user-profile',
-  TEXT_SCAN_CRUCIBLE = 'text-scan-crucible',
-  TEXT_SCAN_COLLECTION = 'text-scan-collection',
+  // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
+  // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
+  TEXT_SCAN = 'text-scan',
   // Arms the reaction reconciliation audit's repair path to WRITE compensating
   // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
   // or an unreachable Flipt, and for a path that mutates production metrics that

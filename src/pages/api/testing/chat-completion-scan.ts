@@ -44,7 +44,7 @@
  * dev only: /api/testing is unreachable on production builds.
  *
  *   { "action": "getPrompts", "history"?: "<key>", "limit"?: 20 }
- *     Active prompt row per key plus the runtime config; with `history`, every
+ *     Active prompt row per key plus the runtime config and rollout modes; with `history`, every
  *     version of that key (author, note, createdAt) newest first.
  *
  *   { "action": "putPrompt", "key": "base" | "label:<label>", "content": "...",
@@ -54,6 +54,11 @@
  *   { "action": "putConfig", "moderatorId": <id>, "config": { "model"?, "maxInputChars"?, "thinking"? } }
  *     Merges the patch over the stored config and returns the result. The
  *     moderator id must be an active moderator; the write is logged with it.
+ *
+ *   { "action": "putModes", "moderatorId": <id>, "entityType": "Model",
+ *     "rollout": { "shadow": 0-100, "active"?: 0-100 } | null, "allowActive"?: false }
+ *     Sets one entity type's rollout in sysRedis (null = off). An active share is
+ *     refused unless `allowActive` is true. Returns every entity type's rollout.
  *
  *   { "action": "scanEntity", "entityType": "...", "entityId": 1,
  *     "promptOverrides"?: { "<key>": "..." }, "model"?, "thinking"?, "wait"? }
