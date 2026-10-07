@@ -1,17 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as AccountDeletionImages from '~/server/services/account-deletion-images';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 
 const { reopenRestrictions } = vi.hoisted(() => ({ reopenRestrictions: vi.fn() }));
 
 vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserRestrictionService>()),
-  reopenRestrictionsOfRestoredAccount: reopenRestrictions,
+  reopenGenerationRestrictionsOfRestoredAccount: reopenRestrictions,
 }));
-vi.mock('~/server/services/account-deletion-images', () => ({
+vi.mock('~/server/services/account-deletion-images', async (importOriginal) => ({
+  ...(await importOriginal<typeof AccountDeletionImages>()),
   disarmAccountDeletionImagePurge: vi.fn(() => 'disarm-statement'),
-  unblockAccountDeletionImages: vi.fn(),
   recordPendingImageRestore: vi.fn(async () => true),
   countPendingAccountDeletionImageRestores: vi.fn(async () => 0),
 }));

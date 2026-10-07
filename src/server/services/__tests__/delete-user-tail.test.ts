@@ -34,7 +34,7 @@ vi.mock('~/server/services/paddle.service', async (importOriginal) => ({
 }));
 vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserRestrictionService>()),
-  closeRestrictionsOfDeletedAccount: closeRestrictions,
+  closeGenerationRestrictionsOfDeletedAccount: closeRestrictions,
 }));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),

@@ -4,9 +4,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { constants } from '~/server/common/constants';
 import {
-  closeRestrictionsOfDeletedAccount,
-  reopenRestrictionsOfRestoredAccount,
+  closeGenerationRestrictionsOfDeletedAccount,
+  reopenGenerationRestrictionsOfRestoredAccount,
 } from '~/server/services/user-restriction.service';
 
 /**
@@ -27,6 +28,8 @@ const ADD_ACCOUNT_DELETED = readFileSync(
 
 const DELETED = 1;
 const BYSTANDER = 2;
+const MODERATOR = 99;
+const LONG_AGO = '2026-01-01 00:00:00';
 
 let db: PGlite;
 
@@ -36,11 +39,12 @@ type Row = {
   resolvedAt: Date | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  updatedAt: Date;
 };
 const rows = async (userId: number) =>
   (
     await db.query<Row>(
-      `SELECT id, status::text AS status, "resolvedAt", "resolvedBy", "resolvedMessage"
+      `SELECT id, status::text AS status, "resolvedAt", "resolvedBy", "resolvedMessage", "updatedAt"
        FROM "UserRestriction" WHERE "userId" = $1 ORDER BY id`,
       [userId]
     )
@@ -57,10 +61,8 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL, type text NOT NULL DEFAULT 'generation',
       status "UserRestrictionStatus" NOT NULL DEFAULT 'Pending',
       "resolvedAt" timestamp, "resolvedBy" int, "resolvedMessage" text,
-      "updatedAt" timestamp NOT NULL DEFAULT now()
+      "updatedAt" timestamp NOT NULL
     );
-    CREATE UNIQUE INDEX "UserRestriction_scam_pending_key" ON "UserRestriction" ("userId")
-      WHERE type = 'scam' AND status = 'Pending';
   `);
 });
 
@@ -75,86 +77,96 @@ beforeEach(async () => {
   );
 });
 
-describe('closeRestrictionsOfDeletedAccount', () => {
-  it("closes every Pending case of the account, of every type, and nothing it doesn't own", async () => {
-    await db.exec(`
-      INSERT INTO "UserRestriction" (id, "userId", type, status, "resolvedBy") VALUES
-        (1, ${DELETED}, 'generation', 'Pending', NULL),
-        (2, ${DELETED}, 'scam', 'Pending', NULL),
-        (3, ${DELETED}, 'bot-account', 'Pending', NULL),
-        (4, ${DELETED}, 'generation', 'Upheld', 99),
-        (5, ${DELETED}, 'generation', 'Overturned', 99),
-        (6, ${BYSTANDER}, 'generation', 'Pending', NULL);
+const insert = (values: string) =>
+  db.exec(`
+    INSERT INTO "UserRestriction" (id, "userId", type, status, "resolvedBy", "updatedAt") VALUES
+    ${values};
+  `);
+
+describe('closeGenerationRestrictionsOfDeletedAccount', () => {
+  it("closes the account's Pending generation cases and nothing it doesn't own", async () => {
+    await insert(`
+      (1, ${DELETED}, 'generation', 'Pending', NULL, '${LONG_AGO}'),
+      (2, ${DELETED}, 'generation', 'Upheld', ${MODERATOR}, '${LONG_AGO}'),
+      (3, ${DELETED}, 'generation', 'Overturned', ${MODERATOR}, '${LONG_AGO}'),
+      (4, ${BYSTANDER}, 'generation', 'Pending', NULL, '${LONG_AGO}')
     `);
 
-    expect(await closeRestrictionsOfDeletedAccount(DELETED)).toBe(3);
+    expect(await closeGenerationRestrictionsOfDeletedAccount(DELETED)).toBe(1);
 
-    expect(await statuses(DELETED)).toEqual({
-      1: 'AccountDeleted',
-      2: 'AccountDeleted',
-      3: 'AccountDeleted',
-      4: 'Upheld',
-      5: 'Overturned',
-    });
-    expect(await statuses(BYSTANDER)).toEqual({ 6: 'Pending' });
+    expect(await statuses(DELETED)).toEqual({ 1: 'AccountDeleted', 2: 'Upheld', 3: 'Overturned' });
+    expect(await statuses(BYSTANDER)).toEqual({ 4: 'Pending' });
   });
 
-  it('records no moderator: it is not a ruling', async () => {
-    await db.exec(`INSERT INTO "UserRestriction" (id, "userId") VALUES (1, ${DELETED});`);
+  // Deliberate, for whoever widens this to every type: a Pending scam case is what blocks a system
+  // release of the mute, and what a moderator unmute closes to restore content and void strikes.
+  // Both select Pending, so a closed scam case disarms both. See `mute-release.service.ts`.
+  it('leaves scam and bot-account cases Pending', async () => {
+    await insert(`
+      (1, ${DELETED}, 'scam', 'Pending', NULL, '${LONG_AGO}'),
+      (2, ${DELETED}, 'bot-account', 'Pending', NULL, '${LONG_AGO}')
+    `);
 
-    await closeRestrictionsOfDeletedAccount(DELETED);
+    expect(await closeGenerationRestrictionsOfDeletedAccount(DELETED)).toBe(0);
+
+    expect(await statuses(DELETED)).toEqual({ 1: 'Pending', 2: 'Pending' });
+  });
+
+  it('records the system actor, not a moderator: it is not a ruling', async () => {
+    await insert(`(1, ${DELETED}, 'generation', 'Pending', NULL, '${LONG_AGO}')`);
+
+    await closeGenerationRestrictionsOfDeletedAccount(DELETED);
 
     const [row] = await rows(DELETED);
-    expect(row.resolvedBy).toBeNull();
+    expect(row.resolvedBy).toBe(constants.system.user.id);
     expect(row.resolvedAt).not.toBeNull();
     expect(row.resolvedMessage).toBe('Closed automatically: the account was deleted.');
+    expect(row.updatedAt.getTime()).toBeGreaterThan(new Date(LONG_AGO).getTime());
   });
 });
 
-describe('reopenRestrictionsOfRestoredAccount', () => {
-  it('puts closed cases back to Pending and leaves rulings alone', async () => {
-    await db.exec(`
-      INSERT INTO "UserRestriction" (id, "userId", type, status, "resolvedBy") VALUES
-        (1, ${DELETED}, 'generation', 'Pending', NULL),
-        (2, ${DELETED}, 'generation', 'Upheld', 99),
-        (3, ${BYSTANDER}, 'generation', 'Pending', NULL);
+describe('reopenGenerationRestrictionsOfRestoredAccount', () => {
+  it("puts the account's closed cases back to Pending and leaves rulings alone", async () => {
+    await insert(`
+      (1, ${DELETED}, 'generation', 'AccountDeleted', ${constants.system.user.id}, '${LONG_AGO}'),
+      (2, ${DELETED}, 'generation', 'Upheld', ${MODERATOR}, '${LONG_AGO}'),
+      (3, ${BYSTANDER}, 'generation', 'AccountDeleted', ${constants.system.user.id}, '${LONG_AGO}')
     `);
-    await closeRestrictionsOfDeletedAccount(DELETED);
-    await closeRestrictionsOfDeletedAccount(BYSTANDER);
+    await db.exec(`UPDATE "UserRestriction" SET "resolvedAt" = now(), "resolvedMessage" = 'x'`);
 
-    await reopenRestrictionsOfRestoredAccount(DELETED);
+    expect(await reopenGenerationRestrictionsOfRestoredAccount(DELETED)).toBe(1);
 
-    expect(await rows(DELETED)).toEqual([
-      { id: 1, status: 'Pending', resolvedAt: null, resolvedBy: null, resolvedMessage: null },
-      expect.objectContaining({ id: 2, status: 'Upheld', resolvedBy: 99 }),
-    ]);
+    const [reopened, ruled] = await rows(DELETED);
+    expect(reopened).toEqual(
+      expect.objectContaining({
+        id: 1,
+        status: 'Pending',
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedMessage: null,
+      })
+    );
+    expect(reopened.updatedAt.getTime()).toBeGreaterThan(new Date(LONG_AGO).getTime());
+    expect(ruled).toEqual(
+      expect.objectContaining({ id: 2, status: 'Upheld', resolvedBy: MODERATOR })
+    );
     expect(await statuses(BYSTANDER)).toEqual({ 3: 'AccountDeleted' });
   });
 
-  // Two closed scam cases come from delete, restore with a case filed meanwhile, delete again.
-  // Reopening both would violate the one-Pending-scam-case index and fail the whole restore.
-  it('reopens only the newest closed scam case', async () => {
-    await db.exec(`
-      INSERT INTO "UserRestriction" (id, "userId", type, status) VALUES
-        (1, ${DELETED}, 'scam', 'AccountDeleted'),
-        (2, ${DELETED}, 'scam', 'AccountDeleted'),
-        (3, ${DELETED}, 'generation', 'AccountDeleted');
-    `);
+  it('round-trips: a delete then a restore leaves the case as it was', async () => {
+    await insert(`(1, ${DELETED}, 'generation', 'Pending', NULL, '${LONG_AGO}')`);
 
-    await reopenRestrictionsOfRestoredAccount(DELETED);
+    await closeGenerationRestrictionsOfDeletedAccount(DELETED);
+    await reopenGenerationRestrictionsOfRestoredAccount(DELETED);
 
-    expect(await statuses(DELETED)).toEqual({ 1: 'AccountDeleted', 2: 'Pending', 3: 'Pending' });
-  });
-
-  it('reopens no scam case while one is already Pending', async () => {
-    await db.exec(`
-      INSERT INTO "UserRestriction" (id, "userId", type, status) VALUES
-        (1, ${DELETED}, 'scam', 'AccountDeleted'),
-        (2, ${DELETED}, 'scam', 'Pending');
-    `);
-
-    await reopenRestrictionsOfRestoredAccount(DELETED);
-
-    expect(await statuses(DELETED)).toEqual({ 1: 'AccountDeleted', 2: 'Pending' });
+    expect(await rows(DELETED)).toEqual([
+      expect.objectContaining({
+        id: 1,
+        status: 'Pending',
+        resolvedAt: null,
+        resolvedBy: null,
+        resolvedMessage: null,
+      }),
+    ]);
   });
 });

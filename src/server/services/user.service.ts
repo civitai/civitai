@@ -137,8 +137,8 @@ import {
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { releaseUserMute, type MuteReleaseActivity } from '~/server/services/mute-release.service';
 import {
-  closeRestrictionsOfDeletedAccount,
-  reopenRestrictionsOfRestoredAccount,
+  closeGenerationRestrictionsOfDeletedAccount,
+  reopenGenerationRestrictionsOfRestoredAccount,
 } from '~/server/services/user-restriction.service';
 
 export const getUsersByIds = async (userIds: number[]) => {
@@ -1183,7 +1183,9 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
-  await runStep('close-pending-restrictions', () => closeRestrictionsOfDeletedAccount(user.id));
+  await runStep('close-pending-restrictions', () =>
+    closeGenerationRestrictionsOfDeletedAccount(user.id)
+  );
 
   // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
   await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
@@ -1312,7 +1314,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   ]);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
-  await reopenRestrictionsOfRestoredAccount(id).catch((error) =>
+  await reopenGenerationRestrictionsOfRestoredAccount(id).catch((error) =>
     logToAxiom({
       name: 'reopen-pending-restrictions',
       type: 'error',

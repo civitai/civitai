@@ -4,6 +4,7 @@
 // `user-restriction-resolve.service.ts` for that reason.
 import { refreshSession } from '~/server/auth/session-invalidation';
 import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
+import { constants } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -265,39 +266,27 @@ export async function hasOtherPendingRestriction(
 /**
  * Not a ruling, so no notice and no change to the mute: the review queue hides deleted accounts,
  * and a case left Pending there would never be ruled on.
+ *
+ * Generation only. A Pending scam case is part of the mute ledger: it blocks system releases and a
+ * moderator unmute closes it, restoring content and voiding strikes (`mute-release.service.ts`,
+ * `scam-case-ledger.ts`). Both select `Pending`, so closing it here would disarm both.
  */
-export async function closeRestrictionsOfDeletedAccount(userId: number) {
+export async function closeGenerationRestrictionsOfDeletedAccount(userId: number) {
   return dbWrite.$executeRaw`
     UPDATE "UserRestriction"
-    SET status = 'AccountDeleted', "resolvedAt" = now(), "resolvedBy" = NULL,
+    SET status = 'AccountDeleted', "resolvedAt" = now(), "resolvedBy" = ${constants.system.user.id},
         "resolvedMessage" = 'Closed automatically: the account was deleted.', "updatedAt" = now()
-    WHERE "userId" = ${userId} AND status = 'Pending'
+    WHERE "userId" = ${userId} AND type = 'generation' AND status = 'Pending'
   `;
 }
 
-/**
- * A restored account keeps its mute, so its closed cases go back in the queue. Scam cases reopen at
- * most one, and none when a scam case is already Pending: `UserRestriction_scam_pending_key` allows one.
- */
-export async function reopenRestrictionsOfRestoredAccount(userId: number) {
+/** Deletion leaves the mute on, so a restored account's closed cases go back in the queue. */
+export async function reopenGenerationRestrictionsOfRestoredAccount(userId: number) {
   return dbWrite.$executeRaw`
-    UPDATE "UserRestriction" ur
+    UPDATE "UserRestriction"
     SET status = 'Pending', "resolvedAt" = NULL, "resolvedBy" = NULL, "resolvedMessage" = NULL,
         "updatedAt" = now()
-    WHERE ur."userId" = ${userId} AND ur.status = 'AccountDeleted'
-      AND (
-        ur.type <> 'scam'
-        OR (
-          ur.id = (
-            SELECT max(c.id) FROM "UserRestriction" c
-            WHERE c."userId" = ${userId} AND c.type = 'scam' AND c.status = 'AccountDeleted'
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM "UserRestriction" p
-            WHERE p."userId" = ${userId} AND p.type = 'scam' AND p.status = 'Pending'
-          )
-        )
-      )
+    WHERE "userId" = ${userId} AND type = 'generation' AND status = 'AccountDeleted'
   `;
 }
 
