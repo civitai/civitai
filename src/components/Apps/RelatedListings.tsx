@@ -11,7 +11,7 @@ import {
 } from '~/components/Apps/related-listings';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
-import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import { onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
@@ -59,7 +59,10 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     { category: categoryFilter, sort: 'popular', limit: RELATED_LISTINGS_LIMIT + 1 },
     { enabled: canSeeStore && !!categoryFilter }
   );
-  const sameCategory = (categoryQuery.data?.items ?? []) as ListingCard[];
+  // `onlyListingCards`, not a cast: the read is typed as a mix of app and sub-listing cards.
+  // This rail never opts in to sub-listings, so the filter is a type narrowing that also
+  // keeps a sub-listing card out of `AppListingCard` if one ever arrives.
+  const sameCategory = onlyListingCards(categoryQuery.data?.items ?? []);
 
   const wantTopUp =
     !categoryFilter ||
@@ -79,7 +82,7 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
   const items = selectRelatedListings({
     selfId: listingId,
     sameCategory,
-    popular: (popularQuery.data?.items ?? []) as ListingCard[],
+    popular: onlyListingCards(popularQuery.data?.items ?? []),
   });
 
   // 🔴 From the PURE module, so the blocking `unit` gate covers the one string on

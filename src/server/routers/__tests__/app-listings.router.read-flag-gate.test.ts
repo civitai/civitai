@@ -248,20 +248,21 @@ describe('appListings.listReviews — scope gate', () => {
 });
 
 describe('appListings.listAvailable — the sub-listing response-shape flag', () => {
-  it('threads the per-viewer flag into the service', async () => {
-    const on = appListingsRouter.createCaller(
-      fakeCtx(modUser, { appStoreSubListings: true }) as never
+  // Sub-listing cards are a different shape, so a caller must ASK for them (only the store grid
+  // does) AND the viewer must have the flag. Each row changes one of the two.
+  it.each([
+    ['flag on, opted in', true, true, true],
+    ['flag on, not opted in', true, undefined, false],
+    ['flag on, opted out', true, false, false],
+    ['flag off, opted in', false, true, false],
+  ] as const)('%s', async (_label, flag, optIn, expected) => {
+    const caller = appListingsRouter.createCaller(
+      fakeCtx(modUser, flag ? { appStoreSubListings: true } : {}) as never
     );
-    await on.listAvailable({ limit: 20 });
+    await caller.listAvailable({ limit: 20, includeSubListings: optIn });
     expect(mockListAvailableListings).toHaveBeenLastCalledWith(
       expect.anything(),
-      expect.objectContaining({ includeSubListings: true })
-    );
-    const off = appListingsRouter.createCaller(fakeCtx(modUser) as never);
-    await off.listAvailable({ limit: 20 });
-    expect(mockListAvailableListings).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.objectContaining({ includeSubListings: false })
+      expect.objectContaining({ includeSubListings: expected })
     );
   });
 

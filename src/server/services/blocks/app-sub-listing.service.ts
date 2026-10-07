@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import * as z from 'zod';
 
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -48,6 +49,7 @@ export type SubListingErrorCode =
   | 'not_your_item'
   | 'text_rejected'
   | 'image_not_yours'
+  | 'image_not_public'
   | 'rating_too_loose'
   | 'rate_limited'
   | 'author_cap'
@@ -197,7 +199,6 @@ type ResolvedParent = {
   contentRating: string | null;
   blockId: string;
   enabled: boolean;
-  autoApprove: boolean;
   maxPerAuthor: number;
 };
 
@@ -211,7 +212,7 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
         slug: true,
         contentRating: true,
         appBlock: { select: { blockId: true } },
-        subListingParent: { select: { enabled: true, autoApprove: true, maxPerAuthor: true } },
+        subListingParent: { select: { enabled: true, maxPerAuthor: true } },
       },
     });
     if (!listing?.appBlock) return null;
@@ -221,7 +222,6 @@ async function resolveParent(appBlockId: string): Promise<ResolvedParent | null>
       contentRating: listing.contentRating,
       blockId: listing.appBlock.blockId,
       enabled: listing.subListingParent?.enabled ?? false,
-      autoApprove: listing.subListingParent?.autoApprove ?? false,
       maxPerAuthor: listing.subListingParent?.maxPerAuthor ?? 0,
     };
   } catch (err) {
@@ -261,6 +261,28 @@ export async function readSharedItemForSubListing(
   }
   const row = rows[0];
   return row ? { authorUserId: row.author_user_id, hidden: row.hidden } : null;
+}
+
+/**
+ * The owner of `imageId` if an ANONYMOUS viewer may see it, else null.
+ *
+ * Reuses `getImage`'s non-moderator read with no viewer rather than restating its predicate:
+ * in a published (`publishedAt < now()`), non-private post, `needsReview` clear and reviewed
+ * (`imageReviewedSql`: scanned, or a moderator-locked rating), and not Blocked. A card shows
+ * its image to every store visitor, so the image must already be public; a private,
+ * scheduled, unscanned or removed image is refused here rather than quietly falling back to
+ * the parent cover at render. The per-viewer maturity check still runs at render
+ * (`projectSubListingCard`).
+ */
+async function publicImageOwner(imageId: number): Promise<number | null> {
+  const { getImage } = await import('~/server/services/image.service');
+  try {
+    const image = await getImage({ id: imageId, isModerator: false });
+    return image.user.id;
+  } catch (err) {
+    if (err instanceof TRPCError && err.code === 'NOT_FOUND') return null;
+    throw err;
+  }
 }
 
 export type UpsertSubListingResult = {
@@ -320,11 +342,15 @@ export async function upsertSubListing(args: {
   }
 
   if (content.imageId != null) {
-    const image = await dbRead.image.findUnique({
-      where: { id: content.imageId },
-      select: { userId: true },
-    });
-    if (!image || image.userId !== user.id) {
+    const owner = await publicImageOwner(content.imageId);
+    if (owner == null) {
+      throw new SubListingError(
+        400,
+        'image_not_public',
+        'The image must be public: in a published post and reviewed'
+      );
+    }
+    if (owner !== user.id) {
       throw new SubListingError(403, 'image_not_yours', 'The image must be one you uploaded');
     }
   }
@@ -384,7 +410,8 @@ async function writeSubListing(
     if ((await activeCount()) >= parent.maxPerAuthor) {
       throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
     }
-    const status: AppSubListingStatus = parent.autoApprove ? 'approved' : 'pending';
+    // 🔴 ALWAYS `pending`: nothing an app publishes reaches the store until a moderator
+    // approves it. There is deliberately no per-parent auto-approve.
     try {
       const created = await dbWrite.appSubListing.create({
         data: {
@@ -393,16 +420,16 @@ async function writeSubListing(
           itemKey,
           authorUserId,
           ...liveColumns(content),
-          status,
-          approvedAt: status === 'approved' ? new Date() : null,
+          status: 'pending',
         },
         select: { id: true, status: true },
       });
+      // A pending row is not in the cached store page, so there is nothing to bust.
       return {
         id: created.id,
         status: created.status as AppSubListingStatus,
         pendingEdit: false,
-        catalogAffected: status === 'approved',
+        catalogAffected: false,
       };
     } catch (err) {
       // A concurrent first publish of the same item won the insert: apply this as an edit.
@@ -435,33 +462,28 @@ async function writeSubListing(
     if ((await activeCount()) >= parent.maxPerAuthor) {
       throw new SubListingError(429, 'author_cap', 'You have reached the store item limit');
     }
-    const next: AppSubListingStatus = parent.autoApprove ? 'approved' : 'pending';
+    // A republished item goes back to review, like a new one.
     const written = await casUpdate({
       ...liveColumns(content),
       ...CLEAR_PENDING,
       editRejectionReason: null,
-      status: next,
+      status: 'pending',
       statusReason: null,
-      approvedAt: next === 'approved' ? new Date() : null,
+      approvedAt: null,
     });
     if (!written) return again();
-    return {
-      id: existing.id,
-      status: next,
-      pendingEdit: false,
-      catalogAffected: next === 'approved',
-    };
+    return { id: existing.id, status: 'pending', pendingEdit: false, catalogAffected: false };
   }
 
-  if (status === 'pending' || parent.autoApprove) {
-    // Never approved (or the parent trusts its authors): the live columns ARE the draft.
+  if (status === 'pending') {
+    // Never approved: the live columns ARE the draft, and a moderator has not seen it yet.
     const written = await casUpdate({
       ...liveColumns(content),
       ...CLEAR_PENDING,
       editRejectionReason: null,
     });
     if (!written) return again();
-    return { id: existing.id, status, pendingEdit: false, catalogAffected: status === 'approved' };
+    return { id: existing.id, status, pendingEdit: false, catalogAffected: false };
   }
 
   // Approved: keep the live version and stage the edit, unless it changes nothing.
@@ -765,6 +787,17 @@ export async function countSubListingQueue(): Promise<number> {
   }
 }
 
+/** Whether the shared-storage row behind a sub-listing exists and is not hidden in the app. */
+async function isSharedItemLive(parentListingId: string, itemKey: string): Promise<boolean> {
+  const parent = await dbRead.appListing.findUnique({
+    where: { id: parentListingId },
+    select: { appBlock: { select: { blockId: true } } },
+  });
+  if (!parent?.appBlock) return false;
+  const item = await readSharedItemForSubListing(parent.appBlock.blockId, itemKey);
+  return item != null && !item.hidden;
+}
+
 export async function moderateSubListing(args: {
   input: ModerateSubListingInput;
   moderatorId: number;
@@ -798,6 +831,16 @@ export async function moderateSubListing(args: {
         break;
       case 'restore':
         if (status !== 'hidden') throw invalid();
+        // The in-app moderation sync hides the store item when its shared row is hidden or
+        // deleted in the app. Restoring it here would put back a card for an item the app no
+        // longer shows, so restore needs the shared row to be live again first.
+        if (!(await isSharedItemLive(row.parentListingId, row.itemKey))) {
+          throw new SubListingError(
+            409,
+            'invalid_transition',
+            'This item is hidden or removed in the app; it cannot be restored here'
+          );
+        }
         // An item hidden before it was ever approved goes back to review, not into the store.
         data = row.approvedAt
           ? { status: 'approved', statusReason: null, ...stamp }

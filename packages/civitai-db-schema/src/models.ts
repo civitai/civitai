@@ -2301,7 +2301,6 @@ export interface AppSubListingParent {
   parentListingId: string;
   parentListing?: AppListing;
   enabled: boolean;
-  autoApprove: boolean;
   maxPerAuthor: number;
   createdAt: Date;
   updatedAt: Date;
@@ -2309,11 +2308,9 @@ export interface AppSubListingParent {
 
 export interface AppSubListing {
   id: string;
-  serialId: number;
   parentListingId: string;
   parentListing?: AppListing;
   itemKey: string;
-  itemSource: string;
   authorUserId: number;
   author?: User;
   title: string;
@@ -2336,7 +2333,6 @@ export interface AppSubListing {
   moderatedBy?: User | null;
   moderatedAt: Date | null;
   approvedAt: Date | null;
-  openCount: number;
   createdAt: Date;
   updatedAt: Date;
 }

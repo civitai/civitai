@@ -213,6 +213,46 @@ describe('SubListingReviewQueue', () => {
     await expect.poll(() => m.invalidated).toEqual(['listSubListingQueue']);
   });
 
+  // The queue carries the stored image KEY (`Image.url`), not a URL. Rendering the key as
+  // `src` requests a relative path on the page origin, which never loads.
+  const LIVE_KEY = 'c0ffee00-live-key';
+  const PROPOSED_KEY = 'c0ffee00-proposed-key';
+  const imgSrc = (testId: string) =>
+    page.getByTestId(testId).element().querySelector('img')?.getAttribute('src') ?? null;
+  // An edge delivery URL is `<image host>/<key>/<transform params>/<name>`. The test env sets no
+  // image host, so the host part is empty; the key followed by its transform segment is what
+  // proves the value went through the edge rather than being rendered raw.
+  const expectEdgeUrl = (src: string | null, key: string) => {
+    expect(src).not.toBe(key);
+    expect(src).toMatch(new RegExp(`(^|/)${key}/[^/]*width=320`));
+  };
+
+  test('renders the live item image through the edge, not as the raw key', async () => {
+    m.rows = [row({ live: { ...live, imageId: 11, imageUrl: LIVE_KEY } })];
+    renderWithProviders(<SubListingReviewQueue />);
+    await expect.element(page.getByText('Neon Portraits')).toBeVisible();
+    const src = page
+      .getByTestId('sub-listing-row')
+      .element()
+      .querySelector('img')
+      ?.getAttribute('src');
+    expectEdgeUrl(src ?? null, LIVE_KEY);
+  });
+
+  test('renders both sides of a staged image change through the edge', async () => {
+    m.rows = [
+      row({
+        status: 'approved',
+        live: { ...live, imageId: 11, imageUrl: LIVE_KEY },
+        pending: { ...live, imageId: 12, imageUrl: PROPOSED_KEY, submittedAt: new Date() },
+      }),
+    ];
+    renderWithProviders(<SubListingReviewQueue />);
+    await expect.element(page.getByTestId('sub-listing-diff-imageUrl')).toBeVisible();
+    expectEdgeUrl(imgSrc('sub-listing-diff-imageUrl'), LIVE_KEY);
+    expectEdgeUrl(imgSrc('sub-listing-diff-imageUrl-proposed'), PROPOSED_KEY);
+  });
+
   test('hiding needs a reason of at least the moderation minimum', async () => {
     m.rows = [row({ status: 'approved' })];
     renderWithProviders(<SubListingReviewQueue />);

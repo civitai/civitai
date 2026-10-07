@@ -618,10 +618,8 @@ export type AppReviewAgentReport = {
 };
 export type AppSubListing = {
   id: string;
-  serial_id: Generated<number>;
   parent_listing_id: string;
   item_key: string;
-  item_source: Generated<string>;
   author_user_id: number;
   title: string;
   tagline: string | null;
@@ -640,14 +638,12 @@ export type AppSubListing = {
   moderated_by_id: number | null;
   moderated_at: Timestamp | null;
   approved_at: Timestamp | null;
-  open_count: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
 export type AppSubListingParent = {
   parent_listing_id: string;
   enabled: Generated<boolean>;
-  auto_approve: Generated<boolean>;
   max_per_author: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;

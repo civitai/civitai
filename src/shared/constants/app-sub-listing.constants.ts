@@ -1,4 +1,8 @@
-import type { StoreGridItem, SubListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import type {
+  ListingCard,
+  StoreGridItem,
+  SubListingCard,
+} from '~/server/schema/blocks/app-listing-read.schema';
 import {
   OFFSITE_CONTENT_RATING_LADDER,
   type OffsiteRatingValue,
@@ -98,4 +102,9 @@ export function subListingRunHref(parentSlug: string, subPath: string, subListin
 
 export function isSubListingCard(item: StoreGridItem): item is SubListingCard {
   return (item as SubListingCard).cardType === 'sub-listing';
+}
+
+/** The app cards of a store page, for a surface that renders `ListingCard`s only. */
+export function onlyListingCards(items: readonly StoreGridItem[]): ListingCard[] {
+  return items.filter((item): item is ListingCard => !isSubListingCard(item));
 }

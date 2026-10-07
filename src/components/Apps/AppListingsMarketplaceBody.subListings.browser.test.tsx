@@ -11,20 +11,27 @@ import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 
 /** The store grid renders a sub-listing item with its own card, beside the app cards. */
 
-const mocks = vi.hoisted(() => ({ items: [] as unknown[], canOpenPages: true }));
+const mocks = vi.hoisted(() => ({
+  items: [] as unknown[],
+  canOpenPages: true,
+  input: null as null | Record<string, unknown>,
+}));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: makeTrpcProxy({
     'appListings.listAvailable': {
-      useInfiniteQuery: () => ({
+      useInfiniteQuery: (input: Record<string, unknown>) => {
+        mocks.input = input;
+        return {
         data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
         isLoading: false,
         isFetchingNextPage: false,
         fetchNextPage: vi.fn(),
         hasNextPage: false,
-      }),
+        };
+      },
     },
   }),
 }));
@@ -76,9 +83,16 @@ const CHILD: SubListingCard = {
 beforeEach(() => {
   mocks.items = [PARENT, CHILD] satisfies StoreGridItem[];
   mocks.canOpenPages = true;
+  mocks.input = null;
 });
 
 describe('store grid with sub-listings', () => {
+  test('the store grid is the caller that opts in to sub-listing cards', async () => {
+    renderWithProviders(<AppListingsMarketplaceBody />);
+    await expect.element(page.getByTestId('apps-sub-listing-card')).toBeVisible();
+    expect(mocks.input).toMatchObject({ includeSubListings: true });
+  });
+
   test('renders the app card and the sub-listing card, in server order', async () => {
     renderWithProviders(<AppListingsMarketplaceBody />);
     await expect.element(page.getByTestId('apps-sub-listing-card')).toBeVisible();

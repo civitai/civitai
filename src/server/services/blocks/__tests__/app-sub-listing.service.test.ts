@@ -3,16 +3,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetSharedMocks } from '~/__tests__/mocks';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { TRPCError } from '@trpc/server';
 import { OnboardingSteps } from '~/server/common/enums';
 import type * as AppListingService from '~/server/services/blocks/app-listing.service';
 import type * as SharedContentSafety from '~/server/services/apps/shared-content-safety';
 import type * as RateLimit from '~/server/utils/shared-storage-rate-limit';
 
-const { mockBust, mockTextSafe, mockRateLimit, mockPoolQuery } = vi.hoisted(() => ({
+const { mockBust, mockTextSafe, mockRateLimit, mockPoolQuery, mockGetImage } = vi.hoisted(() => ({
   mockBust: vi.fn(async () => undefined),
   mockTextSafe: vi.fn(),
   mockRateLimit: vi.fn(),
   mockPoolQuery: vi.fn(),
+  mockGetImage: vi.fn(),
 }));
 
 vi.mock('~/server/services/blocks/app-listing.service', async (importOriginal) => ({
@@ -28,6 +30,7 @@ vi.mock('~/server/utils/shared-storage-rate-limit', async (importOriginal) => ({
   checkSubListingWriteRateLimit: mockRateLimit,
 }));
 vi.mock('~/server/db/appsDb', () => ({ requireAppsDb: () => ({ query: mockPoolQuery }) }));
+vi.mock('~/server/services/image.service', () => ({ getImage: mockGetImage }));
 
 const {
   cleanSubListingText,
@@ -66,7 +69,7 @@ function parentRow(over: Record<string, unknown> = {}) {
     slug: 'custom-generators',
     contentRating: 'pg',
     appBlock: { blockId: 'custom-generators' },
-    subListingParent: { enabled: true, autoApprove: false, maxPerAuthor: 20 },
+    subListingParent: { enabled: true, maxPerAuthor: 20 },
     ...over,
   };
 }
@@ -112,9 +115,18 @@ async function expectError(p: Promise<unknown>, status: number, code: string) {
 
 beforeEach(() => {
   resetSharedMocks();
-  for (const m of [mockBust, mockTextSafe, mockRateLimit, mockPoolQuery]) m.mockReset();
+  for (const m of [mockBust, mockTextSafe, mockRateLimit, mockPoolQuery, mockGetImage]) {
+    m.mockReset();
+  }
   read.appListing.findFirst.mockResolvedValue(parentRow());
+  // The parent's block, for restore's check that the shared row is still live in the app.
+  read.appListing.findUnique.mockResolvedValue({ appBlock: { blockId: 'custom-generators' } });
+  // The pre-visibility-check read (owner only). Kept answering "yours" so a regression to an
+  // ownership-only check would ACCEPT the unpublished image below rather than fail for an
+  // unrelated reason.
   read.image.findUnique.mockResolvedValue({ userId: AUTHOR });
+  // `getImage`'s anonymous read: a public image owned by the author.
+  mockGetImage.mockResolvedValue({ id: 5, user: { id: AUTHOR } });
   write.appSubListing.findUnique.mockResolvedValue(null);
   write.appSubListing.count.mockResolvedValue(0);
   write.appSubListing.create.mockImplementation(
@@ -173,7 +185,7 @@ describe('upsertSubListing — refusals', () => {
     read.appListing.findFirst.mockResolvedValueOnce(parentRow({ subListingParent: null }));
     await expectError(upsert(), 403, 'not_enabled');
     read.appListing.findFirst.mockResolvedValueOnce(
-      parentRow({ subListingParent: { enabled: false, autoApprove: false, maxPerAuthor: 20 } })
+      parentRow({ subListingParent: { enabled: false, maxPerAuthor: 20 } })
     );
     await expectError(upsert(), 403, 'not_enabled');
     read.appListing.findFirst.mockResolvedValueOnce(null);
@@ -221,11 +233,34 @@ describe('upsertSubListing — refusals', () => {
   });
 
   it('refuses an image the caller does not own', async () => {
-    read.image.findUnique.mockResolvedValueOnce({ userId: 7 });
-    await expectError(upsert({ ...BODY, imageId: 5 }), 403, 'image_not_yours');
-    read.image.findUnique.mockResolvedValueOnce(null);
+    mockGetImage.mockResolvedValueOnce({ id: 5, user: { id: 7 } });
     await expectError(upsert({ ...BODY, imageId: 5 }), 403, 'image_not_yours');
     await expect(upsert({ ...BODY, imageId: 5 })).resolves.toBeTruthy();
+  });
+
+  // A card shows its image to every store visitor, so the image must already be public. The
+  // visibility rule is `getImage`'s anonymous read (published, non-private post, reviewed, not
+  // Blocked), which answers NOT_FOUND for anything else, including the owner's own unpublished
+  // image.
+  it("refuses the caller's own image when it is not public (e.g. an unpublished post)", async () => {
+    mockGetImage.mockRejectedValueOnce(
+      new TRPCError({ code: 'NOT_FOUND', message: 'No image with id 5' })
+    );
+    await expectError(upsert({ ...BODY, imageId: 5 }), 400, 'image_not_public');
+    expect(write.appSubListing.create).not.toHaveBeenCalled();
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('asks for the image as an ANONYMOUS viewer, so owner-only visibility does not count', async () => {
+    await expect(upsert({ ...BODY, imageId: 5 })).resolves.toBeTruthy();
+    expect(mockGetImage).toHaveBeenCalledTimes(1);
+    const [arg] = mockGetImage.mock.calls[0];
+    expect(arg).toEqual({ id: 5, isModerator: false });
+  });
+
+  it('a failure other than not-found surfaces instead of reading as "not public"', async () => {
+    mockGetImage.mockRejectedValueOnce(new Error('db down'));
+    await expect(upsert({ ...BODY, imageId: 5 })).rejects.toThrow('db down');
   });
 
   it('runs the shared text-safety check on title and tagline, and stores its output', async () => {
@@ -302,19 +337,51 @@ describe('upsertSubListing — status changes', () => {
       itemKey: 'gen-1',
       authorUserId: AUTHOR,
       status: 'pending',
-      approvedAt: null,
     });
+    expect(write.appSubListing.create.mock.calls[0][0].data.approvedAt ?? null).toBeNull();
     // A pending row cannot be on the cached store page.
     expect(mockBust).not.toHaveBeenCalled();
   });
 
-  it('an auto-approving parent approves a new item directly and busts the catalog', async () => {
+  // Product decision: nothing an app publishes reaches the store without a moderator. There is
+  // no per-parent auto-approve; a parent row carrying an old `autoApprove` value changes nothing.
+  it.each([
+    ['a new item', null],
+    ['a republished (withdrawn) item', 'withdrawn'],
+  ] as const)('%s is always pending, whatever the parent row says', async (_label, existing) => {
     read.appListing.findFirst.mockResolvedValueOnce(
       parentRow({ subListingParent: { enabled: true, autoApprove: true, maxPerAuthor: 20 } })
     );
-    await expect(upsert()).resolves.toMatchObject({ status: 'approved' });
-    expect(write.appSubListing.create.mock.calls[0][0].data.approvedAt).toBeInstanceOf(Date);
-    expect(mockBust).toHaveBeenCalledTimes(1);
+    if (existing)
+      write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: existing }));
+    await expect(upsert()).resolves.toMatchObject({ status: 'pending' });
+    const written = existing ? casWrite().data : write.appSubListing.create.mock.calls[0][0].data;
+    expect(written.status).toBe('pending');
+    expect(written.approvedAt ?? null).toBeNull();
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  it('an edit to a pending item stays pending', async () => {
+    read.appListing.findFirst.mockResolvedValueOnce(
+      parentRow({ subListingParent: { enabled: true, autoApprove: true, maxPerAuthor: 20 } })
+    );
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'pending' }));
+    await expect(upsert({ ...BODY, title: 'v2' })).resolves.toMatchObject({ status: 'pending' });
+    expect(casWrite().data.status).toBeUndefined();
+  });
+
+  it('an edit to an approved item is staged, never applied live, whatever the parent row says', async () => {
+    read.appListing.findFirst.mockResolvedValueOnce(
+      parentRow({ subListingParent: { enabled: true, autoApprove: true, maxPerAuthor: 20 } })
+    );
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow());
+    await expect(upsert({ ...BODY, title: 'Gen One v2' })).resolves.toMatchObject({
+      status: 'approved',
+      pendingEdit: true,
+    });
+    expect(casWrite().data).toMatchObject({ pendingTitle: 'Gen One v2' });
+    expect(casWrite().data.title).toBeUndefined();
+    expect(mockBust).not.toHaveBeenCalled();
   });
 
   it('is idempotent: a second publish of a pending item updates it in place', async () => {
@@ -415,7 +482,7 @@ describe('upsertSubListing — status changes', () => {
     await expectError(upsert({ ...BODY, title: 'x'.repeat(81) }), 400, 'invalid_body');
     await expectError(upsert({ ...BODY, subPath: 'g//x' }), 400, 'invalid_body');
     await expectError(upsert({ ...BODY, contentRating: 'g' }), 400, 'rating_too_loose');
-    read.image.findUnique.mockResolvedValueOnce({ userId: 7 });
+    mockGetImage.mockResolvedValueOnce({ id: 3, user: { id: 7 } });
     await expectError(upsert({ ...BODY, imageId: 3 }), 403, 'image_not_yours');
     mockTextSafe.mockRejectedValueOnce(new SharedContentBlockedError('pattern', 'blocked'));
     await expectError(upsert({ ...BODY, title: 'Changed' }), 400, 'text_rejected');
@@ -681,6 +748,39 @@ describe('moderateSubListing', () => {
     });
     expect(casWrite().data).toMatchObject({ status: 'pending' });
     expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  // The in-app moderation sync hides a store item when its shared row is hidden or deleted in
+  // the app. A store-side restore must not put that card back while the app still hides it.
+  it.each([
+    ['hidden in the app', { rows: [{ author_user_id: AUTHOR, hidden: true }] }],
+    ['deleted in the app', { rows: [] }],
+  ])('restore is refused while the shared row is %s', async (_label, shared) => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(
+      liveRow({ status: 'hidden', statusReason: 'Hidden in the app by a moderator' })
+    );
+    mockPoolQuery.mockResolvedValueOnce(shared);
+    await expectError(mod({ id: 'asl_x', action: 'restore' }), 409, 'invalid_transition');
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
+    expect(mockBust).not.toHaveBeenCalled();
+    // It read THIS item's shared row, in the parent app's schema.
+    expect(mockPoolQuery.mock.calls[0][0]).toContain('"app_custom_generators".shared_kv');
+    expect(mockPoolQuery.mock.calls[0][1]).toEqual(['gen-1']);
+  });
+
+  it('restore is allowed once the shared row is live again (positive control)', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
+    mockPoolQuery.mockResolvedValueOnce({ rows: [{ author_user_id: AUTHOR, hidden: false }] });
+    await expect(mod({ id: 'asl_x', action: 'restore' })).resolves.toMatchObject({
+      status: 'approved',
+    });
+  });
+
+  it('restore fails closed when the app storage cannot be read', async () => {
+    write.appSubListing.findUnique.mockResolvedValueOnce(liveRow({ status: 'hidden' }));
+    mockPoolQuery.mockRejectedValueOnce(new Error('connect ECONNREFUSED'));
+    await expectError(mod({ id: 'asl_x', action: 'restore' }), 503, 'unavailable');
+    expect(write.appSubListing.updateMany).not.toHaveBeenCalled();
   });
 
   it('hiding a pending item, or rejecting an edit, busts nothing (no cached row moved)', async () => {

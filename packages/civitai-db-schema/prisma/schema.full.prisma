@@ -3417,7 +3417,6 @@ model AppSubListingParent {
   parentListingId String     @id @map("parent_listing_id")
   parentListing   AppListing @relation("AppSubListingParentSwitch", fields: [parentListingId], references: [id], onDelete: Cascade)
   enabled         Boolean    @default(false)
-  autoApprove     Boolean    @default(false) @map("auto_approve")
   maxPerAuthor    Int        @default(20) @map("max_per_author")
   createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
@@ -3434,11 +3433,9 @@ model AppSubListingParent {
 /// MANUAL-APPLY (`20261010120000_app_sub_listings`).
 model AppSubListing {
   id                   String     @id // asl_<ULID>
-  serialId             Int        @unique @default(autoincrement()) @map("serial_id")
   parentListingId      String     @map("parent_listing_id")
   parentListing        AppListing @relation("AppSubListings", fields: [parentListingId], references: [id], onDelete: Cascade)
   itemKey              String     @map("item_key")
-  itemSource           String     @default("shared_kv") @map("item_source")
   authorUserId         Int        @map("author_user_id")
   author               User       @relation("AppSubListingAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
   title                String
@@ -3461,7 +3458,6 @@ model AppSubListing {
   moderatedBy          User?      @relation("AppSubListingModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
   moderatedAt          DateTime?  @map("moderated_at") @db.Timestamptz(6)
   approvedAt           DateTime?  @map("approved_at") @db.Timestamptz(6)
-  openCount            Int        @default(0) @map("open_count")
   createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
   updatedAt            DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 

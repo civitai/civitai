@@ -24,12 +24,8 @@ import {
 } from '~/components/Apps/recentlyOpenedAppsStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import type {
-  ListingCard,
-  ListingSort,
-  StoreGridItem,
-} from '~/server/schema/blocks/app-listing-read.schema';
-import { isSubListingCard } from '~/shared/constants/app-sub-listing.constants';
+import type { ListingSort, StoreGridItem } from '~/server/schema/blocks/app-listing-read.schema';
+import { isSubListingCard, onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
 import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
@@ -253,6 +249,9 @@ export function AppListingsMarketplaceBody() {
       // `limit: z.number().int().min(1).max(50).default(20)` — a larger value is a
       // request-time zod error, not a bigger page.
       limit: 48,
+      // The store grid is the one surface that renders `SubListingCard`s, so it is the one
+      // caller that opts in. The server still adds them only behind the flag.
+      includeSubListings: true,
     },
     {
       // W13 (PR-W1a/D8): store-visibility gate = the SHARED `hasAppsStoreAccess`
@@ -314,15 +313,12 @@ export function AppListingsMarketplaceBody() {
   );
 
   const gridItems = useMemo(
-    () => (data?.pages ?? []).flatMap((p) => p.items as StoreGridItem[]),
+    () => (data?.pages ?? []).flatMap((p): StoreGridItem[] => p.items),
     [data]
   );
   // The app cards alone. Sub-listing cards are grid-only: the "Recently opened" rail is about
   // APPS, so it reconciles against these.
-  const items = useMemo(
-    () => gridItems.filter((c): c is ListingCard => !isSubListingCard(c)),
-    [gridItems]
-  );
+  const items = useMemo(() => onlyListingCards(gridItems), [gridItems]);
 
   /**
    * RECONCILE the persisted recents against the listings already on this page.

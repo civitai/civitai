@@ -1899,7 +1899,11 @@ export const appListingsRouter = router({
         redCapable: isRedCapableRequest(ctx),
         scope,
         floor,
-        includeSubListings: !!ctx.features?.appStoreSubListings,
+        // 🔴 OPT-IN AND FLAG, BOTH. Sub-listing cards are a different shape (`SubListingCard`),
+        // so a caller that renders `ListingCard`s only (the related rail on a detail page)
+        // must never receive one just because the viewer has the flag.
+        includeSubListings:
+          input.includeSubListings === true && !!ctx.features?.appStoreSubListings,
         viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
       });
     }),

@@ -880,8 +880,9 @@ export function listingSortKeyExpr(
     case 'name':
     default:
       // `name` is unbounded `text`; the RAW sort key is encoded into the base64
-      // cursor, so a long name would overflow `cursor: z.string().max(128)` and
-      // halt pagination (BAD_REQUEST). Bound the key to 64 chars — IDENTICAL in
+      // cursor, so a long name would overflow the cursor bound (`LISTING_CURSOR_MAX`,
+      // sized for 64 four-byte characters) and halt pagination (BAD_REQUEST). Bound
+      // the key to 64 chars — IDENTICAL in
       // SELECT + the keyset WHERE (same `expr`), so paging stays exact; `al.id`
       // remains the total-order tiebreak, so a 64-char-truncation collision
       // still paginates correctly.
@@ -1089,7 +1090,7 @@ export async function getGlobalRecommendMean(): Promise<number> {
  * It matters because an ATTACKER SUPPLIES HASHED BYTES. `decodeListingCursor`
  * slices `cursorSortKey` and `cursorId` out of a lenient base64url decode as
  * arbitrary free strings (only `cursorMean` is range-validated), the router
- * validates `cursor` only as `z.string().max(128)`, and both land in this
+ * validates `cursor` only as a bounded string (`LISTING_CURSOR_MAX`), and both land in this
  * statement as bound params. That is enough tuning room to steer the 32-bit hash
  * onto any target value.
  *
@@ -1127,7 +1128,7 @@ export async function getGlobalRecommendMean(): Promise<number> {
  *
  * This residual is ACCEPTED, deliberately, and the cost of accepting it is the 180s
  * grid defect above. The alternative to accepting it is putting the remaining axes in
- * the literal key too, and the blocker is `cursor`: it is a free-form 128-byte string,
+ * the literal key too, and the blocker is `cursor`: it is a free-form string of up to `LISTING_CURSOR_MAX` bytes,
  * so lifting it out of the hash makes the redis keyspace AND the `cache_name` metric
  * label request-controlled and unbounded — exactly the property the note at the bottom
  * of this comment relies on. (`kind`, `category` and `sort` are closed enums and
@@ -1342,6 +1343,17 @@ export async function listAvailableListings(
   // 🔴 WHAT THE TTL IS AND IS NOT. It is a bound on staleness for the paths that have
   // no mutation to hang a bust on. It is NOT a redis-outage backstop: `queryCache` has no
   // fail-open, so a redis outage is a 500 on `/apps` and on `GET /api/v1/apps`.
+  //
+  // A cursor taken on a sub-listing row resumes inside the child tier of its sort key.
+  const cursorTb = isAppSubListingId(cursorId) ? 1 : 0;
+  // On the parents-only statement a child cursor means every parent on that sort key was
+  // already served (parents sort before their children), so it resumes strictly after the
+  // key. Comparing the parent id against an `asl_` id instead would serve such a parent
+  // twice, e.g. when the flag turns off or the tables are missing between two pages.
+  const parentKeyset =
+    cursorTb === 1
+      ? Prisma.sql`${sortKeyExpr} ${keysetCmp} ${cursorSortKey}::text`
+      : Prisma.sql`(${sortKeyExpr}, al.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)`;
   const parentsOnlyPage = (levelFilter: Prisma.Sql) =>
     catalogPageCache(
       scope,
@@ -1357,7 +1369,7 @@ export async function listAvailableListings(
     WHERE ${eligibility(levelFilter)}
       AND (
         ${cursorSortKey}::text IS NULL
-        OR (${sortKeyExpr}, al.id) ${keysetCmp} (${cursorSortKey}::text, ${cursorId}::text)
+        OR ${parentKeyset}
       )
     ORDER BY sort_key ${dir}, al.id ${dir}
     LIMIT ${limit + 1}
@@ -1365,8 +1377,6 @@ export async function listAvailableListings(
       { ttl: CacheTTL.sm, tag: [APP_LISTING_CATALOG_TAG] }
     );
 
-  // A cursor taken on a sub-listing row resumes inside the child tier of its sort key.
-  const cursorTb = cursorId?.startsWith('asl_') ? 1 : 0;
   // The keyset over (sort_key, tb, id), for one arm whose tb is fixed. Applied inside each arm
   // with its own ORDER BY / LIMIT so neither arm sorts more than a page.
   const armKeyset = (keyExpr: Prisma.Sql, idCol: Prisma.Sql, tb: number) => Prisma.sql`(

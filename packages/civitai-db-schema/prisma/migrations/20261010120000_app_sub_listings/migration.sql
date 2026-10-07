@@ -11,8 +11,35 @@
 -- table and serves parents only, and the three `/api/v1/blocks/sub-listings/*` endpoints
 -- answer 503.
 --
--- ADDITIVE ONLY. Two new tables and one seed row; nothing on `app_listings` changes.
--- Idempotent (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`), so a re-run is a no-op.
+-- ADDITIVE ONLY. Two new tables and one seed row; no column, index or row of an existing table
+-- changes. Idempotent (`IF NOT EXISTS` / `ON CONFLICT DO NOTHING`), so a re-run is a no-op.
+--
+-- LOCKS ON EXISTING TABLES — brief, but not zero. Each `REFERENCES` takes a SHARE ROW EXCLUSIVE
+-- lock on the table it points at ("User", "Image" and "app_listings"), held until COMMIT. While it
+-- is held, or while this transaction is QUEUED for it, writes (INSERT/UPDATE/DELETE) to those
+-- tables wait; reads do not. The transaction itself is milliseconds (empty tables, one seed
+-- row), and `lock_timeout` below caps each lock wait at 3s: if a long write transaction holds
+-- one of those tables, this aborts instead of stalling every writer queued behind it. So:
+--   1. First check for long-running write transactions on those tables, e.g.
+--        SELECT pid, now() - xact_start AS age, state, left(query, 80)
+--          FROM pg_stat_activity
+--         WHERE xact_start < now() - interval '5 seconds' AND state <> 'idle'
+--         ORDER BY xact_start;
+--   2. Run it off-peak.
+--   3. On `canceling statement due to lock timeout`, nothing was applied (one transaction);
+--      wait and re-run.
+--
+-- ROLLBACK (discards every sub-listing; take a copy first if any rows matter). Dropping a table
+-- also drops its foreign keys, which locks the same three referenced tables (at least against
+-- writes, and depending on the Postgres version possibly against reads too) until COMMIT, so the
+-- same three steps apply:
+--   BEGIN;
+--   SET LOCAL lock_timeout = '3s';
+--   DROP TABLE IF EXISTS "app_sub_listings";
+--   DROP TABLE IF EXISTS "app_sub_listing_parents";
+--   COMMIT;
+-- The code tolerates the tables being absent (see above), so rolling back the schema does not
+-- require rolling back the code.
 --
 -- The CHECK IN-lists are kept in lockstep with `APP_SUB_LISTING_STATUSES` and
 -- `APP_SUB_LISTING_CONTENT_RATINGS` by
@@ -29,8 +56,6 @@ SET LOCAL lock_timeout = '3s';
 CREATE TABLE IF NOT EXISTS "app_sub_listing_parents" (
   "parent_listing_id" TEXT PRIMARY KEY REFERENCES "app_listings"("id") ON DELETE CASCADE,
   "enabled"           BOOLEAN NOT NULL DEFAULT false,
-  -- false = every new item and every edit to an approved item waits for a moderator.
-  "auto_approve"      BOOLEAN NOT NULL DEFAULT false,
   "max_per_author"    INTEGER NOT NULL DEFAULT 20 CHECK ("max_per_author" BETWEEN 1 AND 200),
   "created_at"        TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
   "updated_at"        TIMESTAMPTZ(6) NOT NULL DEFAULT now()
@@ -38,11 +63,9 @@ CREATE TABLE IF NOT EXISTS "app_sub_listing_parents" (
 
 CREATE TABLE IF NOT EXISTS "app_sub_listings" (
   "id"                TEXT PRIMARY KEY,                    -- asl_<ULID>
-  "serial_id"         SERIAL UNIQUE,
   "parent_listing_id" TEXT NOT NULL REFERENCES "app_listings"("id") ON DELETE CASCADE,
   -- The app's own item key (the shared-storage row key). Idempotency key with the parent.
   "item_key"          TEXT NOT NULL CHECK (char_length("item_key") BETWEEN 1 AND 64),
-  "item_source"       TEXT NOT NULL DEFAULT 'shared_kv' CHECK ("item_source" IN ('shared_kv')),
   "author_user_id"    INTEGER NOT NULL REFERENCES "User"("id") ON DELETE CASCADE,
 
   -- LIVE columns: what the store renders.
@@ -76,7 +99,6 @@ CREATE TABLE IF NOT EXISTS "app_sub_listings" (
   "moderated_by_id"   INTEGER REFERENCES "User"("id") ON DELETE SET NULL,
   "moderated_at"      TIMESTAMPTZ(6),
   "approved_at"       TIMESTAMPTZ(6),
-  "open_count"        INTEGER NOT NULL DEFAULT 0,
   "created_at"        TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
   "updated_at"        TIMESTAMPTZ(6) NOT NULL DEFAULT now(),
 

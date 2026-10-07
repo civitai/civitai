@@ -141,6 +141,9 @@ dbMock.dbWrite.appSubListing.updateMany.mockImplementation(
 );
 
 const { listAvailableListings } = await import('~/server/services/blocks/app-listing.service');
+const { listAppListingsSchema, getAppListingsListQuery } = await import(
+  '~/server/schema/blocks/app-listing-read.schema'
+);
 const { moderateSubListing } = await import('~/server/services/blocks/app-sub-listing.service');
 const { hydrateSubListingCards } = await import(
   '~/server/services/blocks/app-sub-listing-store.service'
@@ -420,6 +423,60 @@ describe('store catalog with sub-listings, executed', () => {
       expect(seen).toEqual(all);
     }
   );
+
+  // The name sort key is 64 CHARACTERS, and a character can be 4 bytes of UTF-8, so a page
+  // ending on a long non-ASCII title produced a cursor longer than the input schema accepted:
+  // the next page failed validation and paging stopped there.
+  it.each([
+    ['CJK', '漢'.repeat(70)],
+    ['emoji', '🎨'.repeat(70)],
+  ])(
+    'a page ending on a long %s title yields a cursor the input schema accepts',
+    async (_l, title) => {
+      await holder.db.query(`UPDATE app_sub_listings SET title = $1 WHERE id = $2`, [
+        title,
+        CHILD_A,
+      ]);
+      await holder.db.query(`UPDATE app_listings SET name = $1 WHERE id = $2`, [title, OTHER]);
+      const all = ids(await page({}, 'name'));
+      expect(all).toHaveLength(5);
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      let boundaries = 0;
+      for (let i = 0; i < 10; i++) {
+        // Through the real input schemas (tRPC and REST), as a client's next request would be.
+        const input = listAppListingsSchema.parse({ kind: 'all', sort: 'name', limit: 1, cursor });
+        getAppListingsListQuery().parse({ sort: 'name', limit: '1', cursor });
+        const res = await listAvailableListings(input, BASE_OPTS);
+        seen.push(...ids(res.items));
+        if (res.items.some((it) => it.name === title)) boundaries++;
+        cursor = res.nextCursor;
+        if (!cursor) break;
+      }
+      // Positive control: both long-titled cards (a child and a parent) ended a page.
+      expect(boundaries).toBe(2);
+      expect(seen).toEqual(all);
+    }
+  );
+
+  // A cursor taken on a child row carries an `asl_` id. If the next page runs the parents-only
+  // statement (the flag turned off, or the tables went missing, between two pages), every parent
+  // on that sort key was already served, so none may come back.
+  it('a child cursor resumed on the parents-only path does not repeat a parent', async () => {
+    const first = await listAvailableListings(
+      { kind: 'all', sort: 'popular', limit: 2 },
+      BASE_OPTS
+    );
+    // Children tie with the parent on `popular`, and the parent sorts first.
+    expect(ids(first.items)).toEqual([PARENT, CHILD_B]);
+    const next = await listAvailableListings(
+      { kind: 'all', sort: 'popular', limit: 50, cursor: first.nextCursor },
+      { ...BASE_OPTS, includeSubListings: false }
+    );
+    expect(ids(next.items)).not.toContain(PARENT);
+    // Positive control: the rest of the catalog is still served.
+    expect(ids(next.items)).toEqual([OTHER, OFFSITE]);
+  });
 
   it('shows the item image only within the viewer level, on a red host, under its rating', async () => {
     await holder.db.exec(`

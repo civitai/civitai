@@ -26,6 +26,7 @@ import {
   APPS_SUB_LISTING_QUEUE_COLUMNS,
 } from '~/components/Apps/appsWideLayout';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import type {
   ListSubListingQueueInput,
   SubListingModAction,
@@ -82,6 +83,9 @@ export function subListingEditDiff(live: Content, pending: Content) {
   );
 }
 
+/** Delivery width for the 96px queue thumbnail: the first edge-ladder rung at or above 2x. */
+const QUEUE_IMAGE_WIDTH = 320;
+
 function FieldValue({ field, value }: { field: keyof Content; value: unknown }) {
   if (value == null || value === '')
     return (
@@ -90,7 +94,18 @@ function FieldValue({ field, value }: { field: keyof Content; value: unknown }) 
       </Text>
     );
   if (field === 'imageUrl') {
-    return <Image src={String(value)} alt="" w={96} h={54} fit="cover" radius="sm" />;
+    // `imageUrl` is the stored image KEY, not a URL: resolve it through the edge, as the store
+    // card does server-side.
+    return (
+      <Image
+        src={getEdgeUrl(String(value), { width: QUEUE_IMAGE_WIDTH })}
+        alt=""
+        w={96}
+        h={54}
+        fit="cover"
+        radius="sm"
+      />
+    );
   }
   return <Text size="sm">{String(value)}</Text>;
 }
