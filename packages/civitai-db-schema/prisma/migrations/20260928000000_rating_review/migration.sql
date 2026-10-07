@@ -28,6 +28,8 @@ CREATE INDEX IF NOT EXISTS "RatingReview_entityType_entityId_createdAt_idx"
 CREATE UNIQUE INDEX IF NOT EXISTS "RatingReview_pending_per_entity"
   ON "RatingReview" ("entityType", "entityId") WHERE "status" = 'Pending';
 
+-- Adding a foreign key locks "User" against writes while it is taken; time out rather than queue.
+SET lock_timeout = '3s';
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'RatingReview_userId_fkey') THEN
@@ -39,6 +41,7 @@ BEGIN
       FOREIGN KEY ("resolvedBy") REFERENCES "User"("id") ON DELETE SET NULL ON UPDATE CASCADE;
   END IF;
 END $$;
+RESET lock_timeout;
 
 -- Rows match on (articleId, userId, createdAt), never on id: ArticleRatingReview keeps issuing ids from
 -- its own sequence until the old code is gone, and those would collide with RatingReview's.
