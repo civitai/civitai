@@ -373,6 +373,26 @@ export function SourceImageUploadMultiple({
   );
   const pendingUploadUrls = useMemo(() => pendingUploads.map((u) => u.url), [pendingUploads]);
 
+  // Holds the generator from the pick until the image is in the value, under one key per mount that
+  // no upload id can take. The per-upload marker set inside uploadOrchestratorImage starts after an
+  // await and ends before the value write, and each gap reads as "nothing pending" (the cost box
+  // flickers to its idle state). Derived from `uploads`, so every way a card stops being pending —
+  // in the value, errored, removed, crop cancelled — releases it; unmount clears it below.
+  const cardsPendingKey = useMemo(() => `cards:${getRandomId()}`, []);
+  const cardsPending = uploads.some(
+    (u) =>
+      u.slotIndex === undefined &&
+      (u.status === 'queued' ||
+        u.status === 'uploading' ||
+        u.status === 'cropping' ||
+        (u.status === 'complete' && !value?.some((v) => v.url === u.url)))
+  );
+  useEffect(() => {
+    setImageUploading(cardsPendingKey, cardsPending);
+    if (cardsPending) trackedUploadingIdsRef.current.add(cardsPendingKey);
+    else trackedUploadingIdsRef.current.delete(cardsPendingKey);
+  }, [cardsPending, cardsPendingKey]);
+
   // All image URLs currently in play (value + pending uploads)
   const allImageUrls = useMemo(
     () => [...(value?.map((v) => v.url) ?? []), ...pendingUploadUrls],
@@ -593,7 +613,10 @@ export function SourceImageUploadMultiple({
         x.id === id && x.status === 'queued' ? { ...x, status: 'uploading' as const } : x
       )
     );
+    // uploadOrchestratorImage marks `id` itself; tracked so an unmount mid-upload clears it too.
+    trackedUploadingIdsRef.current.add(id);
     const response = await uploadOrchestratorImage(url, id);
+    trackedUploadingIdsRef.current.delete(id);
     setUploads((items) =>
       items.map((x): ImagePreview => {
         if (x.id !== id || x.status !== 'uploading') return x;

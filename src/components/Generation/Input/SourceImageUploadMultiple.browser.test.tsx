@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
@@ -43,7 +43,10 @@ vi.mock('~/components/Dialog/dialogStore', async (orig) => {
 });
 
 // eslint-disable-next-line import/first
-import { useImagesUploadingStore } from '~/components/Generation/Input/SourceImageUploadMultiple';
+import {
+  useImagesUploadingOrVerifying,
+  useImagesUploadingStore,
+} from '~/components/Generation/Input/SourceImageUploadMultiple';
 // eslint-disable-next-line import/first
 import {
   ImageUploadMultipleInput,
@@ -279,5 +282,179 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
     await settleOneByOne('reject');
     await expect.element(page.getByText(PRESIGN_ERROR)).toBeVisible();
     expect(loaderCount()).toBe(0);
+  });
+});
+
+/**
+ * The generator holds its cost estimate (spinner) and Generate on `useImagesUploadingOrVerifying`.
+ * From the moment an image is picked until it is in the form value, that flag must stay true:
+ * every false gap in between drops the cost box to its "nothing coming" dash and back, a visible
+ * flicker. Once the upload settles (into the value, an error, or a removed card) it must go false
+ * and stay false, or the cost box spins forever.
+ */
+
+/** Every observation of the pending flag and every value write, in order. */
+type Event = { kind: 'pending'; on: boolean } | { kind: 'value'; count: number };
+let events: Event[] = [];
+
+/** Samples the flag on every render, the way WhatIfProvider reads it. */
+function PendingProbe() {
+  const on = useImagesUploadingOrVerifying();
+  const last = [...events].reverse().find((e) => e.kind === 'pending');
+  if (!last || last.on !== on) events.push({ kind: 'pending', on });
+  return null;
+}
+
+function PendingHarness({ aspectRatios }: { aspectRatios?: `${number}:${number}`[] }) {
+  const [value, setValue] = useState<ImageValue[]>([]);
+  const onChange = (next: ImageValue[]) =>
+    setValue((prev) => {
+      if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+      events.push({ kind: 'value', count: next.length });
+      return next;
+    });
+  return (
+    <div data-testid="source-images">
+      <PendingProbe />
+      <ImageUploadMultipleInput
+        value={value}
+        onChange={onChange}
+        max={1}
+        aspectRatios={aspectRatios}
+      />
+    </div>
+  );
+}
+
+const pendingNow = () => {
+  const { uploading, verifying } = useImagesUploadingStore.getState();
+  return uploading.length > 0 || verifying.length > 0;
+};
+
+/** Pending observations from the first `true` up to (not including) the first value write. */
+function pendingBeforeValue() {
+  const firstOn = events.findIndex((e) => e.kind === 'pending' && e.on);
+  const firstValue = events.findIndex((e) => e.kind === 'value' && e.count > 0);
+  return {
+    firstOn,
+    firstValue,
+    gaps: events.slice(firstOn, firstValue).filter((e) => e.kind === 'pending' && !e.on).length,
+  };
+}
+
+describe('SourceImageUploadMultiple — the pending flag the generator waits on', () => {
+  let unsubscribe = () => undefined as void;
+  afterEach(() => unsubscribe());
+
+  beforeEach(() => {
+    events = [];
+    uploads = [];
+    useImagesUploadingStore.setState({ uploading: [], verifying: [] });
+    // Record every store change too, so a gap no component re-rendered for is still seen.
+    unsubscribe = useImagesUploadingStore.subscribe(() => {
+      const on = pendingNow();
+      const last = [...events].reverse().find((e) => e.kind === 'pending');
+      if (!last || last.on !== on) events.push({ kind: 'pending', on });
+    });
+    mocks.uploadConsumerBlob
+      .mockReset()
+      .mockImplementation(
+        () => new Promise((resolve, reject) => uploads.push({ resolve, reject, settled: false }))
+      );
+    mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
+    mocks.dialogTrigger.mockReset();
+  });
+
+  test('stays on from the pick until the image is in the value, then goes off', async () => {
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].resolve({ url: await loadableImageUrl(), available: true });
+
+    await vi.waitFor(() =>
+      expect(events.some((e) => e.kind === 'value' && e.count === 1)).toBe(true)
+    );
+    const { firstOn, firstValue, gaps } = pendingBeforeValue();
+    expect(firstOn).toBeGreaterThanOrEqual(0);
+    expect(firstOn).toBeLessThan(firstValue);
+    expect(gaps).toBe(0);
+
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+  });
+
+  test('a failed upload turns it off, and it stays off', async () => {
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].reject(new Error(PRESIGN_ERROR));
+
+    await vi.waitFor(() => expect(document.body.textContent).toContain(PRESIGN_ERROR));
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    await sleep(500);
+    expect(pendingNow()).toBe(false);
+    expect(uploads).toHaveLength(1);
+  });
+
+  test('removing the card mid-upload turns it off', async () => {
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    expect(pendingNow()).toBe(true);
+
+    const close = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLButtonElement>(
+        '[data-testid="source-images"] button.mantine-ActionIcon-root:has(.tabler-icon-x)'
+      );
+      if (!el) throw new Error('remove button not found');
+      return el;
+    });
+    await userEvent.click(close);
+
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+    // The request it abandoned settles later; that must not turn it back on.
+    uploads[0].reject(new Error(PRESIGN_ERROR));
+    await sleep(300);
+    expect(pendingNow()).toBe(false);
+  });
+  test('unmounting mid-upload turns it off', async () => {
+    const view = await renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    expect(pendingNow()).toBe(true);
+
+    await view.unmount();
+    expect(pendingNow()).toBe(false);
+  });
+
+  test('through a crop: stays on from the pick until the cropped image is in the value', async () => {
+    mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
+    renderWithProviders(<PendingHarness aspectRatios={['1:1']} />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    const { onConfirm, images } = mocks.dialogTrigger.mock.calls[0][0].props;
+
+    onConfirm([{ src: images[0].url, cropped: new Blob(['cropped'], { type: 'image/jpeg' }) }]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].resolve({ url: await loadableImageUrl(), available: true });
+
+    await vi.waitFor(() =>
+      expect(events.some((e) => e.kind === 'value' && e.count === 1)).toBe(true)
+    );
+    const { firstOn, firstValue, gaps } = pendingBeforeValue();
+    expect(firstOn).toBeGreaterThanOrEqual(0);
+    expect(firstOn).toBeLessThan(firstValue);
+    expect(gaps).toBe(0);
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
+  });
+
+  test('cancelling the crop turns it off', async () => {
+    mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
+    renderWithProviders(<PendingHarness aspectRatios={['1:1']} />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    expect(pendingNow()).toBe(true);
+
+    mocks.dialogTrigger.mock.calls[0][0].props.onCancel();
+    await vi.waitFor(() => expect(pendingNow()).toBe(false));
   });
 });
