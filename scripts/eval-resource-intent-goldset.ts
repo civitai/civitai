@@ -37,8 +37,8 @@ import { drainStdio, runScriptAndExit } from './lib/run-as-script';
  * `./eval-resource-intent-registration.ts`; `./eval-resource-intent-goldset-execute.ts`
  * samples the gold and runs it.
  *
- * The models-index positive control (see the retrieval module) runs before either
- * part, so it gates part one too.
+ * The retrieval study's positive control is computed from the run itself and can only
+ * VOID part two's verdict; part one has no positive control of its own.
  *
  * GATED EXECUTION — the live study needs a prod replica read, the models index + an
  * OpenRouter key (team step). Without `--execute` it prints the committed queries and

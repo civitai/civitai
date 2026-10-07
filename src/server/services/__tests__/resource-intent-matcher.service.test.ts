@@ -261,7 +261,7 @@ describe('findResourceIntentCandidates', () => {
     // on this early return then passed the entire suite. No label read happens
     // here, so the only honest value is `false` — and a `true` would shorten the
     // cache TTL for every `role: 'none'` response.
-    expect(result).toEqual({ entries: [], insightFallback: false });
+    expect(result).toEqual({ entries: [], insightFallback: false, promotableVersions: 0 });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
@@ -273,7 +273,7 @@ describe('findResourceIntentCandidates', () => {
       cap: 50,
     });
     // Whole return, for the same reason as the role-none case above.
-    expect(result).toEqual({ entries: [], insightFallback: false });
+    expect(result).toEqual({ entries: [], insightFallback: false, promotableVersions: 0 });
     expect(searchWithSignal).not.toHaveBeenCalled();
   });
 
@@ -666,7 +666,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
 
     // Whole return: an empty pool skips the label read entirely, which is NOT a
     // fallback — the read did not fail, it never happened.
-    expect(result).toEqual({ entries: [], insightFallback: false });
+    expect(result).toEqual({ entries: [], insightFallback: false, promotableVersions: 0 });
     expect(dbMock.dbRead.resourceInsight.findMany).not.toHaveBeenCalled();
   });
 

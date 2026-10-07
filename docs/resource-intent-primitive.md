@@ -1,6 +1,6 @@
 # Resource-intent primitive (Jev)
 
-**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is seeded by popularity alone and the labels act only through the re-rank on it; see [Label ordering](#label-ordering) for why. M3 (the gold-set study) grades stage-1 agreement AND carries a pre-registered two-arm retrieval comparison (the shipped matcher against its popularity seed alone); its registration v2 judged the previous, purpose-first seed NOT MET — see [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison). M4/M5 are gated follow-ons — see [Rollout](#rollout).
+**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is seeded by popularity alone and the labels act only through the re-rank on it; see [Label ordering](#label-ordering) for why. M3 (the gold-set study) grades stage-1 agreement AND carries a pre-registered two-arm retrieval comparison (the shipped matcher against its popularity seed alone); its registration v2 judged the previous, purpose-first seed NOT MET, and registration v3 (not yet run) grades the popularity seed — see [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison). M4/M5 are gated follow-ons — see [Rollout](#rollout).
 
 A versioned, headless API primitive: **prompt → intent + criteria → civitai resource suggestions**. A prompt becomes a typed intent (what kinds of resources it wants, with full probability distributions), the intent compiles into a deterministic shortlist over the model search index, and a second judgment ranks the shortlist. `none` is a first-class answer at every stage — most prompts need no resource.
 
@@ -91,14 +91,15 @@ purpose, so a busy type × baseModel cell filled the pool with labeled models fo
 purposes. Its replacement seeded by PURPOSE first (the filter AND
 `insight.role = <requested role>`, quality-sorted, topped up by popularity only when
 short). Registration v2 of the M3 study judged that seed NOT MET: it retrieved attached
-models about half as often as popularity alone, because in ~80% of requests the
-role-filtered page filled the pool on its own and evicted the popular model the user
-had actually attached. An offline replay of the study's 254 prompts then screened 18
+models about half as often as popularity alone. A separate 254-prompt diagnostic
+(2026-10-06) found why: in 204 of 254 requests (~80%) the role-filtered page filled the
+pool on its own and evicted the popular model the user had actually attached. An offline replay of the study's 254 prompts then screened 18
 seed designs; the only one that tied popularity on hit@10 (26 vs 25) and led it on
 MRR@50 (0.050 vs 0.022) was this one — the popularity page alone, with the label
 ordering on top — and every design that put role-filtered documents into the pool
-lost. That is a screen, not a verdict: this seed is not yet graded, and a v3 registration
-of the study is planned to judge it.
+lost. That is a screen, not a verdict: registration v3 of the study (see
+[The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison)) judges it, and has not
+been run.
 
 The seed reaches `applyInsightRanking` only as the tiebreak index.
 
@@ -121,8 +122,7 @@ The insight fields ARE now projected into `models_v9` (`insight.qualityScore`,
 Without it they would be frozen at the last manual reset, decaying from the moment it
 finished, with every newly-labeled model carrying a null role. No query serving
 requests reads these fields now — the matcher reads labels from Postgres — so the
-cost of a stale projection today falls on the M3 positive control and on any future
-`insight.*` filter. **Touching `Model.updatedAt` instead was considered and
+cost of a stale projection today falls only on a future `insight.*` filter. **Touching `Model.updatedAt` instead was considered and
 rejected:** it orders the "recently updated" model lists (`model.service.ts`
 already drops to raw SQL to AVOID bumping it on a non-creator edit, and says
 so), so a corpus labeling pass would misrepresent every labeled model as
@@ -452,28 +452,44 @@ the two arms differ only by `applyInsightRanking`. Neither arm calls stage 3.
 (`pnpm run tsscript scripts/eval-resource-intent-goldset.ts`), which prints the committed
 queries and that text and exits 0. It still needs the server env to validate, but it
 loads no database or search client, so it needs no Prisma engine, no database and no
-index; every report opens with the same text. In
-brief: the primary metric is hit@10; the decision rule is b > c AND exact two-sided
-McNemar p < 0.05 on the hit@10 discordant pairs; and every run reports exactly one
-verdict on the closing clause — **MET** (the rule holds), **NOT MET** (it does not: the
-clause is judged not met, the question is closed as not delivered, and any follow-up
-such as better gold or new labels is new work under a new registration, not a re-run of
-this one) or **VOID** — the run is too degraded or too different to judge the clause: a
-registered value was overridden, fewer than 667 prompts scored (the n the power
-calculation assumes), infrastructure exclusions (stage-1 failures, arm errors, label-read
-fallbacks) exceed 10% of drawn prompts, or both arms returned the same top 10 on every
-scored prompt. VOID is checked before the decision rule, so a degraded run can never
-produce a binding NOT MET (or MET). The labeled/unlabeled breakdown is
-reported but never decisive.
+index; every report opens with the same text.
+
+**Registration v3 (2026-10-07) is the running one.** v2 graded the then-shipped
+purpose-first matcher and its registered run judged it NOT MET. That verdict is binding,
+and v2 stays in the file verbatim (`M3_RETRIEVAL_PREREGISTRATION_V2`,
+`renderRetrievalPreregistrationV2()`), pinned by its sha256 in the dry-run smoke test.
+v3 asks a new question of the popularity-seed matcher, in brief:
+
+- **Co-primary, both must hold for MET** (intersection-union, no alpha split):
+  (i) non-inferiority on hit@10 with a 0.02 absolute margin — d = (b − c)/n,
+  se = sqrt(b + c − (b − c)²/n)/n, holds iff d − 1.645·se > −0.02; and
+  (ii) superiority on MRR@50 — an exact two-sided sign test over prompts whose reciprocal
+  rank differs, holds iff up > down AND p < 0.05. Otherwise **NOT MET**.
+- **VOID** takes precedence: a registered value was overridden (the pilot included),
+  fewer than 667 prompts scored, infrastructure exclusions above 10% of drawn prompts, or
+  the positive control fails.
+- **Positive control** — on what PURPOSE actually reads: VOID if fewer than 10% of scored
+  prompts had at least one pool version the re-rank promotes (a `ResourceInsight` label at
+  or above the promote floor agreeing on role or style family). The matcher reports that
+  count as `promotableVersions`. It replaces v2's index-document count, which no arm reads
+  any more.
+- **Identical heads are a diagnostic only.** v2 voided a run whose arms matched on every
+  prompt's top 10; the arms now differ only by the re-rank, so identical heads are expected
+  on most prompts (reciprocal ranks tied on 220 of 254 in the offline replay), and the
+  count is printed without deciding anything.
+- **Power** comes from planning assumptions taken from an offline replay of v2's prompts
+  (hit@10 discordance 13 of 254; MRR non-ties 13.4%, 68% favouring PURPOSE) at a planning
+  n of 822 scored: ≈ 0.81 for (i), ≈ 0.97 for (ii). They are assumptions, not evidence;
+  the text derives both from the constants.
+
+The labeled/unlabeled breakdown is reported but never decisive.
 
 **Run the pilot first.** Before the registered run, run
 `--execute --retrieval-sample 100` — no new flags; the override stamps the report as not
-the registered run, so its verdict is VOID by construction. Its report prints the two
-rates the sample size was planned on: the scored fraction (assumed >= 66.7% of drawn
-prompts) and the hit@10 discordant rate, (b + c) / scored (assumed >= 15%), and flags
-either one that falls below. If the discordant rate is under 15%, re-plan the sample size
-BEFORE the registered run: change the registered values only in a new commit dated
-before that run, and say why in it.
+the registered run, so its verdict is VOID by construction. Its report prints the scored
+fraction, the hit@10 discordant rate and the MRR non-tie rate against the planning values,
+and only a pilot below them prints the re-plan banner. Re-plan, if needed, only in a new
+commit dated before the registered run, and say why in it.
 
 **Coverage must resolve as the endpoint's does, or the run does not happen.** Both arms
 filter on generation coverage from `coverageAudience(undefined)`, which reads Flipt through
@@ -489,22 +505,11 @@ hung on an open handle after writing its report; the drain stops that exit trunc
 report printed to a pipe). The drain-then-exit rule is shared with
 `scripts/label-resource-insights.ts` in `scripts/lib/run-as-script.ts`.
 
-**The pilot, and registration v2.** The first pilot (2026-10-06) ran on flag defaults
+**The pilots, and registration v2.** The first v1 pilot (2026-10-06) ran on flag defaults
 for exactly this reason and was discarded. The corrected pilot (2026-10-06, Flipt
 reachable, coverage resolved live) measured 85.0% scored and a 17.6% hit@10 discordant
-rate — both meet the registered power assumption, so the sample size (1000) and both VOID
-floors (667 scored; 10% infrastructure) are unchanged. At those rates ~150 discordant
-pairs are expected, and power against the 65/35 alternative is 0.955. The pilot's
-direction played no part in any choice. Registration v2 differs from v1 only in the
-live-Flipt abort, the coverage line in the report, its History text (which records both
-pilots), and its header now reading "before any registered run".
-
-The positive control counts index documents carrying a projected `insight.role`. ⚠️ No
-arm reads that field any more — PURPOSE's labels come from `ResourceInsight` in Postgres —
-so the control no longer shows the re-rank had labels to read. What catches that is the
-report's count of scored prompts where both arms returned the same first K model ids; if
-that is every one of them, the arms are indistinguishable at K (the label re-rank never
-moved the head) and the run is void rather than null.
+rate. Registration v2 differed from v1 only in the live-Flipt abort, the coverage line in
+the report, its History text, and its header reading "before any registered run".
 
 What it does NOT do: it is offline, so it grades the ordering on a past corpus and
 writes nothing to `resourceIntentShadow` — the shadow-table closing condition above is
@@ -514,8 +519,8 @@ confound the pre-registration states.
 ## Rollout
 
 - **M1:** primitive + REST surface, dark behind `resourceIntentJev`.
-- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index projection** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. The matcher no longer reads any of them (its seed is popularity alone), so an index lacking those settings does not affect it; only the M3 positive control filters `insight.role`.
-- **M3:** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the resource-meaning layer's last closing clause, quoted in that section. Registration v2 judged the previous, purpose-first seed NOT MET; the popularity seed is not yet graded. Run it only once the seed it grades serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison).
+- **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index projection** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. The matcher no longer reads any of them (its seed is popularity alone), so an index lacking those settings does not affect it, and nothing else reads them either; they are left in place pending a separate decision.
+- **M3:** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the resource-meaning layer's last closing clause, quoted in that section. Registration v2 judged the previous, purpose-first seed NOT MET; registration v3 grades the popularity seed and has not been run. Run it only once the seed it grades serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison).
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
   🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.
   ⚠️ **The volume half is NOT affected, and the clause above is the reason:** the shadow write is unconditional, so rows/day tracks calls/day and is invariant to the miss rate. A volume reading stays trustworthy under this fault — do not discount it.

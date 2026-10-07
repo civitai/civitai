@@ -61,14 +61,14 @@ vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
 
 const retrievalModule = await import('../eval-resource-intent-retrieval');
 const {
-  countLabeledIndexDocuments,
   evaluateRetrieval,
   exactMcNemarP,
   hitAtK,
   inRoleGold,
   loadLabeledModelIds,
   popularityArm,
-  purposeBeatsPopularity,
+  mrrSignTest,
+  nonInferiority,
   rankedModelIds,
   reciprocalRankAtK,
   renderRetrievalReport,
@@ -145,19 +145,39 @@ describe('exactMcNemarP — exact two-sided binomial on the discordant pairs', (
   });
 });
 
-describe('purposeBeatsPopularity — the pre-registered decision rule: b > c AND exact McNemar p < 0.05', () => {
+describe('nonInferiority — co-primary (i): d - 1.645 * se > -0.02', () => {
+  // Literals computed independently (Python), never from this implementation.
   it.each([
-    [12, 0, true], // p = 2/4096
-    [9, 1, true], // p = 0.0215
-    [8, 2, false], // b > c, p = 0.109
-    [3, 0, false], // b > c, p = 0.25
-    [5, 5, false], // tie
-    [1, 9, false], // p < 0.05 but c > b
-    [0, 12, false], // a significant loss
-    [0, 0, false],
-  ])('b=%i c=%i → %s', (b, c, expected) => {
-    expect(M3_RETRIEVAL_PREREGISTRATION.alpha).toBe(0.05);
-    expect(purposeBeatsPopularity(b, c)).toBe(expected);
+    // n, b, c, d, se, lower, holds
+    [822, 60, 60, 0, 0.013326582907668276, -0.021922228883114313, false],
+    [822, 50, 50, 0, 0.012165450121654502, -0.020012165450121657, false], // just below
+    [822, 105, 98, 0.00851581508515815, 0.017330553247586273, -0.019992945007121267, true], // just above
+    [822, 0, 11, -0.01338199513381995, 0.004007735424910275, -0.019974719907797353, true],
+    [822, 0, 0, 0, 0, 0, true], // b + c = 0: se = 0, bound 0
+  ])('n=%i b=%i c=%i → d=%f se=%f lower=%f holds=%s', (n, b, c, d, se, lower, holds) => {
+    const r = nonInferiority(n, b, c);
+    expect(r.d).toBeCloseTo(d, 12);
+    expect(r.se).toBeCloseTo(se, 12);
+    expect(r.lower).toBeCloseTo(lower, 12);
+    expect(r.holds).toBe(holds);
+  });
+
+  it('an empty scored set never holds', () => {
+    expect(nonInferiority(0, 0, 0).holds).toBe(false);
+  });
+});
+
+describe('mrrSignTest — co-primary (ii): up > down AND exact two-sided p < 0.05', () => {
+  it.each([
+    [25, 10, 0.01667384780012071, true],
+    [20, 10, 0.09873714670538902, false], // up > down, but p >= 0.05
+    [10, 25, 0.01667384780012071, false], // significant, but the wrong way
+    [10, 20, 0.09873714670538902, false],
+    [0, 0, 1, false],
+  ])('up=%i down=%i → p=%f, holds %s', (up, down, p, holds) => {
+    const r = mrrSignTest(up, down);
+    expect(r.p).toBeCloseTo(p, 12);
+    expect(r.holds).toBe(holds);
   });
 });
 
@@ -166,21 +186,72 @@ describe('purposeBeatsPopularity — the pre-registered decision rule: b > c AND
 // ---------------------------------------------------------------------------
 
 describe('the pre-registration', () => {
-  it('pins the registered values', () => {
+  it('pins the registered v3 values', () => {
     expect(PREREGISTERED_RUN_PARAMS).toEqual({ sampleSize: 1000, sampleDays: 30 });
-    expect(M3_RETRIEVAL_PREREGISTRATION).toMatchObject({
+    expect(M3_RETRIEVAL_PREREGISTRATION).toEqual({
+      version: 3,
+      registeredOn: '2026-10-07',
+      primaryK: 10,
+      secondaryK: 50,
+      alpha: 0.05,
+      nonInferiorityMargin: 0.02,
+      nonInferiorityZ: 1.645,
+      sampleSize: 1000,
+      sampleDays: 30,
+      cap: 50,
+      minPromotableFraction: 0.1,
+      planning: {
+        scored: 822,
+        replayPrompts: 254,
+        replayHitDiscordant: 13,
+        mrrNonTieRate: 0.134,
+        mrrPurposeShare: 0.68,
+      },
+      voidIf: { minScored: 667, maxInfraExclusionFraction: 0.1 },
+      pilotSampleSize: 100,
+    });
+  });
+
+  it('🔴 keeps registration v2 recorded, unchanged', () => {
+    expect(registrationModule.M3_RETRIEVAL_PREREGISTRATION_V2).toEqual({
       version: 2,
       registeredOn: '2026-10-06',
       primaryK: 10,
       secondaryK: 50,
       alpha: 0.05,
+      sampleSize: 1000,
+      sampleDays: 30,
       cap: 50,
       labeledIndexFloor: 100,
       powerAssumption: { discordantRate: 0.15, scoredFraction: 0.667 },
       voidIf: { minScored: 667, maxInfraExclusionFraction: 0.1 },
       pilotSampleSize: 100,
     });
-    expect(M3_RETRIEVAL_PREREGISTRATION).not.toHaveProperty('bootstrapSeed');
+    const v2 = registrationModule.renderRetrievalPreregistrationV2();
+    for (const block of [
+      ['M3 RETRIEVAL PRE-REGISTRATION v2 (registered 2026-10-06, before any registered run)'],
+      [
+        'Question: does the shipped purpose-first matcher (PURPOSE arm) retrieve a resource',
+        'people actually attached more often than the popularity seed alone (POPULARITY arm)?',
+      ],
+      [
+        'Decision rule: PURPOSE beats POPULARITY iff b > c AND the exact two-sided McNemar p',
+        'on (b, c) is < 0.05.',
+      ],
+      [
+        '  VOID    — no verdict on the clause, if ANY of: a registered value was overridden',
+        '            (including the 100-prompt pilot); fewer than 667 prompts scored (the n the',
+        '            power calculation assumes); infrastructure exclusions (stage-1 failure,',
+        '            arm error, label-read fallback) exceed 10% of drawn prompts; or both',
+        '            arms returned the same first 10 model ids on every scored prompt. Two',
+      ],
+      [
+        'Positive control: abort before any vendor call unless >= 100 index',
+        'documents carry a non-none insight.role.',
+      ],
+    ]) {
+      expect(v2).toContain(block.join('\n'));
+    }
   });
 
   it('reports every override, and none for the registered run', () => {
@@ -190,46 +261,67 @@ describe('the pre-registration', () => {
     ).toEqual(['sampleSize: 1000 -> 100', 'sampleDays: 30 -> 7']);
   });
 
-  it('🔴 states the decision rule and all three verdicts, NOT MET included, in full', () => {
+  it('🔴 states v3: history with the binding v2 verdict, both co-primaries, the verdicts, the control, the power', () => {
     const text = renderRetrievalPreregistration();
     for (const block of [
+      ['M3 RETRIEVAL PRE-REGISTRATION v3 (registered 2026-10-07, before any registered run)'],
       [
-        'Decision rule: PURPOSE beats POPULARITY iff b > c AND the exact two-sided McNemar p',
-        'on (b, c) is < 0.05.',
+        'coverage. The v2 registered run judged the then-shipped purpose-first matcher (a',
+        'role-filtered, quality-sorted seed page with a popularity fill, then the label re-rank)',
+        'NOT MET. That verdict is binding: the purpose-first seed is not delivered. v2 is kept',
       ],
       [
-        'Verdict on the closing clause — every run reports exactly one:',
-        '  MET     — the decision rule holds.',
-        '  NOT MET — it does not. The closing clause is judged not met and the question is',
-        '            closed as not delivered. Any follow-up (better gold, new labels) is new',
-        '            work under a new registration, not a re-run of this one.',
-        '  VOID    — no verdict on the clause, if ANY of: a registered value was overridden',
-        '            (including the 100-prompt pilot); fewer than 667 prompts scored (the n the',
-        '            power calculation assumes); infrastructure exclusions (stage-1 failure,',
-        '            arm error, label-read fallback) exceed 10% of drawn prompts; or both',
-        '            arms returned the same first 10 model ids on every scored prompt. Two',
-        '            checks abort before any index read or vendor call, so they produce no',
-        '            report at all: coverage flags not evaluated by a live Flipt client (Flipt',
-        '            unreachable, a flag missing, or a coverage flag set in',
-        '            FLIPT_LOCAL_OVERRIDES — any of which is not the endpoint), and a failed',
-        '            positive control.',
+        'Question: does the shipped matcher (PURPOSE arm: popularity seed + label re-rank) do at',
+        'least as well as the popularity seed alone (POPULARITY arm) on hit@10, while ranking',
+        'attached resources higher?',
       ],
       [
-        'Known confound: people attach popular models, so attached-resource gold is biased',
-        'TOWARD the POPULARITY arm. A MET verdict is therefore conservative. A NOT MET verdict',
-        'stands as the verdict on the closing clause; what the confound limits is only the',
-        'reading of WHY it was not met — the gold measures retrieval of what people attached,',
-        'not the labels themselves — which the labeled/unlabeled breakdown is reported to',
-        'inform.',
+        'Co-primary. BOTH must hold for MET (intersection-union; alpha is not split):',
+        '  (i)  Non-inferiority on hit@10, margin 0.02 absolute. n = scored prompts,',
+        '       b = PURPOSE hit and POPULARITY miss, c = the reverse, d = (b - c) / n,',
+        '       se = sqrt(b + c - (b - c)^2 / n) / n. Holds iff',
+        '       d - 1.645 * se > -0.02 (one-sided 95%). If b + c = 0, se = 0 and the',
+        '       bound is 0.',
+        '  (ii) Superiority on MRR@50, by an exact two-sided sign test over the scored prompts',
+        '       whose reciprocal rank @50 differs between the arms: up = PURPOSE higher, down =',
+        '       POPULARITY higher. Holds iff up > down AND the exact two-sided p on (up, down)',
+        '       is < 0.05.',
       ],
       [
-        'Power assumption (measured by the pilot first): >= 66.7% of drawn prompts score, and the',
-        'arms are discordant at hit@10 on >= 15.0% of scored prompts.',
+        '  MET     — (i) and (ii) both hold.',
+        '  NOT MET — either does not. The closing clause is judged not met for this matcher;',
+        '            any follow-up is new work under a new registration, not a re-run.',
+        '  VOID    — no verdict, if ANY of: a registered value was overridden (including the',
+        '            100-prompt pilot); fewer than 667 prompts scored; infrastructure',
+        '            exclusions (stage-1 failure, arm error, label-read fallback) exceed 10%',
+        '            of drawn prompts; or the positive control fails. VOID takes precedence over',
+        '            both co-primaries.',
+      ],
+      [
+        'Positive control: VOID if fewer than 10% of scored prompts have at least one pool version',
+        'the re-rank promotes — a ResourceInsight label at or above the promote-confidence',
+        'floor that agrees with the request on role or style family.',
+      ],
+      [
+        'No identical-head rule: v2 voided a run whose arms returned the same first 10 model ids',
+        'on every scored prompt. The arms now differ only by the re-rank, which moves nothing',
+        'on a prompt whose pool holds no label it promotes or demotes, so identical heads are',
+        'expected on most prompts (reciprocal ranks tied on 220 of 254 in the offline replay).',
+        'The count is printed as a diagnostic only, so it can neither void nor bias a run;',
+      ],
+      [
+        "Power (planning assumptions from an offline replay of v2's prompts, NOT evidence):",
+        'hit@10 discordance 13 of 254 = 5.1%; at a planning n of 822 scored,',
+        'se = sqrt(0.0512 / 822) = 0.0079, so power for (i) at a true difference of 0 is 0.81.',
+        'MRR@50 non-ties 13.4% of scored (110 of 822) with 68.0% favouring PURPOSE',
+        'gives power for (ii) of 0.97.',
       ],
     ]) {
       expect(text).toContain(block.join('\n'));
     }
-    expect(text).not.toMatch(/bootstrap|not by itself evidence/);
+    expect(text).not.toMatch(
+      /purpose-first seed \+ label re-rank|filters on insight\.role|abort before any vendor call unless/
+    );
   });
 });
 
@@ -308,6 +400,7 @@ const scoredOutcome = (
   inRoleCount: 1,
   goldModelIds: [100],
   goldLabeled: false,
+  promotable: true,
   purposeModelIds: [],
   popularityModelIds: [],
   ...over,
@@ -399,7 +492,11 @@ describe('evaluateRetrieval', () => {
     expect(e.primary).toMatchObject({ n: 4, purposeHits: 3, popularityHits: 2, b: 2, c: 1 });
     expect(e.primary.difference).toBe(0.25);
     expect(e.primary.mcnemarP).toBe(1);
-    expect(e.primary.purposeBeatsPopularity).toBe(false); // b > c, but p = 1
+    // MRR@50: row 1 (1 vs 1/12) and row 2 (1/3 vs 0) favour PURPOSE, row 3 (0 vs 1/2)
+    // POPULARITY, row 4 ties.
+    expect(e.mrr).toMatchObject({ up: 2, down: 1, p: 1, holds: false });
+    expect(e.nonInferiority).toMatchObject({ n: 4, b: 2, c: 1, d: 0.25 });
+    expect(e.promotableScored).toBe(4);
     expect(e.identicalAtPrimaryK).toBe(1);
     // 3 infrastructure exclusions of 9 drawn: the run is too degraded to judge.
     expect(e.verdict).toEqual({
@@ -448,7 +545,7 @@ describe('evaluateRetrieval', () => {
     expect(evaluateRetrieval([sameHead, differsAtTen]).identicalAtPrimaryK).toBe(1);
   });
 
-  it('declares a win only when the rule holds', () => {
+  it('a clean PURPOSE sweep passes both co-primaries, but 12 scored is VOID', () => {
     const wins = Array.from({ length: 12 }, (_, i) =>
       scoredOutcome(i + 1, {
         purposeModelIds: rankedWith(100, 1),
@@ -457,13 +554,12 @@ describe('evaluateRetrieval', () => {
     );
     const e = evaluateRetrieval(wins);
     expect(e.primary).toMatchObject({ b: 12, c: 0 });
-    expect(e.primary.mcnemarP).toBeCloseTo(2 / 4096, 12);
-    expect(e.primary.purposeBeatsPopularity).toBe(true);
-    // The rule holds, but 12 scored is under the registered minimum: VOID, not MET.
+    expect(e.nonInferiority.holds).toBe(true);
+    expect(e.mrr).toMatchObject({ up: 12, down: 0, holds: true });
     expect(e.verdict.verdict).toBe('VOID');
   });
 
-  it('a SIGNIFICANT PURPOSE loss is not a win', () => {
+  it('a PURPOSE loss fails both co-primaries', () => {
     const losses = Array.from({ length: 12 }, (_, i) =>
       scoredOutcome(i + 1, {
         purposeModelIds: rankedWith(null, 1),
@@ -472,27 +568,26 @@ describe('evaluateRetrieval', () => {
     );
     const e = evaluateRetrieval(losses);
     expect(e.primary).toMatchObject({ b: 0, c: 12 });
-    expect(e.primary.mcnemarP).toBeLessThan(0.05);
     expect(e.primary.difference).toBe(-1);
-    expect(e.primary.purposeBeatsPopularity).toBe(false);
+    expect(e.nonInferiority).toMatchObject({ d: -1, holds: false });
+    expect(e.mrr).toMatchObject({ up: 0, down: 12, holds: false });
   });
 
-  it('an empty scored set has no difference and no win, and is VOID', () => {
+  it('an empty scored set has no difference and is VOID', () => {
     const e = evaluateRetrieval([outcomes[4]]);
     expect(e.primary).toMatchObject({ n: 0, difference: null, mcnemarP: 1 });
-    expect(e.primary.purposeBeatsPopularity).toBe(false);
+    expect(e.nonInferiority.holds).toBe(false);
     expect(e.verdict).toEqual({ verdict: 'VOID', reason: 'no prompt scored' });
-    const report = renderRetrievalReport(e, { labeledIndexDocuments: 7000 });
-    expect(report).toContain(
-      'Difference (PURPOSE - POPULARITY): —. Decision rule (b > c AND p < 0.05): does not hold.'
-    );
+    expect(renderRetrievalReport(e, {})).toContain('Difference (PURPOSE - POPULARITY): —.');
   });
 
   it('renders the sample, primary and strata lines exactly', () => {
-    const report = renderRetrievalReport(evaluateRetrieval(outcomes), {
-      labeledIndexDocuments: 7000,
-    });
+    const report = renderRetrievalReport(evaluateRetrieval(outcomes), {});
     for (const line of [
+      'Registration: v3 (registered 2026-10-07). Spec hash: `',
+      'n = 4, b = 2, c = 1; d = (b - c) / n = 0.2500; se = sqrt(b + c - (b - c)^2 / n) / n = 0.4146; lower bound d - 1.645 * se = -0.4320 against -0.02: does not hold.',
+      'Prompts whose reciprocal rank @50 differs: up (PURPOSE higher) = 2, down (POPULARITY higher) = 1; exact two-sided p = 1.00 against 0.05: does not hold.',
+      'Positive control: 4 of 4 scored prompts (100.0%) had at least one pool version the re-rank promotes (VOID under 10%).',
       '| drawn | 9 |',
       '| excluded: stage-1 failed | 1 |',
       '| excluded: role = none | 1 |',
@@ -505,16 +600,34 @@ describe('evaluateRetrieval', () => {
       '| hit@50 | 4 | 75.0% | 75.0% | 1 | 1 | 1.00 |',
       '| gold labeled | 2 | 50.0% | 50.0% | 1 | 1 | 1.00 |',
       '| gold unlabeled | 2 | 100.0% | 50.0% | 1 | 0 | 1.00 |',
-      'Difference (PURPOSE - POPULARITY): 25.0%. Decision rule (b > c AND p < 0.05): does not hold.',
+      'Difference (PURPOSE - POPULARITY): 25.0%.',
       '## Verdict: VOID',
       'VOID — infrastructure exclusions 3 of 9 drawn exceed 10%.',
-      'Positive control: 7000 index documents carry a non-none `insight.role` (floor 100).',
-      // The pilot's two rates: 4 of 9 drawn scored; (2 + 1) / 4 discordant.
-      'Power assumption — scored fraction: 44.4% of drawn (assumed >= 66.7%); discordant rate (b + c) / scored at hit@10: 75.0% (assumed >= 15.0%). 🔴 BELOW THE ASSUMPTION — re-plan the sample size in a new commit before the registered run.',
+      'Scored prompts where both arms returned the same first 10 model ids in the same order: 1 of 4. A diagnostic only — the arms differ only by the re-rank, so identical heads are expected on most prompts; it never voids a run.',
+      // 4 of 9 drawn scored; (2 + 1) / 4 discordant; (2 + 1) / 4 MRR non-ties.
+      'Planning assumptions — scored fraction: 44.4% of drawn (planned 82.2%); hit@10 discordant rate: 75.0% (planned 5.1%); MRR@50 non-tie rate: 75.0% (planned 13.4%).',
     ]) {
       expect(report).toContain(line);
     }
-    expect(report).not.toMatch(/bootstrap|NOT DEMONSTRATED/);
+    // In order: version, both co-primaries, the control, then the verdict.
+    const at = (needle: string) => report.indexOf(needle);
+    expect(at('Registration: v3')).toBeLessThan(at('## Co-primary (i)'));
+    expect(at('## Co-primary (i)')).toBeLessThan(at('## Co-primary (ii)'));
+    expect(at('## Co-primary (ii)')).toBeLessThan(at('Positive control:'));
+    expect(at('Positive control:')).toBeLessThan(at('## Verdict:'));
+    // A registered run below the planning assumptions gets no pilot banner.
+    expect(report).not.toContain('BELOW THE PLANNING ASSUMPTION');
+    expect(report).not.toMatch(/bootstrap|NOT DEMONSTRATED|Decision rule|insight\.role/);
+  });
+
+  it('🔴 the re-plan banner prints on a PILOT below the planning assumptions, and only there', () => {
+    const pilot = renderRetrievalReport(
+      evaluateRetrieval(outcomes, { ...PREREGISTERED_RUN_PARAMS, sampleSize: 100 }),
+      {}
+    );
+    expect(pilot).toContain(
+      '🔴 BELOW THE PLANNING ASSUMPTION — re-plan the sample size in a new commit before the registered run.'
+    );
   });
 });
 
@@ -524,23 +637,24 @@ describe('evaluateRetrieval', () => {
 
 describe('retrievalVerdict — MET / NOT MET / VOID', () => {
   /**
-   * A registered-size run: `p` PURPOSE-only hits, `q` POPULARITY-only, `both` and
-   * `neither` shared, plus `infra` infrastructure exclusions spread over all three kinds.
+   * A registered-size run. `p` PURPOSE-only hits@10 and `q` POPULARITY-only (each also an
+   * MRR@50 up / down); `tie` both hit at rank 1 (MRR tie); `up` / `down` both hit, at
+   * ranks 1 vs 2 / 2 vs 1 (MRR non-ties with no hit@10 discordance); `neither`;
+   * `unpromotable` of the scored rows carry no promotable pool version; `infra` exclusions.
    */
   const run = ({
     p = 0,
     q = 0,
-    both = 0,
+    tie = 0,
+    up = 0,
+    down = 0,
     neither = 0,
+    unpromotable = 0,
     infra = [0, 0, 0] as [number, number, number],
   }) => {
     let id = 0;
-    const scored = (hitP: boolean, hitQ: boolean) =>
-      scoredOutcome(++id, {
-        purposeModelIds: rankedWith(hitP ? 100 : null, 1),
-        // A POPULARITY list that differs from PURPOSE's even when both miss.
-        popularityModelIds: hitQ ? rankedWith(100, 2) : rankedWith(null, 1).map((x) => x + 5000),
-      });
+    const scored = (purposeModelIds: number[], popularityModelIds: number[]) =>
+      scoredOutcome(++id, { purposeModelIds, popularityModelIds });
     const excluded = (status: 'stage1_failed' | 'arm_error' | 'insight_fallback') =>
       ({
         imageId: ++id,
@@ -550,11 +664,24 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
         checkpointCount: 0,
         inRoleCount: status === 'stage1_failed' ? 0 : 1,
       } as Outcome);
+    const miss = rankedWith(null, 1);
+    const rows = [
+      ...Array.from({ length: p }, () => scored(rankedWith(100, 1), miss)),
+      ...Array.from({ length: q }, () => scored(miss, rankedWith(100, 1))),
+      ...Array.from({ length: tie }, () => scored(rankedWith(100, 1), rankedWith(100, 1))),
+      ...Array.from({ length: up }, () => scored(rankedWith(100, 1), rankedWith(100, 2))),
+      ...Array.from({ length: down }, () => scored(rankedWith(100, 2), rankedWith(100, 1))),
+      ...Array.from({ length: neither }, () =>
+        scored(
+          miss,
+          miss.map((x) => x + 5000)
+        )
+      ),
+    ].map((row, i) =>
+      i < unpromotable && row.status === 'scored' ? { ...row, promotable: false } : row
+    );
     return [
-      ...Array.from({ length: p }, () => scored(true, false)),
-      ...Array.from({ length: q }, () => scored(false, true)),
-      ...Array.from({ length: both }, () => scored(true, true)),
-      ...Array.from({ length: neither }, () => scored(false, false)),
+      ...rows,
       ...Array.from({ length: infra[0] }, () => excluded('stage1_failed')),
       ...Array.from({ length: infra[1] }, () => excluded('arm_error')),
       ...Array.from({ length: infra[2] }, () => excluded('insight_fallback')),
@@ -563,26 +690,36 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
   const verdictOf = (rows: Outcome[], params = PREREGISTERED_RUN_PARAMS) =>
     evaluateRetrieval(rows, params).verdict;
 
-  // 700 scored: 100 vs 50 discordant (p ≈ 6e-5) — the rule holds.
-  const winning = run({ p: 100, q: 50, both: 200, neither: 350 });
+  // 700 scored. (i): b = c = 10, lower = -0.0105 > -0.02. (ii): up 50, down 10, p = 1.62e-7.
+  const bothHold = { p: 10, q: 10, up: 40, tie: 200, neither: 440 };
+  // (i) fails: b 10, c 40, lower = -0.0593. (ii) holds: up 110, down 40, p = 9.56e-9.
+  const onlyMrr = { p: 10, q: 40, up: 100, tie: 200, neither: 350 };
+  // (i) holds as in bothHold; (ii) fails: up = down = 10.
+  const onlyNonInferiority = { p: 10, q: 10, tie: 200, neither: 480 };
+  // Both fail: (i) as in onlyMrr; (ii) up 10, down 40.
+  const neitherHolds = { p: 10, q: 40, tie: 200, neither: 450 };
 
-  it('MET iff the decision rule holds on a registered, scoring, non-degraded run', () => {
-    expect(verdictOf(winning).verdict).toBe('MET');
-  });
-
-  it('NOT MET when the rule fails: a loss, a tie, a non-significant win', () => {
-    expect(verdictOf(run({ p: 50, q: 100, both: 200, neither: 350 })).verdict).toBe('NOT MET');
-    expect(verdictOf(run({ p: 60, q: 60, both: 200, neither: 380 })).verdict).toBe('NOT MET');
-    const nonSignificant = verdictOf(run({ p: 60, q: 50, both: 200, neither: 390 }));
-    expect(nonSignificant.verdict).toBe('NOT MET');
-    expect(nonSignificant.reason).toBe(
-      'the decision rule does not hold (b = 60, c = 50); the question is closed as not delivered'
+  it('🔴 the four combinations of the co-primaries: MET only when BOTH hold', () => {
+    expect(verdictOf(run(bothHold))).toEqual({
+      verdict: 'MET',
+      reason:
+        '(i) non-inferiority holds (lower bound -0.0105 vs -0.02); (ii) MRR@50 superiority holds (up 50, down 10, p 1.62e-7)',
+    });
+    expect(verdictOf(run(onlyMrr))).toEqual({
+      verdict: 'NOT MET',
+      reason:
+        '(i) non-inferiority does not hold (lower bound -0.0593 vs -0.02); (ii) MRR@50 superiority holds (up 110, down 40, p 9.56e-9); the question is closed as not delivered for this matcher',
+    });
+    expect(verdictOf(run(onlyNonInferiority)).verdict).toBe('NOT MET');
+    expect(verdictOf(run(onlyNonInferiority)).reason).toContain(
+      '(i) non-inferiority holds (lower bound -0.0105 vs -0.02); (ii) MRR@50 superiority does not hold (up 10, down 10, p 1.00)'
     );
+    expect(verdictOf(run(neitherHolds)).verdict).toBe('NOT MET');
   });
 
-  it('VOID — and never MET — on an overridden run, even one the rule would pass', () => {
-    const e = evaluateRetrieval(winning, { ...PREREGISTERED_RUN_PARAMS, sampleSize: 100 });
-    expect(e.primary.purposeBeatsPopularity).toBe(true);
+  it('VOID takes precedence over both co-primaries holding: an overridden run', () => {
+    const e = evaluateRetrieval(run(bothHold), { ...PREREGISTERED_RUN_PARAMS, sampleSize: 100 });
+    expect(e.nonInferiority.holds && e.mrr.holds).toBe(true);
     expect(e.verdict).toEqual({
       verdict: 'VOID',
       reason: 'not the registered run (overridden: sampleSize: 1000 -> 100)',
@@ -594,54 +731,49 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
   });
 
   it('🔴 VOID below the minimum scored n — 667 is judged, 666 is not', () => {
-    // A rule-passing split at both sizes: 100 vs 50 discordant.
-    expect(verdictOf(run({ p: 100, q: 50, both: 200, neither: 317 })).verdict).toBe('MET');
-    expect(verdictOf(run({ p: 100, q: 50, both: 200, neither: 316 }))).toEqual({
+    expect(verdictOf(run({ ...bothHold, neither: 407 })).verdict).toBe('MET');
+    expect(verdictOf(run({ ...bothHold, neither: 406 }))).toEqual({
       verdict: 'VOID',
       reason: '666 prompts scored, under the 667 the power calculation assumes',
     });
-    // The degraded-run shape that motivated it: ~50 scored, a non-significant split.
-    expect(verdictOf(run({ p: 14, q: 11, neither: 25 })).verdict).toBe('VOID');
   });
 
   it('🔴 VOID when infrastructure exclusions exceed 10% of drawn — 100 of 1000 is judged, 101 is not', () => {
-    // 900 scored + 100 infra = 1000 drawn: exactly 10%, judged.
-    expect(
-      verdictOf(run({ p: 100, q: 50, both: 200, neither: 550, infra: [34, 33, 33] })).verdict
-    ).toBe('MET');
-    // 899 scored + 101 infra: over 10%. Every kind counts toward it.
-    expect(verdictOf(run({ p: 100, q: 50, both: 200, neither: 549, infra: [34, 34, 33] }))).toEqual(
-      {
-        verdict: 'VOID',
-        reason: 'infrastructure exclusions 101 of 1000 drawn exceed 10%',
-      }
-    );
+    expect(verdictOf(run({ ...bothHold, neither: 640, infra: [34, 33, 33] })).verdict).toBe('MET');
+    expect(verdictOf(run({ ...bothHold, neither: 639, infra: [34, 34, 33] }))).toEqual({
+      verdict: 'VOID',
+      reason: 'infrastructure exclusions 101 of 1000 drawn exceed 10%',
+    });
   });
 
-  it('VOID when the arms are identical at K on every scored prompt', () => {
-    const identical = Array.from({ length: 700 }, (_, i) =>
-      scoredOutcome(i + 1, {
-        purposeModelIds: rankedWith(null, 1),
-        popularityModelIds: rankedWith(null, 1),
-      })
-    );
-    expect(verdictOf(identical)).toEqual({
+  it('🔴 the positive control: VOID under 10% of scored prompts with a promotable pool version — 70 of 700 passes, 69 does not', () => {
+    expect(verdictOf(run({ ...bothHold, unpromotable: 630 })).verdict).toBe('MET');
+    expect(verdictOf(run({ ...bothHold, unpromotable: 631 }))).toEqual({
       verdict: 'VOID',
-      reason: 'both arms returned the same first 10 model ids on every scored prompt',
+      reason:
+        'positive control failed: 69 of 700 scored prompts had a pool version the re-rank promotes, under 10%',
     });
-    // One prompt that differs is enough to leave VOID.
-    expect(verdictOf([...identical, ...run({ p: 1 })]).verdict).toBe('NOT MET');
+    // It overrides a run whose co-primaries would both hold.
+    expect(verdictOf(run({ ...bothHold, unpromotable: 700 })).verdict).toBe('VOID');
+  });
+
+  it('🔴 identical heads on EVERY scored prompt do not VOID a v3 run', () => {
+    // 700 prompts, both arms the same list and both hit: (i) holds (b = c = 0, bound 0),
+    // (ii) has no non-ties, so the verdict is NOT MET — reached, not voided.
+    const identical = run({ tie: 700 });
+    const e = evaluateRetrieval(identical);
+    expect(e.identicalAtPrimaryK).toBe(700);
+    expect(e.nonInferiority).toMatchObject({ lower: 0, holds: true });
+    expect(e.verdict.verdict).toBe('NOT MET');
   });
 
   it('the report prints exactly one verdict', () => {
     for (const [rows, params, expected] of [
-      [winning, PREREGISTERED_RUN_PARAMS, 'MET'],
-      [run({ p: 60, q: 50, both: 200, neither: 390 }), PREREGISTERED_RUN_PARAMS, 'NOT MET'],
-      [winning, { ...PREREGISTERED_RUN_PARAMS, sampleDays: 7 }, 'VOID'],
+      [run(bothHold), PREREGISTERED_RUN_PARAMS, 'MET'],
+      [run(onlyMrr), PREREGISTERED_RUN_PARAMS, 'NOT MET'],
+      [run(bothHold), { ...PREREGISTERED_RUN_PARAMS, sampleDays: 7 }, 'VOID'],
     ] as const) {
-      const report = renderRetrievalReport(evaluateRetrieval(rows, params), {
-        labeledIndexDocuments: 7000,
-      });
+      const report = renderRetrievalReport(evaluateRetrieval(rows, params), {});
       const verdicts = report.split('\n').filter((line) => line.startsWith('## Verdict: '));
       expect(verdicts).toEqual([`## Verdict: ${expected}`]);
     }
@@ -652,11 +784,16 @@ describe('retrievalVerdict — MET / NOT MET / VOID', () => {
       overrides: [],
       drawn: 700,
       excluded: { stage1_failed: 0, arm_error: 0, insight_fallback: 0 },
-      primary: { n: 700, b: 100, c: 50 },
-      identicalAtPrimaryK: 0,
+      n: 700,
+      promotableScored: 700,
+      nonInferiority: { lower: -0.01, holds: true },
+      mrr: { up: 50, down: 10, p: 0.001, holds: true },
     };
     expect(retrievalVerdict(base).verdict).toBe('MET');
-    expect(retrievalVerdict({ ...base, identicalAtPrimaryK: 700 }).verdict).toBe('VOID');
+    expect(retrievalVerdict({ ...base, promotableScored: 69 }).verdict).toBe('VOID');
+    expect(
+      retrievalVerdict({ ...base, nonInferiority: { lower: -0.03, holds: false } }).verdict
+    ).toBe('NOT MET');
     expect(
       retrievalVerdict({ ...base, excluded: { ...base.excluded, insight_fallback: 71 } }).verdict
     ).toBe('VOID');
@@ -906,6 +1043,32 @@ describe('runRetrievalArms — the two arms', () => {
     expect(rankedModelIds(entries)).toEqual([7, 8]);
   });
 
+  it('🔴 records the positive-control input from what PURPOSE reports, never from POPULARITY', async () => {
+    const outcomesFor = async (purposeCount: number | undefined, popularityCount: number) => {
+      const [outcome] = await runRetrievalArms([row(1)], {
+        stage1: stage1As('style'),
+        armOpts: ARM_OPTS,
+        labeledModelIds: new Set(),
+        arms: {
+          purpose: async () => ({
+            entries: [],
+            insightFallback: false,
+            promotableVersions: purposeCount,
+          }),
+          popularity: async () => ({
+            entries: [],
+            insightFallback: false,
+            promotableVersions: popularityCount,
+          }),
+        },
+      });
+      return outcome;
+    };
+    expect(await outcomesFor(3, 0)).toMatchObject({ status: 'scored', promotable: true });
+    expect(await outcomesFor(0, 5)).toMatchObject({ status: 'scored', promotable: false });
+    expect(await outcomesFor(undefined, 5)).toMatchObject({ status: 'scored', promotable: false });
+  });
+
   it('hands both arms the identical criteria and options objects', async () => {
     const purpose = vi.fn(async () => ({ entries: [], insightFallback: false }));
     const popularity = vi.fn(async () => ({ entries: [], insightFallback: false }));
@@ -1092,7 +1255,7 @@ describe('runRetrievalArms — exclusions', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Labels and the positive control
+// Labels
 // ---------------------------------------------------------------------------
 
 describe('loadLabeledModelIds — the index projection rule, over every version', () => {
@@ -1131,26 +1294,6 @@ describe('loadLabeledModelIds — the index projection rule, over every version'
     dbMock.dbRead.modelVersion.findMany.mockReset();
     expect(await loadLabeledModelIds([])).toEqual(new Set());
     expect(dbMock.dbRead.modelVersion.findMany).not.toHaveBeenCalled();
-  });
-});
-
-describe('countLabeledIndexDocuments — the positive control', () => {
-  it('counts exactly the non-none roles, in one zero-width query', async () => {
-    const search = vi.fn(async () => ({ hits: [], estimatedTotalHits: 1234 }));
-    meiliHolder.client = { index: () => ({ search }) };
-    expect(await countLabeledIndexDocuments()).toBe(1234);
-    expect(search).toHaveBeenCalledWith('', {
-      filter:
-        'insight.role IN ["style", "character", "subject_detail", "pose_composition", "environment_scene", "clothing", "quality_enhancer", "control_guidance"]',
-      limit: 0,
-    });
-  });
-
-  it('reads 0 with no search client or no count', async () => {
-    meiliHolder.client = null;
-    expect(await countLabeledIndexDocuments()).toBe(0);
-    meiliHolder.client = { index: () => ({ search: async () => ({ hits: [] }) }) };
-    expect(await countLabeledIndexDocuments()).toBe(0);
   });
 });
 
@@ -1202,10 +1345,8 @@ describe('main — the --execute gate', () => {
     }
   };
 
-  const controlReturns = (estimatedTotalHits: number) => {
-    const search = vi.fn(async () => ({ hits: [], estimatedTotalHits }));
-    meiliHolder.client = { index: () => ({ search }) };
-    return search;
+  const indexReady = () => {
+    meiliHolder.client = { index: () => ({}) };
   };
 
   beforeEach(() => {
@@ -1258,29 +1399,8 @@ describe('main — the --execute gate', () => {
     expect(String(result)).toContain('--retrieval-sample must be a positive integer');
   });
 
-  it.each([
-    [99, 'aborts'],
-    [100, 'proceeds with'],
-  ] as const)(
-    '🔴 with --execute, a positive-control count of %i %s the run (abort = before any query or vendor call)',
-    async (count, verdict) => {
-      controlReturns(count);
-      const { result } = await runMain(['--execute', '--limit', '2']);
-      if (verdict === 'proceeds with') {
-        expect(result).toBe('ok');
-        expect(dbMock.dbRead.$queryRaw).toHaveBeenCalled();
-      } else {
-        expect(String(result)).toContain(
-          `positive control FAILED: ${count} models-index documents`
-        );
-        expect(askJev).not.toHaveBeenCalled();
-        expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
-      }
-    }
-  );
-
   it('🔴 the shared matched draw: part one takes a prefix plus the unmatched rows, part two the first sampleSize', async () => {
-    controlReturns(7000);
+    indexReady();
     const matchedRows = [11, 12, 13].map((imageId) => ({
       imageId,
       prompt: `matched prompt ${imageId}`,
@@ -1327,35 +1447,35 @@ describe('main — the --execute gate', () => {
   });
 
   it('🔴 with --execute and Flipt unreachable, aborts before the index, the replica or the vendor', async () => {
-    const search = controlReturns(7000);
+    indexReady();
     fliptSync.mockReturnValue(null);
     const { result } = await runMain(['--execute', '--limit', '2']);
     expect(String(result)).toContain('feature flags could not be evaluated');
-    expect(search).not.toHaveBeenCalled();
+    expect(searchWithSignal).not.toHaveBeenCalled();
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     expect(askJev).not.toHaveBeenCalled();
   });
 
   it('🔴 with --execute and a coverage flag overridden locally (the default env reader), aborts before the index', async () => {
-    const search = controlReturns(7000);
+    indexReady();
     vi.stubEnv('FLIPT_LOCAL_OVERRIDES', 'generation-loading-open-to-all=on');
     const { result } = await runMain(['--execute', '--limit', '2']);
     expect(String(result)).toContain('FLIPT_LOCAL_OVERRIDES sets generation-loading-open-to-all');
-    expect(search).not.toHaveBeenCalled();
+    expect(searchWithSignal).not.toHaveBeenCalled();
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('🔴 with --execute and no initialised Flipt client (the default reader), aborts before the index', async () => {
-    const search = controlReturns(7000);
+    indexReady();
     fliptClientHolder.current = null;
     const { result } = await runMain(['--execute', '--limit', '2']);
     expect(String(result)).toContain('the Flipt client did not initialise');
-    expect(search).not.toHaveBeenCalled();
+    expect(searchWithSignal).not.toHaveBeenCalled();
     expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('🔴 the arms receive the RESOLVED coverage — next on, open-to-all off → {next:true, member:false}, not the defaults', async () => {
-    controlReturns(7000);
+    indexReady();
     // The live state the first pilot missed: coverage-next ON, open-to-all OFF.
     flagTable.mockImplementation((flag) => flag === 'generation-coverage-next');
     dbMock.dbRead.$queryRaw.mockImplementation((async (query: { sql: string }) =>
@@ -1409,7 +1529,7 @@ describe('main — the --execute gate', () => {
   });
 
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
-    controlReturns(7000);
+    indexReady();
     const matchedRow = {
       imageId: 11,
       prompt: 'a knight in anime style',
@@ -1475,7 +1595,11 @@ describe('main — the --execute gate', () => {
     // Part one: the first ceil(2/2) = 1 matched row + no unmatched rows.
     expect(report).toContain('Judged 1 of 1 drawn rows; 0 skipped on a stage-1 failure.');
     // A registered run, scored at hit@10; the labeled model reaches the strata.
-    expect(report).toContain('## Primary: hit@10');
+    expect(report).toContain('## hit@10 per arm');
+    // Model 4's confident `style` label agrees with the request: the control counts it.
+    expect(report).toContain(
+      'Positive control: 1 of 1 scored prompts (100.0%) had at least one pool version the re-rank promotes (VOID under 10%).'
+    );
     // Flags evaluated (real false): the coverage the endpoint resolves, printed.
     expect(report).toContain(
       'Coverage (resolved as the endpoint does, for an anonymous caller): next=false, member=true.'
@@ -1493,7 +1617,7 @@ describe('main — the --execute gate', () => {
   });
 
   it('splits an ODD --limit as ceil to matched, floor to unmatched', async () => {
-    controlReturns(7000);
+    indexReady();
     const matchedRows = [11, 12, 13].map((imageId) => ({
       imageId,
       prompt: `matched prompt ${imageId}`,

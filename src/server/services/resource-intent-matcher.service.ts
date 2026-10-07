@@ -379,6 +379,12 @@ export type ResourceIntentMatchResult = {
    * slice, and nothing about an ordering that ran with nothing to order.
    */
   insightFallback: boolean;
+  /**
+   * Pool versions whose label the re-rank PROMOTES (agrees on role or style family, at or
+   * above the promote floor). `0` ⇒ the ordering had nothing to promote — including on a
+   * fallback, where no label was read. The M3 study's positive control reads it.
+   */
+  promotableVersions: number;
 };
 
 export async function findResourceIntentCandidates(
@@ -389,7 +395,8 @@ export async function findResourceIntentCandidates(
     cap: number;
   }
 ): Promise<ResourceIntentMatchResult> {
-  if (criteria.role === 'none') return { entries: [], insightFallback: false };
+  if (criteria.role === 'none')
+    return { entries: [], insightFallback: false, promotableVersions: 0 };
   const { cap, pool } = await seedResourceIntentPool(criteria, opts);
 
   let insights: Map<number, ResourceIntentInsight>;
@@ -421,10 +428,14 @@ export async function findResourceIntentCandidates(
       },
       'temp-search'
     ).catch(() => undefined);
-    return { entries: pool.slice(0, cap), insightFallback: true };
+    return { entries: pool.slice(0, cap), insightFallback: true, promotableVersions: 0 };
   }
   return {
     entries: applyInsightRanking(pool, insights, criteria).slice(0, cap),
     insightFallback: false,
+    promotableVersions: pool.filter((entry) => {
+      const insight = insights.get(entry.versionId);
+      return insight !== undefined && insightBucket(insight, criteria) > 0;
+    }).length,
   };
 }

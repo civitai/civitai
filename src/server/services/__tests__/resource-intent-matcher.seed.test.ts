@@ -333,12 +333,13 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
   it('🔴 the label re-rank still reorders the popularity pool', async () => {
     reorderCell();
 
-    const { entries, insightFallback } = await findResourceIntentCandidates(criteria, {
-      browsingLevel: 3,
-      coverage: COVERAGE,
-      cap: 4,
-    });
+    const { entries, insightFallback, promotableVersions } = await findResourceIntentCandidates(
+      criteria,
+      { browsingLevel: 3, coverage: COVERAGE, cap: 4 }
+    );
 
+    // Only 390100 promotes: 560100 demotes and the rest carry no label.
+    expect(promotableVersions).toBe(1);
     expect(pooledVersionIds()).toEqual([
       560100, 550000, 550001, 550002, 550003, 550004, 550005, 390100,
     ]);
@@ -350,14 +351,52 @@ describe('findResourceIntentCandidates — the seed reaches the shortlist', () =
     reorderCell();
     dbMock.dbRead.resourceInsight.findMany.mockRejectedValue(new Error('label table down'));
 
-    const { entries, insightFallback } = await findResourceIntentCandidates(criteria, {
+    const result = await findResourceIntentCandidates(criteria, {
       browsingLevel: 3,
       coverage: COVERAGE,
       cap: 4,
     });
+    const { entries, insightFallback } = result;
 
     expect(insightFallback).toBe(true);
     expect(entries.map((e) => e.versionId)).toEqual([560100, 550000, 550001, 550002]);
+    expect(result.promotableVersions).toBe(0);
+  });
+
+  it('🔴 promotableVersions counts only labels the re-rank PROMOTES — not neutral, not demoted', async () => {
+    const label = (role: string, styleFamily: string, confidence: number) => ({
+      role,
+      styleFamily,
+      qualityScore: 0.5,
+      confidence,
+    });
+    const agrees = label('clothing', 'photorealistic', 0.9); // role agrees → promoted
+    const belowFloor = label('clothing', 'anime_manga', 0.1); // agrees, under the floor → neutral
+    const placeless = label('none', 'other', 0.9); // `none` role, `other` style → neutral
+    const disagrees = label('character', 'photorealistic', 0.9); // → demoted
+    busyCell([], {
+      docs: [
+        docOf(3901, 390100, 9600, agrees),
+        docOf(3902, 390200, 9590, belowFloor),
+        docOf(3903, 390300, 9580, placeless),
+        docOf(5601, 560100, 9570, disagrees),
+      ],
+      labels: [
+        [390100, agrees],
+        [390200, belowFloor],
+        [390300, placeless],
+        [560100, disagrees],
+      ],
+    });
+
+    const { promotableVersions } = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+
+    expect(pooledVersionIds().slice(0, 4)).toEqual([390100, 390200, 390300, 560100]);
+    expect(promotableVersions).toBe(1);
   });
 
   it('🔴 a failing seed page fails the seed', async () => {

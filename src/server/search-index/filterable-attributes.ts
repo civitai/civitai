@@ -162,10 +162,9 @@ export const modelsFilterableAttributes = [
   // (`scripts/eval-resource-intent-retrieval.ts`, run from the gold-set runner), but its
   // arms are different ones: the shipped matcher (popularity seed + label re-rank) against
   // that seed alone, both over the same gate filter, neither filtering on this attribute's
-  // nullness.
-  // It runs its own, much looser control (`labeledIndexFloor` documents with a non-`none`
-  // `insight.role`), which likewise catches only a total fault. So the `IS NOT NULL`
-  // control above still belongs to whatever labeled-vs-unlabeled comparison gets built.
+  // nullness, and its own positive control reads `ResourceInsight` rows, not this index.
+  // So the `IS NOT NULL` control above still belongs to whatever labeled-vs-unlabeled
+  // comparison gets built.
   //
   // Measured on v1.15.0 over a mixed fixture (labeled / written-null / key-absent): EXISTS
   // returned 5 of 7 including every written null, NOT EXISTS returned only the 2 whose key
@@ -263,11 +262,9 @@ export const modelsFilterableAttributes = [
   // is silent. A purpose query would want an EQUALITY filter (`insight.role = "style"`),
   // which is exactly what this list buys.
   //
-  // 🔴 NO RUNTIME READER: nothing serving requests filters on either field (the
-  // resource-intent matcher reads labels from Postgres). The one reader is the offline M3
-  // positive control (`countLabeledIndexDocuments` in
-  // scripts/eval-resource-intent-retrieval.ts); removing `insight.role` from this list makes
-  // it fail. A document only ACQUIRES these fields when it is rewritten, so a model whose
+  // 🔴 NO READER: nothing filters on either field — the resource-intent matcher and the
+  // M3 study both read labels from Postgres. Kept pending a separate decision on the
+  // `insight.*` index settings. A document only ACQUIRES these fields when it is rewritten, so a model whose
   // document predates its label carries a null role. ⚠️ A future filter that ANDs the role
   // with the ARRAY form `versions.baseModel IN [...]` inherits the cross-version caveat in
   // ./models.search-index.ts: the role may come from a version on a different base model
