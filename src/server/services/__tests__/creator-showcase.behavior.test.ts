@@ -1,3 +1,6 @@
+// A zone behind UTC, so the month window's UTC handling is checked under CI's UTC as well.
+process.env.TZ = 'America/Los_Angeles';
+
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
@@ -169,16 +172,18 @@ describe('ordering', () => {
     for (const id of [GOOD, OTHER]) await addUser(id);
   });
 
+  // Inserted against the expected order, and with ids against it too, so neither heap order nor a
+  // userId sort can pass for the achievedAt sort.
   it('lists Legends oldest first', async () => {
-    await grant(OTHER, 'score:legend', '2026-11-03 00:00:00');
     await grant(GOOD, 'score:legend', '2026-11-04 00:00:00');
+    await grant(OTHER, 'score:legend', '2026-11-03 00:00:00');
     expect(ids((await showcase()).legends)).toEqual([OTHER, GOOD]);
   });
 
   it('lists new Supernovas newest first', async () => {
-    await grant(GOOD, 'score:supernova', '2026-11-03 00:00:00');
-    await grant(OTHER, 'score:supernova', '2026-11-04 00:00:00');
-    expect(ids((await showcase()).newSupernovas)).toEqual([OTHER, GOOD]);
+    await grant(OTHER, 'score:supernova', '2026-11-03 00:00:00');
+    await grant(GOOD, 'score:supernova', '2026-11-04 00:00:00');
+    expect(ids((await showcase()).newSupernovas)).toEqual([GOOD, OTHER]);
   });
 });
 
