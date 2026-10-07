@@ -356,13 +356,42 @@ describe('shop revenue detector', () => {
     expect(await held(QUIET)).toEqual([]);
   });
 
+  // An official member is recorded at its full list price, which can exceed what the buyer paid.
+  it("a pack never subtracts from its builder's other sales", async () => {
+    await addSales([
+      { id: 'cheap-pack', cosmeticId: null, shopItemId: 50, amount: 50000, at: '2026-03-02' },
+      { id: 'own-sale', cosmeticId: 4, shopItemId: 40, amount: 100000, at: '2026-03-03' },
+    ]);
+    await q(`INSERT INTO "Cosmetic" (id, "createdById") VALUES (4, $1)`, [QUIET]);
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
+       VALUES ('cheap-pack', 2, 60000)`
+    );
+    await run(SHOP);
+    const [builder] = await q(activityValuesSql, [QUIET]);
+    expect(builder.revenue).toBe(100000);
+    expect((await held(QUIET)).map((r) => r.key)).toEqual(['earn:shop-sales-100000']);
+  });
+
   it('leaves out refunded sales and official cosmetics', async () => {
     await addSales([
       { cosmeticId: 1, shopItemId: 40, amount: 99999, at: '2026-03-01' },
       { cosmeticId: 1, shopItemId: 40, amount: 50000, at: '2026-03-02', refunded: true },
-      { cosmeticId: null, shopItemId: 50, amount: 500000, at: '2026-03-02', refunded: true },
+      {
+        id: 'refunded-pack',
+        cosmeticId: null,
+        shopItemId: 50,
+        amount: 500000,
+        at: '2026-03-02',
+        refunded: true,
+      },
       { cosmeticId: 2, shopItemId: 40, amount: 500000, at: '2026-03-02' },
     ]);
+    // A refund leaves the pack's member rows in place.
+    await q(
+      `INSERT INTO "UserCosmeticShopPurchaseCosmetic" ("buzzTransactionId", "cosmeticId", "unitAmount")
+       VALUES ('refunded-pack', 1, 1)`
+    );
     await run(SHOP);
     expect(await held(CREATOR)).toEqual([]);
     expect(await held(TESTER)).toEqual([]);
