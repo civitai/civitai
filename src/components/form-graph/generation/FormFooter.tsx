@@ -63,7 +63,7 @@ import {
   TrialAccessWarning,
   TrialBlockedAlert,
 } from '~/components/Generate/GenerationPaidAccessAlerts';
-import { parseTrialMessage } from '~/components/Generate/paid-access-gate';
+import { parseTrialMessage, type SelectedResources } from '~/components/Generate/paid-access-gate';
 import { useResourceDataContext } from '~/components/generation_v2/inputs/ResourceDataProvider';
 import { filterSnapshotForSubmit } from '~/components/generation_v2/utils';
 import { resolveRemixOfId, type RemixClaimFormState } from '~/utils/remix-claim';
@@ -93,7 +93,7 @@ import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { showWarningNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
-import { hasTipEligibleSelection, type ResourceSnapshot } from './creator-tip';
+import { hasTipEligibleSelection } from './creator-tip';
 import { getMissingFieldMessage, useWhatIfContext } from './WhatIfProvider';
 import { useSelectedResourceIds, type GenerationStore } from './store';
 
@@ -107,7 +107,7 @@ function useTotalGenerationCost(store: GenerationStore) {
   const { data } = useWhatIfContext();
   const { resources: resourceData } = useResourceDataContext();
 
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
+  const snapshot = store.getSnapshot().state as SelectedResources;
   const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
   const creatorTipRate = features.creatorComp && hasCreatorTip ? creatorTip : 0;
@@ -429,7 +429,7 @@ function CostBreakdown({ store }: { store: GenerationStore }) {
 
   if (!features.creatorComp) return null;
 
-  const snapshot = store.getSnapshot().state as ResourceSnapshot;
+  const snapshot = store.getSnapshot().state as SelectedResources;
   const hasCreatorTip = hasTipEligibleSelection(snapshot, resourceData);
 
   return (
@@ -805,7 +805,7 @@ export function FormFooter({
 
     if (!result.success) {
       try {
-        const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+        const submitSnapshot = store.getSnapshot().state as SelectedResources;
         trackAction({
           type: 'Generator_Submit',
           details: {
@@ -854,7 +854,7 @@ export function FormFooter({
     let externalId: string | undefined;
     try {
       externalId = crypto.randomUUID();
-      const submitSnapshot = store.getSnapshot().state as ResourceSnapshot;
+      const submitSnapshot = store.getSnapshot().state as SelectedResources;
       trackAction({
         type: 'Generator_Submit',
         details: {
@@ -895,7 +895,7 @@ export function FormFooter({
       );
     }
 
-    const snapshot = store.getSnapshot().state as ResourceSnapshot & {
+    const snapshot = store.getSnapshot().state as SelectedResources & {
       workflow?: string;
       images?: Array<{ url: string }>;
       video?: { url: string };

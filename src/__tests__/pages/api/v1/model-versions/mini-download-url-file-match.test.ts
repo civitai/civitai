@@ -867,6 +867,13 @@ describe('payoutEnabled and tipsEnabled', () => {
     expect(await payouts({ userFlags: 1 })).toEqual({ payoutEnabled: false, tipsEnabled: false });
   });
 
+  it('DisablePayout wins over a licensing fee', async () => {
+    expect(await payouts({ userFlags: 1, licensingFee: 5 as never })).toEqual({
+      payoutEnabled: false,
+      tipsEnabled: false,
+    });
+  });
+
   it('a system-owned (-1) version gets no tips', async () => {
     expect((await payouts({ modelUserId: -1 })).tipsEnabled).toBe(false);
   });

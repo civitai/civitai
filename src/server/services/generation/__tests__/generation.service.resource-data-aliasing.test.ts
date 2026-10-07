@@ -327,10 +327,13 @@ describe('getResourceData — preview image honours the viewer browsing level', 
 });
 
 describe('getResourceData — tipsEnabled from the owner flags in the cached row', () => {
-  async function resourceFor(owner: { userId: number; userFlags?: number | null }) {
+  async function resourceFor(
+    owner: { userId: number; userFlags?: number | null },
+    user: typeof MOD | typeof ANON = MOD
+  ) {
     const row = dbRow();
     queryRawMock.mockResolvedValue([{ ...row, model: { ...row.model, ...owner } }]);
-    const [resource] = await getResourceData([VERSION_ID], { user: MOD });
+    const [resource] = await getResourceData([VERSION_ID], { user });
     return resource;
   }
 
@@ -350,8 +353,17 @@ describe('getResourceData — tipsEnabled from the owner flags in the cached row
     expect((await resourceFor({ userId: 777 })).tipsEnabled).toBe(true);
   });
 
-  it('does not send the owner flags to the client', async () => {
-    const resource = await resourceFor({ userId: 777, userFlags: 1 });
+  // Both branches of the model rebuild: the moderator can generate with this row, the anonymous
+  // caller cannot.
+  it('does not send the owner flags to a caller who can generate', async () => {
+    const resource = await resourceFor({ userId: 777, userFlags: 1 }, MOD);
+    expect(resource.canGenerate).toBe(true);
+    expect(resource.model).not.toHaveProperty('userFlags');
+  });
+
+  it('does not send the owner flags to a caller who cannot generate', async () => {
+    const resource = await resourceFor({ userId: 777, userFlags: 1 }, ANON);
+    expect(resource.canGenerate).toBe(false);
     expect(resource.model).not.toHaveProperty('userFlags');
   });
 });

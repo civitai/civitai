@@ -21,3 +21,17 @@ describe('buildWorkflowTips', () => {
     expect(buildWorkflowTips({ hasTipEligibleResource: true })).toBeUndefined();
   });
 });
+
+describe('buildWorkflowTips — rate bounds', () => {
+  it('clamps rates into 0..1', () => {
+    expect(
+      buildWorkflowTips({ civitaiTip: 3, creatorTip: -0.5, hasTipEligibleResource: true })
+    ).toEqual({ civitai: 1, creators: 0 });
+  });
+
+  it('treats a non-numeric rate as no tip', () => {
+    expect(
+      buildWorkflowTips({ civitaiTip: '0.5', creatorTip: NaN, hasTipEligibleResource: true })
+    ).toBeUndefined();
+  });
+});

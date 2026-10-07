@@ -1,8 +1,6 @@
+import { constants } from '~/server/common/constants';
 import { UserFlag } from '~/shared/constants/user-flags.constants';
 import { Flags } from '~/shared/utils/flags';
-
-/** Owner id of system-owned versions; the compensation payout never pays it. */
-const SYSTEM_USER_ID = -1;
 
 /**
  * Whether a resource's owner can receive a share of the creator tip. A licensing fee does NOT make a
@@ -15,7 +13,10 @@ export function isCreatorTipEligible({
   ownerId: number;
   ownerFlags: number | null | undefined;
 }) {
-  return ownerId !== SYSTEM_USER_ID && !Flags.hasFlag(ownerFlags ?? 0, UserFlag.DisablePayout);
+  // The compensation payout never pays the system user.
+  return (
+    ownerId !== constants.system.user.id && !Flags.hasFlag(ownerFlags ?? 0, UserFlag.DisablePayout)
+  );
 }
 
 /**
