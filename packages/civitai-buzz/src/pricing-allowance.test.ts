@@ -224,6 +224,7 @@ describe('feeAllowanceBoost', () => {
     expect(FEE_ALLOWANCE_BOOST_MAX).toBe(100);
     expect(feeAllowanceBoost('250', during)).toBe(100);
     expect(feeAllowanceBoost(40, during)).toBe(40);
+    expect(feeAllowanceBoost('40.9', during)).toBe(40);
   });
 
   it.each([null, undefined, '', 'abc', -5, NaN, {}])('reads %s as no grant', (stored) => {
@@ -271,14 +272,41 @@ describe('pricingAllowanceLimits', () => {
 });
 
 describe('gateConversionExceedsAllowance', () => {
+  const thisMonth = { slotSpentThisMonth: true };
+
   it('refuses a gate on a licensed version only once boost-funded slots are in use', () => {
-    expect(gateConversionExceedsAllowance({ used: 4, tier: 'free', boost: 100 })).toBe(true);
-    expect(gateConversionExceedsAllowance({ used: 3, tier: 'free', boost: 100 })).toBe(false);
+    expect(
+      gateConversionExceedsAllowance({ used: 4, tier: 'free', boost: 100, ...thisMonth })
+    ).toBe(true);
+    expect(
+      gateConversionExceedsAllowance({ used: 3, tier: 'free', boost: 100, ...thisMonth })
+    ).toBe(false);
   });
 
   it('never applies without a boost or on an unlimited tier', () => {
-    expect(gateConversionExceedsAllowance({ used: 50, tier: 'free', boost: 0 })).toBe(false);
-    expect(gateConversionExceedsAllowance({ used: 500, tier: 'gold', boost: 100 })).toBe(false);
+    expect(gateConversionExceedsAllowance({ used: 50, tier: 'free', boost: 0, ...thisMonth })).toBe(
+      false
+    );
+    expect(
+      gateConversionExceedsAllowance({ used: 500, tier: 'gold', boost: 100, ...thisMonth })
+    ).toBe(false);
+  });
+
+  it('treats an unreadable grant list as a grant', () => {
+    expect(
+      gateConversionExceedsAllowance({ used: 4, tier: 'free', boost: null, ...thisMonth })
+    ).toBe(true);
+  });
+
+  it('leaves a version priced in an earlier month free to convert', () => {
+    expect(
+      gateConversionExceedsAllowance({
+        used: 50,
+        tier: 'free',
+        boost: 100,
+        slotSpentThisMonth: false,
+      })
+    ).toBe(false);
   });
 });
 

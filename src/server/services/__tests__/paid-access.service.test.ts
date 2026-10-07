@@ -382,10 +382,14 @@ describe('assertMonetizationWrite', () => {
       vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
       redisMock.sysRedis.hGet.mockResolvedValue('100' as never);
       mockSlotCount.mockResolvedValue(3);
+      mockDbWrite.pricingSlot.findUnique.mockResolvedValue({
+        createdAt: new Date('2026-10-02T00:00:00Z'),
+      } as never);
     });
     afterEach(() => {
       vi.useRealTimers();
       redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+      mockDbWrite.paidAccess.findUnique.mockResolvedValue(null as never);
     });
 
     // The form sends `paidAccess: null` when no gate is set, and a timed object for early access.
@@ -420,6 +424,57 @@ describe('assertMonetizationWrite', () => {
           userMeta: ELIGIBLE,
         })
       ).rejects.toThrow(/licensing fees only/);
+      expect(mockDbWrite.pricingSlot.findUnique).toHaveBeenCalledWith({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: 5 } },
+        select: { createdAt: true },
+      });
+    });
+
+    it('may add permanent paid access to a version licensed in an earlier month', async () => {
+      mockSlotCount.mockResolvedValue(50);
+      mockDbWrite.pricingSlot.findUnique.mockResolvedValue({
+        createdAt: new Date('2026-09-12T00:00:00Z'),
+      } as never);
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 5,
+          paidAccess: { permanent: true, terms: {} } as never,
+          storedLicensingFee: 10,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+    });
+
+    it('may still change the fee on a licensed version once past the tier allowance', async () => {
+      mockSlotCount.mockResolvedValue(50);
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 5,
+          paidAccess: null,
+          licensingFee: 12,
+          storedLicensingFee: 10,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+    });
+
+    it('may still re-save a version that already has its gate once past the tier allowance', async () => {
+      mockSlotCount.mockResolvedValue(50);
+      mockDbWrite.paidAccess.findUnique.mockResolvedValue({ timeframeDays: null } as never);
+      await expect(
+        assertMonetizationWrite({
+          ownerId: 1,
+          versionId: 5,
+          paidAccess: { permanent: true, terms: {} } as never,
+          storedLicensingFee: 10,
+          tier: 'free',
+          userMeta: ELIGIBLE,
+        })
+      ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
     });
 
     it('may not add permanent paid access past it, even alongside a fee', async () => {

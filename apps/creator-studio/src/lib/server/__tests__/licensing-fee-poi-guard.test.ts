@@ -21,6 +21,10 @@ const state = vi.hoisted(() => ({
   boostGrant: null as string | null,
   boostKeys: [] as string[],
   boostDown: false,
+  boostHangs: false,
+  // Whether any version the slot-spent-this-month read asks about has one, and the filters it used.
+  slotThisMonth: true,
+  slotQueryFilters: [] as [string, string, unknown][],
 }));
 
 vi.mock('$lib/server/redis', () => ({
@@ -28,6 +32,7 @@ vi.mock('$lib/server/redis', () => ({
     hGet: async (key: string, field: string) => {
       state.boostKeys.push(`${key}:${field}`);
       if (state.boostDown) throw new Error('sysRedis down');
+      if (state.boostHangs) return new Promise(() => undefined);
       return state.boostGrant;
     },
   }),
@@ -86,7 +91,20 @@ vi.mock('$lib/server/db', () => {
         }),
       });
     if (table === 'PricingSlot')
-      return chain({ executeTakeFirst: async () => ({ count: String(state.slotsUsed) }) });
+      return chain({
+        select: (selection: unknown) => {
+          if (selection !== 'entityId')
+            return chain({ executeTakeFirst: async () => ({ count: String(state.slotsUsed) }) });
+          const spent: Record<string, unknown> = {
+            executeTakeFirst: async () => (state.slotThisMonth ? { entityId: 1 } : undefined),
+          };
+          spent.where = (column: string, op: string, value: unknown) => {
+            state.slotQueryFilters.push([column, op, value]);
+            return chain(spent);
+          };
+          return chain(spent);
+        },
+      });
     throw new Error(`unstubbed table in select: ${table}`);
   };
 
@@ -136,7 +154,8 @@ vi.mock('$lib/server/db', () => {
 });
 
 const { setLicensingFee, bulkSetLicensingFee } = await import('../monetization/licensing-fee');
-const { assertGatePricingAllowed } = await import('../monetization/pricing-slot');
+const { assertGatePricingAllowed, versionPriceState } =
+  await import('../monetization/pricing-slot');
 
 const GOLD: Membership = { tier: 'gold', isMember: true, isCreatorProgramMember: true };
 
@@ -170,6 +189,9 @@ beforeEach(() => {
   state.boostGrant = null;
   state.boostKeys = [];
   state.boostDown = false;
+  state.boostHangs = false;
+  state.slotThisMonth = true;
+  state.slotQueryFilters = [];
 });
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
@@ -581,7 +603,9 @@ describe('licensing-fee allowance boost', () => {
   it('counts a bulk fee against the tier allowance plus the boost', async () => {
     state.rows = [version(), version({ id: 2 })];
     state.slotsUsed = 101;
-    await expect(bulkSetLicensingFee(7, FREE, [1, 2], 1, true)).resolves.toMatchObject({ ok: true });
+    await expect(bulkSetLicensingFee(7, FREE, [1, 2], 1, true)).resolves.toMatchObject({
+      ok: true,
+    });
 
     state.rows = [version(), version({ id: 2 })];
     state.written = [];
@@ -611,8 +635,33 @@ describe('licensing-fee allowance boost', () => {
     expect(state.boostKeys).toEqual([]);
   });
 
+  // Through versionPriceState, as both gate actions call it, so the fee-only split is under test too.
+  const gate = async (rows: ReturnType<typeof version>[]) => {
+    state.rows = rows;
+    const priceState = await versionPriceState(
+      7,
+      rows.map((r) => r.id)
+    );
+    return assertGatePricingAllowed(7, FREE, priceState);
+  };
+  const licensed = () => version({ currentFee: 10 });
+
+  it('splits the versions a gate write touches by what they already carry', async () => {
+    state.rows = [
+      version({ id: 1 }),
+      version({ id: 2, currentFee: 10 }),
+      version({ id: 3, currentFee: 10, gated: 3 }),
+      version({ id: 4, gated: 4 }),
+    ];
+
+    await expect(versionPriceState(7, [1, 2, 3, 4])).resolves.toEqual({
+      unpriced: [1],
+      feeOnly: [2],
+    });
+  });
+
   it('does not widen permanent paid access', async () => {
-    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 1, feeOnlyCount: 0 });
+    const result = await gate([version()]);
 
     expect(result).toMatchObject({ ok: false, status: 403 });
   });
@@ -620,14 +669,39 @@ describe('licensing-fee allowance boost', () => {
   it('refuses a gate on a licensed version once boost-funded slots are in use', async () => {
     state.slotsUsed = 4;
 
-    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+    const result = await gate([licensed()]);
 
     expect(result).toMatchObject({ ok: false, status: 403 });
     expect(result.ok ? '' : result.error).toContain('licensing fees only');
+    expect(state.slotQueryFilters).toEqual([
+      ['entityType', '=', 'ModelVersion'],
+      ['entityId', 'in', [1]],
+      ['createdAt', '>=', new Date('2026-10-01T00:00:00Z')],
+    ]);
   });
 
   it('leaves a gate on a licensed version free within the tier allowance', async () => {
-    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+    const result = await gate([licensed()]);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('leaves a gate free on a version licensed in an earlier month', async () => {
+    state.slotsUsed = 50;
+    state.slotThisMonth = false;
+
+    const result = await gate([licensed()]);
+
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('leaves re-saving versions that already have their gate free', async () => {
+    state.slotsUsed = 50;
+
+    const result = await gate([
+      version({ currentFee: 10, gated: 1 }),
+      version({ id: 2, gated: 2 }),
+    ]);
 
     expect(result).toEqual({ ok: true });
   });
@@ -636,16 +710,25 @@ describe('licensing-fee allowance boost', () => {
     state.boostDown = true;
     state.slotsUsed = 4;
 
-    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+    const result = await gate([licensed()]);
 
     expect(result).toMatchObject({ ok: false, status: 403 });
   });
+
+  it('refuses a gate on a licensed version over the tier when the grant-list read hangs', async () => {
+    state.boostHangs = true;
+    state.slotsUsed = 4;
+
+    const result = await gate([licensed()]);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  }, 3000);
 
   it('leaves a gate on a licensed version free for a creator with no grant', async () => {
     state.boostGrant = null;
     state.slotsUsed = 50;
 
-    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+    const result = await gate([licensed()]);
 
     expect(result).toEqual({ ok: true });
   });

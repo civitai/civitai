@@ -375,6 +375,20 @@ describe('ModelVersionUpsertForm — the licensing-fee allowance boost', () => {
       .element(page.getByText("You've used this month's paid-access allowance"))
       .toBeInTheDocument();
     await expect.element(page.getByText(/cover 100 more this month/)).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/licensing fees: 3 of 103, includes 100 extra for licensing fees/))
+      .toBeInTheDocument();
+  });
+
+  test('once the extra slots are spent too, keeps the plain at-limit alert', async () => {
+    allowance.data = { used: 103, baseLimit: 3, feeLimit: 103, feeBoost: 100 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've priced all this month's versions"))
+      .toBeInTheDocument();
+    expect(page.getByText(/cover \d+ more this month/).elements()).toHaveLength(0);
   });
 
   test('without a boost, keeps the plain at-limit alert', async () => {

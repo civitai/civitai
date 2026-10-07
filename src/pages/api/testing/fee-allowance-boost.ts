@@ -93,7 +93,7 @@ async function eligibleUserIds() {
     SELECT DISTINCT fromAccountId AS userId
     FROM buzzTransactions
     WHERE type = 'bank'
-      AND toAccountType = 'creatorProgramBank'
+      AND toAccountType IN ('creatorProgramBank', 'creatorProgramBankGreen')
       AND date >= now() - INTERVAL 12 MONTH
   `;
   const flagged = await dbRead.$queryRaw<{ id: number }[]>`

@@ -102,22 +102,27 @@ export function feeAllowanceBoostNote(boost: number): string {
 }
 
 /**
- * Whether putting a permanent gate on a version that already carries a fee would get past the tier
+ * Whether putting a permanent gate on versions that already carry a fee would get past the tier
  * allowance. Such a write spends no new slot, so without this a fee-only slot opened by the boost
- * could be turned into a gate the tier never allowed. Spending at most the tier allowance means every
- * fee slot this month fits in it, so the conversion is free as it always was.
+ * could be turned into a gate the tier never allowed. Only a slot spent this month can have been
+ * opened by the boost, and spending at most the tier allowance means every one of them fits in it.
+ *
+ * `boost` is the raw read: `null` (the grant list could not be read) counts as a grant, because
+ * wrongly refusing costs a retry and wrongly allowing costs a gate the tier never allowed.
  */
 export function gateConversionExceedsAllowance({
   used,
   tier,
   boost,
+  slotSpentThisMonth,
 }: {
   used: number;
   tier: string | null | undefined;
-  boost: number;
+  boost: number | null;
+  slotSpentThisMonth: boolean;
 }): boolean {
   const base = monthlyPricingAllowance(tier);
-  return boost > 0 && Number.isFinite(base) && used > base;
+  return slotSpentThisMonth && boost !== 0 && Number.isFinite(base) && used > base;
 }
 
 export function gateConversionMessage(used: number, tier: string | null | undefined): string {

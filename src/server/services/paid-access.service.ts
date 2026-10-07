@@ -623,6 +623,7 @@ export async function assertMonetizationWrite({
     willBePriced,
     addsGate: willHavePermanentGate,
     hadGate: hadPermanentGate,
+    entity: versionId ? { entityType: 'ModelVersion', entityId: versionId } : undefined,
     tier,
     userMeta,
   });

@@ -283,6 +283,8 @@ export type PricingWriteCheck = {
   addsGate: boolean;
   /** Whether the entity carries a permanent paid-access gate BEFORE this write. */
   hadGate: boolean;
+  /** The entity written, when it already exists. */
+  entity?: { entityType: PricingSlotEntityType; entityId: number };
   /**
    * The owner's tier, or a thunk resolving it. Pass the thunk from a hot write path: `getCapTier` is
    * three uncached queries against the primary, and the tier is only read once a write turns out to
@@ -312,11 +314,13 @@ export async function assertPricingAllowed({
   willBePriced,
   addsGate,
   hadGate,
+  entity,
   tier,
   userMeta,
 }: PricingWriteCheck): Promise<PricingWriteOutcome> {
   if (!willBePriced || wasPriced) {
-    if (wasPriced && addsGate && !hadGate) await assertGateConversionAllowed(userId, tier);
+    if (wasPriced && addsGate && !hadGate && entity)
+      await assertGateConversionAllowed(userId, tier, entity);
     return { spendsSlot: false, releasesSlot: clearsLastPrice({ wasPriced, willBePriced }) };
   }
 
@@ -347,14 +351,21 @@ export async function assertPricingAllowed({
   return { spendsSlot: true, releasesSlot: false };
 }
 
-async function assertGateConversionAllowed(userId: number, tier: TierInput): Promise<void> {
+async function assertGateConversionAllowed(
+  userId: number,
+  tier: TierInput,
+  entity: { entityType: PricingSlotEntityType; entityId: number }
+): Promise<void> {
   const boost = await readFeeAllowanceBoost(userId, new Date());
   if (boost === 0) return;
+  const slot = await dbWrite.pricingSlot.findUnique({
+    where: { entityType_entityId: entity },
+    select: { createdAt: true },
+  });
+  const slotSpentThisMonth = slot != null && slot.createdAt >= pricingMonthStart();
   const resolvedTier = typeof tier === 'function' ? await tier() : tier;
   const used = await countPricingSlotsThisMonth(userId);
-  // An unreadable grant list counts as a grant here: wrongly refusing costs a retry, wrongly allowing
-  // costs a gate the tier never allowed.
-  if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost: boost ?? 1 }))
+  if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost, slotSpentThisMonth }))
     throw throwBadRequestError(gateConversionMessage(used, resolvedTier));
 }
 

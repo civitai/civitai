@@ -51,9 +51,8 @@ import {
 import {
   earlyAccessDaysForScore,
   earlyAccessQuantityForScore,
-  monthlyPricingAllowance,
+  pricingAllowanceLimits,
   pricingEligibility,
-  pricingLimitFor,
 } from '$lib/monetization/paid-access';
 
 // --- input schemas: every load/action input is zod-validated ---
@@ -97,11 +96,9 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
   const [sales, saleLimits] = view.salesEnabled
     ? await Promise.all([getCreatorSales(locals.user.id), getSaleLimitOverrides()])
     : [[], {}];
-  const pricingLimit = monthlyPricingAllowance(cappedTier(membership));
-  const feePricingLimit = pricingLimitFor({
+  const { baseLimit, feeLimit } = pricingAllowanceLimits({
     tier: cappedTier(membership),
     boost: feeBoost,
-    addsGate: false,
   });
   return {
     ...view,
@@ -118,8 +115,8 @@ export const load: PageServerLoad = async ({ locals, parent, url, cookies }) => 
       capTier: cappedTier(membership),
       pricingUsed,
       pricingSlots,
-      pricingLimit: Number.isFinite(pricingLimit) ? pricingLimit : null,
-      feePricingLimit: Number.isFinite(feePricingLimit) ? feePricingLimit : null,
+      pricingLimit: baseLimit,
+      feePricingLimit: feeLimit,
       feeBoost,
       // The SIMULATED score, deliberately: the moderator score simulator exists to preview what a
       // creator at a given score sees. What it never moves is the write, which re-reads the real one.
@@ -274,10 +271,7 @@ export const actions: Actions = {
       : { unpriced: [], feeOnly: [] };
     const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertGatePricingAllowed(locals.user.id, membership, {
-        newlyPricedCount: newlyPricedIds.length,
-        feeOnlyCount: priceState.feeOnly.length,
-      });
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, priceState);
       if (!gate.ok) return fail(gate.status, { paidAccess: true, error: gate.error });
     }
 
@@ -490,10 +484,7 @@ export const actions: Actions = {
       : { unpriced: [], feeOnly: [] };
     const newlyPricedIds = priceState.unpriced;
     {
-      const gate = await assertGatePricingAllowed(locals.user.id, membership, {
-        newlyPricedCount: newlyPricedIds.length,
-        feeOnlyCount: priceState.feeOnly.length,
-      });
+      const gate = await assertGatePricingAllowed(locals.user.id, membership, priceState);
       if (!gate.ok) return fail(gate.status, { versionId: versionId.data, error: gate.error });
     }
 

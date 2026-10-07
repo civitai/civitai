@@ -78,7 +78,10 @@ export async function versionPriceState(
  */
 const BOOST_READ_TIMEOUT_MS = 1000;
 
-export async function getFeeAllowanceBoost(userId: number, now: Date = new Date()): Promise<number> {
+export async function getFeeAllowanceBoost(
+  userId: number,
+  now: Date = new Date()
+): Promise<number> {
   return (await readFeeAllowanceBoost(userId, now)) ?? 0;
 }
 
@@ -295,25 +298,38 @@ export function assertFeePricingAllowed(
 }
 
 /**
- * Refuse permanent paid access the creator may not set. A gate gets no licensing-fee boost, and
- * `feeOnlyCount` versions that already carry a fee are checked too, though they spend no new slot.
+ * Refuse permanent paid access the creator may not set, given versionPriceState over the versions
+ * written. A gate gets no licensing-fee boost, and `feeOnly` versions are checked too, though they
+ * spend no new slot.
  */
 export async function assertGatePricingAllowed(
   userId: number,
   membership: Membership,
-  { newlyPricedCount, feeOnlyCount }: { newlyPricedCount: number; feeOnlyCount: number }
+  { unpriced, feeOnly }: { unpriced: number[]; feeOnly: number[] }
 ): Promise<PricingGateResult> {
-  if (newlyPricedCount <= 0 && feeOnlyCount > 0) {
+  if (unpriced.length === 0 && feeOnly.length > 0) {
     const tier = cappedTier(membership);
     const boost = await readFeeAllowanceBoost(userId, new Date());
     if (boost === 0) return { ok: true };
+    const slotSpentThisMonth = await anySlotSpentThisMonth(feeOnly);
     const used = await countPricingSlotsThisMonth(userId);
-    // An unreadable grant list counts as a grant, as in the main app's assertGateConversionAllowed.
-    if (gateConversionExceedsAllowance({ used, tier, boost: boost ?? 1 }))
+    if (gateConversionExceedsAllowance({ used, tier, boost, slotSpentThisMonth }))
       return { ok: false, status: 403, error: gateConversionMessage(used, tier) };
     return { ok: true };
   }
-  return assertPricingAllowed(userId, membership, newlyPricedCount, true);
+  return assertPricingAllowed(userId, membership, unpriced.length, true);
+}
+
+async function anySlotSpentThisMonth(versionIds: number[]): Promise<boolean> {
+  const row = await dbRead
+    .selectFrom('PricingSlot')
+    .select('entityId')
+    .where('entityType', '=', 'ModelVersion')
+    .where('entityId', 'in', versionIds)
+    .where('createdAt', '>=', pricingMonthStart())
+    .limit(1)
+    .executeTakeFirst();
+  return row != null;
 }
 
 async function assertPricingAllowed(

@@ -598,6 +598,7 @@ describe('assertPricingAllowed', () => {
     });
 
     describe('adding permanent paid access to a version that already carries a fee', () => {
+      const entity = { entityType: 'ModelVersion' as const, entityId: VERSION };
       const convert = () =>
         assertPricingAllowed({
           userId: 7,
@@ -605,9 +606,14 @@ describe('assertPricingAllowed', () => {
           willBePriced: true,
           addsGate: true,
           hadGate: false,
+          entity,
           tier: 'free',
           userMeta: eligible,
         });
+
+      beforeEach(() => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-10-02T00:00:00Z') } as never);
+      });
 
       it('is refused once boost-funded fee slots are in use', async () => {
         mockCount.mockResolvedValue(4 as never);
@@ -647,10 +653,43 @@ describe('assertPricingAllowed', () => {
             willBePriced: true,
             addsGate: true,
             hadGate: true,
+            entity,
             tier: 'free',
             userMeta: eligible,
           })
         ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('does not apply to editing the fee on a version that keeps no gate', async () => {
+        mockCount.mockResolvedValue(50 as never);
+        await expect(
+          assertPricingAllowed({
+            userId: 7,
+            wasPriced: true,
+            willBePriced: true,
+            addsGate: false,
+            hadGate: false,
+            entity,
+            tier: 'free',
+            userMeta: eligible,
+          })
+        ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is free as before for a version whose fee was set in an earlier month', async () => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-09-30T23:59:59Z') } as never);
+        mockCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        expect(mockSlot).toHaveBeenCalledWith({
+          where: { entityType_entityId: entity },
+          select: { createdAt: true },
+        });
+      });
+
+      it('is free as before for a version that never spent a slot', async () => {
+        mockSlot.mockResolvedValue(null as never);
+        mockCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
       });
     });
 

@@ -11,9 +11,15 @@ const cohort = vi.hoisted(() => ({
   flagged: [] as number[],
   validMembers: new Set<number>(),
   excluded: new Set<number>(),
+  bankerSql: '',
 }));
 vi.mock('~/server/clickhouse/client', () => ({
-  clickhouse: { $query: async () => cohort.bankers.map((userId) => ({ userId: String(userId) })) },
+  clickhouse: {
+    $query: async (strings: TemplateStringsArray) => {
+      cohort.bankerSql = strings.join('?');
+      return cohort.bankers.map((userId) => ({ userId: String(userId) }));
+    },
+  },
 }));
 vi.mock('~/server/services/creator-membership.service', () => ({
   getValidCreatorMembershipMap: async (ids: number[]) =>
@@ -21,6 +27,7 @@ vi.mock('~/server/services/creator-membership.service', () => ({
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { OnboardingSteps } from '~/server/common/enums';
 import handler from '~/pages/api/testing/fee-allowance-boost';
 
 const KEY = REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST;
@@ -117,12 +124,27 @@ describe('fee-allowance-boost grant-eligible', () => {
     const res = await call({ action: 'grant-eligible', dryRun: true });
 
     expect(res.json).toHaveBeenCalledWith({ dryRun: true, bankers: 1, members: 1, eligible: 1 });
-    const standing = dbMock.dbRead.$queryRaw.mock.calls
-      .map((c) => (c[0] as TemplateStringsArray).join('?'))
-      .find((sql) => sql.includes('ANY('));
-    expect(standing).toMatch(
+    const standing = dbMock.dbRead.$queryRaw.mock.calls.find((c) =>
+      (c[0] as TemplateStringsArray).join('?').includes('ANY(')
+    );
+    expect((standing?.[0] as TemplateStringsArray).join('?')).toMatch(
       /onboarding & \? = 0\s+AND "bannedAt" IS NULL\s+AND "deletedAt" IS NULL/
     );
+    expect(standing?.slice(2)).toEqual([OnboardingSteps.BannedCreatorProgram]);
+  });
+
+  // The fakes answer from fixtures whatever the SQL says, so the cohort's definition is pinned here.
+  it('reads bankers into either Creator Program bank over the last 12 months', async () => {
+    await call({ action: 'grant-eligible', dryRun: true });
+
+    expect(cohort.bankerSql.replace(/\s+/g, ' ').trim()).toBe(
+      "SELECT DISTINCT fromAccountId AS userId FROM buzzTransactions WHERE type = 'bank' AND toAccountType IN ('creatorProgramBank', 'creatorProgramBankGreen') AND date >= now() - INTERVAL 12 MONTH"
+    );
+    const flagged = dbMock.dbRead.$queryRaw.mock.calls.find(
+      (c) => !(c[0] as TemplateStringsArray).join('?').includes('ANY(')
+    );
+    expect((flagged?.[0] as TemplateStringsArray).join('?')).toMatch(/onboarding & \? != 0/);
+    expect(flagged?.slice(1)).toEqual([OnboardingSteps.CreatorProgram]);
   });
 
   it('writes a large list in bounded chunks', async () => {

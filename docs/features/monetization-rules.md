@@ -117,8 +117,9 @@ video model. Paid access has no ceiling at all. What a tier buys is **allowance*
 read from a system-Redis hash loaded by `src/pages/api/testing/fee-allowance-boost.ts`) to the tier
 allowance for a write that adds only a fee. A write adding a permanent gate is held to the tier
 allowance, so a gate gets no boost in either app. Adding a gate to a version that already carries a fee
-spends no slot, so while a creator holds a boost it is refused once their month's slots exceed the tier
-allowance (`gateConversionExceedsAllowance`) — otherwise a boost-funded fee slot could become a gate.
+spends no slot, so while a creator holds a boost it is refused when the version's slot was spent this
+month and their month's slots exceed the tier allowance (`gateConversionExceedsAllowance`) — otherwise a
+boost-funded fee slot could become a gate. A fee from an earlier month converts freely.
 Nothing records which slots the boost paid for, so once the window closes those versions follow the
 ordinary rule: an already-priced version takes a gate without spending a slot.
 Boosted fees spend ordinary slots, and the boost ends by the date check in `feeAllowanceBoost`, not by
