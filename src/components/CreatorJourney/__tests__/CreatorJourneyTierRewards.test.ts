@@ -20,10 +20,27 @@ const tier = (key: string, name: string, threshold: number) => ({
   badgeUrl: null,
 });
 
-const journey = ({ total, earnedKeys }: { total: number; earnedKeys: string[] }) =>
+const SUPERNOVA_BAND_UNLOCK = {
+  key: 'test:supernova-band',
+  minScore: 500_000,
+  label: 'A feature unlock in the Supernova band',
+  surface: 'placements',
+  scoreKind: 'total',
+  source: 'compiled',
+};
+
+const journey = ({
+  total,
+  earnedKeys,
+  unlocks = [],
+}: {
+  total: number;
+  earnedKeys: string[];
+  unlocks?: unknown[];
+}) =>
   ({
     scores: { total },
-    unlocks: [],
+    unlocks,
     tiers: [
       tier('score:star', 'Star', 100_000),
       tier('score:supernova', 'Supernova', 1_000_000),
@@ -45,7 +62,7 @@ let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
 /** Each list item's text, and whether it shows the check rather than the lock. */
-function items(props: { total: number; earnedKeys: string[] }) {
+function items(props: { total: number; earnedKeys: string[]; unlocks?: unknown[] }) {
   container = document.createElement('div');
   document.body.appendChild(container);
   root = createRoot(container);
@@ -84,7 +101,7 @@ describe('tier rewards on the ladder', () => {
     expect([...SUPERNOVA, ...LEGEND].filter((reward) => !rendered.has(reward))).toEqual([]);
     expect(SUPERNOVA).toHaveLength(3);
     expect(LEGEND).toHaveLength(3);
-    expect(container?.textContent).toContain('Recognition only');
+    expect(container?.textContent?.split('Recognition only').length).toBe(2);
   });
 
   it('checks a tier’s rewards once its badge is granted, and locks the next tier’s', () => {
@@ -93,6 +110,19 @@ describe('tier rewards on the ladder', () => {
       expect(rendered.get(reward)).toEqual({ checked: true, locked: false });
     for (const reward of LEGEND)
       expect(rendered.get(reward)).toEqual({ checked: false, locked: true });
+  });
+
+  it('lists a rung’s feature unlocks beside its rewards', () => {
+    const rendered = items({
+      total: 0,
+      earnedKeys: [],
+      unlocks: [SUPERNOVA_BAND_UNLOCK],
+    });
+    expect([...rendered.keys()].filter((text) => SUPERNOVA.includes(text))).toHaveLength(3);
+    expect(rendered.get(`${SUPERNOVA_BAND_UNLOCK.label} (from 500,000)`)).toEqual({
+      checked: false,
+      locked: true,
+    });
   });
 
   // The badge is granted by a nightly job, so a score past the threshold has not earned the rewards yet.
