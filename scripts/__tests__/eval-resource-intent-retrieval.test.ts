@@ -870,14 +870,13 @@ describe('runRetrievalArms — the two arms', () => {
       browsingLevel: ARM_OPTS.browsingLevel,
       coverage: COVERAGE,
     });
-    // PURPOSE: the purpose page, then (short page) the popularity fill. POPULARITY: one page.
-    expect(searchCalls().map((c) => c.filter)).toEqual([
-      `(${gate} AND insight.role = "style")`,
-      gate,
-      gate,
+    // One seed page per arm, identical.
+    expect(searchCalls().map((c) => c.filter)).toEqual([gate, gate]);
+    expect(searchCalls().map((c) => c.sort)).toEqual([
+      ['metrics.thumbsUpCount:desc'],
+      ['metrics.thumbsUpCount:desc'],
     ]);
-    // Same pool width on every page.
-    expect(searchCalls().map((c) => c.limit)).toEqual([100, 100, 100]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([100, 100]);
   });
 
   it('caps both arms at the same response width, out of the same pool width', async () => {
@@ -888,7 +887,7 @@ describe('runRetrievalArms — the two arms', () => {
       labeledModelIds: new Set(),
     });
     expect(outcome).toMatchObject({ purposeModelIds: [4, 1], popularityModelIds: [1, 2] });
-    expect(searchCalls().map((c) => c.limit)).toEqual([4, 4, 4]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([4, 4]);
   });
 
   it('the POPULARITY arm expands versions like the matcher: requested baseModel only, one model once', async () => {
@@ -1405,11 +1404,7 @@ describe('main — the --execute gate', () => {
     });
     // Control: the two coverages really produce different filters, so this can tell them apart.
     expect(resolvedGate).not.toBe(defaultGate);
-    expect(searchCalls().map((c) => c.filter)).toEqual([
-      `(${resolvedGate} AND insight.role = "style")`,
-      resolvedGate,
-      resolvedGate,
-    ]);
+    expect(searchCalls().map((c) => c.filter)).toEqual([resolvedGate, resolvedGate]);
   });
 
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
@@ -1438,7 +1433,7 @@ describe('main — the --execute gate', () => {
     }));
 
     // Twelve unlabeled models more popular than model 4, so POPULARITY's first 10 miss it
-    // while PURPOSE seeds it first.
+    // while PURPOSE's re-rank promotes it to the head.
     serveCorpus([
       ...Array.from({ length: 12 }, (_, i) => doc(100 + i, 5000 - i)),
       doc(4, 10, { role: 'style', qualityScore: 0.8 }),
@@ -1472,12 +1467,8 @@ describe('main — the --execute gate', () => {
     expect(gate).toContain(
       `nsfwLevel IN [${Flags.instanceToArray(allBrowsingLevelsFlag).join(', ')}]`
     );
-    expect(searchCalls().map((c) => c.filter)).toEqual([
-      `(${gate} AND insight.role = "style")`,
-      gate,
-      gate,
-    ]);
-    expect(searchCalls().map((c) => c.limit)).toEqual([100, 100, 100]);
+    expect(searchCalls().map((c) => c.filter)).toEqual([gate, gate]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([100, 100]);
 
     const report = log.mock.calls.map((call) => String(call[0])).join('\n');
     // Part one: the first ceil(2/2) = 1 matched row + no unmatched rows.

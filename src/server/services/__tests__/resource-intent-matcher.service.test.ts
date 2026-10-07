@@ -236,10 +236,9 @@ describe('findResourceIntentCandidates', () => {
     baseModel: 'SDXL 1.0',
   };
 
-  // The seed's QUERY SHAPE (the purpose page and the popularity page) and its merge are
-  // pinned in ./resource-intent-matcher.seed.test.ts, against an in-memory index that
-  // honours the role filter and the sort arrays. Every hit fixture in THIS file is served
-  // to whichever pages are requested alike, so here the merge reduces to the fixture order.
+  // The seed's QUERY SHAPE is pinned in ./resource-intent-matcher.seed.test.ts, against an
+  // in-memory index that honours the sort array. Every hit fixture in THIS file is served
+  // as the seed page as-is, so here the seed order is the fixture order.
   it('returns the capped shortlist from the seed', async () => {
     searchWithSignal.mockResolvedValue({ hits: [shortlistHit()], estimatedTotalHits: 1 });
     const { entries } = await findResourceIntentCandidates(criteria, {
@@ -425,7 +424,7 @@ describe('findResourceIntentCandidates — the labels change the response', () =
       versions: [{ id: versionId, name: 'v1', baseModel: 'SDXL 1.0', canGenerate: true }],
     });
 
-  // Served to both seed pages alike, so after the merge's dedupe this IS the seed order.
+  // Served as the seed page, so this IS the seed order.
   const seed = [hitFor(7701, 10701, 97), hitFor(7702, 20802, 61), hitFor(7703, 30903, 23)];
 
   it('🔴 orders the shortlist by the labels, not by the seed order', async () => {

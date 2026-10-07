@@ -4,11 +4,8 @@ import { searchClient } from '~/server/meilisearch/client';
 import { loadResourceInsights, modelInsightProjection } from '~/server/services/resource-insight';
 import { inArray } from '~/shared/utils/meili-filter';
 import {
-  buildResourceIntentSeedQueries,
-  expandShortlist,
   findResourceIntentCandidates,
-  resolveResourceIntentSeedPlan,
-  searchResourceIntentSeedPage,
+  seedResourceIntentPool,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
@@ -32,16 +29,16 @@ import {
  * M3, part two — the two-arm RETRIEVAL comparison, run from
  * `./eval-resource-intent-goldset.ts`.
  *
- * The question: on prompts people actually generated with, does the shipped
- * purpose-first matcher (PURPOSE arm) put a resource they really attached near the top
- * more often than the pre-insight popularity seed alone (POPULARITY arm)?
+ * The question: on prompts people actually generated with, does the shipped matcher
+ * (PURPOSE arm: the popularity seed re-ranked by the labels) put a resource they really
+ * attached near the top more often than that seed alone (POPULARITY arm)?
  *
  * Everything that decides the answer is fixed BEFORE any run, in
  * `M3_RETRIEVAL_PREREGISTRATION` and the text `renderRetrievalPreregistration` builds
  * from it — both in `./eval-resource-intent-registration.ts`.
  *
  * Committed, NOT executed: a live run needs a prod replica read, the models index and
- * an OpenRouter key, and is meant to run only once the purpose-first seed is serving
+ * an OpenRouter key, and is meant to run only once the matcher it grades is serving
  * from a `release` build.
  */
 
@@ -123,33 +120,27 @@ export type RetrievalArm = (
   opts: RetrievalArmOpts
 ) => Promise<RetrievalArmResult>;
 
-/** PURPOSE: the shipped matcher, untouched — purpose-first seed plus label re-rank. */
+/** PURPOSE: the shipped matcher, untouched — popularity seed plus label re-rank. */
 export const purposeArm: RetrievalArm = (criteria, opts) =>
   findResourceIntentCandidates(criteria, opts);
 
 /**
- * POPULARITY: the endpoint's own popularity seed page, ALONE. The filter, pool width,
- * baseModels and cap come from `resolveResourceIntentSeedPlan` (shared with the
- * matcher); the page from `buildResourceIntentSeedQueries` (sorted
- * `metrics.thumbsUpCount:desc` only); the fetch from `searchResourceIntentSeedPage`. The
- * `expandShortlist` call repeats the matcher's arguments — a test pins both arms to the
- * same pool and cap. Never handed to the label re-rank, so the only differences from
- * PURPOSE are the seed (no purpose page) and the ordering (no labels).
+ * POPULARITY: the matcher's own seed pool (`seedResourceIntentPool`) cut to the cap and
+ * never handed to the label re-rank, so the only difference from PURPOSE is
+ * `applyInsightRanking`.
  */
 export const popularityArm: RetrievalArm = async (criteria, opts) => {
   if (criteria.role === 'none') return { entries: [], insightFallback: false };
-  const { cap, poolCap, baseModels, filter } = resolveResourceIntentSeedPlan(criteria, opts);
-  const { popularity } = buildResourceIntentSeedQueries({ filter, role: criteria.role, poolCap });
-  const hits = await searchResourceIntentSeedPage(popularity);
-  const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
+  const { cap, pool } = await seedResourceIntentPool(criteria, opts);
   return { entries: pool.slice(0, cap), insightFallback: false };
 };
 
 /**
  * The positive control: how many models-index documents carry a non-`none`
- * `insight.role` — the field the PURPOSE page filters on. Read through the same index
- * and the same field the arm reads, so a total projection fault (every document
- * written with a null role) reads 0 here rather than as a null study result.
+ * `insight.role`, so a total projection fault (every document written with a null role)
+ * reads 0 here rather than as a null study result. ⚠️ Neither arm reads this field any
+ * more — PURPOSE's labels come from `loadResourceInsights` — so a pass here does not show
+ * the re-rank had labels to read; the identical-at-K diagnostic is what catches that.
  */
 export async function countLabeledIndexDocuments(): Promise<number> {
   const client = searchClient;
@@ -682,7 +673,7 @@ export function renderRetrievalReport(
     '',
     '## Diagnostics',
     '',
-    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. If this is ALL of them the arms are indistinguishable at K (the purpose page returned nothing or the label re-rank never moved the head), and the verdict is VOID.`,
+    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. If this is ALL of them the arms are indistinguishable at K (the label re-rank never moved the head), and the verdict is VOID.`,
     '',
     `Power assumption — scored fraction: ${pct(scoredFraction)} of drawn (assumed >= ${pct(
       powerAssumption.scoredFraction

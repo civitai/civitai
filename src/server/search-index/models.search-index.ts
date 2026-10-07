@@ -353,9 +353,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       // the two coexist, and reading only the widget is how the singular one was missed.
       //
       // So the two are un-ANDed on that page today for one reason only: the page reads no
-      // `insight.*` yet. (The resource-intent matcher's purpose seed does filter
-      // `insight.role`, but beside the array form `versions.baseModel IN [...]` when a base
-      // model is requested, so it has the any-version analogue, not this predicate.) The
+      // `insight.*` yet. (Nothing serving requests filters `insight.*` at all now: the
+      // resource-intent matcher's seed is popularity alone.) The
       // FIRST `insight.*` filter added to that page
       // inherits a cross-version `version.*` predicate whether its author asks for one or not,
       // and the disagreement probability rises with a model's version count — which correlates

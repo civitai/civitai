@@ -30,8 +30,8 @@ import { drainStdio, runScriptAndExit } from './lib/run-as-script';
  * attach rate), review-rate curves (what fraction of prompts each role-confidence
  * threshold defers to review), sliced by role / styleFamily.
  *
- * Part two is the pre-registered two-arm RETRIEVAL comparison — the purpose-first
- * matcher against the popularity seed alone, graded on whether a resource the user
+ * Part two is the pre-registered two-arm RETRIEVAL comparison — the shipped matcher
+ * against its popularity seed alone, graded on whether a resource the user
  * actually attached lands in each arm's shortlist head. Its core and its arms live in
  * `./eval-resource-intent-retrieval.ts`, its pre-registration and the gold-set queries in
  * `./eval-resource-intent-registration.ts`; `./eval-resource-intent-goldset-execute.ts`
