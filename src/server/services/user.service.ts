@@ -1445,9 +1445,12 @@ export const removeAllContent = async ({
   });
   const keptBountyIds: number[] = [];
   if (unsettled.length) {
-    const { settleBountyPayout } = await import('~/server/services/bounty.service');
+    const { settleBountyPayout, skipUnpayableBountyAward } = await import(
+      '~/server/services/bounty.service'
+    );
     for (const { id: bountyId } of unsettled)
-      if (!(await settleBountyPayout(bountyId))) keptBountyIds.push(bountyId);
+      if (!(await settleBountyPayout(bountyId)) && !(await skipUnpayableBountyAward(bountyId)))
+        keptBountyIds.push(bountyId);
     if (keptBountyIds.length)
       logToAxiom({
         name: 'remove-all-content',

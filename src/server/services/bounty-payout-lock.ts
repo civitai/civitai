@@ -13,6 +13,14 @@ export type BountyPayoutState = {
   payoutWinnerUserId: number | null;
 };
 
+/** A payout was recorded and its Buzz has not moved yet. */
+export function isPayoutPending(state: {
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
+}) {
+  return !!state.payoutRecordedAt && !state.payoutSettledAt;
+}
+
 // Every path that moves Buzz for a bounty takes this row lock first, checks the state it
 // returns, and records its claim (`payoutRecordedAt`) in the same transaction. The Buzz calls run
 // after commit, through `settleBountyPayout`.

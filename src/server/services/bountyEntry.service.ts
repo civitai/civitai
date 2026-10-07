@@ -19,8 +19,8 @@ import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
-import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
-import { settleBountyPayout } from '~/server/services/bounty.service';
+import { isPayoutPending, lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import { settleBountyPayout, skipUnpayableBountyAward } from '~/server/services/bounty.service';
 import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 
@@ -387,20 +387,24 @@ export const deleteBountyEntry = async ({
   }
 
   // Checked on the primary under the payout lock, so an award recorded concurrently is seen. An
-  // unsettled payout is settled before the entry goes.
-  const deleteEntry = () =>
+  // unsettled payout is settled before the entry goes; a moderator may go past one that no retry
+  // can pay (see `skipUnpayableBountyAward`).
+  const deleteEntry = (evenIfPending = false) =>
     dbWrite.$transaction(
       async (tx) => {
         const locked = await lockBountyForPayout(tx, entry.bountyId);
-        if (locked?.payoutRecordedAt && !locked.payoutSettledAt) return PAYOUT_PENDING;
+        if (!evenIfPending && locked && isPayoutPending(locked)) return PAYOUT_PENDING;
         return deleteEntryRows(tx, id);
       },
       { maxWait: 10000, timeout: 30000 }
     );
 
   let deleted = await deleteEntry();
-  if (deleted === PAYOUT_PENDING && (await settleBountyPayout(entry.bountyId)))
-    deleted = await deleteEntry();
+  if (deleted === PAYOUT_PENDING) {
+    if (await settleBountyPayout(entry.bountyId)) deleted = await deleteEntry();
+    else if (isModerator && (await skipUnpayableBountyAward(entry.bountyId)))
+      deleted = await deleteEntry(true);
+  }
   if (deleted === PAYOUT_PENDING)
     throw throwBadRequestError(
       'This bounty has a payout still pending, so its entries cannot be deleted yet. Try again later.'

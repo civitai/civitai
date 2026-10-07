@@ -141,6 +141,32 @@ describe('prepare-bounties auto-award', () => {
     expect(mockSettle).toHaveBeenCalledExactlyOnceWith(BOUNTY_ID, { firstAttempt: true });
   });
 
+  it('never picks an entry whose author is gone as the winner', async () => {
+    await runPrepareBounties();
+    const winnerQuery = mockDbWrite.$queryRaw.mock.calls
+      .map((c: unknown[]) => (c[0] as readonly string[]).join('?'))
+      .find((sql: string) => sql.includes('FROM "BountyEntry" be'));
+    expect(winnerQuery).toContain('AND be."userId" IS NOT NULL');
+  });
+
+  it('refunds instead when no entry has an author to pay', async () => {
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+      const sql = strings.join('');
+      if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];
+      if (sql.includes('SELECT currency FROM "BountyBenefactor"')) return [{ currency: 'BUZZ' }];
+      return [];
+    });
+    await runPrepareBounties();
+    expect(
+      executedStatements.some((sql) => sql.includes('"refunded" = true, "payoutRecordedAt"'))
+    ).toBe(true);
+    expect(executedStatements.some((sql) => sql.includes('UPDATE "BountyBenefactor"'))).toBe(false);
+    expect(mockSettle).toHaveBeenCalledWith(
+      BOUNTY_ID,
+      expect.objectContaining({ firstAttempt: true })
+    );
+  });
+
   it('logs an award whose payout did not settle, for the retry job to pay', async () => {
     mockSettle.mockResolvedValueOnce(false);
     await runPrepareBounties();

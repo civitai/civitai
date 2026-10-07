@@ -240,6 +240,12 @@ beforeEach(() => {
       return { count: matches ? 1 : 0 };
     }
   );
+  // Answers the awarding-supporter count; the owner-delete guard's other-supporter count reads 0.
+  dbMock.dbWrite.bountyBenefactor.count.mockImplementation(
+    async ({ where }: { where: { awardedAt?: unknown } }) =>
+      where.awardedAt ? benefactors.filter((b) => b.awardedAt != null).length : 0
+  );
+  dbMock.dbWrite.bountyEntry.count.mockResolvedValue(0);
   dbMock.dbRead.bountyEntry.findUniqueOrThrow.mockImplementation(async () => ({
     ...entry,
     bounty: { complete: bounty?.complete ?? false },
@@ -688,5 +694,46 @@ describe('retryUnsettledBountyPayouts paging', () => {
     await retryUnsettledBountyPayouts({ now: new Date() });
     expect(dbMock.dbWrite.bounty.findMany).toHaveBeenCalledTimes(2);
     expect(dbMock.dbWrite.bounty.findMany.mock.calls[1][0].where.id).toEqual({ gt: 100 });
+  });
+});
+
+describe('a moderator going past an award no retry can pay', () => {
+  const recordAward = (over: Partial<BountyRow> = {}) => {
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date() });
+    Object.assign(bounty!, {
+      complete: true,
+      payoutRecordedAt: new Date(),
+      payoutWinnerUserId: entry.userId,
+      ...over,
+    });
+  };
+  it('deletes the bounty, logging an error, when the award has no winner', async () => {
+    recordAward({ payoutWinnerUserId: null });
+    await deleteBountyById({ id: 4, isModerator: true });
+    expect(bounty).toBeNull();
+    expect(moved('award')).toBe(0);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'bounty-award', type: 'error', bountyId: 4 })
+    );
+  });
+
+  it('deletes the entry when no supporter is marked as awarding the award', async () => {
+    recordAward();
+    benefactors[0].awardedAt = null;
+    await deleteBountyEntry({ id: 10, isModerator: true });
+    expect(moved('delete-entry')).toBe(1);
+  });
+
+  it('still blocks a moderator on a payout that failed for a payable award', async () => {
+    recordAward();
+    buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
+    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow('not deleted');
+    expect(bounty).not.toBeNull();
+  });
+
+  it('gives an owner no override', async () => {
+    recordAward({ payoutWinnerUserId: null });
+    await expect(deleteBountyById({ id: 4, isModerator: false })).rejects.toThrow('not deleted');
+    expect(bounty).not.toBeNull();
   });
 });

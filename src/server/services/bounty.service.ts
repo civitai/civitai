@@ -28,7 +28,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
-import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import { isPayoutPending, lockBountyForPayout } from '~/server/services/bounty-payout-lock';
 import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
 import {
   hasOpenTextScanFlag,
@@ -787,7 +787,7 @@ export const deleteBountyById = async ({
       });
       return { owed: true, firstAttempt: true };
     }
-    return { owed: !!locked.payoutRecordedAt && !locked.payoutSettledAt, firstAttempt: false };
+    return { owed: isPayoutPending(locked), firstAttempt: false };
   });
   if (!claim) return null;
 
@@ -798,7 +798,7 @@ export const deleteBountyById = async ({
         ? 'Refund reason: moderator deleted bounty'
         : 'Refund reason: owner deleted bounty',
     });
-    if (!settled)
+    if (!settled && !(isModerator && (await skipUnpayableBountyAward(id))))
       throw new TRPCError({
         code: 'INTERNAL_SERVER_ERROR',
         message:
@@ -1208,7 +1208,7 @@ export async function settleBountyPayout(
       payoutWinnerUserId: true,
     },
   });
-  if (!bounty?.payoutRecordedAt || bounty.payoutSettledAt) return true;
+  if (!bounty || !isPayoutPending(bounty)) return true;
 
   let settled = false;
   try {
@@ -1233,6 +1233,34 @@ export async function settleBountyPayout(
     data: { payoutSettledAt: new Date() },
   });
   return true;
+}
+
+/**
+ * The moderator override for a recorded award no retry can pay: it has no winner, or no supporter is
+ * marked as awarding it. Returns true (after an error log) when the caller may go ahead and delete;
+ * any other unsettled payout, such as a Buzz failure, stays blocking.
+ */
+export async function skipUnpayableBountyAward(bountyId: number) {
+  const bounty = await dbWrite.bounty.findUnique({
+    where: { id: bountyId },
+    select: {
+      refunded: true,
+      payoutRecordedAt: true,
+      payoutSettledAt: true,
+      payoutWinnerUserId: true,
+    },
+  });
+  if (!bounty || bounty.refunded || !isPayoutPending(bounty)) return false;
+  const unpayable =
+    !bounty.payoutWinnerUserId ||
+    !(await dbWrite.bountyBenefactor.count({ where: { bountyId, awardedAt: { not: null } } }));
+  if (unpayable)
+    logBountyPayoutError({
+      bountyId,
+      name: 'bounty-award',
+      message: 'Deleted by a moderator with an award that cannot be paid; its escrow was not moved',
+    });
+  return unpayable;
 }
 
 const BOUNTY_PAYOUT_RETRY_AFTER_MS = 10 * 60 * 1000;
