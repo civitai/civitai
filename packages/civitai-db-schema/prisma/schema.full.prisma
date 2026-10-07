@@ -8269,6 +8269,8 @@ enum UserRestrictionStatus {
   Pending
   Upheld
   Overturned
+  // Not a ruling: closed by `deleteUser`, reopened to Pending by `restoreUser`.
+  AccountDeleted
 }
 
 // Moderator-curated allowlist for false-positive prompt triggers

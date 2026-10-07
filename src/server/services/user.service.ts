@@ -136,6 +136,10 @@ import {
 } from '~/server/services/blocks/publisher-ban-revocation.service';
 import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 import { releaseUserMute, type MuteReleaseActivity } from '~/server/services/mute-release.service';
+import {
+  closeRestrictionsOfDeletedAccount,
+  reopenRestrictionsOfRestoredAccount,
+} from '~/server/services/user-restriction.service';
 
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
@@ -1179,6 +1183,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  await runStep('close-pending-restrictions', () => closeRestrictionsOfDeletedAccount(user.id));
 
   // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
   await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
@@ -1305,6 +1310,17 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }),
     disarmAccountDeletionImagePurge(id),
   ]);
+
+  // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
+  await reopenRestrictionsOfRestoredAccount(id).catch((error) =>
+    logToAxiom({
+      name: 'reopen-pending-restrictions',
+      type: 'error',
+      source: 'restoreUser',
+      userId: id,
+      message: (error as Error)?.message,
+    }).catch(() => null)
+  );
 
   // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
   // already reads NULL, and the drain job's gates can no longer re-hide what it unblocks.

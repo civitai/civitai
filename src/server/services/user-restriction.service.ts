@@ -263,6 +263,45 @@ export async function hasOtherPendingRestriction(
 }
 
 /**
+ * Not a ruling, so no notice and no change to the mute: the review queue hides deleted accounts,
+ * and a case left Pending there would never be ruled on.
+ */
+export async function closeRestrictionsOfDeletedAccount(userId: number) {
+  return dbWrite.$executeRaw`
+    UPDATE "UserRestriction"
+    SET status = 'AccountDeleted', "resolvedAt" = now(), "resolvedBy" = NULL,
+        "resolvedMessage" = 'Closed automatically: the account was deleted.', "updatedAt" = now()
+    WHERE "userId" = ${userId} AND status = 'Pending'
+  `;
+}
+
+/**
+ * A restored account keeps its mute, so its closed cases go back in the queue. Scam cases reopen at
+ * most one, and none when a scam case is already Pending: `UserRestriction_scam_pending_key` allows one.
+ */
+export async function reopenRestrictionsOfRestoredAccount(userId: number) {
+  return dbWrite.$executeRaw`
+    UPDATE "UserRestriction" ur
+    SET status = 'Pending', "resolvedAt" = NULL, "resolvedBy" = NULL, "resolvedMessage" = NULL,
+        "updatedAt" = now()
+    WHERE ur."userId" = ${userId} AND ur.status = 'AccountDeleted'
+      AND (
+        ur.type <> 'scam'
+        OR (
+          ur.id = (
+            SELECT max(c.id) FROM "UserRestriction" c
+            WHERE c."userId" = ${userId} AND c.type = 'scam' AND c.status = 'AccountDeleted'
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM "UserRestriction" p
+            WHERE p."userId" = ${userId} AND p.type = 'scam' AND p.status = 'Pending'
+          )
+        )
+      )
+  `;
+}
+
+/**
  * Shapes a free-text reason into the trigger entries the moderator review UI
  * renders, so a mute raised by a service or by hand isn't reviewed blind.
  */
