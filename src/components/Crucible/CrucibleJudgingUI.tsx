@@ -26,6 +26,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import {
   accumulatePlaybackMs,
   CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS,
+  playsToEnd,
 } from '~/shared/constants/crucible.constants';
 
 /**
@@ -47,6 +48,7 @@ const IMAGE_LOAD_TIMEOUT_MS = 12_000;
 const VIDEO_LOAD_TIMEOUT_MS = 20_000;
 const bothLoading = { left: 'loading', right: 'loading' } as const;
 const notPlayedThrough = { left: false, right: false };
+const noDurations = { left: null, right: null };
 const LOOP_WRAP_WINDOW_SECONDS = CRUCIBLE_PLAYBACK_SAMPLE_CEILING_MS / 1000;
 
 // Below md the pair gets fixed heights and the page scrolls: squeezed into the space left under
@@ -88,6 +90,8 @@ export function CrucibleJudgingUI({
   const [selectedSide, setSelectedSide] = useState<Side | null>(null);
   const [watchedMs, setWatchedMs] = useState<Record<Side, number>>(emptyWatched);
   const [playedThrough, setPlayedThrough] = useState<Record<Side, boolean>>(notPlayedThrough);
+  const [reachedEnd, setReachedEnd] = useState<Record<Side, boolean>>(notPlayedThrough);
+  const [durations, setDurations] = useState<Record<Side, number | null>>(noDurations);
   const [mediaStatus, setMediaStatus] = useState<
     { pairKey: string | null } & Record<Side, MediaStatus>
   >({ pairKey: null, ...bothLoading });
@@ -108,6 +112,8 @@ export function CrucibleJudgingUI({
   useEffect(() => {
     setWatchedMs(emptyWatched);
     setPlayedThrough(notPlayedThrough);
+    setReachedEnd(notPlayedThrough);
+    setDurations(noDurations);
   }, [pairKey]);
 
   // Keyed on the pair so a new pair reads as loading from its first render, not after an effect.
@@ -144,12 +150,22 @@ export function CrucibleJudgingUI({
   // totals so a judge who plays a clip by hand is counted rather than fought.
   const isVideoPair =
     pair?.left.image.type === MediaType.video && pair?.right.image.type === MediaType.video;
-  const sequencing = isVideoPair && mediaReady && !watchGateOpen;
-  const autoplaySide: Side | null = !sequencing ? null : !sideDone('left') ? 'left' : 'right';
+  // The gate opens at the rule, but a clip only a little longer still plays on to its end.
+  const playbackDone = (side: Side) =>
+    sideDone(side) && (reachedEnd[side] || !playsToEnd(durations[side], ruleSeconds(side)));
+  const sequencing = isVideoPair && mediaReady && !(playbackDone('left') && playbackDone('right'));
+  const autoplaySide: Side | null = !sequencing ? null : !playbackDone('left') ? 'left' : 'right';
   const voteLocked = isDisabled || !mediaReady || !watchGateOpen;
 
-  const handleWatched = useCallback((side: Side, ms: number) => {
+  const handleWatched = useCallback((side: Side, ms: number, durationSeconds: number) => {
     setWatchedMs((prev) => (ms > prev[side] ? { ...prev, [side]: ms } : prev));
+    setDurations((prev) =>
+      prev[side] === durationSeconds ? prev : { ...prev, [side]: durationSeconds }
+    );
+  }, []);
+
+  const handleReachedEnd = useCallback((side: Side) => {
+    setReachedEnd((prev) => (prev[side] ? prev : { ...prev, [side]: true }));
   }, []);
 
   const handlePlayedThrough = useCallback((side: Side) => {
@@ -233,8 +249,9 @@ export function CrucibleJudgingUI({
           requiredMs={requiredMs.left}
           autoplay={autoplaySide === 'left'}
           sequencing={sequencing}
-          onWatched={(ms) => handleWatched('left', ms)}
+          onWatched={(ms, durationSeconds) => handleWatched('left', ms, durationSeconds)}
           onPlayedThrough={() => handlePlayedThrough('left')}
+          onReachedEnd={() => handleReachedEnd('left')}
           onVote={() => handleVote('left')}
           onSkip={handleSkip}
           onMediaStatus={handleMediaStatus}
@@ -259,8 +276,9 @@ export function CrucibleJudgingUI({
           requiredMs={requiredMs.right}
           autoplay={autoplaySide === 'right'}
           sequencing={sequencing}
-          onWatched={(ms) => handleWatched('right', ms)}
+          onWatched={(ms, durationSeconds) => handleWatched('right', ms, durationSeconds)}
           onPlayedThrough={() => handlePlayedThrough('right')}
+          onReachedEnd={() => handleReachedEnd('right')}
           onVote={() => handleVote('right')}
           onSkip={handleSkip}
           onMediaStatus={handleMediaStatus}
@@ -328,8 +346,9 @@ type ImageCardProps = {
   requiredMs: number;
   autoplay: boolean;
   sequencing: boolean;
-  onWatched: (ms: number) => void;
+  onWatched: (ms: number, durationSeconds: number) => void;
   onPlayedThrough: () => void;
+  onReachedEnd: () => void;
   onVote: () => void;
   onSkip: () => void;
   onMediaStatus: (side: Side, status: MediaStatus) => void;
@@ -357,6 +376,7 @@ function ImageCard({
   sequencing,
   onWatched,
   onPlayedThrough,
+  onReachedEnd,
   onVote,
   onSkip,
   onMediaStatus,
@@ -394,21 +414,21 @@ function ImageCard({
     const previousTime = lastTimeRef.current;
     // The player loops, so `ended` never fires: reaching the end shows up as the playhead wrapping.
     // The element's decoded duration, not the uploader-reported one, decides what counts as short.
-    if (
+    const wrapped =
       previousTime != null &&
-      duration * 1000 < requiredMs &&
       currentTime < previousTime &&
       previousTime >= duration - LOOP_WRAP_WINDOW_SECONDS &&
-      currentTime <= LOOP_WRAP_WINDOW_SECONDS
-    )
-      onPlayedThrough();
+      currentTime <= LOOP_WRAP_WINDOW_SECONDS;
+    if (wrapped && duration * 1000 < requiredMs) onPlayedThrough();
+    // Only after the rule is met, so a skip to the end cannot cut the tail short.
+    if (wrapped && watchedRef.current >= requiredMs) onReachedEnd();
     watchedRef.current = accumulatePlaybackMs({
       watchedMs: watchedRef.current,
       previousTime: lastTimeRef.current,
       currentTime,
     });
     lastTimeRef.current = currentTime;
-    onWatched(watchedRef.current);
+    onWatched(watchedRef.current, duration);
   };
 
   const remainingSeconds = Math.ceil(Math.max(0, requiredMs - watchedMs) / 1000);
