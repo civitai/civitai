@@ -4,11 +4,12 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { restoreScamCase, type ScamCleanupRecord } from '~/server/services/scam-cleanup.service';
 import { REVIEW_MUTE_POINTS } from '~/shared/constants/strike.constants';
-import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
+import { StrikeReason, StrikeStatus, UserRestrictionStatus } from '~/shared/utils/prisma/enums';
 
 const MODERATOR_UNMUTE_ACTIVITIES = ['unmute', 'revokeTimedMute'];
 const SYSTEM_ACTOR_ID = constants.system.user.id;
 const SCAM_CASE_CLOSED_VOID_REASON = 'The account was unmuted, which closed its scam review.';
+const SCAM_CASE_OVERTURNED_FIRST_REASON = 'The scam case was overturned before this strike landed.';
 
 type LedgerClient = Pick<Prisma.TransactionClient, '$queryRaw' | '$executeRaw' | 'userRestriction'>;
 
@@ -107,8 +108,9 @@ export async function closeScamCasesOpenedBefore(
  * mute itself. Writes the same void fields as `voidStrike` in `strike.service.ts` (keep the two in
  * step), but sends no notice, and clears the review flag the voided points no longer justify.
  *
- * Besides the strikes a case names, it voids an Active Scam strike no case names that landed between
- * this case and the account's next one: a strike whose link to its case was never written.
+ * Besides the strikes a case names, it voids an Active system-issued Scam strike no case names that
+ * landed between this case and the account's next one: a strike whose link was never written. A
+ * moderator's own Scam strike is never caught by it.
  */
 export async function voidScamCaseStrikes(
   userRestrictionIds: number[],
@@ -129,7 +131,8 @@ export async function voidScamCaseStrikes(
           FROM jsonb_array_elements(CASE WHEN jsonb_typeof(ur.triggers) = 'array' THEN ur.triggers ELSE '[]'::jsonb END) t
         )
         OR (
-          s.reason = ${StrikeReason.Scam}::"StrikeReason" AND s."createdAt" >= ur."createdAt"
+          s.reason = ${StrikeReason.Scam}::"StrikeReason" AND s."issuedBy" IS NULL
+          AND s."createdAt" >= ur."createdAt"
           AND NOT EXISTS (
             SELECT 1 FROM "UserRestriction" o, jsonb_array_elements(CASE WHEN jsonb_typeof(o.triggers) = 'array' THEN o.triggers ELSE '[]'::jsonb END) ot
             WHERE o."userId" = s."userId" AND o.type = 'scam' AND (ot->>'strikeId')::int = s.id
@@ -197,9 +200,10 @@ type TriggerSlot = { userRestrictionId: number; index: number; dedupeKey: string
 async function setTriggerField(
   { userRestrictionId, index, dedupeKey }: TriggerSlot,
   field: 'cleanup' | 'strikeId',
-  value: unknown
+  value: unknown,
+  client: Pick<Prisma.TransactionClient, '$executeRaw'> = dbWrite
 ) {
-  await dbWrite.$executeRaw`
+  await client.$executeRaw`
     UPDATE "UserRestriction"
     SET triggers = jsonb_set(triggers, ARRAY[${String(index)}, ${field}], ${JSON.stringify(
     value
@@ -218,11 +222,28 @@ export async function recordScamCleanup(
   await setTriggerField({ userRestrictionId, index, dedupeKey }, 'cleanup', record);
 }
 
-export async function recordScamStrike(
+/**
+ * Links a new strike to its case, under the case's row lock. If the case was overturned before the
+ * link landed, nothing would void the strike later, so it is voided here; returns whether it was.
+ * An upheld case keeps its strike.
+ */
+export async function linkScamStrike(
   userRestrictionId: number,
   index: number,
   dedupeKey: string,
   strikeId: number
 ) {
-  await setTriggerField({ userRestrictionId, index, dedupeKey }, 'strikeId', strikeId);
+  return dbWrite.$transaction(async (tx) => {
+    const [row] = await tx.$queryRaw<{ status: string }[]>`
+      SELECT status FROM "UserRestriction" WHERE id = ${userRestrictionId} FOR UPDATE
+    `;
+    await setTriggerField({ userRestrictionId, index, dedupeKey }, 'strikeId', strikeId, tx);
+    if (row?.status !== UserRestrictionStatus.Overturned) return false;
+    await voidScamCaseStrikes(
+      [userRestrictionId],
+      { voidedBy: null, reason: SCAM_CASE_OVERTURNED_FIRST_REASON },
+      tx
+    );
+    return true;
+  });
 }

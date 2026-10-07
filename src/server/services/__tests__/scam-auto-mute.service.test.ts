@@ -21,7 +21,7 @@ const m = vi.hoisted(() => ({
   closeScamCasesOpenedBefore: vi.fn(async (): Promise<number[]> => []),
   appendScamTrigger: vi.fn(),
   recordScamCleanup: vi.fn(async () => undefined),
-  recordScamStrike: vi.fn(async () => undefined),
+  linkScamStrike: vi.fn(async () => undefined),
   restoreScamCases: vi.fn(async () => undefined),
   createStrike: vi.fn(),
 }));
@@ -57,7 +57,7 @@ vi.mock('~/server/services/scam-case-ledger', async (importOriginal) => ({
   closeScamCasesOpenedBefore: m.closeScamCasesOpenedBefore,
   appendScamTrigger: m.appendScamTrigger,
   recordScamCleanup: m.recordScamCleanup,
-  recordScamStrike: m.recordScamStrike,
+  linkScamStrike: m.linkScamStrike,
   restoreScamCases: m.restoreScamCases,
 }));
 
@@ -188,7 +188,7 @@ describe('autoMuteScamAccount', () => {
     const { expiresInDays, internalNotes } = m.createStrike.mock.calls[0][0];
     expect(expiresInDays).toBeGreaterThanOrEqual(36500);
     expect(internalNotes).toContain('Fake support');
-    expect(m.recordScamStrike).toHaveBeenCalledWith(5, 0, 'wf-1', 77);
+    expect(m.linkScamStrike).toHaveBeenCalledWith(5, 0, 'wf-1', 77);
     expect(m.announcePendingReviewMute.mock.invocationCallOrder[0]).toBeLessThan(
       m.createStrike.mock.invocationCallOrder[0]
     );
@@ -197,12 +197,12 @@ describe('autoMuteScamAccount', () => {
   it('still files the case and cleans up when the daily cap withholds the strike', async () => {
     m.createStrike.mockResolvedValue(null);
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: null });
-    expect(m.recordScamStrike).not.toHaveBeenCalled();
+    expect(m.linkScamStrike).not.toHaveBeenCalled();
     expect(m.runScamCleanup).toHaveBeenCalled();
   });
 
   it('keeps the mute and its strike when recording the strike id on the case fails', async () => {
-    m.recordScamStrike.mockRejectedValueOnce(new Error('update failed'));
+    m.linkScamStrike.mockRejectedValueOnce(new Error('update failed'));
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: 77 });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'strike record failed', userRestrictionId: 5 })
@@ -217,7 +217,7 @@ describe('autoMuteScamAccount', () => {
       }
     );
     expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: 77 });
-    expect(m.recordScamStrike).toHaveBeenCalledWith(5, 0, 'wf-1', 77);
+    expect(m.linkScamStrike).toHaveBeenCalledWith(5, 0, 'wf-1', 77);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'strike issued, but escalation failed' })
     );

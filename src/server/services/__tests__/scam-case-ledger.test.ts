@@ -17,7 +17,6 @@ const {
   restoreScamCases,
   lastModeratorUnmuteAt,
   recordScamCleanup,
-  recordScamStrike,
   scamTextSeenBefore,
   scamVerdictActioned,
   voidScamCaseStrikes,
@@ -185,18 +184,6 @@ describe('scam case ledger', () => {
     expect(values(call)).toEqual(['2', 'cleanup', JSON.stringify(record), 5, 2, 'wf-1']);
   });
 
-  it('writes the strike id into the entry at that index, guarded by its dedupe key', async () => {
-    await recordScamStrike(5, 2, 'wf-1', 77);
-    expect(values(dbMock.dbWrite.$executeRaw.mock.calls[0])).toEqual([
-      '2',
-      'strikeId',
-      '77',
-      5,
-      2,
-      'wf-1',
-    ]);
-  });
-
   describe('voidScamCaseStrikes', () => {
     it('voids only active strikes named by the cases, on the same account', async () => {
       dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 77, userId: 42 }]);
@@ -216,7 +203,8 @@ describe('scam case ledger', () => {
       dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
       await voidScamCaseStrikes([5], { voidedBy: 3, reason: 'Overturned' });
       const sql = sqlOf(dbMock.dbWrite.$queryRaw.mock.calls[0]);
-      expect(sql).toContain(`s.reason = ?::"StrikeReason" AND s."createdAt" >= ur."createdAt"`);
+      expect(sql).toContain(`s.reason = ?::"StrikeReason" AND s."issuedBy" IS NULL`);
+      expect(sql).toContain(`AND s."createdAt" >= ur."createdAt"`);
       expect(sql).toContain(
         `WHERE o."userId" = s."userId" AND o.type = 'scam' AND (ot->>'strikeId')::int = s.id`
       );

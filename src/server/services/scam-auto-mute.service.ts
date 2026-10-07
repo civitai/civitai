@@ -14,7 +14,7 @@ import {
   closeScamCasesOpenedBefore,
   lastModeratorUnmuteAt,
   recordScamCleanup,
-  recordScamStrike,
+  linkScamStrike,
   restoreScamCases,
   scamTextSeenBefore,
   scamVerdictActioned,
@@ -253,7 +253,7 @@ async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slo
       notifyUser: false,
       onCreated: async ({ id }) => {
         landed = id;
-        await recordScamStrike(slot.userRestrictionId, slot.index, evidence.dedupeKey, id).catch(
+        await linkScamStrike(slot.userRestrictionId, slot.index, evidence.dedupeKey, id).catch(
           (error) =>
             logError('strike record failed', userId, evidence.source, error, slot.userRestrictionId)
         );

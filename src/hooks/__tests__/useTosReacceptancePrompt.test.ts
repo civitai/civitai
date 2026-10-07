@@ -72,7 +72,9 @@ describe('useTosReacceptancePrompt', () => {
   it('opens the Terms on a blocked action, and not again once accepted', async () => {
     m.acceptTos.mockResolvedValue({ accepted: true });
     blocked();
-    expect(m.trigger).toHaveBeenCalledOnce();
+    expect(m.trigger).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'tos-reacceptance' })
+    );
 
     await accept();
     expect(m.showInfoNotification).toHaveBeenCalledExactlyOnceWith(
