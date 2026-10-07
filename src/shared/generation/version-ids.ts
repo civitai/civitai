@@ -23,6 +23,7 @@ export const nanoBananaVersionIds = {
   pro: 2436219,
   v2: 2725610,
   v2lite: 3086021,
+  v21: 3390330,
 } as const;
 
 export const minimaxVersionIds = {
