@@ -592,7 +592,12 @@ export type ComponentFileType = (typeof componentFileTypes)[number];
 
 export const POST_IMAGE_LIMIT = 20;
 export const POST_TAG_LIMIT = 5;
-export const POST_MINIMUM_SCHEDULE_MINUTES = 10;
+// The scheduling window lives in @civitai/shared so the planner element and Creator Studio read the
+// same numbers; re-exported here for the many existing importers.
+export {
+  POST_MAXIMUM_SCHEDULE_MONTHS,
+  POST_MINIMUM_SCHEDULE_MINUTES,
+} from '@civitai/shared/post-scheduling';
 // Caps on resources a user can manually credit on a single uploaded/external image
 // (`ImageResourceNew.detected = false`); auto-detected resources are not counted. This is an
 // attribution action with no GPU cost, so it is intentionally decoupled from the per-tier

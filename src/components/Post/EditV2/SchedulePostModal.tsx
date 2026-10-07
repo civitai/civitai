@@ -2,7 +2,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Button, Group, Modal, Stack, Text } from '@mantine/core';
 import * as z from 'zod';
 import { Form, InputDateTimePicker, useForm } from '~/libs/form';
-import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
+import {
+  POST_MAXIMUM_SCHEDULE_MONTHS,
+  POST_MINIMUM_SCHEDULE_MINUTES,
+} from '~/server/common/constants';
 import { increaseDate } from '~/utils/date-helpers';
 import { getDefaultScheduleDate } from './schedule-post.utils';
 
@@ -22,11 +25,11 @@ const schema = z.object({
     .refine(
       (date) => {
         const now = new Date();
-        const maxDate = increaseDate(now, 3, 'months');
+        const maxDate = increaseDate(now, POST_MAXIMUM_SCHEDULE_MONTHS, 'months');
         return date <= maxDate;
       },
       {
-        message: 'Schedule date cannot be more than 3 months in the future',
+        message: `Schedule date cannot be more than ${POST_MAXIMUM_SCHEDULE_MONTHS} months in the future`,
       }
     ),
 });
@@ -43,7 +46,7 @@ export function SchedulePostModal({
   const dialog = useDialogContext();
   const today = new Date();
   const minDate = increaseDate(today, POST_MINIMUM_SCHEDULE_MINUTES, 'minutes');
-  const maxDate = increaseDate(today, 3, 'months');
+  const maxDate = increaseDate(today, POST_MAXIMUM_SCHEDULE_MONTHS, 'months');
 
   const form = useForm({
     schema,

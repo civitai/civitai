@@ -73,6 +73,21 @@ const hasReputation = (user: SessionUser, minScore: number) =>
   (user.meta?.scores?.total ?? 0) >= minScore;
 const isPaidMember = (user: SessionUser) => !!user.tier && user.tier !== 'free';
 
+/**
+ * The daily post cap `postRateLimits` ends up applying to this user: the highest reputation tier
+ * they meet, scaled by `MEMBER_DAILY_POST_MULTIPLIER` for members. Batch scheduling counts
+ * scheduled posts against it on the day they go live (`validateBatchSchedule`), so it needs the
+ * number, not the middleware's refusal.
+ */
+export function getDailyPostLimit(user: SessionUser): number {
+  const tier = dailyPostTiers.reduce(
+    (best, candidate) =>
+      hasReputation(user, candidate.minScore) && candidate.limit > best.limit ? candidate : best,
+    dailyPostTiers[0]
+  );
+  return isPaidMember(user) ? tier.limit * MEMBER_DAILY_POST_MULTIPLIER : tier.limit;
+}
+
 export const postRateLimits: RateLimit[] = [
   // Newly created accounts: tight hourly clamp for the rest of the calendar day
   // they sign up (isBetweenToday = same-day membership, matching articleRateLimits).
