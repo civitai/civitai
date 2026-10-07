@@ -59,9 +59,22 @@ describe('safeSameOriginPath', () => {
     expect(safeSameOriginPath(`${ORIGIN}/a/..//other.example`, ORIGIN, FALLBACK)).toBe(FALLBACK);
   });
 
-  it('rejects an absolute url on a different origin', () => {
-    expect(safeSameOriginPath('https://other.example/a', ORIGIN, FALLBACK)).toBe(FALLBACK);
-    expect(safeSameOriginPath('http://civitai.example/a', ORIGIN, FALLBACK)).toBe(FALLBACK);
+  it.each([
+    ['backslash after the origin', `${ORIGIN}/\\other.example`],
+    ['tab after the origin', `${ORIGIN}/\t/other.example`],
+    ['line feed after the origin', `${ORIGIN}/\n/other.example`],
+  ])('rejects an absolute url on the origin with a %s', (_name, raw) => {
+    expect(safeSameOriginPath(raw, ORIGIN, FALLBACK)).toBe(FALLBACK);
+  });
+
+  it.each([
+    ['different host', 'https://other.example/a'],
+    ['different scheme', 'http://civitai.example/a'],
+    ['different port', 'https://civitai.example:8443/a'],
+    ['userinfo that names the origin', 'https://civitai.example@other.example/a'],
+    ['non-http scheme', 'javascript:alert(1)'],
+  ])('rejects an absolute url with a %s', (_name, raw) => {
+    expect(safeSameOriginPath(raw, ORIGIN, FALLBACK)).toBe(FALLBACK);
   });
 
   it('falls back for non-strings', () => {

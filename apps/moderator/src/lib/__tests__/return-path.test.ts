@@ -36,6 +36,11 @@ describe('safeReturnPath', () => {
     expect(safeReturnPath(undefined)).toBeNull();
   });
 
+  it('keeps a path exactly at the length cap', () => {
+    const atCap = `/${'a'.repeat(2047)}`;
+    expect(safeReturnPath(atCap)).toBe(atCap);
+  });
+
   it('normalises dot segments without leaving the app', () => {
     expect(safeReturnPath('/a/../../b')).toBe('/b');
   });

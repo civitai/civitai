@@ -39,4 +39,8 @@ export const SAFE_RETURN_PATHS: ReadonlyArray<readonly [string, string, string]>
   ['encoded slash stays encoded', '/a%2Fb', '/a%2Fb'],
   ['encoded tab stays encoded', '/a%09b', '/a%09b'],
   ['query that itself holds a url', '/login?returnUrl=%2Fx', '/login?returnUrl=%2Fx'],
+  // Rows whose expected output differs from the input: the normalised form is what comes back.
+  ['parent segment normalises', '/a/../b', '/b'],
+  ['single-dot segment normalises', '/./b', '/b'],
+  ['space is percent-encoded', '/a b', '/a%20b'],
 ];

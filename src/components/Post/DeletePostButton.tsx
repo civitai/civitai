@@ -5,6 +5,7 @@ import { useRouter } from 'next/router';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { safeInternalPath } from '~/utils/url-helpers';
 
 export function DeletePostButton({
   children,
@@ -20,7 +21,7 @@ export function DeletePostButton({
   }) => React.ReactElement;
 }) {
   const router = useRouter();
-  const returnUrl = (router.query.returnUrl as string) ?? '/';
+  const returnUrl = safeInternalPath(router.query.returnUrl, '/');
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const { mutate, isPending: isLoading } = trpc.post.delete.useMutation({

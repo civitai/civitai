@@ -106,8 +106,9 @@ describe('same-origin path validation (shared case table)', () => {
     expect(isSafeReturnTarget(raw, { isAllowedOrigin: isCivitaiOrigin })).toBe(false);
   });
 
-  // allowAllOrigins (dev) opens absolute URLs only; a path must still pass the same-origin rule.
-  it.each(UNSAFE_RETURN_PATHS.filter(([, raw]) => raw.startsWith('/')))(
+  // allowAllOrigins (dev) opens absolute http(s) URLs only: a path must still pass the same-origin rule,
+  // and any other scheme is still refused. Only the two http(s) rows are excluded here.
+  it.each(UNSAFE_RETURN_PATHS.filter(([, raw]) => !/^https?:\/\//.test(raw)))(
     'isSafeReturnTarget refuses with allowAllOrigins: %s',
     (_name, raw) => {
       expect(isSafeReturnTarget(raw, { allowAllOrigins: true })).toBe(false);

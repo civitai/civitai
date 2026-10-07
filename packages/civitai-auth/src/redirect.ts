@@ -77,12 +77,14 @@ export interface ReturnTargetOptions {
 
 /**
  * The target to actually redirect to, or null when unsafe. A path is accepted only if `safeReturnPath`
- * accepts it, and is returned in that normalised form; an absolute URL only if its origin is allowed.
+ * accepts it, and is returned in that normalised form; an absolute URL only if it is http(s) and its
+ * origin is allowed (`allowAllOrigins` widens the origin, never the scheme).
  */
 function resolveReturnTarget(target: string, opts: ReturnTargetOptions): string | null {
   if (target.startsWith('/')) return safeReturnPath(target);
   try {
-    const { origin } = new URL(target);
+    const { origin, protocol } = new URL(target);
+    if (protocol !== 'https:' && protocol !== 'http:') return null;
     return opts.allowAllOrigins || opts.isAllowedOrigin?.(origin) ? target : null;
   } catch {
     return null;
