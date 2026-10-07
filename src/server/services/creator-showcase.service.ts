@@ -63,7 +63,7 @@ async function getShowcaseCandidates(pg: AugmentedPool, now: Date) {
 /**
  * Which of `userIds` are in good standing, with their privacy settings. That is stricter than the
  * grant filter: muted, metric-suppressed, actively struck and leaderboard-excluded accounts keep their
- * badges but are not showcased.
+ * badges but are not showcased, and neither is anyone who opted out.
  */
 async function getShowcaseStanding(
   pg: AugmentedPool,
@@ -82,6 +82,7 @@ async function getShowcaseStanding(
       AND ${milestoneGrantableUserSql('u')}
       AND NOT u.muted
       AND NOT u."excludeFromLeaderboards"
+      AND u.settings -> 'hideFromCreatorShowcase' IS DISTINCT FROM 'true'::jsonb
       AND u.id <> ALL($2::int[])
       AND NOT EXISTS (
         SELECT 1 FROM "UserStrike" s
