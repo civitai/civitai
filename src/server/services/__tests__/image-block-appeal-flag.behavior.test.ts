@@ -82,10 +82,13 @@ beforeAll(async () => {
       id serial PRIMARY KEY,
       "entityType" text NOT NULL,
       "entityId" int NOT NULL,
+      "userId" int NOT NULL DEFAULT 7,
+      "buzzTransactionId" text,
       status text NOT NULL DEFAULT 'Pending',
       "resolvedBy" int,
       "resolvedAt" timestamp(3),
-      "internalNotes" text
+      "internalNotes" text,
+      "resolvedMessage" text
     );
   `);
 });
@@ -95,12 +98,25 @@ beforeEach(async () => {
   sendEmail.mockClear();
   dbMock.dbWrite.image.updateMany.mockImplementation(updateMany('Image') as never);
   dbMock.dbWrite.appeal.updateMany.mockImplementation(updateMany('Appeal') as never);
+  // resolveEntityAppeal's claim, so a close routed through it is observed rather than crashing.
+  dbMock.dbWrite.appeal.updateManyAndReturn.mockImplementation((async ({ where, data }: any) => {
+    await updateMany('Appeal')({ where, data });
+    return (
+      await holder.db.query(
+        `SELECT id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId"
+         FROM "Appeal" WHERE "entityId" = ANY($1)`,
+        [where.entityId.in]
+      )
+    ).rows;
+  }) as never);
   dbMock.dbWrite.$executeRaw.mockImplementation((async (
     strings: TemplateStringsArray,
     ...v: unknown[]
   ) => {
     const flat = Prisma.sql(strings, ...(v as never[]));
-    if (!flat.text.includes('"Appeal"')) return 0;
+    // Only the statements that write the review flag; the other raw writers touch columns this
+    // stand-in does not have.
+    if (!/"Appeal"|SET "needsReview"/.test(flat.text)) return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
   await holder.db.exec(`

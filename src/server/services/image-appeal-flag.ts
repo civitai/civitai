@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 /**
  * The appeals queue lists images by `needsReview = 'appeal'`, and the blocked-image purge spares only
@@ -8,14 +9,15 @@ import { dbWrite } from '~/server/db/client';
 
 export async function getPendingAppealImageIds(imageIds: number[]): Promise<Set<number>> {
   if (!imageIds.length) return new Set();
-  const rows = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT DISTINCT "entityId" AS id
-    FROM "Appeal"
-    WHERE "entityType" = 'Image'
-      AND "status" = 'Pending'
-      AND "entityId" IN (${Prisma.join(imageIds)})
-  `;
-  return new Set(rows.map((r) => r.id));
+  const rows = await dbWrite.appeal.findMany({
+    where: {
+      entityType: EntityType.Image,
+      status: AppealStatus.Pending,
+      entityId: { in: imageIds },
+    },
+    select: { entityId: true },
+  });
+  return new Set(rows.map((r) => r.entityId));
 }
 
 /** Puts the flag back on any of these images whose appeal is still Pending. */

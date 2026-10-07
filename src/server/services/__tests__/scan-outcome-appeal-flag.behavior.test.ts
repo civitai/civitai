@@ -80,15 +80,17 @@ beforeEach(async () => {
     const { affectedRows } = await holder.db.query(flat.text, flat.values as unknown[]);
     return affectedRows ?? 0;
   }) as never);
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ) => {
+  dbMock.dbWrite.appeal.findMany.mockImplementation(
+    (async ({ where }: any) =>
+      (
+        await holder.db.query(
+          `SELECT "entityId" FROM "Appeal" WHERE "entityType" = $1 AND status = $2 AND "entityId" = ANY($3)`,
+          [where.entityType, where.status, where.entityId.in]
+        )
+      ).rows) as never
+  );
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (strings: TemplateStringsArray) => {
     const text = strings.join('');
-    if (text.includes('"Appeal"')) {
-      const flat = Prisma.sql(strings, ...(values as never[]));
-      return (await holder.db.query(flat.text, flat.values as unknown[])).rows;
-    }
     if (text.includes('TagsOnImageDetails'))
       return [{ id: 10, name: 'tag', type: 'Label', nsfwLevel: 1, confidence: 90 }];
     if (text.includes('is_new_user')) return [{ isNewUser: false }];
