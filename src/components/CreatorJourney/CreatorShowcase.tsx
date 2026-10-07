@@ -8,7 +8,8 @@ export function CreatorShowcase() {
   const { data, isLoading } = trpc.creatorJourney.getShowcase.useQuery();
 
   if (isLoading) return <Loader className="mx-auto" />;
-  if (!data) return null;
+  if (!data)
+    return <Text c="dimmed">The showcase couldn&apos;t load. Try again in a few minutes.</Text>;
 
   return (
     <Stack gap="xl">

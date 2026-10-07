@@ -1,10 +1,11 @@
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { userBasicCache } from '~/server/redis/caches';
-import { SYSTEM_USER_ID } from '~/server/services/creator-milestone-exclusions';
+import { milestoneGrantableUserSql } from '~/server/services/creator-milestone-exclusions';
 import { toLegendStatus } from '~/server/services/creator-journey.service';
-import { achievedAtIsObserved } from '~/server/services/creator-milestone-grant.service';
+import { achievedAtIsObservedSql } from '~/server/services/creator-milestone-grant.service';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
+import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
 import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
 
@@ -26,9 +27,10 @@ const toUtcTimestamp = (date: Date) => date.toISOString().replace('T', ' ').repl
 const utcMonthStart = (now: Date) => new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
 
 /**
- * Every Legend, and the Supernovas granted this month, held by creators in good standing. That is
- * stricter than the grant filter: muted, metric-suppressed and actively struck accounts keep their
- * badges but are not showcased. An owner who hides the tier's badge, or all badges, is left out too.
+ * Every Legend, and the Supernovas whose crossing was observed this UTC month (a silent backfill grant
+ * is not new), held by creators in good standing. That is stricter than the grant filter: muted,
+ * metric-suppressed, actively struck and leaderboard-excluded accounts keep their badges but are not
+ * showcased. An owner who hides the tier's badge, or all badges, is left out too.
  */
 export async function getShowcaseRows(
   pg: AugmentedPool,
@@ -44,12 +46,15 @@ export async function getShowcaseRows(
     LEFT JOIN "UserProfile" p ON p."userId" = u.id
     WHERE (
         ucm."milestoneKey" = $1
-        OR (ucm."milestoneKey" = $2 AND ucm."achievedAt" >= $3::timestamp)
+        OR (
+          ucm."milestoneKey" = $2
+          AND ucm."achievedAt" >= $3::timestamp
+          AND ${achievedAtIsObservedSql('ucm')}
+        )
       )
-      AND u.id <> ${SYSTEM_USER_ID}
-      AND u."deletedAt" IS NULL
-      AND u."bannedAt" IS NULL
+      AND ${milestoneGrantableUserSql('u')}
       AND NOT u.muted
+      AND NOT u."excludeFromLeaderboards"
       AND u.id <> ALL($4::int[])
       AND NOT EXISTS (
         SELECT 1 FROM "UserStrike" s
@@ -63,27 +68,31 @@ export async function getShowcaseRows(
     isBadgeShownOnProfile(row.privacySettings, row.badgeId)
   );
   return {
-    // A Supernova granted silently this month (the launch backfill) did not cross this month.
-    newSupernovas: rows
-      .filter((row) => row.milestoneKey === SUPERNOVA && achievedAtIsObserved(row))
-      .reverse(),
+    newSupernovas: rows.filter((row) => row.milestoneKey === SUPERNOVA).reverse(),
     legends: rows.filter((row) => row.milestoneKey === LEGEND),
   };
 }
 
-export async function getCreatorShowcase() {
-  const { newSupernovas, legends } = await getShowcaseRows(pgDbRead, {
-    now: new Date(),
-    // Fails closed: an unreadable list would put suppressed accounts on a public page.
-    excludedUserIds: await getMetricExcludedUserIdsOrThrow(),
-  });
-  const users = await userBasicCache.fetch([
-    ...new Set([...newSupernovas, ...legends].map((row) => row.userId)),
+export async function getCreatorShowcase({
+  pg = pgDbRead,
+  now = new Date(),
+}: { pg?: AugmentedPool; now?: Date } = {}) {
+  // Fails closed: an unreadable list would put suppressed accounts on a public page.
+  const excludedUserIds = await getMetricExcludedUserIdsOrThrow();
+  const { newSupernovas, legends } = await getShowcaseRows(pg, { now, excludedUserIds });
+  const userIds = [...new Set([...newSupernovas, ...legends].map((row) => row.userId))];
+  const [users, profilePictures, cosmetics] = await Promise.all([
+    userBasicCache.fetch(userIds),
+    getProfilePicturesForUsers(userIds),
+    getCosmeticsForUsers(userIds),
   ]);
-  const withUser = (row: ShowcaseRow) => {
-    const user = users[row.userId];
-    return { id: row.userId, username: user?.username ?? null, image: user?.image ?? null };
-  };
+  const withUser = (row: ShowcaseRow) => ({
+    id: row.userId,
+    username: users[row.userId]?.username ?? null,
+    image: users[row.userId]?.image ?? null,
+    profilePicture: profilePictures[row.userId] ?? null,
+    cosmetics: cosmetics[row.userId] ?? [],
+  });
 
   return {
     newSupernovas: newSupernovas.map((row) => ({

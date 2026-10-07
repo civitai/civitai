@@ -2,7 +2,37 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getShowcaseRows } from '~/server/services/creator-showcase.service';
+
+const mocks = vi.hoisted(() => ({
+  excluded: vi.fn(async (): Promise<number[]> => []),
+  basic: vi.fn(async (ids: number[]) =>
+    Object.fromEntries(ids.map((id) => [id, { id, username: `u${id}`, image: `img${id}` }]))
+  ),
+  pictures: vi.fn(async (ids: number[]) =>
+    Object.fromEntries(ids.map((id) => [id, { id: id * 100 }]))
+  ),
+  cosmetics: vi.fn(async (ids: number[]) =>
+    Object.fromEntries(ids.map((id) => [id, [{ cosmeticId: id }]]))
+  ),
+}));
+vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof MetricExcluded>()),
+  getMetricExcludedUserIdsOrThrow: mocks.excluded,
+}));
+vi.mock('~/server/services/user.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserService>()),
+  getProfilePicturesForUsers: mocks.pictures,
+  getCosmeticsForUsers: mocks.cosmetics,
+}));
+vi.mock('~/server/redis/caches', async (importOriginal) => {
+  const original = await importOriginal<typeof Caches>();
+  return { ...original, userBasicCache: { ...original.userBasicCache, fetch: mocks.basic } };
+});
+
+import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
+import type * as UserService from '~/server/services/user.service';
+import type * as Caches from '~/server/redis/caches';
+import { getCreatorShowcase, getShowcaseRows } from '~/server/services/creator-showcase.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -18,11 +48,15 @@ const MIGRATION = join(
 );
 
 const holder = { db: null as unknown as PGlite };
+const queried = vi.fn();
 const pg = {
-  cancellableQuery: async (sql: string, params?: unknown[]) => ({
-    result: async () => (await holder.db.query(sql, params)).rows,
-    cancel: async () => undefined,
-  }),
+  cancellableQuery: async (sql: string, params?: unknown[]) => {
+    queried();
+    return {
+      result: async () => (await holder.db.query(sql, params)).rows,
+      cancel: async () => undefined,
+    };
+  },
 } as never;
 const q = (sql: string, params?: unknown[]) => holder.db.query(sql, params);
 
@@ -37,18 +71,23 @@ const BANNED = 13;
 const STRUCK = 14;
 const SUPPRESSED = 15;
 const EXPIRED_STRIKE = 16;
+const LEADERBOARD_EXCLUDED = 17;
+const OTHER = 18;
 const SYSTEM = -1;
 
-async function addUser(
-  id: number,
-  flags: { muted?: boolean; deleted?: boolean; banned?: boolean } = {}
-) {
-  await q(`INSERT INTO "User" (id, muted, "deletedAt", "bannedAt") VALUES ($1, $2, $3, $4)`, [
-    id,
-    !!flags.muted,
-    flags.deleted ? new Date() : null,
-    flags.banned ? new Date() : null,
-  ]);
+type Flags = { muted?: boolean; deleted?: boolean; banned?: boolean; excluded?: boolean };
+async function addUser(id: number, flags: Flags = {}) {
+  await q(
+    `INSERT INTO "User" (id, muted, "deletedAt", "bannedAt", "excludeFromLeaderboards")
+     VALUES ($1, $2, $3, $4, $5)`,
+    [
+      id,
+      !!flags.muted,
+      flags.deleted ? new Date() : null,
+      flags.banned ? new Date() : null,
+      !!flags.excluded,
+    ]
+  );
 }
 
 /** `silent` mirrors the grant writer: a silent grant stamps seenAt equal to achievedAt. */
@@ -59,15 +98,16 @@ const grant = (userId: number, key: string, achievedAt: string, silent = false) 
     [userId, key, achievedAt, silent]
   );
 
-const showcase = (excludedUserIds: number[] = []) =>
-  getShowcaseRows(pg, { now: NOW, excludedUserIds });
+const showcase = (excludedUserIds: number[] = [], now = NOW) =>
+  getShowcaseRows(pg, { now, excludedUserIds });
 const ids = (rows: { userId: number }[]) => rows.map((row) => row.userId);
 
 beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "User" (id int PRIMARY KEY, muted boolean NOT NULL DEFAULT false,
-      "deletedAt" timestamp(3), "bannedAt" timestamp(3));
+      "deletedAt" timestamp(3), "bannedAt" timestamp(3),
+      "excludeFromLeaderboards" boolean NOT NULL DEFAULT false);
     CREATE TABLE "Cosmetic" (id serial PRIMARY KEY);
     CREATE TABLE "UserStrike" ("userId" int NOT NULL, status text NOT NULL,
       "expiresAt" timestamp(3) NOT NULL);
@@ -77,8 +117,12 @@ beforeAll(async () => {
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User";
-    UPDATE "CreatorMilestone" SET "cosmeticId" = NULL;`);
+  queried.mockClear();
+  mocks.excluded.mockReset().mockResolvedValue([]);
+  await holder.db.exec(`
+    TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User";
+    UPDATE "CreatorMilestone" SET "cosmeticId" = NULL;
+  `);
 });
 
 describe('good standing', () => {
@@ -90,12 +134,24 @@ describe('good standing', () => {
     await addUser(STRUCK);
     await addUser(SUPPRESSED);
     await addUser(EXPIRED_STRIKE);
+    await addUser(LEADERBOARD_EXCLUDED, { excluded: true });
     await addUser(SYSTEM);
+    // EXPIRED_STRIKE's strike ran out after the month began but before now: it no longer counts.
     await q(
-      `INSERT INTO "UserStrike" VALUES ($1, 'Active', '2026-12-01'), ($2, 'Active', '2026-11-01'), ($3, 'Voided', '2026-12-01')`,
+      `INSERT INTO "UserStrike" VALUES ($1, 'Active', '2026-12-01'), ($2, 'Active', '2026-11-10'), ($3, 'Voided', '2026-12-01')`,
       [STRUCK, EXPIRED_STRIKE, GOOD]
     );
-    for (const id of [GOOD, MUTED, DELETED, BANNED, STRUCK, SUPPRESSED, EXPIRED_STRIKE, SYSTEM])
+    for (const id of [
+      GOOD,
+      MUTED,
+      DELETED,
+      BANNED,
+      STRUCK,
+      SUPPRESSED,
+      EXPIRED_STRIKE,
+      LEADERBOARD_EXCLUDED,
+      SYSTEM,
+    ])
       await grant(id, 'score:legend', THIS_MONTH);
   });
 
@@ -108,46 +164,40 @@ describe('good standing', () => {
   });
 });
 
-describe('badge privacy', () => {
-  const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
-    q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
-      userId,
-      JSON.stringify(settings),
-    ]);
-
+describe('ordering', () => {
   beforeEach(async () => {
-    const { rows } = await q(`INSERT INTO "Cosmetic" DEFAULT VALUES RETURNING id`);
-    await q(`UPDATE "CreatorMilestone" SET "cosmeticId" = $1 WHERE key = 'score:legend'`, [
-      (rows[0] as { id: number }).id,
-    ]);
-    for (const id of [GOOD, MUTED, STRUCK]) {
-      await addUser(id);
-      await grant(id, 'score:legend', LAST_MONTH);
-    }
+    for (const id of [GOOD, OTHER]) await addUser(id);
   });
 
-  it('leaves out a Legend who hides the Legend badge or all badges, not one hiding another', async () => {
-    const [{ cosmeticId }] = (
-      await q(`SELECT "cosmeticId" FROM "CreatorMilestone" WHERE key = 'score:legend'`)
-    ).rows as { cosmeticId: number }[];
-    await setPrivacy(MUTED, { hiddenBadgeIds: [cosmeticId] });
-    await setPrivacy(STRUCK, { showBadges: false });
-    await setPrivacy(GOOD, { hiddenBadgeIds: [cosmeticId + 1] });
-    expect(ids((await showcase()).legends)).toEqual([GOOD]);
+  it('lists Legends oldest first', async () => {
+    await grant(OTHER, 'score:legend', '2026-11-03 00:00:00');
+    await grant(GOOD, 'score:legend', '2026-11-04 00:00:00');
+    expect(ids((await showcase()).legends)).toEqual([OTHER, GOOD]);
+  });
+
+  it('lists new Supernovas newest first', async () => {
+    await grant(GOOD, 'score:supernova', '2026-11-03 00:00:00');
+    await grant(OTHER, 'score:supernova', '2026-11-04 00:00:00');
+    expect(ids((await showcase()).newSupernovas)).toEqual([OTHER, GOOD]);
   });
 });
 
 describe('new Supernovas this month', () => {
   beforeEach(async () => {
-    await addUser(GOOD);
-    await addUser(MUTED);
-    await addUser(STRUCK);
+    for (const id of [GOOD, MUTED, STRUCK]) await addUser(id);
   });
 
-  it('includes a crossing this month, not one last month', async () => {
-    await grant(GOOD, 'score:supernova', THIS_MONTH);
-    await grant(MUTED, 'score:supernova', LAST_MONTH);
+  it('starts exactly at the UTC month boundary', async () => {
+    await grant(GOOD, 'score:supernova', '2026-11-01 00:00:00');
+    await grant(MUTED, 'score:supernova', '2026-10-31 23:59:59.999');
     expect(ids((await showcase()).newSupernovas)).toEqual([GOOD]);
+  });
+
+  it('is already this month at the first instant of it', async () => {
+    await grant(GOOD, 'score:supernova', '2026-11-01 00:00:00');
+    await grant(MUTED, 'score:supernova', LAST_MONTH);
+    const atMonthStart = new Date('2026-11-01T00:00:00Z');
+    expect(ids((await showcase([], atMonthStart)).newSupernovas)).toEqual([GOOD]);
   });
 
   // The launch backfill grants every existing Supernova silently, in whatever month it runs.
@@ -160,5 +210,67 @@ describe('new Supernovas this month', () => {
   it('keeps a silently granted Legend in the Hall of Fame', async () => {
     await grant(GOOD, 'score:legend', LAST_MONTH, true);
     expect(ids((await showcase()).legends)).toEqual([GOOD]);
+  });
+});
+
+describe('badge privacy', () => {
+  const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
+    q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
+      userId,
+      JSON.stringify(settings),
+    ]);
+  const attachBadge = async (key: string) => {
+    const { rows } = await q(`INSERT INTO "Cosmetic" DEFAULT VALUES RETURNING id`);
+    const { id } = rows[0] as { id: number };
+    await q(`UPDATE "CreatorMilestone" SET "cosmeticId" = $1 WHERE key = $2`, [id, key]);
+    return id;
+  };
+
+  beforeEach(async () => {
+    for (const id of [GOOD, MUTED, STRUCK]) await addUser(id);
+  });
+
+  it('leaves out a Legend who hides the Legend badge or all badges, not one hiding another', async () => {
+    const badge = await attachBadge('score:legend');
+    for (const id of [GOOD, MUTED, STRUCK]) await grant(id, 'score:legend', LAST_MONTH);
+    await setPrivacy(MUTED, { hiddenBadgeIds: [badge] });
+    await setPrivacy(STRUCK, { showBadges: false });
+    await setPrivacy(GOOD, { hiddenBadgeIds: [badge + 1] });
+    expect(ids((await showcase()).legends)).toEqual([GOOD]);
+  });
+
+  it('leaves out a new Supernova who hides the Supernova badge', async () => {
+    const badge = await attachBadge('score:supernova');
+    for (const id of [GOOD, MUTED]) await grant(id, 'score:supernova', THIS_MONTH);
+    await setPrivacy(MUTED, { hiddenBadgeIds: [badge] });
+    expect(ids((await showcase()).newSupernovas)).toEqual([GOOD]);
+  });
+});
+
+describe('getCreatorShowcase', () => {
+  it('refuses to list anyone when the suppressed-account list cannot be read', async () => {
+    mocks.excluded.mockRejectedValue(new Error('clickhouse down'));
+    await expect(getCreatorShowcase({ pg, now: NOW })).rejects.toThrow('clickhouse down');
+    expect(queried).not.toHaveBeenCalled();
+  });
+
+  it('passes the suppressed list to the query and shapes each creator for the avatar', async () => {
+    await addUser(GOOD);
+    await addUser(SUPPRESSED);
+    await grant(GOOD, 'score:legend', LAST_MONTH, true);
+    await grant(SUPPRESSED, 'score:legend', LAST_MONTH);
+    await grant(GOOD, 'score:supernova', THIS_MONTH);
+    mocks.excluded.mockResolvedValue([SUPPRESSED]);
+
+    const result = await getCreatorShowcase({ pg, now: NOW });
+    const user = {
+      id: GOOD,
+      username: `u${GOOD}`,
+      image: `img${GOOD}`,
+      profilePicture: { id: GOOD * 100 },
+      cosmetics: [{ cosmeticId: GOOD }],
+    };
+    expect(result.legends).toEqual([{ user, founding: true, since: null }]);
+    expect(result.newSupernovas).toEqual([{ user, achievedAt: expect.any(Date) }]);
   });
 });

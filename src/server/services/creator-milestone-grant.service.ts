@@ -60,6 +60,11 @@ export function achievedAtIsObserved(row: { achievedAt: Date; seenAt: Date | nul
   return row.seenAt?.getTime() !== row.achievedAt.getTime();
 }
 
+/** achievedAtIsObserved as a predicate on a "UserCreatorMilestone" alias, for filtering in SQL. */
+export function achievedAtIsObservedSql(alias: string) {
+  return `${alias}."seenAt" IS DISTINCT FROM ${alias}."achievedAt"`;
+}
+
 /** One row per cosmetic a milestone grants: its badge, then any extras. */
 const milestoneCosmeticsSql = `
   SELECT key AS "milestoneKey", "cosmeticId" FROM "CreatorMilestone" WHERE "cosmeticId" IS NOT NULL
