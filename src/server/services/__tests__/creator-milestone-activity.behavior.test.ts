@@ -14,8 +14,16 @@ import {
   watermarkKeyFor,
 } from '~/server/services/creator-milestone-activity.service';
 import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
-import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
-import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
+import {
+  activityDetectorGroups,
+  activityValuesSql,
+} from '~/server/services/creator-milestone-detectors';
+import type { ActivityMeasure } from '~/server/services/creator-milestone-registry';
+import {
+  activityMeasureOf,
+  creatorMilestoneRegistry,
+  milestoneKeysFor,
+} from '~/server/services/creator-milestone-registry';
 import type { MilestoneGrant } from '~/server/services/creator-milestone-grant.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -48,13 +56,10 @@ const groupFor = (key: string) => {
   if (!group) throw new Error(`no group for ${key}`);
   return group;
 };
-// Registered silent until the Achievements section ships (see the pin below), so the announcing
-// rules are exercised on announced copies of the real groups.
-const announced = (group: MilestoneDetectorGroup) => ({ ...group, silent: false });
-const MODELS = announced(groupFor('create:models-1'));
-const ARTICLES = announced(groupFor('create:articles-1'));
+const MODELS = groupFor('create:models-1');
+const ARTICLES = groupFor('create:articles-1');
 const DOWNLOADS = groupFor('reach:downloads-100');
-const FOLLOWERS = announced(groupFor('reach:followers-100'));
+const FOLLOWERS = groupFor('reach:followers-100');
 
 const AFTER_LAUNCH = new Date('2026-11-01T00:00:00Z');
 
@@ -485,14 +490,19 @@ describe('watermark definitions', () => {
 });
 
 /**
- * 🔴 Shipping these announced before the journey page can show them sends people to a page where the
- * milestone does not appear. The Achievements section's PR turns this off; flipping it changes each
- * group's watermark fingerprint, so the first announced run is silent.
+ * 🔴 Downloads stay silent by product decision: the per-model download notification already marks
+ * the moment. Every other group is announced now that the journey page shows them. A group must be
+ * wholly silent or wholly announced, since its tiers share one watermark row.
  */
-describe('activity milestones before the Achievements section', () => {
-  it('registers every activity group silent', () => {
-    expect(groups.filter((group) => !group.silent).map((group) => group.id)).toEqual([]);
-    expect(groups.length).toBeGreaterThan(0);
+describe('which activity groups announce', () => {
+  it('announces every activity group except downloads', () => {
+    expect(
+      groups
+        .filter((group) => group.silent)
+        .flatMap((group) => group.keys)
+        .sort()
+    ).toEqual(milestoneKeysFor('modelDownloads').sort());
+    expect(groups.filter((group) => !group.silent).length).toBeGreaterThan(0);
   });
 });
 
@@ -509,5 +519,75 @@ describe('launch-day preview', () => {
     const preview = await previewActivityGrants(pg, [MODELS]);
     expect(preview).toEqual([{ group: MODELS.id, users: 1, rows: 2 }]);
     expect(await held(CREATOR)).toEqual([]);
+  });
+});
+
+/**
+ * The journey page shows these counts as progress toward the milestones the detectors grant, so a
+ * count that disagrees with its detector shows a bar that never fills, or fills without a badge.
+ */
+describe('journey progress values', () => {
+  it('count what the detectors grant on, and nothing they exclude', async () => {
+    await addModels(CREATOR, [
+      '2026-01-01',
+      '2026-01-02',
+      '2026-01-03',
+      '2026-01-04',
+      '2026-01-05',
+    ]);
+    await addModels(CREATOR, ['2026-01-06'], 'Draft');
+    await q(
+      `INSERT INTO "Model" ("userId", status, "deletedAt", availability, mode, "publishedAt") VALUES
+        ($1, 'Published', now(), 'Public', NULL, '2026-01-01'),
+        ($1, 'Published', NULL, 'Private', NULL, '2026-01-01'),
+        ($1, 'Published', NULL, 'Public', 'Archived', '2026-01-01')`,
+      [CREATOR]
+    );
+    await q(
+      `INSERT INTO "Article" ("userId", status, availability, "publishedAt") VALUES
+        ($1, 'Published', 'Public', '2026-01-01'),
+        ($1, 'Published', 'Private', '2026-01-01'),
+        ($1, 'Published', 'Public', now() + interval '1 day')`,
+      [CREATOR]
+    );
+    await q(
+      `INSERT INTO "ModelMetric" ("modelId", "userId", status, availability, "downloadCount") VALUES
+        (1, $1, 'Published', 'Public', 150),
+        (2, $1, 'Published', 'Private', 5000),
+        (3, $1, 'Draft', 'Public', 5000)`,
+      [CREATOR]
+    );
+    await q(
+      `INSERT INTO "UserMetric" ("userId", timeframe, "followerCount", "reactionCount") VALUES
+        ($1, 'AllTime', 120, 1000), ($1, 'Month', 9999, 999999)`,
+      [CREATOR]
+    );
+
+    const [values] = await q<Record<ActivityMeasure, number>>(activityValuesSql, [CREATOR]);
+    expect(values).toEqual({
+      models: 5,
+      articles: 1,
+      downloads: 150,
+      followers: 120,
+      reactions: 1000,
+    });
+
+    for (const group of groups) await run(group);
+    const granted = (await held(CREATOR)).map((row) => row.key).sort();
+    const reached = Object.entries(creatorMilestoneRegistry)
+      .filter(([key, entry]) => {
+        const measure = activityMeasureOf(entry);
+        const threshold = Number(key.split('-').pop());
+        return measure && values[measure] >= threshold;
+      })
+      .map(([key]) => key)
+      .sort();
+    expect(granted).toEqual(reached);
+    expect(granted.length).toBeGreaterThan(4);
+  });
+
+  it('read zero for a creator with nothing', async () => {
+    const [values] = await q(activityValuesSql, [QUIET]);
+    expect(values).toEqual({ models: 0, articles: 0, downloads: 0, followers: 0, reactions: 0 });
   });
 });

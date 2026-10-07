@@ -10,8 +10,10 @@ import clsx from 'clsx';
 import type { CSSProperties } from 'react';
 import { creatorScoreGrowsWhen } from '~/components/Account/creator-score-copy';
 import { UserScoreDisplay } from '~/components/Account/UserScoreDisplay';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { CreatorAchievements, earnedLabel } from '~/components/CreatorJourney/CreatorAchievements';
 import { NextLink } from '~/components/NextLink/NextLink';
+import type { BadgeState } from '~/components/CreatorJourney/tier-badge';
+import { DEFAULT_ACCENT, TierBadge, tierAccents } from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
@@ -32,29 +34,10 @@ import {
   pendingCreatorScoreUnlocks,
 } from '~/shared/utils/creator-score-unlocks';
 import type { RouterOutput } from '~/types/router';
-import { formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 type Journey = RouterOutput['creatorJourney']['getMine'];
-type BadgeState = 'earned' | 'next' | 'locked';
-
-const HEXAGON = 'polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%)';
-const DEFAULT_ACCENT = '#f59f00';
-
-// Sampled from each tier's enamel plate, so glows and bars match the art.
-const tierAccents: Record<string, string> = {
-  'score:spark': '#c92a2a',
-  'score:kindle': '#d9480f',
-  'score:flame': '#f76707',
-  'score:blaze': '#f59f00',
-  'score:beacon': '#e8b923',
-  'score:nova': '#3b5bdb',
-  'score:star': '#4dabf7',
-  'score:supernova': '#ae3ec9',
-  'score:legend': '#e9c46a',
-};
-
 const accentOf = (tier: CreatorScoreTier | null | undefined) =>
   (tier && tierAccents[tier.key]) ?? DEFAULT_ACCENT;
 
@@ -188,6 +171,8 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
         </Anchor>
       </Stack>
 
+      <CreatorAchievements activity={journey.activity} />
+
       <Stack gap="sm">
         <Title order={2} size="h3">
           Badges Earned
@@ -262,76 +247,11 @@ function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {
         <div className="flex items-center gap-1.5">
           <IconCalendarCheck size={14} className="shrink-0 text-gray-6 dark:text-dark-2" />
           <Text size="xs" c="dimmed">
-            Earned {formatDate(badge.achievedAt)}
+            {earnedLabel(badge.achievedAt)}
           </Text>
         </div>
       </div>
     </SpotlightBorderCard>
-  );
-}
-
-function TierBadge({
-  name,
-  badgeUrl,
-  state,
-  size,
-  fluid,
-  className,
-}: {
-  name: string;
-  badgeUrl?: string | null;
-  state: BadgeState;
-  size: number;
-  /** Shrink to the container's width, up to `size`. */
-  fluid?: boolean;
-  className?: string;
-}) {
-  return (
-    <div
-      className={clsx(
-        'relative flex shrink-0 items-center justify-center transition-all',
-        state === 'locked' && 'opacity-40 grayscale',
-        state === 'next' && 'opacity-80 grayscale-[60%]',
-        className
-      )}
-      style={{
-        ...(fluid
-          ? { width: '100%', maxWidth: size, aspectRatio: '1' }
-          : { width: size, height: size }),
-        filter:
-          state === 'earned'
-            ? 'drop-shadow(0 4px 10px color-mix(in srgb, var(--cj-accent) 55%, transparent))'
-            : undefined,
-      }}
-    >
-      {badgeUrl ? (
-        <EdgeMedia
-          src={badgeUrl}
-          alt={name}
-          // The source art is ~144px; two request widths let the page share cached images.
-          width={size <= 44 ? 88 : 144}
-          className="size-full object-contain"
-          optimized
-        />
-      ) : (
-        <div
-          className="flex size-full items-center justify-center bg-gray-3 font-bold text-gray-7 dark:bg-dark-4 dark:text-dark-0"
-          style={{ clipPath: HEXAGON, fontSize: size * 0.32 }}
-        >
-          {name.slice(0, 1)}
-        </div>
-      )}
-      {state !== 'earned' && size >= 40 && (
-        <span
-          className={clsx(
-            'absolute -bottom-1 -right-1 flex items-center justify-center rounded-full bg-gray-6 text-white dark:bg-dark-3',
-            fluid ? 'size-4' : 'size-5'
-          )}
-        >
-          <IconLock size={fluid ? 10 : 12} />
-        </span>
-      )}
-    </div>
   );
 }
 

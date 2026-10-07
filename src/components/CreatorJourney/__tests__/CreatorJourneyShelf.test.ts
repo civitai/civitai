@@ -33,6 +33,7 @@ const journey = (earned: Earned[]) =>
     unlocks: buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs),
     tiers: [],
     earned,
+    activity: { milestones: [], closestNext: null },
   } as unknown as Journey);
 
 let root: Root | undefined;
@@ -83,6 +84,14 @@ describe('Badges Earned shelf', () => {
     expect(shelfText([{ ...firstModel, badgeUrl: 'https://example.test/badge.png' }])).toContain(
       'First Model'
     );
+  });
+
+  // Silent grants carry the run time, not the moment, so they show no date.
+  it('shows no date for a badge whose moment was never observed', () => {
+    const text = shelfText([badge({ achievedAt: null })]);
+    expect(text).toContain('Earned');
+    expect(text).toMatch(/Earned$/);
+    expect(shelfText([badge({})])).toMatch(/Earned Oct \d+, 2026/);
   });
 
   it('reads as empty when only activity milestones are held', () => {

@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import {
+  buildActivityProgress,
   getCreatorJourney,
   getCreatorScoreLadder,
   getFirstPublishCard,
@@ -91,8 +92,10 @@ describe('getCreatorJourney', () => {
     await getCreatorJourney(1);
     await getCreatorScoreLadder();
 
-    expect(dbMock.dbRead.creatorMilestone.findMany).toHaveBeenCalledTimes(2);
-    for (const [args] of dbMock.dbRead.creatorMilestone.findMany.mock.calls)
+    const calls = dbMock.dbRead.creatorMilestone.findMany.mock.calls.map(([args]) => args);
+    const tierCalls = calls.filter((args) => !('key' in (args?.where ?? {})));
+    expect(tierCalls).toHaveLength(2);
+    for (const args of tierCalls)
       expect(args).toMatchObject({ where: { track: 'score', threshold: { not: null } } });
   });
 
@@ -110,6 +113,27 @@ describe('getCreatorJourney', () => {
     expect(journey.tiers[0].name).toBe('Remixed');
     expect(journey.earned).toEqual([
       expect.objectContaining({ key: 'score:secret', achievedAt: new Date('2026-10-01') }),
+    ]);
+  });
+});
+
+describe('earned dates', () => {
+  // A silent grant with no moment of its own stamps achievedAt and seenAt together.
+  it('withholds the date of a grant whose moment was never observed', async () => {
+    const at = new Date('2026-10-07T01:20:00Z');
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      { achievedAt: at, seenAt: at, milestone: definition({ key: 'reach:followers-100' }) },
+      {
+        achievedAt: new Date('2026-01-05'),
+        seenAt: at,
+        milestone: definition({ key: 'create:models-5' }),
+      },
+    ] as never);
+
+    const { earned } = await getCreatorJourney(1);
+    expect(earned.map((badge) => [badge.key, badge.achievedAt])).toEqual([
+      ['reach:followers-100', null],
+      ['create:models-5', new Date('2026-01-05')],
     ]);
   });
 });
@@ -162,10 +186,11 @@ describe('tier badge art', () => {
     await getCreatorJourney(1);
 
     expect(dbMock.dbRead.cosmetic.findMany).not.toHaveBeenCalled();
-    expect(dbMock.dbRead.creatorMilestone.findMany).toHaveBeenCalledTimes(1);
-    expect(dbMock.dbRead.creatorMilestone.findMany.mock.calls[0][0]).toMatchObject({
-      select: { cosmetic: { select: { data: true } } },
-    });
+    const tierCalls = dbMock.dbRead.creatorMilestone.findMany.mock.calls.filter(
+      ([args]) => args?.where?.track === 'score'
+    );
+    expect(tierCalls).toHaveLength(1);
+    expect(tierCalls[0][0]).toMatchObject({ select: { cosmetic: { select: { data: true } } } });
   });
 
   // The art identifies the tier as surely as its name does, so an unearned hidden tier shows neither.
@@ -338,5 +363,55 @@ describe('getFirstPublishCard', () => {
     seed('article', [row()]);
     await card('article', 1);
     expect(dbMock.dbWrite.model.findUnique).not.toHaveBeenCalled();
+  });
+});
+
+describe('buildActivityProgress', () => {
+  const activity = (key: string, threshold: number) =>
+    definition({ key, track: key.split(':')[0], threshold, hidden: false, name: key, hint: null });
+  const definitions = [
+    activity('create:models-1', 1),
+    activity('create:models-5', 5),
+    activity('create:articles-1', 1),
+    activity('reach:followers-100', 100),
+    activity('reach:followers-1000', 1000),
+    activity('reach:reactions-1000', 1000),
+    activity('score:spark', 500),
+  ];
+  const values = { models: 3, articles: 0, downloads: 0, followers: 87, reactions: 400 };
+
+  it('picks the unearned milestone nearest to done, one per measure', () => {
+    const held = new Map([['create:models-1', new Date('2026-01-01')]]);
+    const { milestones, closestNext } = buildActivityProgress(definitions, held, values);
+
+    expect(closestNext).toMatchObject({ key: 'reach:followers-100', current: 87, threshold: 100 });
+    expect(milestones.map((m) => m.key)).not.toContain('score:spark');
+    expect(milestones.find((m) => m.key === 'create:models-1')).toMatchObject({
+      earned: true,
+      achievedAt: new Date('2026-01-01'),
+    });
+  });
+
+  // The nightly job grants it; until then the next one up is the real target.
+  it('skips a milestone already reached but not yet granted', () => {
+    const { closestNext } = buildActivityProgress(definitions, new Map(), {
+      ...values,
+      followers: 150,
+    });
+    expect(closestNext).toMatchObject({ key: 'create:models-5', current: 3 });
+  });
+
+  it('leaves an undated grant undated', () => {
+    const held = new Map<string, Date | null>([['create:models-1', null]]);
+    const { milestones } = buildActivityProgress(definitions, held, values);
+    expect(milestones.find((m) => m.key === 'create:models-1')).toMatchObject({
+      earned: true,
+      achievedAt: null,
+    });
+  });
+
+  it('has no closest next once everything is earned', () => {
+    const held = new Map(definitions.map((d) => [d.key, null]));
+    expect(buildActivityProgress(definitions, held, values).closestNext).toBeNull();
   });
 });

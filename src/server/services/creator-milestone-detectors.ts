@@ -28,7 +28,7 @@ const notHeld = (user: string) => `NOT EXISTS (
 
 // What the profile counts (userModelCountCache, userArticleCountCache), so a badge never claims more
 // published work than the creator's own profile shows. publishedAt is required to date the Nth item.
-const publishedSources = {
+export const publishedSources = {
   model: `SELECT x."userId", x."publishedAt", x.id FROM "Model" x
     WHERE x.status = 'Published' AND x.availability != 'Private'
       AND (x.mode IS NULL OR x.mode != 'Archived')
@@ -37,6 +37,20 @@ const publishedSources = {
     WHERE x.status = 'Published' AND x.availability != 'Private'
       AND x."publishedAt" IS NOT NULL AND x."publishedAt" <= now()`,
 } as const;
+
+export const modelDownloadsSource = `SELECT mm."userId", mm."downloadCount" FROM "ModelMetric" mm
+    WHERE mm.status = 'Published' AND mm.availability <> 'Private'`;
+
+/** One user's current count per activity measure (`$1` is the user id), on the detectors' own rules. */
+export const activityValuesSql = `SELECT
+    (SELECT count(*) FROM (${publishedSources.model}) s WHERE s."userId" = $1)::int AS models,
+    (SELECT count(*) FROM (${publishedSources.article}) s WHERE s."userId" = $1)::int AS articles,
+    (SELECT coalesce(max(s."downloadCount"), 0) FROM (${modelDownloadsSource}) s
+      WHERE s."userId" = $1)::int AS downloads,
+    coalesce((SELECT um."followerCount" FROM "UserMetric" um
+      WHERE um."userId" = $1 AND um.timeframe = 'AllTime'), 0)::int AS followers,
+    coalesce((SELECT um."reactionCount" FROM "UserMetric" um
+      WHERE um."userId" = $1 AND um.timeframe = 'AllTime'), 0)::int AS reactions`;
 
 function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
   switch (entry.detector) {
@@ -56,11 +70,10 @@ function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
       return ({ keys, users }) => `
         SELECT d."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt"
         FROM (
-          SELECT mm."userId", max(mm."downloadCount") AS top
-          FROM "ModelMetric" mm
-          WHERE mm.status = 'Published' AND mm.availability <> 'Private'
-            AND (${users}::int[] IS NULL OR mm."userId" = ANY(${users}::int[]))
-          GROUP BY mm."userId"
+          SELECT s."userId", max(s."downloadCount") AS top
+          FROM (${modelDownloadsSource}) s
+          WHERE (${users}::int[] IS NULL OR s."userId" = ANY(${users}::int[]))
+          GROUP BY s."userId"
         ) d
         JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[]) AND d.top >= m.threshold
         WHERE ${notHeld('d."userId"')}`;

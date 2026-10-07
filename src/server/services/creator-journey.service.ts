@@ -10,6 +10,12 @@ import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema'
 import { isBadgeShownOnProfile } from '~/shared/utils/badge-visibility';
 import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
 import { achievedAtIsObserved } from '~/server/services/creator-milestone-grant.service';
+import type { ActivityMeasure } from '~/server/services/creator-milestone-registry';
+import {
+  activityMeasureOf,
+  creatorMilestoneRegistry,
+} from '~/server/services/creator-milestone-registry';
+import { activityValuesSql } from '~/server/services/creator-milestone-detectors';
 
 type MilestoneDefinition = {
   key: string;
@@ -81,20 +87,87 @@ export async function getCreatorScoreLadder() {
   return { unlocks, tiers: tiers.map((tier) => toTier(tier, false)) };
 }
 
+const activityMeasures = new Map(
+  Object.entries(creatorMilestoneRegistry).flatMap(([key, entry]) => {
+    const measure = activityMeasureOf(entry);
+    return measure ? [[key, measure] as const] : [];
+  })
+);
+
+export type ActivityValues = Record<ActivityMeasure, number>;
+
+async function getActivityValues(userId: number): Promise<ActivityValues> {
+  const [row] = await dbRead.$queryRawUnsafe<ActivityValues[]>(activityValuesSql, userId);
+  return row ?? { models: 0, articles: 0, downloads: 0, followers: 0, reactions: 0 };
+}
+
+/**
+ * Every activity milestone with the creator's progress toward it, and the unearned one nearest to
+ * done. A count can pass a threshold before the nightly job grants it, so earned means granted.
+ */
+export function buildActivityProgress(
+  definitions: MilestoneDefinition[],
+  held: Map<string, Date | null>,
+  values: ActivityValues
+) {
+  const milestones = definitions
+    .flatMap((definition) => {
+      const measure = activityMeasures.get(definition.key);
+      if (!measure || definition.threshold == null) return [];
+      const earned = held.has(definition.key);
+      const visible = maskUnearnedMilestone(definition, earned);
+      return [
+        {
+          key: visible.key,
+          track: definition.track,
+          measure,
+          threshold: definition.threshold,
+          name: visible.name,
+          description: visible.description,
+          current: values[measure],
+          earned,
+          achievedAt: held.get(definition.key) ?? null,
+        },
+      ];
+    })
+    .sort((a, b) => a.threshold - b.threshold);
+
+  const nextByMeasure = new Map<ActivityMeasure, (typeof milestones)[number]>();
+  for (const milestone of milestones)
+    if (!milestone.earned && milestone.current < milestone.threshold)
+      if (!nextByMeasure.has(milestone.measure)) nextByMeasure.set(milestone.measure, milestone);
+
+  const ratio = (m: (typeof milestones)[number]) => m.current / m.threshold;
+  let closestNext: (typeof milestones)[number] | null = null;
+  for (const candidate of nextByMeasure.values())
+    if (!closestNext || ratio(candidate) > ratio(closestNext)) closestNext = candidate;
+
+  return { milestones, closestNext };
+}
+
 export async function getCreatorJourney(userId: number) {
-  const [user, unlocks, tierDefinitions, achievements] = await Promise.all([
-    dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } }),
-    getCreatorScoreUnlocks(),
-    getScoreTierDefinitions(),
-    dbRead.userCreatorMilestone.findMany({
-      where: { userId },
-      select: { achievedAt: true, milestone: { select: milestoneSelect } },
-      orderBy: { achievedAt: 'desc' },
-    }),
-  ]);
+  const [user, unlocks, tierDefinitions, achievements, activityDefinitions, activityValues] =
+    await Promise.all([
+      dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } }),
+      getCreatorScoreUnlocks(),
+      getScoreTierDefinitions(),
+      dbRead.userCreatorMilestone.findMany({
+        where: { userId },
+        select: { achievedAt: true, seenAt: true, milestone: { select: milestoneSelect } },
+        orderBy: { achievedAt: 'desc' },
+      }),
+      dbRead.creatorMilestone.findMany({
+        where: { key: { in: [...activityMeasures.keys()] } },
+        select: milestoneSelect,
+      }),
+      getActivityValues(userId),
+    ]);
 
   const rawScores = (user?.meta as { scores?: Partial<UserScoreMeta> } | null)?.scores ?? null;
-  const earnedKeys = new Set(achievements.map((a) => a.milestone.key));
+  const observedAt = new Map(
+    achievements.map((a) => [a.milestone.key, achievedAtIsObserved(a) ? a.achievedAt : null])
+  );
+  const earnedKeys = new Set(observedAt.keys());
   const tiers = tierDefinitions.map((tier) => toTier(tier, earnedKeys.has(tier.key)));
   const badgeUrlByKey = new Map(tiers.map((tier) => [tier.key, tier.badgeUrl ?? null]));
 
@@ -108,15 +181,16 @@ export async function getCreatorJourney(userId: number) {
       : null,
     unlocks,
     tiers,
-    earned: achievements.map(({ achievedAt, milestone }) => ({
+    earned: achievements.map(({ milestone }) => ({
       key: milestone.key,
       track: milestone.track,
       threshold: milestone.threshold,
       name: milestone.name,
       description: milestone.description,
       badgeUrl: badgeUrlByKey.get(milestone.key) ?? null,
-      achievedAt,
+      achievedAt: observedAt.get(milestone.key) ?? null,
     })),
+    activity: buildActivityProgress(activityDefinitions, observedAt, activityValues),
   };
 }
 
