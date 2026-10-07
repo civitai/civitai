@@ -460,6 +460,16 @@ export const cacheFailOpenOriginFetchCounter = registerCounterWithLabels({
   help: 'createCachedArray fail-open: ids sent to origin (lookupFn) by cache name — deduped DB load',
   labelNames: ['cache_name'] as const,
 });
+// createCachedArray healthy miss-fill: ids looked up while another fetch in the SAME process was
+// already looking up that id (same cache). Measurement only — the duplicate lookup and writes still
+// happen. Cross-process duplicates are not visible here. A separate counter rather than a new
+// cache_type on cache_miss_total, because these ids are ALSO counted there and a cache_type would
+// be summed into hit-ratio totals twice.
+export const cacheMissConcurrentDuplicateCounter = registerCounterWithLabels({
+  name: 'cache_miss_concurrent_duplicate_total',
+  help: 'createCachedArray miss-fill lookups for an id another fetch in this process was already looking up, by cache name',
+  labelNames: ['cache_name'] as const,
+});
 
 // ClickHouse TRANSPORT-error fail-soft counter. Incremented when an INSTRUMENTED call site
 // degrades on a TRANSIENT ClickHouse connection/transport failure (socket hang up / Code 279 /

@@ -37,9 +37,9 @@ import { promisify } from 'util';
  *   - `fetchThroughCache` — always the `{ data, cachedAt }` WRAPPER OBJECT.
  *   - `createCachedArray` / `createCachedObject` (`compress: true`) — every value it
  *     writes is a record: `{ ...result, cachedAt }`, the negative marker
- *     `{ [idKey]: id, notFound: true, cachedAt }`, and the debounce marker
- *     `{ [idKey]: id, debounce: true }`. `lookupFn` is typed `T extends object`, so a
- *     scalar cannot reach the write path.
+ *     `{ [idKey]: id, notFound: true, cachedAt }` (written UNCOMPRESSED and read back via
+ *     the raw passthrough below), and the debounce marker `{ [idKey]: id, debounce: true }`.
+ *     `lookupFn` is typed `T extends object`, so a scalar cannot reach the write path.
  *
  * Do NOT enable `compress` for a caller that stores a bare scalar (a positive-fixint
  * 0x01 would be ambiguous with the sentinel).

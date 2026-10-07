@@ -53,12 +53,14 @@ export type CachedLookupOptions<T extends object> = {
   // Opt-in brotli compression of the packed value at rest (sentinel-tagged). Enable only for caches
   // whose values are LARGE and repetitive enough to pay the codec — most per-id values are tiny.
   //
-  // 🔴 SYMMETRY IS THE WHOLE CONTRACT: this flag is threaded to EVERY redis.packed read AND write
-  // this builder performs (fetch's mGet, the value/notFound writes, bust's debounce marker,
-  // invalidate's mGet + rewrite, refresh's rewrite, update's mGet + rewrite). A key written
-  // compressed but read via the general msgpack path throws → the entry is EVICTED and the read
-  // reports a miss, i.e. a permanent miss+evict loop rather than a visible error. If you add a new
-  // redis.packed call site to this module you MUST pass `{ compress }` to it.
+  // 🔴 SYMMETRY IS THE WHOLE CONTRACT: this flag is threaded to EVERY redis.packed READ this
+  // builder performs (fetch's mGet, invalidate's mGet, update's mGet) and to every write except
+  // the not-found marker (the value write, bust's debounce marker, invalidate's, refresh's and
+  // update's rewrites). A key written compressed but read via the general msgpack path throws →
+  // the entry is EVICTED and the read reports a miss, i.e. a permanent miss+evict loop rather than
+  // a visible error. If you add a new redis.packed READ to this module you MUST pass
+  // `{ compress }` to it. The not-found marker is deliberately written uncompressed: every read
+  // above is compress-aware, and that decode passes a non-sentinel value straight to msgpack.
   //
   // Back-compat is free in BOTH directions: the compress-aware read is sentinel-discriminated, so
   // legacy uncompressed entries written before the flag was flipped still decode. No key-bust or
@@ -99,6 +101,12 @@ export type CacheBuilderDeps = {
     revalidate(cacheName: string, cacheType: string, count: number): void;
     failOpenDegraded(cacheName: string): void;
     failOpenOriginFetch(cacheName: string, count: number): void;
+    /**
+     * Ids whose miss-fill lookup was started while another fetch in THIS process was already
+     * looking up the same id (same cache instance). Measurement only: the duplicate lookup and its
+     * writes still happen. Cross-process duplicates are not visible here.
+     */
+    missConcurrentDuplicate(cacheName: string, count: number): void;
   };
   /** Structured log for a fail-open Redis degradation (the app's logSysRedisFailOpen). */
   logFailOpen(
@@ -147,6 +155,16 @@ export function resolveCacheExpiry(
 /** Seconds a write-through `update` holds its per-entry lock. Bounds one GET + one SET. */
 const UPDATE_LOCK_TTL = 5;
 
+/**
+ * Bounds on the per-cache in-flight miss-fill registry (see `missFillInFlight` in
+ * createCachedArray). An entry older than MAX_AGE is not treated as in flight, and nothing new is
+ * registered while the registry holds MAX_ENTRIES — so a lookup that never settles can neither
+ * grow it without bound nor inflate the count forever. Both only affect the measurement.
+ */
+const MISS_FILL_IN_FLIGHT_MAX_AGE_MS = 30_000;
+const MISS_FILL_IN_FLIGHT_MAX_ENTRIES = 50_000;
+type MissFillEntry = { startedAt: number; holders: number };
+
 export function createCacheBuilders(deps: CacheBuilderDeps) {
   const { redis, metrics, logFailOpen, logRefreshError, log, clearByPattern } = deps;
   const degradedIdInFlight = new Map<string, Promise<unknown>>();
@@ -176,6 +194,17 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     // metrics.hit/miss as cache_name — one scheme, not two. Bounded by construction (it is the
     // cache prefix, not `${key}:${id}`), and observational only.
     const packedOptions = { compress, cacheName: key } as const;
+    // The not-found marker is written UNCOMPRESSED even on a `compress: true` cache: it is a tiny
+    // map (nothing to gain) written with NX, so most of those writes are rejected and the codec
+    // work was wasted. Every read of this cache goes through the compress-aware decode, which
+    // passes a value whose first byte is not the brotli sentinel straight to msgpack — and a
+    // marker is a map, whose first byte is never the sentinel. See ./packed-compression.
+    const notFoundPackedOptions = { compress: false, cacheName: key } as const;
+    // Ids whose miss-fill lookup is in flight in THIS process, for the missConcurrentDuplicate
+    // metric only — nothing reads it to change what is looked up, returned or written.
+    // `holders` counts the fetches currently looking the id up, so the first one settling does not
+    // hide the id from a third while the second is still in flight.
+    const missFillInFlight = new Map<number, MissFillEntry>();
     // Holds the FINAL resolved per-id value — post-appendFn, cachedAt stripped — so an L1 hit is
     // byte-identical to what the Redis path returns and needs no further decoration.
     // Driven with get/set rather than its wrapping .fetch — the access pattern here is a batch mGet,
@@ -216,6 +245,40 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
     function dropLocal(ids: number[]) {
       if (!localCache) return;
       for (const id of ids) localCache.delete(id);
+    }
+
+    // Register `ids` as about to be looked up and report how many of them another fetch in this
+    // process is already looking up. Returns the release to call once this fetch's lookup AND its
+    // writes have settled. Measurement only — the caller looks up and writes every id regardless.
+    function trackMissFill(ids: Iterable<number>): () => void {
+      const now = Date.now();
+      const mine: [number, MissFillEntry][] = [];
+      let duplicates = 0;
+      for (const id of ids) {
+        const existing = missFillInFlight.get(id);
+        if (existing && now - existing.startedAt < MISS_FILL_IN_FLIGHT_MAX_AGE_MS) {
+          duplicates++;
+          existing.holders++;
+          mine.push([id, existing]);
+        } else if (existing || missFillInFlight.size < MISS_FILL_IN_FLIGHT_MAX_ENTRIES) {
+          // A stale entry is replaced; its owner's release only touches the entry it registered.
+          const entry = { startedAt: now, holders: 1 };
+          missFillInFlight.set(id, entry);
+          mine.push([id, entry]);
+        }
+      }
+      if (duplicates > 0) {
+        // A metrics sink that throws must not fail the read this is only observing.
+        try {
+          metrics.missConcurrentDuplicate(key, duplicates);
+        } catch {}
+      }
+      return () => {
+        for (const [id, entry] of mine) {
+          entry.holders--;
+          if (entry.holders <= 0 && missFillInFlight.get(id) === entry) missFillInFlight.delete(id);
+        }
+      };
     }
 
     // Degraded origin (DB) fetch used when a CLUSTER read rejects. Returns the SAME shape as the
@@ -397,69 +460,75 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
       if (cacheMisses.size > 0) {
         log(`${key}: Cache miss - ${cacheMisses.size} items: ${[...cacheMisses].join(', ')}`);
 
-        const dbResults: Record<string, T> = {};
-        const lookupBatches = chunk([...cacheMisses], 10000);
-        for (const batch of lookupBatches) {
-          const batchResults = await lookupFn([...batch] as typeof ids);
-          Object.assign(dbResults, batchResults);
-        }
-
-        const toCache: Record<string, AnyRecord> = {};
-        const toCacheNotFound: Record<string, AnyRecord> = {};
-        const cachedAt = new Date();
-        let actualMisses = 0;
-        for (const id of cacheMisses) {
-          const result = dbResults[id];
-          if (!result) {
-            if (cacheNotFound) {
-              toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
-              actualMisses++;
-            }
-            // When cacheNotFound=false, don't count as a miss since we don't cache it.
-            continue;
-          }
-          results.add(result as T);
-          actualMisses++;
-          if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
-        }
-
-        if (actualMisses > 0) metrics.miss(key, 'cachedArray', actualMisses);
-
-        // The DB lookup already SUCCEEDED — a CLUSTER WRITE failure here must NOT turn a good origin
-        // fetch into a 500. Swallow best-effort (the entry just isn't cached this pass).
-        const EX = resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl);
+        // finally: a throwing lookupFn must not leave its ids registered as in flight.
+        const releaseMissFill = trackMissFill(cacheMisses);
         try {
-          if (Object.keys(toCache).length > 0)
-            await Promise.all(
-              Object.entries(toCache).map(([id, value]) =>
-                redis.packed.set(
-                  `${key}:${id}` as RedisKeyTemplateCache,
-                  value,
-                  { EX },
-                  packedOptions
-                )
-              )
-            );
-
-          // NX so a real value is never overwritten by a notFound. notFoundTtl caps negative-cache
-          // lifetime separately, for lookups whose empty result is likely transient.
-          if (Object.keys(toCacheNotFound).length > 0) {
-            const notFoundEX = notFoundTtl ?? EX;
-            await Promise.all(
-              Object.entries(toCacheNotFound).map(([id, value]) =>
-                redis.packed.set(
-                  `${key}:${id}` as RedisKeyTemplateCache,
-                  value,
-                  { EX: notFoundEX, NX: true },
-                  packedOptions
-                )
-              )
-            );
+          const dbResults: Record<string, T> = {};
+          const lookupBatches = chunk([...cacheMisses], 10000);
+          for (const batch of lookupBatches) {
+            const batchResults = await lookupFn([...batch] as typeof ids);
+            Object.assign(dbResults, batchResults);
           }
-        } catch (err) {
-          logFailOpen('write-degraded', `createCachedArray set (cache cluster) [${key}]`, err, {
-            key,
-          });
+
+          const toCache: Record<string, AnyRecord> = {};
+          const toCacheNotFound: Record<string, AnyRecord> = {};
+          const cachedAt = new Date();
+          let actualMisses = 0;
+          for (const id of cacheMisses) {
+            const result = dbResults[id];
+            if (!result) {
+              if (cacheNotFound) {
+                toCacheNotFound[id] = { [idKey]: id, notFound: true, cachedAt };
+                actualMisses++;
+              }
+              // When cacheNotFound=false, don't count as a miss since we don't cache it.
+              continue;
+            }
+            results.add(result as T);
+            actualMisses++;
+            if (!dontCache.has(id) && !dontCacheFn?.(result)) toCache[id] = { ...result, cachedAt };
+          }
+
+          if (actualMisses > 0) metrics.miss(key, 'cachedArray', actualMisses);
+
+          // The DB lookup already SUCCEEDED — a CLUSTER WRITE failure here must NOT turn a good origin
+          // fetch into a 500. Swallow best-effort (the entry just isn't cached this pass).
+          const EX = resolveCacheExpiry(ttl, staleWhileRevalidate, staleWhileRevalidateTtl);
+          try {
+            if (Object.keys(toCache).length > 0)
+              await Promise.all(
+                Object.entries(toCache).map(([id, value]) =>
+                  redis.packed.set(
+                    `${key}:${id}` as RedisKeyTemplateCache,
+                    value,
+                    { EX },
+                    packedOptions
+                  )
+                )
+              );
+
+            // NX so a real value is never overwritten by a notFound. notFoundTtl caps negative-cache
+            // lifetime separately, for lookups whose empty result is likely transient.
+            if (Object.keys(toCacheNotFound).length > 0) {
+              const notFoundEX = notFoundTtl ?? EX;
+              await Promise.all(
+                Object.entries(toCacheNotFound).map(([id, value]) =>
+                  redis.packed.set(
+                    `${key}:${id}` as RedisKeyTemplateCache,
+                    value,
+                    { EX: notFoundEX, NX: true },
+                    notFoundPackedOptions
+                  )
+                )
+              );
+            }
+          } catch (err) {
+            logFailOpen('write-degraded', `createCachedArray set (cache cluster) [${key}]`, err, {
+              key,
+            });
+          }
+        } finally {
+          releaseMissFill();
         }
       }
 
