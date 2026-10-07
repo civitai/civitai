@@ -222,7 +222,9 @@ function ModelCategoryCardContent({
       ...[
         {
           key: 'hide-model',
-          component: <HideModelButton key="hide-model" as="menu-item" modelId={id} />,
+          component: (
+            <HideModelButton key="hide-model" as="menu-item" modelId={id} ownerUserId={user.id} />
+          ),
         },
         {
           key: 'hide-button',

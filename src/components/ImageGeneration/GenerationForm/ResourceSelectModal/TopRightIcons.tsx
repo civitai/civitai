@@ -31,7 +31,12 @@ export function TopRightIcons({
   if (currentUser?.id !== data.user.id) {
     contextMenuItems = contextMenuItems
       .concat([
-        <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
+        <HideModelButton
+          key="hide-model"
+          as="menu-item"
+          modelId={data.id}
+          ownerUserId={data.user.id}
+        />,
         <HideUserButton key="hide-button" as="menu-item" userId={data.user.id} />,
         <BlockUserButton key="block-button" as="menu-item" userId={data.user.id} />,
         <ReportMenuItem
