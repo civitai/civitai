@@ -13,6 +13,7 @@
 
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
+import { request } from 'http';
 import { dirname, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
@@ -89,12 +90,37 @@ function runDirect(args) {
   });
 }
 
-async function post(path, body) {
-  const res = await fetch(`${DAEMON}${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
+/**
+ * `http.request`, not `fetch`: on Node 24 for Windows, `process.exit` after more than one `fetch`
+ * dies on a libuv assertion (0xC0000409) instead of exiting, so the caller saw that code in place of
+ * the run's verdict. Every exit on the queued path follows these requests.
+ */
+function daemonRequest(path, { method = 'GET', body } = {}) {
+  return new Promise((done, fail) => {
+    const req = request(
+      `${DAEMON}${path}`,
+      { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' } },
+      (res) => {
+        let text = '';
+        res.setEncoding('utf8');
+        res.on('data', (chunk) => (text += chunk));
+        res.on('error', fail);
+        res.on('end', () =>
+          done({
+            status: res.statusCode,
+            ok: res.statusCode >= 200 && res.statusCode < 300,
+            json: async () => JSON.parse(text),
+          })
+        );
+      }
+    );
+    req.on('error', fail);
+    req.end(body);
   });
+}
+
+async function post(path, body) {
+  const res = await daemonRequest(path, { method: 'POST', body: JSON.stringify(body) });
   if (!res.ok) throw new Error(`daemon returned ${res.status}`);
   return res.json();
 }
@@ -183,7 +209,7 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
 
   let lastLog = -1;
   for (;;) {
-    const res = await fetch(`${DAEMON}/test-runs/${run.id}`);
+    const res = await daemonRequest(`/test-runs/${run.id}`);
     if (res.status === 404) {
       console.error(
         `The daemon forgot run ${run.id} — it was most likely restarted. Re-run this command.`
@@ -196,7 +222,7 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
     }
     const state = await res.json();
 
-    const logs = await fetch(`${DAEMON}/test-runs/${run.id}/logs?since=${lastLog}`).then((r) =>
+    const logs = await daemonRequest(`/test-runs/${run.id}/logs?since=${lastLog}`).then((r) =>
       r.json()
     );
     for (const entry of logs.logs ?? []) {
