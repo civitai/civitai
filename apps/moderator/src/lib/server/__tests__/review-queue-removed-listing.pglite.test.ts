@@ -67,7 +67,8 @@ beforeAll(async () => {
       (2, 'csam', 'Blocked', 32),
       (3, 'csam', 'Error', 4),
       (4, 'minor', 'Scanned', 4),
-      (5, 'minor', 'Blocked', 32);
+      (5, 'minor', 'Blocked', 32),
+      (6, 'csam', 'Blocked', 32);
   `);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(db) });
 });
@@ -85,13 +86,14 @@ const queueIds = async (needsReview: 'csam' | 'minor') =>
 describe('the review-flag queue', () => {
   it('lists removed images beside live ones', async () => {
     expect(await queueIds('csam')).toEqual([
+      { id: 6, ingestion: 'Blocked' },
       { id: 2, ingestion: 'Blocked' },
       { id: 1, ingestion: 'Scanned' },
     ]);
   });
 
   it('counts them in its badge', async () => {
-    expect((await getImageReviewCounts()).csam).toBe(2);
+    expect((await getImageReviewCounts()).csam).toBe(3);
   });
 });
 
