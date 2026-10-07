@@ -492,7 +492,9 @@ describe('bankBuzz', () => {
       mockBankableLedger({ snapshot: 30000, earned: 10000 });
       redisMock.redis.set.mockResolvedValueOnce(null);
 
-      await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow(/Couldn't start your deposit/);
+      await expect(bankBuzz(userId, 10000, 'yellow')).rejects.toThrow(
+        /Couldn't start your deposit/
+      );
       expect(mockCreateBuzzTransaction).not.toHaveBeenCalled();
     });
 
@@ -640,7 +642,12 @@ describe('getBanked after the bankable-amount cutover', () => {
 
     const result = await getBanked(userId);
 
-    expect(result.bankable).toEqual({ snapshot: 30000, earned: 10000, consumed: 0, remaining: 35000 });
+    expect(result.bankable).toEqual({
+      snapshot: 30000,
+      earned: 10000,
+      consumed: 0,
+      remaining: 35000,
+    });
     expect(mockFetchThroughCache).toHaveBeenCalledWith(
       `${REDIS_KEYS.CREATOR_PROGRAM.BANKABLE}:${userId}`,
       expect.any(Function),

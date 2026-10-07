@@ -111,12 +111,12 @@ All-or-nothing across all buzz types:
 #### Getting Banked Amounts
 
 ```
-getBankedBalance(userId) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem }
+getBankedBalance(userId, { fresh? }) → { perType: { yellow: number, green: number }, total: number, cap: UserCapCacheItem }
 getBanked(userId)        → { ...getBankedBalance, bankable: BankableAmount | null }
 ```
 
-- `getBankedBalance` queries `getCounterPartyBuzzTransactions` for each buzz type against `creatorProgramBank`; `bankBuzz`, `extractBuzz` and `/api/mod/reset-bank` use it
-- `getBanked` is for display (the `creatorProgram.getBanked` query). Its `bankable` is `null` before the cutover, without ClickHouse, or when the lookup fails
+- `getBankedBalance` queries `getCounterPartyBuzzTransactions` for each buzz type against `creatorProgramBank`, through a cache. `bankBuzz`, `extractBuzz` and `/api/mod/reset-bank` pass `fresh: true`: the cache can hold a total from before the last deposit while a display read refreshes it
+- `getBanked` is for display (the `creatorProgram.getBanked` query). It reads the ClickHouse half of the bankable amount through a 3-minute cache (`REDIS_KEYS.CREATOR_PROGRAM.BANKABLE`) and nets this month's deposits from the bank account. Its `bankable` is `null` before the cutover, without ClickHouse, or when the lookup fails
 - The counterparty filter preserves type separation even with a unified bank account
 - Cap is unified across all types based on highest membership tier
 
@@ -150,7 +150,7 @@ bankable = yellow+green balance at the cutover
          + extracted since the cutover, net of the extraction fee
 ```
 
-- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
+- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, App Blocks author fees (`'28'` in ClickHouse, or `fee` + 'App author fee…' before that type existed), user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
 - The cutover balance is computed from ClickHouse the first time it is needed and stored in the `REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT` hash, keyed by user id. It is not stored during the first hour after the cutover, while late ledger rows can still land.
 - Closed months come from ClickHouse; the current month's deposits come from the bank account via `getBankedBalance`, so a deposit made seconds earlier already counts.
 
@@ -212,8 +212,9 @@ The three stage notifications run daily and gate on `getStageNotificationDays`, 
 
 | Key | Content | TTL |
 |-----|---------|-----|
-| `CAPS` | User cap data (tier, peak earnings, cap amount) | 1 day |
+| `CAPS` | User cap data (tier, peak earnings, cap amount). A cap cached before `BANKABLE_CUTOVER` is refilled on first read after it | 1 day |
 | `BANKED:{userId}` | Per-type banked amounts for user | 1 day |
+| `BANKABLE:{userId}` | Bankable ledger for display (cutover balance, earned, consumed) | 3 min |
 | `CASH` | User cash balance (pending, ready, withdrawn) | 1 day |
 | `POOL_VALUE` | Monthly pool dollar value | 1 day |
 | `POOL_SIZE` | Current total banked buzz | Not cached (live) |
