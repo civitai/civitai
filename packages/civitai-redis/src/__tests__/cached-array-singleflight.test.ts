@@ -364,10 +364,8 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     const y = cache.fetch([1]); // joins id 1
     await untilGets(4);
     fast.open();
-    // y's appendFn has now run on the nested object it shares with x's record. What x RETURNS
-    // shares that nested object too (the per-fetch clone is shallow, as on every path in this
-    // module, whose appendFns assign top-level or idempotent fields); this test pins only that
-    // nothing decorated reaches redis.
+    // y's appendFn has now run on the nested object x's record shares. x's result shares it too
+    // (clones are shallow); this test pins only that nothing decorated reaches redis.
     await y;
     slow.open();
     await Promise.all([w, x]);
@@ -505,6 +503,21 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     expect(lookupFn).toHaveBeenCalledTimes(2);
   });
 
+  // Invariant guard (green before coalescing too): EVERY id of a multi-id lookup is released, not
+  // just the first.
+  it('all ids of a settled multi-id lookup are re-read after eviction', async () => {
+    const lookupFn = vi.fn<Lookup>(async (ids) =>
+      Object.fromEntries(ids.map((id) => [id, { id, v: `row-${id}` }]))
+    );
+    const cache = buildCache(lookupFn);
+    await cache.fetch([60, 61, 62]);
+    for (const id of [60, 61, 62]) store.delete(`${KEY}:${id}`); // LRU eviction
+    await cache.fetch([60, 61, 62]);
+    expect(lookedUpIds(lookupFn), 'ids looked up across both fetches').toEqual([
+      60, 60, 61, 61, 62, 62,
+    ]);
+  });
+
   // Invariant guard (green before coalescing too): past IN_FLIGHT_JOIN_MAX_MS a fetch originates
   // its own lookup instead of joining a stuck one.
   it('a stuck lookup is not joined forever', async () => {
@@ -617,7 +630,9 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     try {
       const a = cache.fetch([52]);
       await untilGets(1);
-      vi.setSystemTime(Date.now() + 9_000);
+      // 100ms short of the cap: the faked Date still advances with real time between the two
+      // reads, so landing exactly on the boundary would be flaky.
+      vi.setSystemTime(Date.now() + 9_900);
       const b = cache.fetch([52]);
       await untilGets(2);
       g.open();
