@@ -541,7 +541,11 @@ describe('crucible.getRequiredModels', () => {
 
 describe('crucible.getJudgingProgress', () => {
   it("counts the caller's pairs left among the entries they can judge", async () => {
-    queryRaw.mockResolvedValue([{ crucibleId: CRUCIBLE_ID, id: 1 }, { crucibleId: CRUCIBLE_ID, id: 2 }, { crucibleId: CRUCIBLE_ID, id: 3 }]);
+    queryRaw.mockResolvedValue([
+      { crucibleId: CRUCIBLE_ID, id: 1 },
+      { crucibleId: CRUCIBLE_ID, id: 2 },
+      { crucibleId: CRUCIBLE_ID, id: 3 },
+    ]);
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
 
@@ -583,7 +587,10 @@ describe('crucible.getJudgingProgress', () => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
 
-    queryRaw.mockResolvedValue([{ crucibleId: CRUCIBLE_ID, id: 1 }, { crucibleId: CRUCIBLE_ID, id: 2 }]);
+    queryRaw.mockResolvedValue([
+      { crucibleId: CRUCIBLE_ID, id: 1 },
+      { crucibleId: CRUCIBLE_ID, id: 2 },
+    ]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
     ).toEqual({ remainingPairs: 0, votesUsedUp: true });

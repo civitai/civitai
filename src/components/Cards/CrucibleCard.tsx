@@ -106,7 +106,11 @@ export function CrucibleCard({ data }: { data: CrucibleCardData }) {
               h={26}
               fw="bold"
               leftSection={
-                judgingBadge.kind === 'available' ? <IconGavel size={14} /> : <IconCheck size={14} />
+                judgingBadge.kind === 'available' ? (
+                  <IconGavel size={14} />
+                ) : (
+                  <IconCheck size={14} />
+                )
               }
             >
               {judgingBadge.label}

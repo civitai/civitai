@@ -43,8 +43,7 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
     () =>
       crucibles
         .filter(
-          (c) =>
-            c.status === CrucibleStatus.Active && (!c.endAt || new Date(c.endAt) > new Date())
+          (c) => c.status === CrucibleStatus.Active && (!c.endAt || new Date(c.endAt) > new Date())
         )
         .map((c) => c.id)
         .slice(0, 100),

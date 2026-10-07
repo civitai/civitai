@@ -2607,14 +2607,21 @@ export const getJudgingProgress = async ({
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
     return { remainingPairs: 0, votesUsedUp: false };
 
-  const viewerLevel = getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel });
+  const viewerLevel = getEffectiveBrowsingLevel({
+    isGreen,
+    isLoggedIn: true,
+    requested: browsingLevel,
+  });
   const counted = (await countJudgingPairs({ crucibleIds: [crucibleId], userId, viewerLevel })).get(
     crucibleId
   );
   const remainingPairs = counted?.remainingPairs ?? 0;
   // Fewer than two visible entries also counts zero pairs, but that is the browsing level
   // hiding entries, not this judge's votes running out.
-  return { remainingPairs, votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2 };
+  return {
+    remainingPairs,
+    votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2,
+  };
 };
 
 /** What the crucible cards show a judge: whether each open crucible still has pairs for them. */

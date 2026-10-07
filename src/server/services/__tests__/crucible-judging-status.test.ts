@@ -202,7 +202,9 @@ describe('getJudgingStatuses', () => {
   it('omits crucibles that are not on site for a green viewer', async () => {
     findMany.mockResolvedValue([crucibleRow(1, { nsfwLevel: 4 })]);
 
-    expect(await getJudgingStatuses({ crucibleIds: [1], userId: JUDGE, isGreen: true })).toEqual([]);
+    expect(await getJudgingStatuses({ crucibleIds: [1], userId: JUDGE, isGreen: true })).toEqual(
+      []
+    );
   });
 });
 
