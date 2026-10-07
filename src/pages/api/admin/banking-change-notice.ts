@@ -2,10 +2,11 @@
  * Sends the Creator Program banking-change notice email.
  * =============================================================================
  *
- * Hidden testing route. Guarded by the WEBHOOK_TOKEN via `?token=` query param.
+ * Hidden ops route. Guarded by the WEBHOOK_TOKEN via `?token=` query param. Under /api/admin, not
+ * /api/testing, because the send runs in production and /api/testing/* is redirected there.
  *
  * Usage:
- *   POST /api/testing/banking-change-notice?token=$WEBHOOK_TOKEN
+ *   POST /api/admin/banking-change-notice?token=$WEBHOOK_TOKEN
  *   Content-Type: application/json
  *   Body: { "action": "<action>", ...params }
  *
@@ -19,18 +20,20 @@
  *                                 twice; a failed send is un-recorded and retried by the next run,
  *                                 except `stuckUserIds`, whose un-recording failed: unmark those.
  *   send-test - {email, username?}  Send one copy to `email`. Not recorded, not audience-checked.
+ *   preview   - {username?}         The email HTML, as text/html
  *   sent      - {}                  How many users have been sent the notice
  *   unmark    - {userId}            Forget that one user was sent it, so the next run sends again
  *
  * Both send actions refuse to run on a server with no email transport configured.
- *
- * Preview the HTML at /api/testing/email/bankingChangeNotice?token=$WEBHOOK_TOKEN
  */
 
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isEmailConfigured } from '~/server/email/client';
-import { bankingChangeNoticeEmail } from '~/server/email/templates/bankingChangeNotice.email';
+import {
+  bankingChangeNoticeEmail,
+  getBankingChangeNoticeHtml,
+} from '~/server/email/templates/bankingChangeNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { sendBankingChangeNotice } from '~/server/services/banking-change-notice.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -49,6 +52,7 @@ const schema = z.discriminatedUnion('action', [
     email: z.email(),
     username: z.string().min(1).default('there'),
   }),
+  z.object({ action: z.literal('preview'), username: z.string().min(1).default('there') }),
   z.object({ action: z.literal('sent') }),
   z.object({ action: z.literal('unmark'), userId: z.coerce.number().int().positive() }),
 ]);
@@ -67,6 +71,10 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         return res.status(503).json({ error: 'Email is not configured on this server' });
       await bankingChangeNoticeEmail.send({ to: input.email, username: input.username });
       return res.status(200).json({ sent: input.email });
+    }
+    case 'preview': {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.status(200).send(getBankingChangeNoticeHtml(input.username));
     }
     case 'sent': {
       const all = await sysRedis.hGetAll(KEY);
