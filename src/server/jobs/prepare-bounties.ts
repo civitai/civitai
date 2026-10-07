@@ -239,7 +239,7 @@ async function settleExpiredBounty({
       return { kind: 'refund' as const, currency, poiHidden: true };
     }
 
-    const [winnerEntry] = await tx.$queryRaw<{ id: number; userId: number }[]>`SELECT
+    const [winnerEntry] = await tx.$queryRaw<{ id: number; userId: number | null }[]>`SELECT
             be.id,
             be."userId",
             COALESCE(SUM(bb."unitAmount"), 0) AS "awardedUnitAmount",
@@ -263,7 +263,9 @@ async function settleExpiredBounty({
         UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
       `);
     await tx.$executeRawUnsafe(`
-        UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${id};
+        UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = NOW(), "payoutWinnerUserId" = ${
+          winnerEntry.userId ?? 'NULL'
+        } WHERE b.id = ${id};
       `);
     return { kind: 'award' as const, currency, winnerEntry };
   });

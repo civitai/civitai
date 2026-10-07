@@ -10,6 +10,7 @@ export type BountyPayoutState = {
   meta: Prisma.JsonValue | null;
   payoutRecordedAt: Date | null;
   payoutSettledAt: Date | null;
+  payoutWinnerUserId: number | null;
 };
 
 // Every path that moves Buzz for a bounty takes this row lock first, checks the state it
@@ -28,7 +29,8 @@ export async function lockBountyForPayout(
       availability,
       meta,
       "payoutRecordedAt",
-      "payoutSettledAt"
+      "payoutSettledAt",
+      "payoutWinnerUserId"
     FROM "Bounty"
     WHERE id = ${bountyId}
     FOR UPDATE

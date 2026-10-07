@@ -17,8 +17,13 @@ const {
   };
 });
 
+// The real job shape, `{ name, cron, run }`, with `run` calling the handler directly.
 vi.mock('~/server/jobs/job', () => ({
-  createJob: (_n: string, _c: string, fn: unknown) => fn,
+  createJob: (name: string, cron: string, fn: (ctx: unknown) => unknown) => ({
+    name,
+    cron,
+    run: () => fn({}),
+  }),
   getJobDate: async () => [new Date(0), vi.fn()],
 }));
 vi.mock('~/utils/logging', () => ({ createLogger: () => vi.fn() }));
@@ -67,8 +72,14 @@ const lockedBounty = { complete: false, refunded: false };
 const BOUNTY_ID = 4321;
 const WINNER_ENTRY_ID = 99;
 
-// `createJob` is mocked to return the bare handler, so the exported job IS the function.
-const runPrepareBounties = bountyJobs[0] as unknown as () => Promise<void>;
+const jobNamed = (name: string) => {
+  const job = (bountyJobs as unknown as { name: string; cron: string; run: () => unknown }[]).find(
+    (j) => j.name === name
+  );
+  if (!job) throw new Error(`no bounty job named ${name}`);
+  return job;
+};
+const runPrepareBounties = () => jobNamed('prepare-bounties').run() as Promise<void>;
 
 describe('prepare-bounties auto-award', () => {
   beforeEach(() => {
@@ -122,7 +133,9 @@ describe('prepare-bounties auto-award', () => {
 
     expect(
       executedStatements.some((sql) =>
-        sql.includes(`"complete" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${BOUNTY_ID}`)
+        /"complete" = true, "payoutRecordedAt" = NOW\(\), "payoutWinnerUserId" = 7\s+WHERE b.id = 4321/.test(
+          sql
+        )
       )
     ).toBe(true);
     expect(mockSettle).toHaveBeenCalledExactlyOnceWith(BOUNTY_ID, { firstAttempt: true });
@@ -167,8 +180,10 @@ describe('prepare-bounties auto-award', () => {
 });
 
 describe('bounty-payout-retry', () => {
-  it('is a registered bounty job that retries unsettled payouts', async () => {
-    await (bountyJobs[1] as unknown as () => Promise<unknown>)();
+  it('is an hourly bounty job that retries unsettled payouts', async () => {
+    const job = jobNamed('bounty-payout-retry');
+    expect(job.cron).toBe('41 * * * *');
+    await job.run();
     expect(mockRetry).toHaveBeenCalledOnce();
   });
 });

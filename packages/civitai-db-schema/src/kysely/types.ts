@@ -1479,6 +1479,10 @@ export type Bounty = {
    * When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
    */
   payoutSettledAt: Timestamp | null;
+  /**
+   * The award's winner, captured when it is recorded: the entry it went to can be deleted first.
+   */
+  payoutWinnerUserId: number | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
   moderatorNsfwLevel: number | null;

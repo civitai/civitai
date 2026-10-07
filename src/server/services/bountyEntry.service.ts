@@ -253,6 +253,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         where: { id: entry.bountyId },
         data: {
           payoutRecordedAt: new Date(),
+          payoutWinnerUserId: entry.userId,
           ...(unawardedBountyBenefactors ? {} : { complete: true }),
         },
       });
@@ -362,8 +363,6 @@ export const deleteBountyEntry = async ({
       bounty: {
         select: {
           complete: true,
-          payoutRecordedAt: true,
-          payoutSettledAt: true,
         },
       },
     },
@@ -387,40 +386,45 @@ export const deleteBountyEntry = async ({
     }
   }
 
-  // The winner is read through the award's entry, so an unpaid award is settled before it goes.
-  if (
-    entry.bounty.payoutRecordedAt &&
-    !entry.bounty.payoutSettledAt &&
-    !(await settleBountyPayout(entry.bountyId))
-  )
+  // Checked on the primary under the payout lock, so an award recorded concurrently is seen. An
+  // unsettled payout is settled before the entry goes.
+  const deleteEntry = () =>
+    dbWrite.$transaction(
+      async (tx) => {
+        const locked = await lockBountyForPayout(tx, entry.bountyId);
+        if (locked?.payoutRecordedAt && !locked.payoutSettledAt) return PAYOUT_PENDING;
+        return deleteEntryRows(tx, id);
+      },
+      { maxWait: 10000, timeout: 30000 }
+    );
+
+  let deleted = await deleteEntry();
+  if (deleted === PAYOUT_PENDING && (await settleBountyPayout(entry.bountyId)))
+    deleted = await deleteEntry();
+  if (deleted === PAYOUT_PENDING)
     throw throwBadRequestError(
       'This bounty has a payout still pending, so its entries cannot be deleted yet. Try again later.'
     );
-
-  const deletedBountyEntry = await dbWrite.$transaction(
-    async (tx) => {
-      const deletedBountyEntry = await tx.bountyEntry.delete({ where: { id } });
-      if (!deletedBountyEntry) return null;
-
-      await tx.file.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-      const images = await tx.imageConnection.findMany({
-        select: { imageId: true },
-        where: { entityId: id, entityType: 'BountyEntry' },
-      });
-
-      await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
-      const imageIds = images.map((i) => i.imageId);
-      await Promise.all([
-        tx.image.deleteMany({ where: { id: { in: imageIds } } }),
-        invalidateManyImageExistence(imageIds),
-      ]);
-
-      return deletedBountyEntry;
-    },
-    { maxWait: 10000, timeout: 30000 }
-  );
-
-  if (!deletedBountyEntry) return null;
-
-  return deletedBountyEntry;
+  if (!deleted) return null;
+  await invalidateManyImageExistence(deleted.imageIds);
+  return deleted.entry;
 };
+
+const PAYOUT_PENDING = Symbol('payout-pending');
+
+async function deleteEntryRows(tx: Prisma.TransactionClient, id: number) {
+  const entry = await tx.bountyEntry.delete({ where: { id } });
+  if (!entry) return null;
+
+  await tx.file.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
+  const images = await tx.imageConnection.findMany({
+    select: { imageId: true },
+    where: { entityId: id, entityType: 'BountyEntry' },
+  });
+
+  await tx.imageConnection.deleteMany({ where: { entityId: id, entityType: 'BountyEntry' } });
+  const imageIds = images.map((i) => i.imageId);
+  await tx.image.deleteMany({ where: { id: { in: imageIds } } });
+
+  return { entry, imageIds };
+}

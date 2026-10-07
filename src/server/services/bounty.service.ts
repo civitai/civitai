@@ -996,13 +996,15 @@ function logBountyPayoutError({
   bountyId,
   userId,
   message,
+  name = 'bounty-refund',
 }: {
   bountyId: number;
   userId?: number | null;
   message: string;
+  name?: 'bounty-refund' | 'bounty-award';
 }) {
   logToAxiom({
-    name: 'bounty-refund',
+    name,
     type: 'error',
     message: `Bounty ${bountyId}: ${message}`,
     bountyId,
@@ -1132,20 +1134,32 @@ async function bountyAwardAmounts(benefactors: AwardedFunds[]) {
   return amounts;
 }
 
-async function payBountyAward(bountyId: number) {
-  const awarded = await dbWrite.bountyBenefactor.findMany({
-    where: { bountyId, currency: Currency.BUZZ, awardedToId: { not: null } },
-    select: { unitAmount: true, buzzTransactionId: true, awartedTo: { select: { userId: true } } },
-  });
-  if (!awarded.length) return true;
-  const winners = [...new Set(awarded.map((b) => b.awartedTo?.userId ?? null))];
-  if (winners.length !== 1 || !winners[0]) {
-    logBountyPayoutError({ bountyId, message: `Award winner unresolved: ${winners.join(', ')}` });
+/**
+ * The supporters are the rows with `awardedAt`: `awardedToId` is nulled when the winning entry is
+ * deleted, and the winner itself was captured on the bounty when the award was recorded.
+ */
+async function payBountyAward(bountyId: number, winnerUserId: number | null) {
+  if (!winnerUserId) {
+    logBountyPayoutError({ bountyId, name: 'bounty-award', message: 'Award has no winner to pay' });
     return false;
   }
-  const winnerUserId = winners[0];
+  const awarded = await dbWrite.bountyBenefactor.findMany({
+    where: { bountyId, awardedAt: { not: null } },
+    select: { unitAmount: true, currency: true, buzzTransactionId: true },
+  });
+  if (!awarded.length) {
+    logBountyPayoutError({
+      bountyId,
+      userId: winnerUserId,
+      name: 'bounty-award',
+      message: 'Award recorded but no supporter is marked as awarding it',
+    });
+    return false;
+  }
+  const funds = awarded.filter((b) => b.currency === Currency.BUZZ);
+  if (!funds.length) return true;
 
-  const transactions = Object.entries(await bountyAwardAmounts(awarded)).map(
+  const transactions = Object.entries(await bountyAwardAmounts(funds)).map(
     ([accountType, amount]) => ({
       fromAccountId: 0,
       toAccountId: winnerUserId,
@@ -1165,6 +1179,7 @@ async function payBountyAward(bountyId: number) {
     logBountyPayoutError({
       bountyId,
       userId: winnerUserId,
+      name: 'bounty-award',
       message: 'The ledger neither made nor recognised every award transaction',
     });
     return false;
@@ -1186,7 +1201,12 @@ export async function settleBountyPayout(
 ) {
   const bounty = await dbWrite.bounty.findUnique({
     where: { id: bountyId },
-    select: { refunded: true, payoutRecordedAt: true, payoutSettledAt: true },
+    select: {
+      refunded: true,
+      payoutRecordedAt: true,
+      payoutSettledAt: true,
+      payoutWinnerUserId: true,
+    },
   });
   if (!bounty?.payoutRecordedAt || bounty.payoutSettledAt) return true;
 
@@ -1202,7 +1222,7 @@ export async function settleBountyPayout(
             description: refundDescription,
           })
         ).failed.length === 0
-      : await payBountyAward(bountyId);
+      : await payBountyAward(bountyId, bounty.payoutWinnerUserId);
   } catch (e) {
     logBountyPayoutError({ bountyId, message: `Payout failed - ${String(e)}` });
   }

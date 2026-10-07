@@ -3428,6 +3428,7 @@ export interface Bounty {
   refunded: boolean;
   payoutRecordedAt: Date | null;
   payoutSettledAt: Date | null;
+  payoutWinnerUserId: number | null;
   availability: Availability;
   nsfwLevel: number;
   moderatorNsfwLevel: number | null;

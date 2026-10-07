@@ -5643,6 +5643,8 @@ model Bounty {
   payoutRecordedAt        DateTime?
   /// When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
   payoutSettledAt         DateTime?
+  /// The award's winner, captured when it is recorded: the entry it went to can be deleted first.
+  payoutWinnerUserId      Int?
   availability            Availability    @default(Public)
   nsfwLevel               Int             @default(0)
   moderatorNsfwLevel      Int?

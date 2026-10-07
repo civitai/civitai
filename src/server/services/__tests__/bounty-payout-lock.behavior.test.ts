@@ -39,7 +39,8 @@ beforeAll(async () => {
       "details"      jsonb,
       "meta"         jsonb,
       "payoutRecordedAt" timestamp(3),
-      "payoutSettledAt"  timestamp(3)
+      "payoutSettledAt"  timestamp(3),
+      "payoutWinnerUserId" integer
     );
     INSERT INTO "Bounty" ("id", "userId", "poi", "availability", "details", "meta") VALUES
       (1, 5, true, 'Private', '{"baseModel":"SDXL"}', '${JSON.stringify(OPEN_POI)}'),
@@ -57,6 +58,7 @@ describe('lockBountyForPayout on real rows', () => {
       poi: true,
       payoutRecordedAt: null,
       payoutSettledAt: null,
+      payoutWinnerUserId: null,
     });
     expect(isTextScanPoiHidden(locked!)).toBe(true);
   });
