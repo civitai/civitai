@@ -31,9 +31,9 @@ type SearchRetryBannerProps = {
   // True when zero pages have loaded yet — copy changes to "loading images"
   // instead of "loading more images".
   isInitialLoad?: boolean;
-  // True when the current request has exceeded the slow threshold. Swaps copy
-  // to "… are taking longer than usual" and reframes the countdown as time until
-  // abort instead of time until retry.
+  // True when the current request has exceeded the slow threshold: swaps to the
+  // slow copy and reframes the countdown as time until abort instead of time
+  // until retry.
   slow?: boolean;
 };
 
@@ -120,7 +120,7 @@ export function SearchRetryBanner({
               )}
             </Group>
             <Text size="xs" c="dimmed" ta="center">
-              Images are taking longer than usual to load. Try again in a moment.
+              Something went wrong on our end. Try again in a moment.
             </Text>
             <Button
               size="xs"

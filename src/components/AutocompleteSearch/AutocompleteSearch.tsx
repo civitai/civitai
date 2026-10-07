@@ -148,9 +148,7 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
   // already said.
   const pathname = usePathname();
   const currentSection = pathname.split('/')[1] || 'models';
-  // While image search is off, `/images` defaults the header search to Models rather than to a
-  // target that can only show the maintenance notice. A pick from the selector is not routed
-  // through this, so choosing Images explicitly still shows that notice.
+  // Default only: an explicit selector pick is not routed through here (see resolveSearchTarget).
   const searchTarget = resolveSearchTarget(
     targetData.find((t) => t.value === currentSection)?.value ?? 'models',
     features
@@ -161,8 +159,8 @@ const AutocompleteSearchInner = forwardRef<{ focus: () => void }, Props>(({ ...p
     // all), so text a user typed and walked away from would otherwise reappear — and be searched
     // again — in the next section they land in.
     //
-    // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the line
-    // above collapses every first path segment outside `targetData` to `'models'` (and `images`
+    // 🔴 This runs when `searchTarget` CHANGES, which is narrower than "on navigation": the
+    // statement above collapses every first path segment outside `targetData` to `'models'` (and `images`
     // too while image search is off), so `/` → `/models/123/slug`, or any move between two such
     // paths, leaves it unchanged and this never runs. The other explicit discard is
     // `blurAndDiscardCarriedText`, on submit and on Escape; separately, emptying the input

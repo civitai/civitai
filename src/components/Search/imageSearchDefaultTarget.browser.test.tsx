@@ -5,16 +5,8 @@ import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-/**
- * Both search dropdowns resolve their DEFAULT target through `resolveSearchTarget`. The header
- * search's default follows the URL section: while image search is off, `/images` must default to
- * Models with a real search client — not to Images, which can only show the maintenance item (and
- * is wired to the empty client). `QuickSearchDropdown`'s default comes from its caller instead.
- *
- * Mounts the real components; only the URL, the flags and the search provider are stubbed. The
- * provider is replaced with a recorder, so the client and index it WOULD have been given are
- * observable without any search transport.
- */
+// Only the URL, the flags and the InstantSearch provider are stubbed; the provider is a recorder of
+// the index and client it would have been given.
 
 const state = vi.hoisted(() => ({
   pathname: '/images',
@@ -90,7 +82,8 @@ describe('AutocompleteSearch — default target on /images', () => {
   });
 
   // INVARIANT GUARD (green at the base too): only the DEFAULT moved. An explicit pick of Images
-  // still selects it, on the empty client, so the maintenance item is what the user sees.
+  // still selects it, on the empty client. The notice itself is drawn inside the provider (stubbed
+  // out here), gated on that same target, and this change does not touch it.
   test('an explicit pick of Images still selects it, on the empty client', async () => {
     renderWithProviders(<AutocompleteSearch />);
     // No assertion on the starting value: this guard is about the pick, not the default.

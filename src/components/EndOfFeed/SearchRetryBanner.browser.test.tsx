@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -9,6 +9,15 @@ import { SearchRetryBanner } from '~/components/EndOfFeed/SearchRetryBanner';
  * The banner shows on ANY image-feed failure, so its copy must not blame a particular backend.
  * Each state's text is pinned whole: a word-level check ("no 'search'") is walkable by rewording.
  */
+
+// The countdown text is derived from `Date.now()` on a 200 ms interval, so pinning "600s" is only
+// stable with both frozen. `setTimeout` stays real: `expect.element` polls on it.
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] });
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // The page's text, minus the `<style>` blocks MantineProvider injects (their CSS is textContent too).
 const visibleText = () => {
@@ -28,7 +37,7 @@ describe('SearchRetryBanner copy', () => {
     await expect.element(button).toBeInTheDocument();
     expect(visibleText()).toBe(
       'Unable to load more images right now' +
-        'Images are taking longer than usual to load. Try again in a moment.' +
+        'Something went wrong on our end. Try again in a moment.' +
         'Try again'
     );
 
@@ -36,8 +45,7 @@ describe('SearchRetryBanner copy', () => {
     expect(onRetry).toHaveBeenCalledTimes(1);
   });
 
-  // A delay far beyond the test's budget, so the countdown can never fire and take the state away.
-  test('retrying state (initial load): neutral copy', async () => {
+  test('countdown state (initial load): neutral copy', async () => {
     renderWithProviders(
       <SearchRetryBanner
         delayMs={600_000}
@@ -74,6 +82,24 @@ describe('SearchRetryBanner copy', () => {
       'More images are taking longer than usual' +
         "We'll keep trying automatically." +
         'Retrying in 600s · Attempt 1 of 3'
+    );
+  });
+
+  // Absorbing: nothing in the test flips `countdownActive` back on.
+  test('retrying-now state: neutral copy', async () => {
+    renderWithProviders(
+      <SearchRetryBanner
+        delayMs={600_000}
+        attempt={2}
+        maxAttempts={3}
+        onRetry={() => undefined}
+        countdownActive={false}
+      />
+    );
+
+    await expect.element(page.getByText('Retrying now — hang tight')).toBeInTheDocument();
+    expect(visibleText()).toBe(
+      'Retrying now — hang tight' + "We'll keep trying automatically." + 'Attempt 2 of 3'
     );
   });
 });
