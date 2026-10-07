@@ -234,7 +234,7 @@ export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy"
 
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
-export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
+export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
 
@@ -3426,6 +3426,9 @@ export interface Bounty {
   poi: boolean;
   complete: boolean;
   refunded: boolean;
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
+  payoutWinnerUserId: number | null;
   availability: Availability;
   nsfwLevel: number;
   moderatorNsfwLevel: number | null;

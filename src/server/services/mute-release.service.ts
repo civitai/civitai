@@ -23,15 +23,16 @@ export type MuteReleaseArgs = {
 
 export type MuteRelease =
   | { released: true; closedCaseIds: number[]; user: Prisma.UserGetPayload<object> }
-  | { released: false; reason: 'not-found' | 'open-case' | 'not-timed'; closedCaseIds: [] };
+  | { released: false; reason: 'not-found' | 'not-timed' | 'scam-case'; closedCaseIds: [] };
 
 /**
  * The database half of every unmute, for a caller already inside a transaction. It takes the account
  * row lock that a scam verdict takes before filing, so a verdict either sees this unmute or files
  * first and has its case closed here. Run `afterMuteReleased` once the transaction commits.
  *
- * A moderator's unmute overrides an open scam case and closes it. Nobody decided a system release,
- * so it waits while any case is open.
+ * Only a moderator's unmute closes open scam cases. A system release (an expiry, the strike engine)
+ * lifts its own mute despite other open cases, but never one a Pending scam case holds: that mute
+ * ends with the ruling.
  */
 export async function releaseMuteInTransaction(
   tx: Prisma.TransactionClient,
@@ -44,10 +45,11 @@ export async function releaseMuteInTransaction(
   if (onlyIfTimed && !locked.muteExpiresAt)
     return { released: false, reason: 'not-timed', closedCaseIds: [] };
 
+  // System callers (expiry, strike engine, ToS acceptance) must pass the system user id: a session
+  // user's id here would read as a moderator and bypass the scam-case gate.
   const byModerator = actorId > 0;
-  if (!byModerator && (await hasOtherPendingRestriction(tx, userId)))
-    return { released: false, reason: 'open-case', closedCaseIds: [] };
-
+  if (!byModerator && (await hasOtherPendingRestriction(tx, userId, undefined, 'scam')))
+    return { released: false, reason: 'scam-case', closedCaseIds: [] };
   const cleared = clearedMuteFields(locked.meta);
   const user = await tx.user.update({
     where: { id: userId },

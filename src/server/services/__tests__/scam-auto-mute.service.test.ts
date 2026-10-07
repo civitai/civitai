@@ -4,6 +4,7 @@ import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as Restriction from '~/server/services/user-restriction.service';
 import type * as Ledger from '~/server/services/scam-case-ledger';
 import type * as Cleanup from '~/server/services/scam-cleanup.service';
+import type * as StrikeService from '~/server/services/strike.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { constants } from '~/server/common/constants';
@@ -20,8 +21,9 @@ const m = vi.hoisted(() => ({
   closeScamCasesOpenedBefore: vi.fn(async (): Promise<number[]> => []),
   appendScamTrigger: vi.fn(),
   recordScamCleanup: vi.fn(async () => undefined),
-  fileScamCleanupRecord: vi.fn(),
+  linkScamStrike: vi.fn(async () => false),
   restoreScamCases: vi.fn(async () => undefined),
+  createStrike: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
@@ -39,6 +41,10 @@ vi.mock('~/server/services/user-restriction.service', async (importOriginal) => 
   claimPendingReviewMute: m.claimPendingReviewMute,
   announcePendingReviewMute: m.announcePendingReviewMute,
 }));
+vi.mock('~/server/services/strike.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StrikeService>()),
+  createStrike: m.createStrike,
+}));
 vi.mock('~/server/services/scam-cleanup.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Cleanup>()),
   runScamCleanup: m.runScamCleanup,
@@ -51,7 +57,7 @@ vi.mock('~/server/services/scam-case-ledger', async (importOriginal) => ({
   closeScamCasesOpenedBefore: m.closeScamCasesOpenedBefore,
   appendScamTrigger: m.appendScamTrigger,
   recordScamCleanup: m.recordScamCleanup,
-  fileScamCleanupRecord: m.fileScamCleanupRecord,
+  linkScamStrike: m.linkScamStrike,
   restoreScamCases: m.restoreScamCases,
 }));
 
@@ -91,7 +97,8 @@ const base = { userId: 42, cleanup: 'comments' as const, evidence: evidence() };
 
 const nothingActed = () => {
   expect(m.claimPendingReviewMute).not.toHaveBeenCalled();
-  expect(m.fileScamCleanupRecord).not.toHaveBeenCalled();
+  expect(m.announcePendingReviewMute).not.toHaveBeenCalled();
+  expect(m.createStrike).not.toHaveBeenCalled();
   expect(m.runScamCleanup).not.toHaveBeenCalled();
   expect(m.trackModActivity).not.toHaveBeenCalled();
   expect(m.userActivity).not.toHaveBeenCalled();
@@ -111,7 +118,13 @@ beforeEach(() => {
   });
   m.appendScamTrigger.mockResolvedValue(1);
   m.runScamCleanup.mockResolvedValue(RECORD);
-  m.fileScamCleanupRecord.mockResolvedValue({ userRestrictionId: 9, index: 0, created: true });
+  // As the real one does: the row lands, `onCreated` runs, then escalation.
+  m.createStrike.mockImplementation(
+    async ({ onCreated }: { onCreated?: (strike: { id: number }) => Promise<void> }) => {
+      await onCreated?.({ id: 77 });
+      return { id: 77 };
+    }
+  );
 });
 
 describe('autoMuteScamAccount', () => {
@@ -121,6 +134,7 @@ describe('autoMuteScamAccount', () => {
       userRestrictionId: 5,
       deduped: false,
       accountAgeDays: 2,
+      strikeId: 77,
       cleanup: RECORD,
     });
 
@@ -158,6 +172,80 @@ describe('autoMuteScamAccount', () => {
     expect(m.appendScamTrigger).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.user.update).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('issues one silent, non-expiring 3-point Scam strike with the public reason, and records it on the case', async () => {
+    await autoMuteScamAccount(base);
+    expect(m.createStrike).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        userId: 42,
+        reason: 'Scam',
+        points: 3,
+        description: 'Impersonating Civitai staff',
+        notifyUser: false,
+      })
+    );
+    const { expiresInDays, internalNotes } = m.createStrike.mock.calls[0][0];
+    expect(expiresInDays).toBeGreaterThanOrEqual(36500);
+    expect(internalNotes).toContain('Fake support');
+    expect(m.linkScamStrike).toHaveBeenCalledWith(5, 0, 'wf-1', 77);
+    expect(m.announcePendingReviewMute.mock.invocationCallOrder[0]).toBeLessThan(
+      m.createStrike.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('still files the case and cleans up when the daily cap withholds the strike', async () => {
+    m.createStrike.mockResolvedValue(null);
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: null });
+    expect(m.linkScamStrike).not.toHaveBeenCalled();
+    expect(m.runScamCleanup).toHaveBeenCalled();
+  });
+
+  it('keeps the mute and its strike when recording the strike id on the case fails', async () => {
+    m.linkScamStrike.mockRejectedValueOnce(new Error('update failed'));
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: 77 });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'strike record failed', userRestrictionId: 5 })
+    );
+  });
+
+  it('links a strike whose escalation then failed, and says the strike landed', async () => {
+    m.createStrike.mockImplementationOnce(
+      async ({ onCreated }: { onCreated?: (strike: { id: number }) => Promise<void> }) => {
+        await onCreated?.({ id: 77 });
+        throw new Error('escalation deadlock');
+      }
+    );
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: 77 });
+    expect(m.linkScamStrike).toHaveBeenCalledWith(5, 0, 'wf-1', 77);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'strike issued, but escalation failed' })
+    );
+    expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'strike failed' })
+    );
+  });
+
+  it('reports no live strike when its case was overturned before the strike landed', async () => {
+    m.linkScamStrike.mockResolvedValueOnce(true);
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: null });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'info',
+        message: 'strike voided: its case was overturned before the strike landed',
+        strikeId: 77,
+        userRestrictionId: 5,
+      })
+    );
+  });
+
+  it('logs a failed strike with the case id and carries on', async () => {
+    m.createStrike.mockRejectedValue(new Error('enum value missing'));
+    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, strikeId: null });
+    expect(m.runScamCleanup).toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'strike failed', userRestrictionId: 5 })
+    );
   });
 
   it('writes the ModActivity before any best-effort step', async () => {
@@ -268,53 +356,14 @@ describe('autoMuteScamAccount', () => {
     });
   });
 
-  describe('when a moderator already stands behind a mute', () => {
-    beforeEach(() =>
-      dbMock.dbWrite.user.findUnique.mockResolvedValue(user({ muted: true, mutedAt: new Date() }))
-    );
-
-    it('opens no case, but records the verdict and its cleanup so they can be restored', async () => {
-      expect(await autoMuteScamAccount(base)).toEqual({
-        muted: false,
-        skipped: 'moderator-muted',
-        cleanup: RECORD,
-      });
-      expect(m.claimPendingReviewMute).not.toHaveBeenCalled();
-      expect(m.fileScamCleanupRecord).toHaveBeenCalledWith(
-        42,
-        expect.objectContaining({ category: 'scam', dedupeKey: 'wf-1', reason: 'Fake support' }),
-        expect.anything()
-      );
-      expect(m.runScamCleanup).toHaveBeenCalledWith('comments', 42);
-      expect(m.recordScamCleanup).toHaveBeenCalledWith(9, 0, 'wf-1', RECORD);
-      expect(m.trackModActivity).toHaveBeenCalledExactlyOnceWith(-1, {
-        entityType: 'user',
-        entityId: 42,
-        activity: 'scamCleanup',
-      });
-      expect(m.userActivity).not.toHaveBeenCalled();
-    });
-
-    it('audits only the record it opened, not each verdict appended to it', async () => {
-      m.fileScamCleanupRecord.mockResolvedValue({ userRestrictionId: 9, index: 3, created: false });
-      await autoMuteScamAccount(base);
-      expect(m.recordScamCleanup).toHaveBeenCalledWith(9, 3, 'wf-1', RECORD);
-      expect(m.trackModActivity).not.toHaveBeenCalled();
-    });
-
-    it('does nothing when a concurrent redelivery recorded the same verdict first', async () => {
-      m.fileScamCleanupRecord.mockResolvedValue(null);
-      expect(await autoMuteScamAccount(base)).toEqual({ muted: false, skipped: 'duplicate' });
-      expect(m.runScamCleanup).not.toHaveBeenCalled();
-      expect(m.trackModActivity).not.toHaveBeenCalled();
-    });
-  });
-
-  it('still files a case and cleans up when the account is muted without a moderator verdict', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValue(user({ muted: true }));
-    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, deduped: false });
-    expect(m.runScamCleanup).toHaveBeenCalled();
-    expect(m.fileScamCleanupRecord).not.toHaveBeenCalled();
+  it.each([
+    ['by a moderator', { muted: true, mutedAt: new Date() }],
+    ['pending review or by strikes', { muted: true }],
+  ])('skips an account already muted %s without acting', async (_label, over) => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(user(over));
+    expect(await autoMuteScamAccount(base)).toEqual({ muted: false, skipped: 'muted' });
+    nothingActed();
+    expect(m.scamVerdictActioned).not.toHaveBeenCalled();
   });
 
   it('appends to an open case without a second audit row or ClickHouse event', async () => {
@@ -324,7 +373,12 @@ describe('autoMuteScamAccount', () => {
       deduped: true,
       wasMuted: true,
     });
-    expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true, deduped: true });
+    expect(await autoMuteScamAccount(base)).toMatchObject({
+      muted: true,
+      deduped: true,
+      strikeId: null,
+    });
+    expect(m.createStrike).not.toHaveBeenCalled();
     expect(m.appendScamTrigger).toHaveBeenCalledWith(
       5,
       expect.objectContaining({ dedupeKey: 'wf-1' }),

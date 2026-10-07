@@ -5,7 +5,8 @@ const ASCII_I_LOOKALIKES = /[1l|!]/g;
 
 function matchForms(value: string) {
   const folded = foldConfusables(value);
-  return [...new Set([value.toLowerCase(), folded, folded.replace(ASCII_I_LOOKALIKES, 'i')])];
+  const forms = [value.toLowerCase(), folded, folded.replace(ASCII_I_LOOKALIKES, 'i')];
+  return [...new Set([...forms, ...forms.map((form) => form.replace(/_/g, ''))])];
 }
 
 export function isUsernameBlocked(username: string, lists: { exact: string[]; partial: string[] }) {

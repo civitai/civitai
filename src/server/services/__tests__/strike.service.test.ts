@@ -112,9 +112,15 @@ import { StrikeReason, StrikeStatus } from '~/shared/utils/prisma/enums';
  */
 /**
  * A transaction client. The release helper's lock on the account row is answered from `user`; every
- * other raw read takes the next of `rawAnswers`. `openCase` puts a Pending restriction on the account.
+ * other raw read takes the next of `rawAnswers`. `openCase` puts a Pending restriction of that type
+ * on the account (`true` is a generation case).
  */
-function txClient(user: any, rawAnswers: unknown[][], { openCase = false } = {}) {
+function txClient(
+  user: any,
+  rawAnswers: unknown[][],
+  { openCase = false as boolean | 'scam' | 'generation' } = {}
+) {
+  const caseType = openCase === true ? 'generation' : openCase || null;
   const answers = [...rawAnswers];
   const queryRaw = vi.fn(async (strings: string[]) => {
     const text = strings.join(' ');
@@ -127,7 +133,11 @@ function txClient(user: any, rawAnswers: unknown[][], { openCase = false } = {})
     $queryRaw: queryRaw,
     $executeRaw: vi.fn().mockResolvedValue(1),
     user: { findUnique: vi.fn().mockResolvedValue(user), update: userUpdate },
-    userRestriction: { findFirst: vi.fn().mockResolvedValue(openCase ? { id: 9 } : null) },
+    userRestriction: {
+      findFirst: vi.fn(async ({ where }: { where: { type?: string } }) =>
+        caseType && (!where.type || where.type === caseType) ? { id: 9 } : null
+      ),
+    },
   };
   return { tx, queryRaw, userUpdate };
 }
@@ -135,7 +145,7 @@ function txClient(user: any, rawAnswers: unknown[][], { openCase = false } = {})
 function mockTransactionForEscalation(
   pointsSum: number | null,
   user: any,
-  opts: { lastStrikeAt?: Date | null; openCase?: boolean } = {}
+  opts: { lastStrikeAt?: Date | null; openCase?: boolean | 'scam' | 'generation' } = {}
 ) {
   const { lastStrikeAt = new Date('2026-06-01'), openCase } = opts;
   // Two reads in the transaction now: the locked point sum, then the last strike date the acceptance
@@ -187,6 +197,14 @@ describe('strike.service', () => {
       const result = await shouldRateLimitStrike(1);
 
       expect(result).toBe(false);
+    });
+
+    it('counts neither voided strikes nor the exempt reasons', async () => {
+      mockDbRead.$queryRaw.mockResolvedValue([{ count: 0 }]);
+      await shouldRateLimitStrike(1);
+      const [strings, ...values] = mockDbRead.$queryRaw.mock.calls[0];
+      expect((strings as string[]).join('?')).toContain('"status" != ?::"StrikeStatus"');
+      expect(values).toEqual([1, [StrikeReason.ManualModAction, StrikeReason.Scam], 'Voided']);
     });
   });
 
@@ -683,7 +701,7 @@ describe('strike.service', () => {
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
     });
 
-    it('<2 points, strike-muted, but a review case is open: keeps the mute', async () => {
+    it('<2 points, strike-muted, and a review case is open: still unmutes', async () => {
       const { userUpdate } = mockTransactionForEscalation(
         1,
         {
@@ -696,8 +714,43 @@ describe('strike.service', () => {
 
       const result = await evaluateStrikeEscalation(1, { allowMute: true });
 
-      expect(result).toEqual({ totalPoints: 1, action: 'none' });
-      expect(userUpdate).not.toHaveBeenCalled();
+      expect(result).toEqual({ totalPoints: 1, action: 'unmuted' });
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
+      );
+    });
+
+    it('sums only Active, unexpired strikes, so a strike voided as it landed counts for nothing', async () => {
+      const { queryRaw } = mockTransactionForEscalation(0, {
+        muted: false,
+        muteExpiresAt: null,
+        meta: {},
+      });
+
+      expect(await evaluateStrikeEscalation(1, { allowMute: true })).toEqual({
+        totalPoints: 0,
+        action: 'none',
+      });
+      const [strings, ...values] = queryRaw.mock.calls[0];
+      expect((strings as string[]).join('?')).toContain('"status" = ?::"StrikeStatus"');
+      expect((strings as string[]).join('?')).toContain('"expiresAt" > NOW()');
+      expect(values).toContain(StrikeStatus.Active);
+    });
+
+    it('a voided Scam strike never lifts the mute its Pending case holds, but drops the review flag', async () => {
+      const { userUpdate } = mockTransactionForEscalation(
+        0,
+        { muted: true, muteExpiresAt: null, meta: { strikeFlaggedForReview: true } },
+        { openCase: 'scam' }
+      );
+
+      const result = await evaluateStrikeEscalation(1);
+
+      expect(result).toEqual({ totalPoints: 0, action: 'none' });
+      expect(userUpdate).toHaveBeenCalledExactlyOnceWith({
+        where: { id: 1 },
+        data: { meta: { strikeFlaggedForReview: false } },
+      });
       expect(mockCreateNotification).not.toHaveBeenCalled();
     });
 
@@ -944,6 +997,48 @@ describe('strike.service', () => {
       const result = await createStrike(manualInput);
 
       expect(result).toEqual(mockCreatedStrike);
+    });
+
+    it('finds an account the replica has not caught up with on the primary', async () => {
+      mockDbRead.user.findUnique.mockReset();
+      mockDbRead.user.findUnique.mockResolvedValueOnce(null);
+      mockDbWrite.user.findUnique.mockResolvedValueOnce({ id: 100 });
+
+      expect(await createStrike(baseInput)).toEqual(mockCreatedStrike);
+    });
+
+    it('sends no notice, email or escalation notice when the caller sends its own', async () => {
+      mockTransactionForEscalation(3, {
+        muted: true,
+        mutedAt: null,
+        muteExpiresAt: null,
+        meta: {},
+      });
+
+      expect(await createStrike({ ...baseInput, points: 3, notifyUser: false })).toEqual(
+        mockCreatedStrike
+      );
+
+      expect(mockCreateNotification).not.toHaveBeenCalled();
+      expect(mockStrikeIssuedEmailSend).not.toHaveBeenCalled();
+      expect(mockDbWrite.$transaction).toHaveBeenCalled();
+    });
+
+    it('hands the new strike to onCreated before escalation, which can still throw', async () => {
+      const onCreated = vi.fn(async () => undefined);
+      mockDbWrite.$transaction.mockRejectedValueOnce(new Error('deadlock'));
+
+      await expect(createStrike({ ...baseInput, onCreated })).rejects.toThrow('deadlock');
+      expect(onCreated).toHaveBeenCalledExactlyOnceWith(mockCreatedStrike);
+    });
+
+    it('never rate-limits a Scam strike: a case issues at most one', async () => {
+      mockDbRead.$queryRaw.mockReset();
+      mockDbRead.$queryRaw.mockResolvedValue([{ count: 1 }]);
+
+      expect(
+        await createStrike({ ...baseInput, reason: StrikeReason.Scam, notifyUser: false })
+      ).toEqual(mockCreatedStrike);
     });
 
     it('calls evaluateStrikeEscalation after creation', async () => {
@@ -1197,10 +1292,14 @@ describe('strike.service', () => {
       meta: { muteReason: 'strike-escalation' },
     };
 
-    function mockAcceptTransaction(user: any, pointsSum: number, { openCase = false } = {}) {
+    function mockAcceptTransaction(
+      user: any,
+      pointsSum: number,
+      { openCase = false as boolean | 'scam' | 'generation' } = {}
+    ) {
       const { tx, userUpdate } = txClient(user, [[{ sum: pointsSum }]], { openCase });
       mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
-      return { userUpdate };
+      return { tx, userUpdate };
     }
 
     it('records the acceptance and lifts the mute', async () => {
@@ -1220,14 +1319,25 @@ describe('strike.service', () => {
       expect(mockRefreshSession).toHaveBeenCalledWith(1, { caller: 'strike' });
     });
 
-    it('refuses while a review case is open, even for a strike mute', async () => {
-      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2, { openCase: true });
+    it('refuses while a Pending scam case also holds the account', async () => {
+      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2, { openCase: 'scam' });
 
       const result = await acceptTosAfterMute({ userId: 1 });
 
       expect(result).toEqual({ unmuted: false, reason: 'pending-review' });
       expect(userUpdate).not.toHaveBeenCalled();
       expect(mockRefreshSession).not.toHaveBeenCalled();
+      // Acceptance is still recorded.
+      expect(mockSetUserSetting).toHaveBeenCalled();
+    });
+
+    it('still lifts the strike mute while only another kind of case is open', async () => {
+      const { userUpdate } = mockAcceptTransaction(strikeMuted, 2, { openCase: 'generation' });
+
+      expect(await acceptTosAfterMute({ userId: 1 })).toEqual({ unmuted: true });
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
+      );
     });
 
     it('records against the domain the user accepted on', async () => {
@@ -1278,6 +1388,20 @@ describe('strike.service', () => {
       expect(userUpdate).not.toHaveBeenCalled();
     });
 
+    it('locks the account row before it reads the mute or the points', async () => {
+      const { tx } = mockAcceptTransaction(strikeMuted, 2);
+
+      await acceptTosAfterMute({ userId: 1 });
+
+      const [first, second] = tx.$queryRaw.mock.calls.map(sqlOf);
+      expect(first).toContain('FROM "User" WHERE id =');
+      expect(first).toContain('FOR UPDATE');
+      expect(second).toContain('SUM(points)');
+      expect(tx.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(
+        tx.user.findUnique.mock.invocationCallOrder[0]
+      );
+    });
+
     it('decides on state read INSIDE the transaction, not before it', async () => {
       // Pins the eligibility read to the transaction: reverted to a pre-transaction `dbRead` read,
       // this decides on state that may already be stale.
@@ -1322,12 +1446,27 @@ describe('strike.service', () => {
       expect(mockInvalidateSession).toHaveBeenCalledWith(100, 'moderation');
     });
 
-    it("keeps a moderator's lapsed timed mute while a review case is open", async () => {
+    it("releases a moderator's lapsed timed mute even while a review case is open", async () => {
       mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 100 }]);
       const { tx, userUpdate } = txClient(
         { muted: true, mutedAt: new Date(), muteExpiresAt: new Date(0), meta: {} },
         [],
         { openCase: true }
+      );
+      mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
+
+      expect(await processTimedUnmutes()).toEqual({ unmutedCount: 1 });
+      expect(userUpdate).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ muted: false }) })
+      );
+    });
+
+    it('keeps a lapsed timed mute while a Pending scam case holds the account', async () => {
+      mockDbRead.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([{ id: 100 }]);
+      const { tx, userUpdate } = txClient(
+        { muted: true, mutedAt: new Date(), muteExpiresAt: new Date(0), meta: {} },
+        [],
+        { openCase: 'scam' }
       );
       mockDbWrite.$transaction.mockImplementation(async (fn: any) => fn(tx));
 

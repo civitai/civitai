@@ -12,9 +12,9 @@ import {
 import {
   appendScamTrigger,
   closeScamCasesOpenedBefore,
-  fileScamCleanupRecord,
   lastModeratorUnmuteAt,
   recordScamCleanup,
+  linkScamStrike,
   restoreScamCases,
   scamTextSeenBefore,
   scamVerdictActioned,
@@ -29,12 +29,20 @@ import {
   announcePendingReviewMute,
   claimPendingReviewMute,
 } from '~/server/services/user-restriction.service';
+import { createStrike } from '~/server/services/strike.service';
+import { strikeReasonPublicLabel } from '~/server/schema/strike.schema';
 import { PROTECTED_USER_IDS } from '~/server/utils/protected-user-ids';
+import { StrikeReason } from '~/shared/utils/prisma/enums';
+import {
+  SCAM_STRIKE_EXPIRES_IN_DAYS,
+  SCAM_STRIKE_POINTS,
+} from '~/shared/constants/strike.constants';
 
 export { SCAM_AUTO_MUTE_MAX_ACCOUNT_AGE_DAYS };
 
 const SYSTEM_ACTOR_ID = constants.system.user.id;
 const MAX_REASON_CHARS = 300;
+const MAX_INTERNAL_NOTES_CHARS = 2000;
 
 export type ScamEvidence = {
   /** `text-scan:<EntityType>:<id>` or `clavata:<type>` */
@@ -59,7 +67,7 @@ export type ScamAutoMuteSkip =
   | 'too-old'
   | 'duplicate'
   | 'unmuted-since'
-  | 'moderator-muted';
+  | 'muted';
 
 export type ScamAutoMuteResult =
   | {
@@ -67,15 +75,15 @@ export type ScamAutoMuteResult =
       userRestrictionId: number;
       deduped: boolean;
       accountAgeDays: number;
+      strikeId: number | null;
       cleanup: ScamCleanupRecord | null;
     }
-  | { muted: false; skipped: ScamAutoMuteSkip; cleanup?: ScamCleanupRecord | null };
+  | { muted: false; skipped: ScamAutoMuteSkip };
 
 type Slot = { userRestrictionId: number; index: number };
 
 type Decision =
   | { kind: 'skip'; skipped: ScamAutoMuteSkip; closed: number[] }
-  | { kind: 'record'; slot: Slot; created: boolean; closed: number[] }
   | {
       kind: 'case';
       slot: Slot;
@@ -138,7 +146,6 @@ async function decide(
       createdAt: true,
       isModerator: true,
       muted: true,
-      mutedAt: true,
       bannedAt: true,
       deletedAt: true,
     },
@@ -146,6 +153,7 @@ async function decide(
   if (!user) return { kind: 'skip', skipped: 'not-found', closed: [] };
   const ineligible = scamMuteIneligibility(user, { ignoreAccountAge });
   if (ineligible) return { kind: 'skip', skipped: ineligible, closed: [] };
+  if (user.muted) return { kind: 'skip', skipped: 'muted', closed: [] };
 
   if (await scamVerdictActioned(userId, evidence.dedupeKey, tx))
     return { kind: 'skip', skipped: 'duplicate', closed: [] };
@@ -171,12 +179,6 @@ async function decide(
     contentAt: evidence.contentAt?.toISOString() ?? null,
   };
 
-  if (user.muted && user.mutedAt) {
-    const record = await fileScamCleanupRecord(userId, entry, tx);
-    if (!record) return { kind: 'skip', skipped: 'duplicate', closed };
-    return { kind: 'record', slot: record, created: record.created, closed };
-  }
-
   const claim = await claimPendingReviewMute(tx, { userId, triggers: [entry], type: 'scam' });
   if (!claim.muted) return { kind: 'skip', skipped: claim.skipped, closed };
   const index = claim.deduped ? await appendScamTrigger(claim.userRestrictionId, entry, tx) : 0;
@@ -193,8 +195,8 @@ async function decide(
 async function decideWithRetry(userId: number, evidence: ScamEvidence, ignoreAccountAge: boolean) {
   const attempt = () =>
     dbWrite.$transaction((tx) => decide(tx, userId, evidence, ignoreAccountAge));
-  // Two verdicts racing for one account both pass the dedupe; the one-open-case index stops the
-  // second, and the retry lands in the dedupe path.
+  // Two verdicts racing for one account both pass the checks; the one-open-case index stops the
+  // second, and the retry sees the account muted and skips.
   return attempt().catch((error) => {
     if ((error as { code?: unknown })?.code !== 'P2002') throw error;
     return attempt();
@@ -222,19 +224,81 @@ async function cleanUpAndRecord(
   return record;
 }
 
-async function audit(
-  userId: number,
-  activity: 'autoMuteScam' | 'scamCleanup',
-  slot: Slot,
-  source: string
-) {
-  await trackModActivity(SYSTEM_ACTOR_ID, { entityType: 'user', entityId: userId, activity }).catch(
-    (error) => logError('audit failed', userId, source, error, slot.userRestrictionId)
-  );
+async function audit(userId: number, slot: Slot, source: string) {
+  await trackModActivity(SYSTEM_ACTOR_ID, {
+    entityType: 'user',
+    entityId: userId,
+    activity: 'autoMuteScam',
+  }).catch((error) => logError('audit failed', userId, source, error, slot.userRestrictionId));
 }
 
 /**
- * Throws when it fails before a case or record is filed, so the caller's delivery can be retried.
+ * `null` when no live strike resulted; the case stands either way. The strike is linked to its case
+ * as soon as the row exists, so a later failure cannot leave it out of reach of an overturn. A case
+ * overturned before that link voids the strike at once; escalation then counts nothing for it.
+ */
+async function issueScamStrike(userId: number, evidence: ScamEvidence, slot: Slot) {
+  let landed: number | null = null;
+  let voided = false;
+  try {
+    const strike = await createStrike({
+      userId,
+      reason: StrikeReason.Scam,
+      points: SCAM_STRIKE_POINTS,
+      description: strikeReasonPublicLabel[StrikeReason.Scam],
+      internalNotes:
+        `Scam case ${slot.userRestrictionId} (${evidence.source}): ${evidence.reason}`.slice(
+          0,
+          MAX_INTERNAL_NOTES_CHARS
+        ),
+      expiresInDays: SCAM_STRIKE_EXPIRES_IN_DAYS,
+      notifyUser: false,
+      onCreated: async ({ id }) => {
+        landed = id;
+        voided = await linkScamStrike(
+          slot.userRestrictionId,
+          slot.index,
+          evidence.dedupeKey,
+          id
+        ).catch(async (error) => {
+          await logError(
+            'strike record failed',
+            userId,
+            evidence.source,
+            error,
+            slot.userRestrictionId
+          );
+          return false;
+        });
+      },
+    });
+    if (strike && voided) {
+      await logToAxiom({
+        name: 'scam-auto-mute',
+        type: 'info',
+        message: 'strike voided: its case was overturned before the strike landed',
+        userId,
+        source: evidence.source,
+        userRestrictionId: slot.userRestrictionId,
+        strikeId: strike.id,
+      }).catch(() => undefined);
+      return null;
+    }
+    return strike?.id ?? null;
+  } catch (error) {
+    await logError(
+      landed ? 'strike issued, but escalation failed' : 'strike failed',
+      userId,
+      evidence.source,
+      error,
+      slot.userRestrictionId
+    );
+    return landed;
+  }
+}
+
+/**
+ * Throws when it fails before the case is filed, so the caller's delivery can be retried.
  * After filing nothing throws: the remaining steps log with the case id instead.
  */
 export async function autoMuteScamAccount({
@@ -256,18 +320,10 @@ export async function autoMuteScamAccount({
 
   if (decision.kind === 'skip') return skip(decision.skipped);
 
-  if (decision.kind === 'record') {
-    if (decision.created) await audit(userId, 'scamCleanup', decision.slot, evidence.source);
-    return {
-      muted: false,
-      skipped: 'moderator-muted',
-      cleanup: await cleanUpAndRecord(cleanup, userId, evidence, decision.slot),
-    };
-  }
-
   const { claim, slot, accountAgeDays } = decision;
-  if (!claim.deduped) await audit(userId, 'autoMuteScam', slot, evidence.source);
+  if (!claim.deduped) await audit(userId, slot, evidence.source);
   await announcePendingReviewMute({ userId, type: 'scam', updateSource: 'scamAutoMute', claim });
+  const strikeId = claim.deduped ? null : await issueScamStrike(userId, evidence, slot);
 
   const record = await cleanUpAndRecord(cleanup, userId, evidence, slot);
 
@@ -291,6 +347,7 @@ export async function autoMuteScamAccount({
     userRestrictionId: slot.userRestrictionId,
     deduped: claim.deduped,
     accountAgeDays,
+    strikeId,
     cleanup: record,
   };
 }

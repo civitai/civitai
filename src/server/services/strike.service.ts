@@ -30,9 +30,13 @@ import { REVIEW_MUTE_POINTS, MUTE_POINTS } from '~/shared/constants/strike.const
 // Rate Limiting
 // ============================================================================
 
+// Uncapped: a moderator's own decision, and a scam case's strike, which the case's dedupe already
+// limits to one per case.
+const RATE_LIMIT_EXEMPT_REASONS: StrikeReason[] = [StrikeReason.ManualModAction, StrikeReason.Scam];
+
 /**
  * Check if an auto-strike should be skipped due to rate limiting.
- * Limits non-manual strikes to max 1 per day per user.
+ * Limits automatic strikes to max 1 per day per user; a voided one does not count.
  */
 export async function shouldRateLimitStrike(userId: number): Promise<boolean> {
   const [result] = await dbRead.$queryRaw<[{ count: bigint }]>`
@@ -40,7 +44,8 @@ export async function shouldRateLimitStrike(userId: number): Promise<boolean> {
     FROM "UserStrike"
     WHERE "userId" = ${userId}
       AND "createdAt" >= CURRENT_DATE
-      AND "reason" != ${StrikeReason.ManualModAction}::"StrikeReason"
+      AND "reason" != ALL(${RATE_LIMIT_EXEMPT_REASONS}::"StrikeReason"[])
+      AND "status" != ${StrikeStatus.Voided}::"StrikeStatus"
   `;
   return Number(result.count) >= 1;
 }
@@ -333,7 +338,7 @@ export type EscalationAction = 'none' | 'muted' | 'muted-and-flagged' | 'unmuted
  */
 export async function evaluateStrikeEscalation(
   userId: number,
-  { allowMute = false }: { allowMute?: boolean } = {}
+  { allowMute = false, silent = false }: { allowMute?: boolean; silent?: boolean } = {}
 ): Promise<{ totalPoints: number; action: EscalationAction }> {
   // The point total and the mute-state write are one atomic unit. `FOR UPDATE` on the strike rows
   // only serializes concurrent evaluations while the transaction is open, so the write has to be
@@ -437,6 +442,8 @@ export async function evaluateStrikeEscalation(
               // `mutedAt` null. The ToS gate offers itself on THIS reason only: accepting the Terms
               // must not release an account muted for something else.
               ...(mayLabelMute ? { muteReason: STRIKE_MUTE_REASON } : {}),
+              // The review flag goes once active points are under REVIEW_MUTE_POINTS; the same rule
+              // runs in the de-escalation branch below and in `voidScamCaseStrikes`.
               ...(currentMeta.strikeFlaggedForReview && totalPoints < REVIEW_MUTE_POINTS
                 ? { strikeFlaggedForReview: false }
                 : {}),
@@ -480,7 +487,16 @@ export async function evaluateStrikeEscalation(
             ? { metaPatch: { strikeFlaggedForReview: false } }
             : {}),
         });
-        if (!release.released) return { totalPoints, action: 'none', notify: false };
+        if (!release.released) {
+          // The case's mute stands, but the review flag the voided points raised goes (the flag rule
+          // in the MUTE_POINTS tier above, and in `voidScamCaseStrikes`).
+          if (release.reason === 'scam-case' && currentMeta.strikeFlaggedForReview)
+            await tx.user.update({
+              where: { id: userId },
+              data: { meta: { ...currentMeta, strikeFlaggedForReview: false } },
+            });
+          return { totalPoints, action: 'none', notify: false };
+        }
 
         return { totalPoints, action: 'unmuted', notify: true };
       }
@@ -493,7 +509,7 @@ export async function evaluateStrikeEscalation(
 
   userUpdateCounter?.inc({ location: 'strike.service:evaluateStrikeEscalation' });
 
-  if (notify) {
+  if (notify && !silent) {
     await createNotification(
       action === 'unmuted'
         ? {
@@ -526,10 +542,10 @@ export async function evaluateStrikeEscalation(
  * Writes the acceptance timestamp ITSELF: the modal fires its own settings write without awaiting it,
  * so acceptance is not guaranteed recorded by the time this returns.
  *
- * The release re-reads and re-decides INSIDE a write transaction. Deciding on the replica and then
- * writing by id alone loses whatever happened in between — a third strike landing mid-call would have
- * its `strikeFlaggedForReview` erased by a stale `meta` write, leaving the account unmuted at three
- * points and absent from the review queue.
+ * The release reads and decides INSIDE a write transaction that first locks the account row, the row
+ * strike escalation writes. Deciding on the replica, or before the lock, loses whatever happened in
+ * between — a third strike landing mid-call would have its `strikeFlaggedForReview` erased by a stale
+ * `meta` write, leaving the account unmuted at three points and absent from the review queue.
  */
 export async function acceptTosAfterMute({
   userId,
@@ -550,6 +566,8 @@ export async function acceptTosAfterMute({
 
   const result = await dbWrite.$transaction(
     async (tx): Promise<{ unmuted: boolean; reason?: string }> => {
+      // Locked before anything is read, so a strike landing mid-call waits and is counted.
+      await tx.$queryRaw`SELECT 1 FROM "User" WHERE id = ${userId} FOR UPDATE`;
       const user = await tx.user.findUnique({
         where: { id: userId },
         select: { muted: true, mutedAt: true, meta: true },
@@ -587,6 +605,7 @@ export async function acceptTosAfterMute({
         userId,
         actorId: constants.system.user.id,
       });
+      // Refused while a Pending scam case holds the account: that mute ends only with its ruling.
       if (!release.released) return { unmuted: false, reason: 'pending-review' };
       return { unmuted: true };
     }
@@ -605,8 +624,18 @@ export async function acceptTosAfterMute({
 
 /**
  * Create a new strike for a user.
+ *
+ * `notifyUser: false` is for a caller that sends its own notice for the event the strike is part of;
+ * the strike's notification, email and escalation notice are all skipped. `onCreated` runs once the
+ * row exists and before anything that can throw, so a caller can link the strike to what caused it.
  */
-export async function createStrike(input: CreateStrikeInput & { issuedBy?: number }) {
+export async function createStrike(
+  input: CreateStrikeInput & {
+    issuedBy?: number;
+    notifyUser?: boolean;
+    onCreated?: (strike: { id: number }) => Promise<void>;
+  }
+) {
   const {
     userId,
     reason,
@@ -618,19 +647,23 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
     reportId,
     expiresInDays,
     issuedBy,
+    notifyUser = true,
+    onCreated,
   } = input;
 
-  // Validate user exists
-  const userExists = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: { id: true },
-  });
+  const userArgs = { where: { id: userId }, select: { id: true } } as const;
+  // An automated strike can land seconds after the account was created, ahead of the replica.
+  const userExists =
+    (await dbRead.user.findUnique(userArgs)) ??
+    (await dbWrite.user.findUnique(userArgs).then((user) => {
+      if (user) dbReadFallbackCounter.inc({ entity: 'user', caller: 'createStrike' });
+      return user;
+    }));
   if (!userExists) {
     throw new TRPCError({ code: 'NOT_FOUND', message: `User ${userId} not found` });
   }
 
-  // Rate limit check for non-manual strikes
-  if (reason !== StrikeReason.ManualModAction) {
+  if (!RATE_LIMIT_EXEMPT_REASONS.includes(reason)) {
     const shouldLimit = await shouldRateLimitStrike(userId);
     if (shouldLimit) {
       logToAxiom({
@@ -662,6 +695,7 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
       issuedBy,
     },
   });
+  await onCreated?.(strike);
 
   // Deliberately not fatal: the strike row is already committed, so throwing here would report a
   // failure for a strike that landed — and a moderator retrying a manual strike issues a second one,
@@ -684,7 +718,8 @@ export async function createStrike(input: CreateStrikeInput & { issuedBy?: numbe
     });
   }
 
-  await evaluateStrikeEscalation(userId, { allowMute: true });
+  await evaluateStrikeEscalation(userId, { allowMute: true, silent: !notifyUser });
+  if (!notifyUser) return strike;
 
   // Get updated active points for notification/email
   const activePoints = await getActiveStrikePoints(userId);

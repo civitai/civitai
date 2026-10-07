@@ -240,18 +240,21 @@ export async function announcePendingReviewMute({
 }
 
 /**
- * Whether the account has an open case other than `exceptId`. Every path that lifts a mute asks this
- * first: releasing the account while another case holds it would end that review before its ruling.
+ * Whether the account has an open case (of `type`, when given) other than `exceptId`. A ruling asks
+ * this before lifting the mute, so overturning one case does not release an account another case
+ * still holds; a system release asks it for scam cases, whose mute only a ruling ends.
  */
 export async function hasOtherPendingRestriction(
   client: Pick<Prisma.TransactionClient, 'userRestriction'>,
   userId: number,
-  exceptId?: number
+  exceptId?: number,
+  type?: UserRestrictionType
 ) {
   const other = await client.userRestriction.findFirst({
     where: {
       userId,
       status: UserRestrictionStatus.Pending,
+      ...(type ? { type } : {}),
       ...(exceptId !== undefined ? { id: { not: exceptId } } : {}),
     },
     select: { id: true },

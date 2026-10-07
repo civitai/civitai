@@ -1438,7 +1438,30 @@ export const removeAllContent = async ({
   await dbWrite.bountyEntry.deleteMany({
     where: { userId: id, benefactors: { none: {} } },
   });
-  await dbWrite.bounty.deleteMany({ where: { userId: id } });
+  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
+  const unsettled = await dbWrite.bounty.findMany({
+    // `isPayoutPending` as a query; keep the two in step.
+    where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
+    select: { id: true },
+  });
+  const keptBountyIds: number[] = [];
+  if (unsettled.length) {
+    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
+      '~/server/services/bounty.service'
+    );
+    for (const { id: bountyId } of unsettled)
+      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
+        keptBountyIds.push(bountyId);
+    if (keptBountyIds.length)
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: 'Kept bounties whose payout is not settled',
+        userId: id,
+        bountyIds: keptBountyIds,
+      }).catch(() => undefined);
+  }
+  await dbWrite.bounty.deleteMany({ where: { userId: id, id: { notIn: keptBountyIds } } });
   await dbWrite.answer.deleteMany({ where: { userId: id } });
   await dbWrite.question.deleteMany({ where: { userId: id } });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });

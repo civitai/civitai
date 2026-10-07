@@ -8,10 +8,22 @@ export type BountyPayoutState = {
   poi: boolean;
   availability: Availability;
   meta: Prisma.JsonValue | null;
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
+  payoutWinnerUserId: number | null;
 };
 
+/** A payout was recorded and its Buzz has not moved yet. */
+export function isPayoutPending(state: {
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
+}) {
+  return !!state.payoutRecordedAt && !state.payoutSettledAt;
+}
+
 // Every path that moves Buzz for a bounty takes this row lock first, checks the state it
-// returns, and writes its claim in the same transaction. The Buzz calls run after commit.
+// returns, and records its claim (`payoutRecordedAt`) in the same transaction. The Buzz calls run
+// after commit, through `settleBountyPayout`.
 export async function lockBountyForPayout(
   tx: Prisma.TransactionClient,
   bountyId: number
@@ -23,7 +35,10 @@ export async function lockBountyForPayout(
       refunded,
       poi,
       availability,
-      meta
+      meta,
+      "payoutRecordedAt",
+      "payoutSettledAt",
+      "payoutWinnerUserId"
     FROM "Bounty"
     WHERE id = ${bountyId}
     FOR UPDATE
