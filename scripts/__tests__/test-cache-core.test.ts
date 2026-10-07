@@ -234,6 +234,31 @@ describe('the salt and the workspace manifests', () => {
     expect(globalSalt(root, 'v')).not.toBe(before);
   });
 
+  // Only the top-level `version` is dropped. `main`, `type`, `imports` and the rest steer resolution
+  // too, and the lockfile records none of them.
+  it('still changes when any other field changes', () => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.zzz = 1));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a nested version changes', () => {
+    const root = setup();
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.publishConfig = { version: '1' }));
+    const before = globalSalt(root, 'v');
+    edit(root, 'packages/pkg/package.json', (pkg) => (pkg.publishConfig = { version: '2' }));
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
+  it('still changes when a workspace package appears', () => {
+    const root = setup();
+    const before = globalSalt(root, 'v');
+    mkdirSync(join(root, 'packages/new'));
+    writeManifest(root, 'packages/new/package.json', { name: 'new' });
+    expect(globalSalt(root, 'v')).not.toBe(before);
+  });
+
   it('still changes when a manifest it cannot parse changes', () => {
     const root = setup();
     writeFileSync(join(root, 'apps/app/package.json'), '{ "version": "1.0.0",');
