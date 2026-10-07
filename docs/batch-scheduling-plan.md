@@ -7,7 +7,7 @@ replaced by the project). Scope doc: attached to the project task as
 Companions: [`batch-scheduling-ux.md`](batch-scheduling-ux.md) (UX plan, both phases),
 [`batch-scheduling-phase1-tech.md`](batch-scheduling-phase1-tech.md) (Phase 1 implementation plan) and
 [`batch-scheduling-planner-element.md`](batch-scheduling-planner-element.md) (Phase 2: the planner as
-a Web Component in both apps).
+a Civitai Element in both apps).
 
 Done when: Phase 1 is merged and switched on for creators, or Justin decides not to build it.
 
@@ -85,16 +85,16 @@ jitter, never :00.
 
 **Decided by Luis, 2026-10-06**
 
-1. **The planner is a Web Component that lives in both apps.** The scope left "Creator Studio or
-   main app" open; the UX review argued for the main app (most of the 618 schedulers are not Creator
-   Program members; every edge of the planner crosses the app boundary otherwise; browsing-level blur
-   and mobile layouts live there). Shipping one `<civitai-post-planner>` element, built in Creator
-   Studio and hosted by both its `/calendar` route and a main-app `/user/schedule` page, gets both:
-   RLY's Creator Studio planner and a planner next to the composer for everyone else, with one UI to
-   maintain. It follows the Training Studio element pattern already in production. Data goes through
-   a host-supplied backend (tRPC in the main app, SvelteKit server routes in Creator Studio), so no
-   credential or CORS surface is added. Full design in the element plan. Cost: ~0.5–1 week over a
-   single-host planner.
+1. **The planner is a Web Component that lives in both apps, built on Civitai Elements.** The scope
+   left "Creator Studio or main app" open; the UX review argued for the main app. Shipping one
+   `<civitai-post-planner>` element hosted by both Creator Studio's `/calendar` and a main-app
+   `/user/schedule` page gets both with one UI to maintain. On 2026-10-07 Luis set the stack: the
+   element is a Lit `CivitaiElement` composed from the `<civitai-*>` design-system elements
+   (`@civitai/components`, developer.civitai.com/apps/elements), so it is themed by the same tokens the
+   platform generates from the main app's Mantine theme, and consumed as a workspace package by both
+   hosts (React binding via `@lit/react`). Data goes through a host-supplied backend (tRPC in the main
+   app, SvelteKit server routes in Creator Studio); no credential or CORS surface is added. Full design
+   in the element plan. Cost: ~1–1.5 weeks over a single-host, month-only planner.
 
 **Recommended, needs Justin's confirmation**
 
@@ -125,21 +125,23 @@ jitter, never :00.
 - PR D: owner-only "Promote this model" on the model page, feature doc.
 - Rollout: Flipt flag with an `isMember` rule, dogfood as mods, widen.
 
-**Phase 2 — planner element** (element plan §5, UX plan §4; ~2–2.5 weeks, four flag-dark PRs)
-- PR E, main-app server: `post.getScheduled`, `post.reschedule` (with the first pass's release-move
-  logic and an `expectedScope` check), `post.publishNow`, `post.unschedule`, `post.shiftSchedule`;
+**Phase 2 — planner element** (element plan §5, UX plan §4; ~2.5–3 weeks, four flag-dark PRs)
+- PR E, main-app server: `post.getScheduled`, `post.getPlannerDetail` (everything the drawer shows),
+  `post.reschedule` (with the first pass's release-move logic and an `expectedScope` check),
+  `post.publishNow`, `post.unschedule`, `post.shiftSchedule`;
   REST twins for Creator Studio via `createCallerFactory`; flag `postPlanner`; the
   `Post(userId, publishedAt)` index SQL, applied by hand.
-- PR F, Creator Studio: the element scaffold (host seam, backend interface, shell and element
-  backends, `vite.element.config.ts` with the hoisted `scopeToElement`), the `/calendar` shell route
-  re-hosting the first pass's UI split into components with the must-fix list applied, and the
-  `routes/api/planner/*` server routes.
-- PR G, Creator Studio: the planner UX. Month with `+N more` and `n/cap` badges, agenda view, drag with
-  keyboard nudge and undo, select mode with shift ± / move-to-day / unschedule, model filter,
-  quick-add, legend; release posts amber and excluded from bulk moves.
-- PR H, main app: the `/user/schedule` host page, `NEXT_PUBLIC_CREATOR_STUDIO_URL`, the posts tab's
-  "Open planner" entry, the composer success CTA, a Creator Studio dashboard tile.
-- Week view with drag-to-time, bulk publish-now and drafts on the calendar come later.
+- PR F, `packages/civitai-post-planner` + Creator Studio host: the Lit element on
+  `@civitai/components`, the host seam, the month view with capped cells, badges, chip, the
+  full-detail drawer, blur/unblur controls and drag-with-undo (the first pass's behaviour with the
+  must-fix list applied), the `/calendar` route as a thin host, and the `routes/api/planner/*` server
+  routes.
+- PR G, the element: Day, Week and Agenda views behind the switcher (Week by default for creators
+  averaging 6+ posts a day), hour rows with drag-to-time, select mode with shift ± / move-to-day /
+  unschedule, model filter, quick-add, legend; release posts amber and excluded from bulk moves.
+- PR H, main app: the `/user/schedule` host page with the React binding, the posts tab's "Open
+  planner" entry, the composer success CTA, a Creator Studio dashboard tile.
+- Bulk publish-now and drafts on the calendar come later.
 
 **Phase 3 — presets** (~1 week, migration applied by hand): named presets of resources, tools,
 techniques, tags, title template; used in the composer and the post editor. Phase 1 ships the hooks
@@ -153,4 +155,4 @@ techniques, tags, title template; used in the composer and the post editor. Phas
 | Scope decisions 2–6 | Justin confirms or amends them on 868mcqb8t | Justin |
 | `Post(userId, publishedAt)` index | `pg_indexes` shows it, or EXPLAIN shows the month query is already cheap | Luis, before PR E |
 | First-pass worktree | Deleted once PR F has ported its UI, query and endpoint logic | Luis |
-| `scopeToElement` hoist | Training Studio's element build imports the shared module and its embed still renders correctly in the main app | Luis, in PR F |
+| Kit gaps to upstream | `civitai-drawer`, `civitai-date-input` and a calendar grid proposed to `civitai/civitai-app-starters` once the planner's versions settle, or a decision to keep them in the package | Luis, after PR G |

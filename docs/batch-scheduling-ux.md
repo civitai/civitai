@@ -31,6 +31,39 @@ Reader: the engineer building Phase 1. Everything here is dark-theme first; ligh
 | 10 | `MAX_POSTS = 500` truncates silently. | The 1,062-queue user could see a quieter month than reality. | Show "Showing 500 of N — narrow the range" notice, or page by week. |
 | 11 | Time zone never shown; "Edit post" opens a new tab with no return path. | Minor, but both are cheap. | `All times in {tz}` in header; return URL on edit. |
 
+### Measured against real data (2026-10-06)
+
+The first pass was run locally against production data while impersonating two heavy schedulers: a
+burst poster with roughly 1,200 pending posts (up to 40 a day, clustered between 9 PM and 11 PM) and a
+steady poster with roughly 330 pending posts at four a day on fixed slots. Captures are local only
+(real creator content); what they showed:
+
+- **Untitled posts are the norm, not the edge case.** Every chip on both calendars read `Post #3…`;
+  neither creator titles posts. The chip's title slot is dead weight. Lead with the thumbnail, the time
+  and the image count; the title is a tooltip.
+- **The burst poster's month is a wall.** 15 to 25 chips per cell, two weeks fill a 1000 px viewport,
+  the full month is 3,300 px tall, and the evening slots make every chip's time read `9:xx PM`. The
+  grid conveys nothing beyond "a lot". This is the case the `+N more` cap, the `n/cap` badge and the
+  agenda view exist for; the week view with time rows is where that creator's day actually becomes
+  readable.
+- **The steady poster is already fine in month view** at four a day. Density handling must not make
+  this case worse: four chips with thumbnails per cell is the right amount of detail there.
+- **Published and scheduled chips are hard to tell apart at a glance.** The past week's published
+  posts (grey) sit directly above the scheduled ones (blue) at the same density; the eye reads the
+  grid as one undifferentiated block. Default the view to scheduled only, with published behind the
+  status filter, and mute published chips far more.
+- **The phone view scrolls sideways through a 7-column grid** at 390 px; three columns fit, titles are
+  cut to one letter. The agenda view as the phone default stands.
+- **The detail sheet works but is thin.** Cover, date, item count, native `datetime-local`, Reschedule,
+  Publish now, Edit post in a new tab. Nothing about the post's model, resources or tags, no
+  unschedule, no previous or next post, and the input lets the creator pick the second instead of
+  snapping to five-minute steps.
+- **The main app's own "Scheduled" view is a masonry of covers** with an `IN 3 MONTHS` badge and no
+  dates, times or ordering cues, which is why neither creator can see their queue today. The planner's
+  "Open planner" entry belongs next to that filter.
+- **Timezone matters here.** Both creators' slots are round local hours; the per-day cap counts UTC
+  days, so the badge must say which day boundary it counts (tech plan R5).
+
 ---
 
 ## 2. Information architecture
@@ -181,7 +214,7 @@ Single column, sections stacked; the rail becomes a sticky bottom bar `200 posts
 ```
 ┌───────────────────────────────────────────────────────────────────────────────┐
 │ Scheduled posts     212 queued · 6/day limit · America/New_York   [+ Schedule a batch] │
-│ [Month ▾] [Week] [Agenda]  ‹ October 2026 ›  [Today]   Filter: [All models ▾] [Scheduled ✓ Published ☐ Releases ✓]  [☐ Select] │
+│ [Day] [Week] [Month] [Agenda]  ‹ October 2026 ›  [Today]   Filter: [All models ▾] [Scheduled ✓ Published ☐ Releases ✓]  [☐ Select] │
 │ Legend: ■ scheduled  ■ release (moves with model)  □ published                 │
 ├────────┬────────┬────────┬────────┬────────┬────────┬────────┐                 │
 │ Mon 5  5/6 │ Tue 6  6/6 │ Wed 7  7/6!│ Thu 8  2/6 │ Fri 9  0/6 │ Sat 10 │ Sun 11 │
@@ -192,18 +225,50 @@ Single column, sections stacked; the rail becomes a sticky bottom bar `200 posts
 └────────┴────────┴────────┴────────┴────────┴────────┴────────┘                 │
 ```
 
-- **Month**: max 3 chips per cell then `+N more` (click expands the cell into a popover list). Count badge `n/cap` top-right of each cell: grey, amber at cap, red over. Hover/focus on an empty cell shows `+` (quick-add → `/posts/batch?startAt=`).
-- **Week**: 7 columns × hour rows, chips positioned by time; this is where gap collisions are visible and where drag-to-time (not just day) lives.
-- **Agenda**: grouped-by-day list, infinite scroll, the default on phones and for anyone with > 60 posts in view. Each row: thumb, time, title, model chip, status, overflow menu (`Reschedule… · Unschedule · Edit · Publish now`).
-- **Chips**: 20px thumb (browsing-level blur rules), time, title. Scheduled = blue; release = amber with rocket; published = grey outline, not draggable. Drag handle (⋮⋮) appears on hover/focus.
+- **View switcher** (`Day · Week · Month · Agenda`), persisted in the URL as `?view=&anchor=`. Default
+  picks itself from density on first visit: Month when the creator averages under 6 posts a day in the
+  loaded range, Week otherwise; a creator's explicit choice is remembered per device. The burst poster
+  measured on 2026-10-06 (up to 40 a day) lands on Week; the steady poster (4 a day) on Month.
+- **Day**: one column of hour rows, 6 AM to 2 AM by default with a `Show all hours` toggle; chips at
+  full width with thumbnail, time, image count, model chip and status. This is where 40 posts in one
+  evening become legible, and where drag-to-time at five-minute snapping is precise. `‹ ›` steps a day.
+- **Week**: 7 columns × hour rows, chips positioned by time and compressed to thumbnail + time when a
+  slot holds more than two; overlapping chips stack with a `+N` pill that expands in place. Drag moves
+  across days and hours. Gap collisions are visible here as touching chips.
+- **Month**: at most 3 chips per cell then `+N more`, which opens that day in Day view rather than a
+  popover, so the month never grows past one viewport. Count badge `n/cap` top-right of each cell:
+  grey, amber at cap, red over. Hover/focus on an empty cell shows `+` (quick-add → `/posts/batch?startAt=`).
+  Default status filter is scheduled only; published chips, when shown, are muted to an outline.
+- **Agenda**: grouped-by-day list, infinite scroll, the default on phones. Each row: thumb, time,
+  title or `Untitled · 10 items`, model chip, status, overflow menu (`Reschedule… · Unschedule · Edit ·
+  Publish now`).
+- **Chips**: 20px thumb (browsing-level blur rules), time, image count, then title when there is one (most posts have none). Scheduled = blue; release = amber with rocket; published = grey outline, not draggable. Drag handle (⋮⋮) appears on hover/focus.
 - **Reschedule**: drag (month → day, week → day+hour); keyboard: focus chip, `Enter` opens panel, `Shift+←/→` nudges ±1 day, `Shift+↑/↓` ±1 hour, each nudge announced via `aria-live`; touch: long-press enters select mode, use the bulk bar. Every successful move toasts `Moved to Thu Oct 8, 6:12 PM · Undo` (Undo issues the reverse call).
 - **Select mode** (`Select` toggle or shift-click): checkboxes on chips, bulk bar (port of Creator Studio's `BulkBar` pattern) above the grid: `12 selected · [Shift ±…] [Move to day…] [Unschedule to drafts] [Clear]`. `Shift ±` dialog: `[−][ 1 ][+] [days▾]`, preview line `Oct 7–9 → Oct 8–10 · 0 conflicts`, `Apply`. Release posts are excluded from bulk moves with a notice (`3 release posts not moved — they move with their model`).
-- **Detail panel** (right `Drawer`): thumb, title, `Goes live` date+time picker, `Reschedule`, model/version chips, resources + tags summary, `Unschedule to draft` (confirm), `Publish now` (confirm, as first pass), `Edit post`. Release posts keep the first pass's notice and `Move release`.
+- **Detail panel** (right drawer, ~420px) shows **everything the post has**, not a summary: a swipeable
+  strip of every image/video with the cover first and an index `3 / 10`; title (or `Untitled`) and the
+  description (collapsed after four lines); the model/version chip with a link to the model page;
+  resources (every credited resource with type, linked), tools and techniques as chips; tags; status
+  and `Goes live` with a date picker + time field (five-minute steps) and `Reschedule`; the daily-cap
+  context for that day (`4 of 6 on Thu Oct 8`); the post's own stats where it is already live (views,
+  reactions). Actions: `Unschedule to draft` (confirm), `Publish now` (confirm), `Edit post`,
+  `View post`, `Open model`. Footer `‹ Previous post · Next post ›`. Release posts keep the first pass's
+  notice and `Move release`. The list query stays light; the drawer loads the full post on open
+  (`getPostDetail`), so opening is the only cost of the richer panel.
+- **Blur and unblur.** Covers above the viewer's browsing level render blurred, as everywhere on the
+  site. The toolbar gets a `Show mature` toggle (eye icon) that unblurs every chip and the drawer strip
+  for this session and is remembered per device; each blurred thumbnail also unblurs individually on
+  hover or tap-and-hold, and the drawer strip has its own per-image eye button. The toggle never
+  changes the account's browsing settings and is hidden when the viewer's level already shows
+  everything.
 - **Filters**: model/version select (only models the user has scheduled posts on), status checkboxes. Persisted in the URL.
 - Over-fetch guard: `Showing 500 of 612 in this range — switch to Week or filter by model`.
 
-**Phase 2 scope**: Month, Agenda, drag + keyboard nudge + Undo, select mode with Shift ± and Unschedule, filters, cap badge, quick-add, detail panel, release handling (from first pass).
-**Later**: Week view with drag-to-time, bulk publish-now, gap visualisation, bulk edit of metadata, drafts on the calendar.
+**Phase 2 scope**: Day, Week and Month views with the switcher and density default, Agenda for
+phones, drag (day/hour) + keyboard nudge + Undo, select mode with Shift ± and Unschedule, filters,
+cap badge, quick-add, the full-detail drawer, blur/unblur controls, release handling (from first pass).
+**Later**: bulk publish-now, gap visualisation beyond touching chips, bulk edit of metadata, drafts on
+the calendar.
 
 ---
 
@@ -220,7 +285,14 @@ Single column, sections stacked; the rail becomes a sticky bottom bar `200 posts
 **Main app — reuse**: `MediaDropzone`, `useMediaUpload` (+ EXIF/meta parsing), `UploadNotice`, `ImageSelectModal` (generator import), `ResourceSelectMultiple`, `ImageToolsPopover` / `ImageTechniquesPopover` (make the "all" footer optional), `EditPostTags.TagPicker` (lift to controlled), `InputDateTimePicker` / `InputDatePicker` / `InputTime` from `~/libs/form`, `ConfirmDialog`, `dialogStore`, `AlertWithIcon`, `BackButton`, `useCatchNavigation`, `DaysFromNow`, `PostFiltersDropdown` (add the planner link), `WizardStepper` is **not** used.
 **Main app — new**: `BatchComposerProvider` (zustand, same shape as `PostEditProvider`), `BatchMediaGrid` (thumb states), `ScheduleBuilder` (modes A/B/C + jitter + validator), `SchedulePreview` (mini strips + list, shared with the planner's month cell badge logic), `BatchReviewTable` (virtualised), `BatchProgressModal`, `TitleTemplateInput`, `PromoteModelMenu` (model page split button). Phase 2: `SchedulePlanner` (month/week/agenda), `PostChip`, `PlannerBulkBar`, `ShiftScheduleDialog`, `PostDetailDrawer`.
 **Server (named for the UX contract)**: `post.scheduleBatch`, `post.getScheduled({from,to,modelVersionId?})` returning posts + per-day counts + the user's cap and gap, `post.unschedule`, `post.shiftSchedule({ids, deltaMinutes})`.
-**Creator Studio (only if the planner stays there)**: reuse `Notice`, `BulkBar` → generalise `BulkAction` type, `BulkActionDialog` shell, `Sheet`, `EdgeImage`, `Pagination`; add `@civitai/ui` `calendar` + `popover` primitives to the package, never the app.
+**Planner element (`@civitai/post-planner`, both hosts)** — built from Civitai Elements: `civitai-segmented-control`
+(view switcher), `civitai-button` / `civitai-button-group`, `civitai-select` (model filter), `civitai-checkbox`
+(status filters, select mode), `civitai-badge` (`n/cap` counts, release and status markers), `civitai-tooltip`,
+`civitai-menu` + `civitai-menu-item` (row actions), `civitai-confirm-dialog` (publish now, unschedule),
+`civitai-toast-region` (undo), `civitai-image` (covers with blocked/pending states), `civitai-text-input` /
+`civitai-number-input` (drawer, shift dialog), `civitai-alert` (truncated notice, release caveat),
+`civitai-text` / `civitai-stack` / `civitai-group` / `civitai-card`. Drawn in the element with tokens only:
+month grid, week and day hour rows, post chip, drag layer, drawer. See the element plan.
 
 ---
 
