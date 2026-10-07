@@ -4,18 +4,12 @@ const mocks = vi.hoisted(() => ({
   kv: new Map<string, unknown>(),
   runActivityGroup: vi.fn(),
   loadStoredMilestoneGroups: vi.fn(),
-  logToAxiom: vi.fn(),
   clickhouseQuery: vi.fn(),
 }));
 
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
   clickhouse: { query: mocks.clickhouseQuery },
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof LoggingClient>()),
-  logToAxiom: mocks.logToAxiom,
 }));
 
 vi.mock('~/server/services/creator-milestone-stored', async (importOriginal) => ({
@@ -29,9 +23,9 @@ vi.mock('~/server/services/creator-milestone-activity.service', async (importOri
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as ActivityService from '~/server/services/creator-milestone-activity.service';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
-import type * as LoggingClient from '~/server/logging/client';
 import type * as StoredService from '~/server/services/creator-milestone-stored';
 import { StoredMilestoneSkip } from '~/server/services/creator-milestone-stored';
 import {
@@ -46,7 +40,7 @@ beforeEach(() => {
   mocks.kv.clear();
   mocks.runActivityGroup.mockReset();
   mocks.loadStoredMilestoneGroups.mockReset().mockResolvedValue([]);
-  mocks.logToAxiom.mockReset();
+  loggingMock.logToAxiom.mockClear();
   dbMock.dbWrite.keyValue.findUnique.mockImplementation(
     async ({ where }: { where: { key: string } }) =>
       mocks.kv.has(where.key) ? { key: where.key, value: mocks.kv.get(where.key) } : null
@@ -130,7 +124,7 @@ describe('grant-creator-milestones', () => {
 
   const storedGroup = { id: 'stored:test:x', keys: ['test:x'], candidates: vi.fn() };
   const storedReports = () =>
-    mocks.logToAxiom.mock.calls
+    loggingMock.logToAxiom.mock.calls
       .map(([entry]) => entry)
       .filter((entry) => entry.name === 'creator-milestone-stored');
 
