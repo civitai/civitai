@@ -77,6 +77,9 @@ export type CreatorCaps = {
   /** Prices applied this calendar month, and how many the tier allows. */
   pricingUsed: number;
   pricingLimit: number | null;
+  /** The licensing-fee limit: `pricingLimit` plus any fee boost. A paid-access gate uses `pricingLimit`. */
+  feePricingLimit: number | null;
+  feeBoost: number;
   /** Where the creator's score stands against the monetization floor, for the editors to render. */
   pricingFloor: PricingEligibility;
   maxEarlyAccessDays: number;
