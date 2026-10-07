@@ -566,7 +566,7 @@
   {#if data.hasMore || data.page > 1}
     <!-- Offset paging over a queue being drained skips rows: acting on page 1 shifts everything up,
          so page 2 then starts past something never seen. -->
-    <p class="mt-1 text-xs text-dark-3">
+    <p class="mt-1 text-xs text-dark-2">
       After actioning rows, reload this page rather than paging forward — the queue shifts underneath
       the page boundary.
     </p>

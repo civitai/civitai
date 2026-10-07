@@ -38,6 +38,7 @@
     if (draftTerm === q) draftTerm = null;
   });
 
+  let debounce: ReturnType<typeof setTimeout>;
   // A pending timer outlives this component: navigating away mid-type would otherwise yank the operator
   // back to the filtered list up to half a second later.
   $effect(() => () => clearTimeout(debounce));
@@ -47,7 +48,6 @@
     goto(urlWith(page.url, { page: null, selected: null, ...params }), { keepFocus: true });
 
   // The main app searched as you typed (300ms). The button stays as a shortcut.
-  let debounce: ReturnType<typeof setTimeout>;
   const typed = (value: string) => {
     draftTerm = value;
     clearTimeout(debounce);
