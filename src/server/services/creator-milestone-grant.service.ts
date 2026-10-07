@@ -50,6 +50,16 @@ export function insertMilestoneGrantsSql(candidates: string) {
       RETURNING "userId", "milestoneKey", "seenAt" IS NOT NULL AS silent`;
 }
 
+/**
+ * Whether a row's `achievedAt` is when the milestone happened, rather than when a silent grant caught
+ * up with it (a launch backfill, or a tier the user had already passed). A silent grant with no
+ * achievedAt of its own stamps both columns in one INSERT, so they are equal; every other row is
+ * unseen at insert and stamped later, or carries the detector's own achievedAt.
+ */
+export function achievedAtIsObserved(row: { achievedAt: Date; seenAt: Date | null }) {
+  return row.seenAt?.getTime() !== row.achievedAt.getTime();
+}
+
 /** One row per cosmetic a milestone grants: its badge, then any extras. */
 const milestoneCosmeticsSql = `
   SELECT key AS "milestoneKey", "cosmeticId" FROM "CreatorMilestone" WHERE "cosmeticId" IS NOT NULL

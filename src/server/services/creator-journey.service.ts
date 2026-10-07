@@ -7,7 +7,7 @@ import type { CreatorScoreTier } from '~/shared/utils/creator-score-unlocks';
 import type { BadgeCosmetic } from '~/server/selectors/cosmetic.selector';
 import type { UserScoreMeta } from '~/server/schema/user.schema';
 import { creatorAggregateScoreFromMeta, creatorScoreFromMeta } from '~/shared/utils/creator-score';
-import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
+import { achievedAtIsObserved } from '~/server/services/creator-milestone-grant.service';
 
 type MilestoneDefinition = {
   key: string;
@@ -120,17 +120,14 @@ export async function getCreatorJourney(userId: number) {
 
 const LEGEND_KEY = 'score:legend';
 
-/**
- * A Legend granted before the tier launched has no real crossing date, since no score history
- * exists, so they are founding Legends rather than Legends "since" the launch night.
- */
+/** A Legend whose crossing was never observed (granted silently) is a founding Legend, undated. */
 export async function getLegendStatus(userId: number) {
   const legend = await dbRead.userCreatorMilestone.findUnique({
     where: { userId_milestoneKey: { userId, milestoneKey: LEGEND_KEY } },
-    select: { achievedAt: true },
+    select: { achievedAt: true, seenAt: true },
   });
   if (!legend) return null;
-  const founding = !isMilestoneAnnounced(LEGEND_KEY, legend.achievedAt);
+  const founding = !achievedAtIsObserved(legend);
   return { founding, since: founding ? null : legend.achievedAt };
 }
 
