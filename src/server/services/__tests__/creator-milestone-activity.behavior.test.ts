@@ -303,6 +303,16 @@ describe('shop revenue detector', () => {
       { cosmeticId: 1, shopItemId: 40, amount: 60000, at: '2026-03-01 10:00' },
       { cosmeticId: 1, shopItemId: 40, amount: 40000, at: '2026-03-02 10:00' },
       { cosmeticId: 1, shopItemId: 40, amount: 200000, at: '2026-03-03 10:00' },
+      { cosmeticId: 1, shopItemId: 40, amount: 1000, at: '2026-03-04 10:00' },
+    ]);
+    // One candidate per threshold: later sales above it must not compete to date the grant.
+    const candidates = await q<{ milestoneKey: string; achievedAt: Date }>(
+      `${SHOP.sql({ keys: '$1', users: '$2' })} ORDER BY "milestoneKey"`,
+      [SHOP.keys, null]
+    );
+    expect(candidates.map((c) => c.milestoneKey)).toEqual([
+      'earn:shop-sales-100000',
+      'earn:shop-sales-250000',
     ]);
     await run(SHOP);
     expect(await held(CREATOR)).toEqual([
@@ -326,11 +336,13 @@ describe('shop revenue detector', () => {
     await addSales([
       { cosmeticId: 1, shopItemId: 40, amount: 99999, at: '2026-03-01' },
       { cosmeticId: 1, shopItemId: 40, amount: 50000, at: '2026-03-02', refunded: true },
+      { cosmeticId: null, shopItemId: 50, amount: 500000, at: '2026-03-02', refunded: true },
       { cosmeticId: 2, shopItemId: 40, amount: 500000, at: '2026-03-02' },
     ]);
     await run(SHOP);
     expect(await held(CREATOR)).toEqual([]);
     expect(await held(TESTER)).toEqual([]);
+    expect(await held(QUIET)).toEqual([]);
   });
 
   it('announces a crossing since the previous run, and not one before it', async () => {
