@@ -5,6 +5,7 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
 import type * as CanvasUtils from '~/shared/utils/canvas-utils';
 import type * as ImageUtils from '~/utils/image-utils';
+import type * as Constants from '~/server/common/constants';
 
 /**
  * A failed source-image upload must end on an error card with the spinner cleared, and must not
@@ -16,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   uploadConsumerBlob: vi.fn(),
   getImageDimensions: vi.fn(),
   dialogTrigger: vi.fn(),
+  /** A loadable local url the uploader treats as already uploaded (no network request). */
+  orchestratorUrl: '',
 }));
 
 vi.mock('~/utils/consumer-blob-upload', () => ({ uploadConsumerBlob: mocks.uploadConsumerBlob }));
@@ -30,6 +33,15 @@ vi.mock('~/shared/utils/canvas-utils', async (orig) => ({
   resizeImage: vi.fn(async () => new Blob(['resized'], { type: 'image/png' })),
   imageToJpegBlob: vi.fn(async () => new Blob(['jpeg'], { type: 'image/jpeg' })),
 }));
+
+vi.mock('~/server/common/constants', async (orig) => {
+  const actual = await orig<typeof Constants>();
+  return {
+    ...actual,
+    isOrchestratorUrl: (url: string) =>
+      (!!mocks.orchestratorUrl && url === mocks.orchestratorUrl) || actual.isOrchestratorUrl(url),
+  };
+});
 
 vi.mock('~/utils/metadata/extract-source-metadata', () => ({
   extractSourceMetadata: vi.fn(async () => undefined),
@@ -297,6 +309,7 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
 type Event = { kind: 'pending'; on: boolean } | { kind: 'value'; count: number };
 let events: Event[] = [];
 let lastValue: ImageValue[] = [];
+let valueWrites: ImageValue[][] = [];
 
 /** Samples the flag on every render, the way WhatIfProvider reads it. */
 function PendingProbe() {
@@ -319,6 +332,7 @@ function PendingHarness({
       if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
       events.push({ kind: 'value', count: next.length });
       lastValue = next;
+      valueWrites.push(next);
       return next;
     });
   return (
@@ -358,6 +372,8 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
   beforeEach(() => {
     events = [];
     lastValue = [];
+    valueWrites = [];
+    mocks.orchestratorUrl = '';
     uploads = [];
     useImagesUploadingStore.setState({ uploading: [], verifying: [] });
     // Record every store change too, so a gap no component re-rendered for is still seen.
@@ -473,9 +489,10 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
     // An already-uploaded image confirmed uncropped needs no upload, so nothing starts its card.
     mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
     renderWithProviders(<PendingHarness aspectRatios={['1:1']} layout="url-input" />);
+    mocks.orchestratorUrl = await loadableImageUrl();
     await userEvent.fill(
       page.getByPlaceholder('Add a file or provide a URL'),
-      'https://orchestration.civitai.com/source.jpg'
+      mocks.orchestratorUrl
     );
     await userEvent.keyboard('{Enter}');
     await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
@@ -486,8 +503,9 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
     // The already-uploaded image is kept as it is, not dropped with its card.
-    expect(lastValue).toEqual([
-      { url: 'https://orchestration.civitai.com/source.jpg', width: 600, height: 2000 },
-    ]);
+    const kept = [{ url: mocks.orchestratorUrl, width: 600, height: 2000 }];
+    expect(valueWrites).toContainEqual(kept);
+    await sleep(300);
+    expect(lastValue).toEqual(kept);
   });
 });
