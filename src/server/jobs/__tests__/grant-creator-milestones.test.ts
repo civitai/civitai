@@ -83,6 +83,7 @@ describe('grant-creator-milestones', () => {
     await grantCreatorMilestones.run({} as never).result;
     await grantCreatorMilestones.run({} as never).result;
     const groups = activityDetectorGroups().length;
+    expect(seen).toHaveLength(2 * groups);
     expect(new Set(seen.slice(0, groups)).size).toBe(1);
     expect(seen[0]).not.toBe(seen[groups]);
   });

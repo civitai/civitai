@@ -21,20 +21,20 @@ export type ActivityWatermarkStore = {
 
 export type MilestoneDefinitionRow = { key: string; threshold: number | null };
 
-export const watermarkKeyFor = (group: Pick<MilestoneDetectorGroup, 'id'>) =>
-  `creator-milestones:watermark:${group.id}`;
+export const watermarkKeyFor = (group: Pick<MilestoneDetectorGroup, 'watermarkId'>) =>
+  `creator-milestones:watermark:${group.watermarkId}`;
 
 /**
- * Adding or removing a key, or changing a threshold, changes this. A watermark recorded against other
- * definitions is no watermark, so the group starts over with a silent run rather than announcing
- * everyone the change newly qualifies. It lives in the value, not the key, so reverting a change
- * cannot revive an old row.
+ * What a run granted against: its keys, thresholds and whether it announced. A watermark recorded
+ * against anything else is no watermark, so the run is silent rather than announcing everyone the
+ * change newly qualifies. It lives in the value, not the key, so reverting a change cannot revive an
+ * old row.
  */
-export const definitionsFingerprint = (definitions: MilestoneDefinitionRow[]) =>
-  definitions
+export const definitionsFingerprint = (definitions: MilestoneDefinitionRow[], silent: boolean) =>
+  `${silent ? 'silent' : 'announced'}|${definitions
     .map((d) => `${d.key}=${d.threshold}`)
     .sort()
-    .join(',');
+    .join(',')}`;
 
 /**
  * The earliest achievedAt that is announced, or null when nothing in this run is. A run can only
@@ -98,7 +98,7 @@ export async function runActivityGroup(
   if (missing.length) throw new Error(`No CreatorMilestone row for ${missing.join(', ')}`);
 
   const watermarkKey = watermarkKeyFor(group);
-  const fingerprint = definitionsFingerprint(definitions);
+  const fingerprint = definitionsFingerprint(definitions, group.silent);
   const stored = await store.get(watermarkKey);
   const previous = stored?.definitions === fingerprint ? stored : null;
   const announceFrom = announceFromFor(group, previous, gated);

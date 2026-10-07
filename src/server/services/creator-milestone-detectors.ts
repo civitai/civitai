@@ -11,6 +11,8 @@ type ActivityEntry = Exclude<MilestoneRegistryEntry, { detector: 'scoreSnapshot'
  */
 export type MilestoneDetectorGroup = {
   id: string;
+  /** The group's identity without its silence, so toggling silence keeps one watermark row. */
+  watermarkId: string;
   keys: string[];
   launchedAt: Date;
   silent: boolean;
@@ -81,17 +83,18 @@ export function activityDetectorGroups(
   const groups = new Map<string, MilestoneDetectorGroup>();
   for (const [key, entry] of Object.entries(registry)) {
     if (entry.detector === 'scoreSnapshot') continue;
-    const id = [
+    const watermarkId = [
       entry.detector,
       ...Object.values(entry.params),
       entry.launchedAt.toISOString(),
-      entry.silent ? 'silent' : 'announced',
     ].join(':');
+    const id = `${watermarkId}:${entry.silent ? 'silent' : 'announced'}`;
     const group = groups.get(id);
     if (group) group.keys.push(key);
     else
       groups.set(id, {
         id,
+        watermarkId,
         keys: [key],
         launchedAt: entry.launchedAt,
         silent: !!entry.silent,

@@ -40,8 +40,8 @@ const scoreTier = (): MilestoneRegistryEntry => ({
 });
 
 // Silent until the journey page has an Achievements section to show them in: a notification would
-// link to a page that does not show the milestone. Turning this off renames each group's watermark,
-// so its first announced run is silent and nobody's backlog is announced.
+// link to a page that does not show the milestone. Turning this off changes each group's watermark
+// fingerprint, so its first announced run is silent and nobody's backlog is announced.
 const ACTIVITY_SILENT_UNTIL_ACHIEVEMENTS_SECTION = true as const;
 
 const published = (entity: (typeof PUBLISHED_ENTITIES)[number]): MilestoneRegistryEntry => ({

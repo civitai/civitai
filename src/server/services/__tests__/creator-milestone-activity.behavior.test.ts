@@ -15,6 +15,7 @@ import {
 } from '~/server/services/creator-milestone-activity.service';
 import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
 import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
+import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
 import type { MilestoneGrant } from '~/server/services/creator-milestone-grant.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -71,7 +72,7 @@ async function fingerprintFor(group: MilestoneDetectorGroup) {
     `SELECT key, threshold FROM "CreatorMilestone" WHERE key = ANY($1::text[])`,
     [group.keys]
   );
-  return definitionsFingerprint(definitions);
+  return definitionsFingerprint(definitions, group.silent);
 }
 
 type PreviousRun = Omit<ActivityWatermark, 'definitions'> & { definitions?: string };
@@ -436,17 +437,33 @@ describe('watermark definitions', () => {
   ];
 
   it('fingerprints the keys and thresholds a run used, so adding a key or moving a threshold changes it', () => {
-    const base = definitionsFingerprint(rows);
-    expect(definitionsFingerprint([...rows, { key: 'create:models-50', threshold: 50 }])).not.toBe(
-      base
-    );
-    expect(definitionsFingerprint([rows[0], { key: 'create:models-5', threshold: 4 }])).not.toBe(
-      base
-    );
+    const base = definitionsFingerprint(rows, false);
+    expect(
+      definitionsFingerprint([...rows, { key: 'create:models-50', threshold: 50 }], false)
+    ).not.toBe(base);
+    expect(
+      definitionsFingerprint([rows[0], { key: 'create:models-5', threshold: 4 }], false)
+    ).not.toBe(base);
   });
 
   it('does not depend on the order Postgres returns the rows in', () => {
-    expect(definitionsFingerprint([...rows].reverse())).toBe(definitionsFingerprint(rows));
+    expect(definitionsFingerprint([...rows].reverse(), false)).toBe(
+      definitionsFingerprint(rows, false)
+    );
+  });
+
+  // Silence is in the fingerprint, not the key: turning a group's announcements on, or back on after a
+  // silent spell, starts it over with a silent run instead of reviving an older announced watermark.
+  it('changes when a group turns silent or announced, under the same watermark row', () => {
+    expect(definitionsFingerprint(rows, true)).not.toBe(definitionsFingerprint(rows, false));
+    expect(watermarkKeyFor(MODELS)).toBe(watermarkKeyFor({ ...MODELS, silent: true }));
+    const [silentGroup] = activityDetectorGroups({
+      'create:models-1': { ...creatorMilestoneRegistry['create:models-1'], silent: true },
+    });
+    const [announcedGroup] = activityDetectorGroups({
+      'create:models-1': { ...creatorMilestoneRegistry['create:models-1'], silent: undefined },
+    });
+    expect(watermarkKeyFor(silentGroup)).toBe(watermarkKeyFor(announcedGroup));
   });
 
   // Keyed by group, not by definitions, so reverting a threshold cannot pick up a weeks-old row.
@@ -469,8 +486,8 @@ describe('watermark definitions', () => {
 
 /**
  * 🔴 Shipping these announced before the journey page can show them sends people to a page where the
- * milestone does not appear. The Achievements section's PR turns this off; flipping it renames each
- * group's watermark, so the first announced run is silent.
+ * milestone does not appear. The Achievements section's PR turns this off; flipping it changes each
+ * group's watermark fingerprint, so the first announced run is silent.
  */
 describe('activity milestones before the Achievements section', () => {
   it('registers every activity group silent', () => {

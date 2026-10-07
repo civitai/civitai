@@ -213,9 +213,9 @@ export function CreatorJourneyView({ journey }: { journey: Journey }) {
   );
 }
 
-// Activity milestones get their own section, so the shelf holds the score tiers.
-export function isShelfBadge(badge: Pick<Journey['earned'][number], 'track'>) {
-  return badge.track === 'score';
+// Artless activity milestones get their own section; the shelf holds tiers and anything with art.
+export function isShelfBadge(badge: Pick<Journey['earned'][number], 'track' | 'badgeUrl'>) {
+  return badge.track === 'score' || !!badge.badgeUrl;
 }
 
 function EarnedBadgeCard({ badge }: { badge: Journey['earned'][number] }) {
