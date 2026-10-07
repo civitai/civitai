@@ -16,13 +16,17 @@
 
 import { BaseSequencer } from 'vitest/node';
 
-import * as core from './core.mjs';
+import { loadCore } from './load-core.mjs';
+
+const core = await loadCore();
 
 const parsedRate = Number(process.env.CIVITAI_TEST_CACHE_SAMPLE);
 // A malformed rate must not become NaN: `Math.random() < NaN` is never true, which would switch the
 // sampling — the tripwire's only input in `on` mode — silently off.
 const SAMPLE_RATE =
-  process.env.CIVITAI_TEST_CACHE_SAMPLE !== undefined && Number.isFinite(parsedRate) ? parsedRate : 0.05;
+  process.env.CIVITAI_TEST_CACHE_SAMPLE !== undefined && Number.isFinite(parsedRate)
+    ? parsedRate
+    : 0.05;
 
 export const runKey = (spec) => `${spec.project.name}\0${spec.moduleId}`;
 
@@ -72,7 +76,11 @@ export default class TestCacheSequencer extends BaseSequencer {
           testRel !== null &&
           core
             .recordsFor(dir, project, testRel)
-            .some((rec) => core.keyFor({ salt, project, testRel, entries: rec.entries, fingerprint }) === rec.key);
+            .some(
+              (rec) =>
+                core.keyFor({ salt, project, testRel, entries: rec.entries, fingerprint }) ===
+                rec.key
+            );
 
         if (!hit) {
           keep.push(spec);
@@ -105,7 +113,9 @@ export default class TestCacheSequencer extends BaseSequencer {
       if (keep.length === 0 && state.skipped.length > 0) this.ctx.config.passWithNoTests = true;
       return super.sort(keep);
     } catch (err) {
-      console.error(`[test-cache] could not read the cache, running everything: ${err?.stack ?? err}`);
+      console.error(
+        `[test-cache] could not read the cache, running everything: ${err?.stack ?? err}`
+      );
       state.skipped = [];
       state.sampled = new Set();
       return super.sort(files);
