@@ -37,10 +37,7 @@ import {
   type TierInput,
 } from '~/server/services/pricing-slot.service';
 import { increaseDate } from '~/utils/date-helpers';
-import { isOwnerOrModView } from '~/server/utils/paid-access-viewer';
-import type { PaidAccessViewer } from '~/server/utils/paid-access-viewer';
-
-export type { PaidAccessViewer };
+import { isViewerOrModerator } from '~/utils/is-viewer';
 
 // A gated version must actually charge for something: `download` always carries a price, and a
 // `generation` grant only "charges" when it's the paid tier (not `{ free: true }`). Structural rules
@@ -439,6 +436,8 @@ export async function getPaidAccess(
   return out;
 }
 
+export type PaidAccessViewer = { id?: number | null; isModerator?: boolean | null };
+
 export type ViewerMonetization = {
   paidAccess: PaidAccessRow | undefined;
   /**
@@ -506,7 +505,7 @@ export async function getViewerMonetization({
         : null;
 
     const ownerId = ownerOf(v);
-    const isOwnerOrMod = ownerId != null && isOwnerOrModView(viewer, ownerId);
+    const isOwnerOrMod = ownerId != null && isViewerOrModerator(viewer, ownerId);
     out[v.id] = {
       // The owner keeps the stored terms — their editors resubmit them, and a discounted price written
       // back would make the sale permanent.

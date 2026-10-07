@@ -18,3 +18,11 @@ export function isViewerUsername(
     !!currentUser && !!username && username.toLowerCase() === currentUser.username?.toLowerCase()
   );
 }
+
+/** Whether the viewer owns `ownerId`, or is a moderator. */
+export function isViewerOrModerator(
+  viewer: { id?: number | null; isModerator?: boolean | null },
+  ownerId: number
+): boolean {
+  return (!!viewer.id && viewer.id === ownerId) || !!viewer.isModerator;
+}

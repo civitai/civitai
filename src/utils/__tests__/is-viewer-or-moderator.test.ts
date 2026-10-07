@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { isOwnerOrModView } from '~/server/utils/paid-access-viewer';
+import { isViewerOrModerator } from '~/utils/is-viewer';
 
-describe('isOwnerOrModView', () => {
+describe('isViewerOrModerator', () => {
   it.each([
     ['owner', { id: 7 }, true],
     ['stranger', { id: 8 }, false],
@@ -9,6 +9,6 @@ describe('isOwnerOrModView', () => {
     ['signed out', {}, false],
     ['null id', { id: null }, false],
   ])('%s', (_, viewer, expected) => {
-    expect(isOwnerOrModView(viewer, 7)).toBe(expected);
+    expect(isViewerOrModerator(viewer, 7)).toBe(expected);
   });
 });
