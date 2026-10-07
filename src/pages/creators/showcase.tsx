@@ -1,4 +1,4 @@
-import { Container, Title } from '@mantine/core';
+import { Container } from '@mantine/core';
 import { CreatorShowcase } from '~/components/CreatorJourney/CreatorShowcase';
 import { Meta } from '~/components/Meta/Meta';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -14,10 +14,7 @@ export default function CreatorShowcasePage() {
   return (
     <>
       <Meta title="Creator Showcase | Civitai" deIndex />
-      <Container size="lg" pb="xl">
-        <Title order={1} mb="lg">
-          Creator Showcase
-        </Title>
+      <Container size="lg" py="xl">
         <CreatorShowcase />
       </Container>
     </>
