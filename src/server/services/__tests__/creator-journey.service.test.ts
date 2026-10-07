@@ -1,5 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const chQuery = vi.hoisted(() => vi.fn());
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  clickhouse: { query: chQuery },
+}));
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import {
   buildActivityProgress,
   buildSecretMilestones,
@@ -540,5 +548,54 @@ describe('buildActivityProgress', () => {
   it('has no closest next once everything is earned', () => {
     const held = new Map(definitions.map((d) => [d.key, null]));
     expect(buildActivityProgress(definitions, held, values).closestNext).toBeNull();
+  });
+});
+
+describe('judge votes', () => {
+  const judgeRank = (threshold: number) => ({
+    ...definition({
+      key: `community:crucible-votes-${threshold}`,
+      track: 'community',
+      threshold,
+      hidden: false,
+      hint: null,
+    }),
+    name: `${threshold} Votes`,
+    cosmetic: null,
+  });
+
+  beforeEach(() => {
+    chQuery.mockReset();
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? [judgeRank(5000), judgeRank(500), judgeRank(1000)] : [])) as never);
+  });
+
+  it("shows the viewer's own Crucible vote count against every judge rank", async () => {
+    chQuery.mockResolvedValue({ json: async () => [{ votes: '640' }] });
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(chQuery).toHaveBeenCalledWith(expect.objectContaining({ query_params: { userId: 42 } }));
+    expect(
+      activity.milestones.map(({ key, measure, current }) => ({ key, measure, current }))
+    ).toEqual([
+      { key: 'community:crucible-votes-500', measure: 'votes', current: 640 },
+      { key: 'community:crucible-votes-1000', measure: 'votes', current: 640 },
+      { key: 'community:crucible-votes-5000', measure: 'votes', current: 640 },
+    ]);
+    // 640 has passed 500, which the nightly job has not granted yet, so 1k is the target.
+    expect(activity.closestNext).toMatchObject({ key: 'community:crucible-votes-1000' });
+  });
+
+  // ClickHouse is a second store behind one page; its outage must not take the page down.
+  it('still loads, at zero votes, when ClickHouse fails', async () => {
+    chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
   });
 });

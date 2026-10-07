@@ -17,6 +17,7 @@ import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone
 import {
   activityDetectorGroups,
   activityValuesSql,
+  judgeVoteGroups,
 } from '~/server/services/creator-milestone-detectors';
 import type { ActivityMeasure } from '~/server/services/creator-milestone-registry';
 import {
@@ -793,5 +794,55 @@ describe('journey progress values', () => {
       reactions: 0,
       revenue: 0,
     });
+  });
+});
+
+describe('judge-vote detector', () => {
+  const judgeGroup = (totals: unknown[]) => {
+    const calls: { sql: string; settings: Record<string, string | number> }[] = [];
+    const [group] = judgeVoteGroups(async (sql, settings) => {
+      calls.push({ sql, settings });
+      return totals;
+    });
+    return { group, calls };
+  };
+
+  it('grants every judge rank at or below the vote count, undated', async () => {
+    const { group, calls } = judgeGroup([
+      { userId: CREATOR, votes: '1200' },
+      { userId: TESTER, votes: '500' },
+      { userId: QUIET, votes: '499' },
+    ]);
+    await run(group);
+
+    expect(await held(CREATOR)).toEqual([
+      { key: 'community:crucible-votes-1000', seen: expect.any(Boolean), at: expect.any(String) },
+      { key: 'community:crucible-votes-500', seen: expect.any(Boolean), at: expect.any(String) },
+    ]);
+    expect((await held(TESTER)).map((row) => row.key)).toEqual(['community:crucible-votes-500']);
+    expect(await held(QUIET)).toEqual([]);
+    expect(group.timed).toBe(false);
+    // Totals below the lowest rank stay in ClickHouse; the read-only flag rides on the request.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toMatch(/HAVING votes >= 500$/);
+    expect(calls[0].settings).toMatchObject({ readonly: '1' });
+  });
+
+  it('does not offer a rank the judge already holds', async () => {
+    await run(judgeGroup([{ userId: CREATOR, votes: '600' }]).group);
+    const { group } = judgeGroup([{ userId: CREATOR, votes: '1200' }]);
+    const candidates = await (
+      group as Extract<MilestoneDetectorGroup, { candidates: unknown }>
+    ).candidates(pg);
+    expect(candidates.map((row) => row.milestoneKey)).toEqual(['community:crucible-votes-1000']);
+  });
+
+  it.each([
+    ['an anonymous vote row', { userId: 0, votes: '500' }],
+    ['a non-numeric user', { userId: 'x', votes: '500' }],
+    ['a non-numeric count', { userId: CREATOR, votes: 'many' }],
+  ])('refuses %s instead of granting from it', async (_, row) => {
+    const { group } = judgeGroup([row]);
+    await expect(run(group)).rejects.toThrow('crucible_votes returned a malformed total');
   });
 });

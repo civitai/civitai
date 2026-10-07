@@ -29,12 +29,21 @@ const definitions = [
   definition('earn:shop-sales-100000', 100000, '100k Sales'),
   definition('earn:shop-sales-250000', 250000, '250k Sales'),
   definition('earn:shop-sales-500000', 500000, '500k Sales'),
+  definition('community:crucible-votes-500', 500, '500 Votes'),
+  definition('community:crucible-votes-1000', 1000, '1k Votes'),
+  definition('community:crucible-votes-5000', 5000, '5k Votes'),
 ];
 
 let root: Root | undefined;
 let container: HTMLDivElement | undefined;
 
-function render(held: Map<string, Date | null>, followers = 87, models = 3, revenue = 0) {
+function render(
+  held: Map<string, Date | null>,
+  followers = 87,
+  models = 3,
+  revenue = 0,
+  votes = 0
+) {
   const activity = buildActivityProgress(definitions, held, {
     models,
     articles: 0,
@@ -42,6 +51,7 @@ function render(held: Map<string, Date | null>, followers = 87, models = 3, reve
     followers,
     reactions: 0,
     revenue,
+    votes,
   });
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -123,6 +133,22 @@ describe('Shop track', () => {
   });
 });
 
+describe('Community track', () => {
+  it('shows Crucible votes cast against each judge rank, under its own header', () => {
+    const el = render(new Map([['community:crucible-votes-500', null]]), 87, 3, 0, 640);
+    const header = [...el.querySelectorAll<HTMLElement>('*')].find(
+      (node) => node.childElementCount === 0 && node.textContent === 'Community'
+    );
+    const judgeTrack = header?.parentElement;
+    expect(judgeTrack && tile(judgeTrack, '1k Votes')).toBeTruthy();
+    expect(judgeTrack?.textContent).toContain('Crucible votes640 cast');
+    expect(tile(el, '500 Votes')?.dataset.state).toBe('earned');
+    expect(tile(el, '1k Votes')?.dataset.state).toBe('progress');
+    expect(tile(el, '1k Votes')?.textContent).toContain('640 / 1,000');
+    expect(tile(el, '5k Votes')?.textContent).toContain('5,000 votes');
+  });
+});
+
 describe('Achievements badge art', () => {
   it('shows the milestone art once it has some, the numbered hex until then', () => {
     const withArt = [{ ...definitions[0], cosmetic: { data: { url: 'first-model-art' } } }];
@@ -133,6 +159,7 @@ describe('Achievements badge art', () => {
       followers: 0,
       reactions: 0,
       revenue: 0,
+      votes: 0,
     });
     container = document.createElement('div');
     document.body.appendChild(container);

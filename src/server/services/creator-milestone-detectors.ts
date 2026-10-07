@@ -4,8 +4,9 @@ import {
   creatorMilestoneRegistry,
   USER_METRICS,
 } from '~/server/services/creator-milestone-registry';
+import type { QueryClickhouse } from '~/server/services/creator-milestone-stored';
 
-type ActivityEntry = Exclude<MilestoneRegistryEntry, { detector: 'scoreSnapshot' }>;
+type ActivityEntry = Exclude<MilestoneRegistryEntry, { detector: 'scoreSnapshot' | 'judgeVotes' }>;
 
 type DetectorGroupBase = {
   id: string;
@@ -170,7 +171,7 @@ export function activityDetectorGroups(
 ): SqlDetectorGroup[] {
   const groups = new Map<string, SqlDetectorGroup>();
   for (const [key, entry] of Object.entries(registry)) {
-    if (entry.detector === 'scoreSnapshot') continue;
+    if (entry.detector === 'scoreSnapshot' || entry.detector === 'judgeVotes') continue;
     const watermarkId = [
       entry.detector,
       ...Object.values(entry.params),
@@ -191,4 +192,68 @@ export function activityDetectorGroups(
       });
   }
   return [...groups.values()];
+}
+
+// Rows before 2026-10-04 carry userId 0, so they count for nobody.
+export const judgeVoteCountSql = `SELECT count() AS votes FROM crucible_votes
+  WHERE userId = {userId:UInt32}`;
+
+export const judgeVoteTotalsSql = (min: number) => `SELECT userId, count() AS votes
+  FROM crucible_votes WHERE userId > 0 GROUP BY userId HAVING votes >= ${Math.trunc(min)}`;
+
+const JUDGE_QUERY_LIMITS = { max_execution_time: 60, max_result_rows: 1_000_000 };
+
+/** Judge ranks count Crucible votes, which only ClickHouse holds, so they are found row by row. */
+export function judgeVoteGroups(
+  queryClickhouse: QueryClickhouse,
+  registry: Record<string, MilestoneRegistryEntry> = creatorMilestoneRegistry
+): RowDetectorGroup[] {
+  const entries = Object.entries(registry).filter(([, entry]) => entry.detector === 'judgeVotes');
+  if (!entries.length) return [];
+  const [, first] = entries[0];
+  const keys = entries.map(([key]) => key);
+  const watermarkId = ['judgeVotes', first.launchedAt.toISOString()].join(':');
+  return [
+    {
+      id: `${watermarkId}:${first.silent ? 'silent' : 'announced'}`,
+      watermarkId,
+      keys,
+      launchedAt: first.launchedAt,
+      silent: !!first.silent,
+      timed: false,
+      candidates: async (readPg) => {
+        const thresholds = await readPg.cancellableQuery<{ min: number | null }>(
+          `SELECT min(threshold)::int AS min FROM "CreatorMilestone" WHERE key = ANY($1::text[])`,
+          [keys]
+        );
+        const [{ min } = { min: null }] = await thresholds.result();
+        if (min == null) return [];
+
+        const totals = (await queryClickhouse(judgeVoteTotalsSql(min), {
+          readonly: '1',
+          ...JUDGE_QUERY_LIMITS,
+        })) as { userId: unknown; votes: unknown }[];
+        const userIds: number[] = [];
+        const votes: number[] = [];
+        for (const row of totals) {
+          const userId = Number(row.userId);
+          const count = Number(row.votes);
+          if (!Number.isSafeInteger(userId) || userId <= 0 || !Number.isSafeInteger(count))
+            throw new Error('crucible_votes returned a malformed total');
+          userIds.push(userId);
+          votes.push(Math.min(count, 2147483647));
+        }
+        if (!userIds.length) return [];
+
+        const found = await readPg.cancellableQuery<MilestoneCandidateRow>(
+          `SELECT v."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt"
+          FROM unnest($1::int[], $2::int[]) AS v("userId", votes)
+          JOIN "CreatorMilestone" m ON m.key = ANY($3::text[]) AND v.votes >= m.threshold
+          WHERE ${notHeld('v."userId"')}`,
+          [userIds, votes, keys]
+        );
+        return found.result();
+      },
+    },
+  ];
 }
