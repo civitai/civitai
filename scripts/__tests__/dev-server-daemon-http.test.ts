@@ -51,8 +51,8 @@ describe('daemonFetch', () => {
 
   // `fetch` gave up after undici's implicit 300s; `http.request` has no timeout of its own, so a
   // daemon that accepts and never answers would hang a waiter forever without this.
-  // cli.mjs and console.mjs send every daemon call through this default, including session and app
-  // starts; shortening it below fetch's old 300s would fail calls that used to succeed.
+  // Every cli.mjs and console.mjs daemon call uses this default. It stands in for fetch's implicit
+  // 300s, so a shorter one makes a slow daemon fail calls that fetch would have waited out.
   it('waits at least as long as fetch did by default', () => {
     expect(DAEMON_TIMEOUT_MS).toBeGreaterThanOrEqual(300_000);
   });
