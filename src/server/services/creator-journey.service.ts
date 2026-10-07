@@ -16,6 +16,12 @@ import {
   creatorMilestoneRegistry,
 } from '~/server/services/creator-milestone-registry';
 import { activityValuesSql } from '~/server/services/creator-milestone-detectors';
+import type { ShowcaseSource } from '~/server/services/creator-showcase.service';
+import {
+  getVisibleShowcaseRows,
+  LEGEND,
+  toLegendStatus,
+} from '~/server/services/creator-showcase.service';
 
 type MilestoneDefinition = {
   key: string;
@@ -202,15 +208,14 @@ export async function getCreatorJourney(userId: number) {
   };
 }
 
-const LEGEND_KEY = 'score:legend';
-
 /**
  * A Legend whose crossing was never observed (granted silently) is a founding Legend, undated.
  * Nothing is returned when the owner hides the Legend badge, or all badges, on their profile.
+ * `oneOf` is the Hall of Fame's size, given only to a Legend the Hall of Fame lists.
  */
-export async function getLegendStatus(userId: number) {
+export async function getLegendStatus(userId: number, source?: ShowcaseSource) {
   const legend = await dbRead.userCreatorMilestone.findUnique({
-    where: { userId_milestoneKey: { userId, milestoneKey: LEGEND_KEY } },
+    where: { userId_milestoneKey: { userId, milestoneKey: LEGEND } },
     select: { achievedAt: true, seenAt: true, milestone: { select: { cosmeticId: true } } },
   });
   // Almost no profile belongs to a Legend, so the privacy read waits until one is found.
@@ -221,12 +226,13 @@ export async function getLegendStatus(userId: number) {
   });
   const privacy = profile?.privacySettings as PrivacySettingsSchema | null | undefined;
   if (!isBadgeShownOnProfile(privacy, legend.milestone.cosmeticId)) return null;
-  return toLegendStatus(legend);
-}
-
-export function toLegendStatus(legend: { achievedAt: Date; seenAt: Date | null }) {
-  const founding = !achievedAtIsObserved(legend);
-  return { founding, since: founding ? null : legend.achievedAt };
+  // The label stands on its own, so an unreadable showcase drops only the count, and a profile does not
+  // wait out another request's fill of the candidate list.
+  const legends = await getVisibleShowcaseRows({ retryCount: 0, ...source })
+    .then((rows) => rows.legends)
+    .catch(() => null);
+  const oneOf = legends?.some((row) => row.userId === userId) ? legends.length : null;
+  return { ...toLegendStatus(legend), oneOf };
 }
 
 /**

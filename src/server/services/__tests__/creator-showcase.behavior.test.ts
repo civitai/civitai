@@ -35,6 +35,10 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
 import type * as UserService from '~/server/services/user.service';
 import type * as Caches from '~/server/redis/caches';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { getLegendStatus } from '~/server/services/creator-journey.service';
 import { getCreatorShowcase, getShowcaseRows } from '~/server/services/creator-showcase.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -54,7 +58,7 @@ const holder = { db: null as unknown as PGlite };
 const queried = vi.fn();
 const pg = {
   cancellableQuery: async (sql: string, params?: unknown[]) => {
-    queried();
+    queried(sql);
     return {
       result: async () => (await holder.db.query(sql, params)).rows,
       cancel: async () => undefined,
@@ -62,6 +66,8 @@ const pg = {
   },
 } as never;
 const q = (sql: string, params?: unknown[]) => holder.db.query(sql, params);
+const candidateReads = () =>
+  queried.mock.calls.filter(([sql]) => String(sql).includes('FROM "UserCreatorMilestone"')).length;
 
 const NOW = new Date('2026-11-15T12:00:00Z');
 const THIS_MONTH = '2026-11-02 08:00:00';
@@ -101,6 +107,12 @@ const grant = (userId: number, key: string, achievedAt: string, silent = false) 
     [userId, key, achievedAt, silent]
   );
 
+const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
+  q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
+    userId,
+    JSON.stringify(settings),
+  ]);
+
 const showcase = (excludedUserIds: number[] = [], now = NOW) =>
   getShowcaseRows(pg, { now, excludedUserIds });
 const ids = (rows: { userId: number }[]) => rows.map((row) => row.userId);
@@ -119,8 +131,17 @@ beforeAll(async () => {
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
 });
 
+const cache = new Map<string, unknown>();
+
 beforeEach(async () => {
   queried.mockClear();
+  cache.clear();
+  redisMock.redis.packed.get.mockImplementation(async (key: string) => cache.get(key) ?? null);
+  redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
+    cache.set(key, value);
+    return 'OK';
+  });
+  redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
   mocks.excluded.mockReset().mockResolvedValue([]);
   await holder.db.exec(`
     TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User";
@@ -219,11 +240,6 @@ describe('new Supernovas this month', () => {
 });
 
 describe('badge privacy', () => {
-  const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
-    q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
-      userId,
-      JSON.stringify(settings),
-    ]);
   const attachBadge = async (key: string) => {
     const { rows } = await q(`INSERT INTO "Cosmetic" DEFAULT VALUES RETURNING id`);
     const { id } = rows[0] as { id: number };
@@ -277,5 +293,98 @@ describe('getCreatorShowcase', () => {
     };
     expect(result.legends).toEqual([{ user, founding: true, since: null }]);
     expect(result.newSupernovas).toEqual([{ user, achievedAt: expect.any(Date) }]);
+  });
+});
+
+describe('cached candidates, live standing', () => {
+  const legendRow = {
+    achievedAt: new Date(LAST_MONTH),
+    seenAt: null,
+    milestone: { cosmeticId: null },
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(legendRow as never);
+    dbMock.dbRead.userProfile.findUnique.mockResolvedValue(null);
+  });
+
+  // Pinned for the CJ lead (2026-10-07): the profile's "one of N" and the Hall of Fame must never
+  // disagree, so both read one cached candidate list. Either may be the first to fill it.
+  it('is the Hall of Fame length, read from the same cached entry', async () => {
+    await addUser(GOOD);
+    await addUser(OTHER);
+    await addUser(MUTED, { muted: true });
+    for (const id of [GOOD, OTHER, MUTED]) await grant(id, 'score:legend', LAST_MONTH);
+
+    const status = await getLegendStatus(GOOD, { pg, now: NOW });
+    const { legends } = await getCreatorShowcase({ pg, now: NOW });
+
+    expect(legends).toHaveLength(2);
+    expect(status?.oneOf).toBe(legends.length);
+    expect(candidateReads()).toBe(1);
+    expect(cache.has(REDIS_KEYS.CACHES.CREATOR_SHOWCASE_CANDIDATES)).toBe(true);
+  });
+
+  it('gives no count to a Legend the Hall of Fame leaves out', async () => {
+    await addUser(GOOD);
+    await addUser(MUTED, { muted: true });
+    for (const id of [GOOD, MUTED]) await grant(id, 'score:legend', LAST_MONTH);
+
+    expect(await getLegendStatus(GOOD, { pg, now: NOW })).toMatchObject({ oneOf: 1 });
+    expect(await getLegendStatus(MUTED, { pg, now: NOW })).toMatchObject({ oneOf: null });
+    expect(candidateReads()).toBe(1);
+  });
+
+  // A ban, mute, strike or hidden badge must take a creator off the public page on the next view,
+  // not when the cached list next refills.
+  it.each([
+    ['muted', () => q(`UPDATE "User" SET muted = true WHERE id = $1`, [GOOD])],
+    ['banned', () => q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [GOOD])],
+    [
+      'struck',
+      () =>
+        q(`INSERT INTO "UserStrike" ("userId", status, "expiresAt") VALUES ($1, 'Active', $2)`, [
+          GOOD,
+          '2027-01-01 00:00:00',
+        ]),
+    ],
+    ['hiding badges', () => setPrivacy(GOOD, { showBadges: false })],
+    ['metric-suppressed', async () => void mocks.excluded.mockResolvedValue([GOOD])],
+    [
+      'leaderboard-excluded',
+      () => q(`UPDATE "User" SET "excludeFromLeaderboards" = true WHERE id = $1`, [GOOD]),
+    ],
+  ])('drops a Legend newly %s while the candidate list is cached', async (_, change) => {
+    await addUser(GOOD);
+    await addUser(OTHER);
+    for (const id of [GOOD, OTHER]) await grant(id, 'score:legend', LAST_MONTH);
+    const before = await getCreatorShowcase({ pg, now: NOW });
+    expect(before.legends.map(({ user }) => user.id)).toEqual([GOOD, OTHER]);
+
+    await change();
+
+    const { legends } = await getCreatorShowcase({ pg, now: NOW });
+    expect(legends.map(({ user }) => user.id)).toEqual([OTHER]);
+    expect(candidateReads()).toBe(1);
+  });
+
+  it('drops the count rather than wait while another request fills an empty cache', async () => {
+    await addUser(GOOD);
+    await grant(GOOD, 'score:legend', LAST_MONTH);
+    redisMock.redis.setNxKeepTtlWithEx.mockClear().mockResolvedValue(false);
+
+    expect(await getLegendStatus(GOOD, { pg, now: NOW })).toMatchObject({ oneOf: null });
+    expect(redisMock.redis.setNxKeepTtlWithEx).toHaveBeenCalledTimes(1);
+  });
+
+  it('moves "this month" at the UTC month boundary while the candidate list is cached', async () => {
+    await addUser(GOOD);
+    await grant(GOOD, 'score:supernova', '2026-10-31 20:00:00');
+    const before = await getCreatorShowcase({ pg, now: new Date('2026-10-31T23:30:00Z') });
+    const after = await getCreatorShowcase({ pg, now: new Date('2026-11-01T00:30:00Z') });
+
+    expect(before.newSupernovas.map(({ user }) => user.id)).toEqual([GOOD]);
+    expect(after.newSupernovas).toEqual([]);
+    expect(candidateReads()).toBe(1);
   });
 });
