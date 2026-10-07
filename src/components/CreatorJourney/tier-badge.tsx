@@ -2,24 +2,16 @@ import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { SCORE_TIERS, scoreTierKey } from '~/shared/constants/creator-journey.constants';
 
 export type BadgeState = 'earned' | 'next' | 'locked';
 
 export const HEXAGON = 'polygon(50% 0, 100% 25%, 100% 75%, 50% 100%, 0 75%, 0 25%)';
 export const DEFAULT_ACCENT = '#f59f00';
 
-// Sampled from each tier's enamel plate, so glows and bars match the art.
-export const tierAccents: Record<string, string> = {
-  'score:spark': '#c92a2a',
-  'score:kindle': '#d9480f',
-  'score:flame': '#f76707',
-  'score:blaze': '#f59f00',
-  'score:beacon': '#e8b923',
-  'score:nova': '#3b5bdb',
-  'score:star': '#4dabf7',
-  'score:supernova': '#ae3ec9',
-  'score:legend': '#e9c46a',
-};
+export const tierAccents: Record<string, string> = Object.fromEntries(
+  SCORE_TIERS.map((tier) => [scoreTierKey(tier.slug), tier.accent])
+);
 
 export const accentVar = (accent: string) => ({ '--cj-accent': accent } as CSSProperties);
 
