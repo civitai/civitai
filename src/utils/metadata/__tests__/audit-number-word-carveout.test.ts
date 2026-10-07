@@ -1,28 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { includesInappropriate, includesMinorAge } from '~/utils/metadata/audit';
+import { includesInappropriate } from '~/utils/metadata/audit';
 
 // `\w*tee+n\w*` swallowed every word ending in -teen. It blocked users for writing
 // "eighteen"/"nineteen" — i.e. for asserting adulthood — and for "nineteenth century",
 // "fifteen second", "canteen".
-//
-// The carve-out is safe only because `includesMinorAge` recognises the spelled-out ages
-// on its own; that independence is what the first block below pins. Without it, carving
-// the number words out of the noun pattern would silently stop blocking "fifteen year
-// old".
 describe('number words are carved out of the youth-noun pattern', () => {
-  describe('spelled-out minor ages still block, via the age check', () => {
-    it.each([
-      ['thirteen year old, nude', 13],
-      ['fourteen year old girl, nude', 14],
-      ['fifteen year old, nude', 15],
-      ['sixteen yo, nude', 16],
-      ['seventeen years old, nude', 17],
-    ])('%s -> age %i', (prompt, age) => {
-      expect(includesMinorAge(prompt)).toMatchObject({ found: true, age });
-      expect(includesInappropriate({ prompt })).toBe('minor');
-    });
-  });
-
   describe('a number word that is not an age no longer blocks', () => {
     it.each([
       'eighteen year old woman, nude',

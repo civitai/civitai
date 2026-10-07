@@ -29,6 +29,5 @@ Subpath exports:
 |---------|---------------|
 | `./prompt-audit` | `getPromptHighlightSegments`, `includesInappropriate`, `normalizeText` — the audit surface the moderator spoke calls. |
 | `./prompt-audit/lists` | The audit vocabulary as **named exports** (`blocked`, `blockedNSFW`, `poiWords`, `youngWords`, `harmfulCombinations`, `EXTERNAL_CLASSIFIER_REWRITES`, …). Import this barrel, never a `*.json` path — a raw JSON subpath export would be the only cross-workspace JSON import in the Next app. |
-| `./prompt-audit/lists/ages` | The stated-age vocabulary (`ages`, `templates`, `templateParts`, `canonicalNumberWords`), post teen-expansion. |
 | `./prompt-audit/word-regex` | `prepareWordRegex` / `prepareWordRegexBody` — the zero-width-boundary term-regex builder. Its ReDoS rationale lives in that file. |
 | `./profanity/lists` | `blockedWords` / `whitelistWords` for `src/libs/profanity-simple`. |

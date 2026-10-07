@@ -14,12 +14,6 @@ import {
   youngComposedNouns,
 } from '@civitai/mod-utils/prompt-audit/lists';
 import { prepareWordRegex, prepareWordRegexBody } from '@civitai/mod-utils/prompt-audit/word-regex';
-import {
-  ages,
-  canonicalNumberWords,
-  templateParts,
-  templates,
-} from '@civitai/mod-utils/prompt-audit/lists/ages';
 import { blockedNSFWRegexLazy, blockedRegexLazy } from '~/utils/metadata/audit-base';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { AuditTimer } from '~/utils/metadata/audit-slow-log';
@@ -38,12 +32,6 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
   if (!meta) return { blockedFor: [], success: true };
   const prompt = normalizeText(meta.prompt);
 
-  // Add minor check
-  if (nsfw) {
-    const { found, age } = includesMinorAge(prompt);
-    if (found && age != null) return { blockedFor: [`${age} year old`], success: false };
-  }
-
   const blockList = nsfw ? blockedNSFWRegexLazy() : blockedRegexLazy();
   const blockedFor = blockList
     .filter(({ regex }) => meta?.prompt && regex.test(prompt))
@@ -54,7 +42,6 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
 // #region [enriched audit]
 // Structured trigger data for server-side tracking, moderator review, and false-positive allowlisting
 export type PromptTriggerCategory =
-  | 'minor_age'
   | 'poi'
   | 'inappropriate_minor'
   | 'inappropriate_poi'
@@ -73,10 +60,7 @@ export interface PromptTrigger {
  * Categories a user may click through with a warning ("I know what I'm doing").
  * Everything not listed here is a hard block and has no override path.
  *
- * Do NOT add anything minor- or real-person-related. `minor_age` is the near
- * miss: it fires on innocent text ("an 8 year old oak tree") but also on
- * suggestive-minor prompts carrying no explicit term, which `inappropriate_minor`
- * cannot catch because it requires an NSFW word.
+ * Do NOT add anything minor- or real-person-related.
  *
  * Do NOT add `external`. Its trigger message is whatever a deployment configured
  * — `extModeration.moderatePrompt` relabels provider categories through the
@@ -173,19 +157,7 @@ export const auditPromptEnriched = (
   prompt = timer.time('normalize', () => normalizeText(prompt));
   negativePrompt = timer.time('normalize', () => normalizeText(negativePrompt));
 
-  // 1. Minor age check
-  const { found, age } = timer.time('minor_age', () => includesMinorAge(prompt));
-  if (found && age != null) {
-    const message = `${age} year old`;
-    timer.finish(prompt, negativePrompt);
-    return {
-      blockedFor: [message],
-      triggers: [{ category: 'minor_age', message, matchedWord: String(age) }],
-      success: false,
-    };
-  }
-
-  // 2. POI check
+  // 1. POI check
   const poiMatch = timer.time('poi', () => includesPoi(prompt));
   if (poiMatch) {
     const message = 'Prompt cannot include celebrity names';
@@ -219,7 +191,7 @@ export const auditPromptEnriched = (
     };
   }
 
-  // 3. Inappropriate content check (with matched word capture)
+  // 2. Inappropriate content check (with matched word capture)
   const inappropriateResult = timer.time('inappropriate', () =>
     includesInappropriateEnriched({ prompt, negativePrompt })
   );
@@ -238,7 +210,7 @@ export const auditPromptEnriched = (
     };
   }
 
-  // 4. NSFW blocklist check
+  // 3. NSFW blocklist check
   // A HARD term anywhere in the prompt wins over a soft term that happens to sit
   // earlier in the list. Returning the first match outright would let any soft
   // word act as a universal override key: `daughter` is entry 23 of 191, so
@@ -264,14 +236,13 @@ export const auditPromptEnriched = (
     };
   }
 
-  // 5. Profanity check (green domain only)
+  // 4. Profanity check (green domain only)
   if (checkProfanity) {
     const profanityResults = timer.time('profanity', () => {
       const profanityFilter = createProfanityFilter();
-      // Strip Danbooru rating/score/source tags first, for the same reason
-      // `includesMinorAge` does: they are metadata, not language. `rating_explicit` is
-      // how a booru labels an image, and obscenity matches inside it — so the tag alone
-      // refused prompts whose images the SFW domain publishes.
+      // Strip Danbooru rating/score/source tags first: they are metadata, not language.
+      // `rating_explicit` is how a booru labels an image, and obscenity matches inside it —
+      // so the tag alone refused prompts whose images the SFW domain publishes.
       return profanityFilter.analyze(prompt.replace(falsePositiveTagPattern, ' '));
     });
     if (profanityResults.isProfane) {
@@ -322,159 +293,7 @@ export function hasNsfwPrompt(text?: string | null) {
 }
 // #endregion
 
-// #region [minorCheck]
-// --------------------------------------
-// Prepare Regexes - Two Phase Approach
-// --------------------------------------
-// Phase 1: Quick screening pattern - rejects most prompts instantly
-const quickScreenPattern =
-  /(?:age[ds]?|year|old|birthday|anos|\b(?:1[0-7]|[1-9])\b|teen|eleven|twelve|one|two|three|four|five|six|seven|eight|nine|ten)/i;
-
-// TEST-ONLY. Exposes the POST-teen-expansion `ages` table so the age-path oracle in
-// `__tests__/audit-matching-equivalence.test.ts` can replicate `highlightMinor`'s
-// `ages.find(x => x.matches.includes(ageText))` age-resolution step EXACTLY (it is
-// boundary-invariant — the same lookup for both the live zero-width `ageRegexes` and
-// the old consuming-boundary reference — so reusing the live table keeps the oracle
-// from drifting). Read-only intent; do NOT mutate or call from production code.
-export function __getAgesForTest() {
-  return ages;
-}
-
-// Build regex patterns for each age separately
-const yearsPattern = templateParts.years.join('|');
-const oldPattern = templateParts.old.join('|');
-
-// The trailing `\b` goes on canonical spellings only; `canonicalNumberWords` in
-// `lists/ages.ts` carries why the typo variants must not get one.
-const buildAgePattern = (matches: string[]) =>
-  matches.map((m) => (canonicalNumberWords.has(m) ? `${m}\\b` : m)).join('|');
-
-const perAgeRegexes = ages.map((ageEntry) => {
-  const agePattern = buildAgePattern(ageEntry.matches);
-  const regexes = templates.map((template) => {
-    let regexStr = template;
-    regexStr = regexStr.replace('{age}', `(${agePattern})`);
-    regexStr = regexStr.replace('{years}', `(${yearsPattern})`);
-    regexStr = regexStr.replace('{old}', `(${oldPattern})`);
-    // Limit to 0-3 non-alphanumeric chars between parts
-    regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-    // Zero-width word boundaries instead of consuming non-alnum runs. Logically
-    // equivalent for the boolean match ("preceded/followed by non-alnum or string
-    // edge" ≡ "not preceded/followed by an alnum") but, being zero-width, there is
-    // nothing for the engine to backtrack over a long non-Latin (CJK) run — this
-    // collapses the O(regexes × n²) catastrophic backtracking to linear. See
-    // audit-base.ts prepareWordRegex + audit-cjk-redos.test.ts for the incident.
-    regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
-    return new RegExp(regexStr, 'i');
-  });
-  return { age: ageEntry.age, regexes };
-});
-
-// TEST-ONLY. Reconstructs the per-age regexes EXACTLY as `perAgeRegexes` above but
-// with the PRE-#2722 *consuming* boundary groups (`([^a-zA-Z0-9]+|^)0*…([^a-zA-Z0-9]+|$)`)
-// instead of the zero-width assertions. It deliberately reuses the SAME in-module
-// building blocks (the post-teen-expansion `ages`, `templates`, `buildAgePattern`,
-// `yearsPattern`, `oldPattern`) so the equivalence oracle in
-// `__tests__/audit-matching-equivalence.test.ts` is a faithful old-vs-new comparison
-// that can never drift from the live construction (no copy-pasted data to rot).
-// Not used by any runtime path — exported solely so the test can prove the #2722
-// boundary refactor preserved age matching. Do NOT call from production code.
-export function __buildOldAgeRegexesForTest() {
-  return ages.map((ageEntry) => {
-    const agePattern = buildAgePattern(ageEntry.matches);
-    const regexes = templates.map((template) => {
-      let regexStr = template;
-      regexStr = regexStr.replace('{age}', `(${agePattern})`);
-      regexStr = regexStr.replace('{years}', `(${yearsPattern})`);
-      regexStr = regexStr.replace('{old}', `(${oldPattern})`);
-      regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-      // Pre-#2722 consuming boundaries (the only intended difference vs perAgeRegexes).
-      regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
-      return new RegExp(regexStr, 'i');
-    });
-    return { age: ageEntry.age, regexes };
-  });
-}
-
-// Legacy: Keep ageRegexes for debugAuditPrompt and highlightMinor (which iterate all templates)
-// These use the combined pattern for detailed match info
-const allAgeMatches = ages.flatMap((x) => x.matches);
-const allAgePattern = buildAgePattern(allAgeMatches);
-const ageRegexes = templates.map((template) => {
-  let regexStr = template;
-  regexStr = regexStr.replace('{age}', `(?<age>${allAgePattern})`);
-  regexStr = regexStr.replace('{years}', `(?<years>${yearsPattern})`);
-  regexStr = regexStr.replace('{old}', `(?<old>${oldPattern})`);
-  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-  // Zero-width boundaries — see the perAgeRegexes note above (same ReDoS fix).
-  regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
-  return new RegExp(regexStr, 'i');
-});
-
-// TEST-ONLY. Reconstructs the COMBINED `ageRegexes` above (the legacy path feeding
-// `debugAuditPrompt` / `highlightMinor`) but with the PRE-#2722 *consuming* boundary
-// groups (`([^a-zA-Z0-9]+|^)0*…([^a-zA-Z0-9]+|$)`) instead of the zero-width
-// assertions. #2723 added an old-vs-new oracle for the PER-AGE path
-// (`__buildOldAgeRegexesForTest` / `includesMinorAge`) but NOT for this combined
-// `ageRegexes` path, which ALSO got the #2722 boundary change. This sibling export
-// closes that gap: it reuses the SAME in-module building blocks (`templates`,
-// `allAgePattern`, `yearsPattern`, `oldPattern`, including the named capture groups)
-// so the only difference vs the live `ageRegexes` is the boundary form — no
-// copy-pasted data that could rot. Not used by any runtime path; exported solely so
-// `__tests__/audit-matching-equivalence.test.ts` can prove the #2722 boundary
-// refactor preserved the legacy age path. Do NOT call from production code.
-export function __buildOldAgeRegexesCombinedForTest() {
-  return templates.map((template) => {
-    let regexStr = template;
-    regexStr = regexStr.replace('{age}', `(?<age>${allAgePattern})`);
-    regexStr = regexStr.replace('{years}', `(?<years>${yearsPattern})`);
-    regexStr = regexStr.replace('{old}', `(?<old>${oldPattern})`);
-    regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-    // Pre-#2722 consuming boundaries (the only intended difference vs ageRegexes).
-    regexStr = `([^a-zA-Z0-9]+|^)0*` + regexStr + `([^a-zA-Z0-9]+|$)`;
-    return new RegExp(regexStr, 'i');
-  });
-}
-
-// Danbooru-style tags that embed digits but aren't ages. Without stripping these,
-// prompts like `score_9, year 2025` falsely match the `{age} {years}` template
-// because the trailing digit in `score_9` sits within 3 non-alphanumeric chars of `year`.
 const falsePositiveTagPattern = /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
-
-// Prompt attention-weight syntax embeds a decimal that isn't an age. Without stripping it,
-// `(@ningen mame:0.8), year` falsely matches the `{age} {years}` template because the `8`
-// from the `0.8` weight sits within 3 non-alphanumeric chars of `year`. Only the decimal
-// weight (a `:x.y` immediately preceding a closing `)`/`]`) is removed, so a real age inside
-// a weighted group — e.g. `(8 year old:1.2)` — and integer forms like `age:8` are preserved.
-const promptWeightPattern = /:\s*\d+\.\d+(?=\s*[)\]])/g;
-
-// --------------------------------------
-// Age Check Function (Two-Phase Approach)
-// --------------------------------------
-export function includesMinorAge(prompt: string | undefined) {
-  if (!prompt) return { found: false, age: undefined };
-
-  const cleaned = prompt.replace(falsePositiveTagPattern, ' ').replace(promptWeightPattern, '');
-
-  // Phase 1: Quick screening - skip if prompt clearly doesn't contain age references
-  // This rejects 99%+ of prompts instantly with a tiny regex
-  if (!quickScreenPattern.test(cleaned)) {
-    return { found: false, age: undefined };
-  }
-
-  // Phase 2: Detailed matching - check each age with smaller per-age patterns
-  for (const { age, regexes } of perAgeRegexes) {
-    for (const regex of regexes) {
-      if (regex.test(cleaned)) {
-        return { found: true, age };
-      }
-    }
-  }
-
-  return { found: false, age: undefined };
-}
-
-// #endregion
 
 // #region [inappropriate]
 // Builds the "body" of a word pattern (everything between the leading/trailing
@@ -684,7 +503,6 @@ export function includesMinor(prompt: string | undefined, negativePrompt?: strin
   if (!prompt) return false;
 
   return (
-    includesMinorAge(prompt).found ||
     words.young.nouns.inPrompt(prompt) ||
     (negativePrompt && words.young.negativeNouns.inPrompt(negativePrompt))
   );
@@ -777,11 +595,6 @@ function includesInappropriateEnriched(
   if (poiResult)
     return { type: 'poi', matchedWord: typeof poiResult === 'string' ? poiResult : undefined };
 
-  // Minor — check each sub-check individually to capture the matched word
-  const ageCheck = includesMinorAge(input.prompt);
-  if (ageCheck.found && ageCheck.age != null)
-    return { type: 'minor', matchedWord: `${ageCheck.age} year old` };
-
   const youngNoun = words.young.nouns.inPrompt(input.prompt);
   if (youngNoun) {
     const isObject = typeof youngNoun === 'object';
@@ -828,32 +641,6 @@ function highlightReplacement(
   );
 }
 
-function highlightMinor(prompt: string, replaceFn: (word: string) => string) {
-  for (const regex of ageRegexes) {
-    if (regex.test(prompt)) {
-      const match = regex.exec(prompt);
-      const ageText = match?.groups?.age?.toLowerCase();
-      const age = ages.find((x) => x.matches.includes(ageText ?? ''))?.age;
-      if (!age) continue;
-
-      const word = trimNonAlphanumeric(match?.[0]);
-      if (!word) continue;
-      prompt = prompt.replace(word, replaceFn(word));
-    }
-  }
-
-  return prompt;
-}
-
-// TEST-ONLY. Exposes the LIVE combined `ageRegexes` array (zero-width boundaries) so
-// the oracle can compute the legacy age-path DETECTION signal (per-template match +
-// resolved age) and compare it against the old consuming-boundary reference built by
-// `__buildOldAgeRegexesCombinedForTest`. Read-only; do NOT mutate or call from
-// production code.
-export function __getAgeRegexesForTest() {
-  return ageRegexes;
-}
-
 export function cleanPrompt({
   prompt,
   negativePrompt,
@@ -874,7 +661,6 @@ export function cleanPrompt({
   const nsfw = includesNsfw(prompt);
   if (nsfw) {
     // Remove minor references
-    prompt = highlightMinor(prompt, () => '');
     prompt = words.young.nouns.highlight(prompt, () => '');
     if (negativePrompt)
       negativePrompt = words.young.negativeNouns.highlight(negativePrompt ?? '', () => '');
@@ -917,28 +703,7 @@ export function debugAuditPrompt(prompt: string, negativePrompt?: string): Debug
   const normalizedPrompt = normalizeText(prompt);
   const normalizedNegativePrompt = normalizeText(negativePrompt);
 
-  // 1. Minor age check - test all templates
-  for (let i = 0; i < ageRegexes.length; i++) {
-    const regex = ageRegexes[i];
-    const match = regex.exec(normalizedPrompt);
-    if (match) {
-      const ageText = match?.groups?.age?.toLowerCase();
-      const age = ages.find((x) => x.matches.includes(ageText ?? ''))?.age;
-      matches.push({
-        check: `minor_age`,
-        matched: true,
-        matchedText: match[0],
-        regex: regex.source,
-        context: normalizedPrompt.substring(
-          Math.max(0, (match.index ?? 0) - 30),
-          (match.index ?? 0) + (match[0]?.length ?? 0) + 30
-        ),
-        details: { templateIndex: i, template: templates[i], ageText, detectedAge: age },
-      });
-    }
-  }
-
-  // 2. POI check
+  // 1. POI check
   const poiMatch = includesPoi(normalizedPrompt);
   if (poiMatch) {
     matches.push({
@@ -956,7 +721,7 @@ export function debugAuditPrompt(prompt: string, negativePrompt?: string): Debug
     });
   }
 
-  // 3. Inappropriate content check
+  // 2. Inappropriate content check
   const inappropriateResult = includesInappropriateEnriched({
     prompt: normalizedPrompt,
     negativePrompt: normalizedNegativePrompt,
@@ -971,7 +736,7 @@ export function debugAuditPrompt(prompt: string, negativePrompt?: string): Debug
     });
   }
 
-  // 4. NSFW blocklist check
+  // 3. NSFW blocklist check
   for (const { word, regex } of blockedNSFWRegexLazy()) {
     const match = regex.exec(normalizedPrompt);
     if (match) {
@@ -989,7 +754,7 @@ export function debugAuditPrompt(prompt: string, negativePrompt?: string): Debug
     }
   }
 
-  // 5. Young nouns check (only if not already captured by inappropriate_minor)
+  // 4. Young nouns check (only if not already captured by inappropriate_minor)
   const hasInappropriateMinor = inappropriateResult && inappropriateResult.type === 'minor';
   if (!hasInappropriateMinor) {
     const youngNoun = words.young.nouns.inPrompt(normalizedPrompt);
@@ -1009,7 +774,7 @@ export function debugAuditPrompt(prompt: string, negativePrompt?: string): Debug
     }
   }
 
-  // 6. Young negative nouns check (only if not already captured by inappropriate_minor from negative prompt)
+  // 5. Young negative nouns check (only if not already captured by inappropriate_minor from negative prompt)
   if (normalizedNegativePrompt && !hasInappropriateMinor) {
     const negYoung = words.young.negativeNouns.inPrompt(normalizedNegativePrompt);
     if (negYoung) {

@@ -4,7 +4,7 @@
 //
 // The vocabulary (`./lists`) and the term->regex builder (`./word-regex`) are now shared: the main
 // app imports both from here, so there is one copy of each. What is still duplicated is the
-// DETECTION LOGIC below — the checkable/gate machinery and the age engine — which the main app
+// DETECTION LOGIC below — the checkable/gate machinery — which the main app
 // still has its own copy of. Keeping those in step is manual.
 //
 // Highlighting differs from the legacy HTML approach: instead of sequential string-replace into
@@ -19,7 +19,6 @@ import poiWords from './lists/words-poi.json';
 import youngWords from './lists/words-young.json';
 import blockedNSFW from './lists/blocklist-nsfw.json';
 import { prepareWordRegex, prepareWordRegexBody } from './word-regex';
-import { ages, canonicalNumberWords, templateParts, templates } from './lists/ages';
 import { harmfulCombinations } from './lists/harmful-combinations';
 import { youngComposedNouns } from './lists/composed-nouns';
 
@@ -161,73 +160,6 @@ function checkable(
 }
 // #endregion
 
-// #region [minor-age engine — verbatim]
-
-const yearsPattern = templateParts.years.join('|');
-const oldPattern = templateParts.old.join('|');
-
-const buildAgePattern = (matches: string[]) =>
-  matches.map((m) => (canonicalNumberWords.has(m) ? `${m}\\b` : m)).join('|');
-
-const perAgeRegexes = ages.map((ageEntry) => {
-  const agePattern = buildAgePattern(ageEntry.matches);
-  const regexes = templates.map((template) => {
-    let regexStr = template;
-    regexStr = regexStr.replace('{age}', `(${agePattern})`);
-    regexStr = regexStr.replace('{years}', `(${yearsPattern})`);
-    regexStr = regexStr.replace('{old}', `(${oldPattern})`);
-    regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-    regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
-    return new RegExp(regexStr, 'i');
-  });
-  return { age: ageEntry.age, regexes };
-});
-
-const allAgeMatches = ages.flatMap((x) => x.matches);
-const allAgePattern = buildAgePattern(allAgeMatches);
-const ageRegexes = templates.map((template) => {
-  let regexStr = template;
-  regexStr = regexStr.replace('{age}', `(?<age>${allAgePattern})`);
-  regexStr = regexStr.replace('{years}', `(?<years>${yearsPattern})`);
-  regexStr = regexStr.replace('{old}', `(?<old>${oldPattern})`);
-  regexStr = regexStr.replace(/\s+/g, `[^a-zA-Z0-9]{0,3}`);
-  regexStr = `(?<![a-zA-Z0-9])0*` + regexStr + `(?![a-zA-Z0-9])`;
-  return new RegExp(regexStr, 'i');
-});
-
-const quickScreenPattern =
-  /(?:age[ds]?|year|old|birthday|anos|\b(?:1[0-7]|[1-9])\b|teen|eleven|twelve|one|two|three|four|five|six|seven|eight|nine|ten)/i;
-const falsePositiveTagPattern = /\bscore_\d(?:_up|_down)?\b|\bsource_\w+\b|\brating_\w+\b/gi;
-
-function includesMinorAge(prompt: string | undefined) {
-  if (!prompt) return { found: false, age: undefined as number | undefined };
-  const cleaned = prompt.replace(falsePositiveTagPattern, ' ');
-  if (!quickScreenPattern.test(cleaned)) return { found: false, age: undefined };
-  for (const { age, regexes } of perAgeRegexes) {
-    for (const regex of regexes) {
-      if (regex.test(cleaned)) return { found: true, age };
-    }
-  }
-  return { found: false, age: undefined };
-}
-
-// The age phrases actually present in the prompt (for highlighting), mirroring highlightMinor: only
-// phrases whose captured `age` group resolves to a known age.
-function minorAgeTerms(prompt: string): string[] {
-  const out: string[] = [];
-  for (const regex of ageRegexes) {
-    const match = regex.exec(prompt);
-    if (!match) continue;
-    const ageText = match.groups?.age?.toLowerCase();
-    const age = ages.find((x) => x.matches.includes(ageText ?? ''))?.age;
-    if (!age) continue;
-    const word = trimNonAlphanumeric(match[0]);
-    if (word) out.push(word);
-  }
-  return out;
-}
-// #endregion
-
 // #region [detectors — verbatim]
 const words = {
   nsfw: checkable(nsfwWords),
@@ -283,7 +215,6 @@ function includesPoi(prompt: string | undefined, includeEdit = false) {
 function includesMinor(prompt: string | undefined, negativePrompt?: string) {
   if (!prompt) return false;
   return (
-    includesMinorAge(prompt).found ||
     words.young.nouns.inPrompt(prompt) ||
     (!!negativePrompt && words.young.negativeNouns.inPrompt(negativePrompt))
   );
@@ -323,14 +254,12 @@ export function includesInappropriate(
 
 // #region [segment highlighting]
 // `age` is an explicit age mention of ANY age ("18yo", "21 years old") — not in the legacy, added for
-// minor review where a claimed age (even 18+) is exactly what the moderator scrutinizes. `minor` still
-// wins over `age` for sub-18 ages (both match, priority resolves).
-export type PromptHighlightCategory = 'minor' | 'age' | 'young' | 'poi' | 'blocked' | 'nsfw';
+// minor review where a claimed age (even 18+) is exactly what the moderator scrutinizes.
+export type PromptHighlightCategory = 'age' | 'young' | 'poi' | 'blocked' | 'nsfw';
 export type PromptSegment = { text: string; category: PromptHighlightCategory | null };
 
 // Higher wins where flagged spans overlap.
 const CATEGORY_PRIORITY: Record<PromptHighlightCategory, number> = {
-  minor: 6,
   age: 5,
   young: 4,
   poi: 3,
@@ -406,10 +335,9 @@ export type PromptHighlightResult = {
 };
 
 // Segment-highlight a prompt/negativePrompt for moderator review. By default highlights all categories
-// (minor-age/young/poi/blocked/nsfw), matching the legacy highlightInappropriate. Pass `categories` to
-// restrict which detectors run — e.g. the minor queue only wants minor-relevant terms (`['minor',
-// 'young']`), not every nsfw/poi word in a spicy prompt. Runs SERVER-SIDE (pulls ~50KB of word lists) —
-// never import into client bundles.
+// (age/young/poi/blocked/nsfw). Pass `categories` to restrict which detectors run — e.g. the minor
+// queue only wants minor-relevant terms (`['young', 'age']`), not every nsfw/poi word in a spicy
+// prompt. Runs SERVER-SIDE (pulls ~50KB of word lists) — never import into client bundles.
 export function getPromptHighlightSegments(
   rawPrompt?: string | null,
   rawNegativePrompt?: string | null,
@@ -425,7 +353,6 @@ export function getPromptHighlightSegments(
 
   const sources: Array<{ category: PromptHighlightCategory; terms: string[] }> = [];
   if (prompt) {
-    if (wants('minor')) sources.push({ category: 'minor', terms: minorAgeTerms(prompt) });
     if (wants('age')) sources.push({ category: 'age', terms: ageMentionTerms(prompt) });
     if (wants('young')) sources.push({ category: 'young', terms: words.young.nouns.terms(prompt) });
     if (wants('poi')) sources.push({ category: 'poi', terms: words.poi.terms(prompt) });

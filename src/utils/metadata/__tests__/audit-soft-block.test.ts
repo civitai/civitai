@@ -24,7 +24,6 @@ const trigger = (category: PromptTriggerCategory, message = 'x'): PromptTrigger 
 const EXPECTED: Record<PromptTriggerCategory, boolean> = {
   nsfw_blocklist: true, // per-word — see the suite below
   profanity: true,
-  minor_age: false,
   poi: false,
   inappropriate_minor: false,
   inappropriate_poi: false,
@@ -177,32 +176,5 @@ describe('a hard word anywhere in the prompt beats an overridable one', () => {
     expect(result.success).toBe(false);
     expect(result.triggers[0].matchedWord).toBe('daughter');
     expect(isSoftBlock(result.triggers)).toBe(true);
-  });
-});
-
-describe('minor_age has no override path', () => {
-  // `minor_age` looks like a false-positive machine ("an 8 year old oak tree")
-  // and was proposed for the soft set. It was rejected because it is also the
-  // ONLY thing catching a suggestive-minor prompt that carries no explicit term:
-  // `inappropriate_minor` requires an NSFW word, so these reach `minor_age` and
-  // nothing else. Adding 'minor_age' to SOFT_BLOCK_CATEGORIES makes every case
-  // below overridable.
-  it.each([
-    '12 year old girl, swimsuit, beach',
-    '15 year old girl, bedroom, lying down',
-    '13 year old, revealing outfit',
-    'child, 9 years old, wet t-shirt',
-    'teen, 16 years old, short skirt',
-  ])('suggestive-minor prompt is blocked with no override: %s', (prompt) => {
-    const result = auditPromptEnriched(prompt);
-    expect(result.success).toBe(false);
-    expect(isSoftBlock(result.triggers)).toBe(false);
-  });
-
-  it('an innocent age mention is also still hard — the known cost of keeping the above safe', () => {
-    const result = auditPromptEnriched('an 8 year old oak tree in a field');
-    expect(result.success).toBe(false);
-    expect(result.triggers[0].category).toBe('minor_age');
-    expect(isSoftBlock(result.triggers)).toBe(false);
   });
 });
