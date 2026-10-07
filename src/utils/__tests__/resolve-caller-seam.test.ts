@@ -22,6 +22,11 @@ import { describe, expect, it } from 'vitest';
  * `file.service.ts` forwards the attribution its own caller handed it, so its
  * resolve is recorded as `threaded` and its callers are pinned in the second
  * table instead.
+ *
+ * Known limit: comments are stripped with string-unaware regexes, so a string
+ * literal containing `/*` (a glob) followed later by `*\/` could hide code
+ * between them. An EXISTING call site hidden that way fails the ledger loudly;
+ * only a newly added one in such a file could slip past.
  */
 
 const SRC = path.resolve(__dirname, '../..');
@@ -56,6 +61,8 @@ function argsAt(src: string, open: number): string {
 
 function describeCall(args: string): string {
   if (/\.\.\.attribution\b/.test(args)) return 'threaded';
+  // `resolveDownloadUrl` hands its own `options` straight to `getDownloadUrlByFileId`.
+  if (/,\s*options\s*$/.test(args)) return 'forwarded';
   const callers = [...args.matchAll(/\bcaller:\s*'([^']+)'/g)].map((m) => m[1]);
   const actorLiteral = [...args.matchAll(/\bactor:\s*'([^']+)'/g)].map((m) => m[1]);
   const actorDerived = /\bactor:\s*resolveActorFor\(/.test(args);
@@ -69,26 +76,37 @@ function describeCall(args: string): string {
   return `${caller}|${actor}`;
 }
 
-function scan(fn: string, definedIn: string): Record<string, string[]> {
+/**
+ * Every call of `fn` in `src`, described. A member call (`dw.fn(`, or
+ * `(await import(...)).fn(`) counts too; only the function's own declaration
+ * (`function fn(`) is skipped.
+ */
+function callsIn(src: string, fn: string): string[] {
+  const callRe = new RegExp(`(?<![\\w$])${fn}\\(`, 'g');
+  const out: string[] = [];
+  const stripped = stripComments(src);
+  for (const m of stripped.matchAll(callRe)) {
+    if (stripped.slice(Math.max(0, m.index - 'function '.length), m.index) === 'function ')
+      continue;
+    out.push(describeCall(argsAt(stripped, m.index + fn.length)));
+  }
+  return out;
+}
+
+function scan(fn: string): Record<string, string[]> {
   const found: Record<string, string[]> = {};
-  const callRe = new RegExp(`(?<![\\w.$])${fn}\\(`, 'g');
   for (const file of walk(SRC)) {
     const raw = readFileSync(file, 'utf8');
     if (!raw.includes(`${fn}(`)) continue;
-    const rel = path.relative(SRC, file).split(path.sep).join('/');
-    const src = stripComments(raw);
-    for (const m of src.matchAll(callRe)) {
-      const before = src.slice(Math.max(0, m.index - 'function '.length), m.index);
-      if (rel === definedIn && before.endsWith('function ')) continue;
-      (found[rel] ??= []).push(describeCall(argsAt(src, m.index + fn.length)));
-    }
+    const calls = callsIn(raw, fn);
+    if (calls.length) found[path.relative(SRC, file).split(path.sep).join('/')] = calls;
   }
   return found;
 }
 
 describe('storage-resolver attribution call-site ledger', () => {
   it('every resolveDownloadUrl call names its caller and actor', () => {
-    expect(scan('resolveDownloadUrl', 'utils/delivery-worker.ts')).toEqual({
+    expect(scan('resolveDownloadUrl')).toEqual({
       'pages/api/download/vault/[vaultItemId].ts': ['vault|derived'],
       'pages/api/internal/get-presigned-url.ts': ['internal-presigned|internal'],
       'pages/api/mod/training-data/resolve.ts': ['training-data|derived'],
@@ -104,12 +122,20 @@ describe('storage-resolver attribution call-site ledger', () => {
   });
 
   it('every getFileForModelVersion call names the caller it resolves for', () => {
-    expect(scan('getFileForModelVersion', 'server/services/file.service.ts')).toEqual({
+    expect(scan('getFileForModelVersion')).toEqual({
       'pages/api/download/models/[modelVersionId].ts': ['download-route|derived'],
       'pages/api/v1/model-files/[id]/tensor-metadata.ts': ['other|derived'],
       'server/services/csam.service-new.ts': ['other|internal'],
       'server/services/csam.service.ts': ['other|internal'],
       'server/services/wildcard-pack.service.ts': ['wildcard|derived'],
+    });
+  });
+
+  // Calling the wire layer directly would bypass the two ledgers above, so its
+  // only call site is pinned too: `resolveDownloadUrl` forwarding its own options.
+  it('getDownloadUrlByFileId is called only by resolveDownloadUrl, forwarding its options', () => {
+    expect(scan('getDownloadUrlByFileId')).toEqual({
+      'utils/delivery-worker.ts': ['forwarded'],
     });
   });
 
@@ -125,5 +151,21 @@ describe('storage-resolver attribution call-site ledger', () => {
     );
     expect(describeCall(`1, u, n, { direct, ...attribution }`)).toBe('threaded');
     expect(describeCall(`1, u, n`)).toBe('MISSING(0)|MISSING');
+    expect(describeCall(`fileId, fileName, options`)).toBe('forwarded');
+  });
+
+  it('the scanner sees member calls and skips only the declaration', () => {
+    const src = [
+      `export async function resolveDownloadUrl(a: number) {}`,
+      `await dw.resolveDownloadUrl(1, u, n, { caller: 'vault', actor: 'user' });`,
+      `await (await import('x')).resolveDownloadUrl(1, u, n);`,
+      `// resolveDownloadUrl(1, u, n) in a comment is not a call`,
+      `await resolveDownloadUrl(1, u, n, { caller: 'link', actor: resolveActorFor(user) });`,
+    ].join('\n');
+    expect(callsIn(src, 'resolveDownloadUrl')).toEqual([
+      'vault|user',
+      'MISSING(0)|MISSING',
+      'link|derived',
+    ]);
   });
 });
