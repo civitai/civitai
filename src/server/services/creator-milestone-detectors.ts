@@ -1,5 +1,8 @@
 import type { MilestoneRegistryEntry } from '~/server/services/creator-milestone-registry';
-import { creatorMilestoneRegistry } from '~/server/services/creator-milestone-registry';
+import {
+  creatorMilestoneRegistry,
+  USER_METRICS,
+} from '~/server/services/creator-milestone-registry';
 
 type ActivityEntry = Exclude<MilestoneRegistryEntry, { detector: 'scoreSnapshot' }>;
 
@@ -26,8 +29,7 @@ const notHeld = (user: string) => `NOT EXISTS (
     WHERE held."userId" = ${user} AND held."milestoneKey" = m.key
   )`;
 
-// What the profile counts (userModelCountCache, userArticleCountCache), so a badge never claims more
-// published work than the creator's own profile shows. publishedAt is required to date the Nth item.
+// Only work anyone can see counts. publishedAt is required to date the Nth item.
 const publishedSources = {
   model: `SELECT x."userId", x."publishedAt", x.id FROM "Model" x
     WHERE x.status = 'Published' AND x.availability != 'Private'
@@ -37,6 +39,25 @@ const publishedSources = {
     WHERE x.status = 'Published' AND x.availability != 'Private'
       AND x."publishedAt" IS NOT NULL AND x."publishedAt" <= now()`,
 } as const;
+
+export const modelDownloadsSource = `SELECT mm."userId", mm."downloadCount" FROM "ModelMetric" mm
+    WHERE mm.status = 'Published' AND mm.availability <> 'Private'`;
+
+const userMetricSource = `SELECT um."userId", ${USER_METRICS.map((m) => `um."${m}"`).join(', ')}
+    FROM "UserMetric" um WHERE um.timeframe = 'AllTime'`;
+
+/** One user's current count per activity measure (`$1` is the user id), on the detectors' own rules. */
+export const activityValuesSql = `SELECT
+    (SELECT count(*) FROM (${publishedSources.model}) s WHERE s."userId" = $1)::int AS models,
+    (SELECT count(*) FROM (${publishedSources.article}) s WHERE s."userId" = $1)::int AS articles,
+    -- GROUP BY keeps the planner off the max() rewrite, which walks the whole downloads index for a
+    -- heavy uploader with no public model (1.5s on prod).
+    coalesce((SELECT max(s."downloadCount") FROM (${modelDownloadsSource}) s
+      WHERE s."userId" = $1 GROUP BY s."userId"), 0)::int AS downloads,
+    coalesce((SELECT s."followerCount" FROM (${userMetricSource}) s
+      WHERE s."userId" = $1), 0)::int AS followers,
+    coalesce((SELECT s."reactionCount" FROM (${userMetricSource}) s
+      WHERE s."userId" = $1), 0)::int AS reactions`;
 
 function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
   switch (entry.detector) {
@@ -56,22 +77,20 @@ function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
       return ({ keys, users }) => `
         SELECT d."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt"
         FROM (
-          SELECT mm."userId", max(mm."downloadCount") AS top
-          FROM "ModelMetric" mm
-          WHERE mm.status = 'Published' AND mm.availability <> 'Private'
-            AND (${users}::int[] IS NULL OR mm."userId" = ANY(${users}::int[]))
-          GROUP BY mm."userId"
+          SELECT s."userId", max(s."downloadCount") AS top
+          FROM (${modelDownloadsSource}) s
+          WHERE (${users}::int[] IS NULL OR s."userId" = ANY(${users}::int[]))
+          GROUP BY s."userId"
         ) d
         JOIN "CreatorMilestone" m ON m.key = ANY(${keys}::text[]) AND d.top >= m.threshold
         WHERE ${notHeld('d."userId"')}`;
     case 'userMetric':
       return ({ keys, users }) => `
         SELECT um."userId", m.key AS "milestoneKey", NULL::timestamp AS "achievedAt"
-        FROM "UserMetric" um
+        FROM (${userMetricSource}) um
         JOIN "CreatorMilestone" m
           ON m.key = ANY(${keys}::text[]) AND um."${entry.params.metric}" >= m.threshold
-        WHERE um.timeframe = 'AllTime'
-          AND (${users}::int[] IS NULL OR um."userId" = ANY(${users}::int[]))
+        WHERE (${users}::int[] IS NULL OR um."userId" = ANY(${users}::int[]))
           AND ${notHeld('um."userId"')}`;
   }
 }

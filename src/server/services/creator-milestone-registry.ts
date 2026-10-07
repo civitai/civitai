@@ -39,16 +39,10 @@ const scoreTier = (): MilestoneRegistryEntry => ({
   launchedAt: SCORE_TIERS_LAUNCHED_AT,
 });
 
-// Silent until the journey page has an Achievements section to show them in: a notification would
-// link to a page that does not show the milestone. Turning this off changes each group's watermark
-// fingerprint, so its first announced run is silent and nobody's backlog is announced.
-const ACTIVITY_SILENT_UNTIL_ACHIEVEMENTS_SECTION = true as const;
-
 const published = (entity: (typeof PUBLISHED_ENTITIES)[number]): MilestoneRegistryEntry => ({
   detector: 'publishedCount',
   params: { entity },
   launchedAt: ACTIVITY_LAUNCHED_AT,
-  silent: ACTIVITY_SILENT_UNTIL_ACHIEVEMENTS_SECTION,
 });
 
 // The per-model download notification already marks these moments, so the badge arrives quietly.
@@ -63,7 +57,6 @@ const userMetric = (metric: (typeof USER_METRICS)[number]): MilestoneRegistryEnt
   detector: 'userMetric',
   params: { metric },
   launchedAt: ACTIVITY_LAUNCHED_AT,
-  silent: ACTIVITY_SILENT_UNTIL_ACHIEVEMENTS_SECTION,
 });
 
 export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = {
@@ -97,6 +90,32 @@ export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = 
   'reach:reactions-100000': userMetric('reactionCount'),
   'reach:reactions-1000000': userMetric('reactionCount'),
 };
+
+export type ActivityMeasure = 'models' | 'articles' | 'downloads' | 'followers' | 'reactions';
+
+export const publishedEntityMeasures = {
+  model: 'models',
+  article: 'articles',
+} as const satisfies Record<(typeof PUBLISHED_ENTITIES)[number], ActivityMeasure>;
+
+export const userMetricMeasures = {
+  followerCount: 'followers',
+  reactionCount: 'reactions',
+} as const satisfies Record<(typeof USER_METRICS)[number], ActivityMeasure>;
+
+/** What an activity milestone counts, as the journey page groups it. Null for score tiers. */
+export function activityMeasureOf(entry: MilestoneRegistryEntry): ActivityMeasure | null {
+  switch (entry.detector) {
+    case 'scoreSnapshot':
+      return null;
+    case 'publishedCount':
+      return publishedEntityMeasures[entry.params.entity];
+    case 'modelDownloads':
+      return 'downloads';
+    case 'userMetric':
+      return userMetricMeasures[entry.params.metric];
+  }
+}
 
 export function milestoneKeysFor(detector: MilestoneDetector) {
   return Object.entries(creatorMilestoneRegistry)
