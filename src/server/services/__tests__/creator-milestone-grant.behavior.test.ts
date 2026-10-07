@@ -358,7 +358,9 @@ describe('backfill', () => {
  * Founding Legends and the showcase's "new this month" read achievedAtIsObserved, so each grant path
  * has to leave the row shape it expects. Not pinned here: a crossing before a definition launches is
  * inserted unseen and stamped seen in a later statement, so it reads as observed unless both land in
- * the same millisecond, in which case it reads as unobserved and simply goes undated.
+ * the same millisecond, in which case it reads as unobserved and simply goes undated. Wrapping the
+ * grant and markMilestonesSeen in one transaction would make that every time, and nothing here would
+ * notice.
  */
 describe('achievedAtIsObserved on every grant path', () => {
   const rowOf = async (userId: number, key: string) => {
