@@ -2541,7 +2541,7 @@ const REDIS_KEYS_UNPREFIXED = {
     // call (~1174ms in EXPLAIN ANALYZE); the total is a slowly-moving aggregate so
     // a few-minutes-stale value in totalItems/totalPages is harmless.
     CREATORS_COUNT: 'packed:caches:creators-count',
-    CREATOR_SHOWCASE_ROWS: 'packed:caches:creator-showcase-rows',
+    CREATOR_SHOWCASE_CANDIDATES: 'packed:caches:creator-showcase-candidates',
     // The user-independent active-auction list backing `auction.getAll` (~21.8
     // calls/s at peak, hitting the PRIMARY DB `dbWrite`). Output is a single global
     // `{ id, auctionBase, lowestBidRequired }[]` with no per-user/ctx variance, so

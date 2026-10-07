@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mocks = vi.hoisted(() => ({ showcaseRows: vi.fn() }));
 vi.mock('~/server/services/creator-showcase.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CreatorShowcase>()),
-  getCachedShowcaseRows: mocks.showcaseRows,
+  getVisibleShowcaseRows: mocks.showcaseRows,
 }));
 
 import type * as CreatorShowcase from '~/server/services/creator-showcase.service';
@@ -82,7 +82,8 @@ describe('getLegendStatus', () => {
 
 describe('one of N', () => {
   beforeEach(() => {
-    mocks.showcaseRows.mockClear();
+    mocks.showcaseRows.mockReset();
+    hallOfFame();
     withPrivacy(null);
     dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(legendRow(null) as never);
   });
@@ -118,6 +119,12 @@ describe('legendStatusLabel', () => {
     expect(legendStatusLabel({ founding: true, since: null, oneOf: 1708 })).toBe(
       'Founding Legend · one of 1,708'
     );
+  });
+
+  it('appends the count to a dated Legend', () => {
+    expect(
+      legendStatusLabel({ founding: false, since: new Date('2027-03-15T12:00:00Z'), oneOf: 2 })
+    ).toBe('Legend since March 2027 · one of 2');
   });
 
   it('has no count suffix without a count', () => {

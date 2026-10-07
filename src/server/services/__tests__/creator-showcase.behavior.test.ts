@@ -58,7 +58,7 @@ const holder = { db: null as unknown as PGlite };
 const queried = vi.fn();
 const pg = {
   cancellableQuery: async (sql: string, params?: unknown[]) => {
-    queried();
+    queried(sql);
     return {
       result: async () => (await holder.db.query(sql, params)).rows,
       cancel: async () => undefined,
@@ -66,6 +66,8 @@ const pg = {
   },
 } as never;
 const q = (sql: string, params?: unknown[]) => holder.db.query(sql, params);
+const candidateReads = () =>
+  queried.mock.calls.filter(([sql]) => String(sql).includes('FROM "UserCreatorMilestone"')).length;
 
 const NOW = new Date('2026-11-15T12:00:00Z');
 const THIS_MONTH = '2026-11-02 08:00:00';
@@ -104,6 +106,12 @@ const grant = (userId: number, key: string, achievedAt: string, silent = false) 
      VALUES ($1, $2, $3::timestamp, CASE WHEN $4::boolean THEN $3::timestamp END)`,
     [userId, key, achievedAt, silent]
   );
+
+const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
+  q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
+    userId,
+    JSON.stringify(settings),
+  ]);
 
 const showcase = (excludedUserIds: number[] = [], now = NOW) =>
   getShowcaseRows(pg, { now, excludedUserIds });
@@ -232,11 +240,6 @@ describe('new Supernovas this month', () => {
 });
 
 describe('badge privacy', () => {
-  const setPrivacy = (userId: number, settings: Record<string, unknown>) =>
-    q(`INSERT INTO "UserProfile" ("userId", "privacySettings") VALUES ($1, $2)`, [
-      userId,
-      JSON.stringify(settings),
-    ]);
   const attachBadge = async (key: string) => {
     const { rows } = await q(`INSERT INTO "Cosmetic" DEFAULT VALUES RETURNING id`);
     const { id } = rows[0] as { id: number };
@@ -293,7 +296,7 @@ describe('getCreatorShowcase', () => {
   });
 });
 
-describe('one of N', () => {
+describe('cached candidates, live standing', () => {
   const legendRow = {
     achievedAt: new Date(LAST_MONTH),
     seenAt: null,
@@ -306,20 +309,20 @@ describe('one of N', () => {
   });
 
   // Pinned for the CJ lead (2026-10-07): the profile's "one of N" and the Hall of Fame must never
-  // disagree, so both read one cached showcase entry. Counting Legends any other way breaks this.
+  // disagree, so both read one cached candidate list. Either may be the first to fill it.
   it('is the Hall of Fame length, read from the same cached entry', async () => {
     await addUser(GOOD);
     await addUser(OTHER);
     await addUser(MUTED, { muted: true });
     for (const id of [GOOD, OTHER, MUTED]) await grant(id, 'score:legend', LAST_MONTH);
 
-    const { legends } = await getCreatorShowcase({ pg, now: NOW });
     const status = await getLegendStatus(GOOD, { pg, now: NOW });
+    const { legends } = await getCreatorShowcase({ pg, now: NOW });
 
     expect(legends).toHaveLength(2);
     expect(status?.oneOf).toBe(legends.length);
-    expect(queried).toHaveBeenCalledTimes(1);
-    expect(cache.has(REDIS_KEYS.CACHES.CREATOR_SHOWCASE_ROWS)).toBe(true);
+    expect(candidateReads()).toBe(1);
+    expect(cache.has(REDIS_KEYS.CACHES.CREATOR_SHOWCASE_CANDIDATES)).toBe(true);
   });
 
   it('gives no count to a Legend the Hall of Fame leaves out', async () => {
@@ -327,6 +330,47 @@ describe('one of N', () => {
     await addUser(MUTED, { muted: true });
     for (const id of [GOOD, MUTED]) await grant(id, 'score:legend', LAST_MONTH);
 
+    expect(await getLegendStatus(GOOD, { pg, now: NOW })).toMatchObject({ oneOf: 1 });
     expect(await getLegendStatus(MUTED, { pg, now: NOW })).toMatchObject({ oneOf: null });
+    expect(candidateReads()).toBe(1);
+  });
+
+  // A ban, mute, strike or hidden badge must take a creator off the public page on the next view,
+  // not when the cached list next refills.
+  it.each([
+    ['muted', () => q(`UPDATE "User" SET muted = true WHERE id = $1`, [GOOD])],
+    ['banned', () => q(`UPDATE "User" SET "bannedAt" = now() WHERE id = $1`, [GOOD])],
+    [
+      'struck',
+      () =>
+        q(`INSERT INTO "UserStrike" ("userId", status, "expiresAt") VALUES ($1, 'Active', $2)`, [
+          GOOD,
+          '2027-01-01 00:00:00',
+        ]),
+    ],
+    ['hiding badges', () => setPrivacy(GOOD, { showBadges: false })],
+  ])('drops a Legend newly %s while the candidate list is cached', async (_, change) => {
+    await addUser(GOOD);
+    await addUser(OTHER);
+    for (const id of [GOOD, OTHER]) await grant(id, 'score:legend', LAST_MONTH);
+    const before = await getCreatorShowcase({ pg, now: NOW });
+    expect(before.legends.map(({ user }) => user.id)).toEqual([GOOD, OTHER]);
+
+    await change();
+
+    const { legends } = await getCreatorShowcase({ pg, now: NOW });
+    expect(legends.map(({ user }) => user.id)).toEqual([OTHER]);
+    expect(candidateReads()).toBe(1);
+  });
+
+  it('moves "this month" at the UTC month boundary while the candidate list is cached', async () => {
+    await addUser(GOOD);
+    await grant(GOOD, 'score:supernova', '2026-10-31 20:00:00');
+    const before = await getCreatorShowcase({ pg, now: new Date('2026-10-31T23:30:00Z') });
+    const after = await getCreatorShowcase({ pg, now: new Date('2026-11-01T00:30:00Z') });
+
+    expect(before.newSupernovas.map(({ user }) => user.id)).toEqual([GOOD]);
+    expect(after.newSupernovas).toEqual([]);
+    expect(candidateReads()).toBe(1);
   });
 });
