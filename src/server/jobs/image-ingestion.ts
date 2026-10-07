@@ -583,18 +583,20 @@ export const removeBlockedImages = createJob(
         ).map((x) => x.id)
       : [];
 
-    // The appeal decides this image's fate: approval unblocks it, rejection clears needsReview
-    // and the next run deletes it. Purging it first strands the Appeal as Pending forever.
+    // A pending review decides this image's fate. An appeal: approval unblocks it, rejection
+    // clears needsReview and the next run deletes it; purging it first strands the Appeal as
+    // Pending forever. A CSAM flag: held until a moderator resolves it, since the CsamReport
+    // hold above only starts once a report is filed.
     // dbWrite for the same replica-lag reason as the CSAM lookup above.
-    const appealHeld = (
-      await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "Image"
-        WHERE "needsReview" = 'appeal'
-          AND ingestion = 'Blocked'::"ImageIngestionStatus"
-      `
-    ).map((x) => x.id);
+    const reviewHeldRows = await dbWrite.$queryRaw<{ id: number; needsReview: string }[]>`
+      SELECT id, "needsReview" FROM "Image"
+      WHERE "needsReview" IN ('appeal', 'csam')
+        AND ingestion = 'Blocked'::"ImageIngestionStatus"
+    `;
+    const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
+    const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
 
-    const held = [...heldActive, ...appealHeld];
+    const held = [...heldActive, ...appealHeld, ...csamReviewHeld];
     const jobQueue = await dbRead.jobQueue.findMany({
       where: {
         type: JobQueueType.BlockedImageDelete,
@@ -609,8 +611,14 @@ export const removeBlockedImages = createJob(
       console.log('No blocked images in queue', {
         csamHeld: heldActive.length,
         appealHeld: appealHeld.length,
+        csamReviewHeld: csamReviewHeld.length,
       });
-      return { processed: 0, csamHeld: heldActive.length, appealHeld: appealHeld.length };
+      return {
+        processed: 0,
+        csamHeld: heldActive.length,
+        appealHeld: appealHeld.length,
+        csamReviewHeld: csamReviewHeld.length,
+      };
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -666,6 +674,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       csamHoldExpired: holdExpiredDeletions.length,
       appealHeld: appealHeld.length,
+      csamReviewHeld: csamReviewHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -852,6 +861,7 @@ export const removeBlockedImages = createJob(
       csamHeld: heldActive.length,
       csamHoldExpired: holdExpiredDeletions.length,
       appealHeld: appealHeld.length,
+      csamReviewHeld: csamReviewHeld.length,
     };
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod

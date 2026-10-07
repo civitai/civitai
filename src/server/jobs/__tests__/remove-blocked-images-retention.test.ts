@@ -19,7 +19,8 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 //      send/archive pipeline has no retry limit and can strand a report indefinitely;
 //   6. AiNotVerified and vanished rows are still swept out of the queue;
 //   7. a non-prod database is never mass-deleted;
-//   8. an image under a pending appeal is held until the appeal is resolved.
+//   8. an image under a pending appeal is held until the appeal is resolved;
+//   9. an image flagged for CSAM review is held until the flag is resolved.
 
 const DAY = 24 * 60 * 60 * 1000;
 const EXPIRED = new Date(Date.now() - 8 * DAY); // past BLOCKED_IMAGE_RETENTION_DAYS (7)
@@ -38,6 +39,7 @@ const QUEUE = [
   { entityId: 5, createdAt: EXPIRED }, // live hold -> excluded from the batch
   { entityId: 6, createdAt: EXPIRED }, // hold past the ceiling -> purged + alerted
   { entityId: 7, createdAt: EXPIRED }, // under appeal when a test marks it so -> held
+  { entityId: 8, createdAt: EXPIRED }, // flagged for CSAM review when a test marks it so -> held
 ];
 // Every image here is a MODERATOR TAKEDOWN, so each carries the `ModActivity` row the job now
 // requires before it will ask for blob retraction — dated after its own block, as a real one
@@ -55,6 +57,7 @@ const IMAGES = [
   { id: 5, userId: HELD_USER, blockedFor: 'CSAM' },
   { id: 6, userId: STRANDED_USER, blockedFor: 'CSAM' },
   { id: 7, userId: PLAIN_USER, blockedFor: 'moderated' },
+  { id: 8, userId: PLAIN_USER, blockedFor: 'moderated' },
 ];
 
 const {
@@ -68,6 +71,7 @@ const {
   mockEnv,
   heldUsers,
   appealedIds,
+  csamFlaggedIds,
 } = vi.hoisted(() => {
   const execLog: { sql: string; values: unknown[] }[] = [];
   const sqlLog: string[] = [];
@@ -75,6 +79,7 @@ const {
   // Mutable so a test can vary which reports are open.
   const heldUsers: { userId: number; oldestReport: Date }[] = [];
   const appealedIds: number[] = [];
+  const csamFlaggedIds: number[] = [];
   const mockEnv = {
     IMAGE_SCANNING_MAX_PER_RUN: 100,
     IMAGE_SCANNING_RETRY_DELAY: 5,
@@ -85,7 +90,16 @@ const {
     const sql = strings.join('?');
     sqlLog.push(sql);
     if (sql.includes('FROM "CsamReport"')) return heldUsers;
-    if (sql.includes(`"needsReview" = 'appeal'`)) return appealedIds.map((id) => ({ id }));
+    // Answers with whichever review flags the query actually names, so dropping one from the
+    // SQL is what stops that population being held.
+    const reviewFlags = sql.match(/"needsReview" IN \(([^)]*)\)/);
+    if (reviewFlags) {
+      const named = [...reviewFlags[1].matchAll(/'([^']+)'/g)].map((m) => m[1]);
+      return [
+        ...appealedIds.map((id) => ({ id, needsReview: 'appeal' })),
+        ...csamFlaggedIds.map((id) => ({ id, needsReview: 'csam' })),
+      ].filter((r) => named.includes(r.needsReview));
+    }
     // The moderator-activity lookup that gates blob retraction. Routed before the catch-all
     // below, which would otherwise answer it with Image rows.
     if (sql.includes('FROM "ModActivity"')) {
@@ -107,6 +121,7 @@ const {
     queueWhereLog,
     heldUsers,
     appealedIds,
+    csamFlaggedIds,
     mockEnv,
     mockDbRead: {
       jobQueue: {
@@ -154,6 +169,7 @@ async function runJob() {
     csamHeld: number;
     csamHoldExpired: number;
     appealHeld: number;
+    csamReviewHeld: number;
   }>;
 }
 
@@ -179,6 +195,7 @@ beforeEach(() => {
   queueWhereLog.length = 0;
   heldUsers.length = 0;
   appealedIds.length = 0;
+  csamFlaggedIds.length = 0;
   heldUsers.push(
     { userId: HELD_USER, oldestReport: RECENT },
     { userId: STRANDED_USER, oldestReport: OLD_REPORT }
@@ -339,5 +356,39 @@ describe('remove-blocked-images retention clock', () => {
 
     expect(deletedIds()).toContain(7);
     expect(result.appealHeld).toBe(0);
+  });
+
+  // No CsamReport row exists yet for this owner, so the report hold above cannot see it. The
+  // flag alone has to keep the image, and its queue row, until a moderator resolves it.
+  it('holds a blocked image flagged for CSAM review before any report is filed', async () => {
+    heldUsers.length = 0;
+    csamFlaggedIds.push(8);
+    const result = await runJob();
+
+    expect(deletedIds()).not.toContain(8);
+    expect(result.csamReviewHeld).toBe(1);
+    expect(queuePruneIds()).not.toContain(8);
+    expect(batchWhere()?.entityId?.notIn).toEqual([8]);
+    // Neither population stands in for the other.
+    expect(result.appealHeld).toBe(0);
+    expect(result.csamHeld).toBe(0);
+  });
+
+  it('holds appealed and CSAM-flagged images side by side', async () => {
+    appealedIds.push(7);
+    csamFlaggedIds.push(8);
+    const result = await runJob();
+
+    expect(deletedIds()).not.toContain(7);
+    expect(deletedIds()).not.toContain(8);
+    expect(result).toMatchObject({ appealHeld: 1, csamReviewHeld: 1 });
+    expect(batchWhere()?.entityId?.notIn).toEqual(expect.arrayContaining([5, 7, 8]));
+  });
+
+  it('deletes the image once the CSAM flag is resolved', async () => {
+    const result = await runJob();
+
+    expect(deletedIds()).toContain(8);
+    expect(result.csamReviewHeld).toBe(0);
   });
 });
