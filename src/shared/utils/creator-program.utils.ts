@@ -59,3 +59,33 @@ export function getBankableBreakdown({
     limitedBy: cap < bankable ? 'cap' : 'bankable',
   };
 }
+
+/** The bank card's limits, derived once so the Max button and the meter cannot disagree. */
+export function getBankCardLimits({
+  accountBalances,
+  selectedBalance,
+  cap,
+  bankedThisMonth,
+  bankableRemaining,
+  hasActiveMembership,
+}: {
+  accountBalances: number[];
+  selectedBalance: number;
+  cap: number | undefined;
+  bankedThisMonth: number;
+  bankableRemaining: number | undefined;
+  hasActiveMembership: boolean;
+}) {
+  const capRemaining = cap ? cap - bankedThisMonth : 0;
+
+  return {
+    // A deposit draws on one account, so Max is bounded by that account alone.
+    maxBankable: getBankableBreakdown({
+      balance: selectedBalance,
+      bankableRemaining: bankableRemaining ?? Infinity,
+      capRemaining,
+    }).bankableNow,
+    meterBalance: accountBalances.reduce((sum, balance) => sum + balance, 0),
+    meterCapRemaining: hasActiveMembership && cap ? capRemaining : null,
+  };
+}

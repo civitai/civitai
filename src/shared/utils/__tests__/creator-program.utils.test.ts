@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  getBankCardLimits,
   getBankableBreakdown,
   getCapForDefinition,
   getNextCapDefinition,
@@ -142,5 +143,48 @@ describe('getBankableBreakdown', () => {
     expect(
       getBankableBreakdown({ balance: 50_000, bankableRemaining: 50_000, capRemaining: -10_000 })
     ).toEqual({ bankableNow: 0, overCap: 50_000, notBankable: 0, limitedBy: 'cap' });
+  });
+});
+
+describe('getBankCardLimits', () => {
+  const member = {
+    accountBalances: [40_000, 60_000],
+    selectedBalance: 60_000,
+    cap: 500_000,
+    bankedThisMonth: 450_000,
+    bankableRemaining: 200_000,
+    hasActiveMembership: true,
+  };
+
+  it('bounds Max by the selected account and the cap left, and shows both accounts in the meter', () => {
+    expect(getBankCardLimits(member)).toEqual({
+      maxBankable: 50_000,
+      meterBalance: 100_000,
+      meterCapRemaining: 50_000,
+    });
+  });
+
+  it('bounds Max by the selected account when it holds less than the other limits', () => {
+    expect(getBankCardLimits({ ...member, selectedBalance: 30_000 }).maxBankable).toBe(30_000);
+  });
+
+  it('bounds Max by the bankable amount, and ignores it before the cutover', () => {
+    expect(
+      getBankCardLimits({ ...member, bankedThisMonth: 0, bankableRemaining: 20_000 }).maxBankable
+    ).toBe(20_000);
+    expect(
+      getBankCardLimits({ ...member, bankedThisMonth: 0, bankableRemaining: undefined }).maxBankable
+    ).toBe(60_000);
+  });
+
+  it('gives the meter no cap without an active membership', () => {
+    const limits = getBankCardLimits({ ...member, hasActiveMembership: false });
+    expect(limits.meterCapRemaining).toBeNull();
+  });
+
+  it('gives the meter no cap, and Max nothing, without a cap', () => {
+    const limits = getBankCardLimits({ ...member, cap: undefined });
+    expect(limits.meterCapRemaining).toBeNull();
+    expect(limits.maxBankable).toBe(0);
   });
 });

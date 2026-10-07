@@ -80,7 +80,7 @@ import {
   getExtractionFee,
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
-import { getBankableBreakdown } from '~/shared/utils/creator-program.utils';
+import { getBankCardLimits } from '~/shared/utils/creator-program.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   MIN_CREATOR_SCORE,
@@ -515,12 +515,14 @@ const BankBuzzCard = () => {
     }
   };
 
-  const remainingCap = banked?.cap?.cap ? banked.cap.cap - banked.total : 0;
-  const maxBankable = getBankableBreakdown({
-    balance: buzzAccount.balance ?? 0,
-    bankableRemaining: banked?.bankable?.remaining ?? Infinity,
-    capRemaining: remainingCap,
-  }).bankableNow;
+  const { maxBankable, meterBalance, meterCapRemaining } = getBankCardLimits({
+    accountBalances: accounts.map((account) => account.balance ?? 0),
+    selectedBalance: buzzAccount.balance ?? 0,
+    cap: banked?.cap?.cap,
+    bankedThisMonth: banked?.total ?? 0,
+    bankableRemaining: banked?.bankable?.remaining,
+    hasActiveMembership: !!hasActiveMembership,
+  });
 
   if (isLoading) {
     return (
@@ -631,9 +633,9 @@ const BankBuzzCard = () => {
         </Button>
         {banked?.bankable && (
           <BankableBuzzMeter
-            balance={accounts.reduce((sum, account) => sum + (account.balance ?? 0), 0)}
+            balance={meterBalance}
             bankableRemaining={banked.bankable.remaining}
-            capRemaining={hasActiveMembership && banked.cap?.cap ? remainingCap : null}
+            capRemaining={meterCapRemaining}
             onOpenInfo={() => dialogStore.trigger({ component: CreatorProgramCapsInfoModal })}
           />
         )}
