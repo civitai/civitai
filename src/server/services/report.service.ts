@@ -608,7 +608,9 @@ export function getLatestAppeal({
 
 export function reopenAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
-    where: { id },
+    // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
+    // moderator-only review flag. A reopen has no such check, so it must never reach an image.
+    where: { id, entityType: { not: EntityType.Image } },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,

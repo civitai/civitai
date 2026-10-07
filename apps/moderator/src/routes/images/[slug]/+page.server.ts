@@ -13,6 +13,7 @@ import {
   acceptImage,
   blockImage,
   closedAppellants,
+  dismissReviewFlag,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
@@ -192,6 +193,19 @@ export const actions: Actions = {
         id: reportId,
         status: ReportStatus.Actioned,
         userId: locals.user.id,
+      });
+    return { success: true, imageId };
+  },
+
+  dismissFlag: async ({ request, locals }) => {
+    const form = await request.formData();
+    const imageId = Number(form.get('imageId'));
+    if (!imageId) return fail(400, { error: 'Missing image id.' });
+    const dismissed = await dismissReviewFlag({ imageId, userId: locals.user.id });
+    if (!dismissed)
+      return fail(409, {
+        error: 'This image is no longer flagged or no longer removed. Reload.',
+        imageId,
       });
     return { success: true, imageId };
   },

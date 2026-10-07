@@ -14,7 +14,10 @@ import {
   filterViewableModelVersions,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
-import { keepPendingAppealFlags } from '~/server/services/image-appeal-flag';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -1066,13 +1069,13 @@ export async function handleBlockImages({
         .updateMany({
           where: { id: { in: ids } },
           data: {
-            needsReview: null,
             ingestion: 'Blocked',
             nsfwLevel: NsfwLevel.Blocked,
             blockedFor: BlockedReason.Moderated,
             updatedAt: new Date(),
           },
         })
+        .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),

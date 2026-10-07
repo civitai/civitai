@@ -8,6 +8,7 @@
   let {
     selected,
     imageIds,
+    removableImageIds,
     reportIds,
     submit,
     appeal,
@@ -17,6 +18,8 @@
     selected: SvelteSet<string | number>;
     /** Comma-separated, resolved by the page — a card key is a report id on the reported queue. */
     imageIds: string;
+    /** The subset Remove acts on. */
+    removableImageIds: string;
     reportIds: string;
     submit: SubmitFunction;
     /** Appeals resolve rather than accept, and their images are `Blocked` (so: no rating). */
@@ -27,6 +30,14 @@
   } = $props();
 
   const count = $derived(selected.size);
+  // Cards, like every other label here, unless some selected cards are not removable.
+  const removableCount = $derived(
+    removableImageIds === imageIds
+      ? count
+      : removableImageIds
+        ? removableImageIds.split(',').length
+        : 0
+  );
   const acceptLabel = $derived(reported ? 'Unaction' : 'Accept');
 </script>
 
@@ -58,14 +69,16 @@
           {#if minorQueue}
             {@render bulkButton('?/bulkAccept', `Accept ${count} + clear minor`, 'border-cyan-600/40 text-cyan-400 hover:bg-cyan-500/10', { removeMinorFlag: 'true' })}
           {/if}
-          {#key imageIds}
-            <TosDeleteButton
-              action="?/bulkBlock"
-              {submit}
-              label={`Remove ${count}`}
-              hidden={{ imageIds, reportIds }}
-            />
-          {/key}
+          {#if removableCount}
+            {#key removableImageIds}
+              <TosDeleteButton
+                action="?/bulkBlock"
+                {submit}
+                label={`Remove ${removableCount}`}
+                hidden={{ imageIds: removableImageIds, reportIds }}
+              />
+            {/key}
+          {/if}
         {/if}
       </div>
     </div>

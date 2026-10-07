@@ -161,7 +161,8 @@ export async function blockImage({
   await dbWrite
     .updateTable('Image')
     .set({
-      needsReview: null,
+      // The moderator-only review flag survives a block: only its own queue or a filed report clears it.
+      needsReview: sql<string | null>`CASE WHEN "needsReview" = 'csam' THEN 'csam' END`,
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
       blockedFor: BLOCKED_REASON_MODERATED,
@@ -196,6 +197,37 @@ export async function blockImage({
 }
 
 /**
+ * Clears the moderator-only review flag from an image that stays Blocked: no unblock, no notice to
+ * the uploader. False when there was nothing to clear, e.g. another moderator got there first.
+ */
+export async function dismissReviewFlag({
+  imageId,
+  userId,
+}: {
+  imageId: number;
+  userId: number;
+}): Promise<boolean> {
+  const { numUpdatedRows } = await dbWrite
+    .updateTable('Image')
+    .set({ needsReview: null })
+    .where('id', '=', imageId)
+    .where('needsReview', '=', 'csam')
+    .where('ingestion', '=', 'Blocked')
+    .executeTakeFirst();
+  if (!numUpdatedRows) return false;
+
+  // Never one of the main app's MODERATOR_TAKEDOWN_ACTIVITIES: clearing a flag is not a decision to
+  // destroy the image, and those values license exactly that.
+  await recordModActivity({
+    userId,
+    entityType: 'image',
+    entityId: imageId,
+    activity: 'dismissReviewFlag',
+  });
+  return true;
+}
+
+/**
  * The appeals queue reads `needsReview = 'appeal'` and the blocked-image purge spares only flagged
  * rows, so a block must leave the flag on while the appeal is Pending. A separate statement, not a
  * CASE in the block's own SET: that one re-checks under the row lock with its start-of-statement
@@ -206,6 +238,7 @@ async function keepPendingAppealFlag(imageId: number) {
     .updateTable('Image')
     .set({ needsReview: 'appeal' })
     .where('id', '=', imageId)
+    .where('needsReview', 'is distinct from', 'csam')
     .where((eb) =>
       eb.exists(
         eb
@@ -360,11 +393,14 @@ export async function resolveImageAppeal({
     .where('id', '=', imageId)
     .executeTakeFirst();
 
+  // An appeal verdict never reaches an image under the moderator-only review flag; that flag's own
+  // queue decides it.
   if (status === 'Approved') {
     await dbWrite
       .updateTable('Image')
       .set({ needsReview: null, blockedFor: null, ingestion: 'Scanned' })
       .where('id', '=', imageId)
+      .where('needsReview', 'is distinct from', 'csam')
       .execute();
     await recompute(imageId);
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'update' });
@@ -373,6 +409,7 @@ export async function resolveImageAppeal({
       .updateTable('Image')
       .set({ needsReview: null })
       .where('id', '=', imageId)
+      .where('needsReview', 'is distinct from', 'csam')
       .execute();
     syncSearchIndex({ entityType: 'image', entityId: imageId, action: 'delete' });
   }

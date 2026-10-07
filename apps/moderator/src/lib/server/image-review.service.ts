@@ -16,6 +16,7 @@ export type ImageReviewItem = {
   type: MediaType;
   needsReview: string | null;
   blockedFor: string | null;
+  ingestion: string;
   minor: boolean;
   poi: boolean;
   acceptableMinor: boolean;
@@ -76,6 +77,7 @@ export async function getImageReviewQueue({
       'i.type',
       'i.needsReview',
       'i.blockedFor',
+      'i.ingestion',
       'i.minor',
       'i.poi',
       'i.acceptableMinor',
@@ -97,7 +99,7 @@ export async function getImageReviewQueue({
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', needsReview)
-    .where('i.ingestion', '=', 'Scanned')
+    .where('i.ingestion', 'in', reviewQueueIngestion(needsReview))
     .$if(!!tagIds?.length, (qb) =>
       qb.where(
         sql<boolean>`EXISTS (SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."tagId" IN (${sql.join(
@@ -169,6 +171,14 @@ export async function getReviewQueueTags(
     .execute();
 }
 
+// A block keeps the moderator-only flag, so that queue (and its count) must also list Blocked images,
+// or they would be held with no way to reach them.
+const BLOCKED_LISTED_QUEUE = 'csam' satisfies ImageReviewType;
+
+function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Blocked')[] {
+  return needsReview === BLOCKED_LISTED_QUEUE ? ['Scanned', 'Blocked'] : ['Scanned'];
+}
+
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
   const rows = await dbRead
@@ -177,7 +187,12 @@ export async function getImageReviewCounts(): Promise<Record<string, number>> {
     .select((eb) => eb.fn.countAll<number>().as('count'))
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
-    .where('ingestion', '=', 'Scanned')
+    .where((eb) =>
+      eb.or([
+        eb('ingestion', '=', 'Scanned'),
+        eb.and([eb('needsReview', '=', BLOCKED_LISTED_QUEUE), eb('ingestion', '=', 'Blocked')]),
+      ])
+    )
     .groupBy('needsReview')
     .execute();
   return Object.fromEntries(rows.map((r) => [r.needsReview!, Number(r.count)]));

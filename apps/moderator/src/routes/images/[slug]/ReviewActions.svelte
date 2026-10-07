@@ -11,6 +11,7 @@
     reportId,
     minorQueue = false,
     reported = false,
+    dismissFlag = false,
     verdict,
     selected,
     submit,
@@ -25,6 +26,9 @@
     /** Which queue this is. Not inferred from `reportId`: they agree only by accident today, and a
      *  second report-carrying call site would then label the same gesture two different ways. */
     reported?: boolean;
+    /** The image is already removed and only its review flag is left to rule on, so Remove is
+     *  replaced by clearing the flag. Removing again would notify the uploader a second time. */
+    dismissFlag?: boolean;
     verdict: string | undefined;
     selected: SvelteSet<string | number>;
     submit: SubmitFunction;
@@ -74,11 +78,23 @@
           </button>
         </form>
       {/if}
-      <TosDeleteButton
-        action="?/block"
-        {submit}
-        hidden={reportId ? { imageId: item.id, reportId } : { imageId: item.id }}
-      />
+      {#if dismissFlag}
+        <form method="POST" action="?/dismissFlag" use:enhance={submit}>
+          <input type="hidden" name="imageId" value={item.id} />
+          <button
+            type="submit"
+            class="{button} border-amber-600/40 text-amber-400 hover:bg-amber-500/10"
+          >
+            Dismiss flag, keep removed
+          </button>
+        </form>
+      {:else}
+        <TosDeleteButton
+          action="?/block"
+          {submit}
+          hidden={reportId ? { imageId: item.id, reportId } : { imageId: item.id }}
+        />
+      {/if}
     </div>
   {/if}
 {/if}
