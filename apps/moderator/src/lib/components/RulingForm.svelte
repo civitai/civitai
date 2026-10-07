@@ -36,6 +36,7 @@
     enhancer,
     idPrefix,
     disabled = false,
+    busy = false,
     size = 'sm',
     hidden,
     extra,
@@ -49,6 +50,8 @@
     idPrefix: string;
     /** Disables the controls but keeps the form mounted, so an in-flight submit can finish. */
     disabled?: boolean;
+    /** The ruling is submitting; the confirm button says so. */
+    busy?: boolean;
     size?: 'sm' | 'xs';
     /** The subject's ids, and anything else the action reads that the moderator does not type. */
     hidden: Snippet;
@@ -107,7 +110,7 @@
           variant={chosen.variant}
           disabled={disabled || !!unrecordable}
         >
-          {chosen.confirmLabel}
+          {busy ? chosen.pendingLabel : chosen.confirmLabel}
         </Button>
       </div>
     </form>

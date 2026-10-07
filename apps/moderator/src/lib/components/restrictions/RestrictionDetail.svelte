@@ -113,6 +113,7 @@
         enhancer={rule.enhance}
         idPrefix="restriction-{restriction.id}"
         disabled={rule.submitting || !!unwiredReason}
+        busy={rule.submitting}
       >
         {#snippet hidden()}
           <input type="hidden" name="userRestrictionId" value={restriction.id} />

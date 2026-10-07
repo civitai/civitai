@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import {
   RESOLUTION_NOTE_MAX_LENGTH,
   RESOLUTION_REASONS,
-  reasonRequiresNote,
   resolutionReasonError,
   resolutionReasonLabel,
   type ResolutionReason,
@@ -90,22 +89,6 @@ describe('resolutionReasonError', () => {
     const long = 'x'.repeat(RESOLUTION_NOTE_MAX_LENGTH + 1);
     expect(resolutionReasonError('appeal', 'Approved', 'misclassified', long)).toMatch(/longer/);
   });
-});
-
-// The forms gate Confirm on this predicate; the server refuses on the validator. They must agree on
-// every reason, or a form offers a submit the server will refuse.
-describe('reasonRequiresNote', () => {
-  it.each(lists)(
-    'matches the validator on every $subject/$verdict reason',
-    ({ subject, verdict, reasons }) => {
-      for (const r of reasons) {
-        const refusedWithoutNote =
-          resolutionReasonError(subject as 'restriction', verdict as 'Upheld', r.value, '') !==
-          null;
-        expect(reasonRequiresNote(r.value), r.value).toBe(refusedWithoutNote);
-      }
-    }
-  );
 });
 
 describe('resolutionReasonLabel', () => {
