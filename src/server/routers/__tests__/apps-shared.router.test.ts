@@ -686,7 +686,7 @@ describe('C3 content safety (blocking on append)', () => {
   it('rejects minor content + files a Report', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     await expect(
-      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+      caller().append({ blockToken: 't', value: { title: 'teen girl' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     // a shared_kv_reports row was filed (auto:minor)
     const report = (mockPool.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
@@ -748,7 +748,7 @@ describe('C3 content safety (blocking on append)', () => {
     // minor
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     await expect(
-      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+      caller().append({ blockToken: 't', value: { title: 'teen girl' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     // blocked link
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
@@ -815,12 +815,12 @@ describe('FIX 1 abuse observability (alert emits)', () => {
   it('minor content STILL emits the legal-block error (NOT the content-block event)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     await expect(
-      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+      caller().append({ blockToken: 't', value: { title: 'teen girl' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     const emits = auditEmits('app-blocks-shared-storage-legal-block');
     expect(emits).toHaveLength(1);
     expect(emits[0]).toMatchObject({ type: 'error', category: 'minor' });
-    expect(JSON.stringify(emits[0])).not.toContain('13 year old');
+    expect(JSON.stringify(emits[0])).not.toContain('teen girl');
     // legal signal stays isolated from the general content-block channel.
     expect(auditEmits('app-blocks-shared-storage-content-block')).toHaveLength(0);
   });
@@ -873,7 +873,7 @@ describe('FIX 1 abuse observability (alert emits)', () => {
     mockLogToAxiom.mockRejectedValueOnce(new Error('axiom down'));
     // minor content → BAD_REQUEST regardless of the emit throwing
     await expect(
-      caller().append({ blockToken: 't', value: { title: '13 year old girl' } })
+      caller().append({ blockToken: 't', value: { title: 'teen girl' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
   });
 
@@ -1424,7 +1424,7 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     // it is opaque app state and must pass straight through.
     const out = await caller().append({
       blockToken: 't',
-      value: { title: 'clean title', data: { note: '13 year old girl' } },
+      value: { title: 'clean title', data: { note: 'teen girl' } },
     });
     expect(out.key).toMatch(/^[0-9A-HJKMNP-TV-Z]{26}$/);
     // The belt audited ONLY the moderated text (title), never the data blob.
@@ -1433,11 +1433,11 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
       (mockAuditPromptServer.mock.calls[0][0] as { prompt: string }).prompt
     );
     expect(auditedPrompt).toContain('clean title');
-    expect(auditedPrompt).not.toContain('13 year old girl');
+    expect(auditedPrompt).not.toContain('teen girl');
     const stored = JSON.parse(String((findInsert()![1] as unknown[])[2])) as {
       data?: { note?: string };
     };
-    expect(stored.data?.note).toBe('13 year old girl');
+    expect(stored.data?.note).toBe('teen girl');
   });
 
   it('title/body moderation is UNCHANGED even when a `data` blob is present', async () => {
@@ -1446,7 +1446,7 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     await expect(
       caller().append({
         blockToken: 't',
-        value: { title: '13 year old girl', data: { anything: true } },
+        value: { title: 'teen girl', data: { anything: true } },
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockClient.query).not.toHaveBeenCalled();
@@ -1939,7 +1939,7 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockUpdatePath();
     await expect(
-      caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: '13 year old girl' } })
+      caller().update({ blockToken: 't', key: 'ROW-KEY-1', value: { title: 'teen girl' } })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     // no in-place write happened
     expect(findUpdate()).toBeFalsy();
@@ -2030,18 +2030,18 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
     const out = await caller().update({
       blockToken: 't',
       key: 'ROW-KEY-1',
-      value: { title: 'clean title', data: { note: '13 year old girl' } },
+      value: { title: 'clean title', data: { note: 'teen girl' } },
     });
     expect(out).toEqual({ ok: true });
     // belt audited ONLY the moderated title, never the data blob
     expect(mockAuditPromptServer).toHaveBeenCalledTimes(1);
     const audited = String((mockAuditPromptServer.mock.calls[0][0] as { prompt: string }).prompt);
     expect(audited).toContain('clean title');
-    expect(audited).not.toContain('13 year old girl');
+    expect(audited).not.toContain('teen girl');
     const stored = JSON.parse(String((findUpdate()![1] as unknown[])[1])) as {
       data?: { note?: string };
     };
-    expect(stored.data?.note).toBe('13 year old girl');
+    expect(stored.data?.note).toBe('teen girl');
 
     // But a bad TITLE with a data blob present still rejects (belt runs on title).
     // Reset the connect/client spies so we can assert THIS attempt never wrote.
@@ -2053,7 +2053,7 @@ describe('apps.shared.update (author-scoped in-place edit)', () => {
       caller().update({
         blockToken: 't',
         key: 'ROW-KEY-1',
-        value: { title: '13 year old girl', data: { anything: true } },
+        value: { title: 'teen girl', data: { anything: true } },
       })
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(mockPool.connect).not.toHaveBeenCalled();

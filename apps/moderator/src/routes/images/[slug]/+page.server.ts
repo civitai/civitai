@@ -103,7 +103,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
       limit,
     });
     // The minor queue highlights only minor-relevant categories; other queues highlight the whole prompt.
-    const categories = view === 'minor' ? (['minor', 'young', 'age'] as const) : undefined;
+    const categories = view === 'minor' ? (['young', 'age'] as const) : undefined;
     return {
       ...base,
       view,
