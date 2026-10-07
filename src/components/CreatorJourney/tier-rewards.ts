@@ -1,8 +1,8 @@
 /**
  * What reaching a tier earns beyond feature unlocks. List a reward only once it is live: the animated
  * Legend badge joins when it is delivered and swapped in. Every line is ticked by the badge grant alone,
- * so word it to hold for every holder: the showcase leaves out silent grants and creators not in good
- * standing, and its ticks must not reveal that to them.
+ * never by showcase listing: the showcase leaves out silent grants and creators not in good standing, and
+ * a tick must not reveal that to them.
  */
 export const tierRewards: Partial<Record<string, string[]>> = {
   'score:supernova': [
