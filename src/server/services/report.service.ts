@@ -940,6 +940,9 @@ export async function resolveEntityAppeal({
     switch (appeal.entityType) {
       case EntityType.Image:
         try {
+          // No moderator-only review-flag guard, unlike the moderator app's twin: a Pending image
+          // appeal cannot sit beside that flag (`createEntityAppeal` refuses, `reportCsamImages`
+          // closes it), so there is nothing here for one to protect.
           const updated = await dbWrite.image.update({
             where: { id: appeal.entityId },
             data: approved

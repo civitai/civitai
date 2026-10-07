@@ -22,8 +22,8 @@ export async function getPendingAppealImageIds(imageIds: number[]): Promise<Set<
 }
 
 /**
- * A block settles every review flag except the moderator-only one, which only its own queue or a
- * filed report may clear. Run after the block, not folded into it: Prisma cannot express the CASE,
+ * A block settles every review flag except the moderator-only one, which only its own queue, a
+ * filed report or an explicit unblock may clear. Run after the block, not folded into it: Prisma cannot express the CASE,
  * and a conditional UPDATE re-reads the flag under the row lock.
  */
 export async function clearReviewFlagsOnBlock(imageIds: number[]): Promise<void> {

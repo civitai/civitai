@@ -15,6 +15,10 @@ import { invalidateThumbnails, thumbnailParentId } from './thumbnail-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 
+// The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
+// not true, for every row with no flag, and would refuse every ordinary accept.
+const NOT_FLAG_ONLY_REMAINING = sql<boolean>`("needsReview" IS DISTINCT FROM ${FLAG_KEPT_THROUGH_BLOCK} OR "ingestion" <> 'Blocked')`;
+
 const BLOCKED_REASON_MODERATED = 'moderated';
 
 /**
@@ -94,16 +98,12 @@ export async function acceptImage({
         : {}),
     })
     .where('id', '=', imageId)
-    .$if(!restoreRemoved, (qb) =>
-      qb.where((eb) =>
-        eb.or([
-          eb('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK),
-          eb('ingestion', '!=', 'Blocked'),
-        ])
-      )
-    )
+    .$if(!restoreRemoved, (qb) => qb.where(NOT_FLAG_ONLY_REMAINING))
     .executeTakeFirst();
-  if (!numUpdatedRows) throw new FlagOnlyRemovedError(imageId);
+  if (!numUpdatedRows) {
+    if (restoreRemoved) return;
+    throw new FlagOnlyRemovedError(imageId);
+  }
 
   // update_nsfw_levels_new skips nsfwLevelLocked rows, so without this a rating-locked Blocked image would
   // stay hidden after unblock. Clear the lock + zero the level so the recompute below restores the real one.
@@ -183,7 +183,8 @@ export async function blockImage({
   const { numUpdatedRows } = await dbWrite
     .updateTable('Image')
     .set({
-      // The moderator-only review flag survives a block: only its own queue or a filed report clears it.
+      // The moderator-only review flag survives a block: only its own queue, a filed report or an
+      // explicit unblock clears it.
       needsReview: sql<
         string | null
       >`CASE WHEN "needsReview" = ${FLAG_KEPT_THROUGH_BLOCK} THEN "needsReview" END`,
@@ -204,12 +205,7 @@ export async function blockImage({
     .where('id', '=', imageId)
     // Already removed with only the review flag left: blocking again would only notify the uploader a
     // second time. Decided here, not off the replica read above.
-    .where((eb) =>
-      eb.or([
-        eb('needsReview', 'is distinct from', FLAG_KEPT_THROUGH_BLOCK),
-        eb('ingestion', '!=', 'Blocked'),
-      ])
-    )
+    .where(NOT_FLAG_ONLY_REMAINING)
     .executeTakeFirst();
   if (!numUpdatedRows) return;
   await keepPendingAppealFlag(imageId);

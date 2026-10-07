@@ -40,7 +40,7 @@ const querySchema = z.object({
 const parseIds = (v: unknown): number[] => parseIdList(String(v ?? ''));
 
 const FLAG_ONLY_REFUSAL =
-  'Removed with only the review flag left: dismiss that flag on the card, or unblock the image. Reload.';
+  'removed with only the review flag left. Dismiss that flag from its review queue, or restore the image. Reload.';
 
 /** `string`, not the union: `blockImage` takes the ClickHouse column's type, and the schema is what
  *  guarantees the value is one of the enum's. Returns the refusal message on a bad value, like the
@@ -170,7 +170,7 @@ export const actions: Actions = {
       await acceptImage({ imageId, removeMinorFlag, userId: locals.user.id });
     } catch (e) {
       if (e instanceof FlagOnlyRemovedError)
-        return fail(409, { error: FLAG_ONLY_REFUSAL, imageId });
+        return fail(409, { error: `This image was ${FLAG_ONLY_REFUSAL}`, imageId });
       throw e;
     }
     if (reportId)
@@ -333,9 +333,9 @@ export const actions: Actions = {
     // Which report belongs to which image is not posted, so a partial batch moves no report.
     if (refused.length)
       return fail(409, {
-        error: `Accepted ${imageIds.length - refused.length} of ${
+        error: `${imageIds.length - refused.length} of ${
           imageIds.length
-        }. ${FLAG_ONLY_REFUSAL} Not accepted: ${refused.join(', ')}.`,
+        } done. Not done: ${refused.join(', ')}, ${FLAG_ONLY_REFUSAL}`,
       });
     await Promise.all(
       reportIds.map((id) =>

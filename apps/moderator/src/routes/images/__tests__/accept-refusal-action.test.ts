@@ -68,14 +68,41 @@ describe('accept', () => {
   });
 });
 
+describe('accept', () => {
+  it('lets any other failure through rather than reporting it as a refusal', async () => {
+    acceptImage.mockRejectedValue(new Error('connection lost'));
+
+    await expect(actions.accept(event({ imageId: String(ACCEPTABLE) }))).rejects.toThrow(
+      'connection lost'
+    );
+  });
+});
+
 describe('bulkAccept', () => {
+  it('accepts a batch with nothing refused and moves every posted report', async () => {
+    const result = await actions.bulkAccept(
+      event({ imageIds: `${ACCEPTABLE}`, reportIds: '9,10' })
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(setReportStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it('lets any other failure through rather than reporting it as a refusal', async () => {
+    acceptImage.mockRejectedValue(new Error('connection lost'));
+
+    await expect(
+      actions.bulkAccept(event({ imageIds: `${ACCEPTABLE}`, reportIds: '' }))
+    ).rejects.toThrow('connection lost');
+  });
+
   it('names the refused images, accepts the rest, and moves no report', async () => {
     const result = await actions.bulkAccept(
       event({ imageIds: `${ACCEPTABLE},${REFUSED}`, reportIds: '9,10' })
     );
 
     expect(result).toMatchObject({ status: 409 });
-    expect(JSON.stringify(result)).toContain(`Not accepted: ${REFUSED}.`);
+    expect(JSON.stringify(result)).toContain(`Not done: ${REFUSED},`);
     expect(acceptImage).toHaveBeenCalledTimes(2);
     expect(setReportStatus).not.toHaveBeenCalled();
   });
