@@ -405,8 +405,8 @@ the repo precisely so the next session doesn't need the previous one's context.
 ## 7. Feedback loop
 
 Moderators report bugs and request features in the **Mod Studio Feedback** Discord group chat —
-channel `1534637921829912777`. It is a group chat, so the repo's bot-based `discord` skill cannot read
-it; you need your own Discord access.
+channel `1534637921829912777`. The repo's `discord` skill goes through a bot,
+which may not see a group chat; read it with your own Discord access.
 
 Check it **before** starting a page (someone may have already described what they need) and
 **after** shipping one. It carries screenshots, real SQL moderators want surfaced, and bug

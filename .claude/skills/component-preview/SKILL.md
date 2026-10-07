@@ -101,7 +101,7 @@ const stories = [
   { name: 'empty', path: 'my-component--empty' },
 ];
 const themes = ['dark', 'light'];
-const dir = '<session-screenshots-dir>';
+const dir = '<absolute-output-dir>';
 
 for (const theme of themes) {
   for (const story of stories) {
