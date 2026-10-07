@@ -46,7 +46,10 @@ export async function countPricingSlotsThisMonth(ownerId: number): Promise<numbe
  * Extra licensing-fee slots granted to this creator. Fails to 0: an outage costs a boosted creator
  * their extra slots for its duration, never anyone their tier allowance.
  */
-export async function getFeeAllowanceBoost(userId: number, now: Date = new Date()): Promise<number> {
+export async function getFeeAllowanceBoost(
+  userId: number,
+  now: Date = new Date()
+): Promise<number> {
   if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
   try {
     const granted = await withSysReadDeadline(

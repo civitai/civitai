@@ -38,7 +38,12 @@ const schema = z.discriminatedUnion('action', [
   z.object({
     action: z.literal('grant'),
     userIds: z.array(userId).min(1).max(5000),
-    amount: z.coerce.number().int().min(1).max(FEE_ALLOWANCE_BOOST_MAX).default(FEE_ALLOWANCE_BOOST_MAX),
+    amount: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(FEE_ALLOWANCE_BOOST_MAX)
+      .default(FEE_ALLOWANCE_BOOST_MAX),
   }),
   z.object({ action: z.literal('get'), userId }),
   z.object({ action: z.literal('revoke'), userId }),
