@@ -307,6 +307,109 @@ describe('computePackPayouts', () => {
     expect(packCreatorAmount).toBe(0);
   });
 
+  // What each member is recorded as having sold for. Gross-sales milestones sum
+  // these rows, so the snapshot is the wrong number whenever the sale scaled.
+  describe('attributed', () => {
+    const sum = (m: Map<number, number>) => [...m.values()].reduce((a, b) => a + b, 0);
+
+    it('spreads the remainder over the pack creator own members by snapshot weight', () => {
+      const { attributed } = computePackPayouts({
+        packPrice: PACK_PRICE,
+        packCreatorId: PACK_CREATOR,
+        members: [
+          member(),
+          member({ cosmeticId: 64, floorAmount: 800 }),
+          foreign(),
+          member({ cosmeticId: 81, createdById: null, addedById: RESELLER, floorAmount: 1700 }),
+        ],
+        buyerId: BUYER,
+      });
+      // Remainder 6200 - 2100 - 1700 = 2400, split 1300:800.
+      expect([...attributed.entries()].sort(([a], [b]) => a - b)).toEqual([
+        [61, Math.floor((1300 / 2100) * 2400)],
+        [62, 2100],
+        [64, Math.floor((800 / 2100) * 2400)],
+        [81, 1700],
+      ]);
+    });
+
+    it('records the scaled basis, zero included, rather than the snapshot', () => {
+      const { attributed } = computePackPayouts({
+        packPrice: 100,
+        packCreatorId: PACK_CREATOR,
+        members: [
+          foreign({ floorAmount: 100000 }),
+          foreign({ cosmeticId: 63, createdById: RESELLER, addedById: RESELLER, floorAmount: 3 }),
+        ],
+        buyerId: BUYER,
+      });
+      expect(attributed.get(62)).toBe(99);
+      expect(attributed.get(63)).toBe(0);
+    });
+
+    it('caps rounded-up official shares at what the price has left', () => {
+      // Scale 0.5: ceil(2.5) + ceil(7.5) = 11 on a price of 10.
+      const { attributed, remainder } = computePackPayouts({
+        packPrice: 10,
+        packCreatorId: PACK_CREATOR,
+        members: [
+          member({ cosmeticId: 81, createdById: null, addedById: RESELLER, floorAmount: 5 }),
+          member({ cosmeticId: 82, createdById: null, addedById: RESELLER, floorAmount: 15 }),
+        ],
+        buyerId: BUYER,
+      });
+      expect([attributed.get(81), attributed.get(82)]).toEqual([3, 7]);
+      expect(remainder).toBe(0);
+    });
+
+    it('leaves out a member the buyer authored', () => {
+      const { attributed } = computePackPayouts({
+        packPrice: PACK_PRICE,
+        packCreatorId: PACK_CREATOR,
+        members: [member(), foreign()],
+        buyerId: FOREIGN_CREATOR,
+      });
+      expect([...attributed.keys()]).toEqual([61]);
+    });
+
+    it('never sums past the price, or pays out past 70% of it, over many generated packs', () => {
+      // Deterministic, so a failure reproduces and prints the pack that broke it.
+      let seed = 7;
+      const rand = (n: number) => {
+        seed = (seed * 1103515245 + 12345) % 2147483648;
+        return seed % n;
+      };
+      const owners = [PACK_CREATOR, FOREIGN_CREATOR, RESELLER, BUYER, null];
+      for (let i = 0; i < 500; i++) {
+        const members = Array.from({ length: 1 + rand(5) }, (_, j) =>
+          member({
+            cosmeticId: 100 + j,
+            createdById: owners[rand(owners.length)],
+            floorAmount: 1 + rand(5000),
+          })
+        );
+        const packPrice = 1 + rand(8000);
+        const packCreatorId = rand(6) === 0 ? null : PACK_CREATOR;
+        const { attributed, components, packCreatorAmount } = computePackPayouts({
+          packPrice,
+          packCreatorId,
+          members,
+          buyerId: BUYER,
+          resaleShareByCosmeticId: rand(2) ? new Map([[100, 30]]) : undefined,
+        });
+        const label = JSON.stringify({
+          packPrice,
+          packCreatorId,
+          members: members.map((m) => [m.createdById, m.floorAmount]),
+        });
+        expect(sum(attributed), label).toBeLessThanOrEqual(packPrice);
+        for (const v of attributed.values()) expect(v, label).toBeGreaterThanOrEqual(0);
+        const paid = components.reduce((s, c) => s + c.amount, 0) + packCreatorAmount;
+        expect(paid, label).toBeLessThanOrEqual(Math.floor(packPrice * 0.7));
+      }
+    });
+  });
+
   // Justin, 2026-10-07: "Official item sales should go to the bank." A platform
   // cosmetic has no creator to pay, and its value is NOT the pack creator's — if
   // you are about to fold official members back into the remainder, that is the

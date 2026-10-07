@@ -674,6 +674,16 @@ describe.each(SHAPES)(
       expect(rows).toHaveLength(membersPaidFor().length);
     });
 
+    // Gross-sales milestones credit each creator these rows and the lister the
+    // price minus them, so a row recorded at its unscaled snapshot over-credits
+    // one creator and silently debits the other.
+    it('records attributions that never sum past what the buyer was charged', async () => {
+      const { charged } = await setup();
+      const rows: { unitAmount: number }[] = createManyComponents.mock.calls[0]?.[0]?.data ?? [];
+      for (const row of rows) expect(row.unitAmount).toBeGreaterThanOrEqual(0);
+      expect(rows.reduce((sum, r) => sum + r.unitAmount, 0)).toBeLessThanOrEqual(charged);
+    });
+
     // Identity, where the assertion above is only a count: a write that keeps the
     // row count and records the wrong cosmetic passes the count on every shape
     // and fails this on 13.
