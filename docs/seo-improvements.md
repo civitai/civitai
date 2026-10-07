@@ -58,7 +58,7 @@ broken.**
 
 The `Soft 404` drilldown was **88% `/tag/*`**. Two causes, both now addressed:
 
-**The default period filter hid content.** `modelFilterSchema` defaults to `period: Month` with
+**The default period filter hid content.** `modelFilterSchema` defaulted to `period: Month` with
 `periodMode: 'published'`, so a tag's grid only showed models whose `lastVersionAt` fell inside a
 30-day window — while the meta description and `CollectionPage` schema advertised the full count.
 **224,624 of the 243,469 tags with published models (92%) rendered an empty grid.** In the soft-404
@@ -67,10 +67,10 @@ sample, about 87% of tag URLs had models green can show, so this was their cause
 **Mature-only tags are empty on green.** Green filters out mature models, so a tag whose models are
 all mature shows nothing there regardless of period. About 12% of the sample.
 
-What shipped:
+What shipped (the first of these was later superseded):
 
-- **`periodFallback`** (opt-in, `/tag/:name` only) retries the first page at `AllTime` when a
-  period-filtered query returns nothing.
+- **`periodFallback`** (opt-in, `/tag/:name` only) retried the first page at `AllTime` when a
+  period-filtered query returned nothing. Removed when the Hot sort replaced it — see below.
 - **`getTagPageSeoData({ safeOnly })`** — on green the count and the listed models are filtered to
   green-visible models, so the description and schema stop advertising mature models. A green-only
   `EXISTS` separates "no models at all" from "mature models only", and the second case is
@@ -82,17 +82,24 @@ people search for, not by how much they list: one of the top tag pages by clicks
 and a minimum-model rule would have deindexed 200,000+ pages that had content hidden only by the
 period filter.
 
-### `periodFallback` is a stop-gap
+### `periodFallback` was a stop-gap, now replaced by the Hot sort
 
-It fires on **exactly zero** results. A tag with 255 models where 3 shipped last month shows 3 of
-255; the fallback does not fire. The real fix is for the tag page to derive its default period from
-tag volume server-side (`getTagPageSeoData` already has the count), held as page-local state rather
-than written to the shared `model-filters` localStorage key. Filters were set aside on 2026-09-16,
-so this is parked.
+It fired on **exactly zero** results, so a tag with 255 models where 3 shipped last month still
+showed 3 of 255.
 
-**Closing condition:** the tag page derives its default period server-side, the `periodFallback`
-machinery is deleted in the same PR, and a soft-404 re-export shows the count falling without the
-head tags losing impressions.
+The fix is the **Hot** model sort: recency moves out of the `period` filter, which can drop rows,
+and into the sort, which cannot. The model-filter default is now `sort: Hot, period: AllTime`, so no
+default can empty a page, and `periodFallback` is deleted along with its schema field, controller
+retry, `ModelsInfinite` prop and tag-page prop. Saved `Highest Rated · Month` preferences are
+rewritten once, client-side. An earlier plan — deriving the default period from tag volume
+server-side — was dropped: a sort needs no per-surface default and cannot return an empty page.
+
+Design, measurements and the zero-downtime rollout:
+[model-feed-hot-ranking.md](model-feed-hot-ranking.md).
+
+**Closing condition:** the migration `20261010120000_model_hot_score` is applied in production, the
+code ships, and a soft-404 re-export shows the `/tag/*` count falling without the head tags losing
+impressions.
 
 ### Considered and deferred: a minimum-model threshold for indexing
 

@@ -3236,6 +3236,11 @@ export type ModelBaseModelMetric = {
   poi: Generated<boolean>;
   minor: Generated<boolean>;
   updatedAt: Generated<Timestamp>;
+  /**
+   * Mirror of ModelMetric.hotScore, so a base-model-filtered Hot feed can be served by
+   * mbmm_feed_hot. Trigger-maintained; see the ModelMetric field.
+   */
+  hotScore: number | null;
 };
 export type ModelEngagement = {
   userId: number;
@@ -3314,9 +3319,16 @@ export type ModelMetric = {
   nsfwLevel: Generated<number>;
   userId: Generated<number>;
   lastVersionAt: Timestamp | null;
+  publishedAt: Timestamp | null;
   mode: ModelModifier | null;
   status: Generated<ModelStatus>;
   availability: Generated<Availability>;
+  /**
+   * Hot feed sort key, maintained by the trg_model_metric_hot_score trigger. Never write it
+   * from application code: the DB computes it so the migration can ship before the deploy.
+   * Int, not float — the keyset cursor parser runs parseInt on the sort token.
+   */
+  hotScore: number | null;
 };
 export type ModelMetricDaily = {
   modelId: number;

@@ -1462,9 +1462,15 @@ model ModelMetric {
   nsfwLevel     Int            @default(0)
   userId        Int            @default(0)
   lastVersionAt DateTime?
+  publishedAt   DateTime?
   mode          ModelModifier?
   status        ModelStatus    @default(Draft)
   availability  Availability   @default(Public)
+
+  /// Hot feed sort key, maintained by the trg_model_metric_hot_score trigger. Never write it
+  /// from application code: the DB computes it so the migration can ship before the deploy.
+  /// Int, not float — the keyset cursor parser runs parseInt on the sort token.
+  hotScore Int?
 
   @@id([modelId])
 }
@@ -1503,6 +1509,10 @@ model ModelBaseModelMetric {
   poi          Boolean         @default(false)
   minor        Boolean         @default(false)
   updatedAt    DateTime        @default(now())
+
+  /// Mirror of ModelMetric.hotScore, so a base-model-filtered Hot feed can be served by
+  /// mbmm_feed_hot. Trigger-maintained; see the ModelMetric field.
+  hotScore Int?
 
   @@id([modelId, baseModel])
 }
