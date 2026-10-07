@@ -43,7 +43,21 @@ function detectorExposures(source: string) {
     found.push('whole milestone relation');
   if (/["']CreatorMilestone["']/.test(source)) {
     if (/\b\w+\.\*|(SELECT|RETURNING)\s+\*|selectAll\(/i.test(source)) found.push('star select');
-    if (/\b(to_jsonb|row_to_json|to_json)\s*\(\s*\w+\s*\)/i.test(source)) found.push('whole row');
+    const keywords = /^(as|on|where|join|left|inner|set|using|order|group|limit|values)$/i;
+    const code = source
+      .split('\n')
+      .filter((line) => !/^\s*(\*|\/\/|\/\*)/.test(line))
+      .join('\n');
+    const aliases = [...code.matchAll(/"CreatorMilestone"\s+(?:AS\s+)?(\w+)/gi)]
+      .map((match) => match[1])
+      .filter((alias) => !keywords.test(alias));
+    for (const alias of new Set(aliases)) {
+      const asValue = new RegExp(
+        String.raw`(\bSELECT|\bRETURNING|,|\()\s*${alias}\s*(::\s*\w+\s*)?(,|\)|\bFROM\b|\bORDER\b|$)(?!\s*=>)`,
+        'im'
+      );
+      if (asValue.test(code)) found.push('whole row');
+    }
     if (/\b(SELECT|RETURNING)\b[^;`]*?[\s,.(]"?detector"?(?!\w)/i.test(source))
       found.push('detector column');
   }
@@ -69,6 +83,13 @@ describe('detectorExposures', () => {
     ['a field of the column', `sql\`SELECT m.detector->>'sql' FROM "CreatorMilestone" m\``],
     ['a returning star', 'sql`UPDATE "CreatorMilestone" SET name = $1 RETURNING *`'],
     ['a whole row', 'sql`SELECT to_jsonb(m) FROM "CreatorMilestone" m`'],
+    ['an aggregated row', 'sql`SELECT json_agg(m) FROM "CreatorMilestone" m`'],
+    [
+      'an ordered aggregate',
+      'sql`SELECT jsonb_agg(cm ORDER BY cm.key) FROM "CreatorMilestone" AS cm`',
+    ],
+    ['a bare row', 'sql`SELECT m FROM "CreatorMilestone" m`'],
+    ['a row cast to text', 'sql`SELECT m::text FROM "CreatorMilestone" m`'],
     ['a Kysely selectAll', `db.selectFrom('CreatorMilestone').selectAll().execute()`],
     [
       'a Prisma include',
@@ -86,6 +107,8 @@ describe('detectorExposures', () => {
     ],
     ['a registry field', `if (entry.detector === 'x') return;`],
     ['named columns', 'sql`SELECT m.key, m.name FROM "CreatorMilestone" m`'],
+    ['an aggregated column', 'sql`SELECT array_agg(m.key) FROM "CreatorMilestone" m`'],
+    ['a column named like a word', 'sql`SELECT key FROM "CreatorMilestone" WHERE hidden`'],
   ])('passes %s', (_, source) => {
     expect(detectorExposures(source)).toEqual([]);
   });

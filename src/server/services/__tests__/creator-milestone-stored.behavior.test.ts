@@ -474,6 +474,14 @@ describe('a stored group through the grant runner', () => {
     expect(result).toMatchObject({ granted: 1, announced: 0 });
   });
 
+  // The same gated watermark, dated: a dated finding is news whatever the gate did before.
+  it('treats a dated definition as timed', async () => {
+    await doodle(1, 'teal', '2026-03-20T00:00:00Z');
+    const watermark = await watermarkAfter({});
+    const { result } = await grant({ ...watermark, gated: true });
+    expect(result).toMatchObject({ granted: 1, announced: 1 });
+  });
+
   it('never announces a silent definition', async () => {
     await doodle(1, 'teal', '2026-03-20T00:00:00Z');
     const watermark = await watermarkAfter({ silent: true });
