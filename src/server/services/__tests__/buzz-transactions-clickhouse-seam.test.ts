@@ -15,11 +15,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * So these tests drive the REAL exported function and assert two things about
  * what it emits and returns, not about the helpers:
  *
- *   - the SQL it sends carries the numeric spelling of the type filter, because
- *     a name-only predicate silently matches nothing for a member past the
- *     ingest map's `0..26` ceiling
- *   - a row whose `type` column holds `'28'` comes back as the NUMBER 28, not
- *     the string `'AppAuthorFee'` that the enum's reverse mapping yields
+ *   - the SQL it sends carries the `unknown_<n>` spelling of the type filter,
+ *     because a name-only predicate silently matches nothing for a member the
+ *     ingest MV cannot name (prod stores `AppAuthorFee` only as `'unknown_28'`)
+ *   - a row whose `type` column holds `'unknown_28'` (or a bare `'28'`) comes
+ *     back as the NUMBER 28, not `Tip` and not the string `'AppAuthorFee'`
  *
  * 🔴 BOTH READ PATHS, and they are two independent expressions. The list
  * (`hydrateTransactions`) and the CSV export (`formatExportBatch`) each resolve
@@ -136,7 +136,7 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
    * `type = '<name>'` must fail HERE, because no assertion on the predicate
    * helper alone can see whether the query builder calls it.
    */
-  it('sends a type filter that matches the NUMERIC spelling too', async () => {
+  it('sends a type filter that matches the unknown_<n> and NUMERIC spellings too', async () => {
     await getUserBuzzTransactionsMulti({
       accountId: ACCOUNT_ID,
       ...WINDOW,
@@ -147,7 +147,7 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     // A positive control on the mock: a zero here would make every assertion
     // below unreachable and this test green for no reason.
     expect(sql.length).toBeGreaterThan(0);
-    for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28')");
+    for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28','unknown_28')");
     // The spelling the base emitted, which matches no row the ingest MV wrote.
     for (const q of sql) expect(q).not.toContain("type = 'appAuthorFee'");
   });
@@ -175,27 +175,25 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
   });
 
   /**
-   * 🔴 THE WIRING GUARD FOR THE HYDRATOR, and the one that was missing entirely:
-   * reverting `hydrateTransactions` to `TransactionType[capitalise(row.type)]`
-   * must fail here. `toBe` is `Object.is`, so it separates the number 28 from
-   * the string `'AppAuthorFee'` that the reverse mapping returns — which is what
-   * rendered as a bare `28` on `/user/transactions`.
+   * 🔴 THE WIRING GUARD FOR THE HYDRATOR: reverting `hydrateTransactions` to
+   * `TransactionType[capitalise(row.type)]` must fail here. `'unknown_28'` is the
+   * spelling prod stores, and that expression resolves it to `Tip`.
    */
-  it('hydrates a row stored as its NUMBER into the member, not into the name', async () => {
+  it('hydrates a row stored as unknown_28 into the member, not into Tip', async () => {
     mockQuery.mockResolvedValueOnce([
       // 🔴 CREDIT CASE ONE OF TWO, AND THE TWO MUST DIFFER. Distinct pairs alone are
       // not enough: with one credit case and one debit case, ANY pure function of
       // the direction reproduces both while reading nothing from the row, and such a
       // mutant survived the whole suite twice. What kills it is two cases at the
       // SAME direction with DIFFERENT expected values — this one and
-      // `hydrates the other past-26 member` below. Keep them different.
+      // `hydrates a member stored as its bare number` below. Keep them different.
       // 🔴 And a counterparty id that is NOT the `77` the other rows use, for the
       // same reason the export suite varies one: a sign or side predicate keyed on a
       // LITERAL id agrees with one keyed on `accountId` on every row where the
       // counterparty is always the same, so the double-inverted mutant
       // (`=== 77 ? +amount : -amount`) is equivalent and survives.
       row({
-        type: '28',
+        type: 'unknown_28',
         amount: 3,
         fromAccountId: 5555,
         fromAccountType: 'green',
@@ -211,9 +209,6 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     expect(result.transactions).toHaveLength(1);
     const [tx] = result.transactions;
     expect(tx.type).toBe(TransactionType.AppAuthorFee);
-    // `toBe` is `Object.is`, so this alone separates the number 28 from the string
-    // `'AppAuthorFee'` the reverse mapping returned. A `not.toBe('AppAuthorFee')`
-    // after it could never report, and is deliberately absent.
     expect(tx.type).toBe(28);
     // NOT subsumed by the line above: a duplicate enum value at 28 flips the
     // reverse map, and this reports it directly rather than as a knock-on.
@@ -298,14 +293,11 @@ describe('getUserBuzzTransactionsMulti — the ClickHouse type seam', () => {
     expect(result.transactions[0].amount).toBe(-9);
   });
 
-  /**
-   * The same row shape for the member that has been in this state since
-   * 2026-05-21 — so the guard is not special-cased to one value, and the
-   * pre-existing instance is covered by the same wiring.
-   */
-  it('hydrates the other past-26 member the same way', async () => {
+  // The bare-digit spelling, for a second member, so the guard is not
+  // special-cased to one value or one spelling.
+  it('hydrates a member stored as its bare number the same way', async () => {
     mockQuery.mockResolvedValueOnce([
-      // 🔴 CREDIT CASE TWO OF TWO — same direction as the `'28'` case above, and its
+      // 🔴 CREDIT CASE TWO OF TWO — same direction as the `'unknown_28'` case above, and its
       // account types DELIBERATELY DIFFER from it. A constant substituted for any
       // DIRECTION-DEPENDENT column (the amount, either side) dies somewhere in the
       // file, though never in the case whose own expected value it copies; the date
@@ -373,14 +365,14 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     return chunks.join('');
   }
 
-  it('writes the member NAME for a row stored as its number, not the bare number', async () => {
+  it('writes the member NAME for a row stored as unknown_28, not Tip', async () => {
     // 🔴 CREDIT CASE ONE OF TWO on this path, and it must differ from the other
     // credit (`reports the RECIPIENT side …`). Two cases differing only in direction
     // are satisfied by any pure function of `isDebit` without reading the row — that
     // mutant survived the whole suite until a second credit with a different value
     // existed.
     mockQuery.mockResolvedValueOnce([
-      row({ type: '28', amount: 3, fromAccountType: 'green', toAccountType: 'blue' }),
+      row({ type: 'unknown_28', amount: 3, fromAccountType: 'green', toAccountType: 'blue' }),
     ]);
 
     const out = await csv();
@@ -430,7 +422,7 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
     expect(fields[3]).toBe('green');
   });
 
-  it('does the same for the other past-26 member', async () => {
+  it('does the same for a member stored as its bare number', async () => {
     mockQuery.mockResolvedValueOnce([row({ type: '27', amount: 5 })]);
 
     const out = await csv();
@@ -510,6 +502,6 @@ describe('streamUserBuzzTransactionsCsv — the same seam on the export path', (
 
     const sql = sentSql();
     expect(sql.length).toBeGreaterThan(0);
-    for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28')");
+    for (const q of sql) expect(q).toContain("type IN ('appAuthorFee','28','unknown_28')");
   });
 });

@@ -4,19 +4,16 @@ import { describe, expect, it } from 'vitest';
  * Coverage for the `TransactionType` ⇄ ClickHouse `type` column conversion.
  *
  * ── WHY THIS FILE EXISTS ────────────────────────────────────────────────────
- * The ingest MV's int→string map enumerates only `0..26` and falls back to
- * `toString(Type)`, so every member above 26 is stored as its DIGITS rather than
- * its camelCase name. `LicenseFee` (27) has been in that state since 2026-05-21;
- * `AppAuthorFee` (28) joins it.
+ * The ingest MV stores a member it has no name for as `unknown_<n>` — prod holds
+ * `AppAuthorFee` (28) only as `'unknown_28'` — so the column is not always the
+ * camelCase name. The helpers also accept a bare `'<n>'`, the spelling this file
+ * was first written against; no prod row has ever carried it.
  *
- * The read side was open-coded at both hydrator call sites as
- * `TransactionType[capitalise(row.type)]`, which is WRONG for a numeric string in
- * a way no type error can catch: capitalising `'28'` is a no-op, and
- * `TransactionType['28']` hits the enum's REVERSE mapping, so it returns the
- * NAME as a string where a `TransactionType` number is declared. The value then
- * renders as the raw `28` in the user's transaction list and in the CSV export
- * instead of a label. `buzz.schema.ts` already carried this rule for the
- * buzz-service API read path; neither ClickHouse site had it.
+ * Capitalising a non-name and indexing the enum is WRONG in a way no type error
+ * can catch: `TransactionType['28']` hits the enum's REVERSE mapping and returns
+ * the NAME as a string where a number is declared, and `'Unknown_28'` misses and
+ * falls back to `Tip`. Either way the transaction list and the CSV export show
+ * the wrong label.
  *
  * 🔴 NOT A PURE REGRESSION SUITE, AND THE BASE RED IS DEGENERATE. These symbols
  * do not exist at the base commit, so running this file there produces
@@ -71,12 +68,28 @@ describe('fromClickhouseTransactionType', () => {
    * and that is the one mutation it catches. The seam suite keeps one for that
    * reason — do not delete it there on the strength of this paragraph.
    */
-  it('resolves a member stored as its NUMBER — the 0..26 ingest gap', () => {
+  it('resolves a member stored as its NUMBER', () => {
     for (const [raw, member] of [
       ['27', TransactionType.LicenseFee],
       ['28', TransactionType.AppAuthorFee],
     ] as const)
       expect(fromClickhouseTransactionType(raw)).toBe(member);
+  });
+
+  // 🔴 THE SPELLING PROD ACTUALLY STORES. Before this arm `'unknown_28'` resolved
+  // to Tip, so every App Blocks author fee was listed and exported as a tip.
+  it('resolves a member stored as unknown_<n>', () => {
+    expect(fromClickhouseTransactionType('unknown_28')).toBe(TransactionType.AppAuthorFee);
+    expect(fromClickhouseTransactionType('unknown_27')).toBe(TransactionType.LicenseFee);
+  });
+
+  it('round-trips every member through the unknown_<n> form', () => {
+    const members = Object.values(TransactionType).filter(
+      (v): v is TransactionType => typeof v === 'number'
+    );
+    expect(members.length).toBeGreaterThanOrEqual(29);
+    for (const member of members)
+      expect(fromClickhouseTransactionType(`unknown_${member}`)).toBe(member);
   });
 
   it('round-trips every member through the name form', () => {
@@ -108,6 +121,14 @@ describe('fromClickhouseTransactionType', () => {
   it('falls back to Tip for a value that names no member, in either arm', () => {
     expect(fromClickhouseTransactionType('notAType')).toBe(TransactionType.Tip);
     expect(fromClickhouseTransactionType('999')).toBe(TransactionType.Tip);
+    expect(fromClickhouseTransactionType('unknown_999')).toBe(TransactionType.Tip);
+  });
+
+  // The prefix is anchored: only the exact `unknown_<digits>` shape is numeric.
+  it('does not read digits out of a value that merely contains them', () => {
+    expect(fromClickhouseTransactionType('xunknown_28')).toBe(TransactionType.Tip);
+    expect(fromClickhouseTransactionType('unknown_28x')).toBe(TransactionType.Tip);
+    expect(fromClickhouseTransactionType('unknown_')).toBe(TransactionType.Tip);
   });
 
   /**
@@ -125,28 +146,31 @@ describe('fromClickhouseTransactionType', () => {
 describe('clickhouseTransactionTypePredicate', () => {
   /**
    * 🔴 THE REGRESSION ARM for the filter. A name-only predicate is a silent zero
-   * for a member past the ingest map — the export answers 200 with a header-only
+   * for a member the MV cannot name — the export answers 200 with a header-only
    * body, which is indistinguishable from "this user earned nothing".
    */
-  it('matches the NUMBER as well as the name, so a past-26 member is not a silent zero', () => {
+  it('matches unknown_<n> and the number as well as the name', () => {
     expect(clickhouseTransactionTypePredicate(TransactionType.AppAuthorFee)).toBe(
-      "type IN ('appAuthorFee','28')"
+      "type IN ('appAuthorFee','28','unknown_28')"
     );
     expect(clickhouseTransactionTypePredicate(TransactionType.LicenseFee)).toBe(
-      "type IN ('licenseFee','27')"
+      "type IN ('licenseFee','27','unknown_27')"
     );
   });
 
   /**
-   * The numeric arm is carried for EVERY member, not only the past-26 ones — the
-   * builder does not branch, which is what keeps it one rule. That it admits
-   * nothing extra for an enumerated member is a premise about what the ingest MV
-   * writes, and this test does not establish it; `Number(type)` being a real
-   * member integer is what bounds the widening.
+   * Every arm is carried for EVERY member — the builder does not branch, which is
+   * what keeps it one rule. That they admit nothing extra for a named member is a
+   * premise about what the ingest MV writes, and this test does not establish it;
+   * `Number(type)` being a real member integer is what bounds the widening.
    */
-  it('carries the numeric arm for an enumerated member too', () => {
-    expect(clickhouseTransactionTypePredicate(TransactionType.Fee)).toBe("type IN ('fee','25')");
-    expect(clickhouseTransactionTypePredicate(TransactionType.Tip)).toBe("type IN ('tip','0')");
+  it('carries every arm for a named member too', () => {
+    expect(clickhouseTransactionTypePredicate(TransactionType.Fee)).toBe(
+      "type IN ('fee','25','unknown_25')"
+    );
+    expect(clickhouseTransactionTypePredicate(TransactionType.Tip)).toBe(
+      "type IN ('tip','0','unknown_0')"
+    );
   });
 });
 
@@ -158,10 +182,10 @@ describe('clickhouseTransactionTypeExclusionPredicate', () => {
    * stayed green, since none of them looked at the returned string's shape. The
    * assertion is the full normalised output for exactly that reason.
    */
-  it('emits a complete NOT IN predicate carrying both spellings per member', () => {
+  it('emits a complete NOT IN predicate carrying every spelling per member', () => {
     expect(
       clickhouseTransactionTypeExclusionPredicate([TransactionType.Bank, TransactionType.Extract])
-    ).toBe("type NOT IN ('bank','23','extract','24')");
+    ).toBe("type NOT IN ('bank','23','unknown_23','extract','24','unknown_24')");
   });
 
   // `NOT IN ()` is a syntax error, so an empty list must excuse itself rather
