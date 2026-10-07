@@ -119,3 +119,9 @@ export const hasQueueThreshold = (key: string) => (COUNT_KEY_ALIASES[key] ?? key
  * Lives here with the other operating standards so the number is changed in one place, deliberately.
  */
 export const URGENT_REPORT_COUNT = 5;
+
+/** An item waiting longer than this is overdue: the age at which a queue item's badge turns red. */
+export const OVERDUE_ITEM_DAYS = 7;
+
+export const isOverdue = (since: Date | string, now = Date.now()): boolean =>
+  now - new Date(since).getTime() > OVERDUE_ITEM_DAYS * 86_400_000;
