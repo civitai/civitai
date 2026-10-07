@@ -4920,6 +4920,7 @@ model Cosmetic {
   cosmeticShopItems   CosmeticShopItem[]
   packMemberships     CosmeticShopItemCosmetic[]
   creatorMilestones   CreatorMilestone[]
+  milestoneExtras     CreatorMilestoneCosmetic[]
 
   @@index([createdById])
 }
@@ -4961,8 +4962,20 @@ model CreatorMilestone {
   description  String?
   cosmeticId   Int?
   cosmetic     Cosmetic?              @relation(fields: [cosmeticId], references: [id], onDelete: SetNull)
-  sortOrder    Int                    @default(0)
-  achievements UserCreatorMilestone[]
+  sortOrder      Int                        @default(0)
+  achievements   UserCreatorMilestone[]
+  extraCosmetics CreatorMilestoneCosmetic[]
+}
+
+/// Cosmetics a milestone grants beyond its badge (`cosmeticId`).
+model CreatorMilestoneCosmetic {
+  milestoneKey String
+  milestone    CreatorMilestone @relation(fields: [milestoneKey], references: [key], onDelete: Cascade)
+  cosmeticId   Int
+  cosmetic     Cosmetic         @relation(fields: [cosmeticId], references: [id], onDelete: Cascade)
+
+  @@id([milestoneKey, cosmeticId])
+  @@index([cosmeticId])
 }
 
 /// Badges are permanent by product decision: no revocation columns.

@@ -2478,6 +2478,10 @@ export type CreatorMilestone = {
   cosmeticId: number | null;
   sortOrder: Generated<number>;
 };
+export type CreatorMilestoneCosmetic = {
+  milestoneKey: string;
+  cosmeticId: number;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -4995,6 +4999,7 @@ export type DB = {
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
+  CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
