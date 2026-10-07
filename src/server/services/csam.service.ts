@@ -99,12 +99,12 @@ export async function createCsamReport({
     images: imageIds?.map((id) => ({ id })) ?? [],
   };
 
-  // Internal reports belong to no account, so there is nothing to fold them into: two of them are
-  // unrelated incidents, and updating one would replace the other's images.
+  // An update replaces the row's images and details, so only fold into a report of the same account
+  // AND type: internal reports belong to no account, and a different type is a different report.
   const unsent = isInternalReport
     ? null
     : await dbWrite.csamReport.findFirst({
-        where: { userId, reportSentAt: null },
+        where: { userId, type, reportSentAt: null },
         select: { id: true },
       });
 

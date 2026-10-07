@@ -47,6 +47,9 @@ beforeEach(() => {
   rows = [];
   nextId = 1;
   const table = dbMock.dbWrite.csamReport;
+  table.findFirst.mockClear();
+  table.update.mockClear();
+  table.create.mockClear();
   table.findFirst.mockImplementation(
     async ({ where }: { where: Record<string, unknown> }) =>
       rows.find((row) => matches(row, where)) ?? null
@@ -64,7 +67,7 @@ beforeEach(() => {
   );
 });
 
-describe('createCsamReport unsent-report lookup', () => {
+describe('unsent-report lookup', () => {
   it('fake honours Prisma dropping an undefined where key, so the revert case is reachable', async () => {
     seed({ userId: 101 });
     await expect(
@@ -116,5 +119,15 @@ describe('createCsamReport unsent-report lookup', () => {
     expect(rows.find((r) => r.id === other.id)).toEqual(other);
     expect(rows.find((r) => r.id === unsent.id)).toMatchObject({ images: [{ id: 4 }] });
     expect(rows).toHaveLength(3);
+  });
+
+  it('an account’s report of one type leaves its unsent report of another type untouched', async () => {
+    const external = seed({ userId: 101, type: 'ExternalLink', details: { url: 'x' } });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+    expect(rows.find((r) => r.id === external.id)).toEqual(external);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ userId: 101, type: 'Image', images: [{ id: 4 }] });
   });
 });
