@@ -665,7 +665,11 @@ describe('SourceImageUploadMultiple — a card that cannot start', () => {
       return last;
     });
     await userEvent.click(close);
-    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    // The click removed the uploading card, not the image already in the value.
+    await expect.poll(loaderCount).toBe(0);
+    expect(
+      document.querySelector(`[data-testid="source-images"] img[src="${existing}"]`)
+    ).not.toBeNull();
     await sleep(300);
 
     const before = readsOfExisting();
