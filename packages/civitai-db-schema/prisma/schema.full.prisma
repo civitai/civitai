@@ -500,6 +500,8 @@ model User {
   articleEngagements         ArticleEngagement[]
   articleRatingReviewsSubmitted ArticleRatingReview[] @relation("ArticleRatingReviewSubmitter")
   articleRatingReviewsResolved  ArticleRatingReview[] @relation("ArticleRatingReviewResolver")
+  ratingReviewsSubmitted        RatingReview[]        @relation("RatingReviewSubmitter")
+  ratingReviewsResolved         RatingReview[]        @relation("RatingReviewResolver")
   leaderboardResults         LeaderboardResult[]
   receivedReports            UserReport[]
   engagedImages              ImageEngagement[]
@@ -1851,6 +1853,8 @@ model Post {
   unlisted       Boolean       @default(false)
   availability   Availability  @default(Public)
   nsfwLevel      Int           @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   images          Image[]
   tags            TagsOnPost[]
@@ -2077,6 +2081,7 @@ model EntityModeration {
   triggeredLabels String[]               @default([])
   result          Json?
   contentHash     String?
+  nsfwLevel       Int?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
 
@@ -2088,6 +2093,17 @@ model EntityModeration {
   // manual migration and is not modeled here because Prisma does not
   // support partial indexes. See:
   // prisma/migrations/20260407111422_add_entity_moderation_retry_index/
+}
+
+model TextScanPrompt {
+  id          Int      @id @default(autoincrement())
+  key         String
+  content     String
+  note        String?
+  createdById Int?
+  createdAt   DateTime @default(now())
+
+  @@index([key, id(sort: Desc)])
 }
 
 enum ImageEngagementType {
@@ -2178,6 +2194,31 @@ model ArticleRatingReview {
   @@index([status, createdAt])
   @@index([userId])
   @@index([articleId, createdAt(sort: Desc)])
+}
+
+// Partial unique index `RatingReview_pending_per_entity` ((entityType, entityId) WHERE status = 'Pending')
+// is created by the manual migration; Prisma cannot express it.
+model RatingReview {
+  id               Int          @id @default(autoincrement())
+  entityType       String
+  entityId         Int
+  userId           Int
+  user             User         @relation("RatingReviewSubmitter", fields: [userId], references: [id], onDelete: Cascade)
+  currentLevel     Int
+  suggestedLevel   Int
+  appliedLevel     Int?
+  userComment      String?
+  modComment       String?
+  status           ReportStatus @default(Pending)
+  resolvedBy       Int?
+  resolver         User?        @relation("RatingReviewResolver", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  resolvedAt       DateTime?
+  resolvedTextHash String?
+  createdAt        DateTime     @default(now())
+
+  @@index([status, createdAt])
+  @@index([userId])
+  @@index([entityType, entityId, createdAt(sort: Desc)])
 }
 
 model CollectionMetric {
@@ -5380,6 +5421,8 @@ model Collection {
   metadata     Json                         @default("{}")
   availability Availability                 @default(Public)
   nsfwLevel    Int                          @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   collaborationDisabledAt DateTime?
 
   items        CollectionItem[]
@@ -5611,9 +5654,18 @@ model Bounty {
   poi                     Boolean         @default(false)
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
+  /// When the award (or, with `refunded`, the refund) was recorded under the payout lock.
+  payoutRecordedAt        DateTime?
+  /// When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
+  payoutSettledAt         DateTime?
+  /// The award's winner, captured when it is recorded: the entry it went to can be deleted first.
+  payoutWinnerUserId      Int?
   availability            Availability    @default(Public)
   nsfwLevel               Int             @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   lockedProperties        String[]        @default([])
+  meta                    Json?
 
   tags        TagsOnBounty[]
   entries     BountyEntry[]
@@ -5641,6 +5693,8 @@ model BountyEntry {
   locked      Boolean  @default(false)
   description String?
   nsfwLevel   Int      @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   benefactors BountyBenefactor[]
   thread      Thread?
@@ -6766,6 +6820,8 @@ model Challenge {
   coverImageId Int?
   coverImage   Image?  @relation("ChallengeCoverImage", fields: [coverImageId], references: [id], onDelete: SetNull)
   nsfwLevel    Int     @default(1)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
 
   // Required model versions (optional - empty means any allowed)
   modelVersionIds Int[] @default([]) // Array of allowed model version IDs (OR logic)
@@ -8225,6 +8281,7 @@ enum StrikeReason {
   HarassmentContent
   ProhibitedContent
   ManualModAction
+  Scam
 }
 
 enum StrikeStatus {
@@ -9076,6 +9133,8 @@ model Crucible {
   heroImage         Image?         @relation("CrucibleHeroImage", fields: [heroImageId], references: [id], onDelete: SetNull)
   buzzType          String         @default("yellow")
   nsfwLevel         Int            @default(0)
+  moderatorNsfwLevel      Int?
+  moderatorNsfwLevelBasis Int?
   contentType       MediaType      @default(image)
   entryFee          Int            @default(0)
   seededPrizePool   Int            @default(0)

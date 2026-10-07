@@ -2317,6 +2317,26 @@ export const REDIS_SYS_KEYS = {
       URLS: 'packed:system:entity-moderation:urls',
     },
   },
+  TEXT_SCAN: {
+    /*
+      Use: runtime config for the text-scan pipeline, editable without a deploy
+        (text-scan harness `putConfig`).
+      Structure: json string, get/set ({ "model"?: string, "maxInputChars"?: number, "thinking"?: boolean })
+     */
+    CONFIG: 'system:text-scan:config',
+    /*
+      Use: per-entity-type rollout of text scan (text-scan harness `putModes`). A missing field is off.
+      Structure: hset, field = entity type (e.g. "Model"), value = json { "shadow": 0-100, "active": 0-100 }
+        (percent of entity ids in each mode; active wins)
+     */
+    MODES: 'system:text-scan:modes',
+    /*
+      Use: Clavata keys (e.g. "Model", "Chat") cut over to text scan by `disableClavataFor`. The
+        Clavata job skips them only while the `text-scan` Flipt kill switch is on.
+      Structure: set of Clavata keys
+     */
+    CLAVATA_CUTOVER: 'system:text-scan:clavata-cutover',
+  },
   CONTENT: {
     /*
       Use: Store markdown content for region restrictions and other warnings
@@ -2459,6 +2479,7 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CACHES: {
     ECOSYSTEM_SEO: 'packed:caches:ecosystem-seo',
+    TEXT_SCAN_PROMPTS: 'packed:caches:text-scan-prompts',
     RESOURCE_LOAD_RESIDENCY: 'packed:caches:resource-load-residency',
     // Full resource-intent responses (degraded ones under a short TTL). The v1
     // segment pins the response shape; see resource-intent.service.ts for the
@@ -2676,7 +2697,13 @@ const REDIS_KEYS_UNPREFIXED = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
-    RATING_REVIEW_RATE_LIMIT: 'article:nsfw-review-rate',
+  },
+  RATING_REVIEW: {
+    /*
+      Use: per-user count of rating disputes filed in the current 24h window, across every entity type.
+      Structure: integer (INCR), TTL 24h set on the first increment
+     */
+    RATE_LIMIT: 'rating-review:rate',
   },
   REPORT: {
     /*
@@ -2686,6 +2713,13 @@ const REDIS_KEYS_UNPREFIXED = {
       Read by: the moderator app's dashboard, which filters its most-reported list through it.
      */
     RESOLVED_RECENT: 'report:resolved-recent',
+  },
+  TEXT_SCAN: {
+    /*
+      Use: throttles the "missing prompt rows" error to one log per key per interval.
+      Structure: string '1' set NX with a TTL, key = `text-scan:missing-prompt-logged:${promptKey}`.
+     */
+    MISSING_PROMPT_LOGGED: 'text-scan:missing-prompt-logged',
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',

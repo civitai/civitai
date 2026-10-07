@@ -35,6 +35,9 @@ export type NavLink = {
   // The section is granted as one page and its children are neither granted nor checked individually. Making
   // these children grantable would drop the grants already stored against the parent path.
   sharedAccess?: boolean;
+  /** A pre-filtered view of the page at `path` (`tab=appeals`). It is that page as far as access goes:
+   *  its grant decides who sees the link, and it is never granted on its own. */
+  query?: string;
   children?: NavLink[];
 };
 
@@ -102,7 +105,13 @@ export const NAVIGATION: NavLink[] = [
       // that every navigation in the app waits on. The counts live on the page's own tabs instead,
       // fetched separately. A countKey nothing produces renders as a silently missing badge.
       { path: '/models/minor-hash-matches', label: 'Minor Hash Matches' },
+      { path: '/models/minor-hash-matches', query: 'tab=appeals', label: 'Model Flag Appeals' },
     ],
+  },
+  {
+    label: 'Bounties',
+    path: '/bounties',
+    children: [{ path: '/bounties/poi-appeals', label: 'Real-Person Appeals' }],
   },
   {
     label: 'Articles',
@@ -114,9 +123,10 @@ export const NAVIGATION: NavLink[] = [
         countKey: 'articles',
         informational: true,
       },
-      { path: '/articles/ratings', label: 'Rating Disputes', countKey: 'articleRatings' },
     ],
   },
+  // Every rated entity's owner disputes (Article, Model, Post, Bounty, BountyEntry, Challenge).
+  { path: '/ratings', label: 'Rating Disputes', countKey: 'ratingReviews' },
   { path: '/cosmetics/grant', label: 'Grant Cosmetics' },
   {
     label: 'Audit',
@@ -130,6 +140,14 @@ export const NAVIGATION: NavLink[] = [
       { path: '/audit/training-data', label: 'Training Data Review' },
       { path: '/audit/relabel', label: 'Removal Label Relabel' },
       { path: '/audit/text-relabel', label: 'Automated Text Relabel' },
+    ],
+  },
+  {
+    label: 'Text Scan',
+    path: '/text-scan',
+    children: [
+      { path: '/text-scan/check', label: 'Check' },
+      { path: '/text-scan/prompts', label: 'Versions' },
     ],
   },
   {
@@ -403,6 +421,7 @@ export function pageAccessState(edit?: {
   const walk = (links: NavLink[]): AccessNode[] => {
     const out: AccessNode[] = [];
     for (const link of links) {
+      if (link.query) continue;
       const group = !!link.children && !link.sharedAccess;
       const children = link.children && !link.sharedAccess ? walk(link.children) : [];
       if (!link.path || link.external) {

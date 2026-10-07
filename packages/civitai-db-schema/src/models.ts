@@ -234,7 +234,7 @@ export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy"
 
 export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
 
-export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
+export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
 
@@ -581,6 +581,8 @@ export interface User {
   articleEngagements?: ArticleEngagement[];
   articleRatingReviewsSubmitted?: ArticleRatingReview[];
   articleRatingReviewsResolved?: ArticleRatingReview[];
+  ratingReviewsSubmitted?: RatingReview[];
+  ratingReviewsResolved?: RatingReview[];
   leaderboardResults?: LeaderboardResult[];
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
@@ -1471,6 +1473,8 @@ export interface Post {
   unlisted: boolean;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   images?: Image[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
@@ -1631,8 +1635,18 @@ export interface EntityModeration {
   triggeredLabels: string[];
   result: JsonValue | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface TextScanPrompt {
+  id: number;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Date;
 }
 
 export interface ImageEngagement {
@@ -1699,6 +1713,25 @@ export interface ArticleRatingReview {
   userComment: string | null;
   modComment: string | null;
   status: ReportStatus;
+}
+
+export interface RatingReview {
+  id: number;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  user?: User;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: ReportStatus;
+  resolvedBy: number | null;
+  resolver?: User | null;
+  resolvedAt: Date | null;
+  resolvedTextHash: string | null;
+  createdAt: Date;
 }
 
 export interface CollectionMetric {
@@ -3269,6 +3302,8 @@ export interface Collection {
   metadata: JsonValue;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
@@ -3400,9 +3435,15 @@ export interface Bounty {
   poi: boolean;
   complete: boolean;
   refunded: boolean;
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
+  payoutWinnerUserId: number | null;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  meta: JsonValue | null;
   tags?: TagsOnBounty[];
   entries?: BountyEntry[];
   benefactors?: BountyBenefactor[];
@@ -3425,6 +3466,8 @@ export interface BountyEntry {
   locked: boolean;
   description: string | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   benefactors?: BountyBenefactor[];
   thread?: Thread | null;
   reactions?: BountyEntryReaction[];
@@ -4200,6 +4243,8 @@ export interface Challenge {
   coverImageId: number | null;
   coverImage?: Image | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: number[];
   allowedNsfwLevel: number;
   judgingPrompt: string | null;
@@ -5762,6 +5807,8 @@ export interface Crucible {
   heroImage?: Image | null;
   buzzType: string;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: MediaType;
   entryFee: number;
   seededPrizePool: number;

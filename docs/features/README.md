@@ -11,6 +11,8 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Image Resources | [docs/features/image-resources.md](image-resources.md) |
 | NSFW Filtering | [docs/features/nsfw-filtering.md](nsfw-filtering.md) |
 | Image Rating and Visibility | [docs/features/image-rating.md](image-rating.md) |
+| Text Scan (LLM moderation of user text) | [docs/features/text-scan.md](text-scan.md) |
+| Rating Disputes | [docs/features/rating-dispute.md](rating-dispute.md) |
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |

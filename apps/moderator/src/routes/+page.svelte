@@ -30,6 +30,7 @@
   import { LINK_CLASS } from '$lib/format';
   import { SvelteMap } from 'svelte/reactivity';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
+  import { navHref } from '$lib/nav-links';
   import { sidebarCounts } from '$lib/sidebar-counts.svelte';
   import { URGENT_REPORT_COUNT, queueSeverityClass } from '$lib/queue-thresholds';
   import { FormState } from '$lib/form-state.svelte';
@@ -259,7 +260,7 @@
 
   const sections = $derived.by(() => {
     const toItem = (link: (typeof data.nav)[number]): Item => ({
-      path: link.path as string,
+      path: navHref(link) as string,
       label: link.label,
       informational: link.informational,
       // `?? null`, not `?? 0`: a key the counts endpoint omitted is one it could not measure, and 0
@@ -707,6 +708,12 @@
                 {#if !u.muted}<Badge variant="secondary">already unmuted</Badge>{/if}
                 {ago(u.createdAt)}
               </span>
+              {#if u.scanReason}
+                <p class="w-full text-xs text-dark-2">
+                  {u.scanEntityType} #{u.scanEntityId}: {u.scanReason}
+                  {#if u.restrictionStatus}· {u.restrictionStatus}{/if}
+                </p>
+              {/if}
             </li>
           {/each}
         </ul>

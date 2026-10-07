@@ -50,6 +50,22 @@ export function parseForm<T extends z.ZodType>(schema: T, form: FormData): z.inf
   return parsed.success ? parsed.data : parsed.error.issues[0]?.message ?? 'Invalid input.';
 }
 
+/** Malformed JSON fails with `message`, a schema failure with its first issue's message. */
+export const jsonField = <T extends z.ZodType>(schema: T, message = 'Malformed form data.') =>
+  z.string().transform((raw, ctx): z.infer<T> => {
+    let value: unknown;
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      ctx.addIssue({ code: 'custom', message });
+      return z.NEVER;
+    }
+    const parsed = schema.safeParse(value);
+    if (parsed.success) return parsed.data;
+    ctx.addIssue({ code: 'custom', message: parsed.error.issues[0]?.message ?? message });
+    return z.NEVER;
+  });
+
 // Give every schema field a `.catch(default)`/`.optional()`: query params are user-controllable, so a bad
 // value like `?page=abc` must degrade to the default, not throw a 500.
 export function parseQuery<T extends z.ZodType>(

@@ -3,6 +3,7 @@ import { createJob } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { articleHasText, updateArticleImageScanStatus } from '~/server/services/article.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   ArticleIngestionStatus,
@@ -147,12 +148,17 @@ export const articleIngestionReconcile = createJob(
               .filter(Boolean)
               .join(' ');
             try {
-              await submitTextModeration({
+              await submitTextModerationOrScan({
                 entityType: 'Article',
                 entityId: id,
-                content: textForModeration,
-                labels: ['nsfw'],
-                priority: 'low',
+                xguard: () =>
+                  submitTextModeration({
+                    entityType: 'Article',
+                    entityId: id,
+                    content: textForModeration,
+                    labels: ['nsfw'],
+                    priority: 'low',
+                  }),
               });
               resubmitted++;
               action = 'resubmitted-moderation';

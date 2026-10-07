@@ -14,7 +14,11 @@ export default defineModeratorEndpoint('minorFlag.revert', {
   rateLimit: minorFlagRateLimit,
   input: z.object({ modelId }),
   async handler(input, ctx) {
-    const report = await revertMinorHashAutoFlag({ modelId: input.modelId, userId: ctx.actor.id });
+    const report = await revertMinorHashAutoFlag({
+      modelId: input.modelId,
+      userId: ctx.actor.id,
+      recordTextScanRuling: true,
+    });
     return {
       reverted: report.rolledBack,
       failed: report.failed,

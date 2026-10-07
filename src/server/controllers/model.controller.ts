@@ -165,10 +165,12 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
 } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
@@ -557,6 +559,17 @@ export const getModelHandler = async ({
       // (and by whom) is not a visitor's business.
       minorFlagged: resolveMinorFlagged({
         isOwner,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      poiFlagged: resolvePoiFlagged({
+        isOwner,
+        poi: model.poi,
+        meta: model.meta as ModelMeta | null,
+      }),
+      flagScanReasons: resolveFlagScanReasons({
+        isOwner,
+        poi: model.poi,
         minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
@@ -1570,6 +1583,7 @@ export const setModelMinorHandler = async ({
       userId: ctx.user.id,
       tracker: ctx.track,
       isModerator: ctx.user.isModerator,
+      recordTextScanRuling: true,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -7,6 +7,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
+  // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
+  RATING_DISPUTE = 'rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -100,6 +102,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
+  // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
+  // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
+  TEXT_SCAN = 'text-scan',
   // Arms the reaction reconciliation audit's repair path to WRITE compensating
   // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
   // or an unreachable Flipt, and for a path that mutates production metrics that

@@ -14,6 +14,7 @@ import {
   confirmMinorFlag,
   dismissMinorHashMatch,
   resolveMinorFlagAppeal,
+  resolveMinorFlagAppealPerLabel,
   revertMinorFlag,
   setModelMinorFlag,
 } from '$lib/server/minor-flag.service';
@@ -69,14 +70,16 @@ const modelIdFrom = async (event: RequestEvent) => {
  *  refused write that renders as success is the worst outcome available here. */
 const run = async (
   event: RequestEvent,
-  action: (modelId: number) => Promise<{ ok: boolean; error?: string }>
+  action: (
+    modelId: number
+  ) => Promise<{ ok: boolean; error?: string; rescanQueued?: boolean }>
 ) => {
   const modelId = await modelIdFrom(event);
   if (!modelId) return fail(400, { error: 'Missing model id.' });
 
   const result = await action(modelId);
   if (!result.ok) return fail(400, { error: result.error ?? 'Action failed.', modelId });
-  return { success: true, modelId };
+  return { success: true, modelId, rescanQueued: result.rescanQueued === true };
 };
 
 export const actions: Actions = {
@@ -86,4 +89,21 @@ export const actions: Actions = {
   dismiss: (event) => run(event, dismissMinorHashMatch),
   upholdAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, true)),
   overturnAppeal: (event) => run(event, (id) => resolveMinorFlagAppeal(id, false)),
+  // Reads its own form: `run` consumes the body for the model id alone.
+  splitAppeal: async (event) => {
+    const form = await event.request.formData();
+    const modelId = Number(form.get('modelId'));
+    const decision = z.enum(['uphold', 'overturn']);
+    const minor = decision.safeParse(form.get('minor'));
+    const poi = decision.safeParse(form.get('poi'));
+    if (!(modelId > 0) || !minor.success || !poi.success)
+      return fail(400, { error: 'Missing model id or decision.' });
+
+    const result = await resolveMinorFlagAppealPerLabel(modelId, {
+      minor: minor.data,
+      poi: poi.data,
+    });
+    if (!result.ok) return fail(400, { error: result.error, modelId });
+    return { success: true, modelId, rescanQueued: result.rescanQueued };
+  },
 };

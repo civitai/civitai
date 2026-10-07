@@ -216,6 +216,8 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
+  // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
+  ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },

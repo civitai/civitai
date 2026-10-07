@@ -4,6 +4,7 @@ import { CrucibleSort } from '~/server/common/enums';
 import { baseQuerySchema, infiniteQuerySchema } from './base.schema';
 import { isUUID } from '~/utils/string-helpers';
 import { baseModelByName } from '~/shared/constants/basemodel.constants';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   CRUCIBLE_CONTENT_TYPES,
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
@@ -132,7 +133,7 @@ export const createCrucibleInputBaseSchema = z.object({
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
   coverImage: crucibleImageSchema,
   heroImage: crucibleImageSchema.optional(),
-  nsfwLevel: z.number().int().positive(),
+  nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).default(MediaType.image),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).default(0),
@@ -327,7 +328,7 @@ export const updateCrucibleSchema = z.object({
   description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
   coverImage: crucibleImageSchema.optional(),
   heroImage: crucibleImageSchema.nullish(),
-  nsfwLevel: z.number().int().positive().optional(),
+  nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag).optional(),
   contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
   entryFee: z.number().int().min(CRUCIBLE_MIN_ENTRY_FEE).max(CRUCIBLE_MAX_ENTRY_FEE).optional(),
   seededPrizePool: z.number().int().min(0).max(CRUCIBLE_MAX_SEEDED_PRIZE_POOL).optional(),

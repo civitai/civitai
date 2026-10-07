@@ -394,8 +394,8 @@ must be explicitly re-verified on the new service, because they're what a naive 
 - Mute/ban/onboarding gating is `guardedProcedure` (`trpc.ts` — `isOnboarded` + `isMuted`) on both
   `comment.upsert` and `commentv2.upsert`. It's router-level and the routers don't change; the only
   requirement is that the unified upsert stays behind `guardedProcedure`.
-- The `entity-moderation` job's auto-mute also bulk-hides the muted user's recent comments — its
-  dual-table branches are in the Phase 5 cron-jobs section.
+- The scam auto-mute also bulk-hides the muted user's comments — its dual-table branches are in
+  the Phase 5 cron-jobs section.
 - `throwOnBlockedLinkDomain` (content blocklist) runs inside `upsertComment` on create **and**
   edit; carries over with the service.
 - Verified: there is **no** per-entity "comments disabled" flag anywhere — entity/comment locks are
@@ -555,8 +555,9 @@ moderator app are the two largest consumers and get their own sections below. Th
 - Unify exclusion logic (`boundExcludedUserIds` + hidden/blocked handling) into one shared helper —
   today it's duplicated between v1 and v2 with subtle drift.
 - Cron jobs touching the tables directly (beyond the metrics jobs above):
-  - `src/server/jobs/entity-moderation.ts` — auto-mute cleanup treats `Comment` and `CommentV2` as
-    separate entity types with separate selectors and `updateMany` hide branches. Collapses to one
+  - `src/server/services/scam-cleanup.service.ts` — the scam auto-mute cleanup (`runScamCleanup`)
+    and its restore (`restoreScamCase`) treat `Comment` and `CommentV2` as separate kinds with
+    separate hide and unhide statements. Collapses to one
     `CommentV3` branch; during Phases 2–4 it must hide in **both** old and new tables (a
     moderation hide applied only to the non-authoritative side would silently unhide on flip).
   - `src/server/jobs/daily-challenge-processing.ts` — the judge's "already reviewed" gate is a raw

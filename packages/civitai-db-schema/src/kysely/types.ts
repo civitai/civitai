@@ -1471,9 +1471,24 @@ export type Bounty = {
   poi: Generated<boolean>;
   complete: Generated<boolean>;
   refunded: Generated<boolean>;
+  /**
+   * When the award (or, with `refunded`, the refund) was recorded under the payout lock.
+   */
+  payoutRecordedAt: Timestamp | null;
+  /**
+   * When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
+   */
+  payoutSettledAt: Timestamp | null;
+  /**
+   * The award's winner, captured when it is recorded: the entry it went to can be deleted first.
+   */
+  payoutWinnerUserId: number | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
+  meta: unknown | null;
 };
 export type BountyBenefactor = {
   userId: number;
@@ -1501,6 +1516,8 @@ export type BountyEntry = {
   locked: Generated<boolean>;
   description: string | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type BountyEntryMetric = {
   bountyEntryId: number;
@@ -1799,6 +1816,8 @@ export type Challenge = {
   invitation: string | null;
   coverImageId: number | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
@@ -2139,6 +2158,8 @@ export type Collection = {
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
 };
 export type CollectionContributor = {
@@ -2491,6 +2512,8 @@ export type Crucible = {
   heroImageId: number | null;
   buzzType: Generated<string>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: Generated<MediaType>;
   entryFee: Generated<number>;
   seededPrizePool: Generated<number>;
@@ -2684,6 +2707,7 @@ export type EntityModeration = {
   triggeredLabels: Generated<string[]>;
   result: unknown | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -3749,6 +3773,8 @@ export type Post = {
   unlisted: Generated<boolean>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type PostHelper = {
   postId: number;
@@ -3998,6 +4024,22 @@ export type QuestionReaction = {
   reaction: ReviewReactions;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type RatingReview = {
+  id: Generated<number>;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: Generated<ReportStatus>;
+  resolvedBy: number | null;
+  resolvedAt: Timestamp | null;
+  resolvedTextHash: string | null;
+  createdAt: Generated<Timestamp>;
 };
 export type RecommendedResource = {
   id: Generated<number>;
@@ -4414,6 +4456,14 @@ export type Technique = {
   createdAt: Generated<Timestamp>;
   enabled: Generated<boolean>;
   type: TechniqueType;
+};
+export type TextScanPrompt = {
+  id: Generated<number>;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Generated<Timestamp>;
 };
 export type Thread = {
   id: Generated<number>;
@@ -5119,6 +5169,7 @@ export type DB = {
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
   QuestionReaction: QuestionReaction;
+  RatingReview: RatingReview;
   RecommendedResource: RecommendedResource;
   RedeemableCode: RedeemableCode;
   ReferralAttribution: ReferralAttribution;
@@ -5164,6 +5215,7 @@ export type DB = {
   TagsOnTags: TagsOnTags;
   TagStat: TagStat;
   Technique: Technique;
+  TextScanPrompt: TextScanPrompt;
   Thread: Thread;
   ThreadMute: ThreadMute;
   TipConnection: TipConnection;

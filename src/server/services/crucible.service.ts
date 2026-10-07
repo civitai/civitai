@@ -133,6 +133,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
+import { settleSkippedCrucibleScan } from '~/server/services/text-scan/actions/crucible';
+import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
 import { createPrizes, voidPrizes } from '~/server/services/prize.service';
@@ -485,13 +487,20 @@ export async function scanCrucible(crucibleId: number, { forceRescan = false } =
   if (!crucible) return;
 
   try {
-    await submitTextModeration({
+    await submitTextModerationOrScan({
       entityType: 'Crucible',
       entityId: crucibleId,
-      content: buildCrucibleModerationText(crucible),
-      labels: [...CHALLENGE_MODERATION_LABELS],
-      priority: 'low',
-      forceRescan,
+      force: forceRescan,
+      onActiveSkip: (reason) => settleSkippedCrucibleScan(crucibleId, reason),
+      xguard: () =>
+        submitTextModeration({
+          entityType: 'Crucible',
+          entityId: crucibleId,
+          content: buildCrucibleModerationText(crucible),
+          labels: [...CHALLENGE_MODERATION_LABELS],
+          priority: 'low',
+          forceRescan,
+        }),
     });
   } catch (e) {
     // A failed submit leaves a Failed EntityModeration row that the retry cron picks up; creating
@@ -753,7 +762,9 @@ export const updateCrucible = async ({
   } as typeof current & { name?: string; description?: string };
 
   const buzzType = crucible.buzzType as CrucibleBuzzType;
-  if (isNonSfwForGreen(buzzType, next.nsfwLevel))
+  // Only a requested level is checked: a text-scan escalation can put R on the stored mask, and that
+  // must not lock the rest of the crucible out of edits.
+  if (provided.includes('nsfwLevel') && isNonSfwForGreen(buzzType, next.nsfwLevel))
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
   assertCrucibleSettings(next);
 

@@ -43,6 +43,7 @@
   import { getEdgeUrl } from '$lib/media/edge-url';
   import type { LayoutData } from './$types';
   import type { NavLink } from '$lib/server/access';
+  import { isNavLinkActive, isPathActive, navHref } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
@@ -79,14 +80,11 @@
         ) || null
       : null;
 
-  const isActive = (href: string, path: string) =>
-    href === '/' ? path === '/' : path === href || path.startsWith(href + '/');
-
   // Collapsed unless you're working inside the section; an explicit toggle wins from then on.
   let openGroups = $state<Record<string, boolean>>({});
   const holdsCurrentPage = (item: NavLink) =>
     !!item.children?.some(
-      (child) => !child.external && !!child.path && isActive(child.path, page.url.pathname)
+      (child) => !child.external && !!child.path && isPathActive(child.path, page.url.pathname)
     );
   const isOpen = (item: NavLink) => openGroups[item.label] ?? holdsCurrentPage(item);
 
@@ -163,19 +161,17 @@
                       </CollapsibleTrigger>
                       <CollapsibleContent>
                         <SidebarMenuSub>
-                          {#each item.children as childLink (childLink.path ?? childLink.label)}
+                          {#each item.children as childLink (navHref(childLink) ?? childLink.label)}
                             {@const cnt = countFor(childLink.countKey)}
                             <SidebarMenuSubItem>
                               <SidebarMenuSubButton
-                                isActive={!childLink.external &&
-                                  !!childLink.path &&
-                                  isActive(childLink.path, page.url.pathname)}
+                                isActive={isNavLinkActive(childLink, item.children, page.url)}
                               >
                                 {#snippet child({ props })}
                                   <a
                                     href={childLink.external
                                       ? `${data.civitaiUrl}${childLink.path}`
-                                      : childLink.path}
+                                      : navHref(childLink)}
                                     target={childLink.external ? '_blank' : undefined}
                                     rel={childLink.external ? 'noreferrer' : undefined}
                                     {...props}
@@ -200,7 +196,7 @@
                 {:else}
                   <SidebarMenuItem>
                     <SidebarMenuButton
-                      isActive={!!item.path && isActive(item.path, page.url.pathname)}
+                      isActive={!!item.path && isPathActive(item.path, page.url.pathname)}
                     >
                       {#snippet child({ props })}
                         <a href={item.path} {...props}>

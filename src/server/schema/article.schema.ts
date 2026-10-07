@@ -164,20 +164,6 @@ export const unpublishArticleSchema = z.object({
 
 export type UnpublishArticleSchema = z.infer<typeof unpublishArticleSchema>;
 
-// --- Article rating review / dispute ---
-
-export type CreateArticleRatingReviewInput = z.infer<typeof createArticleRatingReviewSchema>;
-export const createArticleRatingReviewSchema = z.object({
-  articleId: z.number(),
-  suggestedLevel: z.number().int().positive(),
-  userComment: z.string().max(500).optional(),
-});
-
-export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingReviewSchema>;
-export const getMyArticleRatingReviewSchema = z.object({
-  articleId: z.number(),
-});
-
 export type SetArticleOfficialInput = z.infer<typeof setArticleOfficialSchema>;
 export const setArticleOfficialSchema = z.object({
   id: z.number(),

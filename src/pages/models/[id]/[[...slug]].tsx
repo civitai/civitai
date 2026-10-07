@@ -51,6 +51,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import { useEffect, useMemo } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -1477,7 +1478,10 @@ export default function ModelDetailsV2({
                   </Group>
                 </Alert>
               )}
-              {isCreator && model.minorFlagged && <ModelMinorFlagAlert model={model} />}
+              {isCreator && (model.minorFlagged || model.poiFlagged) && (
+                <ModelMinorFlagAlert model={model} />
+              )}
+              <OwnerRatingControls entityType="Model" entityId={model.id} isOwner={isCreator} />
               {inaccurate && (
                 <Alert color="yellow">
                   <Group gap="xs" wrap="nowrap" align="flex-start">

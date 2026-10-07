@@ -75,7 +75,7 @@ const COUNT_KEY_ALIASES: Record<string, string> = {
   // published since the last claim, which is a workload, so it takes `bountyTask`. Aliases resolve
   // once, so `report:bounty` -> `bounties` is unaffected by this entry.
   bounties: 'bountyTask',
-  articleRatings: 'articleReviews',
+  ratingReviews: 'articleReviews',
   ingestionErrors: 'errors',
   minor: 'minors',
   tag: 'blockedTags',

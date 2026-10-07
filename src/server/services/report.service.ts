@@ -606,7 +606,7 @@ export function getLatestAppeal({
   });
 }
 
-export function reopenModelAppeal({ id, message }: { id: number; message: string }) {
+export function reopenAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
     where: { id },
     data: {
@@ -678,6 +678,12 @@ export async function getAppealDetails({
       break;
     case EntityType.Model:
       entityDetails = await dbRead.model.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, name: true, userId: true },
+      });
+      break;
+    case EntityType.Bounty:
+      entityDetails = await dbRead.bounty.findUnique({
         where: { id: appeal.entityId },
         select: { id: true, name: true, userId: true },
       });
@@ -792,7 +798,7 @@ export async function createEntityAppeal({
 // Display label + (when the entity is publicly reachable) a link for an
 // appealed item, surfaced in the resolution email. Entity types with no public
 // URL fall back to a label-only reference.
-function appealEntityLink(
+export function appealEntityLink(
   entityType: EntityType,
   entityId: number
 ): { url?: string; label: string } {
@@ -801,6 +807,8 @@ function appealEntityLink(
       return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
     case EntityType.Model:
       return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
+    case EntityType.Bounty:
+      return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
@@ -908,6 +916,7 @@ export async function resolveEntityAppeal({
       buzzTransactionId: true,
       status: true,
       userId: true,
+      createdAt: true,
     },
   });
   if (appeals.length === 0) return [];
@@ -989,9 +998,11 @@ export async function resolveEntityAppeal({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      // Per appeal, not per entity: an entity can be appealed again after a re-block, and the
-      // notification service reuses the row for a repeated key, so the second decision would vanish.
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${appeal.id}`,
+      // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
+      // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
+        appeal.id
+      }:${appeal.createdAt.getTime()}`,
       details: {
         entityType: appeal.entityType,
         entityId: appeal.entityId,
