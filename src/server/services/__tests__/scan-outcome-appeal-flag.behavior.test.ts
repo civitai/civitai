@@ -45,6 +45,8 @@ const APPEALED = 41;
 const FLAGGED = 42;
 const DECIDED = 43;
 const VISIBLE = 44;
+const LEGACY = 45;
+const BLOCKED_ONLY = 46;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -64,7 +66,7 @@ beforeAll(async () => {
       metadata jsonb,
       "scanJobs" jsonb
     );
-    -- Enums as in prod, so a predicate that compares them to a bound text parameter fails here too.
+    -- Enums as in prod, so a literal outside the enum fails here too.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
     CREATE TABLE "Appeal" (
@@ -90,10 +92,13 @@ beforeEach(async () => {
   }) as never);
   dbMock.dbWrite.appeal.findMany.mockImplementation(
     (async ({ where }: any) =>
+      // Built from the keys present, so a filter the code drops widens the match as in Prisma.
       (
         await holder.db.query(
-          `SELECT "entityId" FROM "Appeal" WHERE "entityType" = $1 AND status = $2 AND "entityId" = ANY($3)`,
-          [where.entityType, where.status, where.entityId.in]
+          `SELECT "entityId" FROM "Appeal" WHERE "entityId" = ANY($1)` +
+            (where.entityType ? ` AND "entityType" = '${where.entityType}'` : '') +
+            (where.status ? ` AND status = '${where.status}'` : ''),
+          [where.entityId.in]
         )
       ).rows) as never
   );
@@ -110,13 +115,17 @@ beforeEach(async () => {
       (${APPEALED}, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 'Rescan', NULL, 4, 'minor'),
       (${DECIDED}, 'Blocked', 'moderated', 32, NULL),
-      (${VISIBLE}, 'Scanned', NULL, 1, 'appeal');
+      (${VISIBLE}, 'Scanned', NULL, 1, 'appeal'),
+      (${LEGACY}, 'Scanned', 'moderated', 4, 'appeal'),
+      (${BLOCKED_ONLY}, 'Blocked', NULL, 4, 'appeal');
     -- FLAGGED shares its id with a post's appeal; DECIDED's own appeal is already closed.
     INSERT INTO "Appeal" ("entityType", "entityId", status) VALUES
       ('Image', ${APPEALED}, 'Pending'),
       ('Post', ${FLAGGED}, 'Pending'),
       ('Image', ${DECIDED}, 'Rejected'),
-      ('Image', ${VISIBLE}, 'Pending');
+      ('Image', ${VISIBLE}, 'Pending'),
+      ('Image', ${LEGACY}, 'Pending'),
+      ('Image', ${BLOCKED_ONLY}, 'Pending');
   `);
 });
 
@@ -198,6 +207,16 @@ describe('a clean rescan', () => {
     await scan(APPEALED);
 
     expect((await imageRow(APPEALED)).blockedFor).toBe('AiNotVerified');
+  });
+
+  it.each([
+    ['a legacy block reason on a scanned row', LEGACY],
+    ['a Blocked ingestion alone', BLOCKED_ONLY],
+  ])('treats %s as a block to keep', async (_, id) => {
+    const outcome = await scan(id);
+
+    expect(outcome.ingestion).toBe('Blocked');
+    expect(await imageRow(id)).toMatchObject({ needsReview: 'appeal', ingestion: 'Blocked' });
   });
 
   it('does not block an image that was visible while under appeal', async () => {

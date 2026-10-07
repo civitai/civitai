@@ -40,7 +40,7 @@ vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
 const { blockImage } = await import('../image-moderation.service');
 
-// Enums as in prod, so a predicate that compares them to a bound text parameter fails here too.
+// Enums as in prod, so a literal outside the enum fails here too.
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
 CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');

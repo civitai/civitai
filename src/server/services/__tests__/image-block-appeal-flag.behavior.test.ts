@@ -88,7 +88,7 @@ beforeAll(async () => {
       "needsReview" text,
       "updatedAt" timestamp(3)
     );
-    -- Enums as in prod, so a predicate that compares them to a bound text parameter fails here too.
+    -- Enums as in prod, so a literal outside the enum fails here too.
     CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
     CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected');
     CREATE TABLE "Appeal" (
@@ -235,7 +235,8 @@ describe('reportCsamImages', () => {
   const moderator = { id: 2, isModerator: true } as never;
 
   it('closes the pending appeal as Rejected so the CSAM queue owns the image', async () => {
-    await reportCsamImages({ imageIds: [APPEALED], user: moderator });
+    // FLAGGED's id is shared by a post's pending appeal, which a CSAM report on the image must not touch.
+    await reportCsamImages({ imageIds: [APPEALED, FLAGGED], user: moderator });
 
     expect(await strandedAppeals()).toEqual([]);
     expect(await appeals()).toEqual([
