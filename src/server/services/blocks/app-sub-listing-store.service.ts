@@ -97,9 +97,10 @@ export function projectSubListingCard(
       subListingImageCeiling(viewer, contentRating)
     );
     // Anything short of `visible` (pending scan included) falls back to the parent cover.
-    if (verdict.status === 'visible') {
-      coverUrl = getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH });
-    }
+    coverUrl =
+      verdict.status !== 'visible'
+        ? parentCover
+        : getEdgeUrl(row.image_url, { width: LISTING_COVER_WIDTH });
   }
   return {
     cardType: 'sub-listing',

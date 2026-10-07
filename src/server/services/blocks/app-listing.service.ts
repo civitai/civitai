@@ -1388,7 +1388,13 @@ export async function listAvailableListings(
       JOIN app_sub_listing_parents sp ON sp.parent_listing_id = s.parent_listing_id
       LEFT JOIN app_listing_metrics m ON m.app_listing_id = al.id
       LEFT JOIN app_blocks ab ON ab.id = al.app_block_id
-      WHERE s.status = 'approved'
+      WHERE ${eligibility(levelFilter)}
+        AND sp.enabled
+        AND s.status = 'approved'
+        -- The parent's run route serves only an approved block, so a suspended or
+        -- re-submitted block would make every child link a 404.
+        AND ab.status = 'approved'
+        AND ${subListingMatureFilter(redCapable)}
     ) u
     WHERE ${cursorSortKey}::text IS NULL
       OR u.sort_key ${keysetCmp} ${cursorSortKey}::text

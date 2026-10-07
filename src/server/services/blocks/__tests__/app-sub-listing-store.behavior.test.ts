@@ -267,6 +267,14 @@ describe('store catalog with sub-listings, executed', () => {
     expect(childIds(await page())).toEqual([CHILD_B]);
   });
 
+  // Hydration also drops non-approved rows, so only a short page can show the id query
+  // admitting one: it would take a slot and the page would come back one card short.
+  it('a non-approved child takes no slot on the page', async () => {
+    await holder.db.exec(`UPDATE app_sub_listings SET status = 'pending' WHERE id = '${CHILD_A}'`);
+    const res = await listAvailableListings({ kind: 'all', sort: 'name', limit: 2 }, BASE_OPTS);
+    expect(ids(res.items)).toEqual([PARENT, CHILD_B]);
+  });
+
   it('applies the mature filter to the child itself', async () => {
     await holder.db.exec(
       `UPDATE app_sub_listings SET content_rating = 'x' WHERE id = '${CHILD_A}'`

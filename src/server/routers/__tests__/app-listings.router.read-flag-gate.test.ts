@@ -84,7 +84,7 @@ function fakeResolveScope(opts?: {
   return Promise.resolve('none');
 }
 
-function fakeCtx(user: unknown) {
+function fakeCtx(user: unknown, features: Record<string, boolean> = {}) {
   return {
     acceptableOrigin: true,
     user,
@@ -93,7 +93,7 @@ function fakeCtx(user: unknown) {
     req: { headers: {} } as never,
     res: { setHeader: () => undefined } as never,
     cache: { edgeTTL: 0 },
-    features: {} as never,
+    features: features as never,
     track: undefined,
   };
 }
@@ -244,5 +244,26 @@ describe('appListings.listReviews — scope gate', () => {
     const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
     const result = await caller.listReviews({ appListingId: 'apl_onsite', limit: 20 });
     expect(result).toEqual({ items: [], nextCursor: undefined });
+  });
+});
+
+describe('appListings.listAvailable — the sub-listing response-shape flag', () => {
+  it('threads the per-viewer flag and browsing level into the service', async () => {
+    const user = { ...modUser, browsingLevel: 3 };
+    const on = appListingsRouter.createCaller(
+      fakeCtx(user, { appStoreSubListings: true }) as never
+    );
+    await on.listAvailable({ limit: 20 });
+    expect(mockListAvailableListings).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ includeSubListings: true, viewerBrowsingLevel: 3 })
+    );
+
+    const off = appListingsRouter.createCaller(fakeCtx(user) as never);
+    await off.listAvailable({ limit: 20 });
+    expect(mockListAvailableListings).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ includeSubListings: false })
+    );
   });
 });
