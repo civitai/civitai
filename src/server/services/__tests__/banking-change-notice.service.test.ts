@@ -125,7 +125,7 @@ describe('getBankingChangeNoticeAudience', () => {
     await getBankingChangeNoticeAudience();
 
     expect(chQuery.mock.calls[0][0].join('?').replace(/\s+/g, ' ').trim()).toBe(
-      "SELECT DISTINCT fromAccountId AS userId FROM buzzTransactions WHERE type = 'bank' AND toAccountType = 'creatorProgramBank' AND date >= now() - INTERVAL 12 MONTH"
+      "SELECT DISTINCT fromAccountId AS userId FROM buzzTransactions WHERE type = 'bank' AND toAccountType IN ('creatorProgramBank', 'creatorProgramBankGreen') AND date >= now() - INTERVAL 12 MONTH"
     );
 
     const [flagStrings, flag] = dbMock.dbRead.$queryRaw.mock.calls[0];

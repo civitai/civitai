@@ -30,10 +30,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isEmailConfigured } from '~/server/email/client';
-import {
-  bankingChangeNoticeEmail,
-  getBankingChangeNoticeHtml,
-} from '~/server/email/templates/bankingChangeNotice.email';
+import { bankingChangeNoticeEmail } from '~/server/email/templates/bankingChangeNotice.email';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { sendBankingChangeNotice } from '~/server/services/banking-change-notice.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
@@ -74,7 +71,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     }
     case 'preview': {
       res.setHeader('Content-Type', 'text/html; charset=utf-8');
-      return res.status(200).send(getBankingChangeNoticeHtml(input.username));
+      return res
+        .status(200)
+        .send(bankingChangeNoticeEmail.getHtml({ to: '', username: input.username }));
     }
     case 'sent': {
       const all = await sysRedis.hGetAll(KEY);
