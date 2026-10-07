@@ -150,7 +150,7 @@ bankable = yellow+green balance at the cutover
          + extracted since the cutover, net of the extraction fee
 ```
 
-- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, App Blocks author fees (`'28'` in ClickHouse, or `fee` + 'App author fee…' before that type existed), user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
+- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, App Blocks author fees (matched by their 'App author fee…' description under `fee`, `unknown_28` or `appAuthorFee`, the types ClickHouse has stored them as or would after an ingest fix), user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
 - The cutover balance is computed from ClickHouse the first time it is needed and stored in the `REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT` hash, keyed by user id. It is not stored during the first hour after the cutover, while late ledger rows can still land.
 - Closed months come from ClickHouse; the current month's deposits come from the bank account via `getBankedBalance`, so a deposit made seconds earlier already counts.
 

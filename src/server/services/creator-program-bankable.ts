@@ -25,13 +25,14 @@ const placementEarningDescriptionsSql = Object.values(PLACEMENT_LEDGER_TEXT)
  * also carries generation tips), purchased Buzz, and system-minted tips.
  *
  * App Blocks author fees are `fee` rows from before `TransactionType.AppAuthorFee` existed and
- * `unknown_28` rows after it: that is how ClickHouse stores them, not `'28'`.
+ * `unknown_28` rows after it: that is how ClickHouse stores them, not `'28'`. `appAuthorFee` is what
+ * they become if the ingest learns the type's name.
  */
 export const BANKABLE_EARNING_PREDICATE_SQL = `(
   type IN ('licenseFee', 'donation', 'sell', 'bounty')
   OR (type IN ('purchase', 'tip') AND fromAccountId != 0)
   OR (type = 'fee' AND description IN (${placementEarningDescriptionsSql}))
-  OR (type IN ('fee', 'unknown_28') AND description LIKE 'App author fee%')
+  OR (type IN ('fee', 'unknown_28', 'appAuthorFee') AND description LIKE 'App author fee%')
 )`;
 
 export type BankableLedger = {

@@ -172,7 +172,7 @@ describe('BANKABLE_EARNING_PREDICATE_SQL', () => {
 
   it('counts app author fees under both ledger types they have been stored as', () => {
     expect(BANKABLE_EARNING_PREDICATE_SQL).toMatch(
-      /\n\s*OR \(type IN \('fee', 'unknown_28'\) AND description LIKE 'App author fee%'\)\n/
+      /\n\s*OR \(type IN \('fee', 'unknown_28', 'appAuthorFee'\) AND description LIKE 'App author fee%'\)\n/
     );
   });
 
