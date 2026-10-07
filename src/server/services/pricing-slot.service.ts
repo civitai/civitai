@@ -52,6 +52,11 @@ export async function getFeeAllowanceBoost(
   userId: number,
   now: Date = new Date()
 ): Promise<number> {
+  return (await readFeeAllowanceBoost(userId, now)) ?? 0;
+}
+
+/** `null` when the grant list could not be read. */
+async function readFeeAllowanceBoost(userId: number, now: Date): Promise<number | null> {
   if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
   try {
     const granted = await withSysReadDeadline(
@@ -62,7 +67,7 @@ export async function getFeeAllowanceBoost(
     logToAxiom({ type: 'error', name: 'fee-allowance-boost-read', error, userId }).catch(
       () => undefined
     );
-    return 0;
+    return null;
   }
 }
 
@@ -343,11 +348,13 @@ export async function assertPricingAllowed({
 }
 
 async function assertGateConversionAllowed(userId: number, tier: TierInput): Promise<void> {
-  const boost = await getFeeAllowanceBoost(userId);
-  if (boost <= 0) return;
+  const boost = await readFeeAllowanceBoost(userId, new Date());
+  if (boost === 0) return;
   const resolvedTier = typeof tier === 'function' ? await tier() : tier;
   const used = await countPricingSlotsThisMonth(userId);
-  if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost }))
+  // An unreadable grant list counts as a grant here: wrongly refusing costs a retry, wrongly allowing
+  // costs a gate the tier never allowed.
+  if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost: boost ?? 1 }))
     throw throwBadRequestError(gateConversionMessage(used, resolvedTier));
 }
 

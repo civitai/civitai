@@ -10,6 +10,7 @@ const cohort = vi.hoisted(() => ({
   bankers: [] as number[],
   flagged: [] as number[],
   validMembers: new Set<number>(),
+  excluded: new Set<number>(),
 }));
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { $query: async () => cohort.bankers.map((userId) => ({ userId: String(userId) })) },
@@ -37,9 +38,14 @@ beforeEach(() => {
   vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
   redisMock.sysRedis.hSetNX.mockReset();
   redisMock.sysRedis.expireAt.mockReset();
-  dbMock.dbRead.$queryRaw.mockImplementation(
-    async () => cohort.flagged.map((id) => ({ id })) as never
-  );
+  dbMock.dbRead.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    if (strings.join('?').includes('ANY('))
+      return (values[0] as number[]).filter((id) => !cohort.excluded.has(id)).map((id) => ({ id }));
+    return cohort.flagged.map((id) => ({ id }));
+  }) as never);
 });
 afterEach(() => vi.useRealTimers());
 
@@ -87,6 +93,7 @@ describe('fee-allowance-boost grant-eligible', () => {
     cohort.bankers = [1, 2];
     cohort.flagged = [2, 3, 4];
     cohort.validMembers = new Set([2, 3]);
+    cohort.excluded = new Set();
     redisMock.sysRedis.hSetNX.mockResolvedValue(true);
   });
 
@@ -104,11 +111,18 @@ describe('fee-allowance-boost grant-eligible', () => {
     expect(granted).toEqual(['1', '2', '3']);
   });
 
-  it('asks only for members not banned from the program', async () => {
-    await call({ action: 'grant-eligible', dryRun: true });
+  it('skips banned or deleted accounts on either list', async () => {
+    cohort.excluded = new Set([1, 3]);
 
-    const sql = (dbMock.dbRead.$queryRaw.mock.calls[0][0] as TemplateStringsArray).join('?');
-    expect(sql).toMatch(/onboarding & \? != 0\s+AND onboarding & \? = 0/);
+    const res = await call({ action: 'grant-eligible', dryRun: true });
+
+    expect(res.json).toHaveBeenCalledWith({ dryRun: true, bankers: 1, members: 1, eligible: 1 });
+    const standing = dbMock.dbRead.$queryRaw.mock.calls
+      .map((c) => (c[0] as TemplateStringsArray).join('?'))
+      .find((sql) => sql.includes('ANY('));
+    expect(standing).toMatch(
+      /onboarding & \? = 0\s+AND "bannedAt" IS NULL\s+AND "deletedAt" IS NULL/
+    );
   });
 
   it('writes a large list in bounded chunks', async () => {

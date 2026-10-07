@@ -119,6 +119,8 @@ allowance for a write that adds only a fee. A write adding a permanent gate is h
 allowance, so a gate gets no boost in either app. Adding a gate to a version that already carries a fee
 spends no slot, so while a creator holds a boost it is refused once their month's slots exceed the tier
 allowance (`gateConversionExceedsAllowance`) — otherwise a boost-funded fee slot could become a gate.
+Nothing records which slots the boost paid for, so once the window closes those versions follow the
+ordinary rule: an already-priced version takes a gate without spending a slot.
 Boosted fees spend ordinary slots, and the boost ends by the date check in `feeAllowanceBoost`, not by
 deleting the grant list.
 

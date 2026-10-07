@@ -79,17 +79,25 @@ export async function versionPriceState(
 const BOOST_READ_TIMEOUT_MS = 1000;
 
 export async function getFeeAllowanceBoost(userId: number, now: Date = new Date()): Promise<number> {
+  return (await readFeeAllowanceBoost(userId, now)) ?? 0;
+}
+
+const UNREAD = Symbol('unread');
+
+/** `null` when the grant list could not be read. */
+async function readFeeAllowanceBoost(userId: number, now: Date): Promise<number | null> {
   if (now >= FEE_ALLOWANCE_BOOST_ENDS_AT) return 0;
   try {
-    const granted = await withTimeoutFallback(
+    const granted = await withTimeoutFallback<string | null | typeof UNREAD>(
       getSysRedis().hGet<string>(REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST, String(userId)),
       BOOST_READ_TIMEOUT_MS,
-      null
+      UNREAD
     );
+    if (granted === UNREAD) return null;
     return feeAllowanceBoost(granted, now);
   } catch (error) {
     console.error('fee allowance boost read failed', error);
-    return 0;
+    return null;
   }
 }
 
@@ -297,10 +305,11 @@ export async function assertGatePricingAllowed(
 ): Promise<PricingGateResult> {
   if (newlyPricedCount <= 0 && feeOnlyCount > 0) {
     const tier = cappedTier(membership);
-    const boost = await getFeeAllowanceBoost(userId);
-    if (boost <= 0) return { ok: true };
+    const boost = await readFeeAllowanceBoost(userId, new Date());
+    if (boost === 0) return { ok: true };
     const used = await countPricingSlotsThisMonth(userId);
-    if (gateConversionExceedsAllowance({ used, tier, boost }))
+    // An unreadable grant list counts as a grant, as in the main app's assertGateConversionAllowed.
+    if (gateConversionExceedsAllowance({ used, tier, boost: boost ?? 1 }))
       return { ok: false, status: 403, error: gateConversionMessage(used, tier) };
     return { ok: true };
   }

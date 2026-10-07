@@ -15,7 +15,8 @@
  *                                 file. An existing grant is left as is; revoke it first to change it.
  *   grant-eligible - {amount?, dryRun?}  `grant` to everyone the boost is for: accounts that banked in
  *                                 the Creator Program in the last 12 months, plus current members
- *                                 (the flag and a valid paid membership). dryRun returns the counts only.
+ *                                 (the flag and a valid paid membership), skipping banned or deleted
+ *                                 accounts. dryRun returns the counts only.
  *   get     - {userId}            The stored grant and the boost it resolves to right now
  *   revoke  - {userId}            Remove one user's grant
  *   count   - {}                  How many users hold a grant
@@ -96,15 +97,27 @@ async function eligibleUserIds() {
       AND date >= now() - INTERVAL 12 MONTH
   `;
   const flagged = await dbRead.$queryRaw<{ id: number }[]>`
-    SELECT id FROM "User"
-    WHERE onboarding & ${OnboardingSteps.CreatorProgram} != 0
-      AND onboarding & ${OnboardingSteps.BannedCreatorProgram} = 0
-      AND "deletedAt" IS NULL
+    SELECT id FROM "User" WHERE onboarding & ${OnboardingSteps.CreatorProgram} != 0
   `;
   const valid = await getValidCreatorMembershipMap(flagged.map((r) => r.id));
-  const bankers = banked.map((r) => Number(r.userId)).filter((id) => id > 0);
-  const members = flagged.map((r) => r.id).filter((id) => valid.get(id));
-  return { bankers, members, all: [...new Set([...bankers, ...members])] };
+  const bankerIds = banked.map((r) => Number(r.userId)).filter((id) => id > 0);
+  const memberIds = flagged.map((r) => r.id).filter((id) => valid.get(id));
+
+  // One standing filter over both lists: a banker can since have been banned or deleted too.
+  const candidates = [...new Set([...bankerIds, ...memberIds])];
+  const inGoodStanding = candidates.length
+    ? await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "User"
+        WHERE id = ANY(${candidates})
+          AND onboarding & ${OnboardingSteps.BannedCreatorProgram} = 0
+          AND "bannedAt" IS NULL
+          AND "deletedAt" IS NULL
+      `
+    : [];
+  const allowed = new Set(inGoodStanding.map((r) => r.id));
+  const bankers = bankerIds.filter((id) => allowed.has(id));
+  const members = memberIds.filter((id) => allowed.has(id));
+  return { bankers, members, all: candidates.filter((id) => allowed.has(id)) };
 }
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {

@@ -20,12 +20,14 @@ const state = vi.hoisted(() => ({
   // The stored fee-allowance boost grant for the creator (null = none).
   boostGrant: null as string | null,
   boostKeys: [] as string[],
+  boostDown: false,
 }));
 
 vi.mock('$lib/server/redis', () => ({
   getSysRedis: () => ({
     hGet: async (key: string, field: string) => {
       state.boostKeys.push(`${key}:${field}`);
+      if (state.boostDown) throw new Error('sysRedis down');
       return state.boostGrant;
     },
   }),
@@ -167,6 +169,7 @@ beforeEach(() => {
   state.creatorScore = 50_000;
   state.boostGrant = null;
   state.boostKeys = [];
+  state.boostDown = false;
 });
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
@@ -627,6 +630,15 @@ describe('licensing-fee allowance boost', () => {
     const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
 
     expect(result).toEqual({ ok: true });
+  });
+
+  it('refuses a gate on a licensed version over the tier when the grant list cannot be read', async () => {
+    state.boostDown = true;
+    state.slotsUsed = 4;
+
+    const result = await assertGatePricingAllowed(7, FREE, { newlyPricedCount: 0, feeOnlyCount: 1 });
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
   });
 
   it('leaves a gate on a licensed version free for a creator with no grant', async () => {

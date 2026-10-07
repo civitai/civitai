@@ -632,6 +632,12 @@ describe('assertPricingAllowed', () => {
         await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
       });
 
+      it('is refused when the grant list cannot be read and the month is over the tier', async () => {
+        redisMock.sysRedis.hGet.mockRejectedValue(new Error('down') as never);
+        mockCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
       it('does not apply to a version that already had its gate', async () => {
         mockCount.mockResolvedValue(50 as never);
         await expect(
