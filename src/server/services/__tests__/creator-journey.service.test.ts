@@ -225,6 +225,56 @@ describe('tier badge art', () => {
   });
 });
 
+// Badge art is attached later by setting cosmeticId; the page must pick it up with no code change.
+describe('activity badge art', () => {
+  const firstModel = {
+    ...definition({ key: 'create:models-1', track: 'create', threshold: 1, hidden: false }),
+    name: 'First Model',
+    cosmetic: { data: { url: 'first-model-art' } },
+  };
+  const { cosmetic: _, ...firstModelAsAchievement } = firstModel;
+
+  const serveDefinitions = (activity: unknown[]) =>
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? activity : [])) as never);
+
+  it('carries a milestone cosmetic onto its tile and onto the earned badge', async () => {
+    serveDefinitions([firstModel]);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([
+      {
+        achievedAt: new Date('2026-01-01'),
+        seenAt: null,
+        milestone: firstModelAsAchievement,
+      },
+    ] as never);
+
+    const journey = await getCreatorJourney(1);
+    expect(journey.activity.milestones[0]).toMatchObject({ badgeUrl: 'first-model-art' });
+    expect(journey.earned[0]).toMatchObject({
+      key: 'create:models-1',
+      badgeUrl: 'first-model-art',
+    });
+  });
+
+  it('withholds the art of a hidden milestone the viewer has not earned', async () => {
+    serveDefinitions([{ ...firstModel, hidden: true, hint: 'Ship something' }]);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+
+    const [tile] = (await getCreatorJourney(1)).activity.milestones;
+    expect(tile).toMatchObject({ name: '???', badgeUrl: null });
+  });
+
+  it('selects the art through the definitions query', async () => {
+    serveDefinitions([]);
+    await getCreatorJourney(1);
+    const activityCall = dbMock.dbRead.creatorMilestone.findMany.mock.calls.find(
+      ([args]) => args?.where?.key
+    );
+    expect(activityCall?.[0]).toMatchObject({ select: { cosmetic: { select: { data: true } } } });
+  });
+});
+
 describe('getFirstPublishCard', () => {
   const owner = 7;
   const DAY_MS = 24 * 60 * 60 * 1000;

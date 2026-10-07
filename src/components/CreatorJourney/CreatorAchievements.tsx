@@ -1,7 +1,7 @@
 import { Stack, Text, Title } from '@mantine/core';
 import clsx from 'clsx';
 import type { CSSProperties } from 'react';
-import { HEXAGON } from '~/components/CreatorJourney/tier-badge';
+import { HEXAGON, TierBadge } from '~/components/CreatorJourney/tier-badge';
 import {
   SpotlightBorderCard,
   SpotlightDivider,
@@ -103,7 +103,7 @@ function ClosestNext({ milestone }: { milestone: Milestone }) {
       style={accentVar(accent)}
       faceClassName="flex items-center gap-4 p-4"
     >
-      <Hexagon label={abbreviateNumber(milestone.threshold)} state="progress" size={56} />
+      <MilestoneBadge milestone={milestone} state="progress" size={56} />
       <div className="flex min-w-0 flex-1 flex-col gap-1.5">
         <Text size="xs" tt="uppercase" fw={700} className="tracking-wider text-[var(--cj-accent)]">
           Closest next
@@ -173,7 +173,7 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
         state === 'locked' && 'opacity-60'
       )}
     >
-      <Hexagon label={abbreviateNumber(milestone.threshold)} state={state} size={34} />
+      <MilestoneBadge milestone={milestone} state={state} size={34} />
       <div className="flex min-w-0 flex-1 flex-col gap-1">
         <Text size="sm" fw={700} truncate>
           {milestone.name}
@@ -190,6 +190,27 @@ function MilestoneTile({ milestone, state }: { milestone: Milestone; state: Tile
         )}
       </div>
     </div>
+  );
+}
+
+function MilestoneBadge({
+  milestone,
+  state,
+  size,
+}: {
+  milestone: Milestone;
+  state: TileState;
+  size: number;
+}) {
+  if (!milestone.badgeUrl)
+    return <Hexagon label={abbreviateNumber(milestone.threshold)} state={state} size={size} />;
+  return (
+    <TierBadge
+      name={milestone.name}
+      badgeUrl={milestone.badgeUrl}
+      state={state === 'progress' ? 'next' : state}
+      size={size}
+    />
   );
 }
 

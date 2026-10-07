@@ -91,3 +91,36 @@ describe('Achievements section', () => {
     expect(tile(el, '1k Followers')?.dataset.state).toBe('progress');
   });
 });
+
+describe('Achievements badge art', () => {
+  it('shows the milestone art once it has some, the numbered hex until then', () => {
+    const withArt = [{ ...definitions[0], cosmetic: { data: { url: 'first-model-art' } } }];
+    const activity = buildActivityProgress(withArt, new Map([['create:models-1', null]]), {
+      models: 3,
+      articles: 0,
+      downloads: 0,
+      followers: 0,
+      reactions: 0,
+    });
+    container = document.createElement('div');
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() =>
+      root?.render(
+        React.createElement(
+          MantineProvider,
+          null,
+          React.createElement(CreatorAchievements, { activity })
+        )
+      )
+    );
+    const art = tile(container, 'First Model')?.querySelector('img');
+    expect(art?.getAttribute('src')).toContain('first-model-art');
+
+    act(() => root?.unmount());
+    container.remove();
+    const plain = render(new Map([['create:models-1', null]]));
+    expect(tile(plain, 'First Model')?.querySelector('img')).toBeNull();
+    expect(tile(plain, 'First Model')?.textContent).toContain('1First Model');
+  });
+});

@@ -58,20 +58,24 @@ const milestoneSelect = {
 async function getScoreTierDefinitions() {
   return dbRead.creatorMilestone.findMany({
     where: { track: 'score', threshold: { not: null } },
-    select: { ...milestoneSelect, cosmetic: { select: { data: true } } },
+    select: withArt,
     orderBy: [{ threshold: 'asc' }, { sortOrder: 'asc' }],
   });
 }
 
-type TierDefinition = MilestoneDefinition & { cosmetic?: { data: unknown } | null };
+type DefinitionWithArt = MilestoneDefinition & { cosmetic?: { data: unknown } | null };
 
-function toTier(milestone: TierDefinition, earned: boolean): CreatorScoreTier {
+const withArt = { ...milestoneSelect, cosmetic: { select: { data: true } } } as const;
+
+// A masked milestone's art would give it away as surely as its name.
+function visibleBadgeUrl(milestone: DefinitionWithArt, visible: MilestoneDefinition) {
+  if (visible !== milestone) return null;
+  return (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null;
+}
+
+function toTier(milestone: DefinitionWithArt, earned: boolean): CreatorScoreTier {
   const visible = maskUnearnedMilestone(milestone, earned);
-  // A masked tier's art would give it away as surely as its name.
-  const badgeUrl =
-    visible === milestone
-      ? (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null
-      : null;
+  const badgeUrl = visibleBadgeUrl(milestone, visible);
   return {
     key: visible.key,
     name: visible.name,
@@ -106,7 +110,7 @@ async function getActivityValues(userId: number): Promise<ActivityValues> {
  * done. A count can pass a threshold before the nightly job grants it, so earned means granted.
  */
 export function buildActivityProgress(
-  definitions: MilestoneDefinition[],
+  definitions: DefinitionWithArt[],
   held: Map<string, Date | null>,
   values: ActivityValues
 ) {
@@ -124,6 +128,7 @@ export function buildActivityProgress(
           threshold: definition.threshold,
           name: visible.name,
           description: visible.description,
+          badgeUrl: visibleBadgeUrl(definition, visible),
           current: values[measure],
           earned,
           achievedAt: held.get(definition.key) ?? null,
@@ -158,7 +163,7 @@ export async function getCreatorJourney(userId: number) {
       }),
       dbRead.creatorMilestone.findMany({
         where: { key: { in: [...activityMeasures.keys()] } },
-        select: milestoneSelect,
+        select: withArt,
       }),
       getActivityValues(userId),
     ]);
@@ -169,7 +174,10 @@ export async function getCreatorJourney(userId: number) {
   );
   const earnedKeys = new Set(observedAt.keys());
   const tiers = tierDefinitions.map((tier) => toTier(tier, earnedKeys.has(tier.key)));
-  const badgeUrlByKey = new Map(tiers.map((tier) => [tier.key, tier.badgeUrl ?? null]));
+  const activity = buildActivityProgress(activityDefinitions, observedAt, activityValues);
+  const badgeUrlByKey = new Map(
+    [...tiers, ...activity.milestones].map((m) => [m.key, m.badgeUrl ?? null])
+  );
 
   return {
     scores: rawScores
@@ -190,7 +198,7 @@ export async function getCreatorJourney(userId: number) {
       badgeUrl: badgeUrlByKey.get(milestone.key) ?? null,
       achievedAt: observedAt.get(milestone.key) ?? null,
     })),
-    activity: buildActivityProgress(activityDefinitions, observedAt, activityValues),
+    activity,
   };
 }
 
