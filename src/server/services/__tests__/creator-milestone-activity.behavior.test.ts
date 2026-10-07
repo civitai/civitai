@@ -17,6 +17,8 @@ import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone
 import {
   activityDetectorGroups,
   activityValuesSql,
+  judgeVoteGroups,
+  judgeVoteTotalsSql,
 } from '~/server/services/creator-milestone-detectors';
 import type { ActivityMeasure } from '~/server/services/creator-milestone-registry';
 import {
@@ -793,5 +795,112 @@ describe('journey progress values', () => {
       reactions: 0,
       revenue: 0,
     });
+  });
+});
+
+describe('judge-vote detector', () => {
+  const judgeGroup = (totals: unknown[]) => {
+    const calls: { sql: string; settings: Record<string, string | number> }[] = [];
+    const [group] = judgeVoteGroups(async (sql, settings) => {
+      calls.push({ sql, settings });
+      return totals;
+    });
+    return { group, calls };
+  };
+
+  it('grants every judge rank at or below the vote count', async () => {
+    const { group, calls } = judgeGroup([
+      { userId: CREATOR, votes: '1200' },
+      { userId: TESTER, votes: '500' },
+      { userId: QUIET, votes: '499' },
+    ]);
+    await run(group);
+
+    expect(await held(CREATOR)).toEqual([
+      { key: 'community:crucible-votes-1000', seen: expect.any(Boolean), at: expect.any(String) },
+      { key: 'community:crucible-votes-500', seen: expect.any(Boolean), at: expect.any(String) },
+    ]);
+    expect((await held(TESTER)).map((row) => row.key)).toEqual(['community:crucible-votes-500']);
+    expect(await held(QUIET)).toEqual([]);
+    expect(group.timed).toBe(false);
+    // Totals below the lowest rank stay in ClickHouse; the read-only flag rides on the request.
+    expect(calls).toHaveLength(1);
+    expect(calls[0].sql).toBe(judgeVoteTotalsSql(500));
+    expect(calls[0].settings).toEqual({
+      readonly: '1',
+      max_execution_time: 60,
+      max_result_rows: 1_000_000,
+    });
+  });
+
+  // The fake ignores the SQL, so the text is what pins the filters: rows before 2026-10-04 carry
+  // userId 0, and without `userId > 0` they would reach the guard below and fail every run.
+  it('asks ClickHouse only for attributed totals at or above the lowest rank', () => {
+    expect(judgeVoteTotalsSql(500)).toBe(`SELECT userId, count() AS votes
+  FROM crucible_votes WHERE userId > 0 GROUP BY userId HAVING votes >= 500`);
+  });
+
+  it('announces a rank crossed after the previous complete run', async () => {
+    const watermark = { at: new Date('2026-10-31T00:00:00Z').getTime(), gated: false };
+    await run(judgeGroup([{ userId: CREATOR, votes: '600' }]).group, { watermark });
+    const { notified } = await run(judgeGroup([{ userId: CREATOR, votes: '1200' }]).group, {
+      watermark,
+    });
+    expect(
+      notified.map(({ userId, milestoneKey, silent }) => ({ userId, milestoneKey, silent }))
+    ).toEqual([{ userId: CREATOR, milestoneKey: 'community:crucible-votes-1000', silent: false }]);
+  });
+
+  it('fails, rather than finding nobody, when the replica has no rank rows yet', async () => {
+    const [group] = judgeVoteGroups(async () => []);
+    const emptyPg = {
+      cancellableQuery: async () => ({
+        result: async () => [{ min: null }],
+        cancel: async () => undefined,
+      }),
+    } as never;
+    await expect(
+      (group as Extract<MilestoneDetectorGroup, { candidates: unknown }>).candidates(emptyPg)
+    ).rejects.toThrow('No CreatorMilestone thresholds for the judge ranks');
+  });
+
+  it('records no complete run when ClickHouse fails', async () => {
+    const [group] = judgeVoteGroups(async () => {
+      throw new Error('ClickHouse unavailable');
+    });
+    const { store, rows } = memoryStore();
+    await expect(
+      runActivityGroup(group, {
+        readPg: pg,
+        writePg: pg,
+        store,
+        gated: false,
+        now: AFTER_LAUNCH,
+        audienceAmong: async (ids) => new Set(ids),
+        notify: async () => undefined,
+      })
+    ).rejects.toThrow('ClickHouse unavailable');
+    expect(rows.size).toBe(0);
+  });
+
+  it('does not offer a rank the judge already holds', async () => {
+    await run(judgeGroup([{ userId: CREATOR, votes: '600' }]).group);
+    const { group } = judgeGroup([{ userId: CREATOR, votes: '1200' }]);
+    const candidates = await (
+      group as Extract<MilestoneDetectorGroup, { candidates: unknown }>
+    ).candidates(pg);
+    // Undated: a dated row before the watermark would be granted silently.
+    expect(candidates).toEqual([
+      { userId: CREATOR, milestoneKey: 'community:crucible-votes-1000', achievedAt: null },
+    ]);
+  });
+
+  it.each([
+    ['an anonymous vote row', { userId: 0, votes: '500' }],
+    ['a non-numeric user', { userId: 'x', votes: '500' }],
+    ['a non-numeric count', { userId: CREATOR, votes: 'many' }],
+  ])('refuses %s instead of granting from it', async (_, row) => {
+    const { group } = judgeGroup([row]);
+    await expect(run(group)).rejects.toThrow('crucible_votes returned a malformed total');
   });
 });

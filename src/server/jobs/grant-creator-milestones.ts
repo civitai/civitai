@@ -4,7 +4,10 @@ import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import type { ActivityWatermarkStore } from '~/server/services/creator-milestone-activity.service';
 import { runActivityGroup } from '~/server/services/creator-milestone-activity.service';
 import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
-import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
+import {
+  activityDetectorGroups,
+  judgeVoteGroups,
+} from '~/server/services/creator-milestone-detectors';
 import type { QueryClickhouse } from '~/server/services/creator-milestone-stored';
 import {
   loadStoredMilestoneGroups,
@@ -118,11 +121,14 @@ export const grantCreatorMilestones = createJob(
       creatorJourneyAudienceAmong(pgDbReadLong, userIds)
     );
 
-    const groups = [...activityDetectorGroups(), ...(await storedGroups())];
+    const stored = await storedGroups();
+    // Judge votes are also found row by row, so a group's shape cannot say it came from a row.
+    const storedIds = new Set(stored.map((group) => group.id));
+    const groups = [...activityDetectorGroups(), ...judgeVoteGroups(queryClickhouse), ...stored];
     for (const group of groups) {
       jobContext.checkIfCanceled();
       const startedAt = Date.now();
-      const stored = 'candidates' in group ? group.keys[0] : null;
+      const storedKey = storedIds.has(group.id) ? group.keys[0] : null;
       try {
         results[group.id] = await runActivityGroup(group, {
           readPg: pgDbReadLong,
@@ -132,8 +138,8 @@ export const grantCreatorMilestones = createJob(
           audienceAmong,
           checkIfCanceled: () => jobContext.checkIfCanceled(),
         });
-        if (stored)
-          reportStored({ milestoneKey: stored, outcome: 'ran', ms: Date.now() - startedAt });
+        if (storedKey)
+          reportStored({ milestoneKey: storedKey, outcome: 'ran', ms: Date.now() - startedAt });
       } catch (e) {
         // Its watermark stays put, so the next run picks up from the last complete one.
         if (e instanceof StoredMilestoneSkip) {
