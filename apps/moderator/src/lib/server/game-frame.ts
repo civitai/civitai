@@ -1,5 +1,5 @@
 import { env } from '$env/dynamic/private';
-import { dbWrite } from './db';
+import { dbRead, dbWrite } from './db';
 
 const TIMEOUT_MS = 10_000;
 
@@ -22,6 +22,18 @@ export async function getReportedGame(reportId: number): Promise<ReportedGame | 
     reason: row.reason,
     violation: typeof details?.violation === 'string' ? details.violation : null,
   };
+}
+
+export type GameMirror = { id: number; title: string; visibility: string; official: boolean };
+
+/** What the mirror row says about each reported game, as of Game Frame's last push. */
+export async function getGameMirrors(ids: number[]): Promise<GameMirror[]> {
+  if (!ids.length) return [];
+  return dbRead
+    .selectFrom('GameFrameGame')
+    .select(['id', 'title', 'visibility', 'official'])
+    .where('id', 'in', ids)
+    .execute();
 }
 
 export type DelistOutcome =

@@ -31,6 +31,7 @@ vi.mock('$lib/server/game-frame', () => ({
   getReportedGame: vi.fn(),
   delistGame: vi.fn(),
   delistReason: vi.fn(),
+  getGameMirrors: vi.fn(async () => []),
 }));
 vi.mock('$lib/server/access', () => ({ canAccess: vi.fn(() => true) }));
 

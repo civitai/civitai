@@ -3,7 +3,7 @@ import type { Actions, PageServerLoad } from './$types';
 import { getReports, setReportStatus, updateReportNotes } from '$lib/server/reports.service';
 import { getResolvedPostReportIds } from '$lib/server/moderation-board.service';
 import { removePlacement } from '$lib/server/user-actions.service';
-import { delistGame, delistReason, getReportedGame } from '$lib/server/game-frame';
+import { delistGame, delistReason, getGameMirrors, getReportedGame } from '$lib/server/game-frame';
 import { canAccess } from '$lib/server/access';
 import {
   DEFAULT_REPORT_REASONS,
@@ -56,6 +56,10 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reportedBy: reportedBy || undefined,
     reportId,
   });
+  const games =
+    type === 'gameFrameGame'
+      ? await getGameMirrors(data.items.flatMap((r) => (r.entityId != null ? [r.entityId] : [])))
+      : [];
 
   // The default reason set is NOT echoed into the filter control: eight pre-ticked chips read as a
   // heavily-narrowed view when it is the ordinary one. The page says what it is hiding instead, and only
@@ -70,6 +74,7 @@ export const load: PageServerLoad = async ({ params, url }) => {
     reasons: urlReasons,
     hidingAutomated: !reportId && !url.searchParams.has('reason'),
     reportedBy,
+    games,
     ...data,
   };
 };

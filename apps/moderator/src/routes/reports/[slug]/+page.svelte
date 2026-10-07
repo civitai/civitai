@@ -389,7 +389,18 @@
         {/if}
 
         {#if data.type === 'gameFrameGame'}
+          {@const game = data.games.find((g) => g.id === selected.entityId)}
           <div class="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3">
+            {#if game}
+              <p class="mb-2 flex flex-wrap items-center gap-2 text-sm">
+                <span class="font-medium">{game.title}</span>
+                <Badge variant="outline">{game.visibility}</Badge>
+                {#if game.official}<Badge variant="outline">official</Badge>{/if}
+              </p>
+              {#if game.visibility === 'delisted'}
+                <p class="mb-2 text-sm">Already delisted on Civitai Games.</p>
+              {/if}
+            {/if}
             <p class="mb-2 text-sm">
               Delisting takes this game and its forks off Civitai Games, then sets this report Actioned.
               Undelisting is done on Civitai Games.

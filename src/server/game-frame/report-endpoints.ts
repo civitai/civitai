@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
+import { blockBearerToken } from '~/server/utils/block-bearer';
 import {
   applyGameFrameState,
   fileGameFrameReport,
@@ -21,11 +22,7 @@ function authorize(req: NextApiRequest): Auth {
   if (expected.length < MIN_TOKEN_LENGTH || typeof guestUserId !== 'number')
     return { ok: false, status: 503, error: 'not_configured' };
 
-  const header = req.headers.authorization ?? '';
-  const presented = header.toLowerCase().startsWith('bearer ')
-    ? header.slice('bearer '.length).trim()
-    : '';
-  const a = Buffer.from(presented);
+  const a = Buffer.from(blockBearerToken(req));
   const b = Buffer.from(expected);
   if (a.length !== b.length || !timingSafeEqual(a, b))
     return { ok: false, status: 401, error: 'unauthorized' };

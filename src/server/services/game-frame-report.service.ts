@@ -47,7 +47,11 @@ export const gameFrameReportSchema = z
     game: gameFrameGameSchema,
     reporter: z.discriminatedUnion('kind', [
       z.object({ kind: z.literal('user'), userId: z.number().int().positive() }),
-      z.object({ kind: z.literal('guest'), guestKey: z.string().regex(/^[0-9a-f]{12}$/) }),
+      // `u` + 11 hex is Game Frame's retry of an unknown_user report as a guest (contract B.3).
+      z.object({
+        kind: z.literal('guest'),
+        guestKey: z.string().regex(/^(?:[0-9a-f]{12}|u[0-9a-f]{11})$/),
+      }),
     ]),
     gfReason: z.enum(Object.keys(GF_REASONS) as [GfReason, ...GfReason[]]),
     reason: z.enum(ReportReason),
@@ -166,9 +170,12 @@ export async function fileGameFrameReport(
       if (input.reporter.kind === 'user') {
         const user = await tx.user.findUnique({
           where: { id: input.reporter.userId },
-          select: { deletedAt: true },
+          select: { deletedAt: true, bannedAt: true, muted: true },
         });
-        if (!user || user.deletedAt) return { ok: false, error: 'unknown_user' };
+        // The site's own report route refuses banned and muted accounts. unknown_user makes Game
+        // Frame refile the report as a guest, so it still reaches a moderator but earns no reward.
+        if (!user || user.deletedAt || user.bannedAt || user.muted)
+          return { ok: false, error: 'unknown_user' };
         filer = input.reporter.userId;
       }
 
