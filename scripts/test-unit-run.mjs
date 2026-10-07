@@ -13,7 +13,6 @@
 
 import { spawn } from 'child_process';
 import { existsSync } from 'fs';
-import { request } from 'http';
 import { dirname, resolve } from 'path';
 import { fileURLToPath, pathToFileURL } from 'url';
 
@@ -28,7 +27,10 @@ const QUEUE = resolve(repoRoot, '.claude/skills/dev-server/scripts/test-queue.mj
 // daemon, which is why the verdict below had no test: there was no way to stand a fake one up
 // beside it. Imported on the queue path only, for the reason given above QUEUE.
 const PORT_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-port.mjs');
+// The daemon's client, shared with cli.mjs. Imported on the queue path only, for the reason above.
+const HTTP_MODULE = resolve(repoRoot, '.claude/skills/dev-server/scripts/daemon-http.mjs');
 let DAEMON = null;
+let daemonFetch = null;
 // Whether the queue has taken ownership of this run. Once it has, a later failure must NOT be
 // answered by starting a second, unqueued suite — see the note where this is set.
 let accepted = false;
@@ -90,33 +92,9 @@ function runDirect(args) {
   });
 }
 
-/**
- * `http.request`, not `fetch`: on Node 24 for Windows, `process.exit` after more than one `fetch`
- * dies on a libuv assertion (0xC0000409) instead of exiting, so the caller saw that code in place of
- * the run's verdict. Every exit on the queued path follows these requests.
- */
 function daemonRequest(path, { method = 'GET', body } = {}) {
-  return new Promise((done, fail) => {
-    const req = request(
-      `${DAEMON}${path}`,
-      { method, headers: body === undefined ? {} : { 'Content-Type': 'application/json' } },
-      (res) => {
-        let text = '';
-        res.setEncoding('utf8');
-        res.on('data', (chunk) => (text += chunk));
-        res.on('error', fail);
-        res.on('end', () =>
-          done({
-            status: res.statusCode,
-            ok: res.statusCode >= 200 && res.statusCode < 300,
-            json: async () => JSON.parse(text),
-          })
-        );
-      }
-    );
-    req.on('error', fail);
-    req.end(body);
-  });
+  const headers = body === undefined ? {} : { 'Content-Type': 'application/json' };
+  return daemonFetch(`${DAEMON}${path}`, { method, headers, body });
 }
 
 async function post(path, body) {
@@ -167,6 +145,7 @@ export async function runQueued(args, { kind = 'unit', fallback = runDirect } = 
   try {
     const { resolveDaemonUrl } = await import(pathToFileURL(PORT_MODULE).href);
     DAEMON = resolveDaemonUrl();
+    ({ daemonFetch } = await import(pathToFileURL(HTTP_MODULE).href));
   } catch (err) {
     console.error(`Test queue address unusable (${err.message}); running directly.`);
     return fallback(args);
@@ -250,7 +229,13 @@ if (
 ) {
   const args = process.argv.slice(2);
   const decision = queueDecision(args, process.env);
-  if (decision.queue && existsSync(CLI) && existsSync(QUEUE) && existsSync(PORT_MODULE)) {
+  if (
+    decision.queue &&
+    existsSync(CLI) &&
+    existsSync(QUEUE) &&
+    existsSync(PORT_MODULE) &&
+    existsSync(HTTP_MODULE)
+  ) {
     // Un-awaited at top level, so anything runQueued throws would otherwise be an unhandled
     // rejection that kills the process with no tests run.
     //
