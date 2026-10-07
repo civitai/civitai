@@ -71,6 +71,10 @@ describe('upsertBountyEntryHandler', () => {
       'You cannot submit entries to your own bounty.'
     );
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    // The fake returns userId whatever is selected; without it in the real select the guard never fires.
+    expect(dbMock.dbRead.bounty.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ userId: true }) })
+    );
   });
 
   it('lets the owner edit an entry that already exists', async () => {

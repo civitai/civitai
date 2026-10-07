@@ -169,7 +169,7 @@ describe('prepare-bounties auto-award', () => {
     expect(values).toEqual(['BUZZ', BOUNTY_ID, BOUNTY_ID, 'BUZZ', OWNER_ID]);
   });
 
-  it('refunds instead when no entry is eligible to win', async () => {
+  it('refunds supporters when the winner query returns no entry', async () => {
     mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
       const sql = strings.join('');
       if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];
