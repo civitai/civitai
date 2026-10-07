@@ -130,6 +130,15 @@ export function resolveCacheExpiry(
 }
 
 /**
+ * How long a healthy-path miss-fill lookup may be JOINED by later fetches (see missInFlight). Past
+ * this a lookup is presumed stuck, so a fetch originates its own instead of waiting on it — which
+ * also bounds how old a lookup a joiner can be handed. Generous next to a normal lookup.
+ */
+const IN_FLIGHT_JOIN_MAX_MS = 10_000;
+
+type InFlightLookup<T> = { value: Promise<T | undefined>; startedAt: number };
+
+/**
  * Per-(pod, cache-key, id) single-flight map for the DEGRADED (cluster-read-failed) origin fetch.
  *
  * WHY: when a CLUSTER read rejects, fetch fails open to a direct origin (DB) fetch instead of 500ing.
@@ -144,15 +153,6 @@ export function resolveCacheExpiry(
  * with the same `key` but different `lookupFn`s would otherwise hand each other's rows back during a
  * degraded fetch.
  */
-/**
- * How long a healthy-path miss-fill lookup may be JOINED by later fetches (see missInFlight). Past
- * this a lookup is presumed stuck, so a fetch originates its own instead of waiting on it — which
- * also bounds how old a lookup a joiner can be handed. Generous next to a normal lookup.
- */
-const IN_FLIGHT_JOIN_MAX_MS = 10_000;
-
-type InFlightLookup<T> = { value: Promise<T | undefined>; startedAt: number };
-
 /** Seconds a write-through `update` holds its per-entry lock. Bounds one GET + one SET. */
 const UPDATE_LOCK_TTL = 5;
 

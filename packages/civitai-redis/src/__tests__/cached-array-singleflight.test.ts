@@ -630,8 +630,8 @@ describe('createCachedObject miss-fill — per-process single-flight', () => {
     try {
       const a = cache.fetch([52]);
       await untilGets(1);
-      // 100ms short of the cap: the faked Date still advances with real time between the two
-      // reads, so landing exactly on the boundary would be flaky.
+      // untilGets' vi.waitFor advances the faked clock by its 50ms poll interval, so b's startedAt
+      // lands 50ms past this; 9_900 keeps it under the cap.
       vi.setSystemTime(Date.now() + 9_900);
       const b = cache.fetch([52]);
       await untilGets(2);
