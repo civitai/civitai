@@ -2504,6 +2504,66 @@ export function countRemainingPairs({
   return Math.max(0, Math.min(unjudgedPairs, byEntry, byVotes));
 }
 
+export type JudgingPairCount = { remainingPairs: number; visibleEntries: number; judged: boolean };
+
+/**
+ * Pairs left for one judge across several crucibles: one entries query, two Redis reads each.
+ * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
+ * viewer's browsing level all change the count without a vote.
+ */
+export async function countJudgingPairs({
+  crucibleIds,
+  userId,
+  viewerLevel,
+}: {
+  crucibleIds: number[];
+  userId: number;
+  viewerLevel: number;
+}) {
+  const ids = [...new Set(crucibleIds)];
+  const counts = new Map<number, JudgingPairCount>();
+  if (!ids.length) return counts;
+
+  const [entries, judgeState] = await Promise.all([
+    dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
+      SELECT ce."crucibleId", ce.id
+      FROM "CrucibleEntry" ce
+      JOIN "Crucible" c ON c.id = ce."crucibleId"
+      JOIN "Image" i ON i.id = ce."imageId"
+      WHERE ce."crucibleId" IN (${Prisma.join(ids)})
+        AND ce."userId" != ${userId}
+        AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, viewerLevel)}
+    `,
+    Promise.all(
+      ids.map((id) =>
+        Promise.all([
+          sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
+          sysRedis.sMembers(getVotedPairsKey(id, userId)),
+        ])
+      )
+    ),
+  ]);
+
+  const entryIds = new Map<number, number[]>(ids.map((id) => [id, []]));
+  for (const { crucibleId, id } of entries) entryIds.get(crucibleId)?.push(id);
+
+  ids.forEach((crucibleId, i) => {
+    const [judgeEntryVotes, votedPairKeys = []] = judgeState[i];
+    const visible = entryIds.get(crucibleId) ?? [];
+    counts.set(crucibleId, {
+      remainingPairs: countRemainingPairs({
+        entryIds: visible,
+        judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
+        votedPairKeys,
+        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+      }),
+      visibleEntries: visible.length,
+      judged: votedPairKeys.length > 0,
+    });
+  });
+  return counts;
+}
+
 export const getJudgingProgress = async ({
   crucibleId,
   userId,
@@ -2540,32 +2600,14 @@ export const getJudgingProgress = async ({
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
     return { remainingPairs: 0, votesUsedUp: false };
 
-  const visibleImage = visibleEntryImageSql(
-    crucible.nsfwLevel,
-    getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel })
+  const viewerLevel = getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel });
+  const counted = (await countJudgingPairs({ crucibleIds: [crucibleId], userId, viewerLevel })).get(
+    crucibleId
   );
-  const [entries, judgeEntryVotes, votedPairKeys] = await Promise.all([
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT ce.id
-      FROM "CrucibleEntry" ce
-      JOIN "Image" i ON i.id = ce."imageId"
-      WHERE ce."crucibleId" = ${crucibleId}
-        AND ce."userId" != ${userId}
-        AND ${visibleImage}
-    `,
-    sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
-    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-  ]);
-
-  const remainingPairs = countRemainingPairs({
-    entryIds: entries.map(({ id }) => id),
-    judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
-    votedPairKeys,
-    maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
-  });
+  const remainingPairs = counted?.remainingPairs ?? 0;
   // Fewer than two visible entries also counts zero pairs, but that is the browsing level
   // hiding entries, not this judge's votes running out.
-  return { remainingPairs, votesUsedUp: remainingPairs === 0 && entries.length >= 2 };
+  return { remainingPairs, votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2 };
 };
 
 type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };
