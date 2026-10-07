@@ -7,11 +7,12 @@
 // apps (including the main app, which also deploys as .red) call their own same-origin /api/auth/* proxies
 // instead. Browser-safe (no jose/redis/env); pure (no navigation — callers reload).
 
-// Browser-safe re-exports of the pure contracts (hub login-URL + shared constants) — so client components import
+// Browser-safe re-exports of the pure contracts (hub login-URL, shared constants, return-path rule) — so client components import
 // these from `@civitai/auth/client` and never pull the main entry's server-only graph (session-registry →
 // @civitai/redis → node:net) into the browser bundle.
 export { hubLoginUrl, hubLogoutUrl, type HubLoginUrlOptions } from './providers';
 export * from './constants';
+export { safeReturnPath } from './return-path';
 
 /** A linked account on the browser's device set — display only (mirrors the hub's `/api/auth/accounts` row). */
 export interface DeviceAccountSummary {
