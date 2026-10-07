@@ -132,7 +132,7 @@ export const minimax = defineGraph<FamilyExt>({ scope: familyScope })
         options: [
           { label: 'Comfy', value: minimaxVersionIds.comfy },
           { label: 'Api', value: minimaxVersionIds['v1.0'] },
-          { label: 'Max', value: minimaxVersionIds.max },
+          { label: 'Max by Fal', value: minimaxVersionIds.max },
           { label: 'HeyGen', value: minimaxVersionIds.heygen },
         ],
       },
