@@ -11,13 +11,12 @@ import { isViewer } from '~/utils/is-viewer';
 import { showSuccessNotification } from '~/utils/notifications';
 
 export function HideModelButton({ model, as = 'button', onToggleHide, ...props }: Props) {
-  const modelId = model.id;
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
 
   const models = useHiddenPreferencesData().hiddenModels;
   const hiddenModels = models.filter((x) => x.hidden);
-  const alreadyHiding = hiddenModels.some((x) => x.id === modelId);
+  const alreadyHiding = hiddenModels.some((x) => x.id === model.id);
 
   const toggleHiddenMutation = useToggleHiddenPreferences();
 
@@ -25,7 +24,7 @@ export function HideModelButton({ model, as = 'button', onToggleHide, ...props }
     e.preventDefault();
     e.stopPropagation();
     if (!alreadyHiding) await utils.model.getAll.invalidate({ hidden: true }, { exact: false });
-    toggleHiddenMutation.mutateAsync({ kind: 'model', data: [{ id: modelId }] }).then(() => {
+    toggleHiddenMutation.mutateAsync({ kind: 'model', data: [{ id: model.id }] }).then(() => {
       showSuccessNotification({
         title: `Model ${alreadyHiding ? 'unhidden' : 'hidden'}`,
         message: `This model will${alreadyHiding ? ' ' : ' not '}show up in your feed`,
