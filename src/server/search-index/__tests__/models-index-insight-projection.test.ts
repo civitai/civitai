@@ -409,7 +409,7 @@ describe('models search index projects insight.qualityScore', () => {
     // attribute and an explicit null sort the same way (measured). But every live write is
     // `PUT /indexes/<uid>/documents`, which MERGES top-level fields — so on a document that
     // already carries a score, omitting leaves the stale value in place and a retracted
-    // label keeps its top-of-pool seeding forever. Measured both arms on v1.15.0: the null
+    // label stays visible to any filter or sort on it forever. Measured both arms on v1.15.0: the null
     // PUT cleared a stored 0.9; the control PUT with no key left a stored 0.1 intact.
     //
     // 🔴 All FOUR keys, for the same reason: `role`, `styleFamily` and `modelVersionId` are
