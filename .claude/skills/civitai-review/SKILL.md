@@ -82,13 +82,9 @@ unrelated slices, review them one at a time; findings from a mixed diff are hard
 uncommitted changes: the review exists to run *before* the commit.
 
 Also locate the **intent doc** now, so the intent reviewer isn't the one to discover it's missing:
-
-```
-C:\Dev\Repos\work\model-share\_local\docs\plans\<feature>.md
-```
-
-Absolute path, from any worktree. 🔴 Never resolve `_local/` relatively — it exists only in the primary
-worktree, and a relative write silently creates a second private copy that nobody else reads.
+`<INTENT_DIR>/<feature>.md`, where `INTENT_DIR` comes from your own instructions or the primary
+checkout's `CLAUDE.local.md` (see `civitai-intent-review`). If none is set, pass the intent reviewer the
+PR body and linked ticket instead.
 
 ## 2. Fan out — the lanes this diff needs, at once, in one message
 
@@ -237,7 +233,7 @@ function that no longer exists in the form it is imagining — new refusals mean
 this test still meaningful" cannot be answered from the assertion alone.
 
 **A declined finding is a legitimate outcome, but it must come back with a reason.** The reviewer then
-either accepts the reason or escalates to Justin. 🔴 **Silent non-fixes are the failure mode here** — a
+either accepts the reason or escalates to the user. 🔴 **Silent non-fixes are the failure mode here** — a
 finding that quietly doesn't appear in the next round has not been resolved, it has been lost. Track
 the list across rounds and account for every item.
 

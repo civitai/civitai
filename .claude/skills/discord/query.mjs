@@ -957,8 +957,8 @@ Options:
 Examples:
   node query.mjs send dev-general "Build passed!"
   node query.mjs announce deployments "v5.0.1381" --title "Release"
-  node query.mjs dm justin "Hey, check out this PR!"
-  node query.mjs dm-messages justin --limit 10
+  node query.mjs dm jane "Hey, check out this PR!"
+  node query.mjs dm-messages jane --limit 10
   node query.mjs react <msg_link> "U+2705"
   node query.mjs rich-embed dev-general --title "Release" --field "Version|5.0|inline"
   node query.mjs thread dev-general --thread "Discussion"

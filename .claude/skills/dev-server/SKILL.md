@@ -317,7 +317,7 @@ against.
 `envModeSummary`, and the daemon log prints them next to `Env:` at start:
 
 ```
-Env: C:\Dev\Repos\work\wt-thing\.env
+Env: <repos-root>\worktrees\thing\.env
 Env modes: buzz=dev db=prod redis=dev search=dev signals=dev | always prod (no dev target): ...
 ```
 

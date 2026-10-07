@@ -76,8 +76,6 @@ Why: a hand-listed mock couples the test to the whole transitive import graph. A
 - **Don't prove a property by absence of termination.** A non-terminating fake over already-resolved promises is a pure microtask loop; it starves the macrotask queue, so vitest's `setTimeout`-based `testTimeout` never fires and CI hangs with nothing to read.
 - The paging guard in `test:lint-rules` catches cursor-shaped fakes only; a loop driven by anything else is still yours to bound.
 
-(Formulation from @ivy's review of PR #3756.)
-
 ## Never `await` a browser-test state that deletes itself
 
 Awaiting a state to arrive is safe; awaiting one that will leave (a spinner on a ceiling, a debounce window, anything torn down on a timer) is a race `expect.element` cannot win. It polls every 50 ms against the test's remaining budget (browser-mode `testTimeout` defaults to 15 s; the `component` project does not override it), and once the state is gone it never returns. Such tests are green on a quiet box and red on a busy one.
