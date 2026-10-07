@@ -11,6 +11,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 const state = vi.hoisted(() => ({
   pathname: '/images',
   imageSearch: false,
+  imageSearchEntry: true,
   provider: [] as Array<{ indexName: string; searchClient: unknown }>,
 }));
 
@@ -36,12 +37,22 @@ vi.mock('react-instantsearch', async (importOriginal) => {
 });
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
-  // Every flag on except `imageSearch`, which each test sets. `imageSearchEntry` stays on, so
-  // Images is still OFFERED by the selector — only the default is under test.
+  // Every flag on except `imageSearch` and `imageSearchEntry`, which tests set. `imageSearchEntry`
+  // defaults on, so Images is OFFERED by the selector unless a test hides it.
   return {
     ...actual,
     useFeatureFlags: () =>
-      new Proxy({}, { get: (_, key) => (key === 'imageSearch' ? state.imageSearch : true) }),
+      new Proxy(
+        {},
+        {
+          get: (_, key) =>
+            key === 'imageSearch'
+              ? state.imageSearch
+              : key === 'imageSearchEntry'
+              ? state.imageSearchEntry
+              : true,
+        }
+      ),
   };
 });
 // The harness has no tRPC client or session, and the search scope reads both.
@@ -65,6 +76,7 @@ const { emptySearchClient } = await import('~/components/Search/emptySearchClien
 beforeEach(() => {
   state.pathname = '/images';
   state.imageSearch = false;
+  state.imageSearchEntry = true;
   state.provider = [];
 });
 
@@ -143,5 +155,54 @@ describe('QuickSearchDropdown — a caller defaulting to Images', () => {
 
     await expect.element(selector()).toHaveValue('Images');
     await vi.waitFor(() => expect(state.provider.at(-1)?.indexName).toBe('images_v6'));
+  });
+});
+
+// With the entry hidden, the selector must not OFFER Images at all. The control is the same render
+// with the entry shown: if Images were missing there too, the option query would be wired to nothing.
+describe('Images entry hidden (imageSearchEntry off)', () => {
+  test('AutocompleteSearch offers no Images option', async () => {
+    state.imageSearchEntry = false;
+    renderWithProviders(<AutocompleteSearch />);
+
+    await expect.element(selectedCategory()).toHaveValue('Models');
+    await selectedCategory().click();
+    await expect.element(page.getByRole('option', { name: 'Models' })).toBeInTheDocument();
+    expect(page.getByRole('option', { name: 'Images' }).elements()).toHaveLength(0);
+  });
+
+  test('QuickSearchDropdown offers no Images option', async () => {
+    state.imageSearchEntry = false;
+    renderWithProviders(
+      <QuickSearchDropdown
+        supportedIndexes={['models', 'images']}
+        startingIndex="models"
+        onItemSelected={() => undefined}
+      />
+    );
+
+    await page.getByRole('textbox').click();
+    await expect.element(page.getByRole('option', { name: 'Models' })).toBeInTheDocument();
+    expect(page.getByRole('option', { name: 'Images' }).elements()).toHaveLength(0);
+  });
+
+  test('control: with the entry shown, AutocompleteSearch offers Images', async () => {
+    renderWithProviders(<AutocompleteSearch />);
+    await selectedCategory().click();
+    await expect.element(page.getByRole('option', { name: 'Images' })).toBeInTheDocument();
+    expect(page.getByRole('option', { name: 'Images' }).elements()).toHaveLength(1);
+  });
+
+  test('control: with the entry shown, QuickSearchDropdown offers Images', async () => {
+    renderWithProviders(
+      <QuickSearchDropdown
+        supportedIndexes={['models', 'images']}
+        startingIndex="models"
+        onItemSelected={() => undefined}
+      />
+    );
+    await page.getByRole('textbox').click();
+    await expect.element(page.getByRole('option', { name: 'Images' })).toBeInTheDocument();
+    expect(page.getByRole('option', { name: 'Images' }).elements()).toHaveLength(1);
   });
 });

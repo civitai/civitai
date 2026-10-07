@@ -206,11 +206,11 @@ const QuickSearchDropdownInner = ({
     buildMinorExclusionFilter({ targetIndex, addons, currentUser }),
   ].filter(isDefined);
 
-  // Images stays selectable while image search is retired, but the images_v6 index is empty and
-  // declares no filterable attributes — so swap to a client that returns nothing (no request to an
-  // index that errors on a filtered query) and show a notice.
-  // 🔴 The index EXISTS, and `imageSearchEntry` offers the Images target to every user, so this
-  // swap is the only thing keeping a public query off it. Do not remove it as dead code.
+  // Images is selectable while image search is retired whenever `imageSearchEntry` offers it, but
+  // the images_v6 index is empty and declares no filterable attributes — so swap to a client that
+  // returns nothing (no request to an index that errors on a filtered query) and show a notice.
+  // 🔴 The index EXISTS, and whenever `imageSearchEntry` offers the Images target this swap is the
+  // only thing keeping a public query off it. Do not remove it as dead code.
   const imageSearchMaintenance = targetIndex === 'images' && !features.imageSearch;
 
   // The options the selector OFFERS: what the caller declared, narrowed by feature flag. Computed
