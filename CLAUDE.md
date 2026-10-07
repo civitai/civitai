@@ -124,7 +124,8 @@ anything committed counts as disclosed and must be fixed and rotated.
    completed a tracked item.
 
 **Every change to `main` goes through a PR** — never push to `main` directly. The one exception is the
-version-bump commit a release script pushes (see Releases above).
+version-bump commit a release script (`release[:minor|:major]`, `release:<app>`) pushes, run only with
+explicit user approval.
 
 **Never stack PRs.** Base every PR on the integration branch (`main` or a `feat/...` branch), never on
 another open PR's branch — a squash-merged parent doesn't retarget the child, and its changes go missing.
