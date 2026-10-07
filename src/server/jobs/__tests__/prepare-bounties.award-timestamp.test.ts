@@ -1,11 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { executedStatements, mockCreateBuzzTransactionMany, mockQueueUpdate } = vi.hoisted(() => {
+const {
+  executedStatements,
+  mockCreateBuzzTransactionMany,
+  mockQueueUpdate,
+  mockSettle,
+  mockRetry,
+} = vi.hoisted(() => {
   const executedStatements: string[] = [];
   return {
     executedStatements,
     mockCreateBuzzTransactionMany: vi.fn(),
     mockQueueUpdate: vi.fn(),
+    mockSettle: vi.fn(async () => true),
+    mockRetry: vi.fn(async () => ({ settled: 0 })),
   };
 });
 
@@ -29,8 +37,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/bounty.service', () => ({
-  isBountyTransactionPrefix: () => false,
-  refundBountyBenefactorFunds: vi.fn(async () => []),
+  settleBountyPayout: mockSettle,
+  retryUnsettledBountyPayouts: mockRetry,
 }));
 vi.mock('~/server/search-index', () => ({
   bountiesSearchIndex: { queueUpdate: mockQueueUpdate },
@@ -109,13 +117,24 @@ describe('prepare-bounties auto-award', () => {
     expect(benefactorUpdate).toMatch(/"awardedAt"\s*=\s*NOW\(\)/i);
   });
 
-  it('still completes the bounty and pays the winner', async () => {
+  it('records the award on the bounty and settles its payout', async () => {
     await runPrepareBounties();
 
-    expect(executedStatements.some((sql) => sql.includes('UPDATE "Bounty"'))).toBe(true);
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith([
-      expect.objectContaining({ toAccountId: 7, amount: 500 }),
-    ]);
+    expect(
+      executedStatements.some((sql) =>
+        sql.includes(`"complete" = true, "payoutRecordedAt" = NOW() WHERE b.id = ${BOUNTY_ID}`)
+      )
+    ).toBe(true);
+    expect(mockSettle).toHaveBeenCalledExactlyOnceWith(BOUNTY_ID, { firstAttempt: true });
+  });
+
+  it('logs an award whose payout did not settle, for the retry job to pay', async () => {
+    mockSettle.mockResolvedValueOnce(false);
+    await runPrepareBounties();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ bountyId: BOUNTY_ID }) }),
+      'webhooks'
+    );
   });
 
   it('writes the award under the payout lock, before any Buzz moves', async () => {
@@ -125,7 +144,10 @@ describe('prepare-bounties auto-award', () => {
       order.push('commit');
       return result;
     });
-    mockCreateBuzzTransactionMany.mockImplementationOnce(async () => order.push('award'));
+    mockSettle.mockImplementationOnce(async () => {
+      order.push('award');
+      return true;
+    });
 
     await runPrepareBounties();
 
@@ -140,6 +162,13 @@ describe('prepare-bounties auto-award', () => {
     lockedBounty.complete = true;
     await runPrepareBounties();
     expect(executedStatements).toEqual([]);
-    expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
+    expect(mockSettle).not.toHaveBeenCalled();
+  });
+});
+
+describe('bounty-payout-retry', () => {
+  it('is a registered bounty job that retries unsettled payouts', async () => {
+    await (bountyJobs[1] as unknown as () => Promise<unknown>)();
+    expect(mockRetry).toHaveBeenCalledOnce();
   });
 });

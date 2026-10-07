@@ -2,11 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Hand-listed like prepare-bounties.award-timestamp.test.ts: the job's graph builds buzz, email,
 // search-index and ClickHouse clients at load.
-const { executedStatements, mockCreateBuzzTransactionMany, mockRefund, mockSetLastRun, emails } =
+const { executedStatements, mockCreateBuzzTransactionMany, mockSettle, mockSetLastRun, emails } =
   vi.hoisted(() => ({
     executedStatements: [] as string[],
     mockCreateBuzzTransactionMany: vi.fn(),
-    mockRefund: vi.fn(async () => []),
+    mockSettle: vi.fn(async () => true),
     mockSetLastRun: vi.fn(),
     emails: {
       expired: vi.fn(() => Promise.resolve()),
@@ -36,8 +36,8 @@ vi.mock('~/server/services/buzz.service', () => ({
   refundTransaction: vi.fn(),
 }));
 vi.mock('~/server/services/bounty.service', () => ({
-  isBountyTransactionPrefix: () => false,
-  refundBountyBenefactorFunds: mockRefund,
+  settleBountyPayout: mockSettle,
+  retryUnsettledBountyPayouts: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({ bountiesSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/email/templates', () => ({
@@ -119,14 +119,16 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
     ).toBe(false);
     expect(
       executedStatements.some((sql) =>
-        /"complete" = true, "refunded" = true WHERE b.id = 7/.test(sql)
+        /"complete" = true, "refunded" = true, "payoutRecordedAt" = NOW\(\) WHERE b.id = 7/.test(
+          sql
+        )
       ),
       `expected the refunded claim for bounty 7; executed:\n${executedStatements.join('\n')}`
     ).toBe(true);
-    // A supporter who already awarded an entry keeps that award; only the rest is returned.
-    expect(mockRefund).toHaveBeenCalledWith(
-      expect.objectContaining({ bountyId: 7, currency: 'BUZZ', onlyUnawarded: true })
-    );
+    expect(mockSettle).toHaveBeenCalledWith(7, {
+      firstAttempt: true,
+      refundDescription: 'Reason: Bounty refund, bounty hidden pending review',
+    });
     expect(mockCreateBuzzTransactionMany).not.toHaveBeenCalled();
     expect(emails.refunded).toHaveBeenCalledTimes(1);
     expect(emails.awarded).not.toHaveBeenCalled();
@@ -138,7 +140,7 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
 
     await runPrepareBounties();
 
-    expect(mockRefund).not.toHaveBeenCalled();
+    expect(mockSettle).not.toHaveBeenCalled();
     expect(executedStatements).toEqual([]);
   });
 
@@ -165,10 +167,11 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
 
     await runPrepareBounties();
 
-    expect(mockRefund).not.toHaveBeenCalled();
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledWith([
-      expect.objectContaining({ toAccountId: 7, amount: 500 }),
-    ]);
+    expect(
+      executedStatements.some((sql) => sql.includes('UPDATE "BountyBenefactor"')),
+      `expected the award; executed:\n${executedStatements.join('\n')}`
+    ).toBe(true);
+    expect(mockSettle).toHaveBeenCalledExactlyOnceWith(7, { firstAttempt: true });
   });
 
   it('sends no expiry or reminder email for a hidden bounty', async () => {
@@ -205,7 +208,7 @@ describe('prepare-bounties — one bounty failing', () => {
       expect.objectContaining({ type: 'error', data: expect.objectContaining({ bountyId: 7 }) }),
       'webhooks'
     );
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
+    expect(mockSettle).toHaveBeenCalledExactlyOnceWith(8, { firstAttempt: true });
     expect(mockSetLastRun).toHaveBeenCalled();
   });
 });

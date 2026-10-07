@@ -37,7 +37,9 @@ beforeAll(async () => {
       "poi"          boolean NOT NULL DEFAULT false,
       "availability" "Availability" NOT NULL DEFAULT 'Public',
       "details"      jsonb,
-      "meta"         jsonb
+      "meta"         jsonb,
+      "payoutRecordedAt" timestamp(3),
+      "payoutSettledAt"  timestamp(3)
     );
     INSERT INTO "Bounty" ("id", "userId", "poi", "availability", "details", "meta") VALUES
       (1, 5, true, 'Private', '{"baseModel":"SDXL"}', '${JSON.stringify(OPEN_POI)}'),
@@ -48,7 +50,14 @@ beforeAll(async () => {
 describe('lockBountyForPayout on real rows', () => {
   it('returns meta, so an open text-scan poi flag reads as hidden', async () => {
     const locked = await lockBountyForPayout(tx, 1);
-    expect(locked).toMatchObject({ userId: 5, complete: false, refunded: false, poi: true });
+    expect(locked).toMatchObject({
+      userId: 5,
+      complete: false,
+      refunded: false,
+      poi: true,
+      payoutRecordedAt: null,
+      payoutSettledAt: null,
+    });
     expect(isTextScanPoiHidden(locked!)).toBe(true);
   });
 

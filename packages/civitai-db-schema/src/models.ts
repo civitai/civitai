@@ -3426,6 +3426,8 @@ export interface Bounty {
   poi: boolean;
   complete: boolean;
   refunded: boolean;
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
   availability: Availability;
   nsfwLevel: number;
   moderatorNsfwLevel: number | null;

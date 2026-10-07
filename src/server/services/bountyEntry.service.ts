@@ -4,13 +4,6 @@ import type {
   BountyEntryFileMeta,
   UpsertBountyEntryInput,
 } from '~/server/schema/bounty-entry.schema';
-import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
-import { TransactionType } from '~/shared/constants/buzz.constants';
-import {
-  createBuzzTransaction,
-  createBuzzTransactionMany,
-  getMultiAccountTransactionsByPrefix,
-} from '~/server/services/buzz.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import {
   createEntityImages,
@@ -27,6 +20,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import { settleBountyPayout } from '~/server/services/bounty.service';
 import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 
@@ -255,155 +249,34 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         select: { userId: true },
         where: { awardedToId: null, bountyId: entry.bountyId },
       });
-      if (!unawardedBountyBenefactors) {
-        await tx.bounty.update({ where: { id: entry.bountyId }, data: { complete: true } });
+      await tx.bounty.update({
+        where: { id: entry.bountyId },
+        data: {
+          payoutRecordedAt: new Date(),
+          ...(unawardedBountyBenefactors ? {} : { complete: true }),
+        },
+      });
+      if (!unawardedBountyBenefactors)
         log('info', 'All benefactors have awarded - bounty marked complete');
-      }
 
       return { entry: { ...entry, userId: entry.userId }, benefactor: updatedBenefactor };
     },
     { maxWait: 10000, timeout: 30000 }
   );
 
-  try {
-    await payBountyAward({
-      entryId: id,
-      bountyId: entry.bountyId,
-      winnerUserId: entry.userId,
-      benefactor,
-      log,
-    });
-  } catch (e) {
-    // The award is committed and the Buzz is owed: `repayBountyAward` resends it under the same
-    // externalTransactionId, so a payment that did land is not duplicated.
-    await log('error', 'Award committed but the Buzz payout failed', {
+  if (!(await settleBountyPayout(entry.bountyId, { firstAttempt: true })))
+    await log('error', 'Award recorded but the Buzz payout failed; the retry job pays it', {
       bountyId: entry.bountyId,
       amount: benefactor.unitAmount,
-      error: e instanceof Error ? e.message : String(e),
     });
-    throw e;
-  }
 
-  await log('info', 'Award bounty entry completed successfully', {
+  await log('info', 'Award bounty entry completed', {
     awardedAmount: benefactor.unitAmount,
     currency: benefactor.currency,
   });
 
   return benefactor;
 };
-
-export async function repayBountyAward({
-  entryId,
-  benefactorUserId,
-}: {
-  entryId: number;
-  benefactorUserId: number;
-}) {
-  const entry = await dbWrite.bountyEntry.findUniqueOrThrow({
-    where: { id: entryId },
-    select: { id: true, bountyId: true, userId: true },
-  });
-  if (!entry.userId) throw throwBadRequestError('Entry has no user.');
-
-  const benefactor = await dbWrite.bountyBenefactor.findUnique({
-    where: { bountyId_userId: { bountyId: entry.bountyId, userId: benefactorUserId } },
-  });
-  if (!benefactor || benefactor.awardedToId !== entry.id)
-    throw throwBadRequestError('This supporter has not awarded this entry.');
-  // Legacy rows are paid without an externalTransactionId, so a second payment would not be
-  // deduplicated by the Buzz service.
-  if (!benefactor.buzzTransactionId?.length)
-    throw throwBadRequestError('Legacy award without transaction ids: reconcile by hand.');
-
-  const logData = { entryId, userId: benefactorUserId, bountyId: entry.bountyId };
-  const log = (type: 'info' | 'error', message: string, extra: Record<string, unknown> = {}) =>
-    logToAxiom({ ...logData, name: 'bounty-award', type, message, ...extra }).catch(() => null);
-
-  await payBountyAward({
-    entryId,
-    bountyId: entry.bountyId,
-    winnerUserId: entry.userId,
-    benefactor,
-    log,
-  });
-  await log('info', 'Award payout re-sent', { amount: benefactor.unitAmount });
-  return { bountyId: entry.bountyId, winnerUserId: entry.userId, amount: benefactor.unitAmount };
-}
-
-async function payBountyAward({
-  entryId,
-  bountyId,
-  winnerUserId,
-  benefactor,
-  log,
-}: {
-  entryId: number;
-  bountyId: number;
-  winnerUserId: number;
-  benefactor: { currency: Currency; unitAmount: number; buzzTransactionId: string[] };
-  log: (type: 'info' | 'error', message: string, extra?: Record<string, unknown>) => unknown;
-}) {
-  if (benefactor.currency !== Currency.BUZZ) return;
-
-  if (!benefactor.buzzTransactionId || benefactor.buzzTransactionId.length === 0) {
-    // Legacy rows carry no transaction ids.
-    await createBuzzTransaction({
-      fromAccountId: 0,
-      toAccountId: winnerUserId,
-      amount: benefactor.unitAmount,
-      type: TransactionType.Bounty,
-      description: 'Reason: Bounty entry has been awarded!',
-      details: { entityId: bountyId, entityType: 'Bounty' },
-    });
-    log('info', 'Single buzz transaction created (no recorded transaction IDs)', {
-      amount: benefactor.unitAmount,
-    });
-    return;
-  }
-
-  const txResults = await Promise.allSettled(
-    benefactor.buzzTransactionId.map((txId) => getMultiAccountTransactionsByPrefix(txId))
-  );
-  txResults.forEach((result, index) => {
-    if (result.status === 'rejected')
-      log('error', 'Transaction lookup failed', {
-        txId: benefactor.buzzTransactionId[index],
-        error: result.reason,
-      });
-  });
-
-  const awardedAmounts = txResults.reduce<Partial<Record<BuzzAccountType, number>>>(
-    (acc, result) => {
-      if (result.status === 'fulfilled' && result.value) {
-        result.value.forEach((t) => {
-          const accountType = t.accountType as BuzzAccountType;
-          acc[accountType] = (acc[accountType] || 0) + t.amount;
-        });
-      }
-      return acc;
-    },
-    {}
-  );
-  if (Object.keys(awardedAmounts).length === 0)
-    throw throwBadRequestError('No valid transactions found for multi-account award');
-
-  await createBuzzTransactionMany(
-    Object.keys(awardedAmounts).map((accountType) => ({
-      fromAccountId: 0,
-      toAccountId: winnerUserId,
-      toAccountType: accountType as BuzzAccountType,
-      amount: awardedAmounts[accountType as BuzzAccountType] || 0,
-      type: TransactionType.Bounty,
-      description: 'Reason: Bounty entry has been awarded!',
-      details: { entityId: bountyId, entityType: 'Bounty' },
-      externalTransactionId: `bounty-award-${entryId}-${accountType}`,
-    }))
-  );
-  log('info', 'All multi-account buzz transactions created (batched)', {
-    transactionIdCount: benefactor.buzzTransactionId.length,
-    accountTypes: Object.keys(awardedAmounts).length,
-  });
-}
 
 export const getBountyEntryFilteredFiles = async ({
   id,
@@ -489,6 +362,8 @@ export const deleteBountyEntry = async ({
       bounty: {
         select: {
           complete: true,
+          payoutRecordedAt: true,
+          payoutSettledAt: true,
         },
       },
     },
@@ -511,6 +386,16 @@ export const deleteBountyEntry = async ({
       );
     }
   }
+
+  // The winner is read through the award's entry, so an unpaid award is settled before it goes.
+  if (
+    entry.bounty.payoutRecordedAt &&
+    !entry.bounty.payoutSettledAt &&
+    !(await settleBountyPayout(entry.bountyId))
+  )
+    throw throwBadRequestError(
+      'This bounty has a payout still pending, so its entries cannot be deleted yet. Try again later.'
+    );
 
   const deletedBountyEntry = await dbWrite.$transaction(
     async (tx) => {

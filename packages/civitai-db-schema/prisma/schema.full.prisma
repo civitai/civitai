@@ -5639,6 +5639,10 @@ model Bounty {
   poi                     Boolean         @default(false)
   complete                Boolean         @default(false)
   refunded                Boolean         @default(false)
+  /// When the award (or, with `refunded`, the refund) was recorded under the payout lock.
+  payoutRecordedAt        DateTime?
+  /// When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
+  payoutSettledAt         DateTime?
   availability            Availability    @default(Public)
   nsfwLevel               Int             @default(0)
   moderatorNsfwLevel      Int?
