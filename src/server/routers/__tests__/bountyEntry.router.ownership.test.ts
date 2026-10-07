@@ -66,12 +66,17 @@ describe('bountyEntry router: editing an existing entry', () => {
     vi.clearAllMocks();
     mockUpsert.mockResolvedValue({ id: ENTRY_ID });
     mockSubmit.mockResolvedValue({ id: ENTRY_ID });
-    dbMock.dbWrite.bountyEntry.findUnique.mockResolvedValue({ userId: AUTHOR_ID });
+    dbMock.dbWrite.bountyEntry.findUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) => (where.id === ENTRY_ID ? { userId: AUTHOR_ID } : null)) as never);
   });
 
   it("refuses an upsert of someone else's entry", async () => {
     await expect(callerFor(OTHER_ID).upsert(upsertInput as never)).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
+      message: 'You are not authorized to perform this action',
     });
     expect(mockUpsert).not.toHaveBeenCalled();
   });
@@ -79,6 +84,7 @@ describe('bountyEntry router: editing an existing entry', () => {
   it("refuses a submit of someone else's entry", async () => {
     await expect(callerFor(OTHER_ID).submit(submitInput as never)).rejects.toMatchObject({
       code: 'UNAUTHORIZED',
+      message: 'You are not authorized to perform this action',
     });
     expect(mockSubmit).not.toHaveBeenCalled();
   });
