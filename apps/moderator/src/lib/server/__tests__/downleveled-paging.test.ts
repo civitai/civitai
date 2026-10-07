@@ -114,7 +114,7 @@ describe('parseDownleveledCursor', () => {
   });
 
   // A bookmarked pre-fix cursor (a bare timestamp) or a hand-edited one restarts at the first page
-  // rather than reaching ClickHouse as a malformed parameter.
+  // rather than reaching ClickHouse, which errors on some of these and silently clamps others.
   it.each([
     TIED_SECOND,
     `${TIED_SECOND}|`,
