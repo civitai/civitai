@@ -1,5 +1,5 @@
-import { Button } from '@mantine/core';
-import { IconGavel } from '@tabler/icons-react';
+import { Button, Group, Paper, Text } from '@mantine/core';
+import { IconCircleCheck, IconGavel } from '@tabler/icons-react';
 
 export function CrucibleStartJudgingButton({ onClick }: { onClick: () => void }) {
   return (
@@ -23,5 +23,22 @@ export function CrucibleStartJudgingButton({ onClick }: { onClick: () => void })
     >
       Start Judging Now
     </Button>
+  );
+}
+
+export function CrucibleCaughtUpNotice() {
+  return (
+    <Paper className="mb-8 rounded-xl border border-[#373a40] text-center" bg="dark.6" p="lg">
+      <Group justify="center" gap="xs">
+        <IconCircleCheck size={22} className="text-green-400" />
+        <Text fw={600} size="lg">
+          You&apos;re caught up
+        </Text>
+      </Group>
+      <Text c="dimmed" size="sm" mt={4}>
+        You&apos;ve judged everything open to you here. New entries open new pairs until the
+        crucible ends.
+      </Text>
+    </Paper>
   );
 }
