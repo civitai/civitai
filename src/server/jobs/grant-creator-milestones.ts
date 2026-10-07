@@ -1,8 +1,15 @@
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
 import type { ActivityWatermarkStore } from '~/server/services/creator-milestone-activity.service';
 import { runActivityGroup } from '~/server/services/creator-milestone-activity.service';
+import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
 import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
+import type { QueryClickhouse } from '~/server/services/creator-milestone-stored';
+import {
+  loadStoredMilestoneGroups,
+  StoredMilestoneSkip,
+} from '~/server/services/creator-milestone-stored';
 import {
   CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
   creatorJourneyAudienceAmong,
@@ -50,6 +57,32 @@ export function memoizedAudience(evaluate: (userIds: number[]) => Promise<Set<nu
   };
 }
 
+const queryClickhouse: QueryClickhouse = async (query, settings) => {
+  if (!clickhouse) throw new Error('ClickHouse is not configured');
+  const response = await clickhouse.query({
+    query,
+    format: 'JSONEachRow',
+    clickhouse_settings: settings,
+  });
+  return response.json();
+};
+
+const logSkip = (skip: StoredMilestoneSkip) =>
+  log('stored milestone skipped', skip.milestoneKey, skip.reason, skip.code ?? '');
+
+/**
+ * The milestones defined on their own rows. Unreadable definitions (the column not yet migrated, say)
+ * leave the code registry's groups to run alone.
+ */
+async function storedGroups(): Promise<MilestoneDetectorGroup[]> {
+  try {
+    return await loadStoredMilestoneGroups(pgDbWrite, { onSkip: logSkip, queryClickhouse });
+  } catch (e) {
+    log('stored milestone definitions unreadable', (e as { code?: unknown })?.code ?? '');
+    return [];
+  }
+}
+
 // Activity milestones. Score tiers are granted inside update-user-score, the only place scores change.
 export const grantCreatorMilestones = createJob(
   'grant-creator-milestones',
@@ -62,7 +95,8 @@ export const grantCreatorMilestones = createJob(
       creatorJourneyAudienceAmong(pgDbReadLong, userIds)
     );
 
-    for (const group of activityDetectorGroups()) {
+    const groups = [...activityDetectorGroups(), ...(await storedGroups())];
+    for (const group of groups) {
       jobContext.checkIfCanceled();
       try {
         results[group.id] = await runActivityGroup(group, {
@@ -75,6 +109,11 @@ export const grantCreatorMilestones = createJob(
         });
       } catch (e) {
         // Its watermark stays put, so the next run picks up from the last complete one.
+        if (e instanceof StoredMilestoneSkip) {
+          logSkip(e);
+          results[group.id] = { skipped: e.reason };
+          continue;
+        }
         log('group failed', group.id, e);
         failures.push(group.id);
       }

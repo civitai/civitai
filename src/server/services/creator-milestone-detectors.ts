@@ -1,3 +1,4 @@
+import type { AugmentedPool } from '~/server/db/db-helpers';
 import type { MilestoneRegistryEntry } from '~/server/services/creator-milestone-registry';
 import {
   creatorMilestoneRegistry,
@@ -6,13 +7,7 @@ import {
 
 type ActivityEntry = Exclude<MilestoneRegistryEntry, { detector: 'scoreSnapshot' }>;
 
-/**
- * One set-based query per group of keys that share a detector, params, launch date and silence. It
- * selects "userId", "milestoneKey" and "achievedAt" (NULL when the moment is unknown) for every key
- * a user has reached but does not hold. `keys` and `users` are SQL placeholders; `users` narrows the
- * scan to those user ids, and NULL means everyone.
- */
-export type MilestoneDetectorGroup = {
+type DetectorGroupBase = {
   id: string;
   /** The group's identity without its silence, so toggling silence keeps one watermark row. */
   watermarkId: string;
@@ -21,8 +16,32 @@ export type MilestoneDetectorGroup = {
   silent: boolean;
   /** Whether "achievedAt" is the real moment. Without it, a crossing cannot be dated. */
   timed: boolean;
+  /** Anything beyond the keys and thresholds that changes what the group grants. */
+  fingerprint?: string;
+};
+
+/**
+ * One set-based query per group of keys that share a detector, params, launch date and silence. It
+ * selects "userId", "milestoneKey" and "achievedAt" (NULL when the moment is unknown) for every key
+ * a user has reached but does not hold. `keys` and `users` are SQL placeholders; `users` narrows the
+ * scan to those user ids, and NULL means everyone.
+ */
+export type SqlDetectorGroup = DetectorGroupBase & {
   sql: (placeholders: { keys: string; users: string }) => string;
 };
+
+export type MilestoneCandidateRow = {
+  userId: number;
+  milestoneKey: string;
+  achievedAt: Date | null;
+};
+
+/** A group whose candidates are found once, on the read pool, and only inserted on the writer. */
+export type RowDetectorGroup = DetectorGroupBase & {
+  candidates: (readPg: AugmentedPool) => Promise<MilestoneCandidateRow[]>;
+};
+
+export type MilestoneDetectorGroup = SqlDetectorGroup | RowDetectorGroup;
 
 const notHeld = (user: string) => `NOT EXISTS (
     SELECT 1 FROM "UserCreatorMilestone" held
@@ -59,7 +78,7 @@ export const activityValuesSql = `SELECT
     coalesce((SELECT s."reactionCount" FROM (${userMetricSource}) s
       WHERE s."userId" = $1), 0)::int AS reactions`;
 
-function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
+function detectorSql(entry: ActivityEntry): SqlDetectorGroup['sql'] {
   switch (entry.detector) {
     // The Nth item still published is dated by its own publishedAt.
     case 'publishedCount':
@@ -98,8 +117,8 @@ function detectorSql(entry: ActivityEntry): MilestoneDetectorGroup['sql'] {
 /** The registry's activity keys, grouped so each group is one query. Score tiers run in their own job. */
 export function activityDetectorGroups(
   registry: Record<string, MilestoneRegistryEntry> = creatorMilestoneRegistry
-): MilestoneDetectorGroup[] {
-  const groups = new Map<string, MilestoneDetectorGroup>();
+): SqlDetectorGroup[] {
+  const groups = new Map<string, SqlDetectorGroup>();
   for (const [key, entry] of Object.entries(registry)) {
     if (entry.detector === 'scoreSnapshot') continue;
     const watermarkId = [

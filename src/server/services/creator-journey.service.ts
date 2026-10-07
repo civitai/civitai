@@ -39,13 +39,14 @@ type MilestoneDefinition = {
  */
 export function maskUnearnedMilestone<T extends MilestoneDefinition>(
   milestone: T,
-  earned: boolean
+  earned: boolean,
+  slot: string
 ) {
   if (!milestone.hidden || earned) return milestone;
-  // Keys follow `<track>:<name>`, so the key would give the name away.
+  // Keys can name the milestone, so a masked one is keyed by its place in the list it is shown in.
   return {
     ...milestone,
-    key: `hidden:${milestone.threshold ?? 'unranked'}`,
+    key: `hidden:${slot}`,
     name: '???',
     description: null,
   };
@@ -79,8 +80,8 @@ function visibleBadgeUrl(milestone: DefinitionWithArt, visible: MilestoneDefinit
   return (milestone.cosmetic?.data as BadgeCosmetic['data'] | null)?.url ?? null;
 }
 
-function toTier(milestone: DefinitionWithArt, earned: boolean): CreatorScoreTier {
-  const visible = maskUnearnedMilestone(milestone, earned);
+function toTier(milestone: DefinitionWithArt, earned: boolean, index: number): CreatorScoreTier {
+  const visible = maskUnearnedMilestone(milestone, earned, `tier-${index}`);
   const badgeUrl = visibleBadgeUrl(milestone, visible);
   return {
     key: visible.key,
@@ -94,7 +95,7 @@ function toTier(milestone: DefinitionWithArt, earned: boolean): CreatorScoreTier
 /** The live unlocks and the score tiers, for anyone. Hidden tiers are masked: nobody has earned them here. */
 export async function getCreatorScoreLadder() {
   const [unlocks, tiers] = await Promise.all([getCreatorScoreUnlocks(), getScoreTierDefinitions()]);
-  return { unlocks, tiers: tiers.map((tier) => toTier(tier, false)) };
+  return { unlocks, tiers: tiers.map((tier, index) => toTier(tier, false, index)) };
 }
 
 const activityMeasures = new Map(
@@ -121,11 +122,11 @@ export function buildActivityProgress(
   values: ActivityValues
 ) {
   const milestones = definitions
-    .flatMap((definition) => {
+    .flatMap((definition, index) => {
       const measure = activityMeasures.get(definition.key);
       if (!measure || definition.threshold == null) return [];
       const earned = held.has(definition.key);
-      const visible = maskUnearnedMilestone(definition, earned);
+      const visible = maskUnearnedMilestone(definition, earned, `activity-${index}`);
       return [
         {
           key: visible.key,
@@ -156,33 +157,73 @@ export function buildActivityProgress(
   return { milestones, closestNext };
 }
 
+/**
+ * Hidden milestones outside the score and activity sections. An unearned one shows its hint and
+ * nothing that would tell it apart from the others.
+ */
+export function buildSecretMilestones(
+  definitions: DefinitionWithArt[],
+  held: Map<string, Date | null>
+) {
+  return definitions.map((definition, index) => {
+    const earned = held.has(definition.key);
+    const visible = maskUnearnedMilestone(definition, earned, `secret-${index}`);
+    return {
+      key: visible.key,
+      name: visible.name,
+      description: visible.description,
+      hint: visible.hint,
+      badgeUrl: visibleBadgeUrl(definition, visible),
+      earned,
+      achievedAt: held.get(definition.key) ?? null,
+    };
+  });
+}
+
 export async function getCreatorJourney(userId: number) {
-  const [user, unlocks, tierDefinitions, achievements, activityDefinitions, activityValues] =
-    await Promise.all([
-      dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } }),
-      getCreatorScoreUnlocks(),
-      getScoreTierDefinitions(),
-      dbRead.userCreatorMilestone.findMany({
-        where: { userId },
-        select: { achievedAt: true, seenAt: true, milestone: { select: milestoneSelect } },
-        orderBy: { achievedAt: 'desc' },
-      }),
-      dbRead.creatorMilestone.findMany({
-        where: { key: { in: [...activityMeasures.keys()] } },
-        select: withArt,
-      }),
-      getActivityValues(userId),
-    ]);
+  const [
+    user,
+    unlocks,
+    tierDefinitions,
+    achievements,
+    activityDefinitions,
+    activityValues,
+    secretDefinitions,
+  ] = await Promise.all([
+    dbRead.user.findUnique({ where: { id: userId }, select: { meta: true } }),
+    getCreatorScoreUnlocks(),
+    getScoreTierDefinitions(),
+    dbRead.userCreatorMilestone.findMany({
+      where: { userId },
+      select: { achievedAt: true, seenAt: true, milestone: { select: milestoneSelect } },
+      orderBy: { achievedAt: 'desc' },
+    }),
+    dbRead.creatorMilestone.findMany({
+      where: { key: { in: [...activityMeasures.keys()] } },
+      select: withArt,
+    }),
+    getActivityValues(userId),
+    dbRead.creatorMilestone.findMany({
+      where: {
+        hidden: true,
+        track: { not: 'score' },
+        key: { notIn: [...activityMeasures.keys()] },
+      },
+      select: withArt,
+      orderBy: [{ sortOrder: 'asc' }, { key: 'asc' }],
+    }),
+  ]);
 
   const rawScores = (user?.meta as { scores?: Partial<UserScoreMeta> } | null)?.scores ?? null;
   const observedAt = new Map(
     achievements.map((a) => [a.milestone.key, achievedAtIsObserved(a) ? a.achievedAt : null])
   );
   const earnedKeys = new Set(observedAt.keys());
-  const tiers = tierDefinitions.map((tier) => toTier(tier, earnedKeys.has(tier.key)));
+  const tiers = tierDefinitions.map((tier, index) => toTier(tier, earnedKeys.has(tier.key), index));
   const activity = buildActivityProgress(activityDefinitions, observedAt, activityValues);
+  const secrets = buildSecretMilestones(secretDefinitions, observedAt);
   const badgeUrlByKey = new Map(
-    [...tiers, ...activity.milestones].map((m) => [m.key, m.badgeUrl ?? null])
+    [...tiers, ...activity.milestones, ...secrets].map((m) => [m.key, m.badgeUrl ?? null])
   );
 
   return {
@@ -205,6 +246,7 @@ export async function getCreatorJourney(userId: number) {
       achievedAt: observedAt.get(milestone.key) ?? null,
     })),
     activity,
+    secrets,
   };
 }
 

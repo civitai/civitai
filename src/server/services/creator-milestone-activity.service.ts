@@ -1,7 +1,10 @@
 import { chunk } from 'lodash-es';
 import { NotificationCategory } from '~/server/common/enums';
 import type { AugmentedPool } from '~/server/db/db-helpers';
-import type { MilestoneDetectorGroup } from '~/server/services/creator-milestone-detectors';
+import type {
+  MilestoneCandidateRow,
+  MilestoneDetectorGroup,
+} from '~/server/services/creator-milestone-detectors';
 import { joinMilestoneGrantableUserSql } from '~/server/services/creator-milestone-exclusions';
 import type { MilestoneGrant } from '~/server/services/creator-milestone-grant.service';
 import { grantMilestones } from '~/server/services/creator-milestone-grant.service';
@@ -30,11 +33,15 @@ export const watermarkKeyFor = (group: Pick<MilestoneDetectorGroup, 'watermarkId
  * change newly qualifies. It lives in the value, not the key, so reverting a change cannot revive an
  * old row.
  */
-export const definitionsFingerprint = (definitions: MilestoneDefinitionRow[], silent: boolean) =>
+export const definitionsFingerprint = (
+  definitions: MilestoneDefinitionRow[],
+  silent: boolean,
+  extra?: string
+) =>
   `${silent ? 'silent' : 'announced'}|${definitions
     .map((d) => `${d.key}=${d.threshold}`)
     .sort()
-    .join(',')}`;
+    .join(',')}${extra ? `|${extra}` : ''}`;
 
 /**
  * The earliest achievedAt that is announced, or null when nothing in this run is. A run can only
@@ -57,11 +64,30 @@ export function announceFromFor(
 }
 
 // A NULL achievedAt is undated, so it is announced whenever anything is.
-const SILENT_SQL = `CASE
-    WHEN $3::timestamptz IS NULL THEN true
+const silentSql = (announceFrom: string) => `CASE
+    WHEN ${announceFrom}::timestamptz IS NULL THEN true
     WHEN c."achievedAt" IS NULL THEN false
-    ELSE c."achievedAt" < ($3::timestamptz AT TIME ZONE 'UTC')
+    ELSE c."achievedAt" < (${announceFrom}::timestamptz AT TIME ZONE 'UTC')
   END`;
+
+const candidateRowsSql = (rows: string, users: string) => `SELECT r."userId", r."milestoneKey",
+    r."achievedAt" AT TIME ZONE 'UTC' AS "achievedAt"
+  FROM jsonb_to_recordset(${rows}::jsonb)
+    AS r("userId" int, "milestoneKey" text, "achievedAt" timestamptz)
+  WHERE ${users}::int[] IS NULL OR r."userId" = ANY(${users}::int[])`;
+
+/** What a group would grant to `users` (NULL for everyone), and the parameters that SQL reads. */
+function groupCandidates(
+  group: MilestoneDetectorGroup,
+  rows: MilestoneCandidateRow[] | null,
+  users: number[] | null
+) {
+  if ('sql' in group)
+    return { sql: group.sql({ keys: '$1', users: '$2' }), params: [group.keys, users] };
+  const wanted = users && new Set(users);
+  const chosen = (rows ?? []).filter((row) => !wanted || wanted.has(row.userId));
+  return { sql: candidateRowsSql('$1', '$2'), params: [JSON.stringify(chosen), users] };
+}
 
 export type ActivityGroupResult = {
   candidates: number;
@@ -98,16 +124,23 @@ export async function runActivityGroup(
   if (missing.length) throw new Error(`No CreatorMilestone row for ${missing.join(', ')}`);
 
   const watermarkKey = watermarkKeyFor(group);
-  const fingerprint = definitionsFingerprint(definitions, group.silent);
+  const fingerprint = definitionsFingerprint(definitions, group.silent, group.fingerprint);
   const stored = await store.get(watermarkKey);
   const previous = stored?.definitions === fingerprint ? stored : null;
   const announceFrom = announceFromFor(group, previous, gated);
 
-  const candidateQuery = await readPg.cancellableQuery<{ userId: number }>(
-    `SELECT DISTINCT c."userId" FROM (${group.sql({ keys: '$1', users: '$2' })}) c`,
-    [group.keys, null]
-  );
-  const candidates = (await candidateQuery.result()).map((row) => row.userId);
+  let rows: MilestoneCandidateRow[] | null = null;
+  let candidates: number[];
+  if ('sql' in group) {
+    const candidateQuery = await readPg.cancellableQuery<{ userId: number }>(
+      `SELECT DISTINCT c."userId" FROM (${group.sql({ keys: '$1', users: '$2' })}) c`,
+      [group.keys, null]
+    );
+    candidates = (await candidateQuery.result()).map((row) => row.userId);
+  } else {
+    rows = await group.candidates(readPg);
+    candidates = [...new Set(rows.map((row) => row.userId))];
+  }
   const users = gated ? [...(await deps.audienceAmong(candidates))] : candidates;
 
   let granted = 0;
@@ -117,11 +150,12 @@ export async function runActivityGroup(
     chunkSize
   )) {
     deps.checkIfCanceled?.();
+    const chunkCandidates = groupCandidates(group, rows, userChunk);
     const grants = await grantMilestones(writePg, {
       sql: `
-        SELECT c."userId", c."milestoneKey", c."achievedAt", ${SILENT_SQL} AS silent
-        FROM (${group.sql({ keys: '$1', users: '$2' })}) c`,
-      params: [group.keys, userChunk, announceFrom?.toISOString() ?? null],
+        SELECT c."userId", c."milestoneKey", c."achievedAt", ${silentSql('$3')} AS silent
+        FROM (${chunkCandidates.sql}) c`,
+      params: [...chunkCandidates.params, announceFrom?.toISOString() ?? null],
     });
     granted += grants.length;
     let fresh = grants.filter((grant) => !grant.silent);
@@ -159,13 +193,15 @@ export async function notifyMilestonesReached(grants: MilestoneGrant[]) {
 export async function previewActivityGrants(pg: AugmentedPool, groups: MilestoneDetectorGroup[]) {
   const preview: { group: string; users: number; rows: number }[] = [];
   for (const group of groups) {
+    const rows = 'sql' in group ? null : await group.candidates(pg);
+    const candidates = groupCandidates(group, rows, null);
     const query = await pg.cancellableQuery<{ users: number; rows: number }>(
       `
       SELECT count(DISTINCT c."userId")::int AS users, count(*)::int AS rows
-      FROM (${group.sql({ keys: '$1', users: '$2' })}) c
+      FROM (${candidates.sql}) c
       ${joinMilestoneGrantableUserSql('u', 'c."userId"')}
       `,
-      [group.keys, null]
+      candidates.params
     );
     const [row] = await query.result();
     preview.push({ group: group.id, ...row });
