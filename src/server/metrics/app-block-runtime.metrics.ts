@@ -254,7 +254,11 @@ export type AppBlockEndpoint =
   // Merging them would put the checkout path's p95 behind the volume of a
   // read every app makes on mount.
   | 'goods_purchase'
-  | 'entitlements';
+  | 'entitlements'
+  // App Store sub-listings (store items): the two writes and the author's own read.
+  | 'sub_listings_upsert'
+  | 'sub_listings_withdraw'
+  | 'sub_listings_mine';
 // NOTE ON THE BUZZ SELF-READS — one of the four is back, three are not.
 //
 // 'buzz' IS in the union above, because `src/pages/api/v1/blocks/buzz.ts` exists

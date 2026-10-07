@@ -1487,6 +1487,11 @@ const CONSENT_EXEMPT_SCOPES = new Set([
   // consent to. Its sibling `goods:purchase:self` is deliberately ABSENT — money
   // out of the viewer's balance always needs an explicit grant.
   'goods:read:self',
+  // apps:store:items:write — publishes the viewer's OWN app items as store cards. Gated per
+  // call by the parent's enabled switch, the shared-write trust check, item authorship, text
+  // safety, rate limits and moderator approval; a consent gate here would only drop the
+  // scope from tokens.
+  'apps:store:items:write',
 ]);
 
 export function partitionByConsent(

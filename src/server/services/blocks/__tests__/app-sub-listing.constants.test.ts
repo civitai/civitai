@@ -111,7 +111,8 @@ describe('ratings', () => {
     expect(isRatingAtLeastAsStrict('pg13', 'pg')).toBe(true);
     expect(isRatingAtLeastAsStrict('pg', 'pg')).toBe(true);
     expect(isRatingAtLeastAsStrict('g', 'pg13')).toBe(false);
-    expect(isRatingAtLeastAsStrict(null, 'r')).toBe(false);
+    // Unset inherits the parent's rating; the card shows the stricter of the two.
+    expect(isRatingAtLeastAsStrict(null, 'r')).toBe(true);
     expect(isRatingAtLeastAsStrict(null, null)).toBe(true);
     expect(isRatingAtLeastAsStrict('x', null)).toBe(true);
   });

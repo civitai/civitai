@@ -84,6 +84,7 @@ const SCOPE_ACTION_LABELS: Record<string, string> = {
   'social:tip:self': 'Tip',
   'goods:read:self': 'Read owned items',
   'goods:purchase:self': 'Buy an item',
+  'apps:store:items:write': 'Listed an item in the App Store',
 };
 
 export function humaniseScopeInvocation(scope: string, endpoint?: string): string {

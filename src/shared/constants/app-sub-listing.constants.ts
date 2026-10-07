@@ -56,12 +56,15 @@ export function isAppSubListingContentRating(value: unknown): value is AppSubLis
   );
 }
 
-/** A child may be as mature as its parent or more, never less. */
+/**
+ * A child may be as mature as its parent or more, never less. An unset child rating inherits
+ * the parent's (the card is shown under {@link effectiveSubListingRating}).
+ */
 export function isRatingAtLeastAsStrict(
   child: string | null | undefined,
   parent: string | null | undefined
 ): boolean {
-  if (child == null) return parent == null || ratingRank(parent) === 0;
+  if (child == null) return true;
   const childRank = ratingRank(child);
   const parentRank = ratingRank(parent);
   return childRank >= 0 && parentRank >= 0 && childRank >= parentRank;

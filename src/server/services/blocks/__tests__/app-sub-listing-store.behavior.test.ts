@@ -9,15 +9,16 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
-vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
-vi.mock('~/server/utils/cache-helpers', () => ({
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof CacheHelpers>()),
   queryCache:
     () =>
     async (sql: unknown): Promise<unknown[]> =>
       dbMock.dbRead.$queryRaw(sql),
   bustCacheTag: vi.fn(async () => undefined),
 }));
+import type * as CacheHelpers from '~/server/utils/cache-helpers';
+import type { ListingSort } from '~/server/schema/blocks/app-listing-read.schema';
 // The beta columns are a separate manual-apply concern; these stand-in tables do not carry them.
 vi.mock('~/server/services/blocks/app-listing-beta.service', async (importOriginal) => ({
   ...(await importOriginal<typeof BetaService>()),
@@ -89,7 +90,42 @@ dbMock.dbRead.appListing.findMany.mockImplementation(
   }
 );
 
+// The moderator write path is Prisma; bridge the two calls it makes onto the same database so
+// an approved edit is applied by the real service and then read back by the real store SQL.
+const snake = (k: string) => k.replace(/[A-Z]/g, (c) => `_${c.toLowerCase()}`);
+const camel = (k: string) => k.replace(/_([a-z])/g, (_m, c: string) => c.toUpperCase());
+dbMock.dbWrite.appSubListing.findUnique.mockImplementation(
+  async (args: { where: { id: string } }) => {
+    const { rows } = await holder.db.query<Record<string, unknown>>(
+      'SELECT * FROM app_sub_listings WHERE id = $1',
+      [args.where.id]
+    );
+    const row = rows[0];
+    return row ? Object.fromEntries(Object.entries(row).map(([k, v]) => [camel(k), v])) : null;
+  }
+);
+dbMock.dbWrite.appSubListing.updateMany.mockImplementation(
+  async (args: { where: Record<string, unknown>; data: Record<string, unknown> }) => {
+    const values: unknown[] = [];
+    const set = Object.entries(args.data).map(([k, v]) => {
+      values.push(v);
+      return `${snake(k)} = $${values.length}`;
+    });
+    const where = Object.entries(args.where).map(([k, v]) => {
+      if (v === null) return `${snake(k)} IS NULL`;
+      values.push(v);
+      return `${snake(k)} = $${values.length}`;
+    });
+    const res = await holder.db.query(
+      `UPDATE app_sub_listings SET ${set.join(', ')} WHERE ${where.join(' AND ')}`,
+      values
+    );
+    return { count: res.affectedRows ?? 0 };
+  }
+);
+
 const { listAvailableListings } = await import('~/server/services/blocks/app-listing.service');
+const { moderateSubListing } = await import('~/server/services/blocks/app-sub-listing.service');
 
 const OWNER = 7001;
 const AUTHOR = 7002;
@@ -164,7 +200,7 @@ const BASE_OPTS = {
   includeSubListings: true,
 } as const satisfies ListOpts;
 
-async function page(opts: Partial<NonNullable<ListOpts>> = {}, sort = 'name' as const) {
+async function page(opts: Partial<NonNullable<ListOpts>> = {}, sort: ListingSort = 'name') {
   const res = await listAvailableListings(
     { kind: 'all', sort, limit: 50 },
     { ...BASE_OPTS, ...opts }
@@ -337,16 +373,44 @@ describe('store catalog with sub-listings, executed', () => {
     }
   });
 
-  it('a staged edit to an approved child does not change the rendered card', async () => {
+  it('a staged edit does not change the rendered card, and approving it does', async () => {
     await holder.db.exec(`
+      INSERT INTO "Image" (id, url, "userId", "nsfwLevel") VALUES (3, 'item-a-v2', ${AUTHOR}, 1);
       UPDATE app_sub_listings
          SET pending_title = 'Gen Alpha v2', pending_tagline = 'second', pending_sub_path = 'g/A2',
-             pending_image_id = NULL, pending_submitted_at = now()
+             pending_image_id = 3, pending_content_rating = 'pg13',
+             pending_submitted_at = date_trunc('milliseconds', now())
        WHERE id = '${CHILD_A}'`);
-    const card = (await page()).find((i) => i.id === CHILD_A);
-    expect(card).toMatchObject({ name: 'Gen Alpha', tagline: 'first', coverUrl: 'item-a' });
-    expect(card && 'runHref' in card && card.runHref).toBe(
-      `/apps/run/custom-generators/g/A?sl=${CHILD_A}`
+    const card = async () => (await page()).find((i) => i.id === CHILD_A);
+
+    expect(await card()).toMatchObject({
+      name: 'Gen Alpha',
+      tagline: 'first',
+      coverUrl: 'item-a',
+      contentRating: 'pg',
+      runHref: `/apps/run/custom-generators/g/A?sl=${CHILD_A}`,
+    });
+
+    await moderateSubListing({
+      input: { id: CHILD_A, action: 'approve-edit' },
+      moderatorId: OWNER,
+    });
+
+    expect(await card()).toMatchObject({
+      name: 'Gen Alpha v2',
+      tagline: 'second',
+      coverUrl: 'item-a-v2',
+      contentRating: 'pg13',
+      runHref: `/apps/run/custom-generators/g/A2?sl=${CHILD_A}`,
+    });
+    const { rows } = await holder.db.query<Record<string, unknown>>(
+      `SELECT status, pending_submitted_at, moderated_by_id FROM app_sub_listings WHERE id = $1`,
+      [CHILD_A]
     );
+    expect(rows[0]).toEqual({
+      status: 'approved',
+      pending_submitted_at: null,
+      moderated_by_id: OWNER,
+    });
   });
 });
