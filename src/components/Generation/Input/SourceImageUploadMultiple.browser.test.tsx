@@ -296,6 +296,7 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
 /** Every observation of the pending flag and every value write, in order. */
 type Event = { kind: 'pending'; on: boolean } | { kind: 'value'; count: number };
 let events: Event[] = [];
+let lastValue: ImageValue[] = [];
 
 /** Samples the flag on every render, the way WhatIfProvider reads it. */
 function PendingProbe() {
@@ -317,6 +318,7 @@ function PendingHarness({
     setValue((prev) => {
       if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
       events.push({ kind: 'value', count: next.length });
+      lastValue = next;
       return next;
     });
   return (
@@ -355,6 +357,7 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
 
   beforeEach(() => {
     events = [];
+    lastValue = [];
     uploads = [];
     useImagesUploadingStore.setState({ uploading: [], verifying: [] });
     // Record every store change too, so a gap no component re-rendered for is still seen.
@@ -466,7 +469,7 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
     mocks.dialogTrigger.mock.calls[0][0].props.onCancel();
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
   });
-  test('confirming a crop with nothing to upload turns it off', async () => {
+  test('confirming a crop with nothing to upload keeps the image and turns it off', async () => {
     // An already-uploaded image confirmed uncropped needs no upload, so nothing starts its card.
     mocks.getImageDimensions.mockResolvedValue({ width: 600, height: 2000 });
     renderWithProviders(<PendingHarness aspectRatios={['1:1']} layout="url-input" />);
@@ -482,5 +485,9 @@ describe('SourceImageUploadMultiple — the pending flag the generator waits on'
     await onConfirm([{ src: images[0].url }]);
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    // The already-uploaded image is kept as it is, not dropped with its card.
+    expect(lastValue).toEqual([
+      { url: 'https://orchestration.civitai.com/source.jpg', width: 600, height: 2000 },
+    ]);
   });
 });

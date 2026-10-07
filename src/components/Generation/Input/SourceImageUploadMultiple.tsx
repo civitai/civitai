@@ -640,8 +640,8 @@ export function SourceImageUploadMultiple({
   }
 
   // Open crop modal with already-dimensioned images. pending are the cards that
-  // need orchestrator upload. In slots mode their images are already in value
-  // (eagerly set); non-slot picks are not in value until their upload lands.
+  // need orchestrator upload: non-slot picks, which are not in value until their
+  // upload lands. In slots mode it is empty (slot picks go through handleSlotUpload).
   function openCropModal(
     images: { url: string; width: number; height: number; aspectRatio: number }[],
     pending: UploadCard[]
@@ -764,8 +764,15 @@ export function SourceImageUploadMultiple({
 
             isCroppingRef.current = false;
           } else {
-            // Nothing to upload, so nothing will start the pending cards: clear them, as the
-            // upload branch above does, rather than leave them queued (holding the generator).
+            // Nothing to upload: every image came back uncropped and is already an orchestrator
+            // url. Pending picks go into the value as they are (what the no-crop path does for the
+            // same url), and their cards are cleared rather than left queued with nothing to start
+            // them, which would hold the generator.
+            const latest = valueRef.current ?? [];
+            const ready = images
+              .filter((img) => pendingUrlSet.has(img.url) && !latest.some((v) => v.url === img.url))
+              .map(({ url, width, height }) => ({ url, width, height }));
+            if (ready.length) onChange?.([...latest, ...ready]);
             setUploads((prev) => prev.filter((x) => !isPendingCard(x)));
             isCroppingRef.current = false;
           }
