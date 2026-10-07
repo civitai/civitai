@@ -2,8 +2,13 @@ import type { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { userBasicCache } from '~/server/redis/caches';
 import { milestoneGrantableUserSql } from '~/server/services/creator-milestone-exclusions';
-import { toLegendStatus } from '~/server/services/creator-journey.service';
-import { achievedAtIsObservedSql } from '~/server/services/creator-milestone-grant.service';
+import { CacheTTL } from '~/server/common/constants';
+import {
+  achievedAtIsObserved,
+  achievedAtIsObservedSql,
+} from '~/server/services/creator-milestone-grant.service';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import type { PrivacySettingsSchema } from '~/server/schema/user-profile.schema';
@@ -73,13 +78,33 @@ export async function getShowcaseRows(
   };
 }
 
-export async function getCreatorShowcase({
-  pg = pgDbRead,
-  now = new Date(),
-}: { pg?: AugmentedPool; now?: Date } = {}) {
-  // Fails closed: an unreadable list would put suppressed accounts on a public page.
-  const excludedUserIds = await getMetricExcludedUserIdsOrThrow();
-  const { newSupernovas, legends } = await getShowcaseRows(pg, { now, excludedUserIds });
+export const SHOWCASE_ROWS_TTL = CacheTTL.hour;
+
+export type ShowcaseSource = { pg?: AugmentedPool; now?: Date };
+
+/**
+ * The showcase page and the Legend profile line's "one of N" both read this one entry, so N always
+ * equals the Hall of Fame's length.
+ */
+export function getCachedShowcaseRows({ pg = pgDbRead, now = new Date() }: ShowcaseSource = {}) {
+  return fetchThroughCache(
+    REDIS_KEYS.CACHES.CREATOR_SHOWCASE_ROWS,
+    async () => {
+      // Fails closed: an unreadable list would put suppressed accounts on a public page.
+      const excludedUserIds = await getMetricExcludedUserIdsOrThrow();
+      return getShowcaseRows(pg, { now, excludedUserIds });
+    },
+    { ttl: SHOWCASE_ROWS_TTL }
+  );
+}
+
+export function toLegendStatus(legend: { achievedAt: Date; seenAt: Date | null }) {
+  const founding = !achievedAtIsObserved(legend);
+  return { founding, since: founding ? null : legend.achievedAt };
+}
+
+export async function getCreatorShowcase(source: ShowcaseSource = {}) {
+  const { newSupernovas, legends } = await getCachedShowcaseRows(source);
   const userIds = [...new Set([...newSupernovas, ...legends].map((row) => row.userId))];
   const [users, profilePictures, cosmetics] = await Promise.all([
     userBasicCache.fetch(userIds),

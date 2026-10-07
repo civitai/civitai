@@ -35,6 +35,10 @@ vi.mock('~/server/redis/caches', async (importOriginal) => {
 import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
 import type * as UserService from '~/server/services/user.service';
 import type * as Caches from '~/server/redis/caches';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { getLegendStatus } from '~/server/services/creator-journey.service';
 import { getCreatorShowcase, getShowcaseRows } from '~/server/services/creator-showcase.service';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -119,8 +123,17 @@ beforeAll(async () => {
   await holder.db.exec(readFileSync(MIGRATION, 'utf8'));
 });
 
+const cache = new Map<string, unknown>();
+
 beforeEach(async () => {
   queried.mockClear();
+  cache.clear();
+  redisMock.redis.packed.get.mockImplementation(async (key: string) => cache.get(key) ?? null);
+  redisMock.redis.packed.set.mockImplementation(async (key: string, value: unknown) => {
+    cache.set(key, value);
+    return 'OK';
+  });
+  redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
   mocks.excluded.mockReset().mockResolvedValue([]);
   await holder.db.exec(`
     TRUNCATE "UserCreatorMilestone", "UserStrike", "UserProfile", "User";
@@ -277,5 +290,43 @@ describe('getCreatorShowcase', () => {
     };
     expect(result.legends).toEqual([{ user, founding: true, since: null }]);
     expect(result.newSupernovas).toEqual([{ user, achievedAt: expect.any(Date) }]);
+  });
+});
+
+describe('one of N', () => {
+  const legendRow = {
+    achievedAt: new Date(LAST_MONTH),
+    seenAt: null,
+    milestone: { cosmeticId: null },
+  };
+
+  beforeEach(() => {
+    dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(legendRow as never);
+    dbMock.dbRead.userProfile.findUnique.mockResolvedValue(null);
+  });
+
+  // Pinned for the CJ lead (2026-10-07): the profile's "one of N" and the Hall of Fame must never
+  // disagree, so both read one cached showcase entry. Counting Legends any other way breaks this.
+  it('is the Hall of Fame length, read from the same cached entry', async () => {
+    await addUser(GOOD);
+    await addUser(OTHER);
+    await addUser(MUTED, { muted: true });
+    for (const id of [GOOD, OTHER, MUTED]) await grant(id, 'score:legend', LAST_MONTH);
+
+    const { legends } = await getCreatorShowcase({ pg, now: NOW });
+    const status = await getLegendStatus(GOOD, { pg, now: NOW });
+
+    expect(legends).toHaveLength(2);
+    expect(status?.oneOf).toBe(legends.length);
+    expect(queried).toHaveBeenCalledTimes(1);
+    expect(cache.has(REDIS_KEYS.CACHES.CREATOR_SHOWCASE_ROWS)).toBe(true);
+  });
+
+  it('gives no count to a Legend the Hall of Fame leaves out', async () => {
+    await addUser(GOOD);
+    await addUser(MUTED, { muted: true });
+    for (const id of [GOOD, MUTED]) await grant(id, 'score:legend', LAST_MONTH);
+
+    expect(await getLegendStatus(MUTED, { pg, now: NOW })).toMatchObject({ oneOf: null });
   });
 });

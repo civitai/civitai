@@ -1,4 +1,12 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({ showcaseRows: vi.fn() }));
+vi.mock('~/server/services/creator-showcase.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CreatorShowcase>()),
+  getCachedShowcaseRows: mocks.showcaseRows,
+}));
+
+import type * as CreatorShowcase from '~/server/services/creator-showcase.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { legendStatusLabel } from '~/components/CreatorJourney/legend-status';
 import { getLegendStatus } from '~/server/services/creator-journey.service';
@@ -17,8 +25,17 @@ const withPrivacy = (privacySettings: Record<string, unknown> | null) =>
     (privacySettings ? { privacySettings } : null) as never
   );
 
+const hallOfFame = (...userIds: number[]) =>
+  mocks.showcaseRows.mockResolvedValue({
+    newSupernovas: [],
+    legends: userIds.map((userId) => ({ userId })),
+  });
+
 describe('getLegendStatus', () => {
-  beforeEach(() => withPrivacy(null));
+  beforeEach(() => {
+    withPrivacy(null);
+    hallOfFame();
+  });
 
   it('is null for a user who is not a Legend', async () => {
     dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(null);
@@ -39,12 +56,12 @@ describe('getLegendStatus', () => {
     dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(
       legendRow(new Date(GRANTED)) as never
     );
-    expect(await getLegendStatus(7)).toEqual({ founding: true, since: null });
+    expect(await getLegendStatus(7)).toEqual({ founding: true, since: null, oneOf: null });
   });
 
   it('dates a Legend whose crossing was observed', async () => {
     dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(legendRow(null) as never);
-    expect(await getLegendStatus(7)).toEqual({ founding: false, since: GRANTED });
+    expect(await getLegendStatus(7)).toEqual({ founding: false, since: GRANTED, oneOf: null });
   });
 
   it.each([
@@ -59,11 +76,54 @@ describe('getLegendStatus', () => {
   it('still shows when the owner hides some other badge', async () => {
     dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(legendRow(null) as never);
     withPrivacy({ hiddenBadgeIds: [LEGEND_BADGE + 1], showBadges: true });
-    expect(await getLegendStatus(7)).toEqual({ founding: false, since: GRANTED });
+    expect(await getLegendStatus(7)).toEqual({ founding: false, since: GRANTED, oneOf: null });
+  });
+});
+
+describe('one of N', () => {
+  beforeEach(() => {
+    mocks.showcaseRows.mockClear();
+    withPrivacy(null);
+    dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(legendRow(null) as never);
+  });
+
+  it('counts the Hall of Fame for a Legend it lists', async () => {
+    hallOfFame(3, 7, 9);
+    expect(await getLegendStatus(7)).toMatchObject({ oneOf: 3 });
+  });
+
+  // Agreed with the CJ lead (2026-10-07): a Legend the Hall of Fame leaves out (muted, struck,
+  // suppressed, leaderboard-excluded) keeps the label, but "one of 3" would claim a place they lack.
+  it('gives no count to a Legend the Hall of Fame leaves out', async () => {
+    hallOfFame(3, 9);
+    expect(await getLegendStatus(7)).toEqual({ founding: false, since: GRANTED, oneOf: null });
+  });
+
+  it('keeps the label when the showcase cannot be read', async () => {
+    mocks.showcaseRows.mockRejectedValue(new Error('clickhouse down'));
+    expect(await getLegendStatus(7)).toEqual({ founding: false, since: GRANTED, oneOf: null });
+  });
+
+  it('does not read the showcase for a profile without a shown Legend badge', async () => {
+    withPrivacy({ showBadges: false });
+    expect(await getLegendStatus(7)).toBeNull();
+    dbMock.dbRead.userCreatorMilestone.findUnique.mockResolvedValue(null);
+    expect(await getLegendStatus(8)).toBeNull();
+    expect(mocks.showcaseRows).not.toHaveBeenCalled();
   });
 });
 
 describe('legendStatusLabel', () => {
+  it('appends the count, grouped', () => {
+    expect(legendStatusLabel({ founding: true, since: null, oneOf: 1708 })).toBe(
+      'Founding Legend · one of 1,708'
+    );
+  });
+
+  it('has no count suffix without a count', () => {
+    expect(legendStatusLabel({ founding: true, since: null, oneOf: null })).toBe('Founding Legend');
+  });
+
   it('reads Founding Legend for a founding Legend', () => {
     expect(legendStatusLabel({ founding: true, since: null })).toBe('Founding Legend');
   });
