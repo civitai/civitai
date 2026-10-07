@@ -142,7 +142,7 @@ describe('reopenGenerationRestrictionsOfRestoredAccount', () => {
     `);
     await db.exec(`UPDATE "UserRestriction" SET "resolvedAt" = now(), "resolvedMessage" = 'x'`);
 
-    await reopenGenerationRestrictionsOfRestoredAccount(DELETED);
+    expect(await reopenGenerationRestrictionsOfRestoredAccount(DELETED)).toBe(1);
 
     const [reopened, ruled, scam] = await rows(DELETED);
     expect(reopened).toEqual(
@@ -164,23 +164,20 @@ describe('reopenGenerationRestrictionsOfRestoredAccount', () => {
     expect(await statuses(BYSTANDER)).toEqual({ 3: 'AccountDeleted' });
   });
 
-  // An overturn of another case, ruled while this one was closed, lifts the mute without seeing it.
-  it('re-mutes an account it reopens a case on', async () => {
-    await db.exec(`UPDATE "User" SET muted = false WHERE id = ${DELETED}`);
+  // Deliberate: the mute can be lifted while the account is deleted (an overturn of another case no
+  // longer sees this one). Reopening then would leave a Pending case on an unmuted account, and
+  // re-muting would silently undo that release on restore, so the case stays closed.
+  it('leaves the cases closed on an account that is no longer muted, and does not re-mute it', async () => {
+    await db.exec(`
+      UPDATE "User" SET muted = false WHERE id = ${DELETED};
+      UPDATE "User" SET muted = true WHERE id = ${BYSTANDER};
+    `);
     await insert(`(1, ${DELETED}, 'generation', 'AccountDeleted', -1, '${LONG_AGO}')`);
 
-    await reopenGenerationRestrictionsOfRestoredAccount(DELETED);
+    expect(await reopenGenerationRestrictionsOfRestoredAccount(DELETED)).toBe(0);
 
-    expect(await isMuted(DELETED)).toBe(true);
-    expect(await isMuted(BYSTANDER)).toBe(false);
-  });
-
-  it('leaves the mute alone when there is nothing to reopen', async () => {
-    await insert(`(1, ${BYSTANDER}, 'generation', 'Upheld', ${MODERATOR}, '${LONG_AGO}')`);
-
-    await reopenGenerationRestrictionsOfRestoredAccount(BYSTANDER);
-
-    expect(await isMuted(BYSTANDER)).toBe(false);
+    expect(await statuses(DELETED)).toEqual({ 1: 'AccountDeleted' });
+    expect(await isMuted(DELETED)).toBe(false);
   });
 
   it('round-trips: a delete then a restore leaves the case as it was', async () => {
