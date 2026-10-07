@@ -132,7 +132,7 @@ getBanked(userId)        → { ...getBankedBalance, bankable: BankableAmount | n
 | Gold | No fixed limit | 1.5x |
 
 - Minimum cap: 100,000 for all tiers
-- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees and paid/early access. Until `BANKABLE_CUTOVER` they also count generation compensation; from it, compensation is excluded for every month in the window
+- Silver/Gold caps scale with peak monthly earnings over a 12-month rolling window. Peak earnings count license fees and paid/early access (`PEAK_EARNING_PREDICATE_SQL`). Until `BANKABLE_CUTOVER` they also count generation compensation (`PRE_CUTOVER_PEAK_EARNING_PREDICATE_SQL`); from it, compensation is excluded for every month in the window. Pool forecasts and `earnedCache` in `buzz.service.ts` still count compensation
 - The highest tier across all active subscriptions is used
 
 **Relevant code:** `createUserCapCache()` in the service queries `CustomerSubscription` joined with `Product.metadata.tier`.
@@ -150,8 +150,8 @@ bankable = yellow+green balance at the cutover
          + extracted since the cutover, net of the extraction fee
 ```
 
-- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, App Blocks author fees (matched by their 'App author fee…' description under `fee`, `unknown_28` or `appAuthorFee`, the types ClickHouse has stored them as or would after an ingest fix), user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
-- The cutover balance is computed from ClickHouse the first time it is needed and stored in the `REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT` hash, keyed by user id. It is not stored during the first hour after the cutover, while late ledger rows can still land.
+- Bankable earnings: `licenseFee`, `donation`, `sell`, `bounty`, App Blocks author fees (matched by the `APP_AUTHOR_FEE_DESCRIPTION` prefix the fee writers also use, under `fee`, `unknown_28` or `appAuthorFee`, the types ClickHouse has stored them as or would after an ingest fix), user-paid `purchase` and `tip`, and the placement legs paid to creators (`BANKABLE_EARNING_PREDICATE_SQL`). Generation `compensation` (which also carries generation tips) is still paid but not bankable, nor is purchased or Blue Buzz.
+- The cutover balance is computed from ClickHouse the first time it is needed and stored in the `REDIS_SYS_KEYS.CREATOR_PROGRAM.BANKABLE_SNAPSHOT` hash, keyed by user id. It is not stored until an hour after the cutover, and not until ClickHouse holds a ledger row dated past that point, so a stalled ingest cannot freeze a short balance. To recompute a stored snapshot, `HDEL` the user's field from that hash.
 - Closed months come from ClickHouse; the current month's deposits come from the bank account via `getBankedBalance`, so a deposit made seconds earlier already counts.
 
 ### Extraction Fees
@@ -301,6 +301,7 @@ Bitwise flags on `User.onboarding`:
 |-----------|------|---------|
 | `CreatorProgramV2` | `src/components/Buzz/CreatorProgramV2/CreatorProgramV2.tsx` | Main dashboard |
 | `BankBuzzCard` | Same file | Buzz type selector + amount input for banking |
+| `BankableBuzzMeter` | `BankableBuzzMeter.tsx` | From the cutover, splits the yellow + green balance into bankable this month, over the cap, and not bankable (`getBankableBreakdown`) |
 | `ExtractBuzzCard` | Same file | All-or-nothing extraction button |
 | `CompensationPoolCard` | Same file | Unified pool value and size |
 | `EstimatedEarningsCard` | Same file | Per-type banked breakdown + value estimate |

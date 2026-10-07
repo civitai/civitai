@@ -235,6 +235,88 @@ export const openExtractionFeeModal = () => {
   });
 };
 
+const BuzzAmount = ({ amount }: { amount: number }) => (
+  <span className="inline-flex items-center">
+    <CurrencyIcon currency={Currency.BUZZ} size={14} />
+    {numberWithCommas(amount)}
+  </span>
+);
+
+type BankableAmount = NonNullable<
+  NonNullable<ReturnType<typeof useBankedBuzz>['banked']>['bankable']
+>;
+
+const BankableBuzzInfo = ({
+  bankable,
+  bankedThisMonth,
+}: {
+  bankable: BankableAmount;
+  bankedThisMonth: number;
+}) => {
+  const cutover = formatDate(BANKABLE_CUTOVER, 'MMMM D, YYYY', true);
+  const rows = [
+    { label: `Your Yellow and Green Buzz on ${cutover}`, amount: bankable.snapshot, sign: '' },
+    { label: `Bankable Buzz earned since ${cutover}`, amount: bankable.earned, sign: '+' },
+    {
+      label: 'Banked in earlier months, less what you extracted',
+      amount: bankable.consumed,
+      sign: '−',
+    },
+    { label: 'Banked this month', amount: bankedThisMonth, sign: '−' },
+  ];
+
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="font-bold">Bankable Buzz</p>
+      <p>
+        Each month you can bank the lower of your Cap and your bankable Buzz. Generation
+        compensation is still paid to you but is not bankable.
+      </p>
+
+      <Table className="table-auto">
+        <Table.Tbody>
+          {rows.map((row) => (
+            <Table.Tr key={row.label}>
+              <Table.Td>{row.label}</Table.Td>
+              <Table.Td className="text-nowrap text-right tabular-nums">
+                {row.sign} <BuzzAmount amount={row.amount} />
+              </Table.Td>
+            </Table.Tr>
+          ))}
+          <Table.Tr className="font-bold">
+            <Table.Td>Bankable Buzz left</Table.Td>
+            <Table.Td className="text-nowrap text-right tabular-nums">
+              <BuzzAmount amount={bankable.remaining} />
+            </Table.Td>
+          </Table.Tr>
+        </Table.Tbody>
+      </Table>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <p className="font-bold">Bankable</p>
+          <ul className="list-disc pl-4">
+            <li>Licensing fees</li>
+            <li>Early Access and paid access</li>
+            <li>Tips from other users</li>
+            <li>Donations, shop sales and bounties</li>
+            <li>App author fees</li>
+            <li>Sticker, remix and promotion fees</li>
+          </ul>
+        </div>
+        <div>
+          <p className="font-bold">Not bankable</p>
+          <ul className="list-disc pl-4">
+            <li>Generation compensation, including generator tips</li>
+            <li>Buzz you bought</li>
+            <li>Rewards and credits from Civitai</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }) => {
   const { banked, isLoading } = useBankedBuzz();
 
@@ -361,6 +443,10 @@ export const CreatorProgramCapsInfo = ({ onUpgrade }: { onUpgrade?: () => void }
             </p>
           )}
         </>
+      )}
+
+      {banked?.bankable && (
+        <BankableBuzzInfo bankable={banked.bankable} bankedThisMonth={banked.total} />
       )}
 
       <div className="flex flex-col gap-2">

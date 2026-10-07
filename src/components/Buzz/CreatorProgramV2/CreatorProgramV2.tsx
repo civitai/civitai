@@ -43,6 +43,7 @@ import {
   useUserCash,
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { BankableBuzzMeter } from '~/components/Buzz/CreatorProgramV2/BankableBuzzMeter';
 import {
   CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
@@ -628,10 +629,11 @@ const BankBuzzCard = () => {
           Max
         </Button>
         {banked?.bankable && (
-          <p className="text-xs text-dimmed">
-            Bankable Buzz left: {numberWithCommas(banked.bankable.remaining)}. Generation
-            compensation no longer counts toward banking.
-          </p>
+          <BankableBuzzMeter
+            balance={accounts.reduce((sum, account) => sum + (account.balance ?? 0), 0)}
+            bankableRemaining={banked.bankable.remaining}
+            capRemaining={remainingCap}
+          />
         )}
 
         <div className="mb-2 flex items-center gap-2">

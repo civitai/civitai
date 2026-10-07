@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { getCapForDefinition, getNextCapDefinition } from '~/shared/utils/creator-program.utils';
+import {
+  getBankableBreakdown,
+  getCapForDefinition,
+  getNextCapDefinition,
+} from '~/shared/utils/creator-program.utils';
 import { MIN_CAP, type CapDefinition } from '~/shared/constants/creator-program.constants';
 
 describe('getCapForDefinition', () => {
@@ -91,5 +95,31 @@ describe('getNextCapDefinition', () => {
     // Gold: 1.5 * 50000 = 75000 → MIN_CAP = 100000, same as current
     const result = getNextCapDefinition('silver', MIN_CAP, 50000);
     expect(result).toBeUndefined();
+  });
+});
+
+describe('getBankableBreakdown', () => {
+  it('splits the balance into bankable this month, over the cap, and not bankable', () => {
+    expect(
+      getBankableBreakdown({ balance: 100_000, bankableRemaining: 70_000, capRemaining: 50_000 })
+    ).toEqual({ bankableNow: 50_000, overCap: 20_000, notBankable: 30_000, limitedBy: 'cap' });
+  });
+
+  it('is limited by the bankable amount when the cap leaves more room', () => {
+    expect(
+      getBankableBreakdown({ balance: 100_000, bankableRemaining: 40_000, capRemaining: 500_000 })
+    ).toEqual({ bankableNow: 40_000, overCap: 0, notBankable: 60_000, limitedBy: 'bankable' });
+  });
+
+  it('never counts more as bankable than the creator holds', () => {
+    expect(
+      getBankableBreakdown({ balance: 30_000, bankableRemaining: 90_000, capRemaining: 500_000 })
+    ).toEqual({ bankableNow: 30_000, overCap: 0, notBankable: 0, limitedBy: 'bankable' });
+  });
+
+  it('treats a used-up cap as no room rather than negative room', () => {
+    expect(
+      getBankableBreakdown({ balance: 50_000, bankableRemaining: 50_000, capRemaining: -10_000 })
+    ).toEqual({ bankableNow: 0, overCap: 50_000, notBankable: 0, limitedBy: 'cap' });
   });
 });
