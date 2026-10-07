@@ -1,19 +1,12 @@
-import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
-import { searchClient } from '~/server/meilisearch/client';
 import { loadResourceInsights, modelInsightProjection } from '~/server/services/resource-insight';
-import { inArray } from '~/shared/utils/meili-filter';
 import {
-  buildResourceIntentSeedQueries,
-  expandShortlist,
   findResourceIntentCandidates,
-  resolveResourceIntentSeedPlan,
-  searchResourceIntentSeedPage,
   type ResourceIntentCoverage,
   type ResourceIntentShortlistEntry,
 } from '~/server/services/resource-intent-matcher.service';
 import {
-  RESOURCE_INTENT_ROLE_OPTIONS,
+  clampResourceIntentCap,
   RESOURCE_INTENT_SPEC_HASH,
   ROLE_MODEL_TYPES,
   type ResourceIntentAnswer,
@@ -21,6 +14,7 @@ import {
   type ResourceIntentRole,
 } from '~/server/schema/resource-intent.schema';
 import {
+  exactMcNemarP,
   M3_RETRIEVAL_PREREGISTRATION,
   PREREGISTERED_RUN_PARAMS,
   preregistrationOverrides,
@@ -32,16 +26,16 @@ import {
  * M3, part two — the two-arm RETRIEVAL comparison, run from
  * `./eval-resource-intent-goldset.ts`.
  *
- * The question: on prompts people actually generated with, does the shipped
- * purpose-first matcher (PURPOSE arm) put a resource they really attached near the top
- * more often than the pre-insight popularity seed alone (POPULARITY arm)?
+ * The question: on prompts people actually generated with, does the shipped matcher
+ * (PURPOSE arm: the popularity seed re-ranked by the labels) put a resource they really
+ * attached near the top more often than that seed alone (POPULARITY arm)?
  *
  * Everything that decides the answer is fixed BEFORE any run, in
  * `M3_RETRIEVAL_PREREGISTRATION` and the text `renderRetrievalPreregistration` builds
  * from it — both in `./eval-resource-intent-registration.ts`.
  *
  * Committed, NOT executed: a live run needs a prod replica read, the models index and
- * an OpenRouter key, and is meant to run only once the purpose-first seed is serving
+ * an OpenRouter key, and is meant to run only once the matcher it grades is serving
  * from a `release` build.
  */
 
@@ -76,30 +70,29 @@ export function reciprocalRankAtK(
   return index === -1 ? 0 : 1 / (index + 1);
 }
 
-function logChoose(n: number, k: number): number {
-  let sum = 0;
-  for (let i = 1; i <= k; i++) sum += Math.log(n - k + i) - Math.log(i);
-  return sum;
+export { exactMcNemarP };
+
+/** Co-primary (i): the one-sided non-inferiority bound on the paired hit@K difference. */
+export function nonInferiority(
+  n: number,
+  b: number,
+  c: number
+): { n: number; b: number; c: number; d: number; se: number; lower: number; holds: boolean } {
+  const { nonInferiorityMargin, nonInferiorityZ } = M3_RETRIEVAL_PREREGISTRATION;
+  if (n === 0) return { n, b, c, d: 0, se: 0, lower: 0, holds: false };
+  const d = (b - c) / n;
+  const se = Math.sqrt(b + c - (b - c) ** 2 / n) / n;
+  const lower = d - nonInferiorityZ * se;
+  return { n, b, c, d, se, lower, holds: lower > -nonInferiorityMargin };
 }
 
-/**
- * Exact two-sided McNemar: with n = b + c discordant pairs, under H0 the smaller count
- * is Binomial(n, 0.5), and p = min(1, 2 * P(X <= min(b, c))). Summed in log space so
- * n in the thousands neither underflows nor overflows. No discordant pairs ⇒ p = 1.
- */
-export function exactMcNemarP(b: number, c: number): number {
-  const n = b + c;
-  if (n === 0) return 1;
-  const k = Math.min(b, c);
-  const logHalfN = n * Math.log(0.5);
-  let tail = 0;
-  for (let i = 0; i <= k; i++) tail += Math.exp(logChoose(n, i) + logHalfN);
-  return Math.min(1, 2 * tail);
-}
-
-/** The pre-registered decision rule: b > c AND exact McNemar p < alpha. */
-export function purposeBeatsPopularity(b: number, c: number): boolean {
-  return b > c && exactMcNemarP(b, c) < M3_RETRIEVAL_PREREGISTRATION.alpha;
+/** Co-primary (ii): the exact two-sided sign test on prompts whose MRR differs. */
+export function mrrSignTest(
+  up: number,
+  down: number
+): { up: number; down: number; p: number; holds: boolean } {
+  const p = exactMcNemarP(up, down);
+  return { up, down, p, holds: up > down && p < M3_RETRIEVAL_PREREGISTRATION.alpha };
 }
 
 // ---------------------------------------------------------------------------
@@ -116,6 +109,10 @@ export type RetrievalArmResult = {
   entries: ResourceIntentShortlistEntry[];
   /** PURPOSE only: the label read failed and `entries` is in seed order. */
   insightFallback: boolean;
+  /** PURPOSE only: pool versions the re-rank promotes — the positive control's input. */
+  promotableVersions?: number;
+  /** PURPOSE only: the whole pool it ranked, in seed order — POPULARITY's input. */
+  pool?: ResourceIntentShortlistEntry[];
 };
 
 export type RetrievalArm = (
@@ -123,46 +120,25 @@ export type RetrievalArm = (
   opts: RetrievalArmOpts
 ) => Promise<RetrievalArmResult>;
 
-/** PURPOSE: the shipped matcher, untouched — purpose-first seed plus label re-rank. */
+/** POPULARITY is derived from PURPOSE's result, so the two arms cannot seed separately. */
+export type PopularityArm = (
+  purpose: RetrievalArmResult,
+  opts: RetrievalArmOpts
+) => RetrievalArmResult | Promise<RetrievalArmResult>;
+
+/** PURPOSE: the shipped matcher, untouched — popularity seed plus label re-rank. */
 export const purposeArm: RetrievalArm = (criteria, opts) =>
   findResourceIntentCandidates(criteria, opts);
 
 /**
- * POPULARITY: the endpoint's own popularity seed page, ALONE. The filter, pool width,
- * baseModels and cap come from `resolveResourceIntentSeedPlan` (shared with the
- * matcher); the page from `buildResourceIntentSeedQueries` (sorted
- * `metrics.thumbsUpCount:desc` only); the fetch from `searchResourceIntentSeedPage`. The
- * `expandShortlist` call repeats the matcher's arguments — a test pins both arms to the
- * same pool and cap. Never handed to the label re-rank, so the only differences from
- * PURPOSE are the seed (no purpose page) and the ordering (no labels).
+ * POPULARITY: the pool PURPOSE ranked, in seed order, cut to the same cap and never
+ * handed to the label re-rank. One seed per prompt, so the only difference from PURPOSE
+ * is `applyInsightRanking`.
  */
-export const popularityArm: RetrievalArm = async (criteria, opts) => {
-  if (criteria.role === 'none') return { entries: [], insightFallback: false };
-  const { cap, poolCap, baseModels, filter } = resolveResourceIntentSeedPlan(criteria, opts);
-  const { popularity } = buildResourceIntentSeedQueries({ filter, role: criteria.role, poolCap });
-  const hits = await searchResourceIntentSeedPage(popularity);
-  const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
-  return { entries: pool.slice(0, cap), insightFallback: false };
-};
-
-/**
- * The positive control: how many models-index documents carry a non-`none`
- * `insight.role` — the field the PURPOSE page filters on. Read through the same index
- * and the same field the arm reads, so a total projection fault (every document
- * written with a null role) reads 0 here rather than as a null study result.
- */
-export async function countLabeledIndexDocuments(): Promise<number> {
-  const client = searchClient;
-  if (!client) return 0;
-  const result = await client.index(MODELS_SEARCH_INDEX).search('', {
-    filter: inArray(
-      'insight.role',
-      RESOURCE_INTENT_ROLE_OPTIONS.filter((role) => role !== 'none')
-    ),
-    limit: 0,
-  });
-  return result.estimatedTotalHits ?? 0;
-}
+export const popularityArm: PopularityArm = (purpose, opts) => ({
+  entries: (purpose.pool ?? []).slice(0, clampResourceIntentCap(opts.cap)),
+  insightFallback: false,
+});
 
 /**
  * Which of `modelIds` carry a label the index projection would write: the same
@@ -228,6 +204,8 @@ export type RetrievalRowOutcome =
       inRoleCount: number;
       goldModelIds: number[];
       goldLabeled: boolean;
+      /** PURPOSE's pool held at least one version the re-rank promotes. */
+      promotable: boolean;
       purposeModelIds: number[];
       popularityModelIds: number[];
     };
@@ -261,7 +239,7 @@ export async function runRetrievalArms(
     ) => Promise<{ intent: ResourceIntentAnswer; criteria: ResourceIntentCriteria } | null>;
     armOpts: RetrievalArmOpts;
     labeledModelIds: ReadonlySet<number>;
-    arms?: { purpose: RetrievalArm; popularity: RetrievalArm };
+    arms?: { purpose: RetrievalArm; popularity: PopularityArm };
   }
 ): Promise<RetrievalRowOutcome[]> {
   const arms = deps.arms ?? { purpose: purposeArm, popularity: popularityArm };
@@ -328,7 +306,7 @@ export async function runRetrievalArms(
     let popularity: RetrievalArmResult;
     try {
       purpose = await arms.purpose(criteria, deps.armOpts);
-      popularity = await arms.popularity(criteria, deps.armOpts);
+      popularity = await arms.popularity(purpose, deps.armOpts);
     } catch (error) {
       outcomes.push({
         imageId: row.imageId,
@@ -362,6 +340,7 @@ export async function runRetrievalArms(
       inRoleCount: gold.length,
       goldModelIds: gold.map((m) => m.modelId),
       goldLabeled: gold.some((m) => deps.labeledModelIds.has(m.modelId)),
+      promotable: (purpose.promotableVersions ?? 0) > 0,
       purposeModelIds: rankedModelIds(purpose.entries),
       popularityModelIds: rankedModelIds(popularity.entries),
     });
@@ -402,7 +381,13 @@ export type RetrievalEvaluation = {
    * stage 1's role choice).
    */
   outOfRole: { attached: number; excluded: number; checkpoints: number };
-  primary: ArmComparison & { purposeBeatsPopularity: boolean };
+  primary: ArmComparison;
+  /** Co-primary (i). */
+  nonInferiority: ReturnType<typeof nonInferiority>;
+  /** Co-primary (ii). */
+  mrr: ReturnType<typeof mrrSignTest>;
+  /** Scored prompts whose PURPOSE pool held a version the re-rank promotes. */
+  promotableScored: number;
   secondary: {
     k: number;
     hit: ArmComparison;
@@ -410,7 +395,7 @@ export type RetrievalEvaluation = {
     popularityMrr: number | null;
   };
   strata: { labeled: ArmComparison; unlabeled: ArmComparison };
-  /** Scored prompts where the two arms returned the same first-K model ids, in order. */
+  /** Diagnostic only: scored prompts where the two arms returned the same first-K ids. */
   identicalAtPrimaryK: number;
   /** The one verdict on the closing clause, and why. */
   verdict: { verdict: RetrievalVerdict; reason: string };
@@ -418,24 +403,27 @@ export type RetrievalEvaluation = {
 
 /**
  * The pre-registered mapping from an evaluation to exactly one verdict. VOID first —
- * a run that cannot speak to the clause must not reach the decision rule — then MET iff
- * the decision rule holds, else NOT MET.
+ * a run that cannot speak to the clause must not reach the co-primaries — then MET iff
+ * both co-primaries hold, else NOT MET.
  */
 export function retrievalVerdict(e: {
   overrides: readonly string[];
   drawn: number;
   excluded: Pick<Record<RetrievalExclusion, number>, INFRA_EXCLUSION>;
-  primary: Pick<ArmComparison, 'n' | 'b' | 'c'>;
-  identicalAtPrimaryK: number;
+  n: number;
+  promotableScored: number;
+  nonInferiority: Pick<ReturnType<typeof nonInferiority>, 'lower' | 'holds'>;
+  mrr: Pick<ReturnType<typeof mrrSignTest>, 'up' | 'down' | 'p' | 'holds'>;
 }): { verdict: RetrievalVerdict; reason: string } {
-  const { minScored, maxInfraExclusionFraction } = M3_RETRIEVAL_PREREGISTRATION.voidIf;
+  const p = M3_RETRIEVAL_PREREGISTRATION;
+  const { minScored, maxInfraExclusionFraction } = p.voidIf;
   if (e.overrides.length) {
     return {
       verdict: 'VOID',
       reason: `not the registered run (overridden: ${e.overrides.join('; ')})`,
     };
   }
-  if (e.primary.n === 0) return { verdict: 'VOID', reason: 'no prompt scored' };
+  if (e.n === 0) return { verdict: 'VOID', reason: 'no prompt scored' };
   const infra = INFRA_EXCLUSIONS.reduce((sum, key) => sum + e.excluded[key], 0);
   if (infra > maxInfraExclusionFraction * e.drawn) {
     return {
@@ -445,26 +433,35 @@ export function retrievalVerdict(e: {
       }%`,
     };
   }
-  if (e.primary.n < minScored) {
+  if (e.n < minScored) {
     return {
       verdict: 'VOID',
-      reason: `${e.primary.n} prompts scored, under the ${minScored} the power calculation assumes`,
+      reason: `${e.n} prompts scored, under the ${minScored}-prompt scored-fraction floor carried from v2's sample design`,
     };
   }
-  if (e.identicalAtPrimaryK === e.primary.n) {
+  if (e.promotableScored / e.n < p.minPromotableFraction) {
     return {
       verdict: 'VOID',
-      reason: `both arms returned the same first ${M3_RETRIEVAL_PREREGISTRATION.primaryK} model ids on every scored prompt`,
+      reason: `positive control failed: ${e.promotableScored} of ${
+        e.n
+      } scored prompts had a pool version the re-rank promotes, under ${
+        p.minPromotableFraction * 100
+      }%`,
     };
   }
-  return purposeBeatsPopularity(e.primary.b, e.primary.c)
-    ? {
-        verdict: 'MET',
-        reason: `b > c and exact McNemar p < ${M3_RETRIEVAL_PREREGISTRATION.alpha}`,
-      }
+  const parts = [
+    `(i) non-inferiority ${
+      e.nonInferiority.holds ? 'holds' : 'does not hold'
+    } (lower bound ${e.nonInferiority.lower.toFixed(4)} vs -${p.nonInferiorityMargin})`,
+    `(ii) MRR@${p.secondaryK} superiority ${e.mrr.holds ? 'holds' : 'does not hold'} (up ${
+      e.mrr.up
+    }, down ${e.mrr.down}, p ${e.mrr.p.toPrecision(3)})`,
+  ].join('; ');
+  return e.nonInferiority.holds && e.mrr.holds
+    ? { verdict: 'MET', reason: parts }
     : {
         verdict: 'NOT MET',
-        reason: `the decision rule does not hold (b = ${e.primary.b}, c = ${e.primary.c}); the question is closed as not delivered`,
+        reason: `${parts}; the question is closed as not delivered for this matcher`,
       };
 }
 
@@ -530,13 +527,21 @@ export function evaluateRetrieval(
   ).length;
 
   const secondaryK = M3_RETRIEVAL_PREREGISTRATION.secondaryK;
+  const rr = (row: Scored, ids: number[]) =>
+    reciprocalRankAtK(ids, new Set(row.goldModelIds), secondaryK);
   const mrr = (pick: (row: Scored) => number[]) =>
-    scored.length
-      ? scored.reduce(
-          (sum, row) => sum + reciprocalRankAtK(pick(row), new Set(row.goldModelIds), secondaryK),
-          0
-        ) / scored.length
-      : null;
+    scored.length ? scored.reduce((sum, row) => sum + rr(row, pick(row)), 0) / scored.length : null;
+  let up = 0;
+  let down = 0;
+  for (const row of scored) {
+    const purposeRr = rr(row, row.purposeModelIds);
+    const popularityRr = rr(row, row.popularityModelIds);
+    if (purposeRr > popularityRr) up++;
+    else if (popularityRr > purposeRr) down++;
+  }
+  const nonInferiorityResult = nonInferiority(primary.n, primary.b, primary.c);
+  const mrrResult = mrrSignTest(up, down);
+  const promotableScored = scored.filter((row) => row.promotable).length;
 
   return {
     params,
@@ -548,7 +553,10 @@ export function evaluateRetrieval(
       excluded: outOfRoleExcluded,
       checkpoints: outOfRoleCheckpoints,
     },
-    primary: { ...primary, purposeBeatsPopularity: purposeBeatsPopularity(primary.b, primary.c) },
+    primary,
+    nonInferiority: nonInferiorityResult,
+    mrr: mrrResult,
+    promotableScored,
     secondary: {
       k: secondaryK,
       hit: compareArms(scored, secondaryK),
@@ -570,27 +578,39 @@ export function evaluateRetrieval(
       overrides,
       drawn: outcomes.length,
       excluded,
-      primary,
-      identicalAtPrimaryK,
+      n: primary.n,
+      promotableScored,
+      nonInferiority: nonInferiorityResult,
+      mrr: mrrResult,
     }),
   };
 }
 
 export function renderRetrievalReport(
   evaluation: RetrievalEvaluation,
-  context: { labeledIndexDocuments: number; coverage?: ResourceIntentCoverage }
+  context: { coverage?: ResourceIntentCoverage }
 ): string {
   const pct = (v: number | null) => (v === null ? '—' : `${(v * 100).toFixed(1)}%`);
   const rate = (hits: number, n: number) => pct(n ? hits / n : null);
   const { primary, secondary, strata, excluded, outOfRole } = evaluation;
-  const k = M3_RETRIEVAL_PREREGISTRATION.primaryK;
-  const { powerAssumption } = M3_RETRIEVAL_PREREGISTRATION;
-  const scoredFraction = evaluation.drawn ? primary.n / evaluation.drawn : null;
-  const discordantRate = primary.n ? (primary.b + primary.c) / primary.n : null;
-  const belowAssumption =
-    (scoredFraction !== null && scoredFraction < powerAssumption.scoredFraction) ||
-    (discordantRate !== null && discordantRate < powerAssumption.discordantRate);
+  const p = M3_RETRIEVAL_PREREGISTRATION;
+  const k = p.primaryK;
+  const ni = evaluation.nonInferiority;
+  const mrr = evaluation.mrr;
   const scored = primary.n;
+  const isPilot = evaluation.overrides.length > 0;
+  const scoredFraction = evaluation.drawn ? scored / evaluation.drawn : null;
+  const discordantRate = scored ? (primary.b + primary.c) / scored : null;
+  const nonTieRate = scored ? (mrr.up + mrr.down) / scored : null;
+  const planned = {
+    scoredFraction: p.planning.scored / p.sampleSize,
+    discordantRate: p.planning.replayHitDiscordant / p.planning.replayPrompts,
+    nonTieRate: p.planning.mrrNonTieRate,
+  };
+  const belowPlanning =
+    (scoredFraction !== null && scoredFraction < planned.scoredFraction) ||
+    (discordantRate !== null && discordantRate < planned.discordantRate) ||
+    (nonTieRate !== null && nonTieRate < planned.nonTieRate);
   const comparisonRow = (label: string, cmp: ArmComparison) =>
     `| ${label} | ${cmp.n} | ${rate(cmp.purposeHits, cmp.n)} | ${rate(
       cmp.popularityHits,
@@ -599,7 +619,7 @@ export function renderRetrievalReport(
   const lines: string[] = [
     '# Resource-intent gold-set study — two-arm retrieval comparison',
     '',
-    ...(evaluation.overrides.length
+    ...(isPilot
       ? [
           `> 🔴 **NOT THE PRE-REGISTERED RUN.** Overridden: ${evaluation.overrides.join(
             '; '
@@ -607,15 +627,38 @@ export function renderRetrievalReport(
           '',
         ]
       : []),
-    `Spec hash: \`${RESOURCE_INTENT_SPEC_HASH.slice(0, 16)}…\`. Positive control: ${
-      context.labeledIndexDocuments
-    } index documents carry a non-none \`insight.role\` (floor ${
-      M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor
-    }).${
+    `Registration: v${p.version} (registered ${
+      p.registeredOn
+    }). Spec hash: \`${RESOURCE_INTENT_SPEC_HASH.slice(0, 16)}…\`.${
       context.coverage
         ? ` Coverage (resolved as the endpoint does, for an anonymous caller): next=${context.coverage.next}, member=${context.coverage.member}.`
         : ''
     }`,
+    '',
+    `## Co-primary (i): non-inferiority on hit@${k}`,
+    '',
+    `n = ${ni.n}, b = ${ni.b}, c = ${ni.c}; d = (b - c) / n = ${ni.d.toFixed(
+      4
+    )}; se = sqrt(b + c - (b - c)^2 / n) / n = ${ni.se.toFixed(4)}; lower bound d - ${
+      p.nonInferiorityZ
+    } * se = ${ni.lower.toFixed(4)} against -${p.nonInferiorityMargin}: ${
+      ni.holds ? 'holds' : 'does not hold'
+    }.`,
+    '',
+    `## Co-primary (ii): superiority on MRR@${p.secondaryK}`,
+    '',
+    `Prompts whose reciprocal rank @${p.secondaryK} differs: up (PURPOSE higher) = ${
+      mrr.up
+    }, down (POPULARITY higher) = ${mrr.down}; exact two-sided p = ${mrr.p.toPrecision(
+      3
+    )} against ${p.alpha}: ${mrr.holds ? 'holds' : 'does not hold'}.`,
+    '',
+    `Positive control: ${evaluation.promotableScored} of ${scored} scored prompts (${rate(
+      evaluation.promotableScored,
+      scored
+    )}) had at least one pool version the re-rank promotes (VOID under ${(
+      p.minPromotableFraction * 100
+    ).toFixed(0)}%).`,
     '',
     `## Verdict: ${evaluation.verdict.verdict}`,
     '',
@@ -653,15 +696,13 @@ export function renderRetrievalReport(
       outOfRole.attached - outOfRole.checkpoints
     )}).`,
     '',
-    `## Primary: hit@${k}`,
+    `## hit@${k} per arm`,
     '',
     '| slice | n | PURPOSE | POPULARITY | b (P hit, Q miss) | c (Q hit, P miss) | McNemar p |',
     '|---|---|---|---|---|---|---|',
     comparisonRow('all scored', primary),
     '',
-    `Difference (PURPOSE - POPULARITY): ${pct(primary.difference)}. Decision rule (b > c AND p < ${
-      M3_RETRIEVAL_PREREGISTRATION.alpha
-    }): ${primary.purposeBeatsPopularity ? 'holds' : 'does not hold'}.`,
+    `Difference (PURPOSE - POPULARITY): ${pct(primary.difference)}.`,
     '',
     '## Secondary (not decisive)',
     '',
@@ -682,15 +723,17 @@ export function renderRetrievalReport(
     '',
     '## Diagnostics',
     '',
-    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. If this is ALL of them the arms are indistinguishable at K (the purpose page returned nothing or the label re-rank never moved the head), and the verdict is VOID.`,
+    `Scored prompts where both arms returned the same first ${k} model ids in the same order: ${evaluation.identicalAtPrimaryK} of ${scored}. A diagnostic only — the arms differ only by the re-rank, so identical heads are expected on most prompts; it never voids a run.`,
     '',
-    `Power assumption — scored fraction: ${pct(scoredFraction)} of drawn (assumed >= ${pct(
-      powerAssumption.scoredFraction
-    )}); discordant rate (b + c) / scored at hit@${k}: ${pct(discordantRate)} (assumed >= ${pct(
-      powerAssumption.discordantRate
+    `Planning assumptions — scored fraction: ${pct(scoredFraction)} of drawn (planned ${pct(
+      planned.scoredFraction
+    )}); hit@${k} discordant rate: ${pct(discordantRate)} (planned ${pct(
+      planned.discordantRate
+    )}); MRR@${p.secondaryK} non-tie rate: ${pct(nonTieRate)} (planned ${pct(
+      planned.nonTieRate
     )}).${
-      belowAssumption
-        ? ' 🔴 BELOW THE ASSUMPTION — re-plan the sample size in a new commit before the registered run.'
+      isPilot && belowPlanning
+        ? ' 🔴 BELOW THE PLANNING ASSUMPTION — re-plan the sample size in a new commit before the registered run.'
         : ''
     }`,
     '',

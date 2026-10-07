@@ -75,8 +75,8 @@ export const modelsFilterableAttributes = [
   'hasActivePaidAccess',
   // Carried so a filter can split the models with a PROMOTABLE label — ≈7,023 of them — from
   // everything else (the labeled-vs-unlabeled arms described below; the M3 retrieval
-  // comparison does not split on it — it reaches labels through the matcher's
-  // `insight.role` page and re-rank). 🔴 That "everything
+  // comparison does not split on it — its matcher arm reaches labels through the re-rank's
+  // Postgres read). 🔴 That "everything
   // else" side is NOT the unlabeled set: it holds 863 labeled models too, for the reasons
   // enumerated below. Do not describe it as the unlabeled tier.
   // Verified on Meilisearch v1.15.0 that filtering works on this field even though
@@ -160,11 +160,11 @@ export const modelsFilterableAttributes = [
   // 🔴 NO COMMITTED RUNNER IMPLEMENTS THESE ARMS — the labeled-vs-unlabeled split by
   // `IS NOT NULL` / `IS NULL` above. The M3 study DOES now carry a retrieval comparison
   // (`scripts/eval-resource-intent-retrieval.ts`, run from the gold-set runner), but its
-  // arms are different ones: the shipped purpose-first matcher against the popularity seed
-  // alone, both over the same gate filter, neither filtering on this attribute's nullness.
-  // It runs its own, much looser control (`labeledIndexFloor` documents with a non-`none`
-  // `insight.role`), which likewise catches only a total fault. So the `IS NOT NULL`
-  // control above still belongs to whatever labeled-vs-unlabeled comparison gets built.
+  // arms are different ones: the shipped matcher (popularity seed + label re-rank) against
+  // that seed alone, both over the same gate filter, neither filtering on this attribute's
+  // nullness, and its own positive control reads `ResourceInsight` rows, not this index.
+  // So the `IS NOT NULL` control above still belongs to whatever labeled-vs-unlabeled
+  // comparison gets built.
   //
   // Measured on v1.15.0 over a mixed fixture (labeled / written-null / key-absent): EXISTS
   // returned 5 of 7 including every written null, NOT EXISTS returned only the 2 whose key
@@ -259,18 +259,15 @@ export const modelsFilterableAttributes = [
   // adding them to ./sortable-attributes.ts. They are unordered categories, so a
   // `role:desc` would order alphabetically and read as meaningful ranking; Meilisearch
   // accepts a sort on any declared sortable attribute without complaint, so that mistake
-  // is silent. A purpose query wants an EQUALITY filter (`insight.role = "style"`), which
-  // is exactly what this list buys.
+  // is silent. A purpose query would want an EQUALITY filter (`insight.role = "style"`),
+  // which is exactly what this list buys.
   //
-  // 🔴 ONE READER: `insight.role` is filtered by `searchShortlistModels`
-  // (~/server/services/resource-intent-matcher.service.ts), whose purpose page is the gate
-  // filter AND `insight.role = <requested role>`; `insight.styleFamily` is read by nothing.
-  // A document only ACQUIRES these fields when it is rewritten, so a model whose document
-  // predates its label carries a null role and reaches the shortlist only through the
-  // seed's popularity page. ⚠️ When a base model is requested, that reader ANDs the role
-  // with the ARRAY form `versions.baseModel IN [...]`, so it inherits the cross-version
-  // caveat in ./models.search-index.ts: the role may come from a version on a different
-  // base model than the versions the shortlist then expands to.
+  // 🔴 NO READER: nothing filters on either field — the resource-intent matcher and the
+  // M3 study both read labels from Postgres. A document only ACQUIRES these fields when it
+  // is rewritten, so a model whose document predates its label carries a null role. ⚠️ A future filter that ANDs the role
+  // with the ARRAY form `versions.baseModel IN [...]` inherits the cross-version caveat in
+  // ./models.search-index.ts: the role may come from a version on a different base model
+  // than the versions it then expands to.
   //
   // 🔴 ⚠️ DO NOT RE-DERIVE THAT AS "THE LISTS ONLY REACH A LIVE INDEX THROUGH A RESET" — a
   // draft of this very entry said exactly that, and it is the claim the ⚠️ paragraph beside

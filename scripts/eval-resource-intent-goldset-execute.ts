@@ -29,7 +29,6 @@ import {
   type RetrievalRunParams,
 } from './eval-resource-intent-registration';
 import {
-  countLabeledIndexDocuments,
   evaluateRetrieval,
   loadLabeledModelIds,
   renderRetrievalReport,
@@ -66,16 +65,6 @@ export async function executeGoldsetStudy({
   // Coverage first: if the flags behind it cannot be evaluated, the run would grade a filter
   // the endpoint does not use. Fails closed, before any index read or vendor call.
   const coverage = await resolveEndpointCoverage();
-
-  // The retrieval study's positive control runs next, before any vendor spend, and so
-  // also gates part one: a models index with no projected `insight.role` would turn
-  // the purpose arm into the popularity arm and the study into a silent null result.
-  const labeledIndexDocuments = await countLabeledIndexDocuments();
-  if (labeledIndexDocuments < M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor) {
-    throw new Error(
-      `[goldset] positive control FAILED: ${labeledIndexDocuments} models-index documents carry a non-none insight.role (floor ${M3_RETRIEVAL_PREREGISTRATION.labeledIndexFloor}). The purpose arm cannot differ from the popularity arm on this index; aborting before any vendor call.`
-    );
-  }
 
   const matched = await dbRead.$queryRaw<MatchedSqlRow[]>(GOLDSET_MATCHED_SQL(days, matchedDraw));
   const unmatched = await dbRead.$queryRaw<GoldsetRow[]>(
@@ -119,7 +108,7 @@ export async function executeGoldsetStudy({
 
   const report = [
     renderGoldsetReport(evaluateGoldset(pairs), { drawn: partOneRows.length }),
-    renderRetrievalReport(retrieval, { labeledIndexDocuments, coverage }),
+    renderRetrievalReport(retrieval, { coverage }),
   ].join('\n');
   if (out) {
     const { writeFile } = await import('fs/promises');
