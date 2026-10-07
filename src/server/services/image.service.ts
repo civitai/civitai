@@ -7212,25 +7212,28 @@ export async function reportCsamImages({
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
   // Flag first: an appeal that starts after this is refused by createEntityAppeal, and one that
-  // committed before it is closed below, so no pending appeal outlives the flag.
-  await dbWrite.image.updateMany({
-    where: { id: { in: imageIds } },
-    data: { needsReview: 'csam' },
-  });
-  // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and the
-  // uploader is not told.
-  await dbWrite.appeal.updateMany({
-    where: {
-      entityType: EntityType.Image,
-      entityId: { in: imageIds },
-      status: AppealStatus.Pending,
-    },
-    data: {
-      status: AppealStatus.Rejected,
-      resolvedBy: user.id,
-      resolvedAt: new Date(),
-      internalNotes: 'Closed by CSAM report',
-    },
+  // committed before it is closed below. One transaction, so a failed close cannot leave the flag
+  // beside a still-pending appeal.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: { needsReview: 'csam' },
+    });
+    // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
+    // the uploader is not told.
+    await tx.appeal.updateMany({
+      where: {
+        entityType: EntityType.Image,
+        entityId: { in: imageIds },
+        status: AppealStatus.Pending,
+      },
+      data: {
+        status: AppealStatus.Rejected,
+        resolvedBy: user.id,
+        resolvedAt: new Date(),
+        internalNotes: 'Closed by CSAM report',
+      },
+    });
   });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },

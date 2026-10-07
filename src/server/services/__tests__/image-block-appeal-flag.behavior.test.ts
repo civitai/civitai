@@ -282,6 +282,28 @@ describe('reportCsamImages', () => {
     expect((await imageRow(APPEALED)).needsReview).toBe('csam');
   });
 
+  it('does not leave the flag behind when closing the appeals fails', async () => {
+    // A real transaction on the stand-in, so a write that is not inside it survives the rollback.
+    dbMock.dbWrite.$transaction.mockImplementationOnce((async (cb: (tx: unknown) => unknown) => {
+      await holder.db.exec('BEGIN');
+      try {
+        const result = await cb(dbMock.dbWrite);
+        await holder.db.exec('COMMIT');
+        return result;
+      } catch (e) {
+        await holder.db.exec('ROLLBACK');
+        throw e;
+      }
+    }) as never);
+    dbMock.dbWrite.appeal.updateMany.mockRejectedValueOnce(new Error('connection lost'));
+
+    await expect(reportCsamImages({ imageIds: [APPEALED], user: moderator })).rejects.toThrow(
+      'connection lost'
+    );
+
+    expect((await imageRow(APPEALED)).needsReview).toBe('appeal');
+  });
+
   it('leaves no pending appeal whose resolution could clear the flag', async () => {
     // The shared claim fake returns every row now in the target status; here it must return only
     // the rows this claim moved out of Pending, as Prisma does.
