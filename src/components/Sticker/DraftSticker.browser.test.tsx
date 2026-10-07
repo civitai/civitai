@@ -930,4 +930,19 @@ describe('previewing without the controls', () => {
     await expect.element(remove).toBeVisible();
     expect(knobVisibility()).toBe('visible');
   });
+
+  // Portalled, so hiding the cluster never reaches it.
+  test('hides an open opacity slider too', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    await page.getByRole('button', { name: "Set this sticker's opacity" }).click();
+    const slider = page.getByText('Opacity', { exact: true });
+    await expect.element(slider).toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(slider).not.toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(slider).toBeVisible();
+  });
 });
