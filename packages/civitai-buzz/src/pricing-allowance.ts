@@ -128,11 +128,12 @@ export function gateConversionExceedsAllowance({
 export function gateConversionMessage(used: number, tier: string | null | undefined): string {
   return `You have priced ${used} model versions this month, more than the ${monthlyPricingAllowance(
     tier
-  )} your membership allows, using extra licensing-fee slots. Those slots cover licensing fees only, so permanent paid access can't be added to a licensed version this month.`;
+  )} your membership allows. While you hold extra licensing-fee slots, which cover licensing fees only, permanent paid access can't be added this month to a version you licensed this month.`;
 }
 
 /**
- * Whether an entity already carries a price, and so is exempt from both rules. The single definition of
+ * Whether an entity already carries a price, and so is exempt from both rules (a boosted fee gaining a
+ * gate aside). The single definition of
  * that question — a timed early-access window is not a price.
  */
 export function isAlreadyPriced({

@@ -114,8 +114,19 @@ describe('fee-allowance-boost grant-eligible', () => {
   it('grants exactly that cohort', async () => {
     await call({ action: 'grant-eligible' });
 
-    const granted = redisMock.sysRedis.hSetNX.mock.calls.map((c) => c[1]).sort();
-    expect(granted).toEqual(['1', '2', '3']);
+    const granted = redisMock.sysRedis.hSetNX.mock.calls.map((c) => [c[1], c[2]]).sort();
+    expect(granted).toEqual([
+      ['1', '100'],
+      ['2', '100'],
+      ['3', '100'],
+    ]);
+  });
+
+  it('refuses once the window has closed', async () => {
+    vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+    const res = await call({ action: 'grant-eligible' });
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(redisMock.sysRedis.hSetNX).not.toHaveBeenCalled();
   });
 
   it('skips banned or deleted accounts on either list', async () => {

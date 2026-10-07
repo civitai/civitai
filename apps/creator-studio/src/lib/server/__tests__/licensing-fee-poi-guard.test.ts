@@ -22,9 +22,8 @@ const state = vi.hoisted(() => ({
   boostKeys: [] as string[],
   boostDown: false,
   boostHangs: false,
-  // Whether any version the slot-spent-this-month read asks about has one, and the filters it used.
-  slotThisMonth: true,
-  slotQueryFilters: [] as [string, string, unknown][],
+  anySlotSpentThisMonth: true,
+  slotSpentThisMonthFilters: [] as [string, string, unknown][],
 }));
 
 vi.mock('$lib/server/redis', () => ({
@@ -96,10 +95,11 @@ vi.mock('$lib/server/db', () => {
           if (selection !== 'entityId')
             return chain({ executeTakeFirst: async () => ({ count: String(state.slotsUsed) }) });
           const spent: Record<string, unknown> = {
-            executeTakeFirst: async () => (state.slotThisMonth ? { entityId: 1 } : undefined),
+            executeTakeFirst: async () =>
+              state.anySlotSpentThisMonth ? { entityId: 1 } : undefined,
           };
           spent.where = (column: string, op: string, value: unknown) => {
-            state.slotQueryFilters.push([column, op, value]);
+            state.slotSpentThisMonthFilters.push([column, op, value]);
             return chain(spent);
           };
           return chain(spent);
@@ -190,8 +190,8 @@ beforeEach(() => {
   state.boostKeys = [];
   state.boostDown = false;
   state.boostHangs = false;
-  state.slotThisMonth = true;
-  state.slotQueryFilters = [];
+  state.anySlotSpentThisMonth = true;
+  state.slotSpentThisMonthFilters = [];
 });
 
 // Clearing a price hands the slot back, but only when nothing has transacted against the version — the
@@ -635,7 +635,6 @@ describe('licensing-fee allowance boost', () => {
     expect(state.boostKeys).toEqual([]);
   });
 
-  // Through versionPriceState, as both gate actions call it, so the fee-only split is under test too.
   const gate = async (rows: ReturnType<typeof version>[]) => {
     state.rows = rows;
     const priceState = await versionPriceState(
@@ -673,7 +672,7 @@ describe('licensing-fee allowance boost', () => {
 
     expect(result).toMatchObject({ ok: false, status: 403 });
     expect(result.ok ? '' : result.error).toContain('licensing fees only');
-    expect(state.slotQueryFilters).toEqual([
+    expect(state.slotSpentThisMonthFilters).toEqual([
       ['entityType', '=', 'ModelVersion'],
       ['entityId', 'in', [1]],
       ['createdAt', '>=', new Date('2026-10-01T00:00:00Z')],
@@ -688,7 +687,7 @@ describe('licensing-fee allowance boost', () => {
 
   it('leaves a gate free on a version licensed in an earlier month', async () => {
     state.slotsUsed = 50;
-    state.slotThisMonth = false;
+    state.anySlotSpentThisMonth = false;
 
     const result = await gate([licensed()]);
 
@@ -723,6 +722,34 @@ describe('licensing-fee allowance boost', () => {
 
     expect(result).toMatchObject({ ok: false, status: 403 });
   }, 3000);
+
+  it.each([
+    ['without a grant', null],
+    ['with a grant', '100'],
+  ])(
+    'charges the new versions in a selection that also holds a licensed one, %s',
+    async (_, grant) => {
+      state.boostGrant = grant;
+      state.slotsUsed = 3;
+
+      const result = await gate([version({ id: 1 }), version({ id: 2, currentFee: 10 })]);
+
+      expect(result).toMatchObject({ ok: false, status: 403 });
+    }
+  );
+
+  it('charges every new version in a mixed selection, not just the first', async () => {
+    state.slotsUsed = 1;
+
+    const result = await gate([
+      version({ id: 1 }),
+      version({ id: 2 }),
+      version({ id: 3 }),
+      version({ id: 4, currentFee: 10 }),
+    ]);
+
+    expect(result).toMatchObject({ ok: false, status: 403 });
+  });
 
   it('leaves a gate on a licensed version free for a creator with no grant', async () => {
     state.boostGrant = null;

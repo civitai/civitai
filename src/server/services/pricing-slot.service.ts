@@ -38,8 +38,11 @@ export async function getCreatorScore(userId: number): Promise<number> {
 }
 
 /** Slots spent this calendar month. Index-only on (ownerId, createdAt) — no join. */
-export async function countPricingSlotsThisMonth(ownerId: number): Promise<number> {
-  return dbRead.pricingSlot.count({
+export async function countPricingSlotsThisMonth(
+  ownerId: number,
+  db: Pick<PrismaClient, 'pricingSlot'> = dbRead
+): Promise<number> {
+  return db.pricingSlot.count({
     where: { ownerId, createdAt: { gte: pricingMonthStart() } },
   });
 }
@@ -272,9 +275,8 @@ async function attemptRelease({ entityType, entityId, ownerId }: ReleaseArgs): P
 export type PricingWriteCheck = {
   userId: number;
   /**
-   * Whether the entity carries a price BEFORE this write. Editing an existing price is exempt from
-   * both rules, so this is the single thing that decides whether they apply at all. Callers get it
-   * from `isAlreadyPriced`.
+   * Whether the entity carries a price BEFORE this write. A priced entity skips the floor and the
+   * allowance; only a fee gaining a gate is still checked. Callers get it from `isAlreadyPriced`.
    */
   wasPriced: boolean;
   /** Whether it will carry one after. */
@@ -283,7 +285,7 @@ export type PricingWriteCheck = {
   addsGate: boolean;
   /** Whether the entity carries a permanent paid-access gate BEFORE this write. */
   hadGate: boolean;
-  /** The entity written, when it already exists. */
+  /** Required for an existing entity: without it, a fee gaining a gate goes unchecked. */
   entity?: { entityType: PricingSlotEntityType; entityId: number };
   /**
    * The owner's tier, or a thunk resolving it. Pass the thunk from a hot write path: `getCapTier` is
@@ -364,7 +366,7 @@ async function assertGateConversionAllowed(
   });
   const slotSpentThisMonth = slot != null && slot.createdAt >= pricingMonthStart();
   const resolvedTier = typeof tier === 'function' ? await tier() : tier;
-  const used = await countPricingSlotsThisMonth(userId);
+  const used = await countPricingSlotsThisMonth(userId, dbWrite);
   if (gateConversionExceedsAllowance({ used, tier: resolvedTier, boost, slotSpentThisMonth }))
     throw throwBadRequestError(gateConversionMessage(used, resolvedTier));
 }

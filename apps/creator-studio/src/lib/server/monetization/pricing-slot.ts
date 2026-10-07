@@ -72,12 +72,12 @@ export async function versionPriceState(
   };
 }
 
+const BOOST_READ_TIMEOUT_MS = 1000;
+
 /**
  * Mirrors the main app's getFeeAllowanceBoost over the same hash. Fails to 0 so an outage never touches
  * the tier allowance.
  */
-const BOOST_READ_TIMEOUT_MS = 1000;
-
 export async function getFeeAllowanceBoost(
   userId: number,
   now: Date = new Date()
@@ -321,7 +321,7 @@ export async function assertGatePricingAllowed(
 }
 
 async function anySlotSpentThisMonth(versionIds: number[]): Promise<boolean> {
-  const row = await dbRead
+  const row = await dbWrite
     .selectFrom('PricingSlot')
     .select('entityId')
     .where('entityType', '=', 'ModelVersion')

@@ -262,10 +262,8 @@ export const actions: Actions = {
       }
     }
 
-    // Paid-access prices are uncapped. What is limited is how many versions gain a price this month —
-    // and only versions that are not already priced count, so re-pricing a selection is always free.
-    // Moderators are NOT exempt — see assertGatePricingAllowed. The fee paths in this app do not exempt
-    // them either, and one write path answering this differently is how a spoke becomes a way around it.
+    // Moderators are NOT exempt. The fee paths in this app do not exempt them either, and one write
+    // path answering this differently is how a spoke becomes a way around it.
     const priceState = permanent
       ? await versionPriceState(locals.user.id, versionIds.data)
       : { unpriced: [], feeOnly: [] };
@@ -476,9 +474,8 @@ export const actions: Actions = {
 
     const membership = resolveMembership(locals.user, cookies.get(TEST_MEMBERSHIP_COOKIE));
 
-    // Only a version with no price yet spends allowance — re-saving one that already has a price stays
-    // allowed even at the limit, so an edit can never strand a creator.
-    // Moderators are NOT exempt — see assertGatePricingAllowed.
+    // A version that already has its gate re-saves free even at the limit, so an edit never strands a
+    // creator. Moderators are NOT exempt.
     const priceState = permanent
       ? await versionPriceState(locals.user.id, [versionId.data])
       : { unpriced: [], feeOnly: [] };

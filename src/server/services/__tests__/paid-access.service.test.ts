@@ -413,7 +413,7 @@ describe('assertMonetizationWrite', () => {
     );
 
     it('may not add permanent paid access to a licensed version once past the tier allowance', async () => {
-      mockSlotCount.mockResolvedValue(4);
+      mockDbWrite.pricingSlot.count.mockResolvedValue(4);
       await expect(
         assertMonetizationWrite({
           ownerId: 1,
@@ -431,7 +431,7 @@ describe('assertMonetizationWrite', () => {
     });
 
     it('may add permanent paid access to a version licensed in an earlier month', async () => {
-      mockSlotCount.mockResolvedValue(50);
+      mockDbWrite.pricingSlot.count.mockResolvedValue(50);
       mockDbWrite.pricingSlot.findUnique.mockResolvedValue({
         createdAt: new Date('2026-09-12T00:00:00Z'),
       } as never);
@@ -448,7 +448,7 @@ describe('assertMonetizationWrite', () => {
     });
 
     it('may still change the fee on a licensed version once past the tier allowance', async () => {
-      mockSlotCount.mockResolvedValue(50);
+      mockDbWrite.pricingSlot.count.mockResolvedValue(50);
       await expect(
         assertMonetizationWrite({
           ownerId: 1,
@@ -463,7 +463,7 @@ describe('assertMonetizationWrite', () => {
     });
 
     it('may still re-save a version that already has its gate once past the tier allowance', async () => {
-      mockSlotCount.mockResolvedValue(50);
+      mockDbWrite.pricingSlot.count.mockResolvedValue(50);
       mockDbWrite.paidAccess.findUnique.mockResolvedValue({ timeframeDays: null } as never);
       await expect(
         assertMonetizationWrite({

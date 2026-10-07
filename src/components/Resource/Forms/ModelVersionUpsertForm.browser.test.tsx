@@ -400,6 +400,7 @@ describe('ModelVersionUpsertForm — the licensing-fee allowance boost', () => {
       .element(page.getByText("You've priced all this month's versions"))
       .toBeInTheDocument();
     expect(page.getByText(/cover \d+ more this month/).elements()).toHaveLength(0);
+    expect(page.getByText(/licensing fees:/).elements()).toHaveLength(0);
   });
 });
 
