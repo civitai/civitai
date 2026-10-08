@@ -160,7 +160,7 @@ describe('cooc retention heartbeat', () => {
     expect(route).toContain("import '~/server/prom/resource-intent-cooc.metrics';");
   });
 
-  it('a failed read keeps the last value and waits a minute before trying again', async () => {
+  it('a failed read keeps the last value, waits a minute, then reads again', async () => {
     let t = 0;
     let fail = false;
     const read = vi.fn(async () => {
@@ -184,7 +184,6 @@ describe('cooc retention heartbeat', () => {
     t = 119_000;
     await values(gauge);
     expect(read).toHaveBeenCalledTimes(2);
-    // Reads resume after a failure and the exported value moves.
     const later = new Date(NOW.getTime() + 86_400_000);
     read.mockImplementation(async () => later);
     t = 120_000;

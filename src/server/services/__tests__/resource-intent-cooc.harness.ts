@@ -140,9 +140,10 @@ export function fakeImageDb(opts: {
           (id): CoocDrawRow => ({
             imageId: id,
             createdAt: createdAt(id),
-            // 'model' and 'ctrl' only where id % 40 === 1; every such image attaches model 1001.
+            // 'model', 'ctrl' and 'checkpoint' only where id % 40 === 1; every such image attaches
+            // model 1001 and, like every image, the checkpoint (version 9900, 'Base Checkpoint').
             prompt: `tok${pad(id % 17)} tok${pad(id % 5)} shared rare${id % 40}${
-              id % 40 === 1 ? ' model ctrl' : ''
+              id % 40 === 1 ? ' model ctrl checkpoint' : ''
             }`,
             att: [
               {

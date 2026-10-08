@@ -8,8 +8,8 @@ import type { CoocModelText } from './tokenize';
  * Builder side of the resource-intent co-occurrence index: the training-row sampler, the
  * counts, and the snapshot payload. A port of the offline screen's draw loop and its
  * reference index builder; the seam tests in
- * `src/server/services/__tests__/resource-intent-cooc.*.test.ts` hold each piece to the screen's
- * output.
+ * `src/server/services/__tests__/resource-intent-cooc.*.seam.test.ts` hold each piece to the
+ * screen's output.
  *
  * Takes its parameters as arguments rather than importing `./spec`, because `./spec` hashes
  * what these functions produce.

@@ -87,12 +87,14 @@ describe('cooc build pipeline', () => {
     const c = (await loadCoocSnapshot(sql, s.contentHash, { kind: 'production', now: NOW })).counts;
     expect(c.N).toBe(900);
     // Own-model tokens are removed in training. "rare0" (version 2000's trigger) appears only on
-    // images attaching model 1000, so it is removed everywhere, while "rare4", on the same images,
-    // is kept and pairs with model 1000. 'model' and 'ctrl' share their 23 images, all attaching
-    // model 1001 ("Model 2001", the only attachment whose name has "model"): the control token
-    // pairs with it, the model-name token is removed.
+    // images attaching model 1000, so it is removed everywhere, while "rare4", also only on
+    // model-1000 images, is kept and pairs with model 1000. 'model', 'checkpoint' and 'ctrl' share
+    // their 23 images, all attaching model 1001 ("Model 2001", the only attachment whose name has
+    // "model") and the checkpoint ("Base Checkpoint"): the control token is kept, the two
+    // attachment-name tokens are removed.
     expect(c.vocab).toContain('ctrl');
     expect(c.vocab).not.toContain('model');
+    expect(c.vocab).not.toContain('checkpoint');
     expect(c.vocab).not.toContain('rare0');
     const t = c.vocab.indexOf('rare4');
     expect(t).toBeGreaterThanOrEqual(0);
