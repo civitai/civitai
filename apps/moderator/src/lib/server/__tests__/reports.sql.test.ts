@@ -242,6 +242,7 @@ describe('the filtered queue', () => {
 
   it('adds the same guest term to both Most Reported statements', async () => {
     await service.getMostReportedPage({ page: 1, limit: 25, days: 7 });
+    expect(emitted()).toHaveLength(2);
     for (const sql of emitted().map(flat)) expect(sql).toContain(guestCount('t'));
   });
 

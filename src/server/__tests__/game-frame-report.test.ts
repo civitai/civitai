@@ -430,10 +430,10 @@ describe('everything happens on the one transaction', () => {
       ),
     },
     user: {
-      findUnique: vi.fn(async ({ where }: { where: { id: number } }) => ({
-        id: where.id,
-        deletedAt: null,
-      })),
+      findUnique: vi.fn(
+        async ({ where, select }: { where: { id: number }; select?: Record<string, boolean> }) =>
+          pick({ id: where.id, deletedAt: null }, select)
+      ),
     },
     gameFrameGame: {
       upsert: vi.fn(async () => ({ id: GAME_ID, stateAt: null })),
@@ -580,10 +580,10 @@ describe('filing edge cases', () => {
   });
 
   it('refuses a deleted reporter as unknown_user', async () => {
-    db.user.findUnique.mockImplementation(async ({ where }: { where: { id: number } }) => ({
-      id: where.id,
-      deletedAt: where.id === 678 ? new Date() : null,
-    }));
+    db.user.findUnique.mockImplementation(
+      async ({ where, select }: { where: { id: number }; select?: Record<string, boolean> }) =>
+        pick({ id: where.id, deletedAt: where.id === 678 ? new Date() : null }, select)
+    );
     expect(await file()).toEqual({ ok: false, error: 'unknown_user' });
     expect(db.report.create).not.toHaveBeenCalled();
   });

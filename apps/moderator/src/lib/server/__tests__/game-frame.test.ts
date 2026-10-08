@@ -41,7 +41,7 @@ describe('delistGame', () => {
   });
 
   it.each([null, '', 'a'.repeat(65), 'a b', 'a\r\nx-evil: 1', 'modé'])(
-    'falls back to mod-<id> for a name Game Frame would refuse (%j)',
+    'falls back to mod-<id> for a name outside the ASCII header rule (%j)',
     async (username) => {
       const fetchImpl = reply(200, { ok: true, affected: [], state: 'delisted' });
       await delistGame({ ...input, moderator: { id: 7, username } }, fetchImpl);
