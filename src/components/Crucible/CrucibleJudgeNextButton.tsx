@@ -30,6 +30,7 @@ export function CrucibleJudgeNextButton() {
         { staleTime: 0 }
       );
       // Hidden users, tags and words are client-side only; the server can't apply them.
+      // filterPreferences returns every feed's item union; useApplyHiddenPreferences casts the same way.
       const [next] = filterPreferences({
         type: 'crucibles',
         data: suggestions,
@@ -39,7 +40,7 @@ export function CrucibleJudgeNextButton() {
         canViewNsfw,
         poiDisabled: browsingSettingsAddons.settings.disablePoi,
         minorDisabled: browsingSettingsAddons.settings.disableMinor,
-      }).items;
+      }).items as typeof suggestions;
       if (!next) {
         showInfoNotification({
           title: 'Nothing to judge right now',
