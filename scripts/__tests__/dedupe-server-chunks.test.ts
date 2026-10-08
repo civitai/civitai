@@ -103,6 +103,18 @@ function seedRealisticTree() {
 }
 
 describe('dedupe-server-chunks', () => {
+  it('reports the bytes the stubs replaced', () => {
+    const big = `1,()=>"${'a'.repeat(3 * 2 ** 20)}"`; // ~3 MiB per copy
+    write('chunks/_a._.js', chunk('_a._.js', big));
+    write('chunks/_b._.js', chunk('_b._.js', big));
+    write('chunks/_c._.js', chunk('_c._.js', big));
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('stubbed 2 duplicates (6.0 MiB)');
+  });
+
   it('stubs files identical apart from the sourceMappingURL to the first sibling by name', () => {
     seedRealisticTree();
     const before = read('chunks/_a1._.js');
@@ -219,6 +231,15 @@ describe('dedupe-server-chunks', () => {
     expect(run().code).toBe(2);
   });
 
+  it('exits 2 with usage on an extra positional argument, even over a valid tree', () => {
+    write('chunks/_a._.js', chunk('_a._.js', `1,()=>"x"`));
+
+    const r = run(server, 'extra');
+
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('usage:');
+  });
+
   it('dedupes inside nested directories, each against its own in-directory canonical', () => {
     write('chunks/ssr/_0unique._.js', chunk('_0unique._.js', `1,()=>"u"`));
     write('chunks/ssr/_x1._.js', chunk('_x1._.js', `2,()=>"ssr"`));
@@ -276,6 +297,7 @@ describe('dedupe-server-chunks', () => {
   it.each([
     ['a runtime file', '[turbopack]_runtime.js', 'is a runtime file'],
     ['a non-sibling path', 'ssr/_real._.js', 'is not a sibling'],
+    ['a backslash path', 'ssr\\_real._.js', 'is not a sibling'],
     ['itself', '_bad._.js', 'is itself a stub'],
   ])('fails loudly (exit 1) when a stub points at %s', (_label, target, message) => {
     write('chunks/_real._.js', chunk('_real._.js', `1,()=>"x"`));
@@ -291,16 +313,28 @@ describe('dedupe-server-chunks', () => {
 
   it('leaves identical files that are not module.exports=[ chunks alone', () => {
     const body = 'globalThis.x=1;\nmodule.exports=[1,()=>"x"];\n';
+    // Near misses a format change would plausibly produce: the `[` is part of the check.
+    const objectBody = 'module.exports={a:1};\n';
+    const fnBody = 'module.exports=()=>[1];\n';
     write('chunks/_a._.js', body);
     write('chunks/_b._.js', body);
+    write('chunks/_c._.js', objectBody);
+    write('chunks/_d._.js', objectBody);
+    write('chunks/_e._.js', fnBody);
+    write('chunks/_f._.js', fnBody);
     write('chunks/_real._.js', chunk('_real._.js', `1,()=>"r"`));
+    // Not a .js file: not counted, not touched.
+    write('chunks/_real._.js.map', '{}');
 
     const r = run(server);
 
     expect(r.code).toBe(0);
+    expect(r.out).toContain('7 chunk files, 1 distinct contents');
     expect(r.out).toContain('stubbed 0 duplicates');
-    expect(r.out).toContain('2 skipped (not a module.exports=[ chunk)');
+    expect(r.out).toContain('6 skipped (not a module.exports=[ chunk)');
     expect(read('chunks/_b._.js')).toBe(body);
+    expect(read('chunks/_d._.js')).toBe(objectBody);
+    expect(read('chunks/_f._.js')).toBe(fnBody);
   });
 
   it('exits 2 when no file is in the module.exports=[ chunk format', () => {
