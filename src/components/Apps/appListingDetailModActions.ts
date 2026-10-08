@@ -32,7 +32,12 @@ import {
  */
 
 /**
- * The actions the DETAIL body implements, of the seven {@link ListingModAction}s.
+ * The actions the DETAIL body implements, of the eight {@link ListingModAction}s.
+ *
+ * `set-visibility` opens the same `ModListingVisibilityModal` the /apps/review mgmt table
+ * uses. Like every member here it is offered only when {@link listingModActions} admits it
+ * for this surface's status, which it does for `approved` via the shared visibility
+ * eligibility predicate.
  *
  * 🔴 THE FOUR OMISSIONS ARE DECISIONS, NOT GAPS, and each has a reason that is about this
  * surface rather than about effort:
@@ -49,7 +54,12 @@ import {
  * Every omitted lifecycle action is still reachable, one click away, via the menu's link
  * to the review queue.
  */
-export const DETAIL_SURFACE_MOD_ACTIONS = ['message-owner', 'reset-to-pending', 'hide'] as const;
+export const DETAIL_SURFACE_MOD_ACTIONS = [
+  'message-owner',
+  'reset-to-pending',
+  'hide',
+  'set-visibility',
+] as const;
 export type DetailSurfaceModAction = (typeof DETAIL_SURFACE_MOD_ACTIONS)[number];
 
 /**
@@ -246,6 +256,10 @@ export function detailModActionLabel(action: DetailSurfaceModAction): string {
       // off the store; only this one comes back without a re-review. A moderator picking
       // between two items that both read "Unpublish" would be choosing at random.
       return 'Hide from store (reversible)';
+    case 'set-visibility':
+      // The verb matches the modal's own title and submit button ("Set visibility"), so the
+      // item and the dialog it opens read as one action.
+      return 'Set visibility';
   }
 }
 

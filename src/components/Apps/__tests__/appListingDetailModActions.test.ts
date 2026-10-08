@@ -15,6 +15,7 @@ import {
 } from '~/components/Apps/appListingDetailModActions';
 import {
   ALL_LISTING_MOD_ACTIONS,
+  actionOpensVisibility,
   listingModActions,
 } from '~/components/Apps/appListingModerationTableView';
 
@@ -26,6 +27,13 @@ import {
  */
 
 const KINDS = ['onsite', 'offsite'] as const;
+
+/**
+ * The purge-branch inputs `listingModActions` requires, pinned to the same fail-safe values
+ * the production call site in `appListingDetailModActions` passes, so the shared state
+ * machine is queried here exactly as the surface queries it.
+ */
+const NO_PURGE_INPUTS = { appBlockId: null, hasPendingBlockRequest: true } as const;
 
 /**
  * The first whitespace-delimited word of a label — the half a confirm button's verb is
@@ -53,11 +61,12 @@ describe('detailListingStatus — what this surface can honestly claim', () => {
 
 describe('appListingDetailModActions', () => {
   for (const kind of KINDS) {
-    it(`a moderator on a live ${kind} listing gets Contact owner + both takedowns, in canonical order`, () => {
+    it(`a moderator on a live ${kind} listing gets Contact owner, both takedowns and Set visibility, in canonical order`, () => {
       expect(appListingDetailModActions({ isModerator: true, preview: false, kind })).toEqual([
         'message-owner',
         'reset-to-pending',
         'hide',
+        'set-visibility',
       ]);
     });
 
@@ -85,7 +94,12 @@ describe('appListingDetailModActions', () => {
    */
   it('is exactly the intersection of the shared state machine with this surface subset', () => {
     for (const kind of KINDS) {
-      const admitted = listingModActions({ status: 'approved', kind, hasPendingRequest: false });
+      const admitted = listingModActions({
+        status: 'approved',
+        kind,
+        hasPendingRequest: false,
+        ...NO_PURGE_INPUTS,
+      });
       const rendered = appListingDetailModActions({ isModerator: true, preview: false, kind });
       // Positive control on both sides: neither set is empty, so the comparison below is
       // a real one and not two empty arrays agreeing.
@@ -107,13 +121,55 @@ describe('appListingDetailModActions', () => {
    */
   it('offers hide for an approved listing of either kind — the state machine admits it', () => {
     for (const kind of KINDS) {
-      expect(listingModActions({ status: 'approved', kind, hasPendingRequest: false })).toContain(
-        'hide'
-      );
+      expect(
+        listingModActions({
+          status: 'approved',
+          kind,
+          hasPendingRequest: false,
+          ...NO_PURGE_INPUTS,
+        })
+      ).toContain('hide');
       expect(appListingDetailModActions({ isModerator: true, preview: false, kind })).toContain(
         'hide'
       );
     }
+  });
+
+  /**
+   * `set-visibility` reaches this surface through the same intersection as `hide`: the
+   * shared machine admits it on `approved` (via the visibility-eligibility predicate) and
+   * the subset now includes it. Both halves are asserted so the case cannot pass on the
+   * subset alone.
+   */
+  it('offers set-visibility for an approved listing of either kind — and routes it to the level picker', () => {
+    for (const kind of KINDS) {
+      expect(
+        listingModActions({
+          status: 'approved',
+          kind,
+          hasPendingRequest: false,
+          appBlockId: null,
+          hasPendingBlockRequest: true,
+        })
+      ).toContain('set-visibility');
+      expect(appListingDetailModActions({ isModerator: true, preview: false, kind })).toContain(
+        'set-visibility'
+      );
+      // Non-moderator and preview: withheld like every other mod action.
+      expect(
+        appListingDetailModActions({ isModerator: false, preview: false, kind })
+      ).not.toContain('set-visibility');
+      expect(appListingDetailModActions({ isModerator: true, preview: true, kind })).not.toContain(
+        'set-visibility'
+      );
+    }
+    // The menu opens `ModListingVisibilityModal` for it — the same route the mgmt table uses.
+    expect(actionOpensVisibility('set-visibility')).toBe(true);
+  });
+
+  it('set-visibility is not a takedown — it never opens the reason-gated takedown confirm', () => {
+    expect(isDetailTakedownAction('set-visibility')).toBe(false);
+    expect(detailModActionLabel('set-visibility')).toBe('Set visibility');
   });
 
   /**
@@ -144,7 +200,12 @@ describe('appListingDetailModActions', () => {
     // absence above is a fact about this surface rather than about a dead identifier.
     expect(ALL_LISTING_MOD_ACTIONS).toContain('relist');
     expect(
-      listingModActions({ status: 'removed', kind: 'offsite', hasPendingRequest: false })
+      listingModActions({
+        status: 'removed',
+        kind: 'offsite',
+        hasPendingRequest: false,
+        ...NO_PURGE_INPUTS,
+      })
     ).toContain('relist');
   });
 
