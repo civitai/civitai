@@ -29,6 +29,7 @@ const versionMetricKeys = [
 ] as const;
 
 const modelMetricKeys = [
+  'uniqueGeneratorCount',
   'thumbsUpCount',
   'thumbsDownCount',
   'commentCount',
@@ -91,6 +92,7 @@ export const modelMetrics = createMetricProcessor({
       getCommentTasks(ctx),
       getBuzzTasks(ctx),
       getVersionAggregationTasks(ctx),
+      getUniqueGeneratorTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
     for (const tasks of modelTasks) await limitConcurrency(tasks, 2);
@@ -150,9 +152,7 @@ export const modelMetrics = createMetricProcessor({
     // window); genuine mutations still reindex immediately via the untouched
     // service-layer queueUpdate path.
     const FLUSH_INTERVAL_MS = env.SEARCH_INDEX_MODEL_METRIC_FLUSH_INTERVAL_MS;
-    const lastFlushStr = await sysRedis.get(
-      REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH
-    );
+    const lastFlushStr = await sysRedis.get(REDIS_SYS_KEYS.INDEX_UPDATES.MODEL_METRIC_LAST_FLUSH);
     const lastFlush = lastFlushStr ? new Date(lastFlushStr).getTime() : 0;
     const shouldFlush = shouldFlushMetricSearchIndex(Date.now(), lastFlush, FLUSH_INTERVAL_MS);
 
@@ -478,6 +478,52 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
 
 //   return tasks;
 // }
+
+// Distinct generators per model, merged across versions in ClickHouse (uniqMerge), which
+// caps the hot score's generation term (migration 20261011120000). NOT routed through
+// ModelVersionMetric like generationCount: getVersionAggregationTasks SUMs version rows,
+// and summing per-version distinct counts double-counts anyone who used two versions.
+async function getUniqueGeneratorTasks(ctx: ModelMetricContext) {
+  const affected = await getAffected(ctx, 'Model')`
+    SELECT DISTINCT mv."modelId" as id
+    FROM "ModelVersionMetric" mvm
+    JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+    WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
+  `;
+
+  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getUniqueGeneratorTasks', i + 1, 'of', tasks.length);
+
+    const versions = await ctx.db.$queryRaw<{ id: number; modelId: number }[]>`
+      SELECT id, "modelId" FROM "ModelVersion" WHERE "modelId" = ANY(${ids}::int[])
+    `;
+    const usable = versions.filter((v) => !injectedVersionIds.includes(v.id));
+    if (!usable.length) return;
+
+    const versionIds = usable.map((v) => v.id);
+    const modelIds = usable.map((v) => v.modelId);
+    const generators = await ctx.ch.$query<{ modelId: number; uniqueGenerators: number }>`
+      SELECT
+        transform(modelVersionId, [${versionIds}], [${modelIds}], 0) AS modelId,
+        uniqMerge(users_state) AS uniqueGenerators
+      FROM daily_resource_generation_user_counts
+      WHERE modelVersionId IN (${versionIds})
+      GROUP BY modelId
+    `;
+
+    ctx.jobContext.checkIfCanceled();
+    for (const row of generators) {
+      if (!row.modelId) continue;
+      ctx.updates[row.modelId] ??= { [ctx.idKey]: row.modelId };
+      ctx.updates[row.modelId].uniqueGeneratorCount = Number(row.uniqueGenerators);
+    }
+
+    log('getUniqueGeneratorTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
 
 async function getVersionRatingTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`

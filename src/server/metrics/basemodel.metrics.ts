@@ -10,12 +10,19 @@ const log = createLogger('metrics:basemodel');
 const BATCH_SIZE = 500;
 const AGGREGATION_CONCURRENCY = 5;
 
-const baseModelMetricKeys = ['thumbsUpCount', 'downloadCount', 'imageCount'] as const;
+const baseModelMetricKeys = [
+  'thumbsUpCount',
+  'downloadCount',
+  'imageCount',
+  'generationCount',
+  'uniqueGeneratorCount',
+] as const;
 type BaseModelMetricKey = (typeof baseModelMetricKeys)[number];
 
 type BaseModelMetricUpdate = {
   modelId: number;
   baseModel: string;
+  publishedAt?: Date | null;
 } & Partial<Record<BaseModelMetricKey, number>>;
 
 type BaseModelMetricContext = MetricProcessorRunContext & {
@@ -60,6 +67,7 @@ export const baseModelMetrics = createMetricProcessor({
 
     const aggExecStart = Date.now();
     await limitConcurrency(baseModelTasks, AGGREGATION_CONCURRENCY);
+    await addUniqueGeneratorCounts(ctx);
     const aggDuration = Date.now() - aggExecStart;
     log(
       `aggregation phase complete: ${
@@ -143,6 +151,8 @@ async function getBaseModelAggregationTasks(ctx: BaseModelMetricContext) {
         baseModel: vs.baseModel,
         downloadCount: parseInt(vs.downloadCount) || 0,
         imageCount: parseInt(vs.imageCount) || 0,
+        generationCount: parseInt(vs.generationCount) || 0,
+        publishedAt: vs.publishedAt,
         thumbsUpCount: 0, // Will be filled by review stats
       };
     }
@@ -168,22 +178,88 @@ async function getBaseModelAggregationTasks(ctx: BaseModelMetricContext) {
   return tasks;
 }
 
+// Distinct generators per (model, base model). The only column here ClickHouse has to
+// supply, and the one the hot-score trigger gates on: while it is NULL the trigger mirrors
+// the whole-model score instead of ranking a slice on a partial formula (20261012120000).
+//
+// uniqMerge has to group by the (modelId, baseModel) pair, and transform() maps one integer
+// to one integer, so each pair gets an index and the versions map to that.
+async function addUniqueGeneratorCounts(ctx: BaseModelMetricContext) {
+  const keys = Object.keys(ctx.baseModelUpdates);
+  if (!keys.length) return;
+
+  const modelIds = [...new Set(keys.map((k) => Number(k.split(':')[0])))];
+  for (const ids of chunk(modelIds, BATCH_SIZE)) {
+    ctx.jobContext.checkIfCanceled();
+    const versions = await ctx.db.$queryRaw<{ id: number; modelId: number; baseModel: string }[]>`
+      SELECT id, "modelId", "baseModel"
+      FROM "ModelVersion"
+      WHERE "modelId" = ANY(${ids}::int[]) AND status = 'Published'
+    `;
+    if (!versions.length) continue;
+
+    const pairs: string[] = [];
+    const versionIds: number[] = [];
+    const pairIndexes: number[] = [];
+    for (const v of versions) {
+      const pair = `${v.modelId}:${v.baseModel}`;
+      let idx = pairs.indexOf(pair);
+      if (idx < 0) idx = pairs.push(pair) - 1;
+      versionIds.push(v.id);
+      pairIndexes.push(idx);
+    }
+
+    const rows = await ctx.ch.$query<{ grp: number; uniqueGenerators: number }>`
+      SELECT
+        transform(modelVersionId, [${versionIds}], [${pairIndexes}], -1) AS grp,
+        uniqMerge(users_state) AS uniqueGenerators
+      FROM daily_resource_generation_user_counts
+      WHERE modelVersionId IN (${versionIds})
+      GROUP BY grp
+    `;
+
+    for (const row of rows) {
+      const pair = pairs[row.grp];
+      // Only slices this run already aggregated: the ClickHouse rows cover every published
+      // version of these models, including base models not in this batch's updates.
+      if (pair === undefined || !ctx.baseModelUpdates[pair]) continue;
+      ctx.baseModelUpdates[pair].uniqueGeneratorCount = Number(row.uniqueGenerators);
+    }
+  }
+}
+
 async function getVersionStatsForBatch(
   ctx: BaseModelMetricContext,
   ids: number[]
-): Promise<{ modelId: number; baseModel: string; downloadCount: string; imageCount: string }[]> {
+): Promise<
+  {
+    modelId: number;
+    baseModel: string;
+    downloadCount: string;
+    imageCount: string;
+    generationCount: string;
+    publishedAt: Date | null;
+  }[]
+> {
   const query = await ctx.pg.cancellableQuery<{
     modelId: number;
     baseModel: string;
     downloadCount: string;
     imageCount: string;
+    generationCount: string;
+    publishedAt: Date | null;
   }>(
-    `-- aggregate version metrics by base model (downloadCount, imageCount)
+    // MIN(publishedAt), not the model's own publish date and not the newest version: a
+    // model's first version in a new ecosystem should read as new in that ecosystem's feed,
+    // and a later version in the same one must not refresh it. Migration 20261012120000.
+    `-- aggregate version metrics by base model
     SELECT
       mv."modelId",
       mv."baseModel",
       SUM(mvm."downloadCount") as "downloadCount",
-      SUM(mvm."imageCount") as "imageCount"
+      SUM(mvm."imageCount") as "imageCount",
+      SUM(mvm."generationCount") as "generationCount",
+      MIN(mv."publishedAt") as "publishedAt"
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
     WHERE mv."modelId" = ANY($1::int[])
@@ -250,11 +326,15 @@ async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
           "baseModel" TEXT,
           "thumbsUpCount" INT,
           "downloadCount" INT,
-          "imageCount" INT
+          "imageCount" INT,
+          "generationCount" INT,
+          "uniqueGeneratorCount" INT,
+          "publishedAt" TIMESTAMP(3)
         )
       )
       INSERT INTO "ModelBaseModelMetric" (
-        "modelId", "baseModel", "thumbsUpCount", "downloadCount", "imageCount", "updatedAt",
+        "modelId", "baseModel", "thumbsUpCount", "downloadCount", "imageCount",
+        "generationCount", "uniqueGeneratorCount", "publishedAt", "updatedAt",
         "status", "availability", "mode", "nsfwLevel", "minor", "poi"
       )
       SELECT
@@ -263,6 +343,9 @@ async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
         COALESCE(d."thumbsUpCount", 0),
         COALESCE(d."downloadCount", 0),
         COALESCE(d."imageCount", 0),
+        COALESCE(d."generationCount", 0),
+        d."uniqueGeneratorCount",
+        d."publishedAt",
         NOW(),
         m."status",
         m."availability",
@@ -277,6 +360,14 @@ async function bulkInsertBaseModelMetrics(ctx: BaseModelMetricContext) {
           "thumbsUpCount" = EXCLUDED."thumbsUpCount",
           "downloadCount" = EXCLUDED."downloadCount",
           "imageCount" = EXCLUDED."imageCount",
+          "generationCount" = EXCLUDED."generationCount",
+          -- COALESCE, not a plain assignment: a run where ClickHouse returned nothing for a
+          -- slice must not blank a count it already has, which would drop the row back onto
+          -- the mirrored fallback and undo the per-base-model score.
+          "uniqueGeneratorCount" = COALESCE(
+            EXCLUDED."uniqueGeneratorCount", "ModelBaseModelMetric"."uniqueGeneratorCount"
+          ),
+          "publishedAt" = EXCLUDED."publishedAt",
           "updatedAt" = NOW()
     `;
 

@@ -38,9 +38,11 @@ import { baseModels } from '~/shared/constants/basemodel.constants';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
-  period: z.enum(MetricTimeframe).default(MetricTimeframe.Month),
+  // AllTime: a recency FILTER can empty a page, and on a tag page it usually does. Hot ranks
+  // recency instead, and a sort cannot drop rows.
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
   periodMode: periodModeSchema,
-  sort: z.enum(ModelSort).default(ModelSort.HighestRated),
+  sort: z.enum(ModelSort).default(ModelSort.Hot),
   types: z.enum(ModelType).array().optional(),
   checkpointType: z.enum(CheckpointType).optional(),
   baseModels: z.enum(baseModels).array().optional(),
@@ -267,6 +269,31 @@ const localStorageSchemas: LocalStorageSchema = {
   auctions: { key: 'auction-filters', schema: auctionFilterSchema },
 };
 
+/**
+ * One-time rewrite of the old default pair (`Highest Rated` + `Month`). The store persists
+ * its whole merged state on every change, defaults included, so anyone who ever touched a
+ * model filter has those saved as though chosen, and would otherwise keep them forever.
+ * Only the exact pair is replaced, so a real choice of either field survives.
+ */
+export const MODEL_FILTER_MIGRATION_KEY = 'model-filters-migration';
+export const MODEL_FILTER_MIGRATION_VERSION = '1-hot-default';
+
+export function migrateModelFilters(key: string, value: Record<string, unknown>) {
+  if (key !== localStorageSchemas.models.key) return value;
+  if (localStorage.getItem(MODEL_FILTER_MIGRATION_KEY) === MODEL_FILTER_MIGRATION_VERSION)
+    return value;
+
+  const isOldDefaultPair =
+    value?.sort === ModelSort.HighestRated && value?.period === MetricTimeframe.Month;
+  const migrated = isOldDefaultPair
+    ? { ...value, sort: ModelSort.Hot, period: MetricTimeframe.AllTime }
+    : value;
+
+  localStorage.setItem(MODEL_FILTER_MIGRATION_KEY, MODEL_FILTER_MIGRATION_VERSION);
+  if (isOldDefaultPair) localStorage.setItem(key, serializeJSON(migrated));
+  return migrated;
+}
+
 const getInitialValues = <TSchema extends z.ZodObject>({
   key,
   schema,
@@ -276,7 +303,7 @@ const getInitialValues = <TSchema extends z.ZodObject>({
 }) => {
   if (typeof window === 'undefined') return schema.parse({});
   const storageValue = localStorage.getItem(key) ?? '{}';
-  const value = deserializeJSON(storageValue);
+  const value = migrateModelFilters(key, deserializeJSON(storageValue));
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   else {

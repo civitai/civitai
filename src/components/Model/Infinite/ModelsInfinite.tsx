@@ -21,9 +21,6 @@ type InfiniteModelsProps = {
   showEof?: boolean;
   showAds?: boolean;
   showEmptyCta?: boolean;
-  /** Fall back to AllTime when the period filter returns nothing on the first page.
-   *  For surfaces that exist to list one collection, where an empty grid is a dead end. */
-  periodFallback?: boolean;
 };
 
 export function ModelsInfinite({
@@ -32,7 +29,6 @@ export function ModelsInfinite({
   disableStoreFilters = false,
   showAds,
   showEmptyCta,
-  periodFallback,
 }: InfiniteModelsProps) {
   const modelFilters = useModelFilters();
   const currentUser = useCurrentUser();
@@ -52,7 +48,6 @@ export function ModelsInfinite({
   const { models, fetchNextPage, hasNextPage, isRefetching, isFetching } = useQueryModels({
     ...filters,
     browsingLevel,
-    periodFallback,
   });
   const salesByModelId = useModelSaleBadges(models.map((m) => m.id));
 

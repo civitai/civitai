@@ -1200,9 +1200,12 @@ export interface ModelMetric {
   nsfwLevel: number;
   userId: number;
   lastVersionAt: Date | null;
+  publishedAt: Date | null;
   mode: ModelModifier | null;
   status: ModelStatus;
   availability: Availability;
+  hotScore: number | null;
+  uniqueGeneratorCount: number;
 }
 
 export interface ModelVersionMetric {
@@ -1235,6 +1238,10 @@ export interface ModelBaseModelMetric {
   poi: boolean;
   minor: boolean;
   updatedAt: Date;
+  hotScore: number | null;
+  generationCount: number | null;
+  uniqueGeneratorCount: number | null;
+  publishedAt: Date | null;
 }
 
 export interface ModelMetricDaily {

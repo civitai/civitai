@@ -128,6 +128,16 @@ export default JobEndpoint(async function testModelFeedFilters(
     results.push(await testSortingComparison([testBaseModel]));
   }
 
+  // Test 7: Hot. Its key lives on ModelMetric, so the FROM shape differs per base-model
+  // count, and a NULL hotScore sorts FIRST under DESC.
+  if (testBaseModel) {
+    for (const queryPath of pathsToTest) {
+      results.push(await testHotSort([testBaseModel], queryPath.name, queryPath.force));
+    }
+    results.push(await testHotSort([testBaseModel, 'SDXL 1.0'], 'baseModelMetrics', true));
+  }
+  results.push(await testHotSort([], 'standard', false));
+
   // Check what the feature flag is actually returning
   const flagValue = await isFlipt('base-model-feed-metrics');
 
@@ -449,6 +459,88 @@ async function testBaseModelOnlyFilter(
       passed: false,
       queryPath,
       details: `Error: ${error instanceof Error ? error.message : String(error)}`,
+    };
+  }
+}
+
+/**
+ * Hot returns an ordered page with no unscored row: a NULL `hotScore` sorts FIRST under
+ * `DESC`, so an unscored row announces itself at the top.
+ */
+async function testHotSort(
+  baseModels: string[],
+  queryPath: 'standard' | 'baseModelMetrics',
+  force: boolean
+): Promise<TestResult> {
+  const label = baseModels.length
+    ? `${baseModels.length} base model(s): ${baseModels.join(', ')}`
+    : 'no base-model filter';
+  const name = `[${queryPath}] Hot sort (${label})`;
+
+  try {
+    const result = await getModelsRaw({
+      input: {
+        ...createInput({
+          baseModels: baseModels.length
+            ? (baseModels as GetAllModelsOutput['baseModels'])
+            : undefined,
+        }),
+        sort: ModelSort.Hot,
+        take: 20,
+      },
+      _forceBaseModelMetrics: force,
+    });
+
+    const items = result.items;
+    if (!items.length) {
+      return {
+        name,
+        passed: false,
+        details:
+          'Hot returned no rows; it has no period filter, so an empty page means the score or its index is missing',
+        itemCount: 0,
+        queryPath,
+      };
+    }
+
+    const scores = await dbRead.$queryRaw<{ modelId: number; hotScore: number | null }[]>`
+      SELECT "modelId", "hotScore" FROM "ModelMetric" WHERE "modelId" IN (${items
+        .map((m) => m.id)
+        .join(',')})
+    `;
+    const byId = new Map(scores.map((r) => [r.modelId, r.hotScore]));
+    const unscored = items.filter((m) => byId.get(m.id) == null);
+    const ordered = items
+      .map((m) => byId.get(m.id) ?? Number.POSITIVE_INFINITY)
+      .every((score, i, all) => i === 0 || all[i - 1] >= score);
+
+    const passed = unscored.length === 0 && ordered;
+    return {
+      name,
+      passed,
+      details: passed
+        ? `${items.length} rows, descending by hotScore, none unscored`
+        : [
+            unscored.length ? `${unscored.length} row(s) have a NULL hotScore` : null,
+            ordered ? null : 'rows are not in descending hotScore order',
+          ]
+            .filter(Boolean)
+            .join('; '),
+      itemCount: items.length,
+      queryPath,
+      sampleItems: items.slice(0, 3).map((m) => ({
+        name: m.name,
+        userId: m.user.id,
+        type: m.type,
+        baseModels: m.modelVersions.map((v) => v.baseModel),
+      })),
+    };
+  } catch (error) {
+    return {
+      name,
+      passed: false,
+      details: `Error: ${error instanceof Error ? error.message : String(error)}`,
+      queryPath,
     };
   }
 }

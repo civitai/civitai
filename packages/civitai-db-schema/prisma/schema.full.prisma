@@ -1466,9 +1466,22 @@ model ModelMetric {
   nsfwLevel     Int            @default(0)
   userId        Int            @default(0)
   lastVersionAt DateTime?
+  publishedAt   DateTime?
   mode          ModelModifier?
   status        ModelStatus    @default(Draft)
   availability  Availability   @default(Public)
+
+  /// Hot feed sort key, maintained by the trg_model_metric_hot_score trigger. Never write it
+  /// from application code: the DB computes it so the migration can ship before the deploy.
+  /// Int, not float — the keyset cursor parser runs parseInt on the sort token.
+  hotScore Int?
+
+  /// Distinct users who have generated with any version of this model, merged across
+  /// versions rather than summed. Caps hotScore's generation term so one person — the
+  /// owner included — cannot lift a model on their own generations. 0 means "not computed
+  /// yet" and leaves the cap inert, so a model with no count is never penalised. Kept
+  /// current by the Model metrics job.
+  uniqueGeneratorCount Int @default(0)
 
   @@id([modelId])
 }
@@ -1507,6 +1520,28 @@ model ModelBaseModelMetric {
   poi          Boolean         @default(false)
   minor        Boolean         @default(false)
   updatedAt    DateTime        @default(now())
+
+  /// This base model's OWN hot score, so a filtered feed ranks on the slice rather than on
+  /// engagement the model earned in another ecosystem. Served by mbmm_feed_hot. Computed by
+  /// trigger from the columns below; falls back to mirroring ModelMetric.hotScore while
+  /// generationCount is NULL. Same formula as the whole-model score, so a rank does not jump
+  /// when a filter is applied.
+  hotScore Int?
+
+  /// Generations attributed to this model's versions of THIS base model. A plain SUM over
+  /// ModelVersionMetric, so it arrives with the metrics job.
+  generationCount Int?
+
+  /// Distinct generators for this slice, merged across its versions; caps generationCount the
+  /// same way ModelMetric.uniqueGeneratorCount does. NULL is what gates hotScore onto the
+  /// mirrored fallback, because this is the one value that needs ClickHouse and so arrives
+  /// last — a row scores on its own slice only once all three are in hand.
+  uniqueGeneratorCount Int?
+
+  /// EARLIEST published version for this base model — not the model's first publish, which
+  /// would make a new version in a new ecosystem read as old there, and not the newest, which
+  /// would let a republish refresh recency inside a filtered feed.
+  publishedAt DateTime?
 
   @@id([modelId, baseModel])
 }

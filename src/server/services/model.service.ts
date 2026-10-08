@@ -524,14 +524,17 @@ export const getModelsRaw = async ({
   // subquery scans every "ModelBaseModelMetric" row matching the requested base
   // models BEFORE the cursor predicate can be applied (since the cursor lives on
   // mm."lastVersionAt"). On production this is ~2.8s/query at deep cursors. The
-  // new path drives from "ModelMetric" using the feed_newest / feed_oldest
+  // new path drives from "ModelMetric" using its feed_newest / feed_oldest / feed_hot
   // covering index, semi-joins to "ModelBaseModelMetric" via EXISTS, and pulls
   // the per-base-model rank sums via LATERAL aggregate that fires only for the
   // LIMIT survivors.
-  const useNewestOldestMultiBmPath =
+  // Newest, Oldest and Hot all order on a ModelMetric column, so driving from ModelMetric
+  // lets its index seek and the cursor push down. The aggregate path below has to scan every
+  // matching ModelBaseModelMetric row first. Measurements: docs/model-feed-hot-ranking.md §10.
+  const useModelMetricDrivenMultiBmPath =
     !!useBaseModelMetrics &&
     (baseModels?.length ?? 0) > 1 &&
-    (sort === ModelSort.Newest || sort === ModelSort.Oldest);
+    (sort === ModelSort.Newest || sort === ModelSort.Oldest || sort === ModelSort.Hot);
 
   // Dynamic alias: 'mbm' for ModelBaseModelMetric path, 'mm' for standard ModelMetric path
   // pSql is used for columns denormalized on both tables (status, nsfwLevel, availability, mode, minor, poi)
@@ -539,15 +542,15 @@ export const getModelsRaw = async ({
   //
   // The newest/oldest multi-bm path drives from mm and only references mbm for the
   // per-base-model rank sums (downloadCount, thumbsUpCount). All other denormalized
-  // columns come from mm so the feed_newest/feed_oldest covering index is fully
+  // columns come from mm so the feed_newest / feed_oldest / feed_hot covering index is fully
   // exploited (filters are applied during the index scan, not after).
-  const pAlias = useBaseModelMetrics && !useNewestOldestMultiBmPath ? 'mbm' : 'mm';
+  const pAlias = useBaseModelMetrics && !useModelMetricDrivenMultiBmPath ? 'mbm' : 'mm';
   const pSql = Prisma.raw(pAlias);
 
   // For the SELECT-list rank fields, the per-base-model sums must come from mbm
   // (the ModelBaseModelMetric driver in the legacy paths, or the LATERAL alias in
   // the new path). Other paths can keep using `${pSql}` directly.
-  const rankPSql = useNewestOldestMultiBmPath ? Prisma.raw('mbm') : pSql;
+  const rankPSql = useModelMetricDrivenMultiBmPath ? Prisma.raw('mbm') : pSql;
 
   if (searchModelIds.length) {
     AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(searchModelIds, ',')})`);
@@ -690,7 +693,7 @@ export const getModelsRaw = async ({
   // - Standard path: EXISTS subquery on ModelVersion
   // - Base model metrics, single base model: direct equality on mbm."baseModel" (preserves index scan)
   // - Base model metrics, multiple base models, Newest/Oldest sort: EXISTS semi-join
-  //   on ModelBaseModelMetric (planner-friendly, lets feed_newest/feed_oldest drive)
+  //   on ModelBaseModelMetric (planner-friendly, lets the ModelMetric feed index drive)
   // - Base model metrics, multiple base models, per-base-model-stat sort: filter is
   //   inside the FROM subquery (see fromClause)
   if (baseModels?.length && !useBaseModelMetrics) {
@@ -704,9 +707,9 @@ export const getModelsRaw = async ({
   } else if (useBaseModelMetrics && baseModels!.length === 1) {
     // Single base model: filter in WHERE clause so covering indexes can be fully utilized
     AND.push(Prisma.sql`mbm."baseModel" = ${baseModels![0]}`);
-  } else if (useNewestOldestMultiBmPath) {
+  } else if (useModelMetricDrivenMultiBmPath) {
     // Multi-base-model + lastVersionAt sort: semi-join via EXISTS so the planner
-    // keeps the feed_newest/feed_oldest index as the driver. The PK on
+    // keeps the ModelMetric feed index as the driver. The PK on
     // (modelId, baseModel) makes this lookup index-only.
     AND.push(
       Prisma.sql`EXISTS (
@@ -912,7 +915,8 @@ export const getModelsRaw = async ({
   // Use mm.* for model-level stats (commentCount, collectedCount, lastVersionAt)
   let orderBy = `mm."lastVersionAt" DESC NULLS LAST, ${pAlias}."modelId" DESC`;
 
-  if (sort === ModelSort.HighestRated)
+  if (sort === ModelSort.Hot) orderBy = `${pAlias}."hotScore" DESC, ${pAlias}."modelId"`;
+  else if (sort === ModelSort.HighestRated)
     orderBy = `${pAlias}."thumbsUpCount" DESC, ${pAlias}."downloadCount" DESC, ${pAlias}."modelId"`;
   else if (sort === ModelSort.MostLiked)
     orderBy = `${pAlias}."thumbsUpCount" DESC, ${pAlias}."downloadCount" DESC, ${pAlias}."modelId"`;
@@ -975,7 +979,7 @@ export const getModelsRaw = async ({
   // 2. Base model metrics, single base model: direct JOIN on ModelBaseModelMetric
   //    (preserves covering index scan + sort order + early LIMIT termination)
   // 3. Base model metrics, multiple base models, lastVersionAt-based sort
-  //    (Newest/Oldest): drive from ModelMetric so the feed_newest/feed_oldest
+  //    (Newest/Oldest/Hot): drive from ModelMetric so its feed_newest / feed_oldest / feed_hot
   //    index seek + cursor pushdown work; semi-join to ModelBaseModelMetric via
   //    EXISTS; pull per-base-model rank sums via LATERAL that fires only for the
   //    LIMIT survivors.
@@ -989,7 +993,7 @@ export const getModelsRaw = async ({
     ? Prisma.sql`FROM "ModelBaseModelMetric" mbm
       JOIN "Model" m ON m."id" = mbm."modelId"
       JOIN "ModelMetric" mm ON mm."modelId" = mbm."modelId"`
-    : useNewestOldestMultiBmPath
+    : useModelMetricDrivenMultiBmPath
     ? Prisma.sql`FROM "ModelMetric" mm
       JOIN "Model" m ON m."id" = mm."modelId"
       LEFT JOIN LATERAL (
