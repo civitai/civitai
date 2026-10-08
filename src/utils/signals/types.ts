@@ -1,6 +1,20 @@
+// Bump with any tab ↔ worker protocol change. It names the SharedWorker and versions its URL, and a
+// tab that gets a different version back is talking to a stale script (e.g. mid rolling deploy).
+export const SIGNALS_WORKER_VERSION = '2.2';
+
+// Tabs heartbeat on this interval; the worker treats a port silent for PORT_STALE_AFTER_MS as a tab
+// that died without `beforeunload`. Hidden tabs throttle timers to ~1/min, so keep a wide margin.
+export const PORT_HEARTBEAT_INTERVAL_MS = 30_000;
+export const PORT_STALE_AFTER_MS = 3 * 60_000;
+
 type SignalWorkerReady = {
   type: 'worker:ready';
+  /** Absent on scripts older than 2.2. */
+  version?: string;
 };
+
+/** The worker dropped this port's topics as stale; the tab must re-send them. */
+type SignalWorkerPortReset = { type: 'port:reset' };
 
 type SignalWorkerPong = { type: 'pong' };
 
@@ -33,12 +47,20 @@ export type SignalEventEntry = {
 };
 
 export type SignalWorkerStatus = {
+  version?: string;
   connectionState: SignalStatus | null;
+  connectionMessage?: string;
+  /** The SignalR HubConnection's own state; can disagree with `connectionState`. */
+  hubState: string | null;
+  connectionId: string | null;
   connectedUserId: number | null;
   portCount: number;
   registeredEvents: string[];
+  /** Topics any tab wants subscribed → whether as `subscribeNotify`. */
+  topics: Record<string, boolean>;
   lastEventReceivedAt: number | null;
   lastServerPongAt: number | null;
+  lastServerActivityAt: number | null;
   logEntries: SignalLogEntry[];
   recentSignals: SignalEventEntry[];
   uptime: number;
@@ -48,6 +70,9 @@ type SignalWorkerDebugDump = {
   type: 'debug:dump';
   data: SignalWorkerStatus;
 };
+
+export type SignalServerPingResult = { ok: boolean; ms: number; error?: string };
+type SignalWorkerServerPong = { type: 'debug:server-pong' } & SignalServerPingResult;
 
 export type SignalTopicMethod = 'subscribe' | 'subscribeNotify' | 'unsubscribe';
 
@@ -61,7 +86,10 @@ export type SignalTopicStatus = {
   topic: string;
   method: SignalTopicMethod;
   ok: boolean;
-  /** Present on failure. `'no-connection'` when the worker wasn't connected. */
+  /**
+   * Present on failure. `'no-connection'` when the worker wasn't connected; `'timeout'` when the hub
+   * didn't answer in time (the call may still land, so don't pile retries on it).
+   */
   reason?: string;
 };
 
@@ -71,16 +99,21 @@ export type WorkerOutgoingMessage =
   | SignalWorkerPong
   | SignalWorkerState
   | SignalWorkerDebugDump
+  | SignalWorkerServerPong
+  | SignalWorkerPortReset
   | SignalTopicStatus;
 
 export type WorkerIncomingMessage =
-  | { type: 'connection:init'; token: string; userId: number }
+  | { type: 'connection:init'; token: string; userId: number; tokenFetchedAt: number }
   | { type: 'event:register'; target: string }
   | { type: 'beforeunload' }
   | { type: 'ping' }
+  | { type: 'port:heartbeat' }
   | { type: 'send'; target: string; args: Record<string, unknown> }
   | { type: 'topic:register'; topic: string }
   | { type: 'topic:registerNotify'; topic: string }
   | { type: 'topic:unsubscribe'; topic: string }
   | { type: 'debug:dump' }
-  | { type: 'debug:toggle-verbose' };
+  | { type: 'debug:toggle-verbose' }
+  | { type: 'debug:server-ping' }
+  | { type: 'debug:reconnect' };
