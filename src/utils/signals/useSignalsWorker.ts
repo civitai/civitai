@@ -343,7 +343,10 @@ export function useSignalsWorker(options?: {
           SERVER_PONG_EVENT,
           timeoutMs
         ),
-      /** Skips every backoff: a fresh token now, and an immediate hub attempt. */
+      /**
+       * Skips every backoff: an immediate hub attempt with the token the tab holds, while a fresh
+       * token is fetched in parallel and used from the next attempt on.
+       */
       forceReconnect: () => {
         tokenRefreshAttemptRef.current = 0;
         // The query is disabled while connected; invalidating marks it stale, so it refetches the

@@ -326,13 +326,17 @@ describe('useSignalsWorker: signals token re-mint', () => {
     expect(state.invalidations.map((t) => t - t0)).toEqual([600_000, 1_800_000]);
   });
 
-  /** The token of the last connection:init the given worker received, if any. */
-  function lastInitToken(worker: { port: FakePort }) {
+  /** The last connection:init the given worker received, if any. */
+  function lastInit(worker: { port: FakePort }) {
     const inits = worker.port.postMessage.mock.calls
       .map(([m]) => m)
       .filter((m) => m.type === 'connection:init');
-    return inits.at(-1)?.token;
+    return inits.at(-1);
   }
+  const lastInitToken = (worker: { port: FakePort }) => lastInit(worker)?.token;
+  // The fake clock's start: when `mount` fetched t1. The worker ranks tokens by this stamp, so a
+  // re-sent t1 must keep it — not take the time of the degraded re-mint 10 minutes later.
+  const T1_FETCHED_AT = 1_000_000;
 
   it("after a re-mint came back degraded, 'closed' still hands the worker the last real token", async () => {
     await mount({ accessToken: 't1' });
@@ -345,7 +349,7 @@ describe('useSignalsWorker: signals token re-mint', () => {
 
     // The worker dropped its connection object on this close; only an init rebuilds it.
     await fromWorker({ type: 'connection:state', state: 'closed' });
-    expect(lastInitToken(workers[0])).toBe('t1');
+    expect(lastInit(workers[0])).toMatchObject({ token: 't1', tokenFetchedAt: T1_FETCHED_AT });
   });
 
   it('a replacement worker is handed the last real token even after a degraded re-mint', async () => {
@@ -360,7 +364,7 @@ describe('useSignalsWorker: signals token re-mint', () => {
     await advance(61_000);
     expect(workers).toHaveLength(2);
     await fromWorker({ type: 'worker:ready', version: '2.3' });
-    expect(lastInitToken(workers[1])).toBe('t1');
+    expect(lastInit(workers[1])).toMatchObject({ token: 't1', tokenFetchedAt: T1_FETCHED_AT });
   });
 
   it("never hands the worker another user's last token", async () => {
