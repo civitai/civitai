@@ -336,10 +336,12 @@ describe('D — "live" belongs to the currently published version only', () => {
       version({ id: 'v_cur', deployState: 'live', version: '2.0.0' }),
       version({ id: 'v_old', deployState: 'live', version: '1.0.0' }),
     ]);
-    await expect.element(page.getByTestId('apps-history-deploy-v_cur')).toHaveTextContent('live');
-    expect(page.getByTestId('apps-history-deploy-v_old').elements()).toHaveLength(0);
+    // Every row has rendered once the oldest one has; then read synchronously, so the
+    // listing edit stealing the "published" slot fails here by name rather than by timeout.
     await expect.element(page.getByTestId('apps-history-entry-v_old')).toHaveTextContent(/· live/);
-    expect(page.getByTestId('apps-history-deploy-l_edit').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-history-deploy-v_cur').elements()).toHaveLength(1);
+    expect(page.getByTestId('apps-history-deploy-v_cur').element().textContent).toBe('live');
+    expect(page.getByTestId('apps-history-deploy-v_old').elements()).toHaveLength(0);
     // A pending version has no build lifecycle to show.
     expect(page.getByTestId('apps-history-deploy-v_pend').elements()).toHaveLength(0);
   });
