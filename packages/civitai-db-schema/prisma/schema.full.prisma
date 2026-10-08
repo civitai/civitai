@@ -1820,6 +1820,40 @@ model ResourceInsight {
   @@index([stale])
 }
 
+// One build of the resource-intent co-occurrence index (token -> model counts). A row is
+// inserted when a build starts (`status` 'building'), then set 'ready' or 'failed' once; a
+// ready row never changes again. `contentHash` = sha256(kind, NUL, payload), where `payload` is
+// msgpack + brotli of integer counts only; it is the snapshot's identity (unique among ready
+// rows, a partial index the migration creates) and loads verify it. `kind` 'production' rows are
+// what the weekly job writes and serving reads; 'study' rows are pinned builds for an offline
+// study, deleted at `pinnedUntil` or on explicit release (a DB CHECK holds the pin rules).
+// `trainImageIds` is read only by study controls, never by serving. Written by
+// src/server/services/resource-intent-cooc/pipeline.ts. The migration is applied manually per
+// environment (no prisma migrate deploy).
+model ResourceIntentCoocSnapshot {
+  id                String    @id @default(uuid())
+  kind              String
+  status            String    @default("building")
+  contentHash       String?
+  specHash          String
+  trainStart        DateTime
+  trainEnd          DateTime
+  seed              Int
+  pinnedUntil       DateTime?
+  builtAt           DateTime  @default(now())
+  trainCreatedAtMin DateTime?
+  trainCreatedAtMax DateTime?
+  idsTried          Int?
+  trainRows         Int?
+  vocab             Int?
+  models            Int?
+  keptPairs         Int?
+  payload           Bytes?
+  trainImageIds     Bytes?
+
+  @@index([kind, status, trainEnd(sort: Desc), builtAt(sort: Desc)])
+}
+
 enum ReviewReactions {
   Like
   Dislike
