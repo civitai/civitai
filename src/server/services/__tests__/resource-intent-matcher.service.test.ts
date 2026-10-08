@@ -953,6 +953,8 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
     // Nothing guarantees Meilisearch orders tied documents the same at limit 10 and 500,
     // so the fake does not: the seed page leads 2, 1; the 500-document page 1, 2.
     const docs = Array.from({ length: 30 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: true }]));
+    // A real tie: models 1 and 2 share a score, so both orders are valid sorts.
+    (docs[1] as unknown as { metrics: { thumbsUpCount: number } }).metrics.thumbsUpCount = 9_999;
     const seedOrder = [docs[1], docs[0], ...docs.slice(2)];
     searchWithSignal.mockImplementation(async (_index, _q, params: { limit: number }) => ({
       hits: (params.limit === 500 ? docs : seedOrder).slice(0, params.limit),
