@@ -874,11 +874,10 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
   const PREP_ERROR =
     "Couldn't read this image on your device. Try a different file or a screenshot.";
 
-  /** The card shows exactly `text`, and none of the browser's own error text. */
-  async function expectFailedCard(text: string) {
+  /** The card shows exactly `text`, and not the underlying error's own text. */
+  async function expectFailedCard(text: string, raw = 'Image failed to load') {
     await expect.element(page.getByText(text, { exact: true })).toBeVisible();
-    for (const raw of ['Image failed to load', 'failed to load image blob', 'broke'])
-      expect(document.body.textContent).not.toContain(raw);
+    expect(document.body.textContent).not.toContain(raw);
     await expect.poll(loaderCount).toBe(0);
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
@@ -912,7 +911,7 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
       );
       renderWithProviders(<PendingHarness />);
       await pickFiles(1);
-      await expectFailedCard(PREP_ERROR);
+      await expectFailedCard(PREP_ERROR, `${stage} broke`);
       expect(reports()).toEqual([
         [`source image prep failed: ${stage}`, 'picked-file image/jpeg <5MB NotReadableError'],
       ]);
@@ -999,5 +998,31 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     await expect.poll(loaderCount).toBe(0);
     expect(document.body.textContent).not.toContain(PREP_ERROR);
     expect(reports()).toEqual([]);
+  });
+
+  test('a size requirement keeps its own message and is not reported', async () => {
+    const tooSmall = 'Does not meet minimum width requirement: 512px';
+    vi.mocked(resizeImage).mockRejectedValueOnce(new Error(tooSmall));
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await expectFailedCard(tooSmall, PREP_ERROR);
+    expect(reports()).toEqual([]);
+  });
+
+  test('a slot whose image cannot be read shows the same text, not the browser error', async () => {
+    mocks.getImageDimensions.mockRejectedValue(new Error('Image failed to load'));
+    renderWithProviders(
+      <div data-testid="source-images">
+        <ImageUploadMultipleInput
+          value={[]}
+          onChange={() => undefined}
+          slots={[{ label: 'First frame' }, { label: 'Last frame' }]}
+        />
+      </div>
+    );
+    await pickFiles(1);
+    await expect.element(page.getByText(PREP_ERROR, { exact: true })).toBeVisible();
+    expect(document.body.textContent).not.toContain('Image failed to load');
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
   });
 });

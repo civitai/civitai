@@ -1049,7 +1049,7 @@ export function SourceImageUploadMultiple({
           const dims =
             cached?.width && cached?.height
               ? { width: cached.width, height: cached.height }
-              : await getImageDimensions(item.previewUrl);
+              : await prepStage('dims', () => getImageDimensions(item.previewUrl));
           if (!cached?.width || !cached?.height) {
             sourceMetadataStore.setMetadata(item.previewUrl, dims);
           }
@@ -1161,7 +1161,8 @@ export function SourceImageUploadMultiple({
       setUploads((prev) => prev.filter((x) => !x.id || !successfulIds.has(x.id)));
       cleanupTracking();
     } catch (e) {
-      setError((e as Error).message);
+      // The browser's own text for an image it could not read is not shown.
+      setError(e instanceof ImagePrepError ? IMAGE_PREP_ERROR : (e as Error).message);
       setUploads((prev) => prev.filter((x) => !x.id || !itemIds.has(x.id)));
       cleanupTracking();
     }
