@@ -752,7 +752,9 @@ describe('withSignals', () => {
 
       // A push on the default lane still gets a slot and completes.
       const pushFn = vi.fn(async () => 'pushed');
-      await expect(withSignals(pushFn)).resolves.toBe('pushed');
+      const push = track(withSignals(pushFn));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(push.value).toBe('pushed');
       expect(pushFn).toHaveBeenCalledTimes(1);
       expect(countLane('signals_call_queue_rejections_total', 'default')).toBe(0);
     });
@@ -765,7 +767,9 @@ describe('withSignals', () => {
       await Promise.resolve();
       expect((shed.error as Error | undefined)?.message).toMatch(/queue full/);
 
-      await expect(withSignals(async () => 'token', { lane: 'token' })).resolves.toBe('token');
+      const mint = track(withSignals(async () => 'token', { lane: 'token' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mint.value).toBe('token');
       expect(countLane('signals_call_queue_rejections_total', 'default')).toBe(1);
       expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(0);
     });
@@ -790,6 +794,46 @@ describe('withSignals', () => {
       expect(await laneGauge('signals_call_active', 'default')).toBe(1);
       expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(1);
       expect(countLane('signals_call_queue_rejections_total', 'default')).toBe(1);
+    });
+
+    it('a token storm cannot open the shared circuit through its own queue (pushes keep flowing)', async () => {
+      const { withSignals } = await load({
+        SIGNALS_TOKEN_CALL_MAX_QUEUE: 0,
+        SIGNALS_CIRCUIT_TRIP_THRESHOLD: 3,
+      });
+
+      // One real token-lane backend timeout: counted (1) AND backend evidence.
+      track(withSignals(hang, { lane: 'token' }));
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(count('signals_call_timeouts_total')).toBe(1);
+
+      // Then a token storm overflows the token queue — with evidence in the
+      // window these would count on the default lane, but token-lane queue
+      // rejections measure demand and never count.
+      track(withSignals(hang, { lane: 'token' }));
+      Array.from({ length: 5 }, () => track(withSignals(async () => 't', { lane: 'token' })));
+      await Promise.resolve();
+      expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(5);
+      expect(count('signals_circuit_trips_total')).toBe(0);
+
+      const push = track(withSignals(async () => 'pushed'));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(push.value).toBe('pushed');
+    });
+
+    it('backend evidence from the token lane still lets DEFAULT-lane queue failures count', async () => {
+      const { withSignals } = await load({
+        SIGNALS_CALL_MAX_QUEUE: 0,
+        SIGNALS_CIRCUIT_TRIP_THRESHOLD: 3,
+      });
+
+      track(withSignals(hang, { lane: 'token' }));
+      await vi.advanceTimersByTimeAsync(1000); // token backend timeout: 1 + evidence
+      track(withSignals(hang)); // default lane: the only slot
+      [1, 2].forEach(() => track(withSignals(async () => 'p')));
+      await Promise.resolve();
+      expect(countLane('signals_call_queue_rejections_total', 'default')).toBe(2);
+      expect(count('signals_circuit_trips_total')).toBe(1); // 1 + 2 = threshold
     });
 
     it('the circuit breaker is SHARED: a sick backend seen by one lane stops the other', async () => {

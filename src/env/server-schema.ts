@@ -561,10 +561,12 @@ export const serverSchema = z
     // 30s router timeout fires. Default tuned for signals normal latency
     // (higher than Meili due to Orleans grain init).
     SIGNALS_CALL_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(5000),
-    // Per-pod cap on in-flight signals HTTP calls wrapped via withSignals().
-    // Calls beyond it wait in a queue bounded by SIGNALS_CALL_MAX_QUEUE.
+    // Per-pod cap on in-flight signals HTTP calls in withSignals()' 'default'
+    // lane (everything except getToken; the pod-wide cap adds
+    // SIGNALS_TOKEN_CALL_CONCURRENCY). Calls beyond it wait in a queue bounded
+    // by SIGNALS_CALL_MAX_QUEUE.
     SIGNALS_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
-    // Per-pod cap on calls waiting for a SIGNALS_CALL_CONCURRENCY slot. When
+    // Per-pod cap on 'default'-lane calls waiting for a SIGNALS_CALL_CONCURRENCY slot. When
     // full, further calls fail at 0ms with SignalsCallTimeoutError('concurrency')
     // instead of piling up requests that can only time out. A queue-full
     // rejection counts toward the circuit only when the window also holds a
@@ -574,7 +576,8 @@ export const serverSchema = z
     // only, so a client reconnect storm cannot crowd out signal pushes. Defaults
     // equal the shared limiter getToken used before (30 / 200), so getToken's
     // bounds are unchanged; the 'default' lane keeps SIGNALS_CALL_*. The circuit
-    // breaker stays shared across lanes. See src/server/signals/wrapper.ts.
+    // breaker stays shared across lanes, but token-lane queue rejections never
+    // count toward it (they measure demand). See src/server/signals/wrapper.ts.
     SIGNALS_TOKEN_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
     SIGNALS_TOKEN_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
     // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).

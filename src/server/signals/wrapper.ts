@@ -94,7 +94,13 @@ const log = createLogger('signals', 'cyan');
  * to share (30 / 200), so getToken sees the same bounds as before; the
  * default lane keeps its own 30 / 200. A pod can therefore hold up to 60
  * signals calls in flight (30 per lane) instead of 30. The CIRCUIT BREAKER is
- * SHARED: a sick backend stops both lanes, and every lane's outcomes feed it.
+ * SHARED: a sick backend stops both lanes — backend timeouts and backend
+ * evidence from EITHER lane feed it. But the token lane's queue-side failures
+ * (queue full / expired in queue / not started) never count toward it: they
+ * measure token DEMAND, and counting them would let a healthy token storm
+ * open the circuit and shut down pushes — the crowding-out the lane exists to
+ * prevent. A sick backend still trips it through the token lane's own backend
+ * timeouts (~concurrency per deadline).
  * Metrics carry a `lane` label where they are per-lane (active, queue depth,
  * queue rejections, queue expirations); sum() over the label gives the
  * pod-wide figure the single-lane metric used to report.
@@ -109,7 +115,7 @@ const log = createLogger('signals', 'cyan');
 /**
  * Typed error thrown by withSignals() when a wrapped signals call exceeds
  * SIGNALS_CALL_TIMEOUT_MS (reason 'timeout'), or when it is shed at 0ms because
- * the circuit breaker is OPEN or the per-pod queue is full (reason
+ * the circuit breaker is OPEN or the call's lane queue is full (reason
  * 'concurrency').
  *
  * Hot-path callers (signals.getToken tRPC handler, webhooks/resource-training
@@ -147,6 +153,9 @@ type Lane = {
   // Calls in this lane still waiting for a slot (live: excludes calls that
   // already settled while queued). Reported as signals_call_queue_depth.
   queued: number;
+  // Whether this lane's queue-side failures may count toward the shared
+  // circuit (with evidence). False for 'token' — see LANES in the header.
+  shedFeedsCircuit: boolean;
 };
 
 const lanes: Record<SignalsLane, Lane> = {
@@ -156,6 +165,7 @@ const lanes: Record<SignalsLane, Lane> = {
     maxQueue: () => env.SIGNALS_CALL_MAX_QUEUE,
     outstanding: 0,
     queued: 0,
+    shedFeedsCircuit: true,
   },
   token: {
     limiter: pLimit(env.SIGNALS_TOKEN_CALL_CONCURRENCY),
@@ -163,6 +173,7 @@ const lanes: Record<SignalsLane, Lane> = {
     maxQueue: () => env.SIGNALS_TOKEN_CALL_MAX_QUEUE,
     outstanding: 0,
     queued: 0,
+    shedFeedsCircuit: false,
   },
 };
 
@@ -425,7 +436,7 @@ function classifyOutcome(
   return heldFor >= minBudgetMs() ? 'backendError' : 'fastError';
 }
 
-function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
+function recordCallOutcome(isTrial: boolean, outcome: CallOutcome, lane: Lane) {
   const c = circuit;
   const now = Date.now();
   pruneFailures(c, now);
@@ -435,8 +446,10 @@ function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
   }
   const shed = outcome === 'queueFull' || outcome === 'queueExpired';
   // See the header comment: a backend timeout always counts; a queue-side
-  // failure counts only when backend evidence is in the window.
-  const counted = outcome === 'backendTimeout' || (shed && c.backendFailures.length > 0);
+  // failure counts only when backend evidence is in the window, and never for
+  // a lane whose queue measures demand only (shedFeedsCircuit: false).
+  const counted =
+    outcome === 'backendTimeout' || (shed && lane.shedFeedsCircuit && c.backendFailures.length > 0);
   if (counted) {
     c.failures.push(now);
   }
@@ -457,7 +470,7 @@ function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
 }
 
 /**
- * Run a single signals HTTP call under per-pod concurrency cap + hard per-call
+ * Run a single signals HTTP call under its lane's concurrency cap + hard per-call
  * timeout + circuit breaker. Throws SignalsCallTimeoutError on the timeout /
  * circuit-rejection paths so callers can fail-fast (408 / TRPCError TIMEOUT)
  * instead of hanging until Traefik's 30s router timeout fires.
@@ -504,7 +517,7 @@ export async function withSignals<T>(
   // so the lane's queue is full once it reaches concurrency + max queue.
   if (lane.outstanding >= lane.concurrency() + lane.maxQueue()) {
     signalsCallQueueRejectionsCounter.inc({ lane: laneName });
-    recordCallOutcome(isTrial, 'queueFull');
+    recordCallOutcome(isTrial, 'queueFull', lane);
     throw new SignalsCallTimeoutError('concurrency', 'Signals call queue full — failing fast');
   }
 
@@ -600,6 +613,6 @@ export async function withSignals<T>(
     } catch {
       // intentionally swallowed
     }
-    recordCallOutcome(isTrial, classifyOutcome(timedOut, rejected, startedAt, deadlineAt));
+    recordCallOutcome(isTrial, classifyOutcome(timedOut, rejected, startedAt, deadlineAt), lane);
   }
 }
