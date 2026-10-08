@@ -229,7 +229,9 @@ describe('dedupe-server-chunks', () => {
     const r = run(server);
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain('5 chunk files, 3 distinct contents, stubbed 2 duplicates');
+    expect(r.out).toContain(
+      '5 chunk files, 3 distinct contents (per directory), stubbed 2 duplicates'
+    );
     expect(parseStub(readFileSync(path.join(server, 'chunks/ssr/_x2._.js')))).toBe('_x1._.js');
     expect(parseStub(readFileSync(path.join(server, 'chunks/ssr/route/_y2._.js')))).toBe(
       '_y1._.js'
@@ -253,7 +255,9 @@ describe('dedupe-server-chunks', () => {
     const r = run(server);
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain('3 chunk files, 2 distinct contents, stubbed 1 duplicates');
+    expect(r.out).toContain(
+      '3 chunk files, 2 distinct contents (per directory), stubbed 1 duplicates'
+    );
     expect(read('chunks/_0first._.js')).toBe(first);
     expect(parseStub(readFileSync(path.join(server, 'chunks/_2dup._.js')))).toBe('_1dup._.js');
   });
@@ -289,6 +293,7 @@ describe('dedupe-server-chunks', () => {
     const body = 'globalThis.x=1;\nmodule.exports=[1,()=>"x"];\n';
     write('chunks/_a._.js', body);
     write('chunks/_b._.js', body);
+    write('chunks/_real._.js', chunk('_real._.js', `1,()=>"r"`));
 
     const r = run(server);
 
@@ -296,6 +301,30 @@ describe('dedupe-server-chunks', () => {
     expect(r.out).toContain('stubbed 0 duplicates');
     expect(r.out).toContain('2 skipped (not a module.exports=[ chunk)');
     expect(read('chunks/_b._.js')).toBe(body);
+  });
+
+  it('exits 2 when no file is in the module.exports=[ chunk format', () => {
+    write('chunks/_a._.js', 'globalThis.x=1;\n');
+    write('chunks/_b._.js', 'globalThis.x=1;\n');
+    write('chunks/[turbopack]_runtime.js', 'module.exports=()=>({});\n');
+
+    const r = run(server);
+
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('none of the 2 chunk files');
+    expect(read('chunks/_b._.js')).toBe('globalThis.x=1;\n');
+  });
+
+  it('reports runtime files separately from chunk files', () => {
+    write('chunks/_a._.js', chunk('_a._.js', `1,()=>"x"`));
+    write('chunks/[turbopack]_runtime.js', 'module.exports=()=>({});\n');
+    write('chunks/ssr/[turbopack]_runtime.js', 'module.exports=()=>({});\n');
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('1 chunk files, 1 distinct contents');
+    expect(r.out).toContain('2 runtime files left alone');
   });
 
   it('--dry-run still fails (exit 1) on a dangling stub already on disk', () => {

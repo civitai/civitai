@@ -61,7 +61,8 @@
  *
  * Usage:  node scripts/dedupe-server-chunks.mjs <server-dir> [--dry-run]
  * Exit:   0 = done (or nothing to do) · 1 = a stub does not resolve to a real chunk
- *         · 2 = could not run (usage, no chunks directory, no chunk files)
+ *         · 2 = could not run (usage, no chunks directory, no chunk files, or no file in the
+ *           `module.exports=[` chunk format)
  */
 import { createHash } from 'node:crypto';
 import {
@@ -82,7 +83,7 @@ export const isRuntimeFile = (name) => name === '[turbopack]_runtime.js';
 
 const CHUNK_PREFIX = Buffer.from('module.exports=[');
 
-/** True for a Turbopack server chunk: a file that only assigns `module.exports` an array. */
+/** True when the file begins `module.exports=[` — the Turbopack server chunk format. */
 export const isChunkFormat = (buf) => buf.subarray(0, CHUNK_PREFIX.length).equals(CHUNK_PREFIX);
 
 /** Content of the stub that replaces a duplicate of `canonicalName` (a sibling file). */
@@ -170,16 +171,21 @@ export function dedupeServerChunks(serverDir, { dryRun = false } = {}) {
   const groups = new Map();
   let existingStubs = 0;
   let otherFormat = 0;
+  let runtimeFiles = 0;
   for (const file of files) {
-    if (isRuntimeFile(basename(file))) continue;
+    if (isRuntimeFile(basename(file))) {
+      runtimeFiles++;
+      continue;
+    }
     const buf = readFileSync(file);
     if (parseStub(buf) !== null) {
       existingStubs++;
       continue;
     }
-    // Only a pure `module.exports=[…]` chunk is known to have no load-time behaviour that
-    // depends on its own path. Anything else is left alone, so a future chunk format is
-    // skipped rather than stubbed on an assumption.
+    // Only files that BEGIN `module.exports=[` (the chunk format this design was checked
+    // against) are candidates. Anything else is left alone, so a future chunk format is
+    // skipped rather than stubbed on an assumption. This is a prefix check, not a proof
+    // that the file has no path-dependent load-time behaviour.
     if (!isChunkFormat(buf)) {
       otherFormat++;
       continue;
@@ -189,6 +195,16 @@ export function dedupeServerChunks(serverDir, { dryRun = false } = {}) {
     const group = groups.get(key);
     if (group) group.push(file);
     else groups.set(key, [file]);
+  }
+
+  // Every non-runtime file in an unrecognised format means Turbopack's output changed shape:
+  // the script can no longer see its input, so it must not report a quiet "nothing to do".
+  if (groups.size === 0 && existingStubs === 0 && otherFormat > 0) {
+    throw new DedupeError(
+      2,
+      `none of the ${otherFormat} chunk files under ${chunksDir} begins "module.exports=[" — ` +
+        'the chunk format changed; re-check the design in this script before adapting it'
+    );
   }
 
   let stubbed = 0;
@@ -209,8 +225,9 @@ export function dedupeServerChunks(serverDir, { dryRun = false } = {}) {
   }
 
   const summary = {
-    chunkFiles: files.length,
-    distinct: groups.size,
+    chunkFiles: files.length - runtimeFiles,
+    runtimeFiles,
+    distinct: groups.size, // per directory: identical content in two directories counts twice
     existingStubs,
     otherFormat,
     stubbed,
@@ -244,9 +261,10 @@ function main(argv) {
     const s = dedupeServerChunks(args[0], { dryRun });
     const mib = (s.bytesReplaced / 2 ** 20).toFixed(1);
     console.log(
-      `dedupe-server-chunks: ${s.chunkFiles} chunk files, ${s.distinct} distinct contents, ` +
-        `${dryRun ? 'would stub' : 'stubbed'} ${s.stubbed} duplicates (${mib} MiB), ` +
-        `${s.existingStubs} already stubbed, ${s.otherFormat} skipped (not a module.exports=[ chunk)`
+      `dedupe-server-chunks: ${s.chunkFiles} chunk files, ${s.distinct} distinct contents ` +
+        `(per directory), ${dryRun ? 'would stub' : 'stubbed'} ${s.stubbed} duplicates ` +
+        `(${mib} MiB), ${s.existingStubs} already stubbed, ${s.otherFormat} skipped ` +
+        `(not a module.exports=[ chunk), ${s.runtimeFiles} runtime files left alone`
     );
     return 0;
   } catch (err) {
