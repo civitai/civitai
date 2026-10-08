@@ -4,6 +4,7 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import {
   chooseFiles,
+  makeFilesExpireAfterFirstRead,
   makeSlowFilesStall,
   makeUnreadableFilesFail,
 } from '../../../../test/unreadable-files';
@@ -273,5 +274,59 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
     await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
     expect(page.getByText(PICK_MESSAGE).elements()).toHaveLength(0);
     expect(reports()).toEqual([]);
+  });
+});
+
+/**
+ * A photo-picker File can read fine at the pick and turn unreadable seconds later, so an image is
+ * handed on as an in-memory copy taken at the pick. A dropped file the consumer later fails to read
+ * gets the same fallback as an unreadable pick.
+ */
+describe('MediaDropzone — a picked file that turns unreadable after the pick', () => {
+  const onDrop = vi.fn();
+  let expiry: ReturnType<typeof makeFilesExpireAfterFirstRead> | undefined;
+
+  beforeEach(() => {
+    onDrop.mockReset();
+    mocks.android = true;
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+  });
+  afterEach(() => {
+    expiry?.restore();
+    expiry = undefined;
+  });
+
+  test('an image is handed on as a copy that still reads after the original stops reading', async () => {
+    expiry = makeFilesExpireAfterFirstRead();
+    const photo = expiry.expiringFile(
+      new File(['photo bytes'], 'photo-0.jpg', { type: 'image/jpeg' })
+    );
+    renderWithProviders(
+      <div data-testid="media">
+        <MediaDropzone onDrop={onDrop} accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]} />
+      </div>
+    );
+    await chooseFiles(dropzoneInput(), [photo]);
+
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
+    const [{ file }] = onDrop.mock.calls[0][0] as { file: File }[];
+    expect([file.name, file.type]).toEqual(['photo-0.jpg', 'image/jpeg']);
+    expect(await file.text()).toBe('photo bytes');
+    expect(reports()).toEqual([]);
+  });
+
+  test('files the consumer could not read are offered the Files fallback, which hands on new ones', async () => {
+    renderWithProviders(
+      <div data-testid="media">
+        <MediaDropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} unreadablePicks={1} />
+      </div>
+    );
+
+    await expect.element(page.getByText(PICK_MESSAGE, { exact: true })).toBeVisible();
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-1.jpg')]);
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
+    expect(onDrop.mock.calls[0][0].map(({ file }: { file: File }) => file.name)).toEqual([
+      'photo-1.jpg',
+    ]);
   });
 });

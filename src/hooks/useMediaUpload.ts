@@ -12,6 +12,7 @@ import { auditMetaData } from '~/utils/metadata/audit';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { isReadFailure } from '~/utils/unreadable-pick';
 
 // Max number of images uploading concurrently to S3. Tune here if we hit
 // throttling from the bucket or want to let more through.
@@ -40,6 +41,11 @@ export type MediaUploadOnCompleteProps = {
 export type UseMediaUploadProps<TContext> = {
   count: number;
   onComplete: (props: MediaUploadOnCompleteProps, context?: TContext) => void;
+  /**
+   * Called when a file could not be read while it was prepared. Returning true means the caller
+   * shows it (as an unreadable pick), so no error notification is shown.
+   */
+  onUnreadable?: (file: File) => boolean;
 };
 
 // #endregion
@@ -47,6 +53,7 @@ export type UseMediaUploadProps<TContext> = {
 export function useMediaUpload<TContext extends Record<string, unknown>>({
   count,
   onComplete,
+  onUnreadable,
 }: UseMediaUploadProps<TContext>) {
   const currentUser = useCurrentUser();
   // #region [state]
@@ -67,6 +74,8 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
     !files.some((x) => x.status === 'uploading' || x.status === 'pending');
   const onCompleteRef = useRef(onComplete);
   onCompleteRef.current = onComplete;
+  const onUnreadableRef = useRef(onUnreadable);
+  onUnreadableRef.current = onUnreadable;
 
   // Concurrency pool shared across all processFiles() calls on this hook instance.
   type UploadJob = {
@@ -196,6 +205,7 @@ export function useMediaUpload<TContext extends Record<string, unknown>>({
               data = await preprocessFile(file, { allowAnimatedWebP: currentUser?.isModerator });
             } catch (e: any) {
               data = null;
+              if (isReadFailure(e) && onUnreadableRef.current?.(file)) return null;
               showErrorNotification({
                 title: `Error: ${file.name}`,
                 error: e instanceof Error ? e : { message: e },

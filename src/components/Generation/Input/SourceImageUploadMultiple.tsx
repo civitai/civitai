@@ -25,6 +25,7 @@ import { SIGN_IN_TO_UPLOAD_MESSAGE, uploadConsumerBlob } from '~/utils/consumer-
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import {
   ImagePrepError,
+  type ImagePrepStage,
   imageToJpegBlob,
   prepStage,
   resizeImage,
@@ -56,7 +57,7 @@ import {
 } from '~/utils/metadata/extract-source-metadata';
 import { isDefined } from '~/utils/type-guards';
 import { reportApplicationError } from '~/utils/application-error';
-import { boundedFileFields, splitUnreadablePicks } from '~/utils/unreadable-pick';
+import { boundedFileFields, isReadFailure, splitUnreadablePicks } from '~/utils/unreadable-pick';
 import { UnreadablePickAlert } from '~/components/ImageUpload/UnreadablePickAlert';
 import { isMediaHost } from '~/shared/utils/media-host';
 import { isCivitaiSiteUrl } from '~/utils/civitai-url';
@@ -258,6 +259,29 @@ function prepFailureText(error: ImagePrepError, src: string | Blob | File, other
     : IMAGE_PREP_TIMEOUT_ERROR;
 }
 
+function sourceKind(src: string | Blob | File) {
+  if (typeof src !== 'string') return src instanceof File ? 'picked-file' : 'blob';
+  if (src.startsWith('blob:')) return 'picked-file';
+  if (src.startsWith('data:')) return 'data-url';
+  return /^https?:/i.test(src) ? 'url' : 'other';
+}
+
+const PICK_READ_STAGES: ImagePrepStage[] = ['dims', 'read-blob', 'decode', 'metadata'];
+
+/**
+ * A later stage could not read a picked file, the way a photo-picker File fails once it turns
+ * unreadable after the pick. The user is offered what an unreadable pick gets, not a dead end.
+ */
+function isPickedFileReadFailure(error: unknown, src: string | Blob | File) {
+  return (
+    sourceKind(src) === 'picked-file' &&
+    error instanceof ImagePrepError &&
+    !error.timedOut &&
+    PICK_READ_STAGES.includes(error.stage) &&
+    isReadFailure(error.cause)
+  );
+}
+
 /**
  * Reports a source image that could not be prepared on the device, with bounded fields only: the
  * stage, where the image came from, a picked file's type (from a short list) and size bucket, the
@@ -270,18 +294,7 @@ function reportImagePrepFailure(
   file?: PickedFileInfo,
   origin?: ImageOrigin
 ) {
-  const source =
-    typeof src !== 'string'
-      ? src instanceof File
-        ? 'picked-file'
-        : 'blob'
-      : src.startsWith('blob:')
-      ? 'picked-file'
-      : src.startsWith('data:')
-      ? 'data-url'
-      : /^https?:/i.test(src)
-      ? 'url'
-      : 'other';
+  const source = sourceKind(src);
   const info = typeof src !== 'string' ? src : file;
   const { type, size } = info ? boundedFileFields(info) : { type: undefined, size: undefined };
   const cause = error.cause;
@@ -712,17 +725,26 @@ export function SourceImageUploadMultiple({
         reportImagePrepFailure(error, url, pickedFilesRef.current.get(url), origin);
       }
       if (unreadable.size) {
+        const pickReadFailures = new Set(
+          [...failures].filter(([url, e]) => isPickedFileReadFailure(e, url)).map(([url]) => url)
+        );
+        addUnreadablePicks(
+          uploads.filter(
+            (x) => x.status === 'queued' && x.slotIndex === undefined && pickReadFailures.has(x.url)
+          ).length
+        );
         // Only when a queued card is affected: a new array re-runs this effect, which retries the
         // url, which would fail again, without end, for an unreadable image already in the value.
         setUploads((items) => {
           let changed = false;
-          const next = items.map((x): ImagePreview => {
-            if (x.status !== 'queued' || x.slotIndex !== undefined) return x;
+          const next = items.flatMap((x): ImagePreview[] => {
+            if (x.status !== 'queued' || x.slotIndex !== undefined) return [x];
             const error = failures.get(x.url);
-            if (!error) return x;
+            if (!error) return [x];
             changed = true;
+            if (pickReadFailures.has(x.url)) return [];
             const message = prepFailureText(error, x.url, IMAGE_LOAD_ERROR);
-            return { status: 'error', url: x.url, src: x.url, error: message, id: x.id };
+            return [{ status: 'error', url: x.url, src: x.url, error: message, id: x.id }];
           });
           return changed ? next : items;
         });
@@ -817,6 +839,11 @@ export function SourceImageUploadMultiple({
       origin: 'card',
     });
     trackedUploadingIdsRef.current.delete(id);
+    if (response.unreadablePick) {
+      setUploads((items) => items.filter((x) => x.id !== id));
+      addUnreadablePicks(1);
+      return;
+    }
     setUploads((items) => {
       if (!items.some((x) => x.id === id && x.status === 'uploading')) return items;
       return items.map((x): ImagePreview => {
@@ -935,6 +962,7 @@ export function SourceImageUploadMultiple({
             // is removed before the batched value swap.
             const toUploadIds = new Set(toUpload.map((u) => u.id));
             let failure: string | undefined;
+            let unreadablePicks = 0;
             const uploadResults = await Promise.all(
               toUpload.map(async ({ src, id, originalUrl }) => {
                 const origin = valueRef.current?.some((v) => v.url === originalUrl)
@@ -951,12 +979,14 @@ export function SourceImageUploadMultiple({
                     },
                   };
                 }
-                failure ??= response.blockedReason ?? 'Unexpected image upload error';
+                if (response.unreadablePick) unreadablePicks++;
+                else failure ??= response.blockedReason ?? 'Unexpected image upload error';
                 return null;
               })
             );
             // The cropping cards are cleared below, so a failure has to be reported here.
             if (failure) setError(failure);
+            addUnreadablePicks(unreadablePicks);
 
             const successful = uploadResults.filter(isDefined);
             if (successful.length > 0) {
@@ -1023,17 +1053,24 @@ export function SourceImageUploadMultiple({
     const files = items.filter((src): src is File => typeof src !== 'string');
     if (!files.length) return queueItems(items);
     setPicksProbing((n) => n + 1);
-    return splitUnreadablePicks(files).then(({ unreadable }) => {
-      setPicksProbing((n) => n - 1);
-      const rejected = rejectUnreadablePicks(unreadable);
-      queueItems(items.filter((src) => typeof src === 'string' || !rejected.has(src)));
-    });
+    return splitUnreadablePicks(files, { maxBytes: maxOrchestratorImageFileSize }).then(
+      ({ unreadable, replacements }) => {
+        setPicksProbing((n) => n - 1);
+        rejectUnreadablePicks(unreadable);
+        queueItems(
+          items.flatMap((src): (string | File)[] => {
+            if (typeof src === 'string') return [src];
+            const replacement = replacements.get(src);
+            return replacement ? [replacement] : [];
+          })
+        );
+      }
+    );
   }
 
   /**
    * Reports picked files the browser cannot read and shows the unreadable-pick alert for them (with
-   * the Files fallback on Android); a pick with none clears it. Returns the rejected files, which
-   * are not queued.
+   * the Files fallback on Android); a pick with none clears it.
    */
   function rejectUnreadablePicks(
     unreadable: { file: File; error: DOMException }[],
@@ -1045,7 +1082,15 @@ export function SourceImageUploadMultiple({
         file
       );
     setUnreadablePick(unreadable.length ? { count: unreadable.length, slotIndices } : null);
-    return new Set<File>(unreadable.map(({ file }) => file));
+  }
+
+  /** Picks a later stage could not read: they get the unreadable-pick alert too. */
+  function addUnreadablePicks(count: number, slotIndices?: number[]) {
+    if (!count) return;
+    setUnreadablePick((prev) => ({
+      count: (prev?.count ?? 0) + count,
+      slotIndices: slotIndices ? [...(prev?.slotIndices ?? []), ...slotIndices] : undefined,
+    }));
   }
 
   function queueItems(items: (string | File)[]) {
@@ -1106,13 +1151,19 @@ export function SourceImageUploadMultiple({
     if (files.length) {
       // Counted as pending from here: the slot's own uploading marker is set only after the probe.
       setPicksProbing((n) => n + 1);
-      const { unreadable } = await splitUnreadablePicks(files);
+      const { unreadable, replacements } = await splitUnreadablePicks(files, {
+        maxBytes: maxOrchestratorImageFileSize,
+      });
       setPicksProbing((n) => n - 1);
       const unreadableSlots = entries
         .filter(({ src }) => unreadable.some(({ file }) => file === src))
         .map(({ slotIndex }) => slotIndex);
-      const rejected = rejectUnreadablePicks(unreadable, unreadableSlots);
-      entries = entries.filter(({ src }) => typeof src === 'string' || !rejected.has(src));
+      rejectUnreadablePicks(unreadable, unreadableSlots);
+      entries = entries.flatMap(({ slotIndex, src }): typeof entries => {
+        if (typeof src === 'string') return [{ slotIndex, src }];
+        const replacement = replacements.get(src);
+        return replacement ? [{ slotIndex, src: replacement }] : [];
+      });
       if (!entries.length) return;
     }
 
@@ -1154,6 +1205,7 @@ export function SourceImageUploadMultiple({
       }
     };
 
+    let unreadableItem: (typeof items)[number] | undefined;
     try {
       // Resolve dimensions (cache-first) so we can detect whether cropping is needed.
       const dimensioned = await Promise.all(
@@ -1162,7 +1214,10 @@ export function SourceImageUploadMultiple({
           const dims =
             cached?.width && cached?.height
               ? { width: cached.width, height: cached.height }
-              : await prepStage('dims', () => getImageDimensions(item.previewUrl));
+              : await prepStage('dims', () => getImageDimensions(item.previewUrl)).catch((e) => {
+                  if (isPickedFileReadFailure(e, item.src)) unreadableItem ??= item;
+                  throw e;
+                });
           if (!cached?.width || !cached?.height) {
             sourceMetadataStore.setMetadata(item.previewUrl, dims);
           }
@@ -1226,6 +1281,11 @@ export function SourceImageUploadMultiple({
           const response = await uploadOrchestratorImage(src, uploadId, undefined, {
             origin: 'card',
           });
+          if (response.unreadablePick) {
+            setUploads((prev) => prev.filter((item) => item.id !== uploadId));
+            addUnreadablePicks(1, [slotIndex]);
+            return null;
+          }
           if (response.blockedReason || !response.available || !response.url) {
             const previewUrl = items.find((x) => x.uploadId === uploadId)?.previewUrl ?? '';
             setUploads((prev) =>
@@ -1277,7 +1337,8 @@ export function SourceImageUploadMultiple({
       cleanupTracking();
     } catch (e) {
       // The browser's own text for an image it could not read is not shown.
-      setError(e instanceof ImagePrepError ? IMAGE_PREP_ERROR : (e as Error).message);
+      if (unreadableItem) addUnreadablePicks(1, [unreadableItem.slotIndex]);
+      else setError(e instanceof ImagePrepError ? IMAGE_PREP_ERROR : (e as Error).message);
       setUploads((prev) => prev.filter((x) => !x.id || !itemIds.has(x.id)));
       cleanupTracking();
     }
@@ -2109,6 +2170,7 @@ export async function uploadOrchestratorImage(
         url: src,
         ...originalSize,
         available: true,
+        unreadablePick: false,
         type: 'image',
         id: '',
       };
@@ -2178,7 +2240,7 @@ export async function uploadOrchestratorImage(
       });
     }
 
-    return { ...blob, ...resizedSize };
+    return { ...blob, ...resizedSize, unreadablePick: false };
   } catch (e) {
     setImageUploading(id, false);
     const error = e as Error;
@@ -2191,6 +2253,7 @@ export async function uploadOrchestratorImage(
       url: typeof src === 'string' ? src : URL.createObjectURL(src),
       ...originalSize,
       available: false,
+      unreadablePick: isPickedFileReadFailure(error, src),
       // A local preparation failure shows fixed text; the upload's own failures and size
       // validation keep their messages.
       blockedReason:

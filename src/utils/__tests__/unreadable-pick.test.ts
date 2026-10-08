@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   boundedFileFields,
+  isReadFailure,
   probeUnreadablePick,
+  snapshotPick,
   splitUnreadablePicks,
   UNREADABLE_PROBE_TIMEOUT_MS,
   unreadablePickMessage,
 } from '~/utils/unreadable-pick';
 
-/** A file whose 16-byte probe read rejects with `error`. */
+const MAX_BYTES = 1024;
+
+/** A file whose reads, whole or sliced, reject with `error`. */
 function fileFailingWith(name: string, error: unknown) {
   const file = new File([new Uint8Array(32)], name, { type: 'image/jpeg' });
   file.slice = () => {
@@ -15,6 +19,7 @@ function fileFailingWith(name: string, error: unknown) {
     part.arrayBuffer = () => Promise.reject(error);
     return part;
   };
+  file.arrayBuffer = () => Promise.reject(error);
   return file;
 }
 
@@ -61,9 +66,12 @@ describe('probeUnreadablePick', () => {
     it('keeps a stalled file with the readable ones', async () => {
       vi.useFakeTimers();
       const slow = stalledFile();
-      const split = splitUnreadablePicks([slow]);
+      slow.arrayBuffer = () => new Promise<ArrayBuffer>(() => undefined);
+      const split = splitUnreadablePicks([slow], { maxBytes: MAX_BYTES });
       await vi.advanceTimersByTimeAsync(UNREADABLE_PROBE_TIMEOUT_MS);
-      expect(await split).toEqual({ readable: [slow], unreadable: [] });
+      const { readable, unreadable } = await split;
+      expect(readable[0]).toBe(slow);
+      expect(unreadable).toEqual([]);
     });
 
     it('is bounded by a short injected timeout too', async () => {
@@ -106,9 +114,87 @@ describe('splitUnreadablePicks', () => {
     const bad = fileFailingWith('bad.jpg', error);
     const ok2 = new File(['2'], 'two.jpg');
 
-    const { readable, unreadable } = await splitUnreadablePicks([ok1, bad, ok2]);
+    const { readable, unreadable, replacements } = await splitUnreadablePicks([ok1, bad, ok2], {
+      maxBytes: MAX_BYTES,
+    });
     expect(readable).toEqual([ok1, ok2]);
     expect(unreadable).toEqual([{ file: bad, error }]);
+    expect([...replacements.keys()]).toEqual([ok1, ok2]);
+  });
+
+  it('replaces a readable image with its in-memory copy', async () => {
+    const photo = new File(['photo'], 'p.jpg', { type: 'image/jpeg' });
+    const { readable, replacements } = await splitUnreadablePicks([photo], { maxBytes: MAX_BYTES });
+    expect(readable).toHaveLength(1);
+    expect(readable[0]).not.toBe(photo);
+    expect(replacements.get(photo)).toBe(readable[0]);
+  });
+});
+
+describe('snapshotPick', () => {
+  const imageFile = (bytes: BlobPart, name = 'p.jpg') =>
+    new File([bytes], name, { type: 'image/jpeg', lastModified: 1_700_000_000_000 });
+
+  it('replaces an image with a copy of its bytes that keeps its name, type and date', async () => {
+    const photo = imageFile('photo bytes');
+    const { file, error } = await snapshotPick(photo, { maxBytes: MAX_BYTES });
+    expect(error).toBeUndefined();
+    expect(file).not.toBe(photo);
+    expect(file).toBeInstanceOf(File);
+    expect(await file!.text()).toBe('photo bytes');
+    expect([file!.name, file!.type, file!.lastModified]).toEqual([
+      'p.jpg',
+      'image/jpeg',
+      1_700_000_000_000,
+    ]);
+  });
+
+  it('does not read an image over the size limit in full: it is probed and kept', async () => {
+    const big = imageFile(new Uint8Array(MAX_BYTES + 1));
+    const fullRead = vi.spyOn(big, 'arrayBuffer');
+    expect(await snapshotPick(big, { maxBytes: MAX_BYTES })).toEqual({ file: big });
+    expect(fullRead).not.toHaveBeenCalled();
+  });
+
+  it('only probes a file that is not an image', async () => {
+    const video = new File(['v'], 'v.mp4', { type: 'video/mp4' });
+    const fullRead = vi.spyOn(video, 'arrayBuffer');
+    expect(await snapshotPick(video, { maxBytes: MAX_BYTES })).toEqual({ file: video });
+    expect(fullRead).not.toHaveBeenCalled();
+  });
+
+  it('returns the NotReadableError of a full read that is refused', async () => {
+    const error = new DOMException('could not be read', 'NotReadableError');
+    const photo = imageFile('x');
+    photo.arrayBuffer = () => Promise.reject(error);
+    expect(await snapshotPick(photo, { maxBytes: MAX_BYTES })).toEqual({ error });
+  });
+
+  it('keeps the original for any other read failure', async () => {
+    const photo = imageFile('x');
+    photo.arrayBuffer = () => Promise.reject(new DOMException('denied', 'SecurityError'));
+    expect(await snapshotPick(photo, { maxBytes: MAX_BYTES })).toEqual({ file: photo });
+  });
+
+  it('keeps the original when the full read does not settle in time', async () => {
+    const photo = imageFile('x');
+    photo.arrayBuffer = () => new Promise<ArrayBuffer>(() => undefined);
+    expect(await snapshotPick(photo, { maxBytes: MAX_BYTES, timeoutMs: 5 })).toEqual({
+      file: photo,
+    });
+  });
+});
+
+describe('isReadFailure', () => {
+  it.each([
+    ['a NotReadableError', new DOMException('x', 'NotReadableError'), true],
+    ['a TypeError (a blob: fetch)', new TypeError('Failed to fetch'), true],
+    ['an <img> load error', new Error('Image failed to load', { cause: new Event('error') }), true],
+    ['an Error without an Event cause', new Error('Image failed to load'), false],
+    ['an EncodingError', new DOMException('x', 'EncodingError'), false],
+    ['undefined', undefined, false],
+  ])('%s → %s', (_, error, expected) => {
+    expect(isReadFailure(error)).toBe(expected);
   });
 });
 

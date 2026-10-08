@@ -32,6 +32,7 @@ export function MediaDropzone({
   accept = IMAGE_MIME_TYPE,
   onDrop,
   error,
+  unreadablePicks = 0,
   ...dropzoneProps
 }: Omit<DropzoneProps, 'children' | 'onDropCapture' | 'onDrop'> & {
   label?: string;
@@ -39,6 +40,8 @@ export function MediaDropzone({
   accept?: string[];
   error?: Error;
   onDrop: (args: { file: File; meta?: Record<string, unknown> }[]) => void;
+  /** Dropped files the consumer could not read later on; offered the same fallback. */
+  unreadablePicks?: number;
 }) {
   // #region [state]
   const settings = useMediaUploadSettingsContext();
@@ -78,7 +81,9 @@ export function MediaDropzone({
       : `${seconds} seconds`;
 
   async function handleDrop(files: File[]) {
-    const { readable, unreadable } = await splitUnreadablePicks(files);
+    const { readable, unreadable } = await splitUnreadablePicks(files, {
+      maxBytes: constants.mediaUpload.maxImageFileSize,
+    });
     for (const { file } of unreadable) reportUnreadablePick(file);
     setUnreadableCount(unreadable.length);
     if (readable.length) onDrop(readable.map((file) => ({ file })));
@@ -148,10 +153,10 @@ export function MediaDropzone({
           </div>
         </div>
       </Dropzone>
-      {unreadableCount > 0 && (
+      {unreadableCount + unreadablePicks > 0 && (
         <UnreadablePickAlert
           accept={accept}
-          count={unreadableCount}
+          count={unreadableCount + unreadablePicks}
           maxSize={dropzoneProps.maxSize}
           multiple
           disabled={dropzoneProps.disabled || dropzoneProps.loading}

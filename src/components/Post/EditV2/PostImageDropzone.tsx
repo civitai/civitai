@@ -1,5 +1,5 @@
 import { Button, Progress } from '@mantine/core';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
@@ -72,8 +72,16 @@ export function PostImageDropzone({
   const submittedUrlsRef = useRef(new Set<string>());
 
   // #region [upload images]
+  // Files from the dropzone, so a read failure is shown there only for a pick, not an import.
+  const pickedFilesRef = useRef(new WeakSet<File>());
+  const [unreadablePicks, setUnreadablePicks] = useState(0);
   const { files, canAdd, error, upload, progress, loading } = useMediaUpload<{ postId: number }>({
     count: images.length,
+    onUnreadable: (file) => {
+      if (!pickedFilesRef.current.has(file)) return false;
+      setUnreadablePicks((n) => n + 1);
+      return true;
+    },
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
@@ -148,6 +156,8 @@ export function PostImageDropzone({
   }
 
   const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
+    for (const { file } of args) pickedFilesRef.current.add(file);
+    setUnreadablePicks(0);
     handleUpload(args);
   };
 
@@ -216,6 +226,7 @@ export function PostImageDropzone({
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
+          unreadablePicks={unreadablePicks}
           loading={createPostMutation.isPending || loading}
           className="rounded-lg"
         />
