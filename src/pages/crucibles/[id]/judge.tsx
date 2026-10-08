@@ -466,7 +466,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
               data-judge-chrome
               className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2"
             >
-              <div className="flex min-w-0 flex-1 items-center gap-3 max-md:basis-full">
+              <div className="flex min-w-0 flex-1 items-center gap-3 max-md:gap-2">
                 <ActionIcon
                   component={Link}
                   href={getCrucibleUrl(id, crucible.name)}
@@ -478,7 +478,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                   <IconArrowLeft size={20} />
                 </ActionIcon>
                 {crucible.image && (
-                  <div className="size-11 shrink-0 overflow-hidden rounded-lg bg-[#2C2E33]">
+                  <div className="size-11 shrink-0 overflow-hidden rounded-lg bg-[#2C2E33] max-md:size-9">
                     <EdgeMedia
                       src={crucible.image.url}
                       name={crucible.image.name}
@@ -494,8 +494,15 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                       {crucible.name}
                     </h1>
                     <CrucibleContentBadges
+                      className="max-md:hidden"
                       contentType={crucible.contentType}
                       nsfwLevel={crucible.nsfwLevel}
+                    />
+                    <CrucibleContentBadges
+                      className="md:hidden"
+                      contentType={crucible.contentType}
+                      nsfwLevel={crucible.nsfwLevel}
+                      compact
                     />
                   </div>
                   {theme && (
@@ -506,7 +513,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                 </div>
               </div>
 
-              <div className="flex shrink-0 flex-wrap items-center gap-1 max-md:w-full">
+              <div className="flex shrink-0 items-center gap-1 max-md:gap-0.5">
                 <JudgingRulesButton />
                 <SwitchCrucibleMenu crucibleId={id} />
                 <CrucibleJudgeNextButton
@@ -644,9 +651,13 @@ function JudgingRulesButton() {
           variant="subtle"
           color="gray"
           size="compact-sm"
-          leftSection={<IconInfoCircle size={14} />}
+          aria-label="Rules"
+          className="max-md:px-1.5"
         >
-          Rules
+          <span className="flex items-center gap-1.5">
+            <IconInfoCircle size={16} />
+            <span className="max-md:hidden">Rules</span>
+          </span>
         </Button>
       </Popover.Target>
       <Popover.Dropdown>
@@ -689,9 +700,13 @@ function SwitchCrucibleMenu({ crucibleId }: { crucibleId: number }) {
           variant="subtle"
           color="gray"
           size="compact-sm"
-          leftSection={<IconArrowsShuffle size={14} />}
+          aria-label="Switch crucible"
+          className="max-md:px-1.5"
         >
-          Switch
+          <span className="flex items-center gap-1.5">
+            <IconArrowsShuffle size={16} />
+            <span className="max-md:hidden">Switch</span>
+          </span>
         </Button>
       </Menu.Target>
       <Menu.Dropdown>

@@ -19,7 +19,10 @@ type Props = {
    * repeated presses visit each one. Without it, the newest crucible with pairs is picked.
    */
   cycleFrom?: CrucibleCyclePoint;
-  /** `primary` is the filled call to action, for where moving on is the main next step. */
+  /**
+   * `primary` is the filled call to action, for where moving on is the main next step. `link` is
+   * the quiet header action; on phones it shrinks to its arrow.
+   */
   variant?: 'button' | 'link' | 'primary';
   label?: string;
 };
@@ -83,11 +86,15 @@ export function CrucibleJudgeNextButton({
         variant="subtle"
         color="blue"
         size="compact-sm"
-        rightSection={<IconArrowRight size={14} />}
+        aria-label={label}
+        className="max-md:px-1.5"
         loading={loading}
         onClick={handleClick}
       >
-        {label}
+        <span className="flex items-center gap-1.5">
+          <span className="max-md:hidden">{label}</span>
+          <IconArrowRight size={16} />
+        </span>
       </Button>
     );
   }

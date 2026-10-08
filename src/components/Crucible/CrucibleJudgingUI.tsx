@@ -354,7 +354,7 @@ export function CrucibleJudgingUI({
           ) : (
             'Vote'
           )}
-          <Kbd size="xs" className="opacity-75 max-md:hidden">
+          <Kbd size="xs" className="opacity-75">
             {side === 'left' ? '1' : '2'}
           </Kbd>
         </span>
@@ -388,12 +388,16 @@ export function CrucibleJudgingUI({
                   data-testid="judge-skip"
                   onClick={handleSkip}
                   disabled={isDisabled}
-                  className="shrink-0 border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
-                  classNames={{ section: 'max-md:data-[position=right]:hidden' }}
-                  leftSection={<IconPlayerSkipForward size={16} />}
+                  aria-label="Skip"
+                  // Icon only on phones, so both vote buttons keep room for their key hint.
+                  className="shrink-0 border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057] max-md:px-3"
+                  classNames={{ section: 'max-md:hidden' }}
                   rightSection={<Kbd size="xs">Space</Kbd>}
                 >
-                  Skip
+                  <span className="flex items-center gap-2">
+                    <IconPlayerSkipForward size={16} />
+                    <span className="max-md:hidden">Skip</span>
+                  </span>
                 </Button>
               </Tooltip>
               {voteButton('right')}

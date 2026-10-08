@@ -3,6 +3,7 @@ import { crucibleDetailSelect } from '~/server/selectors/crucible.selector';
 import { CrucibleIngestionStatus, CrucibleStatus, MediaType } from '~/shared/utils/prisma/enums';
 import {
   getAverageFinishTopPercent,
+  getContentLevelRange,
   getCrucibleJudgingBadge,
   getCreatorFinish,
   baseModelMakesMediaType,
@@ -698,5 +699,26 @@ describe('getCrucibleJudgingBadge', () => {
     expect(
       getCrucibleJudgingBadge({ judged: true, available: false, votesUsedUp: false })
     ).toBeNull();
+  });
+});
+
+describe('getContentLevelRange', () => {
+  const { PG, PG13, R, X, XXX } = { PG: 1, PG13: 2, R: 4, X: 8, XXX: 16 };
+
+  it('collapses an unbroken run into one range, keyed to the highest level', () => {
+    expect(getContentLevelRange(PG | PG13 | R | X | XXX)).toEqual({ label: 'PG–XXX', level: XXX });
+    expect(getContentLevelRange(R | X)).toEqual({ label: 'R–X', level: X });
+  });
+
+  it('keeps a single level as itself', () => {
+    expect(getContentLevelRange(PG13)).toEqual({ label: 'PG-13', level: PG13 });
+  });
+
+  it('refuses a run with a gap, which a range would misstate', () => {
+    expect(getContentLevelRange(PG | X)).toBeNull();
+  });
+
+  it('returns nothing for no displayable level', () => {
+    expect(getContentLevelRange(0)).toBeNull();
   });
 });

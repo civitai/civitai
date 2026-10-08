@@ -18,7 +18,11 @@ import { CrucibleContentBadges } from '~/components/Crucible/CrucibleContentBadg
 import { CrucibleUserLink } from '~/components/Crucible/CrucibleUserLink';
 import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { getCrucibleStatusBadge, getCrucibleTotalPrizePool } from '~/utils/crucible-helpers';
+import {
+  CRUCIBLE_NO_DESCRIPTION,
+  getCrucibleStatusBadge,
+  getCrucibleTotalPrizePool,
+} from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
@@ -177,7 +181,7 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
             {name}
           </Title>
 
-          {description && (
+          {description ? (
             // Spoiler draws "Show More" in its bottom margin; a margin here would collapse into it.
             <div className="pb-4">
               <ContentClamp maxHeight={72}>
@@ -186,6 +190,10 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
                 </Text>
               </ContentClamp>
             </div>
+          ) : (
+            <Text size="sm" c="dimmed" fs="italic" pb="md">
+              {CRUCIBLE_NO_DESCRIPTION}
+            </Text>
           )}
 
           <CrucibleUserLink user={user}>

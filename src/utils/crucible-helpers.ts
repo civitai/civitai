@@ -10,6 +10,7 @@ import {
   allBrowsingLevelsFlag,
   browsingLevelLabels,
   getIsSafeBrowsingLevel,
+  nsfwLevelColors,
   parseBitwiseBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { slugit } from '~/utils/string-helpers';
@@ -28,6 +29,27 @@ export const toCrucibleBuzzType = (value: string): 'green' | 'yellow' =>
 
 /** How a prize is displayed. It is paid in whichever Buzz the winner picks when claiming. */
 export const CRUCIBLE_PRIZE_BUZZ_TYPE = 'yellow' as const;
+
+/**
+ * A crucible's allowed levels as one range ("PG–XXX"), keyed to the highest for its colour. `null`
+ * when a level in between is missing, since a range would claim it.
+ */
+export function getContentLevelRange(nsfwLevel: number) {
+  const levels = parseBitwiseBrowsingLevel(nsfwLevel).filter((level) => level in nsfwLevelColors);
+  if (!levels.length) return null;
+  const lowest = levels[0];
+  const highest = levels[levels.length - 1];
+  // Levels are single bits, so an unbroken run is exactly highest*2 - lowest.
+  if (levels.reduce((sum, level) => sum + level, 0) !== highest * 2 - lowest) return null;
+  const label = (level: number) => browsingLevelLabels[level as keyof typeof browsingLevelLabels];
+  return {
+    label: lowest === highest ? label(lowest) : `${label(lowest)}–${label(highest)}`,
+    level: highest,
+  };
+}
+
+/** Shown where a crucible's description is expected; a blank description is stored as NULL. */
+export const CRUCIBLE_NO_DESCRIPTION = 'No description provided';
 
 /** An entrant pays in the currency of the site they enter on. */
 export const getCrucibleEntryBuzzType = (isGreen: boolean): 'green' | 'yellow' =>
