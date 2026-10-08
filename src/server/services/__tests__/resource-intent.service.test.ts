@@ -1152,10 +1152,6 @@ describe('degradation reasons', () => {
   it('a stage-3 answer of the wrong kind degrades as jev_stage3_shape', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
-    // Replace the queued stage-3 answers with a well-formed NON-choice answer.
-    mockAskJev.mockReset();
-    mockStage1();
     const noul = async () => ({
       answers: [{ id: 'resourceVersion', type: 'noul' as const, value: 0.5 }],
       usage: { promptTokens: 1, completionTokens: 1 },

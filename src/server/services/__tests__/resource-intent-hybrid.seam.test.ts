@@ -210,7 +210,7 @@ const CRITERIA = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The oracle. Everything between the two rules is copied verbatim (minus `export`) from
+// The oracle. Everything between the two rules is copied verbatim (minus `export` and one stale line comment) from
 // the screen script (R4c block, combineR4c, runR4c, mergeHybrid); `askStage3` is the one stand-in,
 // replaying the recorded answers instead of calling the vendor.
 // ─────────────────────────────────────────────────────────────────────────────
@@ -233,7 +233,6 @@ const R4C_INSTRUCTIONS =
 const R4C_NONE_DESCRIPTION =
   'None of the listed resources fits: each is the wrong character, subject, style or purpose for this prompt.';
 function describeEntry(e: ResourceIntentShortlistEntry): string {
-  // The same text production puts on its numbered lines (resource-intent.service.ts:199-202).
   return `${e.modelName} — ${e.versionName} (${e.modelType}, ${e.baseModel})`;
 }
 /** Positional keys "0".."n-1" for the order sent, plus a described `none`. */
