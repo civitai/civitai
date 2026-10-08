@@ -1,5 +1,13 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -209,6 +217,81 @@ describe('dedupe-server-chunks', () => {
     expect(run(path.join(root, 'nope')).code).toBe(2);
     expect(run(server).code).toBe(2); // chunks/ exists but holds no .js files
     expect(run().code).toBe(2);
+  });
+
+  it('dedupes inside nested directories, each against its own in-directory canonical', () => {
+    write('chunks/ssr/_0unique._.js', chunk('_0unique._.js', `1,()=>"u"`));
+    write('chunks/ssr/_x1._.js', chunk('_x1._.js', `2,()=>"ssr"`));
+    write('chunks/ssr/_x2._.js', chunk('_x2._.js', `2,()=>"ssr"`));
+    write('chunks/ssr/route/_y1._.js', chunk('_y1._.js', `3,()=>"deep"`));
+    write('chunks/ssr/route/_y2._.js', chunk('_y2._.js', `3,()=>"deep"`));
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('5 chunk files, 3 distinct contents, stubbed 2 duplicates');
+    expect(parseStub(readFileSync(path.join(server, 'chunks/ssr/_x2._.js')))).toBe('_x1._.js');
+    expect(parseStub(readFileSync(path.join(server, 'chunks/ssr/route/_y2._.js')))).toBe(
+      '_y1._.js'
+    );
+    const post = loadInChild([
+      'server/chunks/ssr/_x1._.js',
+      'server/chunks/ssr/_x2._.js',
+      'server/chunks/ssr/route/_y1._.js',
+      'server/chunks/ssr/route/_y2._.js',
+    ]);
+    expect(post.same).toEqual([0, 0, 2, 2]);
+    expect(post.vals).toEqual([['ssr'], ['ssr'], ['deep'], ['deep']]);
+  });
+
+  it('a unique chunk sorting first neither becomes a canonical nor hides later duplicates', () => {
+    write('chunks/_0first._.js', chunk('_0first._.js', `1,()=>"first"`));
+    write('chunks/_1dup._.js', chunk('_1dup._.js', `2,()=>"dup"`));
+    write('chunks/_2dup._.js', chunk('_2dup._.js', `2,()=>"dup"`));
+    const first = read('chunks/_0first._.js');
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('3 chunk files, 2 distinct contents, stubbed 1 duplicates');
+    expect(read('chunks/_0first._.js')).toBe(first);
+    expect(parseStub(readFileSync(path.join(server, 'chunks/_2dup._.js')))).toBe('_1dup._.js');
+  });
+
+  it('keeps the duplicate file mode when it writes the stub', () => {
+    write('chunks/_a._.js', chunk('_a._.js', `1,()=>"x"`));
+    write('chunks/_b._.js', chunk('_b._.js', `1,()=>"x"`));
+    chmodSync(path.join(server, 'chunks/_b._.js'), 0o640);
+
+    expect(run(server).code).toBe(0);
+
+    expect(parseStub(readFileSync(path.join(server, 'chunks/_b._.js')))).toBe('_a._.js');
+    expect(statSync(path.join(server, 'chunks/_b._.js')).mode & 0o777).toBe(0o640);
+  });
+
+  it.each([
+    ['a runtime file', '[turbopack]_runtime.js', 'is a runtime file'],
+    ['a non-sibling path', 'ssr/_real._.js', 'is not a sibling'],
+    ['itself', '_bad._.js', 'is itself a stub'],
+  ])('fails loudly (exit 1) when a stub points at %s', (_label, target, message) => {
+    write('chunks/_real._.js', chunk('_real._.js', `1,()=>"x"`));
+    write('chunks/ssr/_real._.js', chunk('_real._.js', `1,()=>"y"`));
+    write('chunks/[turbopack]_runtime.js', 'module.exports=()=>({});\n');
+    write('chunks/_bad._.js', stubFor(target));
+
+    const r = run(server);
+
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`_bad._.js: stub target ${target} ${message}`);
+  });
+
+  it('parseStub accepts only the exact stub shape', () => {
+    expect(parseStub(Buffer.from(stubFor('_a._.js')))).toBe('_a._.js');
+    // Marker text whose require() names a different file is not one of our stubs.
+    const mismatched = stubFor('_a._.js').replace('"./_a._.js"', '"./_b._.js"');
+    expect(parseStub(Buffer.from(mismatched))).toBeNull();
+    // A real chunk that merely begins with the marker text is content.
+    expect(parseStub(Buffer.from(`${stubFor('_a._.js')}module.exports=[1,()=>1];\n`))).toBeNull();
   });
 
   it('normalise strips only a trailing sourceMappingURL comment', () => {

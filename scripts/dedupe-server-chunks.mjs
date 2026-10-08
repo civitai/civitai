@@ -177,12 +177,13 @@ export function dedupeServerChunks(serverDir, { dryRun = false } = {}) {
   let stubbed = 0;
   let bytesReplaced = 0;
   for (const group of groups.values()) {
-    if (group.length < 2) continue;
+    if (group.length < 2) continue; // no duplicates: skip re-reading the file
     const [canonical, ...duplicates] = group; // `files` is sorted, so the canonical is deterministic
     const canonicalBytes = normalise(readFileSync(canonical));
     for (const dup of duplicates) {
       const buf = readFileSync(dup);
-      // Byte-compare, never trust the hash alone.
+      // Byte-compare, never trust the hash alone. Defence in depth: only a sha256 collision
+      // reaches the `continue`, so no fixture can exercise it.
       if (!normalise(buf).equals(canonicalBytes)) continue;
       if (!dryRun) writeAtomic(dup, stubFor(basename(canonical)));
       stubbed++;
