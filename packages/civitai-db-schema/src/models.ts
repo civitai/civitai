@@ -1239,6 +1239,9 @@ export interface ModelBaseModelMetric {
   minor: boolean;
   updatedAt: Date;
   hotScore: number | null;
+  generationCount: number | null;
+  uniqueGeneratorCount: number | null;
+  publishedAt: Date | null;
 }
 
 export interface ModelMetricDaily {

@@ -3300,10 +3300,31 @@ export type ModelBaseModelMetric = {
   minor: Generated<boolean>;
   updatedAt: Generated<Timestamp>;
   /**
-   * Mirror of ModelMetric.hotScore, so a base-model-filtered Hot feed can be served by
-   * mbmm_feed_hot. Trigger-maintained; see the ModelMetric field.
+   * This base model's OWN hot score, so a filtered feed ranks on the slice rather than on
+   * engagement the model earned in another ecosystem. Served by mbmm_feed_hot. Computed by
+   * trigger from the columns below; falls back to mirroring ModelMetric.hotScore while
+   * generationCount is NULL. Same formula as the whole-model score, so a rank does not jump
+   * when a filter is applied.
    */
   hotScore: number | null;
+  /**
+   * Generations attributed to this model's versions of THIS base model. A plain SUM over
+   * ModelVersionMetric, so it arrives with the metrics job.
+   */
+  generationCount: number | null;
+  /**
+   * Distinct generators for this slice, merged across its versions; caps generationCount the
+   * same way ModelMetric.uniqueGeneratorCount does. NULL is what gates hotScore onto the
+   * mirrored fallback, because this is the one value that needs ClickHouse and so arrives
+   * last — a row scores on its own slice only once all three are in hand.
+   */
+  uniqueGeneratorCount: number | null;
+  /**
+   * EARLIEST published version for this base model — not the model's first publish, which
+   * would make a new version in a new ecosystem read as old there, and not the newest, which
+   * would let a republish refresh recency inside a filtered feed.
+   */
+  publishedAt: Timestamp | null;
 };
 export type ModelEngagement = {
   userId: number;
