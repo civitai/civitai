@@ -70,23 +70,17 @@ vi.mock('~/utils/trpc', () => ({
 
 const auth = vi.hoisted(() => ({
   currentUser: { id: 1 } as { id: number } | null,
-  sessionLoading: false,
   openLoginPopup: vi.fn(),
   uploadConsumerBlob: vi.fn(),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => auth.currentUser }));
 
-// Outside a provider useSession reports 'loading'; resolved here from the mocked user unless a test
-// holds the session in its loading state.
+// Outside a provider useSession reports 'loading'; resolved here from the mocked user.
 vi.mock('~/providers/SessionProvider', async (orig) => ({
   ...(await orig<typeof SessionProviderModule>()),
   useSession: () => ({
     data: undefined,
-    status: auth.sessionLoading
-      ? 'loading'
-      : auth.currentUser
-      ? 'authenticated'
-      : 'unauthenticated',
+    status: auth.currentUser ? 'authenticated' : 'unauthenticated',
     update: async () => null,
   }),
 }));

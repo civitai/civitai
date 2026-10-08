@@ -28,22 +28,16 @@ const mocks = vi.hoisted(() => ({
   openLoginPopup: vi.fn(),
   /** Signed in unless a test signs out. */
   currentUser: { id: 1 } as { id: number } | null,
-  sessionLoading: false,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 
-// Outside a provider useSession reports 'loading'; resolved here from the mocked user unless a test
-// holds the session in its loading state.
+// Outside a provider useSession reports 'loading'; resolved here from the mocked user.
 vi.mock('~/providers/SessionProvider', async (orig) => ({
   ...(await orig<typeof SessionProviderModule>()),
   useSession: () => ({
     data: undefined,
-    status: mocks.sessionLoading
-      ? 'loading'
-      : mocks.currentUser
-      ? 'authenticated'
-      : 'unauthenticated',
+    status: mocks.currentUser ? 'authenticated' : 'unauthenticated',
     update: async () => null,
   }),
 }));

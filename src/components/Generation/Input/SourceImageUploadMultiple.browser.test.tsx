@@ -1280,6 +1280,27 @@ describe('SourceImageUploadMultiple — signed out', () => {
     expect(mocks.openLoginPopup).not.toHaveBeenCalled();
   });
 
+  // The seam the loading window relies on: the real upload, refused at presign, ends on a card
+  // telling the user to sign in.
+  test('while the session loads, a signed-out pick refused at presign shows the sign-in message', async () => {
+    mocks.sessionLoading = true;
+    const actual = await vi.importActual<typeof ConsumerBlobUpload>('~/utils/consumer-blob-upload');
+    mocks.uploadConsumerBlob.mockImplementation(actual.uploadConsumerBlob);
+    const presign = vi.fn(async () => new Response(null, { status: 401 }));
+    vi.stubGlobal('fetch', presign);
+    try {
+      renderWithProviders(<PendingHarness max={3} />);
+      await pickFiles(1);
+
+      await expect.element(page.getByText(SIGN_IN_MESSAGE, { exact: true })).toBeVisible();
+      expect(presign).toHaveBeenCalledTimes(1);
+      expect(presign.mock.calls[0][0]).toBe('/api/orchestrator/getConsumerBlobUploadUrl');
+      await expect.poll(loaderCount).toBe(0);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   // Control for the cases above: the same pick, signed in, uploads and asks for nothing.
   test('signed in, the same pick uploads and does not open sign-in', async () => {
     mocks.currentUser = { id: 1 };
