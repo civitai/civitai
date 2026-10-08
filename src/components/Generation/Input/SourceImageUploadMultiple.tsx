@@ -242,6 +242,7 @@ type ImageOrigin = 'value' | 'card';
 
 const isRemoteUrl = (src: string | Blob | File) => typeof src === 'string' && /^https?:/i.test(src);
 
+// Order matters: orchestrator hosts also satisfy the image-cdn and site-host checks.
 function imageHostClass(url: string) {
   if (isOrchestratorUrl(url)) return 'orchestrator';
   if (isMediaHost(url, env.NEXT_PUBLIC_IMAGE_LOCATION)) return 'image-cdn';
@@ -2076,7 +2077,6 @@ export async function uploadOrchestratorImage(
 
     // If already an orchestrator URL, return it directly
     if (typeof src === 'string' && isOrchestratorUrl(src)) {
-      sourceMetadataStore.setMetadata(src, originalSize);
       return {
         url: src,
         ...originalSize,

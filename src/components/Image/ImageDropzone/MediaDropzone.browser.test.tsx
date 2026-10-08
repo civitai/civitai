@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -66,12 +67,23 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
   });
   afterEach(() => restoreReads());
 
-  function renderDropzone() {
-    renderWithProviders(
+  let setLoading: (loading: boolean) => void = () => undefined;
+  function Harness(props: { maxSize?: number; maxFiles?: number }) {
+    const [loading, setLoadingState] = useState(false);
+    setLoading = setLoadingState;
+    return (
       <div data-testid="media">
-        <MediaDropzone onDrop={onDrop} accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]} />
+        <MediaDropzone
+          onDrop={onDrop}
+          accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
+          loading={loading}
+          {...props}
+        />
       </div>
     );
+  }
+  function renderDropzone(props: { maxSize?: number; maxFiles?: number } = {}) {
+    renderWithProviders(<Harness {...props} />);
   }
 
   async function expectFilesFallbackOffered() {
@@ -132,6 +144,34 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
       .element(page.getByText("That file type isn't supported here.", { exact: true }))
       .toBeVisible();
     expect(onDrop).not.toHaveBeenCalled();
+  });
+
+  test('the Files button is disabled while the dropzone is loading', async () => {
+    renderDropzone();
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    setLoading(true);
+    await expect.element(page.getByRole('button', { name: 'Choose from Files' })).toBeDisabled();
+    setLoading(false);
+    await expect.element(page.getByRole('button', { name: 'Choose from Files' })).toBeEnabled();
+  });
+
+  test("files chosen from Files keep the dropzone's size and count limits", async () => {
+    renderDropzone({ maxSize: 100, maxFiles: 1 });
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    const tooLarge = new File([new Uint8Array(101)], 'big.jpg', { type: 'image/jpeg' });
+    await chooseFiles(filesFallbackInput(), [
+      tooLarge,
+      imageFile('photo-0.jpg'),
+      imageFile('photo-1.jpg'),
+    ]);
+    await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
+    expect(onDrop.mock.calls[0][0].map(({ file }: { file: File }) => file.name)).toEqual([
+      'photo-0.jpg',
+    ]);
   });
 
   // Control: the same pick, readable, goes straight through with nothing shown or reported.

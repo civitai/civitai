@@ -108,9 +108,12 @@ import { sourceMetadataStore } from '~/store/source-metadata.store';
 import { ImagePrepError, imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
 // eslint-disable-next-line import/first
 import {
+  IMAGE_PREP_STAGE_TIMEOUT_MS,
   useImagesUploadingOrVerifying,
   useImagesUploadingStore,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
+// eslint-disable-next-line import/first
+import { maxOrchestratorImageFileSize } from '~/server/common/constants';
 // eslint-disable-next-line import/first
 import {
   ImageUploadMultipleInput,
@@ -1361,10 +1364,12 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
   const reports = () =>
     mocks.reportApplicationError.mock.calls.map(([error, ctx]) => [
       (error as Error).message,
+      (ctx as { name?: string } | undefined)?.name,
       (ctx as { message?: string } | undefined)?.message,
     ]);
   const PICK_REPORT = [
     'source image prep failed: pick-unreadable',
+    'source-image-prep',
     'picked-file image/jpeg <5MB NotReadableError',
   ];
 
@@ -1387,6 +1392,19 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
 
   test('is not uploaded, offers the Files chooser, and is reported once', async () => {
     renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+
+    await expectFilesFallbackOffered();
+    await expectNothingStarted();
+    expect(reports()).toEqual([PICK_REPORT]);
+    expect(filesFallbackInput().multiple).toBe(true);
+  });
+
+  test.each([
+    ['one image', { max: 1 }],
+    ['the url-input layout', { max: 3, layout: 'url-input' as const }],
+  ])('in %s: nothing starts and the Files chooser is offered', async (_, props) => {
+    renderWithProviders(<PendingHarness {...props} />);
     await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
 
     await expectFilesFallbackOffered();
@@ -1429,6 +1447,26 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
     await expectNothingStarted();
   });
 
+  test('files chosen from Files keep the size limit and the image count', async () => {
+    renderWithProviders(<PendingHarness max={2} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    const tooLarge = new File([new Uint8Array(maxOrchestratorImageFileSize + 1)], 'big.jpg', {
+      type: 'image/jpeg',
+    });
+    await chooseFiles(filesFallbackInput(), [
+      tooLarge,
+      imageFile('photo-0.jpg'),
+      imageFile('photo-1.jpg'),
+      imageFile('photo-2.jpg'),
+    ]);
+    await expect.element(page.getByText(/^Images should not exceed /)).toBeVisible();
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    await sleep(300);
+    expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(2);
+  });
+
   test('into a slot: nothing starts, and a file chosen from Files fills that slot', async () => {
     function SlotHarness() {
       const [value, setValue] = useState<ImageValue[]>([]);
@@ -1454,12 +1492,16 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
     await expectFilesFallbackOffered();
     await expectNothingStarted();
     expect(reports()).toEqual([PICK_REPORT]);
+    expect(filesFallbackInput().multiple).toBe(false);
 
     await chooseFiles(filesFallbackInput(), [imageFile('photo-0.jpg')]);
     await vi.waitFor(() => expect(uploads).toHaveLength(1));
     const uploaded = await loadableImageUrl();
     uploads[0].resolve({ url: uploaded, available: true });
     await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
+    // The slot's upload measured it too, so it is not downloaded again.
+    await sleep(500);
+    expect(mocks.getImageDimensions.mock.calls.filter(([src]) => src === uploaded)).toEqual([]);
   });
 });
 
@@ -1537,7 +1579,7 @@ describe('SourceImageUploadMultiple — a url that cannot be loaded', () => {
     );
     await userEvent.keyboard('{Enter}');
     await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(1));
-    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.advanceTimersByTimeAsync(IMAGE_PREP_STAGE_TIMEOUT_MS + 1000);
 
     await expect
       .element(
@@ -1558,7 +1600,7 @@ describe('SourceImageUploadMultiple — a url that cannot be loaded', () => {
     renderWithProviders(<PendingHarness />);
     await pickFiles(1);
     await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(1));
-    await vi.advanceTimersByTimeAsync(31_000);
+    await vi.advanceTimersByTimeAsync(IMAGE_PREP_STAGE_TIMEOUT_MS + 1000);
 
     await expect
       .element(
@@ -1568,6 +1610,54 @@ describe('SourceImageUploadMultiple — a url that cannot be loaded', () => {
         )
       )
       .toBeVisible();
+  });
+
+  test('a pasted url whose upload times out loading it shows network wording', async () => {
+    // The dimension check (which passes options) succeeds; the upload's own load never settles.
+    mocks.getImageDimensions.mockImplementation((_src: unknown, options?: unknown) =>
+      options ? Promise.resolve({ width: 1024, height: 1024 }) : new Promise(() => undefined)
+    );
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    renderWithProviders(<PendingHarness layout="url-input" />);
+    const url = 'https://example.com/slow-upload.jpg';
+    cachedUrls.push(url);
+    await userEvent.fill(page.getByPlaceholder('Add a file or provide a URL'), url);
+    await userEvent.keyboard('{Enter}');
+    await vi.waitFor(() => expect(mocks.getImageDimensions).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(IMAGE_PREP_STAGE_TIMEOUT_MS + 1000);
+
+    await expect
+      .element(
+        page.getByText("Couldn't load this image. Check your connection and try again.", {
+          exact: true,
+        })
+      )
+      .toBeVisible();
+    expect(reports()).toEqual([
+      ['source image prep failed: dims:timeout', 'url origin:card host:other'],
+    ]);
+  });
+
+  test('re-uploading an image already in the value, after a crop, reports origin:value', async () => {
+    const url = 'https://example.com/in-the-value.jpg';
+    cachedUrls.push(url);
+    // The dimension check (which passes options) succeeds; the upload's own load fails.
+    mocks.getImageDimensions.mockImplementation((_src: unknown, options?: unknown) =>
+      options
+        ? Promise.resolve({ width: 600, height: 2000 })
+        : Promise.reject(new Error('Image failed to load'))
+    );
+    renderWithProviders(
+      <PendingHarness aspectRatios={['1:1']} initialValue={[{ url, width: 600, height: 2000 }]} />
+    );
+    await vi.waitFor(() => expect(mocks.dialogTrigger).toHaveBeenCalledTimes(1));
+    // Confirmed uncropped: an image that is not an orchestrator url is uploaded as it is.
+    void mocks.dialogTrigger.mock.calls[0][0].props.onConfirm([{ src: url }]);
+
+    await vi.waitFor(() => expect(reports()).toHaveLength(1));
+    expect(reports()).toEqual([
+      ['source image prep failed: dims', 'url Error origin:value host:other'],
+    ]);
   });
 
   test.each([

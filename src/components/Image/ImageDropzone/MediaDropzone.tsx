@@ -83,6 +83,13 @@ export function MediaDropzone({
     if (readable.length) onDrop(readable.map((file) => ({ file })));
   }
 
+  // The Files chooser bypasses the dropzone's own limits, so they are applied here.
+  function handleFallbackFiles(files: File[]) {
+    const { maxSize, maxFiles } = dropzoneProps;
+    const fitting = files.filter((file) => maxSize === undefined || file.size <= maxSize);
+    return handleDrop(maxFiles ? fitting.slice(0, maxFiles) : fitting);
+  }
+
   // #region [render]
   return (
     <div className="flex w-full flex-col gap-1">
@@ -144,8 +151,8 @@ export function MediaDropzone({
         <UnreadablePickAlert
           accept={accept}
           multiple
-          disabled={dropzoneProps.disabled}
-          onFiles={handleDrop}
+          disabled={dropzoneProps.disabled || dropzoneProps.loading}
+          onFiles={handleFallbackFiles}
         />
       )}
       {error && <Input.Error>{typeof error === 'string' ? error : error.message}</Input.Error>}
