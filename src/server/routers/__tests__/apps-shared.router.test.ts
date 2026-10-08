@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClientModule from '~/server/flipt/client';
 import { TRPCError } from '@trpc/server';
 
 /**
@@ -28,6 +29,9 @@ const {
   mockIsRevoked,
   mockLogToAxiom,
   mockSyncSubListing,
+  mockIsFlipt,
+  mockFindBlocked,
+  mockChInsert,
 } = vi.hoisted(() => {
   // 🔴 THE SIGNATURE IS DECLARED VIA THE GENERIC, NOT AS UNUSED PARAMETERS. `pg`'s
   // `query(sql, params)` is what the router calls, and `vi.fn(async () => …)` infers a
@@ -100,6 +104,16 @@ const {
       async () => undefined
     ),
     mockSyncSubListing: vi.fn<(args: unknown) => Promise<void>>(async () => undefined),
+    // `data`/counter-key moderation: the two per-app flags, the pure blocklist classifier and the
+    // hit-list sink. The detectors themselves (includesMinor/includesPoi/auditPromptEnriched) run
+    // for real.
+    mockIsFlipt: vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>(
+      async () => false
+    ),
+    mockFindBlocked: vi.fn<(values: unknown, opts?: unknown) => Promise<unknown[]>>(async () => []),
+    mockChInsert: vi.fn<(args: { table: string; values: unknown[] }) => Promise<void>>(
+      async () => undefined
+    ),
   };
 });
 
@@ -134,6 +148,16 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: (content: unknown, options?: unknown) =>
     mockThrowOnBlockedUserContent(content, options),
+  findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
+  stripBenignPhrases: async (text: string) => text,
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClientModule>()),
+  isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+    mockIsFlipt(flag, entityId, context),
+}));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: { insert: (args: { table: string; values: unknown[] }) => mockChInsert(args) },
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: (args: unknown) => mockAuditPromptServer(args),
@@ -241,6 +265,9 @@ beforeEach(() => {
   mockThrowOnBlockedUserContent.mockResolvedValue(undefined);
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
+  mockIsFlipt.mockResolvedValue(false);
+  mockFindBlocked.mockResolvedValue([]);
+  mockChInsert.mockResolvedValue(undefined);
 });
 
 /**
@@ -1479,7 +1506,7 @@ describe('append `data` blob (opaque, unmoderated app payload)', () => {
     expect((out.items[0].value as { data?: unknown }).data).toEqual({ k: 'v', n: 42 });
   });
 
-  it('does NOT run `data` through the content-safety belt (a "bad" string in data is stored, not rejected)', async () => {
+  it('does NOT run `data` through the title/body belt (a "bad" string in data is stored, not rejected, with the data-moderation flags OFF)', async () => {
     mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
     mockAppendDataPath();
     // The SAME string would be REJECTED in `title` (includesMinor); inside `data`
@@ -2366,5 +2393,277 @@ describe('REST entry shape — the six exported write functions carry the full l
       String(c[0]).includes('shared_kv_reports')
     );
     expect(reportInsert?.[1]).toEqual(expect.arrayContaining([KEY, 42, REASON]));
+  });
+});
+
+// ── `data` leaf moderation (shadow → enforce) ─────────────────────────────────
+//
+// Behaviour of the two per-app flags on the append/update paths. The tRPC procedures and the REST
+// adapters (`/api/v1/blocks/shared-storage/{append,update}`) call the SAME exported functions, so
+// the REST surface is covered by the `appendSharedRow`/`updateSharedRow` cases here.
+describe('shared `data` local moderation', () => {
+  const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
+  const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
+  const MINOR = '13 year old girl';
+
+  function setFlags({ shadow = false, enforce = false }: { shadow?: boolean; enforce?: boolean }) {
+    mockIsFlipt.mockImplementation(async (flag: string) =>
+      flag === SHADOW_FLAG ? shadow : flag === ENFORCE_FLAG ? enforce : false
+    );
+  }
+  function insertedValue(): string | undefined {
+    const insert = (mockClient.query.mock.calls as Array<[string, unknown[]?]>).find((c) =>
+      c[0].includes('INSERT INTO "app_app_voting".shared_kv')
+    );
+    return insert ? String((insert[1] as unknown[])[2]) : undefined;
+  }
+  function reportReasons(): string[] {
+    return (mockPool.query.mock.calls as Array<[string, unknown[]?]>)
+      .filter((c) => c[0].includes('shared_kv_reports'))
+      .map((c) => String((c[1] as unknown[])[3]));
+  }
+  function eventNames(): string[] {
+    return mockLogToAxiom.mock.calls.map((c) => String((c[0] as { name?: string }).name));
+  }
+  const flushImmediates = async () => {
+    for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+  function deepArray(depth: number, leaf: unknown): unknown {
+    let value = leaf;
+    for (let i = 0; i < depth; i++) value = [value];
+    return value;
+  }
+  async function appendData(data: unknown) {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockAppendDataPath();
+    return appendSharedRow('tok', { title: 'clean title', data });
+  }
+
+  describe('INVARIANT GUARD: both flags OFF is the pre-moderation behaviour', () => {
+    it('a flagged term in `data` is stored byte-for-byte, nothing is scanned, recorded or scheduled', async () => {
+      const value = { title: 'clean title', body: 'b', data: { x: MINOR, [MINOR]: [1] } };
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockAppendDataPath();
+      await expect(appendSharedRow('tok', value)).resolves.toMatchObject({
+        key: expect.any(String),
+      });
+      await flushImmediates();
+      expect(insertedValue()).toBe(JSON.stringify(value));
+      expect(mockFindBlocked).not.toHaveBeenCalled();
+      expect(mockChInsert).not.toHaveBeenCalled();
+      expect(eventNames()).not.toContain('app-blocks-shared-data-moderation-scan');
+      expect(reportReasons()).toEqual([]);
+      // ...and the flags were asked, per app, with no user context.
+      expect(mockIsFlipt).toHaveBeenCalledWith(SHADOW_FLAG, 'apb_test', undefined);
+      expect(mockIsFlipt).toHaveBeenCalledWith(ENFORCE_FLAG, 'apb_test', undefined);
+    });
+  });
+
+  describe('ENFORCE', () => {
+    beforeEach(() => setFlags({ enforce: true }));
+
+    it.each([
+      ['a string value `data.x`', { x: MINOR }],
+      ['an OBJECT KEY', { tags: { [MINOR]: true } }],
+      ['a leaf 20 arrays deep', { nest: deepArray(20, MINOR) }],
+      ['a format-character-split term', { x: 'lo​li' }],
+    ])(
+      '🔴 REGRESSION: a flagged term in %s → BAD_REQUEST, nothing written',
+      async (_name, data) => {
+        await expect(appendData(data)).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+          message: 'Content flagged for review',
+        });
+        expect(mockPool.connect).not.toHaveBeenCalled();
+        expect(insertedValue()).toBeUndefined();
+      }
+    );
+
+    it('a minor hit files a Report row and the legal-block alert, as a title/body hit does', async () => {
+      await appendData({ x: MINOR }).catch(() => undefined);
+      expect(reportReasons()).toEqual(['auto:data:minor']);
+      const legal = mockLogToAxiom.mock.calls.find(
+        (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-storage-legal-block'
+      );
+      expect(legal?.[0]).toMatchObject({
+        category: 'minor',
+        field: 'data',
+        appBlockId: 'apb_test',
+      });
+      // The alert carries metadata only.
+      expect(JSON.stringify(legal?.[0])).not.toContain(MINOR);
+    });
+
+    it('🔴 REGRESSION: an over-cap blob (33 deep) is rejected, without a Report row', async () => {
+      await expect(appendData(deepArray(33, 'x'))).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Data is too large or too deeply nested to review',
+      });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(reportReasons()).toEqual([]);
+    });
+
+    it('a blocked link in a leaf → the link message, no Report row', async () => {
+      mockFindBlocked.mockResolvedValue([{ kind: 'link', index: 0, matched: ['bad.example'] }]);
+      await expect(appendData({ url: 'see bad.example' })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content contains a blocked link',
+      });
+      expect(reportReasons()).toEqual([]);
+    });
+
+    it('records the rejected hit with blocked=1 and no row key (a create that never got one)', async () => {
+      await appendData({ x: MINOR }).catch(() => undefined);
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          category: 'minor',
+          blocked: 1,
+          mode: 'enforce',
+          rowKey: '',
+          leafPath: 'x',
+        })
+      );
+    });
+
+    it('clean `data` is written, and the scan still emits its denominator', async () => {
+      await expect(appendData({ label: 'a calm lake', n: 3 })).resolves.toMatchObject({
+        key: expect.any(String),
+      });
+      expect(insertedValue()).toBeDefined();
+      expect(mockLogToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          name: 'app-blocks-shared-data-moderation-scan',
+          mode: 'enforce',
+          blocked: false,
+          leafCount: 3,
+        }),
+        'block-audit'
+      );
+    });
+
+    it('title/body still run first: a bad TITLE is refused by the title/body belt before `data` is read', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      await expect(
+        appendSharedRow('tok', { title: MINOR, data: { x: 'clean' } })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockFindBlocked).not.toHaveBeenCalled();
+      expect(reportReasons()).toEqual(['auto:minor']);
+    });
+
+    it('🔴 REGRESSION (update): a flagged key in edited `data` → BAD_REQUEST, no UPDATE', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('author_user_id, size_bytes'))
+          return { rows: [{ author_user_id: 42, size_bytes: 100 }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+      await expect(
+        updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { [MINOR]: 1 } })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: 'Content flagged for review' });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+        expect.objectContaining({ rowKey: 'ROW-KEY-1', surface: 'update', leafKind: 'key' })
+      );
+    });
+
+    it('enforce ON with shadow ALSO on scans once, inline — no second post-commit scan', async () => {
+      setFlags({ shadow: true, enforce: true });
+      await appendData({ label: 'a calm lake' });
+      await flushImmediates();
+      expect(mockFindBlocked).toHaveBeenCalledTimes(1);
+      const scans = eventNames().filter((n) => n === 'app-blocks-shared-data-moderation-scan');
+      expect(scans).toHaveLength(1);
+    });
+  });
+
+  describe('SHADOW', () => {
+    beforeEach(() => setFlags({ shadow: true }));
+
+    it('🔴 REGRESSION: a flagged term is RECORDED against the committed row — and the write is not refused', async () => {
+      const out = await appendData({ x: MINOR, list: [{ [MINOR]: 1 }] });
+      expect(insertedValue()).toBeDefined();
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      const rows = mockChInsert.mock.calls[0][0].values as Array<Record<string, unknown>>;
+      expect(rows).toContainEqual(
+        expect.objectContaining({
+          rowKey: out.key,
+          surface: 'append',
+          mode: 'shadow',
+          blocked: 0,
+          category: 'minor',
+          leafPath: 'x',
+          leafKind: 'value',
+          leafText: MINOR,
+        })
+      );
+    });
+
+    it('INVARIANT GUARD: shadow has NO consequences — no Report row, no block alert, no extra belt call', async () => {
+      await appendData({ x: MINOR, y: 'emma watson' });
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      await flushImmediates();
+      expect(reportReasons()).toEqual([]);
+      expect(eventNames()).not.toContain('app-blocks-shared-storage-legal-block');
+      expect(eventNames()).not.toContain('app-blocks-shared-storage-content-block');
+      // Exactly the title/body belt's own calls — shadow added none.
+      expect(mockThrowOnBlockedUserContent).toHaveBeenCalledTimes(1);
+      expect(mockAuditPromptServer).toHaveBeenCalledTimes(1);
+    });
+
+    it('INVARIANT GUARD: shadow is NOT awaited — the write returns while the scan is still pending', async () => {
+      // A classifier that never settles: if the write awaited the scan, this would hang.
+      mockFindBlocked.mockImplementation(() => new Promise(() => undefined));
+      let settled = false;
+      let scanCallsWhenSettled = -1;
+      const pending = appendData({ x: 'anything' }).then((r) => {
+        settled = true;
+        scanCallsWhenSettled = mockFindBlocked.mock.calls.length;
+        return r;
+      });
+      await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 });
+      await expect(pending).resolves.toMatchObject({ key: expect.any(String) });
+      // ...and the scan had not even started by then (it is deferred past the request's tick).
+      expect(scanCallsWhenSettled).toBe(0);
+      await flushImmediates();
+      expect(mockFindBlocked).toHaveBeenCalledTimes(1);
+      expect(mockChInsert).not.toHaveBeenCalled();
+    });
+
+    it('an over-cap blob is recorded as an overflow, not rejected', async () => {
+      await expect(appendData(deepArray(33, 'x'))).resolves.toMatchObject({
+        key: expect.any(String),
+      });
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      expect(mockChInsert.mock.calls[0][0].values).toEqual([
+        expect.objectContaining({ category: 'overflow', matched: 'depth', mode: 'shadow' }),
+      ]);
+    });
+
+    it('a write refused for another reason (quota) is never shadow-scanned', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockPool.query.mockImplementation(async (sql: string) => {
+        if (sql.includes('author_user_id') && sql.includes('count(*)'))
+          return { rows: [{ n: '0' }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [{ used_bytes: String(50 * 1024 * 1024), row_count: '0', stored_size_bytes: 10 }],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+      await expect(
+        appendSharedRow('tok', { title: 't', data: { x: MINOR } })
+      ).rejects.toMatchObject({ code: 'PAYLOAD_TOO_LARGE' });
+      await flushImmediates();
+      expect(mockFindBlocked).not.toHaveBeenCalled();
+    });
   });
 });

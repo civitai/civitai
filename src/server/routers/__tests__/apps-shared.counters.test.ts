@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClientModule from '~/server/flipt/client';
 
 /**
  * Coverage for the App Blocks play-count counter surface added to
@@ -22,6 +23,10 @@ const {
   mockGetSessionUser,
   mockCheckVoteRl,
   mockIsRevoked,
+  mockIsFlipt,
+  mockFindBlocked,
+  mockChInsert,
+  mockLog,
 } = vi.hoisted(() => {
   const mockClient = {
     query: vi.fn(async () => ({ rows: [{ count: '3' }], rowCount: 1 })),
@@ -41,6 +46,15 @@ const {
     mockGetSessionUser: vi.fn(),
     mockCheckVoteRl: vi.fn(async () => ({ allowed: true })),
     mockIsRevoked: vi.fn(async () => false),
+    // Counter-key moderation: the per-app flags, the pure blocklist classifier, the hit sink.
+    mockIsFlipt: vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>(
+      async () => false
+    ),
+    mockFindBlocked: vi.fn<(values: unknown, opts?: unknown) => Promise<unknown[]>>(async () => []),
+    mockChInsert: vi.fn<(args: { table: string; values: unknown[] }) => Promise<void>>(
+      async () => undefined
+    ),
+    mockLog: vi.fn<(payload: unknown, stream?: string) => Promise<void>>(async () => undefined),
   };
 });
 
@@ -63,7 +77,17 @@ vi.mock('~/server/utils/shared-storage-rate-limit', () => ({
 vi.mock('~/server/services/block-revocation.service', () => ({
   BlockRevocation: { isRevoked: (...a: unknown[]) => mockIsRevoked(...a) },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
+vi.mock('~/server/logging/client', () => ({
+  logToAxiom: (payload: unknown, stream?: string) => mockLog(payload, stream),
+}));
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClientModule>()),
+  isFlipt: (flag: string, entityId?: string, context?: unknown) =>
+    mockIsFlipt(flag, entityId, context),
+}));
+vi.mock('~/server/clickhouse/client', () => ({
+  clickhouse: { insert: (args: { table: string; values: unknown[] }) => mockChInsert(args) },
+}));
 // Cut the shared-content-safety → blocklist/prompt-audit → @civitai/db import
 // chain (mirrors apps-shared.router.test.ts): the counter ops never touch the
 // content-safety belt, and these mocks keep the module graph free of the
@@ -71,6 +95,8 @@ vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefi
 vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedLinkDomain: vi.fn(async () => undefined),
   throwOnBlockedUserContent: vi.fn(),
+  findBlockedUserContent: (values: unknown, opts?: unknown) => mockFindBlocked(values, opts),
+  stripBenignPhrases: async (text: string) => text,
 }));
 vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
   auditPromptServer: vi.fn(async () => undefined),
@@ -136,6 +162,8 @@ beforeEach(() => {
   mockIsRevoked.mockResolvedValue(false);
   mockCheckVoteRl.mockResolvedValue({ allowed: true });
   mockClient.query.mockResolvedValue({ rows: [{ count: '3' }], rowCount: 1 });
+  mockIsFlipt.mockResolvedValue(false);
+  mockFindBlocked.mockResolvedValue([]);
 });
 
 describe('assertValidCounterKey', () => {
@@ -239,5 +267,95 @@ describe('getTopSharedCounters', () => {
     mockPool.query.mockResolvedValue({ rows: [], rowCount: 0 });
     const items = await getTopSharedCounters('tok', '', 20);
     expect(items).toEqual([]);
+  });
+});
+
+// ── Counter-key local moderation ──────────────────────────────────────────────
+// The key is app-chosen text `getTop` returns to every reader. Same two per-app flags as `data`.
+describe('incrementSharedCounter — counter-key moderation', () => {
+  const SHADOW_FLAG = 'app-blocks-shared-data-moderation';
+  const ENFORCE_FLAG = 'app-blocks-shared-data-moderation-enforce';
+  const BAD_KEY = 'playcount:13 year old girl';
+
+  function setFlags({ shadow = false, enforce = false }: { shadow?: boolean; enforce?: boolean }) {
+    mockIsFlipt.mockImplementation(async (flag: string) =>
+      flag === SHADOW_FLAG ? shadow : flag === ENFORCE_FLAG ? enforce : false
+    );
+  }
+  function reportReasons(): string[] {
+    return (mockPool.query.mock.calls as unknown as Array<[string, unknown[]?]>)
+      .filter((c) => String(c[0]).includes('shared_kv_reports'))
+      .map((c) => String((c[1] as unknown[])[3]));
+  }
+  const flushImmediates = async () => {
+    for (let i = 0; i < 3; i++) await new Promise((resolve) => setImmediate(resolve));
+  };
+
+  beforeEach(() => {
+    mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+  });
+
+  it('INVARIANT GUARD: both flags OFF → a flagged key increments exactly as before, nothing scanned', async () => {
+    await expect(incrementSharedCounter('tok', BAD_KEY)).resolves.toEqual({
+      key: BAD_KEY,
+      count: 3,
+    });
+    await flushImmediates();
+    expect(mockFindBlocked).not.toHaveBeenCalled();
+    expect(mockChInsert).not.toHaveBeenCalled();
+    expect(mockIsFlipt).toHaveBeenCalledWith(ENFORCE_FLAG, 'apb_test', undefined);
+  });
+
+  it('🔴 REGRESSION (enforce): a flagged counter key → BAD_REQUEST, no counter write, Report filed', async () => {
+    setFlags({ enforce: true });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Content flagged for review',
+    });
+    expect(mockPool.connect).not.toHaveBeenCalled();
+    expect(mockClient.query).not.toHaveBeenCalled();
+    expect(reportReasons()).toEqual(['auto:counterKey:minor']);
+  });
+
+  it('🔴 REGRESSION (enforce): a format-character-split key is caught', async () => {
+    setFlags({ enforce: true });
+    await expect(incrementSharedCounter('tok', 'playcount:lo\u200Bli')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('enforce: a clean key increments, and the blocklist saw the key as ONE array entry', async () => {
+    setFlags({ enforce: true });
+    await expect(incrementSharedCounter('tok', 'playcount:7')).resolves.toEqual({
+      key: 'playcount:7',
+      count: 3,
+    });
+    expect(mockFindBlocked).toHaveBeenCalledTimes(1);
+    expect(mockFindBlocked.mock.calls[0][0]).toEqual(['playcount:7']);
+  });
+
+  it('🔴 REGRESSION (shadow): a flagged key increments AND is recorded against the key, no Report', async () => {
+    setFlags({ shadow: true });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).resolves.toEqual({
+      key: BAD_KEY,
+      count: 3,
+    });
+    await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+    expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+      expect.objectContaining({
+        rowKey: BAD_KEY,
+        surface: 'counter',
+        mode: 'shadow',
+        category: 'minor',
+        leafKind: 'key',
+      })
+    );
+    expect(reportReasons()).toEqual([]);
+    expect(
+      mockLog.mock.calls.some(
+        (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-storage-legal-block'
+      )
+    ).toBe(false);
   });
 });

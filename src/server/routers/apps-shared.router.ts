@@ -56,6 +56,17 @@ import {
   SHARED_BODY_MAX,
 } from '~/server/services/apps/shared-content-safety';
 import {
+  blockingHit,
+  recordSharedDataScan,
+  resolveSharedDataModerationMode,
+  scanCounterKey,
+  scanSharedData,
+  scheduleSharedDataShadow,
+  type SharedDataModerationMode,
+  type SharedDataSurface,
+  type SharedTextScan,
+} from '~/server/services/apps/shared-data-moderation';
+import {
   checkSharedAppendRateLimit,
   checkSharedVoteRateLimit,
   checkSharedReportRateLimit,
@@ -421,16 +432,17 @@ const sharedKeyInput = z.string().min(1).max(SHARED_KEY_MAX);
 // `title`/`body` are the MODERATED, user-visible TEXT — they run the full
 // content-safety belt (assertSharedTextSafe) synchronously on every append.
 //
-// `data` is an OPTIONAL, opaque, app-owned, UNMODERATED structured payload stored
-// alongside the moderated text. It is NOT run through the content-safety belt: it
-// is opaque app-structured state (e.g. an app's own saved-config JSON), rendered
-// ONLY inside the app's opaque-origin iframe sandbox — the SAME trust boundary as
-// the rest of shared storage (all approved apps are `unverified` tier → no
-// `allow-same-origin`, so even hostile bytes in `data` run in an origin that can't
-// touch civitai). 🔴 Apps MUST place all user-VISIBLE TEXT in `title`/`body`
-// (which is moderated); `data` must carry ONLY opaque app structure, never a text
-// surface shown to other users outside the sandbox. Size is bounded by the whole-
-// value SHARED_VALUE_BYTE_CAP (below) and its bytes count toward the app quota.
+// `data` is an OPTIONAL, app-owned structured payload stored alongside the moderated
+// text. It is NOT run through the title/body content-safety belt: it is app-structured
+// state (e.g. an app's own saved-config JSON), rendered ONLY inside the app's
+// opaque-origin iframe sandbox — the SAME trust boundary as the rest of shared storage
+// (all approved apps are `unverified` tier → no `allow-same-origin`, so even hostile
+// bytes in `data` run in an origin that can't touch civitai). Apps can and do render
+// strings from it to other users, so its string values and object keys get the LOCAL
+// leaf moderation in `shared-data-moderation.ts` — default OFF, ramped per app by two
+// flags (shadow, then enforce). 🔴 Apps should still place user-VISIBLE TEXT in
+// `title`/`body`, which carries the full belt. Size is bounded by the whole-value
+// SHARED_VALUE_BYTE_CAP (below) and its bytes count toward the app quota.
 //
 // EXPORTED because the REST adapters (`/api/v1/blocks/shared-storage/{append,
 // update}`) validate the SAME payload. Exporting the schema rather than its three
@@ -733,13 +745,14 @@ export async function appendSharedRow(
   // Only `serialized` is taken: the wire `byteSize` it also returns has already
   // done its one job (SHARED_VALUE_BYTE_CAP, enforced in that unit inside the
   // helper) and must not reach the quota gate below. See STORED_SIZE_PROBE_SQL.
-  const { serialized } = await assertSharedValueSafeAndSerialize({
+  const { serialized, moderation } = await assertSharedValueSafeAndSerialize({
     schema,
     slug,
     appBlockId,
     uid,
     subjectUser,
     value,
+    surface: 'append',
   });
 
   const pool = requireAppsDb();
@@ -814,6 +827,15 @@ export async function appendSharedRow(
     client.release();
   }
 
+  // SHADOW `data` moderation: only now that the row exists, and never awaited.
+  if (moderation.mode === 'shadow') {
+    const { storedData } = moderation;
+    scheduleSharedDataShadow(
+      () => scanSharedData(storedData, { isModerator: subjectUser?.isModerator }),
+      { appBlockId, rowKey: key, surface: 'append' }
+    );
+  }
+
   return { key };
 }
 
@@ -827,8 +849,8 @@ export async function appendSharedRow(
  *   - FORBIDDEN unless author_user_id = the token subject (a non-author cannot edit;
  *     mods use apps.mod.purgeSharedRow, not this)
  * The new title/body run the SAME blocking content-safety belt as append (a
- * policy-violating edit is rejected, no write); the opaque `data` blob stays
- * UNMODERATED (same trust boundary as append). The whole value is serialize-guarded
+ * policy-violating edit is rejected, no write); the `data` blob gets the same flag-
+ * governed leaf moderation as append. The whole value is serialize-guarded
  * + capped, and the per-app quota is re-checked on the byte DELTA (new − old) BEFORE
  * the write. The write is IN PLACE: value + updated_at (+ the generated size_bytes,
  * which the shared_kv UPDATE quota trigger folds into used_bytes) change; the key,
@@ -886,13 +908,15 @@ export async function updateSharedRow(
   // Only `serialized` is taken — see the matching note in `append`: the wire
   // `byteSize` has already enforced SHARED_VALUE_BYTE_CAP inside the helper and
   // must not reach the delta arithmetic below.
-  const { serialized } = await assertSharedValueSafeAndSerialize({
+  const { serialized, moderation } = await assertSharedValueSafeAndSerialize({
     schema,
     slug,
     appBlockId,
     uid,
     subjectUser,
     value,
+    surface: 'update',
+    rowKey: key,
   });
 
   // Per-app byte quota re-checked on the DELTA (new − old). A shrinking edit always
@@ -1027,6 +1051,15 @@ export async function updateSharedRow(
   }
   // Lost a race (row vanished / was hidden / reassigned between SELECT and UPDATE).
   if (updated === 0) throw new TRPCError({ code: 'NOT_FOUND', message: 'request not found' });
+
+  // SHADOW `data` moderation, after the edit landed — see `appendSharedRow`.
+  if (moderation.mode === 'shadow') {
+    const { storedData } = moderation;
+    scheduleSharedDataShadow(
+      () => scanSharedData(storedData, { isModerator: subjectUser?.isModerator }),
+      { appBlockId, rowKey: key, surface: 'update' }
+    );
+  }
 
   return { ok: true as const };
 }
@@ -1377,7 +1410,9 @@ const COUNTER_KEY_MAX = 64;
  * `counters.key` column FK-references `shared_kv.key`, so we first upsert a tiny
  * ANCHOR `shared_kv` row for the key (value `{}`) inside the same txn (under the
  * quota GUC), then upsert the counter. Rate-limited on the SAME per-(user, app)
- * vote bucket as the shared vote path. Returns the new count.
+ * vote bucket as the shared vote path. Returns the new count. The KEY is app-chosen text
+ * that `getTop` returns to every reader, so it gets the same flag-governed local
+ * moderation as a `data` leaf (see `shared-data-moderation.ts`).
  *
  * NOTE (best-effort/anti-abuse): the per-user shared_kv row cap that `append`
  * enforces is intentionally NOT applied here — counter keys are app-global
@@ -1390,7 +1425,10 @@ export async function incrementSharedCounter(
   blockToken: string,
   key: string
 ): Promise<{ key: string; count: number }> {
-  const { userId, schema, appBlockId } = await resolveSharedContext(blockToken, 'increment');
+  const { userId, subjectUser, slug, schema, appBlockId } = await resolveSharedContext(
+    blockToken,
+    'increment'
+  );
   const uid = userId as number; // non-null (write path ran the trust gate)
 
   const rl = await checkSharedVoteRateLimit(uid, appBlockId);
@@ -1398,6 +1436,22 @@ export async function incrementSharedCounter(
     throw new TRPCError({
       code: 'TOO_MANY_REQUESTS',
       message: `Too many increments — retry in ${rl.retryAfterSeconds}s`,
+    });
+  }
+
+  // The key is app-chosen text that `getTop` hands to every reader, so it is moderated as one
+  // leaf, under the same two flags as `data` (see `shared-data-moderation.ts`). Enforce rejects
+  // here, before anything is written; shadow scans after the commit below.
+  const moderationMode = await resolveSharedDataModerationMode(appBlockId);
+  if (moderationMode === 'enforce') {
+    const scan = await scanCounterKey(key, { isModerator: subjectUser?.isModerator });
+    await rejectSharedTextHit(scan, {
+      schema,
+      slug,
+      appBlockId,
+      uid,
+      rowKey: key,
+      surface: 'counter',
     });
   }
 
@@ -1424,6 +1478,12 @@ export async function incrementSharedCounter(
       )
     ).rows;
     await client.query('COMMIT');
+    if (moderationMode === 'shadow') {
+      scheduleSharedDataShadow(
+        () => scanCounterKey(key, { isModerator: subjectUser?.isModerator }),
+        { appBlockId, rowKey: key, surface: 'counter' }
+      );
+    }
     return { key, count: Number(rows[0]?.count ?? '0') };
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
@@ -1573,10 +1633,14 @@ export const appsModRouter = router({
  * minor/POI; the separate lower-urgency content-block for a general audit hit) — the
  * SAME observability append historically had inline — then throws BAD_REQUEST.
  *
- * `data` is the OPAQUE, app-owned, UNMODERATED payload: it is folded into the stored
- * value but NEVER runs the belt (same trust boundary as append). It holds PLAIN-JSON
- * app state round-tripped as JSON (superjson-special types are NOT preserved), and
- * because `z.unknown()` does no validation, JSON.stringify can THROW (BigInt /
+ * `data` is the app-owned payload: it is folded into the stored value but NEVER runs the
+ * title/body belt. Its strings and object keys get the LOCAL leaf moderation in
+ * `shared-data-moderation.ts` instead, governed by two per-app flags: off (the shipped
+ * default — `data` is not read at all), shadow (scanned after the write commits, recorded,
+ * never rejected — the caller schedules that from the returned `moderation`), or enforce
+ * (scanned here, before the write, and rejected via `rejectSharedTextHit`). It holds
+ * PLAIN-JSON app state round-tripped as JSON (superjson-special types are NOT preserved),
+ * and because `z.unknown()` does no validation, JSON.stringify can THROW (BigInt /
  * circular) — guarded to a clean BAD_REQUEST, never an unhandled 500. The whole
  * serialized value is bounded by SHARED_VALUE_BYTE_CAP.
  *
@@ -1590,7 +1654,15 @@ async function assertSharedValueSafeAndSerialize(params: {
   uid: number;
   subjectUser: SessionUser | null;
   value: { title: string; body?: string; data?: unknown };
-}): Promise<{ serialized: string; byteSize: number }> {
+  surface: 'append' | 'update';
+  /** The row being edited (update). A create has no key until it is written. */
+  rowKey?: string;
+}): Promise<{
+  serialized: string;
+  byteSize: number;
+  /** For the caller's post-commit shadow scan; `storedData` is set only when `mode` is not off. */
+  moderation: { mode: SharedDataModerationMode; storedData: unknown };
+}> {
   const { schema, slug, appBlockId, uid, subjectUser, value } = params;
 
   let safe: { title: string; body?: string };
@@ -1662,7 +1734,109 @@ async function assertSharedValueSafeAndSerialize(params: {
   if (byteSize > SHARED_VALUE_BYTE_CAP) {
     throw new TRPCError({ code: 'PAYLOAD_TOO_LARGE', message: 'value exceeds size cap' });
   }
-  return { serialized, byteSize };
+
+  // `data` moderation (see `shared-data-moderation.ts` for the modes). Runs AFTER the title/body
+  // belt and the byte cap, so a value that fails either is refused exactly as before, and the walk
+  // is bounded by SHARED_VALUE_BYTE_CAP. Both flags OFF ⇒ nothing below parses or scans anything.
+  //
+  // 🔴 The scan reads the SERIALIZED value parsed back, not `value.data`: that is the exact JSON
+  // that will be stored and later rendered, so a superjson-revived `Date`, a `toJSON` override or a
+  // dropped `undefined` is seen in its stored form rather than guessed at.
+  const mode = await resolveSharedDataModerationMode(appBlockId);
+  const storedData =
+    mode === 'off' || value.data === undefined
+      ? undefined
+      : (JSON.parse(serialized) as { data?: unknown }).data;
+  if (mode === 'enforce') {
+    const scan = await scanSharedData(storedData, { isModerator: subjectUser?.isModerator });
+    await rejectSharedTextHit(scan, {
+      schema,
+      slug,
+      appBlockId,
+      uid,
+      rowKey: params.rowKey ?? '',
+      surface: params.surface,
+    });
+  }
+  return { serialized, byteSize, moderation: { mode, storedData } };
+}
+
+/**
+ * ENFORCE half of shared-text moderation for `data` leaves and counter keys: record the scan, then
+ * reject a hit with the SAME consequences a title/body hit has in
+ * `assertSharedValueSafeAndSerialize` — a Report row for minor/POI/audit, the legal-block or
+ * content-block alert, and a BAD_REQUEST carrying only a generic message (never the matched term).
+ * An overflow (a blob too deep, too wide or too long to read in full) is rejected too: an unread
+ * leaf must not pass by being past a cap.
+ *
+ * The recording is not awaited and never throws, so it cannot change the outcome either way.
+ */
+async function rejectSharedTextHit(
+  scan: SharedTextScan,
+  ctx: {
+    schema: string;
+    slug: string;
+    appBlockId: string;
+    uid: number;
+    rowKey: string;
+    surface: SharedDataSurface;
+  }
+): Promise<void> {
+  const hit = blockingHit(scan);
+  void recordSharedDataScan(scan, {
+    appBlockId: ctx.appBlockId,
+    rowKey: ctx.rowKey,
+    surface: ctx.surface,
+    mode: 'enforce',
+    blocked: hit != null,
+  });
+  if (!hit) return;
+
+  const field = ctx.surface === 'counter' ? 'counterKey' : 'data';
+  const reportable =
+    hit.category === 'minor' || hit.category === 'poi' || hit.category === 'audit_regex';
+  if (reportable) {
+    await insertSharedReport(ctx.schema, {
+      key: null,
+      reporterUserId: ctx.uid,
+      reason: `auto:${field}:${hit.category}`,
+    }).catch(() => undefined);
+  }
+  if (hit.category === 'minor' || hit.category === 'poi') {
+    logToAxiom(
+      {
+        name: 'app-blocks-shared-storage-legal-block',
+        type: 'error',
+        category: hit.category,
+        field,
+        userId: ctx.uid,
+        slug: ctx.slug,
+        appBlockId: ctx.appBlockId,
+      },
+      'block-audit'
+    ).catch(() => undefined);
+  } else if (hit.category === 'audit_regex') {
+    logToAxiom(
+      {
+        name: 'app-blocks-shared-storage-content-block',
+        type: 'warning',
+        category: hit.category,
+        field,
+        userId: ctx.uid,
+        slug: ctx.slug,
+        appBlockId: ctx.appBlockId,
+      },
+      'block-audit'
+    ).catch(() => undefined);
+  }
+
+  const message =
+    hit.category === 'link'
+      ? 'Content contains a blocked link'
+      : hit.category === 'overflow'
+      ? 'Data is too large or too deeply nested to review'
+      : 'Content flagged for review';
+  throw new TRPCError({ code: 'BAD_REQUEST', message });
 }
 
 async function insertSharedReport(
