@@ -1,10 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { generationGraph } from '~/shared/data-graph/generation/generation-graph';
-import type { GenerationCtx } from '~/shared/data-graph/generation/context';
+import type { GenerationCtx } from '~/shared/generation/context';
 import { generationHub } from '~/shared/form-graph/generation/hub.graph';
 import { reconcileSelectors } from '~/shared/form-graph/generation/reconcile';
 import { mingAspectRatios, mingResolutions } from '~/shared/constants/ming.constants';
-import { buildMingStep } from '../ecosystems/ming-input';
+import { buildMingStep } from '../handlers/ming-input';
 
 const ext: GenerationCtx = {
   limits: { maxQuantity: 4, maxResources: 9, vidQuantity: 4 },
@@ -19,12 +18,10 @@ const ext: GenerationCtx = {
 const mingVersionId = 3355635;
 const image = { url: 'https://example.com/reference.png', width: 1200, height: 800 };
 const base = { workflow: 'txt2img', ecosystem: 'Ming', prompt: 'A teal poster', seed: 42 };
-const parsers = {
-  data: (input: Record<string, unknown>) => generationGraph.safeParse(input, ext),
-  form: (input: Record<string, unknown>) => generationHub.parse(reconcileSelectors(input).raw, ext),
-};
+const parse = (input: Record<string, unknown>) =>
+  generationHub.parse(reconcileSelectors(input).raw, ext);
 
-describe.each(Object.entries(parsers))('Ming %s graph and request', (_lane, parse) => {
+describe('Ming graph and request', () => {
   function data(input: Record<string, unknown> = {}) {
     const result = parse({ ...base, ...input });
     if (!result.success) throw new Error(JSON.stringify(result.errors));

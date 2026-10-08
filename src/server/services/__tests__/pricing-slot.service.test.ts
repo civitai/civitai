@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const { mockChQuery } = vi.hoisted(() => ({ mockChQuery: vi.fn(async () => [] as unknown[]) }));
 vi.mock('~/server/clickhouse/client', () => ({
@@ -16,8 +17,10 @@ import {
   recordPricingSlot,
   releasePricingSlot,
 } from '~/server/services/pricing-slot.service';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 
 const mockCount = dbMock.dbRead.pricingSlot.count;
+const mockPrimaryCount = dbMock.dbWrite.pricingSlot.count;
 const mockCreateMany = dbMock.dbWrite.pricingSlot.createMany;
 const mockFindUnique = dbMock.dbRead.user.findUnique;
 const mockDeleteMany = dbMock.dbWrite.pricingSlot.deleteMany;
@@ -330,6 +333,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -342,6 +347,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: true,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: { scores: { total: 0 } },
       })
@@ -355,6 +362,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: false,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: { scores: { total: 0 } },
       })
@@ -369,6 +378,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: true,
         willBePriced: false,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: { scores: { total: 0 } },
       })
@@ -390,6 +401,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: async () => 'gold',
         userMeta: { scores: { total: 50000 } },
       })
@@ -404,6 +417,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: async () => null,
         userMeta: { scores: { total: 50000 } },
       })
@@ -419,6 +434,8 @@ describe('assertPricingAllowed', () => {
       userId: 1,
       wasPriced: true,
       willBePriced: true,
+      addsGate: false,
+      hadGate: false,
       tier,
       userMeta: { scores: { total: 50000 } },
     });
@@ -432,6 +449,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'gold',
         // Both keys, unequal — see the note on the same fixture in paid-access.service.test.ts.
         userMeta: { scores: { total: MONETIZATION_MIN_CREATOR_SCORE - 1, models: 50_000 } },
@@ -443,6 +462,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'gold',
         userMeta: eligible,
       })
@@ -456,6 +477,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -467,6 +490,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: 'free',
         userMeta: eligible,
       })
@@ -480,6 +505,8 @@ describe('assertPricingAllowed', () => {
         userId: 1,
         wasPriced: false,
         willBePriced: true,
+        addsGate: false,
+        hadGate: false,
         tier: null,
         userMeta: eligible,
       })
@@ -490,9 +517,216 @@ describe('assertPricingAllowed', () => {
     mockFindUnique.mockResolvedValue({ meta: { scores: { total: 50000 } } } as never);
 
     await expect(
-      assertPricingAllowed({ userId: 1, wasPriced: false, willBePriced: true, tier: 'free' })
+      assertPricingAllowed({
+        userId: 1,
+        wasPriced: false,
+        willBePriced: true,
+        addsGate: false,
+        hadGate: false,
+        tier: 'free',
+      })
     ).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
     expect(mockFindUnique).toHaveBeenCalledWith({ where: { id: 1 }, select: { meta: true } });
+  });
+
+  describe('licensing-fee boost', () => {
+    const boosted = (overrides: { addsGate?: boolean } = {}) =>
+      assertPricingAllowed({
+        userId: 7,
+        wasPriced: false,
+        willBePriced: true,
+        addsGate: overrides.addsGate ?? false,
+        hadGate: false,
+        tier: 'free',
+        userMeta: eligible,
+      });
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(new Date('2026-10-15T12:00:00Z'));
+      redisMock.sysRedis.hGet.mockResolvedValue('100' as never);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+      redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+    });
+
+    it('lets a granted creator past the tier allowance with a licensing fee', async () => {
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+      expect(redisMock.sysRedis.hGet).toHaveBeenCalledWith(
+        REDIS_SYS_KEYS.PRICING.FEE_ALLOWANCE_BOOST,
+        '7'
+      );
+    });
+
+    it('stops at the tier allowance plus the boost', async () => {
+      mockCount.mockResolvedValue(102 as never);
+      await expect(boosted()).resolves.toEqual({ spendsSlot: true, releasesSlot: false });
+      mockCount.mockResolvedValue(103 as never);
+      await expect(boosted()).rejects.toThrow(/103 of 103/);
+    });
+
+    it('does not widen a paid-access gate', async () => {
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted({ addsGate: true })).rejects.toThrow(/licensing fees only/);
+    });
+
+    it('gives a creator with no grant only the tier allowance', async () => {
+      redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    });
+
+    it('ends on its own at the start of November, whatever the grant list holds', async () => {
+      vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    });
+
+    it('bounds the grant-list read so a hung Redis cannot hold the save open', async () => {
+      redisMock.sysRedis.hGet.mockReturnValue(new Promise(() => undefined) as never);
+      redisMock.withSysReadDeadline.mockImplementationOnce(async () => {
+        throw new Error('sysRedis read timed out');
+      });
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    }, 2000);
+
+    it('tells a boosted creator the refusal already includes their extra slots', async () => {
+      mockCount.mockResolvedValue(103 as never);
+      await expect(boosted()).rejects.toThrow(/includes your 100 extra licensing-fee slots/);
+    });
+
+    describe('adding permanent paid access to a version that already carries a fee', () => {
+      const entity = { entityType: 'ModelVersion' as const, entityId: VERSION };
+      const convert = () =>
+        assertPricingAllowed({
+          userId: 7,
+          wasPriced: true,
+          willBePriced: true,
+          addsGate: true,
+          hadGate: false,
+          entity,
+          tier: 'free',
+          userMeta: eligible,
+        });
+
+      beforeEach(() => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-10-02T00:00:00Z') } as never);
+        // A lagging replica that has not seen this month's slots yet: the count must come from the primary.
+        mockCount.mockResolvedValue(0 as never);
+      });
+
+      it('is refused once boost-funded fee slots are in use', async () => {
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
+      it('stays free while every slot this month fits the tier allowance', async () => {
+        mockPrimaryCount.mockResolvedValue(3 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is free as before for a creator with no grant', async () => {
+        redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        expect(mockPrimaryCount).not.toHaveBeenCalled();
+      });
+
+      it('is free as before once the window closes', async () => {
+        vi.setSystemTime(new Date('2026-11-01T00:00:00Z'));
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is refused when the grant list cannot be read and the month is over the tier', async () => {
+        redisMock.sysRedis.hGet.mockRejectedValue(new Error('down') as never);
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
+      it('does not apply to a version that already had its gate', async () => {
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(
+          assertPricingAllowed({
+            userId: 7,
+            wasPriced: true,
+            willBePriced: true,
+            addsGate: true,
+            hadGate: true,
+            entity,
+            tier: 'free',
+            userMeta: eligible,
+          })
+        ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('does not apply to editing the fee on a version that keeps no gate', async () => {
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(
+          assertPricingAllowed({
+            userId: 7,
+            wasPriced: true,
+            willBePriced: true,
+            addsGate: false,
+            hadGate: false,
+            entity,
+            tier: 'free',
+            userMeta: eligible,
+          })
+        ).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+
+      it('is free as before for a version whose fee was set in an earlier month', async () => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-09-30T23:59:59Z') } as never);
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        expect(mockSlot).toHaveBeenCalledWith({
+          where: { entityType_entityId: entity },
+          select: { createdAt: true },
+        });
+      });
+
+      it('counts a slot spent at the very start of the month as this month', async () => {
+        mockSlot.mockResolvedValue({ createdAt: new Date('2026-10-01T00:00:00Z') } as never);
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        await expect(convert()).rejects.toThrow(/licensing fees only/);
+      });
+
+      it.each([
+        ['silver', 'resolves'],
+        ['free', 'rejects'],
+      ])('applies the rule to a tier passed as a thunk (%s)', async (tier, outcome) => {
+        mockPrimaryCount.mockResolvedValue(4 as never);
+        const result = assertPricingAllowed({
+          userId: 7,
+          wasPriced: true,
+          willBePriced: true,
+          addsGate: true,
+          hadGate: false,
+          entity,
+          tier: async () => tier,
+          userMeta: eligible,
+        });
+        if (outcome === 'resolves')
+          await expect(result).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+        else await expect(result).rejects.toThrow(/licensing fees only/);
+      });
+
+      it('is free as before for a version that never spent a slot', async () => {
+        mockSlot.mockResolvedValue(null as never);
+        mockPrimaryCount.mockResolvedValue(50 as never);
+        await expect(convert()).resolves.toEqual({ spendsSlot: false, releasesSlot: false });
+      });
+    });
+
+    it('falls back to the tier allowance when the grant list cannot be read', async () => {
+      redisMock.sysRedis.hGet.mockRejectedValue(new Error('down') as never);
+      mockCount.mockResolvedValue(3 as never);
+      await expect(boosted()).rejects.toThrow(/3 of 3/);
+    });
   });
 });
 

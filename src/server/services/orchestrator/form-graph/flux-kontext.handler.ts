@@ -13,7 +13,7 @@ import {
   fluxKontextModeOf,
   type FluxKontextMode,
 } from '~/shared/form-graph/generation/image/flux-kontext.graph';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type FluxKontextInput = Flux1KontextProImageGenInput | Flux1KontextMaxImageGenInput;

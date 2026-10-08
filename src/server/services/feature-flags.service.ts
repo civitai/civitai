@@ -77,17 +77,6 @@ const featureFlags = createFeatureFlags({
   // is the Flipt-DOWN fallback (mirrors `faro`); Flipt is authoritative when the flag
   // exists — ramp by bumping its % rollout, never all-at-once. See `src/utils/trpc.ts`.
   trpcBatching: { availability: ['mod'], fliptKey: 'trpc-batching' },
-  // Feed-page CLS fix. Reserves vertical space for the above-feed announcements
-  // banner during the pre-hydration window so the isClient-gated / dynamically
-  // imported carousel mount doesn't shove the (very tall) masonry feed down — the
-  // shift production RUM attributes to `MasonryContainer .queries`, which is the
-  // DISPLACED VICTIM (largest moved element), not the cause. Default OFF (mods
-  // only = the Flipt-DOWN fallback); ramp a % of ALL
-  // users via Flipt (`feed-reserve-cls`) as a THRESHOLD rollout — CLS is an
-  // all-user route metric, so a mod cohort can't move the aggregate. Purely
-  // cosmetic space reservation (worst case = a little dead space, never a
-  // functional break), so flipping the flag off is an instant, safe rollback.
-  feedReserveCls: { availability: ['mod'], fliptKey: 'feed-reserve-cls' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -227,6 +216,8 @@ const featureFlags = createFeatureFlags({
   articles: ['public'],
   articleCreate: ['public'],
   articleRatingDispute: { availability: ['user'], fliptKey: 'article-rating-dispute' },
+  // Every entity except Article, which keeps `articleRatingDispute`. Flipt-down falls back to off.
+  ratingDispute: { availability: [], fliptKey: 'rating-dispute' },
   adminTags: ['mod', 'granted'],
   civitaiLink: ['mod', 'member'],
   imageTraining: { availability: ['user'], fliptKey: 'image-training' },
@@ -269,16 +260,15 @@ const featureFlags = createFeatureFlags({
   // Steps-based training pricing + QOL inputs (steps/batchSize/sample params/continue-training).
   // Public availability so it can be rolled out to a tester segment via Flipt; default off.
   trainingStepsPricing: { availability: ['mod'], fliptKey: 'training-steps-pricing' },
-  // The embedded Training Studio (/training-studio). Flipt segments own WHO can use it; within
-  // that population it's an opt-in settings toggle (default off). The overlay withholds the key
-  // from users Flipt hasn't granted (see fliptGatedToggleableKeys), so a toggle can't override
-  // the gate; the mod static fallback keeps a missing Flipt flag from opening it to everyone.
+  // The embedded Training Studio (/training-studio), the default trainer for whoever Flipt grants.
+  // Keep `availability: ['mod']`: it is the static fallback when the Flipt flag is missing or
+  // unreachable, and with `default: true` anything wider makes the Studio everyone's trainer.
   trainingStudioUi: {
     toggleable: true,
-    default: false,
+    default: true,
     displayName: 'Training Studio',
     badge: 'Beta',
-    description: `Try the new Training Studio experience for LoRA training — you can switch back at any time.`,
+    description: `Use the new Training Studio for LoRA training. Turn this off to go back to the classic trainer, which will be phased out gradually as Training Studio matures.`,
     availability: ['mod'],
     fliptKey: 'training-studio-ui',
   },
@@ -349,10 +339,11 @@ const featureFlags = createFeatureFlags({
   // So: treat re-enabling as a planned project, not a flag flip.
   imageSearch: { availability: [], fliptKey: 'image-search' },
   // Whether the Images entry appears in the search pickers/tabs at all. Split from `imageSearch`
-  // (which gates whether image search actually RUNS) so the entry can stay visible with a
+  // (which gates whether image search actually RUNS) so the entry could stay visible with a
   // "temporarily disabled for maintenance" notice while the index is retired — see 868m8yafw.
-  // Set to [] to hide the entry entirely again and redirect /search/images to /search/models.
-  imageSearchEntry: ['public'],
+  // Now [] : the entry is hidden from the header search, the quick-search pickers and the /search
+  // tabs, and /search/images redirects to /search/models. Set to ['public'] to show the notice again.
+  imageSearchEntry: [],
   buzz: ['public'],
   referralProgramV2: { availability: ['public'], fliptKey: 'referral-program-v2' },
   assistant: {
@@ -381,6 +372,8 @@ const featureFlags = createFeatureFlags({
   // ramps; everyone else keeps the current chat, which still ships alongside it.
   chatRedesign: { availability: ['mod'], fliptKey: 'chat-redesign' },
   creatorsProgram: ['mod', 'granted'],
+  // The banking-change notice alert and modal on the Buzz dashboard. Dark until the Flipt flag is on.
+  bankingChangeNotice: { availability: [], fliptKey: 'banking-change-notice' },
   buzzWithdrawalTransfer: ['granted'],
   vault: ['user'],
   membershipsV2: ['public'],
@@ -419,6 +412,9 @@ const featureFlags = createFeatureFlags({
   // or a model in its Suggested Resources. Gates buying and serving; a host can
   // still answer what is already waiting on them.
   creatorPromotions: { availability: ['mod'], fliptKey: 'creator-promotions' },
+  // The journey page, its entry points and the tier pointer in score refusals, plus tier badge grants
+  // and their notifications (see creator-journey-flag.service.ts for the off-session evaluation).
+  creatorJourney: { availability: ['mod'], fliptKey: 'creator-journey' },
   // The three entry points below are gated SEPARATELY from `remixGallery` so they
   // can be released one at a time, and each one is checked TOGETHER with it
   // rather than instead of it. `remixGallery` gates the submit mutation, so a
@@ -561,10 +557,7 @@ const featureFlags = createFeatureFlags({
   generationPresets: { availability: ['public'], fliptKey: 'generation-presets' },
   // Raw orchestrator-blob AIR resources in the generator (Training Studio
   // "generate with this epoch" handoff) — gates both server acceptance and the
-  // /generate?air= form entry. That entry exists ONLY in the form-graph lane
-  // (form-graph/generation/ingestion.ts); the v2 lane ignores the params. So
-  // don't widen this flag beyond formGraphGenerator's audience — move the two
-  // in lockstep.
+  // /generate?air= form entry (form-graph/generation/ingestion.ts).
   generationAirResources: { availability: ['mod'], fliptKey: 'generation-air-resources' },
   wildcards: { availability: ['public'], fliptKey: 'wildcards' },
   // 3D Models — split flags: feed (view/comment/review) vs generator (create).
@@ -574,13 +567,8 @@ const featureFlags = createFeatureFlags({
   // Gates PolyGen's v7 build, which is a `polygenVersion` option rather than a
   // model version, so generation gate rules cannot target it: off ⇒ v7 is
   // dropped from the version options, which both hides it and makes a submitted
-  // `polygenVersion: 'v7'` fail the node's schema (see polygen-graph.ts).
+  // `polygenVersion: 'v7'` fail the node's schema (see `model3d/polygen.graph.ts`).
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
-  // THE form-graph cutover flag: swaps GenerationTabs' form for the form-graph
-  // lane AND serves the hub parse for the user's submits/whatIfs (validateInput
-  // reads it from the generation ctx). Every parse shadow-compares regardless.
-  // Widen via the fliptKey; flag and comparison both go away with data-graph.
-  formGraphGenerator: { availability: ['mod'], fliptKey: 'form-graph-generator' },
   // Retool privileged endpoints — `granted` means the moderator must carry the
   // matching permission key in user.permissions. Endpoints lookup the key
   // directly from `RetoolAction.privileged`, so the permission name MUST stay
@@ -674,6 +662,13 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
+  // App Store sub-listings — RESPONSE-SHAPE flag for the store grid: when on for the viewer AND
+  // the caller sets `includeSubListings`, `appListings.listAvailable` mixes approved sub-listing
+  // cards into the page. `[]` so it is dark for everyone, mods included, until the Flipt flag
+  // exists. Writes are NOT gated on it (they are gated by the parent's
+  // `app_sub_listing_parents` row), so items can queue for moderation while the store side is
+  // dark.
+  appStoreSubListings: { availability: [], fliptKey: 'app-store-sub-listings' },
   // 🔴 THE PRIVATE-RUN SURFACE HAS NO ENTRY HERE, DELIBERATELY — do not "complete the
   // set" by adding one. Its gate is the server accessor `isAppBlocksPrivateRunEnabled`
   // (`app-blocks-flag.ts`), which reads the `app-blocks-private-run-enabled` Flipt key
@@ -1198,12 +1193,9 @@ export const fliptGatedToggleableKeys = new Set(
     .map(([key]) => key as FeatureFlagKey)
 );
 
-/** Host-level ELIGIBILITY for the Flipt-gated toggleable keys. These keys are toggleable with
- *  `default: false`, so `isFeatureFlagKeyPresent` keeps them out of every FeatureAccess payload
- *  (the base layer must stay off for users who haven't opted in) — which means PRESENCE in host
- *  flags can never answer "may this user opt in": it reads false for eligible users too, and an
- *  overlay gated on it withholds the toggle from everyone. Evaluate `hasFeature` directly (Flipt
- *  gate, or the static fallback when the flag is missing) for exactly these keys. */
+/** Host-level ELIGIBILITY for the Flipt-gated toggleable keys. Presence in host flags cannot
+ *  stand in for it: a Flipt segment miss drops the key for a moderator this keeps eligible, and
+ *  `isFeatureFlagKeyPresent` drops a `default: false` toggleable for everyone. */
 export function getFliptGatedEligibility(
   ctx: FeatureAccessContext
 ): Partial<Record<FeatureFlagKey, boolean>> {
@@ -1241,7 +1233,7 @@ export function computeUserFeatureFlagsOverlay(
   userFeatures: Record<string, boolean> | undefined,
   hostFeatures: FeatureAccess,
   /** From `getFliptGatedEligibility` — presence in `hostFeatures` cannot stand in for it (see that
-   *  helper). Without it the Flipt-gated keys fall back to presence and are withheld from everyone. */
+   *  helper). */
   gatedEligibility?: Partial<Record<FeatureFlagKey, boolean>>
 ): FeatureAccess {
   const features = userFeatures ?? {};

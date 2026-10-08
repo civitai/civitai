@@ -5,6 +5,7 @@ import {
   captionTriggerHit,
   defaultRunParams,
   newRun,
+  nextImgId,
   paramDeviations,
   promptHasTrigger,
   runExtraCapabilities,
@@ -185,5 +186,14 @@ describe('buildTrainingRuns extra fields', () => {
     });
     expect(video.noiseOffset).toBe(0);
     expect(video.flipAugmentation).toBe(false);
+  });
+});
+
+describe('nextImgId', () => {
+  it('never re-issues an id across a Data step remount', () => {
+    const first = Array.from({ length: 5 }, nextImgId);
+    const second = Array.from({ length: 5 }, nextImgId);
+    expect(new Set([...first, ...second]).size).toBe(10);
+    expect(Math.min(...second)).toBeGreaterThan(Math.max(...first));
   });
 });

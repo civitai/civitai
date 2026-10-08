@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { createGrokImageInput } from '../ecosystems/grok.handler';
-import { grokVersionIds } from '~/shared/data-graph/generation/version-ids';
+import { createGrokImageInput } from '../form-graph/grok.handler';
+import { grokVersionIds } from '~/shared/generation/version-ids';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 

@@ -8,14 +8,20 @@ import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { surfaceMayContainStickers } from '~/shared/utils/sticker-token';
 import { COMMENT_ALLOWED_TAGS } from '~/utils/html-sanitize-helpers';
 
+export const COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE = 1000;
+
 export const commentRateLimits: RateLimit[] = [
   { limit: 10, period: CacheTTL.hour },
   { limit: 4 * 10, period: CacheTTL.day },
-  { limit: 60, period: CacheTTL.hour, userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000 },
+  {
+    limit: 60,
+    period: CacheTTL.hour,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE,
+  },
   {
     limit: 8 * 60,
     period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.total ?? 0) >= 1000,
+    userReq: (user) => (user.meta?.scores?.total ?? 0) >= COMMENT_RATE_LIMIT_MIN_CREATOR_SCORE,
   },
 ];
 

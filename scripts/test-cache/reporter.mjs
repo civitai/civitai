@@ -18,7 +18,9 @@
 import { appendFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import * as core from './core.mjs';
+import { loadCore } from './load-core.mjs';
+
+const core = await loadCore();
 
 /** Every case ran and passed. A skipped case means part of the file never ran. */
 export function fullyPassed(testModule) {
@@ -77,7 +79,11 @@ export default class TestCacheReporter {
         // null file is refused by recordOne anyway ("test file outside the repo").
         file: relOrNull(m.moduleId, root),
         project: m.project.name,
-        ms: (d.prepareDuration ?? 0) + (d.setupDuration ?? 0) + (d.collectDuration ?? 0) + (d.duration ?? 0),
+        ms:
+          (d.prepareDuration ?? 0) +
+          (d.setupDuration ?? 0) +
+          (d.collectDuration ?? 0) +
+          (d.duration ?? 0),
         passed,
         wasHit,
         falseSkip: wasHit && !passed,
@@ -125,10 +131,10 @@ export default class TestCacheReporter {
     const runBlock = unattributed
       ? 'unattributed unhandled error in the run'
       : reason === 'interrupted'
-        ? 'run interrupted'
-        : this.vitest.config.testNamePattern
-          ? 'name-filtered run'
-          : null;
+      ? 'run interrupted'
+      : this.vitest.config.testNamePattern
+      ? 'name-filtered run'
+      : null;
 
     const fingerprint = core.makeFingerprinter(root);
     const salt = core.globalSalt(root, this.vitest.version, fingerprint);
@@ -150,7 +156,15 @@ export default class TestCacheReporter {
       try {
         const block =
           runBlock ?? (errorFiles.has(row.file) ? 'unhandled error attributed to this file' : null);
-        this.recordOne(row, { root, dir, fingerprint, salt, runBlock: block, since: state.startedAt, opaqueSource });
+        this.recordOne(row, {
+          root,
+          dir,
+          fingerprint,
+          salt,
+          runBlock: block,
+          since: state.startedAt,
+          opaqueSource,
+        });
       } catch (err) {
         row.why = `record failed: ${err?.code ?? err?.message ?? err}`;
       }
@@ -244,12 +258,18 @@ export default class TestCacheReporter {
     // Unmemoised it measured ~19s of synchronous work at the end of a full run.
     this.movedMemo ??= new Map();
     const moved = kept.find((rel) => {
-      if (!this.movedMemo.has(rel)) this.movedMemo.set(rel, core.changedSince(root, rel, since - 2000));
+      if (!this.movedMemo.has(rel))
+        this.movedMemo.set(rel, core.changedSince(root, rel, since - 2000));
       return this.movedMemo.get(rel);
     });
     if (moved) return void (row.why = `changed during the run: ${moved}`);
 
-    core.writeRecord(dir, project, testRel, { key, entries: kept, at: new Date().toISOString(), ms: row.ms });
+    core.writeRecord(dir, project, testRel, {
+      key,
+      entries: kept,
+      at: new Date().toISOString(),
+      ms: row.ms,
+    });
     row.recorded = true;
   }
 }

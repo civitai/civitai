@@ -1,18 +1,21 @@
 import { createHash } from 'crypto';
 import { parseArgs } from 'util';
 
-import { Prisma } from '@prisma/client';
-import { dbRead } from '~/server/db/client';
-import { askJev, JEV_TIMEOUT_MS } from '~/server/services/ai/jev';
 import {
-  RESOURCE_INTENT_QUESTIONS,
   RESOURCE_INTENT_SPEC_HASH,
   ROLE_MODEL_TYPES,
   type ResourceIntentAnswer,
-  type ResourceIntentContentType,
   type ResourceIntentRole,
-  type ResourceIntentStyleFamily,
 } from '~/server/schema/resource-intent.schema';
+import {
+  GOLDSET_MATCHED_SQL,
+  GOLDSET_UNMATCHED_SQL,
+  PREREGISTERED_RUN_PARAMS,
+  preregistrationOverrides,
+  renderRetrievalPreregistration,
+  type RetrievalRunParams,
+} from './eval-resource-intent-registration';
+import { drainStdio, runScriptAndExit } from './lib/run-as-script';
 
 /**
  * Gold-set study runner (M3) — measures Stage-1 quality against the provenance
@@ -22,57 +25,45 @@ import {
  *               `Image.meta->>'prompt'`)
  *   unmatched — prompts with NO attached resources (the "none" gold class)
  *
- * Measures: role agreement with actually-attached resource types, needsResource
- * calibration by probability bucket (predicted vs observed attach rate),
- * review-rate curves (what fraction of prompts each role-confidence threshold
- * defers to review), all sliced by role / styleFamily / baseModel. Writes a
- * markdown report.
+ * Part one measures STAGE 1: role agreement with actually-attached resource
+ * types, needsResource calibration by probability bucket (predicted vs observed
+ * attach rate), review-rate curves (what fraction of prompts each role-confidence
+ * threshold defers to review), sliced by role / styleFamily.
  *
- * GATED EXECUTION — this script is committed but NOT run in this change:
- * the live study needs a prod replica read + an OpenRouter key (team step).
- * Without `--execute` it prints the committed queries and exits.
+ * Part two is the pre-registered two-arm RETRIEVAL comparison — the shipped matcher
+ * against its popularity seed alone, graded on whether a resource the user
+ * actually attached lands in each arm's shortlist head. Its core and its arms live in
+ * `./eval-resource-intent-retrieval.ts`, its pre-registration and the gold-set queries in
+ * `./eval-resource-intent-registration.ts`; `./eval-resource-intent-goldset-execute.ts`
+ * samples the gold and runs it.
+ *
+ * The retrieval study's positive control is computed from the run itself and can only
+ * VOID part two's verdict; part one has no positive control of its own.
+ *
+ * GATED EXECUTION — the live study needs a prod replica read, the models index + an
+ * OpenRouter key (team step). Without `--execute` it prints the committed queries and
+ * the retrieval pre-registration, and exits.
+ *
+ * 🔴 THE DRY RUN IS HERMETIC BY CONSTRUCTION: this file's static imports reach no
+ * database or search client (the queries and the pre-registration live in
+ * `./eval-resource-intent-registration.ts`), and everything `--execute` needs is in
+ * `./eval-resource-intent-goldset-execute.ts`, loaded by a dynamic import only under
+ * `--execute`. A static import of either client here would construct a Prisma client
+ * the dry run never uses, whose engine-load rejection nothing handles — exit 1 on a
+ * host without a Prisma engine, after the dry run has printed. The tsx smoke test spawns
+ * the dry run with no engine env and catches that.
  *
  *   pnpm run tsscript scripts/eval-resource-intent-goldset.ts --execute --limit 200
  *   pnpm run tsscript scripts/eval-resource-intent-goldset.ts --execute --limit 200 --out /tmp/goldset-report.md
+ *
+ * Retrieval flags (defaults ARE the pre-registered values; overriding one prints a
+ * warning, stamps the report as not the registered run and makes its verdict VOID):
+ * `--retrieval-sample` and `--days` (which also sets part one's window). The pilot the
+ * doc describes is `--execute --retrieval-sample 100`.
  */
 
 export const GOLDSET_REVIEW_THRESHOLDS = [0.4, 0.5, 0.6, 0.7, 0.8] as const;
 export const GOLDSET_CALIBRATION_BUCKETS = 10;
-export const DEFAULT_SAMPLE_DAYS = 30;
-
-/** The committed gold-set queries — reviewable and re-runnable as written. */
-export const GOLDSET_MATCHED_SQL = (days: number, limit: number) => Prisma.sql`
-  SELECT i.id AS "imageId",
-         i.meta->>'prompt' AS prompt,
-         array_agg(DISTINCT m.type) AS "attachedTypes",
-         array_agg(DISTINCT mv.baseModel) AS "attachedBaseModels"
-  FROM "ImageResourceNew" irn
-  JOIN "Image" i ON i.id = irn."imageId"
-  JOIN "ModelVersion" mv ON mv.id = irn."modelVersionId"
-  JOIN "Model" m ON m.id = mv."modelId"
-  WHERE i.hideMeta = false
-    AND i.meta->>'prompt' IS NOT NULL
-    AND length(i.meta->>'prompt') > 0
-    AND i."createdAt" > now() - (${days} || ' days')::interval
-  GROUP BY i.id
-  ORDER BY random()
-  LIMIT ${limit}
-`;
-
-export const GOLDSET_UNMATCHED_SQL = (days: number, limit: number) => Prisma.sql`
-  SELECT i.id AS "imageId",
-         i.meta->>'prompt' AS prompt,
-         ARRAY[]::text[] AS "attachedTypes",
-         ARRAY[]::text[] AS "attachedBaseModels"
-  FROM "Image" i
-  WHERE i.hideMeta = false
-    AND i.meta->>'prompt' IS NOT NULL
-    AND length(i.meta->>'prompt') > 0
-    AND i."createdAt" > now() - (${days} || ' days')::interval
-    AND NOT EXISTS (SELECT 1 FROM "ImageResourceNew" irn WHERE irn."imageId" = i.id)
-  ORDER BY random()
-  LIMIT ${limit}
-`;
 
 export type GoldsetRow = {
   imageId: number;
@@ -243,7 +234,10 @@ export function evaluateGoldset(
   };
 }
 
-export function renderGoldsetReport(evaluation: GoldsetEvaluation): string {
+export function renderGoldsetReport(
+  evaluation: GoldsetEvaluation,
+  context?: { drawn: number }
+): string {
   const { agreement, calibration, reviewCurves, slices } = evaluation;
   const pct = (v: number | null) => (v === null ? '—' : `${(v * 100).toFixed(1)}%`);
   const lines: string[] = [
@@ -254,6 +248,14 @@ export function renderGoldsetReport(evaluation: GoldsetEvaluation): string {
       16
     )}…\` — rows below are only comparable within one hash.`,
     '',
+    ...(context
+      ? [
+          `Judged ${evaluation.rows.length} of ${context.drawn} drawn rows; ${
+            context.drawn - evaluation.rows.length
+          } skipped on a stage-1 failure.`,
+          '',
+        ]
+      : []),
     '## Agreement',
     '',
     '| slice | n | agreement |',
@@ -308,16 +310,6 @@ export function renderGoldsetReport(evaluation: GoldsetEvaluation): string {
   return lines.join('\n');
 }
 
-async function sampleGoldset(days: number, limit: number): Promise<GoldsetRow[]> {
-  const matched = await dbRead.$queryRaw<
-    { imageId: number; prompt: string; attachedTypes: string[]; attachedBaseModels: string[] }[]
-  >(GOLDSET_MATCHED_SQL(days, Math.ceil(limit / 2)));
-  const unmatched = await dbRead.$queryRaw<
-    { imageId: number; prompt: string; attachedTypes: string[]; attachedBaseModels: string[] }[]
-  >(GOLDSET_UNMATCHED_SQL(days, Math.floor(limit / 2)));
-  return [...matched, ...unmatched];
-}
-
 export async function main(): Promise<void> {
   const { values } = parseArgs({
     options: {
@@ -325,85 +317,98 @@ export async function main(): Promise<void> {
       limit: { type: 'string' },
       days: { type: 'string' },
       out: { type: 'string' },
+      'retrieval-sample': { type: 'string' },
     },
     strict: true,
   });
 
   const limit = values.limit ? Number.parseInt(values.limit, 10) : 200;
-  const days = values.days ? Number.parseInt(values.days, 10) : DEFAULT_SAMPLE_DAYS;
+  const retrievalParams = parseRetrievalParams(values);
+  // One window for both parts: `--days` sets it, and overriding it is an override of
+  // the retrieval pre-registration.
+  const days = retrievalParams.sampleDays;
+  const matchedLimit = Math.ceil(limit / 2);
+  const unmatchedLimit = Math.floor(limit / 2);
+  // ONE matched draw serves both parts: its rows come back in random order, so part
+  // one takes a prefix and part two takes the first `sampleSize`.
+  const matchedDraw = Math.max(matchedLimit, retrievalParams.sampleSize);
+  const overrides = preregistrationOverrides(retrievalParams);
+  if (overrides.length) {
+    console.warn(
+      `\n🔴🔴🔴 WARNING: retrieval parameters OVERRIDE the pre-registration (${overrides.join(
+        '; '
+      )}). This is NOT the pre-registered run: its verdict is VOID and it does not judge the closing clause.\n`
+    );
+  }
 
   if (!values.execute) {
-    const matched = GOLDSET_MATCHED_SQL(days, Math.ceil(limit / 2));
-    const unmatched = GOLDSET_UNMATCHED_SQL(days, Math.floor(limit / 2));
+    const matched = GOLDSET_MATCHED_SQL(days, matchedDraw);
+    const unmatched = GOLDSET_UNMATCHED_SQL(days, unmatchedLimit);
     console.log(
       'Dry run. The gold-set queries (run with --execute against a prod REPLICA):\n\n' +
-        `-- matched\n${matched.sql}\n-- values: ${JSON.stringify(matched.values)}\n\n` +
-        `-- unmatched\n${unmatched.sql}\n-- values: ${JSON.stringify(unmatched.values)}\n`
+        `-- matched (part one takes the first ${matchedLimit}, the retrieval study the first ${
+          retrievalParams.sampleSize
+        })\n${matched.sql}\n-- values: ${JSON.stringify(matched.values)}\n\n` +
+        `-- unmatched (part one)\n${unmatched.sql}\n-- values: ${JSON.stringify(
+          unmatched.values
+        )}\n\n` +
+        `${renderRetrievalPreregistration()}\n`
     );
     return;
   }
 
-  const rows = await sampleGoldset(days, limit);
-  const pairs: { row: GoldsetRow; judgment: GoldsetJudgment }[] = [];
-  for (const row of rows) {
-    const response = await askJev(
-      {
-        state: { prompt: row.prompt },
-        questions: RESOURCE_INTENT_QUESTIONS.map((q) => ({ ...q })),
-      },
-      { timeoutMs: JEV_TIMEOUT_MS }
-    );
-    const byId = new Map(response.answers.map((answer) => [answer.id, answer]));
-    const needsResource = byId.get('needsResource');
-    const role = byId.get('role');
-    const styleFamily = byId.get('styleFamily');
-    const contentType = byId.get('contentType');
-    const specificity = byId.get('specificity');
-    const injectionPresent = byId.get('injectionPresent');
-    if (
-      needsResource?.type !== 'noul' ||
-      role?.type !== 'choice' ||
-      styleFamily?.type !== 'choice' ||
-      contentType?.type !== 'choice' ||
-      specificity?.type !== 'score' ||
-      injectionPresent?.type !== 'noul'
-    ) {
-      console.warn(`[goldset] stage-1 shape mismatch for image ${row.imageId}; row skipped`);
-      continue;
-    }
-    pairs.push({
-      row,
-      judgment: {
-        needsResource: needsResource.value,
-        role: { value: role.value as ResourceIntentRole, distribution: role.distribution },
-        styleFamily: {
-          value: styleFamily.value as ResourceIntentStyleFamily,
-          distribution: styleFamily.distribution,
-        },
-        contentType: {
-          value: contentType.value as ResourceIntentContentType,
-          distribution: contentType.distribution,
-        },
-        specificity: specificity.value,
-        injectionPresent: injectionPresent.value,
-      },
-    });
-  }
+  // Everything past here reads the replica, the index and the vendor. It is loaded only
+  // now, so the dry run above never constructs a database or search client.
+  const { executeGoldsetStudy } = await import('./eval-resource-intent-goldset-execute');
+  await executeGoldsetStudy({
+    days,
+    matchedLimit,
+    unmatchedLimit,
+    matchedDraw,
+    retrievalParams,
+    out: values.out,
+  });
+}
 
-  const evaluation = evaluateGoldset(pairs);
-  const report = renderGoldsetReport(evaluation);
-  if (values.out) {
-    const { writeFile } = await import('fs/promises');
-    await writeFile(values.out, report);
-    console.log(`[goldset] report written to ${values.out} (${pairs.length} rows judged)`);
-  } else {
-    console.log(report);
-  }
+/** Parse the retrieval flags; every default is the pre-registered value. */
+export function parseRetrievalParams(values: {
+  'retrieval-sample'?: string;
+  days?: string;
+}): RetrievalRunParams {
+  const int = (raw: string | undefined, fallback: number, name: string) => {
+    if (raw === undefined) return fallback;
+    const parsed = Number.parseInt(raw, 10);
+    if (!Number.isInteger(parsed) || parsed <= 0 || String(parsed) !== raw.trim()) {
+      throw new Error(`--${name} must be a positive integer, got ${JSON.stringify(raw)}`);
+    }
+    return parsed;
+  };
+  return {
+    sampleSize: int(
+      values['retrieval-sample'],
+      PREREGISTERED_RUN_PARAMS.sampleSize,
+      'retrieval-sample'
+    ),
+    sampleDays: int(values.days, PREREGISTERED_RUN_PARAMS.sampleDays, 'days'),
+  };
+}
+
+/**
+ * Run `main` as a script: DRAIN stdout and stderr, then EXIT — 0 on success, 1 on failure.
+ * The exit is explicit because a finished `--execute` otherwise stayed alive on an open
+ * handle (it hung for 30+ minutes after writing its report); `closeStudyHandles` closes the
+ * known ones, and this makes the end of the run not depend on that list being complete. The
+ * drain is what stops that exit truncating a report printed to a pipe; both are the shared
+ * rule in ./lib/run-as-script.
+ */
+export async function runAsScript(
+  run: () => Promise<void> = main,
+  exit: (code: number) => void = process.exit,
+  flush: () => Promise<void> = drainStdio
+): Promise<void> {
+  await runScriptAndExit(run, exit, flush);
 }
 
 if (process.argv[1]?.endsWith('eval-resource-intent-goldset.ts')) {
-  main().catch((error) => {
-    console.error(error);
-    process.exit(1);
-  });
+  void runAsScript();
 }

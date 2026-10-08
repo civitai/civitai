@@ -1,7 +1,24 @@
 # Gift Memberships (GREEN / Stripe) — Implementation Plan
 
-**Status**: Implemented (phases 1–6) — pending review + QA. Migration `20260729200000_membership_gifts` must be applied manually.
+**Status**: v1 shipped. The redemption model below was replaced — see [Redemption redesign](#redemption-redesign-supersedes-v1-fulfillment).
 **Branch**: `worktree-gift-memberships`
+
+## Redemption redesign (supersedes v1 fulfillment)
+
+A gift is now N months of a tier, **accepted by the recipient and consumed one month at a time**. The purchase flow, data model base, notifications and refund entry points below still stand; the fulfillment mechanism (Case A / Case B, one multi-month coupon applied at payment) and Decisions 1–2 do not.
+
+- **Any tier to anyone.** The tier lock is gone; an annual or past-due recipient no longer blocks a purchase. Only a non-Stripe membership does.
+- **Reaching the gift.** The notification and email link to `/user/membership#membership-gifts`; that page lets a user with no membership through when they hold an open gift (`holdsOpenMembershipGift`).
+- **Paying applies nothing.** `fulfillMembershipGift` records the payment, queues the gift (`Fulfilled`, `monthsRemaining = months`) and notifies. The recipient accepts it from the Membership Gifts card (`membershipGift.getOffer` / `membershipGift.accept`).
+- **What accepting does** is decided from the holder's membership at that moment: no membership → a free subscription at the gift's tier that ends on its own; same tier → free months; lower tier → moved up with `proration_behavior: 'none'`, then free months; higher tier → the gift's monthly price comes off each of the next bills. Nothing moves a holder down.
+- **Not billed monthly** (annual plans): no tier move and no free months. The gift's cash value (the gift tier's monthly price × months) comes off the next renewal as one `amount_off` coupon covering as many whole months as that renewal can absorb; the rest stay on the gift for the renewal after.
+- **One month live in Stripe at a time**, as a `duration: 'once'` coupon with a deterministic id (`armNextGiftMonth`). A month counts as consumed on `invoice.paid` (`recordGiftMonthConsumed`), never when it is armed, and the next month is armed then. `sweepGiftArming` (job `gift-membership-arming`, hourly) is the backstop for a missed webhook.
+- **Changing plan mid-gift.** `createSubscribeSession` releases the armed month (`releaseArmedGiftMonth`) and clears the discount in the same `subscriptions.update` that changes the plan, so the month never lands on the plan-change invoice. The `customer.subscription.updated` webhook arms it again against the new plan.
+- **Cancelling mid-gift keeps the months.** On `customer.subscription.deleted`, `honorGiftResidualsForUser` turns the months still owed into a free subscription at the gift's tier.
+- **Statuses**: `Pending → Fulfilled` (paid, waiting) `→ Active` (accepted) `→ Completed`; `Refunded` / `Revoked` from a refund or chargeback.
+- **`holderId`** is who the gift belongs to. Every read goes through it; nothing writes it after creation, because transfer is deliberately not built.
+- **Migration** `20260815010000_gift_membership_redemption` is applied by hand in two parts; its header says which part is safe before the deploy.
+- **Debug endpoint** gained `offer` / `accept` / `arm` / `sweep` / `residual`.
 
 ## Summary
 
@@ -168,10 +185,10 @@ New `membership-gift.notifications.ts` (pattern: `buzz.notifications.ts` tip-rec
 
 ## Decisions (v1)
 
-1. **Tier mismatch** — locked: when the recipient already has an active green sub, the gift must match their current tier (UI pre-selects and locks the tier after picking the recipient; service rejects mismatches). Revisit post-v1.
+1. **Tier mismatch** — _superseded by the redemption redesign above; any tier can be gifted._ v1: locked: when the recipient already has an active green sub, the gift must match their current tier (UI pre-selects and locks the tier after picking the recipient; service rejects mismatches). Revisit post-v1.
    @dev: Lets lock it for V1 at least.
 
-2. **Annual-interval recipients** — blocked in v1 (a repeating 100%-off coupon would zero a full annual invoice). Service returns `blocked: 'annual-interval'`; UI explains why.
+2. **Annual-interval recipients** — _superseded; no longer blocked at purchase._ Blocked in v1 (a repeating 100%-off coupon would zero a full annual invoice). Service returns `blocked: 'annual-interval'`; UI explains why.
    @dev: Block them in the meantime.
 
 3. **Month options / pricing** — 1, 3, or 6 months only; flat months × the tier's monthly price, no bundle discount. (12 months dropped.)

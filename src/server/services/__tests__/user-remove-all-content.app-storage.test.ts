@@ -189,6 +189,15 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteImageById: vi.fn(async () => undefined),
 }));
+const { settleBountyPayout, refundUnpayableBountyAward } = vi.hoisted(() => ({
+  settleBountyPayout: vi.fn(),
+  refundUnpayableBountyAward: vi.fn(async () => false),
+}));
+vi.mock('~/server/services/bounty.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  settleBountyPayout,
+  refundUnpayableBountyAward,
+}));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteBidsForModel: vi.fn(async () => undefined),
@@ -403,5 +412,32 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     for (const model of ['model', 'image', 'post', 'article', 'collection', 'comment'] as const) {
       expect(dbMock.dbWrite[model].deleteMany).toHaveBeenCalledWith({ where: { userId: TARGET } });
     }
+  });
+});
+
+describe('removeAllContent — bounties with a payout in flight', () => {
+  it('settles them first, and keeps any whose payout still failed', async () => {
+    dbMock.dbWrite.bounty.findMany.mockResolvedValueOnce([{ id: 3 }, { id: 4 }, { id: 5 }]);
+    settleBountyPayout
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(false);
+    // Bounty 5's award has no winner to pay, so the wipe goes past it.
+    refundUnpayableBountyAward.mockImplementation(async (bountyId: number) => bountyId === 5);
+
+    await removeAllContent({ id: TARGET, actorUserId: MOD });
+
+    expect(dbMock.dbWrite.bounty.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { userId: TARGET, payoutRecordedAt: { not: null }, payoutSettledAt: null },
+      })
+    );
+    expect(settleBountyPayout.mock.calls).toEqual([[3], [4], [5]]);
+    expect(dbMock.dbWrite.bounty.deleteMany).toHaveBeenCalledWith({
+      where: { userId: TARGET, id: { notIn: [4] } },
+    });
+    expect(settleBountyPayout.mock.invocationCallOrder[1]).toBeLessThan(
+      dbMock.dbWrite.bounty.deleteMany.mock.invocationCallOrder[0]
+    );
   });
 });

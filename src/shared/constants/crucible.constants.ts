@@ -12,6 +12,19 @@ export const CRUCIBLE_MAX_ENTRY_FEE = 1_000;
 /** Per-user entry cap. A viewer's own entries render unpaged on the detail page. */
 export const CRUCIBLE_MAX_ENTRIES = 20;
 
+/**
+ * How close to the end entrants are warned, and when entries close, as a share of the run. A late
+ * entry can't collect the votes it needs to place: each judge votes on an entry at most
+ * CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY times, so its votes are capped by how many judges come
+ * back after it is posted.
+ */
+export const CRUCIBLE_ENTRY_WARNING_PERCENT = { min: 10, max: 50, default: 20 } as const;
+export const CRUCIBLE_ENTRY_CUTOFF_PERCENT = { min: 0, max: 40, default: 10 } as const;
+export const CRUCIBLE_ENTRY_WINDOW_ORDER_MESSAGE =
+  'Entries must close later than the late-entry warning starts';
+export const CRUCIBLE_ENTRIES_CLOSED_MESSAGE =
+  'Entries are closed. This crucible stops taking entries near the end so every entry has time to be judged.';
+
 /** Judging needs a pair, so the cap is at least 2; `maxTotalEntries` is int4, so the ceiling must stay under 2^31. */
 export const CRUCIBLE_MIN_TOTAL_ENTRIES = 2;
 export const CRUCIBLE_MAX_TOTAL_ENTRIES = 100_000;
@@ -92,11 +105,7 @@ export const getMaxCrucibleStartAt = (from: Date = new Date()) =>
 export const crucibleRankingsAreFinal = (status: CrucibleStatus) =>
   status === CrucibleStatus.Completed || status === CrucibleStatus.Cancelled;
 
-/** A scheduled crucible stays Pending until the activation job runs, which can lag its start. */
-export const hasCrucibleStarted = (
-  { status, startAt }: { status: CrucibleStatus; startAt: Date | string | null },
-  now = new Date()
-) => status !== CrucibleStatus.Pending || (!!startAt && new Date(startAt) <= now);
+export { hasCrucibleStarted } from '@civitai/shared/crucible';
 
 /**
  * Media types entries may be. Audio is excluded: judging is a side-by-side visual comparison.
@@ -170,6 +179,15 @@ export const accumulatePlaybackMs = ({
 
   return watchedMs + deltaMs;
 };
+
+/** How far past the watch cap a clip may run and still play to its end rather than stop at the cap. */
+export const CRUCIBLE_PLAY_TO_END_TOLERANCE = 0.35;
+
+export const playsToEnd = (durationSeconds: number | null, capSeconds: number) =>
+  capSeconds > 0 &&
+  durationSeconds != null &&
+  durationSeconds > capSeconds &&
+  durationSeconds <= capSeconds * (1 + CRUCIBLE_PLAY_TO_END_TOLERANCE);
 
 /** Bounds how far one judge can move a single entry. */
 export const CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY = 5;

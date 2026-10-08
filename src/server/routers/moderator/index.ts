@@ -84,11 +84,13 @@ export const modRouter = router({
       .mutation(({ input, ctx }) =>
         confirmMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
       ),
-    revertMinorHashAutoFlag: moderatorProcedure
-      .input(getByIdSchema)
-      .mutation(({ input, ctx }) =>
-        revertMinorHashAutoFlag({ modelId: input.id, userId: ctx.user.id })
-      ),
+    revertMinorHashAutoFlag: moderatorProcedure.input(getByIdSchema).mutation(({ input, ctx }) =>
+      revertMinorHashAutoFlag({
+        modelId: input.id,
+        userId: ctx.user.id,
+        recordTextScanRuling: true,
+      })
+    ),
     queryMinorFlagAppeals: moderatorProcedure
       .input(getMinorFlagAppealsSchema)
       .query(({ input }) => getMinorFlagAppealsForReview(input)),

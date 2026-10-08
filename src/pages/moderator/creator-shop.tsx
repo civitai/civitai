@@ -14,7 +14,6 @@ import {
   Select,
   SimpleGrid,
   Stack,
-  Switch,
   Text,
   TextInput,
   ThemeIcon,
@@ -88,8 +87,8 @@ import {
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
 import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
-import { CosmeticFlag } from '~/shared/constants/cosmetic-flags.constants';
-import { Flags } from '~/shared/utils/flags';
+import type { StickerPlacementRating } from '~/shared/constants/cosmetic-flags.constants';
+import { getStickerPlacementRating } from '~/shared/constants/cosmetic-flags.constants';
 import { daysFromNow, formatDate } from '~/utils/date-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -131,6 +130,14 @@ function statusMeta(status: CosmeticShopItemStatus): { label: string; color: str
       return { label: getDisplayName(status), color: 'gray' };
   }
 }
+
+const placementRatingDescriptions: Record<StickerPlacementRating, string> = {
+  any: 'Can be placed on any image.',
+  sfwOnly:
+    'Blocks placing it on R, X or XXX images, and hides it where it is already placed on one.',
+  nsfwOnly:
+    'Blocks placing it on PG or PG-13 images, and hides it where it is already placed on one.',
+};
 
 // Quick-insert reasons a moderator can append to their note. A concern with a
 // stock wording inserts that; the rest insert their bare label.
@@ -465,7 +472,7 @@ function CreatorShopReviewPage() {
     onError: (error) =>
       showErrorNotification({ title: 'Failed to save fit', error: new Error(error.message) }),
   });
-  const setCosmeticFlag = trpc.cosmetic.setFlag.useMutation({
+  const setPlacementRating = trpc.cosmetic.setStickerPlacementRating.useMutation({
     async onSuccess() {
       await queryUtils.creatorShop.getReviewQueue.invalidate();
     },
@@ -475,10 +482,7 @@ function CreatorShopReviewPage() {
         error: new Error(error.message),
       }),
   });
-  const sfwPlacementsOnly = Flags.hasFlag(
-    selected?.cosmetic?.flags ?? 0,
-    CosmeticFlag.SfwPlacementsOnly
-  );
+  const placementRating = getStickerPlacementRating(selected?.cosmetic?.flags ?? 0);
 
   if (currentUser && !currentUser.isModerator) return <NotFound />;
 
@@ -1100,20 +1104,27 @@ function CreatorShopReviewPage() {
                           <DetailRow
                             label="Placements"
                             value={
-                              <Switch
-                                size="sm"
-                                label="SFW placements only"
-                                description="Blocks placing it on R, X or XXX images, and hides it where it is already placed on one."
-                                checked={sfwPlacementsOnly}
-                                disabled={setCosmeticFlag.isPending}
-                                onChange={(event) =>
-                                  setCosmeticFlag.mutate({
-                                    id: selected.cosmetic!.id,
-                                    flag: CosmeticFlag.SfwPlacementsOnly,
-                                    enabled: event.currentTarget.checked,
-                                  })
-                                }
-                              />
+                              <Stack gap={4}>
+                                <SegmentedControl
+                                  size="xs"
+                                  data={[
+                                    { value: 'any', label: 'Any' },
+                                    { value: 'sfwOnly', label: 'SFW only' },
+                                    { value: 'nsfwOnly', label: 'NSFW only' },
+                                  ]}
+                                  value={placementRating}
+                                  disabled={setPlacementRating.isPending}
+                                  onChange={(value) =>
+                                    setPlacementRating.mutate({
+                                      id: selected.cosmetic!.id,
+                                      rating: value as StickerPlacementRating,
+                                    })
+                                  }
+                                />
+                                <Text size="xs" c="dimmed">
+                                  {placementRatingDescriptions[placementRating]}
+                                </Text>
+                              </Stack>
                             }
                           />
                         )}

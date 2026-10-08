@@ -93,6 +93,8 @@ export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvi
 export const MembershipGiftStatus = {
   Pending: 'Pending',
   Fulfilled: 'Fulfilled',
+  Active: 'Active',
+  Completed: 'Completed',
   Failed: 'Failed',
   Refunded: 'Refunded',
   Revoked: 'Revoked',
@@ -919,6 +921,7 @@ export const UserRestrictionStatus = {
   Pending: 'Pending',
   Upheld: 'Upheld',
   Overturned: 'Overturned',
+  AccountDeleted: 'AccountDeleted',
 } as const;
 export type UserRestrictionStatus =
   (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];
@@ -930,6 +933,7 @@ export const StrikeReason = {
   HarassmentContent: 'HarassmentContent',
   ProhibitedContent: 'ProhibitedContent',
   ManualModAction: 'ManualModAction',
+  Scam: 'Scam',
 } as const;
 export type StrikeReason = (typeof StrikeReason)[keyof typeof StrikeReason];
 export const StrikeStatus = {

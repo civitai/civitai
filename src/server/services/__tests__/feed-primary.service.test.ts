@@ -81,6 +81,62 @@ describe('serveFromFeed follow feeds', () => {
   });
 });
 
+describe('serveFromFeed hub feeds', () => {
+  const sources = {
+    userIds: [7],
+    modelVersionIds: [],
+    collectionIds: [],
+    tagGroups: [],
+    excluded: { userIds: [], modelVersionIds: [], tagGroups: [] },
+  };
+
+  it('serves a hub that resolves to nothing as an empty page without asking the feed', async () => {
+    const fetchFeed = vi.fn(async () => answer([1]));
+    const r = await serveFromFeed(
+      { ...base, hubId: 12, hubSources: null },
+      { fetchFeed, hydrate: async () => rows([1]) }
+    );
+    expect(r).toEqual({ ok: true, page: { data: [], nextCursor: undefined, feedMs: 0 } });
+    expect(fetchFeed).not.toHaveBeenCalled();
+  });
+
+  it('asks the feed for the hub sources, never for the open feed', async () => {
+    const fetchFeed = vi.fn(async () => answer([4], { route: 'union-walk' }));
+    const r = await serveFromFeed(
+      { ...base, hubId: 12, hubSources: sources },
+      { fetchFeed, hydrate: async (ids) => rows(ids) }
+    );
+    expect(r.ok && r.page.data.map((d) => d.id)).toEqual([4]);
+    expect(new URLSearchParams(fetchFeed.mock.calls[0]?.[0] as string).get('anyUserIds')).toBe('7');
+  });
+
+  it('refuses an answer that did not take the hub sources', async () => {
+    // A feed release from before the any-of sources drops the parameters it does not know and
+    // answers the same request with the open feed.
+    const hydrate = vi.fn(async (ids: number[]) => rows(ids));
+    for (const route of ['sortat-walk', undefined]) {
+      const r = await serveFromFeed(
+        { ...base, hubId: 12, hubSources: sources },
+        { fetchFeed: async () => answer([4, 5], { route }), hydrate }
+      );
+      expect(r).toEqual({ ok: false, reason: 'hub:route' });
+    }
+    expect(hydrate).not.toHaveBeenCalled();
+    const empty = await serveFromFeed(
+      { ...base, hubId: 12, hubSources: sources },
+      { fetchFeed: async () => answer([], { route: 'empty' }), hydrate }
+    );
+    expect(empty.ok).toBe(true);
+  });
+
+  it('falls back when the hub was not resolved', async () => {
+    const fetchFeed = vi.fn(async () => answer([1]));
+    const r = await serveFromFeed({ ...base, hubId: 12 }, { fetchFeed, hydrate: async () => [] });
+    expect(r).toEqual({ ok: false, reason: 'input:hubId' });
+    expect(fetchFeed).not.toHaveBeenCalled();
+  });
+});
+
 describe('reasonLabel', () => {
   it('keeps the fixed reasons and collapses the ones that carry request text', () => {
     expect(reasonLabel('flag:followed')).toBe('flag:followed');
@@ -125,8 +181,19 @@ describe('feedHydrateQuery', () => {
       tags: [7],
       ids: [9, 5, 2],
       limit: 3,
+      throwOnStatementTimeout: true,
     });
     for (const k of ['cursor', 'skip', 'offset', 'entry']) expect(k in q).toBe(false);
+  });
+
+  it('drops the hub: the feed applied it, and the database path refuses one', () => {
+    const q = feedHydrateQuery(
+      { ...base, hubId: 12, hubExcludedSources: [{ type: 'User', targetId: 7 }], tags: [7] },
+      [9]
+    );
+    expect('hubId' in q).toBe(false);
+    expect('hubExcludedSources' in q).toBe(false);
+    expect(q.tags).toEqual([7]);
   });
 });
 

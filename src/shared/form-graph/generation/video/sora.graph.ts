@@ -5,16 +5,22 @@ import {
   type GenerationAspectRatio,
 } from '~/shared/constants/generation.constants';
 import { checkpointDef } from '../checkpoint';
-import { SEED, aspectRatioDef, boolDef, enumDef, imagesDef, workflowScoped } from '../defs';
+import {
+  optionFallback,
+  SEED,
+  aspectRatioDef,
+  boolDef,
+  enumDef,
+  imagesDef,
+  workflowScoped,
+} from '../defs';
 import { familyScope, promptOnlyTextBlock, type FamilyExt } from '../shared';
 
 /**
- * Sora 2, ported from `sora-graph.ts`. Locked model; resolution tier drives
+ * Sora 2. Locked model; resolution tier drives
  * aspect-ratio dims, aspect ratio only on txt2vid; pro toggle and fixed
  * durations. No negative prompt.
  */
-
-// ---- copied from sora-graph.ts, which dies with the data-graph engine -------
 
 const soraAspectRatioList: GenerationAspectRatio[] = ['16:9', '9:16'];
 
@@ -27,8 +33,6 @@ const soraDurations = [
   { label: '4 seconds', value: 4 },
   { label: '8 seconds', value: 8 },
 ];
-
-// ---- end of sora-graph.ts copies --------------------------------------------
 
 const AR = defFamily((resolution: string) =>
   aspectRatioDef({
@@ -52,6 +56,7 @@ export const sora = defineGraph<FamilyExt>({ scope: familyScope })
     input: z.enum(['720p', '1080p']).optional(),
     output: z.enum(['720p', '1080p']),
     default: '720p' as const,
+    correct: optionFallback(['720p', '1080p'] as const, '720p'),
     meta: { options: soraResolutions },
   })
   .field('aspectRatio', ({ resolution, _ext }) =>

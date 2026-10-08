@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { createMiniMaxInput } from '../ecosystems/minimax.handler';
+import { createMiniMaxInput } from '../form-graph/minimax.handler';
 import {
   MINIMAX_DEFAULT_ASPECT_RATIO,
   minimaxComfyAspectRatios,
   minimaxVersionIds,
-} from '~/shared/data-graph/generation/minimax-graph';
+} from '~/shared/form-graph/generation/video/minimax.graph';
 import type { GenerationHandlerCtx } from '../orchestration-new.service';
 
 const ctx = {
@@ -337,4 +337,120 @@ describe('createMiniMaxInput — control video cannot displace user images', () 
       });
     }
   );
+});
+
+const falMax = (overrides: Record<string, unknown> = {}) => ({
+  ecosystem: 'MiniMaxH3',
+  workflow: 'txt2vid',
+  model: { id: minimaxVersionIds.max },
+  minimaxVariant: 'max',
+  prompt: 'a cat wanders off',
+  duration: 6,
+  resolution: '768P',
+  seed: 42,
+  turbo: false,
+  aspectRatio: { value: '9:16' },
+  ...overrides,
+});
+
+describe('createMiniMaxInput — H3 Max (FAL)', () => {
+  it('sends textToVideo with the picked ratio and resolution', async () => {
+    expect(await input(falMax())).toMatchObject({
+      engine: 'minimax-h3-max',
+      operation: 'textToVideo',
+      model: 'max',
+      aspectRatio: '9:16',
+      resolution: '768P',
+      duration: 6,
+      seed: 42,
+    });
+  });
+
+  it('maps the turbo toggle to the Max Turbo model', async () => {
+    expect(await input(falMax({ turbo: true }))).toMatchObject({ model: 'turbo' });
+  });
+
+  it('sends first and last frames on imageToVideo, without a ratio', async () => {
+    const result = await input(
+      falMax({
+        workflow: 'img2vid:first-last',
+        aspectRatio: undefined,
+        images: [{ url: 'https://x/first.png' }, { url: 'https://x/last.png' }],
+      })
+    );
+    expect(result).toMatchObject({
+      operation: 'imageToVideo',
+      firstFrameImage: 'https://x/first.png',
+      lastFrameImage: 'https://x/last.png',
+    });
+    expect(result.aspectRatio).toBeUndefined();
+  });
+
+  it('sends every image as a reference on ref2vid', async () => {
+    const result = await input(
+      falMax({
+        workflow: 'img2vid:ref2vid',
+        images: [{ url: 'https://x/a.png' }, { url: 'https://x/b.png' }],
+      })
+    );
+    expect(result).toMatchObject({
+      operation: 'referenceToVideo',
+      referenceImages: ['https://x/a.png', 'https://x/b.png'],
+    });
+    expect(result.firstFrameImage).toBeUndefined();
+  });
+
+  it('rejects ref2vid without a reference image', async () => {
+    await expect(input(falMax({ workflow: 'img2vid:ref2vid', images: [] }))).rejects.toThrow(
+      'reference image'
+    );
+  });
+});
+
+const heygen = (overrides: Record<string, unknown> = {}) => ({
+  ecosystem: 'MiniMaxH3',
+  workflow: 'txt2vid',
+  model: { id: minimaxVersionIds.heygen },
+  minimaxVariant: 'heygen',
+  prompt: 'a cat wanders off',
+  duration: 6,
+  resolution: '768p',
+  seed: 7,
+  aspectRatio: { value: '1:1' },
+  ...overrides,
+});
+
+describe('createMiniMaxInput — HeyGen', () => {
+  it('sends textToVideo with the picked ratio', async () => {
+    expect(await input(heygen())).toMatchObject({
+      engine: 'heygen',
+      operation: 'textToVideo',
+      aspectRatio: '1:1',
+      resolution: '768p',
+      duration: 6,
+      seed: 7,
+    });
+  });
+
+  it('fills the required ratio on imageToVideo and sends only the first frame', async () => {
+    const result = await input(
+      heygen({
+        workflow: 'img2vid',
+        aspectRatio: undefined,
+        images: [{ url: 'https://x/first.png' }, { url: 'https://x/stale-last.png' }],
+      })
+    );
+    expect(result).toMatchObject({
+      operation: 'imageToVideo',
+      firstFrameImage: 'https://x/first.png',
+      aspectRatio: MINIMAX_DEFAULT_ASPECT_RATIO,
+    });
+    expect(result.lastFrameImage).toBeUndefined();
+  });
+
+  it('sends references on ref2vid', async () => {
+    expect(
+      await input(heygen({ workflow: 'img2vid:ref2vid', images: [{ url: 'https://x/a.png' }] }))
+    ).toMatchObject({ operation: 'referenceToVideo', referenceImages: ['https://x/a.png'] });
+  });
 });

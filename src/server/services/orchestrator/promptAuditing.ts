@@ -49,6 +49,7 @@ const GREEN_SFW_REDIRECT =
 
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
+const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
 const RESET_MARKER = '__RESET__';
 
 function getBlockedPromptsKey(userId: number) {
@@ -169,7 +170,13 @@ async function getBlockedPrompts(userId: number): Promise<BlockedPromptEntry[]> 
   );
   return entries
     .filter((e) => e !== RESET_MARKER)
-    .map((entry) => JSON.parse(entry) as BlockedPromptEntry);
+    .map((entry) => {
+      const parsed = JSON.parse(entry) as BlockedPromptEntry;
+      // Lists seeded from ClickHouse before the tracker stopped writing this placeholder for an
+      // absent negative prompt still carry it for up to BLOCKED_PROMPTS_TTL.
+      if (parsed.negativePrompt === LEGACY_MISSING_NEGATIVE_PROMPT) parsed.negativePrompt = '';
+      return parsed;
+    });
 }
 
 /**
@@ -212,6 +219,167 @@ export interface AuditPromptOptions {
   moderationSource?: ExternalModerationSource;
 }
 
+export type PromptClassificationOutcome = 'pass' | 'soft' | 'hard';
+export type PromptClassificationSource = 'regex' | 'external';
+
+export interface PromptClassification {
+  /**
+   * `soft`/`hard` is `isSoftBlock(triggers)` — the same predicate `auditPromptServer` branches
+   * on, so a caller reading this verdict cannot disagree with the enforcing path about tier.
+   */
+  outcome: PromptClassificationOutcome;
+  /** Which check produced the block. `null` exactly when `outcome` is `pass`. */
+  source: PromptClassificationSource | null;
+  triggers: PromptTrigger[];
+  /** The user-facing reasons, one per trigger, in trigger order. */
+  blockedFor: string[];
+  /**
+   * The external classifier's categories as it returned them, whenever it RAN — including when it
+   * did not flag and the verdict is a held soft regex block or a pass. Evidence, not the verdict.
+   * Empty when it never ran (a hard regex block skips it) or when it failed open.
+   */
+  categories: string[];
+  /**
+   * The external classifier's failure message when it threw. It fails OPEN — the verdict is then
+   * computed as though it had not flagged — so this is the only trace that it did not actually
+   * clear the text. Reporting it is the caller's job; this function records nothing.
+   */
+  externalError: { message: string } | null;
+}
+
+export interface ClassifyPromptOptions {
+  prompt: string;
+  negativePrompt?: string;
+  /** Applies the green-only blocklist. See `auditPromptServer` for what GREEN means. */
+  isGreen: boolean;
+  moderationSource?: ExternalModerationSource;
+}
+
+/**
+ * The DECISION half of `auditPromptServer`, with none of its consequences: no ClickHouse report,
+ * no blocked-prompt counter, no auto-mute, no Axiom event, no throw on a verdict. It still READS
+ * — the benign-phrase lists and the external classifier — because those are inputs to the
+ * decision, not records of it.
+ *
+ * It exists so a caller can learn what the audit WOULD do without the audit doing it (shadow
+ * moderation). `auditPromptServer` is a wrapper over this, so the two cannot drift.
+ *
+ * Ordering, which is the part that matters:
+ * - a HARD regex block short-circuits: the external classifier is not called.
+ * - a SOFT regex block does NOT short-circuit. External moderation runs first and, if it flags
+ *   with at least one category, its block wins; otherwise the held soft block is the verdict.
+ *   Short-circuiting here would let an overridable word appended to a prompt buy a click-through
+ *   past the hosted classifier.
+ * - an external flag with ZERO categories is not a block (unchanged from before this split).
+ *
+ * An infrastructure failure other than the external classifier's (e.g. the benign-phrase read)
+ * propagates as a throw — exactly as it did inside `auditPromptServer`.
+ */
+export async function classifyPromptServer(
+  options: ClassifyPromptOptions
+): Promise<PromptClassification> {
+  const { prompt, negativePrompt, isGreen, moderationSource } = options;
+
+  // Mirrors `auditPromptServer`'s own early return: an empty prompt is never audited, so the
+  // honest answer to "what would the audit do" is pass — with no reads at all.
+  if (!prompt || !prompt.trim()) {
+    return {
+      outcome: 'pass',
+      source: null,
+      triggers: [],
+      blockedFor: [],
+      categories: [],
+      externalError: null,
+    };
+  }
+
+  const verdict = (
+    source: PromptClassificationSource,
+    triggers: PromptTrigger[],
+    categories: string[],
+    externalError: PromptClassification['externalError']
+  ): PromptClassification => ({
+    outcome: isSoftBlock(triggers) ? 'soft' : 'hard',
+    source,
+    triggers,
+    blockedFor: triggers.map((t) => t.message),
+    categories,
+    externalError,
+  });
+
+  // 🔴 The green blocklist (`blocked-words.json`) is the ONLY list in this audit that
+  // varies by domain, and it is not profanity in the ordinary sense — "breasts" blocks
+  // on .com and passes on .red. Everything else below runs identically everywhere.
+  const checkProfanity = isGreen;
+
+  // Moderator-managed benign phrases (proper nouns / technical terms that
+  // coincidentally contain a detection token) are blanked before auditing, so the
+  // generation gate and the post-generation scan audit agree on what's benign.
+  // Only the audited copy is cleaned — the original prompt is what gets generated,
+  // reported to ClickHouse, and stored on the blocked-prompt entry.
+  //
+  // 🔴 Strip the NORMALIZED copy. `auditPromptEnriched` folds accents before the
+  // detector runs, so stripping raw text matches one alphabet while the detector
+  // reads another and a whitelisted `emma stone` still blocks `émma stone`. The
+  // scan paths in image-scan-pipeline.ts already normalize first.
+  const [auditedPrompt, auditedNegativePrompt] = await Promise.all([
+    stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase),
+    stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
+  ]);
+
+  // Run regex-based audit (enriched to capture structured trigger data)
+  const { triggers, success } = auditPromptEnriched(
+    auditedPrompt ?? prompt,
+    auditedNegativePrompt,
+    checkProfanity
+  );
+
+  let softRegexTriggers: PromptTrigger[] | null = null;
+
+  if (!success && triggers.length > 0) {
+    // A hard block short-circuits. A soft one must NOT — returning here would
+    // skip the external classifier below, so appending any overridable word
+    // ("… pee") to a prompt would buy a click-through past it. Hold the block
+    // and let external moderation run first; it can only escalate.
+    if (!isSoftBlock(triggers)) return verdict('regex', triggers, [], null);
+    softRegexTriggers = triggers;
+  }
+
+  // Run external moderation service. Fails OPEN: a classifier error is treated as "not flagged".
+  // `error.message` is read exactly as the pre-split code read it, untyped, so a non-Error
+  // rejection reports the same (possibly undefined) message it always did.
+  let externalError: PromptClassification['externalError'] = null;
+  const { flagged, categories } = await extModeration
+    .moderatePrompt(auditedPrompt ?? prompt, moderationSource)
+    .catch((error) => {
+      externalError = { message: error.message };
+      return { flagged: false, categories: [] as string[] };
+    });
+
+  if (flagged) {
+    const externalTriggers: PromptTrigger[] = categories.map((cat) => ({
+      category: 'external' as PromptTriggerCategory,
+      message: cat,
+      matchedWord: cat,
+    }));
+    if (externalTriggers.length > 0) {
+      return verdict('external', externalTriggers, categories, externalError);
+    }
+  }
+
+  // External moderation cleared it; now honor the held soft block.
+  if (softRegexTriggers) return verdict('regex', softRegexTriggers, categories, externalError);
+
+  return {
+    outcome: 'pass',
+    source: null,
+    triggers: [],
+    blockedFor: [],
+    categories,
+    externalError,
+  };
+}
+
 /**
  * Centralized prompt auditing function that handles both regex and external moderation checks.
  *
@@ -249,77 +417,28 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
   }
 
   try {
-    // 🔴 The green blocklist (`blocked-words.json`) is the ONLY list in this audit that
-    // varies by domain, and it is not profanity in the ordinary sense — "breasts" blocks
-    // on .com and passes on .red. Everything else below runs identically everywhere.
-    const checkProfanity = isGreen;
+    // The decision lives in `classifyPromptServer`; everything below is its consequences.
+    // A non-verdict throw from the classifier (an infrastructure failure) lands in the same
+    // catch it always did.
+    const verdict = await classifyPromptServer({
+      prompt,
+      negativePrompt,
+      isGreen,
+      moderationSource,
+    });
 
-    // Moderator-managed benign phrases (proper nouns / technical terms that
-    // coincidentally contain a detection token) are blanked before auditing, so the
-    // generation gate and the post-generation scan audit agree on what's benign.
-    // Only the audited copy is cleaned — the original prompt is what gets generated,
-    // reported to ClickHouse, and stored on the blocked-prompt entry below.
-    //
-    // 🔴 Strip the NORMALIZED copy. `auditPromptEnriched` folds accents before the
-    // detector runs, so stripping raw text matches one alphabet while the detector
-    // reads another and a whitelisted `emma stone` still blocks `émma stone`. The
-    // scan paths in image-scan-pipeline.ts already normalize first.
-    const [auditedPrompt, auditedNegativePrompt] = await Promise.all([
-      stripBenignPhrases(normalizeText(prompt), BlocklistType.PromptBenignPhrase),
-      stripBenignPhrases(normalizeText(negativePrompt), BlocklistType.NegativeBenignPhrase),
-    ]);
-
-    // Run regex-based audit (enriched to capture structured trigger data)
-    const { triggers, success } = auditPromptEnriched(
-      auditedPrompt ?? prompt,
-      auditedNegativePrompt,
-      checkProfanity
-    );
-
-    let softRegexBlock: { blockedFor: string[]; triggers: PromptTrigger[]; type: string } | null =
-      null;
-
-    if (!success) {
-      if (triggers.length > 0) {
-        const regexBlock = {
-          blockedFor: triggers.map((t) => t.message),
-          triggers,
-          type: 'regex',
-        };
-        // A hard block short-circuits. A soft one must NOT — throwing here would
-        // skip the external classifier below, so appending any overridable word
-        // ("… pee") to a prompt would buy a click-through past it. Hold the block
-        // and let external moderation run first; it can only escalate.
-        if (!isSoftBlock(triggers)) throw regexBlock;
-        softRegexBlock = regexBlock;
-      }
-    }
-
-    // Run external moderation service
-    const { flagged, categories } = await extModeration
-      .moderatePrompt(auditedPrompt ?? prompt, moderationSource)
-      .catch((error) => {
-        logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-        return { flagged: false, categories: [] as string[] };
+    // The classifier fails open on an external-moderation error and leaves reporting it to us.
+    if (verdict.externalError) {
+      logToAxiom({
+        name: 'external-moderation-error',
+        type: 'error',
+        message: verdict.externalError.message,
       });
-
-    if (flagged) {
-      const externalTriggers: PromptTrigger[] = categories.map((cat) => ({
-        category: 'external' as PromptTriggerCategory,
-        message: cat,
-        matchedWord: cat,
-      }));
-      if (externalTriggers.length > 0) {
-        throw {
-          blockedFor: externalTriggers.map((t) => t.message),
-          triggers: externalTriggers,
-          type: 'external',
-        };
-      }
     }
 
-    // External moderation cleared it; now honor the held soft block.
-    if (softRegexBlock) throw softRegexBlock;
+    if (verdict.outcome !== 'pass') {
+      throw { blockedFor: verdict.blockedFor, triggers: verdict.triggers, type: verdict.source };
+    }
   } catch (e) {
     const error = e as { blockedFor: string[]; triggers: PromptTrigger[]; type: string };
 
@@ -462,8 +581,8 @@ async function reportProhibitedRequest(options: {
   if (track) {
     try {
       await track.prohibitedRequest({
-        prompt: prompt ?? '{error capturing prompt}',
-        negativePrompt: negativePrompt ?? '{error capturing negativePrompt}',
+        prompt: prompt ?? '',
+        negativePrompt: negativePrompt ?? '',
         source,
         remixOfId,
         inputImages,

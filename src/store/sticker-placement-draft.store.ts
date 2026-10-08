@@ -105,6 +105,11 @@ interface StickerPlacementDraftStore {
   targetImageId: number | null;
   /** Whether the panel is showing. A session outlives it. */
   trayOpen: boolean;
+  /**
+   * Every piece of placement chrome hidden — handles, the control bar, the buy
+   * button and the panel — so the drafts can be judged as they will look placed.
+   */
+  previewing: boolean;
   surface: HTMLElement | null;
   /**
    * The tray element, for the one thing outside it that has to know where it is:
@@ -147,6 +152,7 @@ interface StickerPlacementDraftStore {
   closeTray: () => void;
   /** Discard one draft, defaulting to the selected one. */
   cancelDraft: (id?: string) => void;
+  setPreviewing: (previewing: boolean) => void;
   select: (id: string) => void;
   setSurface: (element: HTMLElement | null) => void;
   setTray: (element: HTMLElement | null) => void;
@@ -271,6 +277,7 @@ const nextPurchaseKey = () =>
 const ENDED = {
   targetImageId: null,
   trayOpen: false,
+  previewing: false,
   drafts: [] as StickerDraft[],
   selectedDraftId: null,
   interaction: null,
@@ -290,6 +297,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   selectedDraftId: null,
   targetImageId: null,
   trayOpen: false,
+  previewing: false,
   surface: null,
   tray: null,
   interaction: null,
@@ -319,7 +327,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
   open: (imageId) =>
     set((state) =>
       state.targetImageId === imageId
-        ? { targetImageId: imageId, trayOpen: true }
+        ? { targetImageId: imageId, trayOpen: true, previewing: false }
         : { ...ENDED, targetImageId: imageId, trayOpen: true }
     ),
 
@@ -337,6 +345,7 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
       const drafts = state.drafts.filter((draft) => draft.id !== target);
       if (drafts.length === state.drafts.length) return state;
       if (!drafts.length && !state.trayOpen) return ENDED;
+      if (!drafts.length) return { drafts, selectedDraftId: null, previewing: false };
 
       return {
         drafts,
@@ -359,6 +368,9 @@ export const useStickerPlacementDraftStore = create<StickerPlacementDraftStore>(
     }),
 
   select: (id) => set({ selectedDraftId: id }),
+
+  setPreviewing: (previewing) =>
+    set((state) => ({ previewing: previewing && state.drafts.length > 0 })),
 
   setInteraction: (interaction, pointerId) =>
     set({ interaction, interactionPointerId: interaction ? pointerId ?? null : null }),

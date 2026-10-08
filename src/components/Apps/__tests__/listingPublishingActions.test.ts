@@ -5,6 +5,7 @@ import {
   listingOwnerState,
   listingPublishingActions,
   OWNER_ACTIONS_BY_STATE,
+  ownerVisibilityLoadState,
   PUBLISHING_PANEL_ACTIONS,
   republishSuccessMessage,
   withdrawSuccessMessage,
@@ -352,4 +353,53 @@ describe('withdrawSuccessMessage — 🔴 a one-way close must SAY it is one-way
       expect(message).toBe('Submission withdrawn.');
     }
   );
+});
+
+/**
+ * The store `⋮` menu's owner "Visibility" item fetches the authoring context lazily and
+ * decides what to render from it. Eligibility must be `showVisibility` on the FETCHED row —
+ * the menu item itself is gated on ownership only, because neither store DTO carries a
+ * status.
+ */
+describe('ownerVisibilityLoadState — the store menu’s lazily-fetched owner picker', () => {
+  it('no context and no error → loading', () => {
+    expect(ownerVisibilityLoadState({ isError: false, context: undefined })).toBe('loading');
+    expect(ownerVisibilityLoadState({ isError: false, context: null })).toBe('loading');
+  });
+
+  it('no context and an error → error (e.g. FORBIDDEN for a caller with no role)', () => {
+    expect(ownerVisibilityLoadState({ isError: true, context: undefined })).toBe('error');
+  });
+
+  it('an eligible owner row → ready, on every status showVisibility admits', () => {
+    expect(ownerVisibilityLoadState({ isError: false, context: LIVE })).toBe('ready');
+    expect(ownerVisibilityLoadState({ isError: false, context: INACTIVE })).toBe('ready');
+  });
+
+  it('🔴 a loaded but ineligible row → ineligible, never ready', () => {
+    // `rejected` and mod-`removed` carry no settable level; an editor is refused by role.
+    // Each is the case that kills a mutant returning 'ready' for any loaded context.
+    expect(ownerVisibilityLoadState({ isError: false, context: REJECTED })).toBe('ineligible');
+    expect(ownerVisibilityLoadState({ isError: false, context: MOD_REMOVED })).toBe('ineligible');
+    expect(ownerVisibilityLoadState({ isError: false, context: { ...LIVE, role: 'editor' } })).toBe(
+      'ineligible'
+    );
+  });
+
+  it('agrees with showVisibility on every fixture (one predicate, not a second derivation)', () => {
+    for (const r of [LIVE, OWNER_HIDDEN, MOD_REMOVED, INACTIVE, REJECTED]) {
+      for (const role of ['owner', 'editor'] as const) {
+        const context = { ...r, role };
+        expect(ownerVisibilityLoadState({ isError: false, context }) === 'ready').toBe(
+          showVisibility(context)
+        );
+      }
+    }
+  });
+
+  it('a loaded context wins over a later refetch error', () => {
+    // React Query keeps the last data alongside `isError` after a failed refetch; the
+    // decision should follow the data the picker would actually render from.
+    expect(ownerVisibilityLoadState({ isError: true, context: LIVE })).toBe('ready');
+  });
 });

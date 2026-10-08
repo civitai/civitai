@@ -3,7 +3,6 @@ import dayjs from '~/shared/utils/dayjs';
 
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
   CreateEntityAppealInput,
   CreateReportInput,
@@ -15,8 +14,12 @@ import {
   createReport,
   getAppealCount,
   getLatestAppeal,
-  reopenModelAppeal,
+  reopenAppeal,
 } from '~/server/services/report.service';
+import {
+  isBountyFlagAppealable,
+  isModelFlagAppealable,
+} from '~/server/services/text-scan/flag-snapshot';
 import {
   isPrismaForeignKeyViolation,
   throwAuthorizationError,
@@ -25,7 +28,12 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getAppealRefusal, isAppealableImage, isAppealableModel3D } from '~/shared/utils/appeal';
+import {
+  getAppealRefusal,
+  IMAGE_NOT_APPEALABLE,
+  isAppealableImage,
+  isAppealableModel3D,
+} from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
@@ -98,8 +106,7 @@ export async function createEntityAppealHandler({
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
         await assertNotAlreadyAppealed({ ...input, userId });
-        if (!isAppealableImage(image))
-          throw throwBadRequestError('Only an image blocked by moderators can be appealed');
+        if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
       }
       case EntityType.Model3D:
@@ -116,21 +123,38 @@ export async function createEntityAppealHandler({
       case EntityType.Model: {
         const model = await dbRead.model.findUnique({
           where: { id: input.entityId },
-          select: { userId: true, minor: true, meta: true },
+          select: { userId: true, minor: true, poi: true, meta: true },
         });
         if (!model) throw throwNotFoundError('Model not found');
         if (model.userId !== userId) throw throwAuthorizationError();
 
         // Legacy flags carry no snapshot and are deliberately excluded.
-        const meta = model.meta as ModelMeta | null;
-        if (!model.minor || !meta?.minorFlagSnapshot)
-          throw throwBadRequestError('This model is not flagged as depicting a minor');
+        if (!isModelFlagAppealable(model))
+          throw throwBadRequestError('This model has no automated flag to review');
 
-        // Asking again after a denial is intended for a minor flag, so reuse the row.
+        // Asking again after a denial is intended for an automated flag, so reuse the row.
         const existing = await getLatestAppeal({ ...input, userId });
         if (existing?.status === AppealStatus.Pending)
           throw throwBadRequestError('Your review request for this model is already under review');
-        if (existing) return await reopenModelAppeal({ id: existing.id, message: input.message });
+        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
+
+        skipFee = true;
+        break;
+      }
+      case EntityType.Bounty: {
+        const bounty = await dbRead.bounty.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, poi: true, meta: true },
+        });
+        if (!bounty) throw throwNotFoundError('Bounty not found');
+        if (bounty.userId !== userId) throw throwAuthorizationError();
+        if (!isBountyFlagAppealable(bounty))
+          throw throwBadRequestError('This bounty has no automated flag to review');
+
+        const existing = await getLatestAppeal({ ...input, userId });
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your review request for this bounty is already under review');
+        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
 
         skipFee = true;
         break;

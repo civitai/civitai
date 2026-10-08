@@ -15,6 +15,7 @@ import {
 import type { ProfileSectionSchema, ProfileSectionType } from '~/server/schema/user-profile.schema';
 import { userPageQuerySchema } from '~/server/schema/user.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { parseScoreTierSlug } from '~/shared/constants/creator-journey.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -23,11 +24,20 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, ctx }) => {
     const { username, id } = userPageQuerySchema.parse(ctx.params);
     if (username) {
-      await Promise.all([
+      const milestone = parseScoreTierSlug(ctx.query.milestone);
+      const [, profile] = await Promise.all([
         ssg?.user.getCreator.prefetch({ username }),
-        ssg?.userProfile.get.prefetch({ username }),
+        milestone
+          ? ssg?.userProfile.get.fetch({ username }).catch(() => null)
+          : ssg?.userProfile.get.prefetch({ username }).then(() => null),
         ssg?.userProfile.overview.prefetch({ username }),
       ]);
+      // Crawlers read og:image from the server render, so whether `?milestone=` swaps it is decided here.
+      if (ssg && milestone && profile)
+        await ssg.creatorJourney.isMilestoneShareable.prefetch({
+          userId: profile.id,
+          slug: milestone,
+        });
     }
 
     return {

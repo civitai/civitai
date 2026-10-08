@@ -9,6 +9,7 @@ import type {
 } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
 import { createExternalCsamReport } from '~/server/services/csam.service-new';
+import { releaseReviewFlagsToReportHold } from '~/server/services/image-appeal-flag';
 import { bulkAddBlockedImages } from '~/server/services/image.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
@@ -88,6 +89,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
   if (userId !== -1) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
+
+  // Last, so the images are already blocked and the report row committed when the flag comes off.
+  if (type === 'Image' && imageIds.length) await releaseReviewFlagsToReportHold(imageIds);
 
   // Reported and removed either way; the caller decides how loudly to say the run is still open.
   return { denyFailed, denyBookkeepingFailed };

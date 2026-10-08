@@ -9,7 +9,6 @@ import { describe, expect, it } from 'vitest';
 // Affected (unfixed) sites that rely on this behavior:
 //   - src/server/services/training.service.ts:267,287
 //   - src/server/services/generation/generation.service.ts:251,272,315
-//   - src/server/services/orchestrator/common.ts:99
 //   - src/server/services/orchestrator/orchestration-new.service.ts:227
 //   - src/server/jobs/entity-moderation.ts:283,291
 //   - src/server/routers/buzz-withdrawal-request.router.ts:50

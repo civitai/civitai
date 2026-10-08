@@ -1,17 +1,15 @@
 import { z } from 'zod';
 import { defineGraph } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { SEED, aspectRatioDef, boolDef, imagesDef, workflowScoped } from '../defs';
+import { optionFallback, SEED, aspectRatioDef, boolDef, imagesDef, workflowScoped } from '../defs';
 import { familyScope, textBlock, type FamilyExt } from '../shared';
 
 /**
- * Veo 3, ported from `veo3-graph.ts`. Fast/Standard version pick (same list
+ * Veo 3. Fast/Standard version pick (same list
  * on both workflows); ref2vid pins duration to 8s and takes up to 3
  * references; img2vid derives its ratio from the source. Negative prompt
  * registers at top level.
  */
-
-// ---- copied from veo3-graph.ts, which dies with the data-graph engine -------
 
 const veo3BaseModel = 'Veo 3';
 
@@ -42,8 +40,6 @@ type Veo3ApiVersion = (typeof veo3ApiVersions)[number];
 
 const veo3ApiVersionOptions = [{ label: 'Veo 3.1', value: '3.1' as Veo3ApiVersion }];
 
-// ---- end of veo3-graph.ts copies --------------------------------------------
-
 export const veo3 = defineGraph<FamilyExt>({ scope: familyScope })
   .field(
     'images',
@@ -56,7 +52,7 @@ export const veo3 = defineGraph<FamilyExt>({ scope: familyScope })
     })
   )
   .field('model', ({ _ext }) =>
-    // v1 configures workflowVersions, but both workflows share ONE option
+    // Both workflows share ONE option
     // list, so the cross-workflow machinery is inert
     checkpointDef({
       ecosystem: _ext.ecosystem,
@@ -76,7 +72,7 @@ export const veo3 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('duration', ({ _ext }) => {
     const isRef2Vid = _ext.workflow === 'img2vid:ref2vid';
     return {
-      // ref2vid pins duration to 8s at the boundary, as v1's transform does
+      // ref2vid pins duration to 8s at the boundary
       input: z.coerce
         .number()
         .optional()
@@ -94,6 +90,7 @@ export const veo3 = defineGraph<FamilyExt>({ scope: familyScope })
     input: z.enum(veo3ApiVersions).optional(),
     output: z.enum(veo3ApiVersions),
     default: '3.1' as Veo3ApiVersion,
+    correct: optionFallback(veo3ApiVersions, '3.1' as Veo3ApiVersion),
     meta: { options: veo3ApiVersionOptions },
   });
 

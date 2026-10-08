@@ -27,7 +27,10 @@ import {
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
-import { stampWorkflowPublished } from '~/server/services/orchestrator/training/publish-from-workflow';
+import {
+  assertTrainingSourcePublishable,
+  stampWorkflowPublished,
+} from '~/server/services/orchestrator/training/publish-from-workflow';
 import { getTrainingWorkflowOverlay } from '~/server/services/orchestrator/training/training-state';
 import {
   applyTrainingWorkflowOverlay,
@@ -162,10 +165,12 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
 } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
@@ -186,6 +191,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -557,6 +563,17 @@ export const getModelHandler = async ({
         minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
+      poiFlagged: resolvePoiFlagged({
+        isOwner,
+        poi: model.poi,
+        meta: model.meta as ModelMeta | null,
+      }),
+      flagScanReasons: resolveFlagScanReasons({
+        isOwner,
+        poi: model.poi,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
       minorAppeal: resolveMinorAppeal({ isOwner, appeal: minorAppeal }),
       meta: model.meta
         ? filterModelMetaForClient(model.meta as ModelMeta, ctx?.user?.isModerator)
@@ -827,7 +844,7 @@ export const publishModelHandler = async ({
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
-      select: { status: true, meta: true, nsfw: true },
+      select: { status: true, meta: true, nsfw: true, userId: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
     if (model.status === ModelStatus.Published)
@@ -840,6 +857,13 @@ export const publishModelHandler = async ({
     const modelMeta = model.meta as ModelMeta | null;
     const republishing =
       model.status !== ModelStatus.Draft && model.status !== ModelStatus.Scheduled;
+    await assertTrainingSourcePublishable({
+      modelId: input.id,
+      meta: modelMeta,
+      ownerId: model.userId,
+      callerId: ctx.user.id,
+    });
+
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
       modelMeta || {};
     const updatedModel = await publishModelById({ ...input, meta, republishing });
@@ -1221,7 +1245,10 @@ export const getDownloadCommandHandler = async ({
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file, versionFiles: files });
-    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName, {
+      caller: 'link',
+      actor: resolveActorFor(ctx.user),
+    });
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -1256,8 +1283,12 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
-            .url,
+          url: (
+            await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName, {
+              caller: 'link',
+              actor: resolveActorFor(ctx.user),
+            })
+          ).url,
         },
       });
     }
@@ -1560,6 +1591,7 @@ export const setModelMinorHandler = async ({
       userId: ctx.user.id,
       tracker: ctx.track,
       isModerator: ctx.user.isModerator,
+      recordTextScanRuling: true,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
@@ -2388,6 +2420,19 @@ export const privateModelFromTrainingHandler = async ({
       await throwIfBlockedTags({ tagsOnModels, isModerator: ctx.user.isModerator });
     }
 
+    // Publishes the model (privately), so the training-source check applies like any publish.
+    const stored = await dbRead.model.findUnique({
+      where: { id: input.id },
+      select: { userId: true, meta: true },
+    });
+    if (stored && (stored.userId === ctx.user.id || ctx.user.isModerator))
+      await assertTrainingSourcePublishable({
+        modelId: input.id,
+        meta: stored.meta as ModelMeta | null,
+        ownerId: stored.userId,
+        callerId: ctx.user.id,
+      });
+
     const model = await privateModelFromTraining({
       ...input,
       user: ctx.user,
@@ -2437,7 +2482,7 @@ export const publishPrivateModelHandler = async ({
     const { id: userId } = ctx.user;
     const model = await getModel({
       id: input.modelId,
-      select: { id: true, userId: true, status: true, availability: true },
+      select: { id: true, userId: true, status: true, availability: true, meta: true },
     });
 
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
@@ -2449,6 +2494,13 @@ export const publishPrivateModelHandler = async ({
     if (model.userId !== userId && !ctx.user.isModerator) {
       throw throwAuthorizationError();
     }
+
+    await assertTrainingSourcePublishable({
+      modelId: model.id,
+      meta: model.meta as ModelMeta | null,
+      ownerId: model.userId,
+      callerId: userId,
+    });
 
     const { versionIds } = await publishPrivateModel(input);
     await dataForModelsCache.refresh(input.modelId);

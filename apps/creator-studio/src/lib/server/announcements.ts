@@ -1,7 +1,7 @@
 import type { SessionUser } from '@civitai/auth';
 import { dbRead } from '$lib/server/db';
 import { callMainApp, type MainAppResult } from '$lib/server/main-app';
-import { getFlipt, fliptContext } from '$lib/server/flipt';
+import { modFallbackFlagEnabled } from '$lib/server/main-app-flags';
 import {
   toAnnouncementLinks,
   toDomainArray,
@@ -16,23 +16,9 @@ import { allowanceSchema, toSaveBody, type AnnouncementForm } from './announceme
 
 export const ANNOUNCEMENTS_FLAG = 'creator-announcements';
 
-/**
- * 🔴 Must stay the same key AND the same Flipt-down posture as the main app's
- * `creatorAnnouncements` feature flag (availability ['mod'] + fliptKey). One flag drives both apps;
- * an app that fails to a different answer produces the half-visible state the single flag exists to
- * prevent.
- *
- * The fallback keys on a null EVALUATION, not on the client being absent: `isEnabledSync` returns
- * null for an unreachable client and for a flag that does not exist yet, which is the normal state
- * of a feature that ships dark. `isEnabled` would collapse both to false and lock moderators out of
- * a page the main app is already showing them.
- */
-export async function announcementsEnabled(user: SessionUser): Promise<boolean> {
-  const flipt = getFlipt();
-  await flipt.ensureInitialized();
-
-  const evaluated = flipt.isEnabledSync(ANNOUNCEMENTS_FLAG, String(user.id), fliptContext(user));
-  return evaluated ?? user.isModerator === true;
+// 🔴 Must stay the main app's `creatorAnnouncements` fliptKey.
+export function announcementsEnabled(user: SessionUser): Promise<boolean> {
+  return modFallbackFlagEnabled(ANNOUNCEMENTS_FLAG, user);
 }
 
 export type AnnouncementRow = {

@@ -17,6 +17,7 @@ import React, { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { constants, POST_TAG_LIMIT } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { IMAGE_MIME_TYPE, MEDIA_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
@@ -27,7 +28,7 @@ import {
 import { createImageElement } from '~/utils/image-utils';
 import { getLoginLink } from '~/utils/login-helpers';
 import { getVideoData } from '~/utils/media-preprocessors';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { showSuccessNotification } from '~/utils/notifications';
 import { formatBytes } from '~/utils/number-helpers';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -86,6 +87,7 @@ type ParseProgress = {
 };
 
 export default function IntentPost() {
+  const showCreatePostError = useShowCreatePostError();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const [readyData, setReadyData] = useState<PostQuerySchema | undefined>();
@@ -137,10 +139,7 @@ export default function IntentPost() {
           setCreatingPost(undefined);
         },
         onError(error) {
-          showErrorNotification({
-            title: 'Failed to create post',
-            error: new Error(error.message),
-          });
+          showCreatePostError(error.message);
           setCreatingPost(undefined);
         },
       }

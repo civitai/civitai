@@ -35,6 +35,10 @@ import {
   updateImageNsfwLevel,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -222,14 +226,14 @@ export const setTosViolationHandler = async ({
     await dbWrite.image.updateMany({
       where: { id },
       data: {
-        needsReview: null,
         ingestion: 'Blocked',
-        // nsfw: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
         updatedAt: new Date(),
       },
     });
+    await clearReviewFlagsOnBlock([id]);
+    await keepPendingAppealFlags([id]);
     await invalidateManyImageExistence([id]);
 
     // A moderator block outranks an account-deletion grace block; leaving the grace breadcrumbs on

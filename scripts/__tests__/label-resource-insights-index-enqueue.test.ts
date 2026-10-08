@@ -68,7 +68,7 @@ vi.mock('~/server/services/ai/jev', async (importOriginal) => ({
   askJev: (...a: unknown[]) => askJev(...a),
 }));
 
-// `importOriginal`, NOT a hand-listed mock — CLAUDE.md names this exact
+// `importOriginal`, NOT a hand-listed mock — .claude/rules/testing.md names this exact
 // specifier as the example, and the five sibling suites already load the real
 // barrel transitively through the script, so it demonstrably imports fine in
 // this project. A hand-listed `{ modelsSearchIndex }` would break this file
@@ -602,7 +602,7 @@ describe('label writes are announced to the models search index', () => {
     });
 
     it('drainStdio resolves only AFTER both stream callbacks have fired', async () => {
-      const { drainStdio } = await import('../label-resource-insights');
+      const { drainStdio } = await import('../lib/run-as-script');
       // The property the two tests above cannot see, and the reason the export
       // exists: a `drainStdio` that ISSUED the empty writes without AWAITING
       // them satisfies every write assertion and still lets `process.exit` run

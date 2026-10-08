@@ -32,6 +32,7 @@ import type { PostImageEditProps, PostImageEditSelect } from '~/server/selectors
 import { editPostImageSelect, postSelect } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -50,6 +51,7 @@ import {
 } from '~/server/services/collection-media-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { canViewCollectionPost } from '~/server/services/post-collection-visibility';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   canViewModelVersion,
   MODEL_VERSION_NOT_FOUND,
@@ -70,7 +72,7 @@ import {
 } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
-import { getTechniqueByName } from '~/server/services/technique.service';
+import { getTechniqueForWorkflow } from '~/server/services/technique.service';
 import { getToolByAlias, getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import type {
   getCosmeticsForUsers,
@@ -88,7 +90,6 @@ import {
 } from '~/server/utils/errorHandling';
 import {
   Availability,
-  CollectionContributorPermission,
   CollectionMode,
   CollectionType,
   MediaType,
@@ -653,32 +654,7 @@ export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
   const db = await getDbWithoutLag('post', id);
   const post = await db.post.findFirst({
-    where: {
-      id,
-      OR: user?.isModerator
-        ? undefined
-        : [
-            { userId: user?.id },
-            { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } },
-            // Support judges of a collection to view any post in the collection
-            // regardless of NSFW level and published status.
-            {
-              collectionId: {
-                not: null,
-              },
-              collection: {
-                contributors: {
-                  some: {
-                    userId: user?.id,
-                    permissions: {
-                      has: CollectionContributorPermission.MANAGE,
-                    },
-                  },
-                },
-              },
-            },
-          ],
-    },
+    where: { id, ...getPostDetailVisibility(user) },
     select: postSelect,
   });
 
@@ -896,6 +872,7 @@ export const createPost = async ({
 
   await preventReplicationLag('post', post.id);
   await userPostCountCache.refresh(userId);
+  if (data.title || data.detail) scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   let collectionTagId: null | number = null;
   let collectionItemExists = false;
@@ -1005,6 +982,8 @@ export const updatePost = async ({
   await preventReplicationLag('post', post.id);
   if (publishedAtWritten) await afterPostPublish({ postId: post.id, userId: post.userId });
   else await userPostCountCache.refresh(post.userId);
+  if (data.title !== undefined || data.detail !== undefined)
+    scanEntityInBackground({ entityType: 'Post', entityId: post.id });
 
   return post;
 };
@@ -1304,12 +1283,9 @@ export const addPostImage = async ({
   let techniqueId: number | undefined;
   if (meta && 'engine' in meta) {
     // older meta has type: string, but the updated meta has process: string
-    const rawProcess = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
-    // Graph workflow keys carry a variant suffix (e.g. 'img2img:hires-fix'); techniques are
-    // keyed on the base ('img2img'), so match on the segment before the colon.
-    const process = rawProcess?.split(':')[0];
+    const process = (meta.process ?? meta.type ?? meta.workflow) as string | undefined;
     if (process) {
-      techniqueId = (await getTechniqueByName(process))?.id;
+      techniqueId = (await getTechniqueForWorkflow(process))?.id;
     }
   }
 

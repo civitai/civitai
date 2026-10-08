@@ -8,8 +8,9 @@ import type {
   NanoBanana2LiteImageGenInput,
   NanoBananaProImageGenInput,
 } from '@civitai/client';
+import type { NanoBanana21ImageGenInput } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 export const createNanoBananaInput = defineHandler<
@@ -62,6 +63,23 @@ export const createNanoBananaInput = defineHandler<
           seed: data.seed,
           enableWebSearch: data.enableWebSearch,
         }) as NanoBanana2ImageGenInput,
+      },
+    ];
+  }
+
+  if (data.nanoBananaMode === 'v21') {
+    return [
+      {
+        $type: 'imageGen',
+        input: removeEmpty({
+          engine: 'google',
+          model: 'nano-banana-2.1',
+          prompt: data.prompt,
+          aspectRatio: data.aspectRatio?.value,
+          resolution: data.resolution,
+          images: data.images?.map((x) => x.url),
+          numImages: quantity,
+        }) as NanoBanana21ImageGenInput,
       },
     ];
   }

@@ -69,6 +69,12 @@ const mocks = vi.hoisted(() => ({
     string,
     boolean
   >,
+  // The owner "Visibility" item's lazy read, recorded with its `enabled` per call. Data is
+  // returned only when enabled, matching React Query for a disabled query.
+  authoringCalls: [] as { input: unknown; enabled: boolean | undefined }[],
+  authoringContext: null as null | Record<string, unknown>,
+  setVisibilityMutate: vi.fn(),
+  setVisibilityAsModMutate: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({
@@ -196,6 +202,23 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
           isPending: false,
         }),
       },
+      // 🔴 THE TWO VISIBILITY PICKERS' HOOKS. Both modals mount (lazily) the first time an
+      // owner's or moderator's menu opens, so a missing key here throws AT MOUNT and fails
+      // every test in this file that opens such a menu — measured: 15 of 99 went red.
+      getAuthoringContext: {
+        useQuery: (input: unknown, opts?: { enabled?: boolean }) => {
+          mocks.authoringCalls.push({ input, enabled: opts?.enabled });
+          return opts?.enabled
+            ? { data: mocks.authoringContext ?? undefined, isError: false }
+            : { data: undefined, isError: false };
+        },
+      },
+      setListingVisibility: {
+        useMutation: () => ({ mutate: mocks.setVisibilityMutate, isPending: false }),
+      },
+      setListingVisibilityAsModerator: {
+        useMutation: () => ({ mutate: mocks.setVisibilityAsModMutate, isPending: false }),
+      },
     },
     // The SmartCreatorCard's own fetch. 🔴 VERIFIED PUBLIC: `user.getCreator` is a
     // `publicProcedure` in `src/server/routers/user.router.ts`, which is why this page
@@ -212,6 +235,8 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         getMyReview: { invalidate: async () => undefined },
         listReviews: { invalidate: async () => undefined },
         getAppDetail: { invalidate: async () => undefined },
+        getAuthoringContext: { invalidate: async () => undefined },
+        listMine: { invalidate: async () => undefined },
       },
     }),
   },
@@ -284,6 +309,10 @@ beforeEach(async () => {
   mocks.delistMutate.mockClear();
   mocks.resetOffsiteMutate.mockClear();
   mocks.resetOnsiteMutate.mockClear();
+  mocks.authoringCalls = [];
+  mocks.authoringContext = null;
+  mocks.setVisibilityMutate.mockClear();
+  mocks.setVisibilityAsModMutate.mockClear();
   // 🔴 Restore the WIDE viewport before every test. The viewport is browser-global
   // state, so without this a narrow-layout test silently re-runs every later test at
   // 390px — the "config pins a dimension" trap, arriving by leakage instead of config.
@@ -535,6 +564,8 @@ describe('AppListingDetailBody', () => {
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-owner-edit"]')).toBeNull();
+    // The owner Visibility item is owner-only, like Edit.
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).toBeNull();
   });
 
   test('🔴 the OWNER gets no Review item (no self-review), but keeps Report', async () => {
@@ -544,7 +575,36 @@ describe('AppListingDetailBody', () => {
     // Positive control from the same dropdown: Report and Edit ARE there.
     expect(dropdown.querySelector('[data-testid="apps-listing-report-action"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-owner-edit"]')).not.toBeNull();
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).not.toBeNull();
     expect(dropdown.querySelector('[data-testid="apps-listing-review-action"]')).toBeNull();
+  });
+
+  test('🔴 the owner Visibility item fetches the authoring context only when clicked', async () => {
+    mocks.currentUser = { id: 5, username: 'alice' };
+    mocks.authoringContext = {
+      status: 'approved',
+      role: 'owner',
+      lastModerationAction: null,
+      visibility: 'moderators',
+      visibilityAvailable: true,
+    };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    const item = dropdown.querySelector(
+      '[data-testid="apps-listing-owner-visibility"]'
+    ) as HTMLElement | null;
+    expect(item).not.toBeNull();
+    // Menu open, picker mounted, read still disabled.
+    expect(mocks.authoringCalls.length).toBeGreaterThan(0);
+    expect(mocks.authoringCalls.every((c) => c.enabled === false)).toBe(true);
+
+    await userEvent.click(item as HTMLElement);
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility-save').first())
+      .toBeInTheDocument();
+    expect(mocks.authoringCalls.filter((c) => c.enabled).map((c) => c.input)).toContainEqual({
+      appListingId: 'l1',
+    });
   });
 
   test('🔴 a SIGNED-OUT viewer gets no menu at all (nothing in it is available)', async () => {
@@ -1896,6 +1956,7 @@ describe('AppListingDetailBody — moderator menu section', () => {
   const NON_MOD = { id: 999, username: 'bob' };
   const MESSAGE_ITEM = 'apps-listing-mod-message-owner';
   const MANAGE_ITEM = 'apps-listing-mod-manage';
+  const VISIBILITY_ITEM = 'apps-listing-mod-visibility';
   // Menu items and confirm fields share a stem per action — see `TAKEDOWN_TESTID_STEM`.
   const UNPUBLISH = 'apps-listing-unpublish';
   const HIDE = 'apps-listing-hide';
@@ -1927,13 +1988,18 @@ describe('AppListingDetailBody — moderator menu section', () => {
     await page.getByTestId(`${stem}-submit`).first().click();
   }
 
-  test('🔴 a MODERATOR gets Contact app owner, BOTH takedowns, and the review-queue link', async () => {
+  test('🔴 a MODERATOR gets Contact app owner, BOTH takedowns, Set visibility, and the review-queue link', async () => {
     mocks.currentUser = MOD;
     const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
     const dropdown = (await openMenu(within)) as HTMLElement;
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
     expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
     expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)?.textContent).toContain(
+      'Set visibility'
+    );
+    // Not the owner, so not the owner's copy of the control.
+    expect(dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')).toBeNull();
     // The INVERSE affordance. There is no Relist button because a removed listing 404s
     // on this route; the link is where a removed listing can actually be acted on.
     //
@@ -1947,6 +2013,23 @@ describe('AppListingDetailBody — moderator menu section', () => {
     );
     // Asserted on the STATE, not on a word: no lifecycle action here may be a relist.
     expect(dropdown.textContent).not.toContain('Relist');
+  });
+
+  test('an OWNER who is also a MODERATOR gets "Visibility" and NOT "Set visibility" — the other mod items stay', async () => {
+    // Same viewer shape as MOD, differing only in the id: 5 is `base().creator.id`.
+    mocks.currentUser = { ...MOD, id: 5 };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(
+      dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')?.textContent
+    ).toContain('Visibility');
+    // Positive control: the moderator section is there, so the absence is set-visibility's.
+    expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)).toBeNull();
+    expect(dropdown.textContent).not.toContain('Set visibility');
   });
 
   test('🔴 the two takedown items are TELLABLE APART in the rendered menu', async () => {
@@ -1981,7 +2064,19 @@ describe('AppListingDetailBody — moderator menu section', () => {
     expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)).toBeNull();
     expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).toBeNull();
+  });
+
+  test('the Set visibility item opens the moderator picker (menu → modal wiring)', async () => {
+    mocks.currentUser = MOD;
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    await clickMenuItem(within, VISIBILITY_ITEM);
+    // The REAL `ModListingVisibilityModal`: its required reason field and its title.
+    await expect
+      .element(page.getByTestId('apps-mod-visibility-reason').first())
+      .toBeInTheDocument();
+    expect(document.body.textContent).toContain('Set visibility for my-app');
   });
 
   test('the Contact app owner item opens the composer (menu → modal wiring)', async () => {

@@ -1,7 +1,9 @@
 <script lang="ts">
-  import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { SvelteMap, SvelteSet } from 'svelte/reactivity';
+  import RulingForm, { emptyRulingDraft, type RulingDraft } from '$lib/components/RulingForm.svelte';
+  import { appealRulingChoices } from '$lib/ruling-choices';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import ImageCardModTools from './ImageCardModTools.svelte';
   import VerdictBadge from './VerdictBadge.svelte';
 
@@ -10,6 +12,7 @@
     verdict,
     selected,
     messages,
+    drafts,
     submit,
   }: {
     item: { id: number; minor: boolean; poi: boolean };
@@ -17,21 +20,14 @@
     selected: SvelteSet<string | number>;
     /** imageId → resolution message. Held by the page so it survives this card re-rendering. */
     messages: SvelteMap<number, string>;
+    /** imageId → the ruling being drafted. Held by the page for the same reason: the card swaps to its
+     *  verdict badge on submit and back on a refusal, which would otherwise come back empty. */
+    drafts: SvelteMap<number, RulingDraft<ResolutionVerdict<'appeal'>>>;
     submit: SubmitFunction;
   } = $props();
 
-  const CHOICES = [
-    {
-      status: 'Approved',
-      label: 'Approve',
-      cls: 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10',
-    },
-    {
-      status: 'Rejected',
-      label: 'Reject',
-      cls: 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10',
-    },
-  ];
+  type Verdict = ResolutionVerdict<'appeal'>;
+  const CHOICES = appealRulingChoices();
 </script>
 
 {#if verdict}
@@ -53,28 +49,28 @@
       <span class="text-xs text-primary">In selection — resolve it from the bar below.</span>
     {:else}
       <textarea
-        placeholder="Resolution message (optional)"
+        placeholder="Message to the user (optional)"
         value={messages.get(item.id) ?? ''}
         oninput={(e) => messages.set(item.id, e.currentTarget.value)}
         rows="2"
         maxlength={1000}
         class="w-full resize-none rounded border border-dark-4 bg-dark-6 px-2 py-1 text-xs"
       ></textarea>
-      <div class="flex flex-wrap gap-1.5">
-        {#each CHOICES as choice (choice.status)}
-          <form method="POST" action="?/resolveAppeal" use:enhance={submit}>
-            <input type="hidden" name="imageId" value={item.id} />
-            <input type="hidden" name="status" value={choice.status} />
-            <input type="hidden" name="resolvedMessage" value={messages.get(item.id) ?? ''} />
-            <button
-              type="submit"
-              class="rounded border px-2 py-0.5 text-xs font-semibold transition {choice.cls}"
-            >
-              {choice.label}
-            </button>
-          </form>
-        {/each}
-      </div>
+      <RulingForm
+        subject="appeal"
+        choices={CHOICES}
+        action="?/resolveAppeal"
+        enhancer={submit}
+        idPrefix="appeal-{item.id}"
+        size="xs"
+        bind:draft={() => drafts.get(item.id) ?? emptyRulingDraft<Verdict>(),
+          (d: RulingDraft<Verdict>) => drafts.set(item.id, d)}
+      >
+        {#snippet hidden()}
+          <input type="hidden" name="imageId" value={item.id} />
+          <input type="hidden" name="resolvedMessage" value={messages.get(item.id) ?? ''} />
+        {/snippet}
+      </RulingForm>
     {/if}
   </div>
 {/if}

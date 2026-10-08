@@ -12,6 +12,7 @@ import type {
   GetCrucibleByIdSchema,
   GetCrucibleRequiredModelsSchema,
   GetJudgingProgressSchema,
+  GetJudgingStatusesSchema,
   GetCruciblesInfiniteSchema,
   GetJudgesCountSchema,
   GetJudgeStatsSchema,
@@ -43,6 +44,7 @@ import {
   getCrucibleMinVotesToPlace,
   getCrucibleRequiredModels,
   getJudgingProgress,
+  getJudgingStatuses,
   getCrucibles,
   getFeaturedCrucible,
   getJudgesCount,
@@ -250,6 +252,21 @@ export const getJudgingProgressHandler = async ({
   ctx: ProtectedContext;
 }) =>
   getJudgingProgress({
+    ...input,
+    userId: ctx.user.id,
+    isGreen: !!ctx.features?.isGreen,
+    isModerator: ctx.user.isModerator,
+    blockedByUserIds: await getAllBlockedByUserIds(ctx.user),
+  });
+
+export const getJudgingStatusesHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetJudgingStatusesSchema;
+  ctx: ProtectedContext;
+}) =>
+  getJudgingStatuses({
     ...input,
     userId: ctx.user.id,
     isGreen: !!ctx.features?.isGreen,

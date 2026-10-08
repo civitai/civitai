@@ -1,17 +1,24 @@
 import { z } from 'zod';
 import { branch, defineGraph, type FieldDef } from 'form-graph';
 import { checkpointDef } from '../checkpoint';
-import { SEED, boolDef, enumDef, imagesDef, sliderDef, textDef } from '../defs';
+import {
+  truncateCoerce,
+  clampCoerce,
+  SEED,
+  boolDef,
+  enumDef,
+  imagesDef,
+  sliderDef,
+  textDef,
+} from '../defs';
 import { familyScope, modelIdOf, type FamilyExt } from '../shared';
 
 /**
- * ACE Audio, ported from `ace-audio-graph.ts`. Simple mode is a single prompt
+ * ACE Audio. Simple mode is a single prompt
  * (the handler drafts lyrics/description via chatCompletion); custom mode is
  * the full control surface. cfg/steps ranges and defaults follow the model
- * variant (turbo vs base). No snippets — v1 merges triggerWordsGraph only.
+ * variant (turbo vs base). No snippets key at all.
  */
-
-// ---- copied from ace-audio-graph.ts, which dies with the data-graph engine --
 
 export type AceAudioMode = 'simple' | 'custom';
 
@@ -59,11 +66,8 @@ const ACE_AUDIO_DEFAULT_BPM = 120;
 
 const MAX_DESCRIPTION_LENGTH = 1000;
 
-// ---- end of ace-audio-graph.ts copies ---------------------------------------
-
 type AceExt = FamilyExt & { model?: unknown; triggerWords?: string[] };
 
-/** v1's textNode editors read triggerWords off ctx; no snippets graph here. */
 const editorMeta = (name: string, required: boolean, triggerWords: string[] | undefined) => ({
   required,
   targetKey: name,
@@ -81,17 +85,20 @@ const simple = defineGraph<AceExt>().field('prompt', ({ _ext }) => ({
   meta: editorMeta('prompt', true, _ext.triggerWords),
 }));
 
-/** 0-1 weight — unbounded coerce input, bounded output, like v1's node. */
+/** 0-1 weight — unbounded coerce input, bounded output. */
 const WEIGHT: FieldDef<number, { min: number; max: number; step: number }> = {
   input: z.coerce.number().optional(),
   output: z.number().min(0).max(1),
   default: 0.5,
+  // 'coerce', not 'correct': the input above is an unbounded 'z.coerce.number()', so a
+  // `correct` would be the first thing to clamp an out-of-range weight on the SERVER
+  // parse too — a 400 turned into a silent normalise-and-bill.
+  coerce: clampCoerce({ min: 0, max: 1, fallback: 0.5 }),
   meta: { min: 0, max: 1, step: 0.1 },
 };
 
 const custom = defineGraph<AceExt>()
-  // v1's model effect fires at parse init and stomps cfg/steps to the
-  // variant's defaults — at the parse boundary they are pinned, not free
+  // At the parse boundary cfg/steps are PINNED to the variant's defaults, not free
   .field('cfgScale', ({ _ext }) => {
     const target = resolveVariant(modelIdOf(_ext.model)) === 'turbo' ? 1 : 4;
     return {
@@ -113,6 +120,7 @@ const custom = defineGraph<AceExt>()
     input: z.string().optional(),
     output: z.string().trim().max(100, 'Title is too long').optional(),
     default: '',
+    coerce: truncateCoerce(100),
   })
   .field('musicDescription', ({ _ext }) => ({
     ...requiredText('musicDescription', 'Music description is required', MAX_DESCRIPTION_LENGTH),
@@ -126,6 +134,11 @@ const custom = defineGraph<AceExt>()
     input: z.coerce.number().optional(),
     output: z.number().min(ACE_AUDIO_MIN_BPM).max(ACE_AUDIO_MAX_BPM),
     default: ACE_AUDIO_DEFAULT_BPM,
+    coerce: clampCoerce({
+      min: ACE_AUDIO_MIN_BPM,
+      max: ACE_AUDIO_MAX_BPM,
+      fallback: ACE_AUDIO_DEFAULT_BPM,
+    }),
     meta: { min: ACE_AUDIO_MIN_BPM, max: ACE_AUDIO_MAX_BPM },
   })
   .field('instrumentalWeight', WEIGHT)
@@ -157,12 +170,17 @@ export const ace = defineGraph<FamilyExt>({ scope: familyScope })
     input: z.coerce.number().optional(),
     output: z.number().min(ACE_AUDIO_MIN_DURATION).max(ACE_AUDIO_MAX_DURATION),
     default: ACE_AUDIO_DEFAULT_DURATION,
+    coerce: clampCoerce({
+      min: ACE_AUDIO_MIN_DURATION,
+      max: ACE_AUDIO_MAX_DURATION,
+      fallback: ACE_AUDIO_DEFAULT_DURATION,
+    }),
     meta: { min: ACE_AUDIO_MIN_DURATION, max: ACE_AUDIO_MAX_DURATION },
   })
   .field('aceAudioMode', enumDef({ options: aceAudioModeOptions, default: 'simple' }))
   .use(modes)
-  // v1: switching models resets cfg/steps to the variant's defaults, so a
-  // base-range value can't survive onto a turbo model's smaller range
+  // Switching models resets cfg/steps to the variant's defaults, so a base-range
+  // value can't survive onto a turbo model's smaller range
   .effect({
     model: (model: unknown) => {
       const isTurbo = resolveVariant(modelIdOf(model)) === 'turbo';

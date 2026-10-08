@@ -1,5 +1,5 @@
 import { branch, defFamily, defineGraph } from 'form-graph';
-import { isWorkflowOrVariant } from '~/shared/data-graph/generation/config/workflows';
+import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import { checkpointDef, type VersionGroup } from '../checkpoint';
 import { effectiveEcosystemOf } from '../reconcile';
 import {
@@ -19,17 +19,11 @@ import {
 import { familyScope, textBlock, type FamilyExt, narrowEcosystem } from '../shared';
 
 /**
- * LTX (LTXV2 + LTXV23 + LTXV25), ported from `ltx-graph.ts`.
- *
- * data-graph shape → form-graph shape:
- * - the parent's shared nodes become a `shared` graph every version mounts;
- * - `.computed('ltxVersion') + .discriminator('ltxVersion', {...})` becomes a
- *   TAGGED branch: the picked member key is stamped into state under
- *   `ltxVersion`, so the state union discriminates exactly as before;
- * - the checkpoint graph's ecosystem-switching effect becomes a rule on the hub.
+ * LTX (LTXV2 + LTXV23 + LTXV25). The three versions share one `shared` graph and
+ * branch on a TAGGED key: the picked member's key is stamped into state as
+ * `ltxVersion`, which is what makes the state union discriminable. The
+ * ecosystem-switching behaviour is a rule on the hub, not here.
  */
-
-// ---- copied from ltx-graph.ts / version-ids.ts, which die with the engine ----
 
 const LTXV2_DEV_ID = 2578325;
 export const LTXV2_DISTILLED_ID = 2600562;
@@ -157,8 +151,6 @@ const ltxv23Resolutions = [
 export const ltxv25AspectRatiosByResolution: Record<string, AspectRatioOption[]> =
   ltxv23AspectRatiosByResolution;
 
-// ---- end of ltx-graph.ts copies ---------------------------------------------
-
 /** Aspect-ratio option sets vary per resolution; memoize per resolution key. */
 const AR_V23 = defFamily((resolution: string) =>
   aspectRatioDef({
@@ -176,7 +168,7 @@ const AR_V2 = aspectRatioDef({ options: ltxv2AspectRatios, default: '16:9' });
 const RESOLUTION = enumDef({ options: ltxv23Resolutions, default: '720p' });
 const DURATION_V2 = enumDef({ options: ltxv2Durations, default: 5 });
 
-/** ltx-graph.ts: max duration per resolution (same table for v23 and v25). */
+/** Max duration per resolution (same table for v23 and v25). */
 const maxDurationByResolution: Record<string, number> = { '720p': 20, '1080p': 15 };
 const DURATION = defFamily((resolution: string) =>
   sliderDef({ min: 3, max: maxDurationByResolution[resolution] ?? 20, step: 1, default: 5 })
@@ -250,7 +242,7 @@ const FRAME_GUIDE = sliderDef({
   ],
 });
 
-/** ltx-graph.ts `sharedAspectRatioValues` — upload-time ratio hints. */
+/** Upload-time ratio hints. */
 const sharedAspectRatioValues = ['16:9', '3:2', '1:1', '2:3', '9:16'];
 
 const isFirstLast = (workflow: string) =>
@@ -297,7 +289,7 @@ const shared = defineGraph<FamilyExt>()
     })
   )
   // LTX is unlocked and its version options carry baseModel precisely so a
-  // model choice drags the ecosystem (v1's checkpoint effect) — same split as
+  // model choice drags the ecosystem — same split as
   // image/sd.ts. The version BRANCH still picks on the selection; the
   // cross-version re-pick happens at the boundary via reconcileSelectors.
   .computed(

@@ -15,6 +15,7 @@ import dynamic from 'next/dynamic';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import type Konva from 'konva';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -73,6 +74,7 @@ export function MaskEditorModal({
   const [brushSize, setBrushSize] = useState(DEFAULT_BRUSH);
   const [fill, setFill] = useState<FillMode>('black');
   const [loading, setLoading] = useState(false);
+  const { requireSignIn } = useSignInToUpload();
 
   const strokesRef = useRef<MaskStroke[]>(strokes);
   strokesRef.current = strokes;
@@ -173,6 +175,8 @@ export function MaskEditorModal({
       handleCancel();
       return;
     }
+    // The mask is uploaded on confirm; a signed-out user signs in instead, keeping the editor open.
+    if (requireSignIn()) return;
     setLoading(true);
     try {
       const blob = await exportPng();

@@ -775,11 +775,17 @@ export async function createModelFileScanRequest({
   // 52% of them) rather than spread out as independent file losses would be.
   if (preflight) {
     try {
-      await resolveDownloadUrl(fileId, url);
+      await resolveDownloadUrl(fileId, url, undefined, {
+        caller: 'orchestrator-preflight',
+        actor: 'internal',
+      });
     } catch (firstError) {
       await new Promise((r) => setTimeout(r, 60_000));
       try {
-        await resolveDownloadUrl(fileId, url);
+        await resolveDownloadUrl(fileId, url, undefined, {
+          caller: 'orchestrator-preflight',
+          actor: 'internal',
+        });
       } catch (retryError) {
         // Classify on the RETRY's failure: it is the most recent evidence, and
         // the first failure may have been the transient one that the retry

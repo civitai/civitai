@@ -11,7 +11,7 @@ import {
 } from '../shared';
 
 /**
- * Boogu (base / turbo / edit / editTurbo), ported from `boogu-graph.ts`. One
+ * Boogu (base / turbo / edit / editTurbo). One
  * ecosystem; version options are WORKFLOW-scoped (Base/Turbo on txt2img,
  * Edit/Edit Turbo on img2img:edit) and the MODEL WINS the workflow — an edit
  * checkpoint on txt2img switches the workflow to img2img:edit (probed; the
@@ -19,8 +19,6 @@ import {
  * cannot change the root workflow mid-parse). Distilled modes hide cfg range
  * and negative prompt.
  */
-
-// ---- copied from boogu-graph.ts, which dies with the data-graph engine ------
 
 export type BooguMode = 'base' | 'turbo' | 'edit' | 'editTurbo';
 
@@ -45,8 +43,6 @@ const booguEditVersionOptions = [
   { label: 'Edit', value: booguVersionIds.edit },
   { label: 'Edit Turbo', value: booguVersionIds.editTurbo },
 ];
-
-// ---- end of boogu-graph.ts copies -------------------------------------------
 
 type BooguModeExt = FamilyExt & { model?: unknown };
 
@@ -78,7 +74,7 @@ const editTurbo = defineGraph<BooguModeExt>()
   .field('cfgScale', perModelSlider(TURBO_CFG))
   .field('steps', perModelSlider(TURBO_STEPS));
 
-/** Tagged: v1's `booguMode` computed becomes the branch key. */
+/** Tagged: the picked key is stamped into state as `booguMode`. */
 const modes = branch('booguMode', (ext: BooguModeExt) => booguModeOf(ext.model, ext), {
   base,
   turbo,
@@ -102,8 +98,6 @@ export const boogu = defineGraph<FamilyExt>({ scope: familyScope })
   })
   .field('seed', SEED)
   .use(modes)
-  // negativePrompt exists only in the base/edit v1 subgraphs (turbo variants
-  // drop it), and its in-branch snippet registration never fires
   .use(
     makeTextBlock({
       negativePrompt: (ext) => ['base', 'edit'].includes(booguModeOf(ext.model, ext)),

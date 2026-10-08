@@ -34,7 +34,7 @@ export interface NumberMeta {
 /**
  * A numeric slider: lenient input snaps into range, output enforces it.
  * Near-twin of the lib's `slider` minus its `coerce`; kept separate so the
- * snap semantics stay pinned to v1's exactly.
+ * snap semantics stay pinned.
  */
 export const sliderDef = cachedFactory(function sliderDef(opts: {
   min: number;
@@ -86,7 +86,7 @@ function buildEnumDef<const T extends string | number>(opts: {
 
 /**
  * A closed option set: coerces, then REFUSES values outside the options at the
- * boundary — v1's nodes refuse, and the differential suites pin that. Still not
+ * boundary — the defs refuse rather than clamp. Still not
  * the lib's `enumOf`, which corrects to the first UNGATED option and normalises
  * trusted writes destructively; `correct` here falls back to the declared
  * default and leaves the original in intent. Don't consolidate the two without

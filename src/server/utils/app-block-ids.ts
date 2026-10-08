@@ -150,6 +150,11 @@ export function newAppListingModerationEventId(): string {
   return `alme_${newUlid()}`;
 }
 
+// App Store sub-listings. The shape is pinned by `APP_SUB_LISTING_ID_RE`.
+export function newAppSubListingId(): string {
+  return `asl_${newUlid()}`;
+}
+
 // App Blocks — agentic mod code-review report (P0). Dark/additive.
 export function newAppReviewAgentReportId(): string {
   return `arar_${newUlid()}`;

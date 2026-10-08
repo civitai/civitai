@@ -24,9 +24,9 @@ const tosFiles = readdirSync(CONTENT_ROOT).filter((f) => /^tos(\.[\w-]+)?\.md$/.
  * re-accept.
  */
 const ACCEPTED_IDENTITY: Record<string, string> = {
-  blue: 'b5db388c235f268791f1aaee484913af94544c6ce1b1b5b8487d5dc1307f8b4e',
-  red: 'b5db388c235f268791f1aaee484913af94544c6ce1b1b5b8487d5dc1307f8b4e', // no tos.red.md — falls back to tos.md
-  green: '978c839dea33653f13bce7440d91f4024e886e93557d4deb5718086c904ce0b5',
+  blue: '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0',
+  red: '0f0267ab412d4f1e050f501406a85367042265223ec38a2b04b2a8e7b61823f0', // no tos.red.md — falls back to tos.md
+  green: 'c8098f0e2e2364091210a1efdf4a1d170dcc0fda179224df977adf570e0873b6',
 };
 
 describe('ToS prohibited-content anchor', () => {

@@ -80,7 +80,7 @@ export const MODELS_WITHHELD_ATTRIBUTES = [
   'flags',
   // Sort-only AND filter-only: `insight.qualityScore` is in both `modelsSortableAttributes` and
   // `modelsFilterableAttributes`, and no consumer reads it off a hit — the resource-intent matcher
-  // sorts on it and reads the scores it needs from Postgres via `loadResourceInsights`. The
+  // reads the scores it needs from Postgres via `loadResourceInsights`. The
   // top-level key is `insight` because `transformData` emits
   // `insight: { qualityScore, role, styleFamily, modelVersionId }`, and this list is keyed on
   // top-level attributes (nested children ride along with their parent).

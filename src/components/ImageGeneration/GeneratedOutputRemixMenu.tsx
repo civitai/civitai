@@ -7,7 +7,7 @@ import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generat
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { postGeneratedMedia } from '~/components/ImageGeneration/utils/postGeneratedMedia';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
-import { showErrorNotification } from '~/utils/notifications';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -56,6 +56,7 @@ function GeneratedOutputRemixMenuContent({
   remixOfId: number;
 }) {
   const router = useRouter();
+  const showCreatePostError = useShowCreatePostError();
   const createPost = trpc.post.create.useMutation();
 
   /**
@@ -82,10 +83,7 @@ function GeneratedOutputRemixMenuContent({
         createPost: () => createPost.mutateAsync({}),
       });
     } catch (e) {
-      showErrorNotification({
-        title: 'Failed to create post',
-        error: new Error((e as Error).message),
-      });
+      showCreatePostError((e as Error).message);
     }
   };
 

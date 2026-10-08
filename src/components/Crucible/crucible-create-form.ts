@@ -13,6 +13,8 @@ import {
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_ENTRIES,
+  CRUCIBLE_ENTRY_CUTOFF_PERCENT,
+  CRUCIBLE_ENTRY_WARNING_PERCENT,
   CRUCIBLE_MAX_ENTRY_FEE,
   CRUCIBLE_MAX_PRIZE_POSITIONS,
   CRUCIBLE_MAX_SEEDED_PRIZE_POOL,
@@ -36,7 +38,6 @@ import {
 
 export const CRUCIBLE_CREATE_STEP_COUNT = 4;
 export const CRUCIBLE_CREATE_DRAFT_KEY = 'crucible_new';
-export const CRUCIBLE_NO_DESCRIPTION = 'No description provided';
 
 export const entryFeeRangeLabel = `${CRUCIBLE_MIN_ENTRY_FEE.toLocaleString()}–${CRUCIBLE_MAX_ENTRY_FEE.toLocaleString()} Buzz`;
 
@@ -69,6 +70,16 @@ export const crucibleCreateFormSchema = z.object({
       `At least ${CRUCIBLE_MIN_TOTAL_ENTRIES} entries are needed for judging`
     )
     .optional(),
+  entryWarningPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_WARNING_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_WARNING_PERCENT.max),
+  entryCutoffPercent: z
+    .number()
+    .int()
+    .min(CRUCIBLE_ENTRY_CUTOFF_PERCENT.min)
+    .max(CRUCIBLE_ENTRY_CUTOFF_PERCENT.max),
   allowedResources: z.array(z.number()).optional(),
   allowedBaseModels: z.array(z.string()).optional(),
   minViewSeconds: z.number().optional(),
@@ -94,6 +105,8 @@ export const crucibleCreateDefaultValues: CrucibleCreateFormValues = {
   entryFee: 100,
   entryLimit: 1,
   freeEntriesPerUser: 0,
+  entryWarningPercent: CRUCIBLE_ENTRY_WARNING_PERCENT.default,
+  entryCutoffPercent: CRUCIBLE_ENTRY_CUTOFF_PERCENT.default,
   allowedResources: [],
   allowedBaseModels: [],
   seededPrizePool: 0,
@@ -120,6 +133,8 @@ export const crucibleCreateDraftSchema = crucibleCreateFormSchema.extend({
   entryLimit: shape.entryLimit.catch(defaults.entryLimit),
   freeEntriesPerUser: shape.freeEntriesPerUser.catch(defaults.freeEntriesPerUser),
   maxTotalEntries: shape.maxTotalEntries.catch(undefined),
+  entryWarningPercent: shape.entryWarningPercent.catch(defaults.entryWarningPercent),
+  entryCutoffPercent: shape.entryCutoffPercent.catch(defaults.entryCutoffPercent),
   seededPrizePool: shape.seededPrizePool.catch(defaults.seededPrizePool),
   prizePositions: shape.prizePositions.catch({ ...CRUCIBLE_DEFAULT_PRIZE_POSITIONS }),
   coverImage: shape.coverImage.catch(null),
@@ -228,7 +243,7 @@ export function toCrucibleSubmitValues(values: CrucibleCreateFormValues) {
   const isVideo = values.contentType === MediaType.video;
   return {
     name: values.name.trim(),
-    description: values.description?.trim() || CRUCIBLE_NO_DESCRIPTION,
+    description: values.description?.trim() || undefined,
     coverImage: values.coverImage ?? undefined,
     heroImage: values.heroImage ?? undefined,
     nsfwLevel: values.nsfwLevel,
@@ -237,6 +252,8 @@ export function toCrucibleSubmitValues(values: CrucibleCreateFormValues) {
     entryLimit: values.entryLimit,
     freeEntriesPerUser: values.freeEntriesPerUser,
     maxTotalEntries: values.maxTotalEntries || undefined,
+    entryWarningPercent: values.entryWarningPercent,
+    entryCutoffPercent: values.entryCutoffPercent,
     allowedResources: values.allowedResources?.length ? values.allowedResources : undefined,
     allowedBaseModels: values.allowedBaseModels?.length ? values.allowedBaseModels : undefined,
     prizePositions: values.prizePositions,
@@ -261,6 +278,8 @@ export type CrucibleEditSource = {
   entryLimit: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
+  entryWarningPercent: number;
+  entryCutoffPercent: number;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   seededPrizePool: number;
@@ -303,6 +322,8 @@ export function crucibleToFormValues(crucible: CrucibleEditSource): CrucibleCrea
     entryLimit: crucible.entryLimit,
     freeEntriesPerUser: crucible.freeEntriesPerUser,
     maxTotalEntries: crucible.maxTotalEntries ?? undefined,
+    entryWarningPercent: crucible.entryWarningPercent,
+    entryCutoffPercent: crucible.entryCutoffPercent,
     allowedResources: Array.isArray(crucible.allowedResources)
       ? crucible.allowedResources.filter((id): id is number => typeof id === 'number')
       : [],
@@ -320,7 +341,7 @@ export function crucibleToFormValues(crucible: CrucibleEditSource): CrucibleCrea
 /** `null` clears a value; an absent key leaves it unchanged. */
 export type CrucibleUpdateChanges = {
   name?: string;
-  description?: string;
+  description?: string | null;
   coverImage?: CrucibleImageSchema;
   heroImage?: CrucibleImageSchema | null;
   nsfwLevel?: number;
@@ -329,6 +350,8 @@ export type CrucibleUpdateChanges = {
   entryLimit?: number;
   freeEntriesPerUser?: number;
   maxTotalEntries?: number | null;
+  entryWarningPercent?: number;
+  entryCutoffPercent?: number;
   allowedResources?: number[];
   allowedBaseModels?: string[];
   prizePositions?: Record<string, number>;
@@ -351,6 +374,8 @@ export const CRUCIBLE_EDITABLE_FIELDS = [
   'entryLimit',
   'freeEntriesPerUser',
   'maxTotalEntries',
+  'entryWarningPercent',
+  'entryCutoffPercent',
   'allowedResources',
   'allowedBaseModels',
   'prizePositions',

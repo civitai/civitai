@@ -9,6 +9,10 @@ import type {
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type {
   ComfyMiniMaxH3ControlVideoInput,
+  HeyGenVideoGenInput,
+  MiniMaxH3MaxImageToVideoInput,
+  MiniMaxH3MaxReferenceToVideoInput,
+  MiniMaxH3MaxTextToVideoInput,
   PreprocessVideoStepTemplate,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -17,8 +21,8 @@ import {
   MINIMAX_DEFAULT_ASPECT_RATIO,
   minimaxComfyAspectRatios,
 } from '~/shared/form-graph/generation/video/minimax.graph';
-import { buildControlVideoStep } from '../ecosystems/control-video.helper';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { buildControlVideoStep } from '../handlers/control-video.helper';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 
@@ -114,6 +118,82 @@ export const createMiniMaxInput = defineHandler<
   const firstFrameImage = !isRef2Vid && hasImages ? images?.[0]?.url : undefined;
   const lastFrameImage = !isRef2Vid && images && images.length > 1 ? images[1]?.url : undefined;
   const referenceImages = isRef2Vid && hasImages ? images?.map((x) => x.url) : undefined;
+  const isFalOrHeyGen = data.minimaxVariant === 'max' || data.minimaxVariant === 'heygen';
+  if (isFalOrHeyGen && isRef2Vid && !referenceImages?.length)
+    throw new Error('At least one reference image is required for img2vid:ref2vid');
+
+  if (data.minimaxVariant === 'max') {
+    const shared = {
+      engine: 'minimax-h3-max' as const,
+      prompt,
+      model: data.turbo ? ('turbo' as const) : ('max' as const),
+      duration: data.duration,
+      resolution: data.resolution,
+      seed: data.seed,
+    };
+    if (isRef2Vid) {
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...shared,
+            operation: 'referenceToVideo',
+            aspectRatio: data.aspectRatio
+              ?.value as MiniMaxH3MaxReferenceToVideoInput['aspectRatio'],
+            referenceImages,
+          }) as MiniMaxH3MaxReferenceToVideoInput,
+        },
+      ];
+    }
+    if (firstFrameImage) {
+      return [
+        {
+          $type: 'videoGen',
+          input: removeEmpty({
+            ...shared,
+            operation: 'imageToVideo',
+            firstFrameImage,
+            lastFrameImage,
+          }) as MiniMaxH3MaxImageToVideoInput,
+        },
+      ];
+    }
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty({
+          ...shared,
+          operation: 'textToVideo',
+          aspectRatio: data.aspectRatio?.value as MiniMaxH3MaxTextToVideoInput['aspectRatio'],
+        }) as MiniMaxH3MaxTextToVideoInput,
+      },
+    ];
+  }
+
+  if (data.minimaxVariant === 'heygen') {
+    return [
+      {
+        $type: 'videoGen',
+        input: removeEmpty({
+          engine: 'heygen',
+          operation: isRef2Vid
+            ? 'referenceToVideo'
+            : firstFrameImage
+            ? 'imageToVideo'
+            : 'textToVideo',
+          prompt,
+          duration: data.duration,
+          resolution: data.resolution,
+          // required by the schema; ignored for imageToVideo, which has no ratio field
+          aspectRatio: (data.aspectRatio?.value ??
+            MINIMAX_DEFAULT_ASPECT_RATIO) as HeyGenVideoGenInput['aspectRatio'],
+          seed: data.seed,
+          firstFrameImage,
+          referenceImages,
+        }) as HeyGenVideoGenInput,
+      },
+    ];
+  }
 
   return [
     {

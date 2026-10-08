@@ -83,9 +83,12 @@ const LEDGER: Record<string, { calls: number; selfBinds: string; why: string }> 
     //   -1  `updateUserSettings`  → user-settings.service.ts          (POST /user-checkpoint/set)
     // Both landed as their own ledger entries below, so net production call sites are
     // unchanged — the count moved between rows, it did not leave the table.
-    calls: 15,
+    // 15 → 16: `assertTrainingRequestAllowed`, the shared gate of the four
+    // `kind:'training'` entry points (dataset, estimate, submit, and the consent
+    // pair via its preamble). One call site, not four — the helper is the gate.
+    calls: 16,
     selfBinds: 'parseSubjectUserId(claims.sub) on claims from authorizeBlockBridgeToken',
-    why: 'The tRPC bridge procs. Block-JWT-authed publicProcedures, so the flag cannot be evaluated against ctx.user and must be evaluated against the token subject. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
+    why: 'The tRPC bridge procs. Block-JWT-authed procedures (`previewPostFromApp`, `createPostFromApp` and `publishGenerationOutputs` additionally require a session matching the subject), so the flag is evaluated against the token subject, never ctx.user. Was 17 until two post-authorization halves moved out to be shared with their REST twins: `getImagesByIds` into block-gated-images-read.service.ts, and `updateUserSettings` into user-settings.service.ts. Neither call disappeared — both MOVED, and the entries below are where they went.',
   },
   'src/server/services/blocks/block-gated-images-read.service.ts': {
     calls: 1,

@@ -27,7 +27,7 @@ import {
 } from '~/components/generation_v2/GenerationLayout';
 import { getGenerationEcosystemsForMediaType } from '~/shared/constants/basemodel.constants';
 import { buzzSpendTypes } from '~/shared/constants/buzz.constants';
-import type { SnippetReferenceValue } from '~/shared/data-graph/schemas/snippet-schema';
+import type { SnippetReferenceValue } from '~/shared/generation/schemas/snippet-schema';
 import { showErrorNotification } from '~/utils/notifications';
 import { submitPromptEnhancement, useGetPromptEnhancementHistory } from './promptEnhanceHooks';
 import type { PromptEnhanceImage } from './promptEnhanceStore';

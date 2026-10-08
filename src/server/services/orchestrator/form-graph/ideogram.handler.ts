@@ -6,7 +6,7 @@ import type {
   Ideogram45EditFalImageGenInput,
 } from '@civitai/orchestration-client';
 import { removeEmpty } from '~/utils/object-helpers';
-import { defineHandler } from '../ecosystems/handler-factory';
+import { defineHandler } from '../handlers/handler-factory';
 import { resourcesToLoras } from './types';
 import type { EcosystemData } from './types';
 

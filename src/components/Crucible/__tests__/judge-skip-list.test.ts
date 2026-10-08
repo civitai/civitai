@@ -22,43 +22,68 @@ function renderSkipList() {
 }
 
 describe('judgeSkipListReducer', () => {
-  it('adds both entries of a skipped pair', () => {
-    expect(judgeSkipListReducer([1, 2], { type: 'skip', pair: pair(3, 4) })).toEqual([1, 2, 3, 4]);
+  it('adds a skipped pair, lower id first', () => {
+    expect(judgeSkipListReducer([[1, 2]], { type: 'skip', pair: pair(4, 3) })).toEqual([
+      [1, 2],
+      [3, 4],
+    ]);
   });
 
-  it('keeps only the most recent entries', () => {
-    const full = Array.from({ length: JUDGE_SKIP_LIST_LIMIT }, (_, i) => i + 1);
+  it('keeps only the most recent pairs', () => {
+    const full = Array.from({ length: JUDGE_SKIP_LIST_LIMIT }, (_, i): [number, number] => [
+      i * 2 + 1,
+      i * 2 + 2,
+    ]);
     const next = judgeSkipListReducer(full, { type: 'skip', pair: pair(100, 101) });
 
     expect(next).toHaveLength(JUDGE_SKIP_LIST_LIMIT);
-    expect(next.slice(-2)).toEqual([100, 101]);
-    expect(next).not.toContain(1);
+    expect(next.at(-1)).toEqual([100, 101]);
+    expect(next).not.toContainEqual([1, 2]);
   });
 
   it('never grows past what getJudgingPair accepts, or every pair request is rejected', () => {
-    let skipped: number[] = [];
+    let skipped: [number, number][] = [];
     for (let id = 1; id < 200; id += 2) {
       skipped = judgeSkipListReducer(skipped, { type: 'skip', pair: pair(id, id + 1) });
     }
 
-    expect(
-      getJudgingPairSchema.safeParse({ crucibleId: 1, excludeEntryIds: skipped }).success
-    ).toBe(true);
+    expect(getJudgingPairSchema.safeParse({ crucibleId: 1, skippedPairs: skipped }).success).toBe(
+      true
+    );
   });
 
-  it('does not list an entry twice when a pair holding it is skipped again', () => {
-    expect(judgeSkipListReducer([1, 2], { type: 'skip', pair: pair(2, 3) })).toEqual([1, 2, 3]);
+  it('moves a pair skipped again to the end instead of listing it twice', () => {
+    expect(
+      judgeSkipListReducer(
+        [
+          [1, 2],
+          [3, 4],
+        ],
+        { type: 'skip', pair: pair(2, 1) }
+      )
+    ).toEqual([
+      [3, 4],
+      [1, 2],
+    ]);
   });
 
   // Identity, not equality: the page reads "same array" as "the pair query's input did not move, so
-  // refetch by hand". A copy with the same ids leaves the judge on the pair they just voted on.
+  // refetch by hand". A copy with the same pairs leaves the judge on the pair they just voted on.
   it('returns the SAME array after a vote on other entries, which tells the page to refetch', () => {
-    const skipped = [1, 2];
+    const skipped: [number, number][] = [[1, 2]];
     expect(judgeSkipListReducer(skipped, { type: 'vote', pair: pair(3, 4) })).toBe(skipped);
   });
 
-  it('takes an entry off the list once the judge votes on it', () => {
-    expect(judgeSkipListReducer([1, 2, 5], { type: 'vote', pair: pair(2, 9) })).toEqual([1, 5]);
+  it('takes the pairs holding an entry off the list once the judge votes on it', () => {
+    expect(
+      judgeSkipListReducer(
+        [
+          [1, 2],
+          [5, 6],
+        ],
+        { type: 'vote', pair: pair(2, 9) }
+      )
+    ).toEqual([[5, 6]]);
   });
 });
 
@@ -75,7 +100,7 @@ describe('useJudgeSkipList', () => {
     });
 
     expect(changed).toBe(false);
-    expect(list.current.skippedEntryIds).toEqual([1, 2]);
+    expect(list.current.skippedPairs).toEqual([[1, 2]]);
   });
 
   it('drops a voted entry and reports the change, so the moved input fetches the next pair', () => {
@@ -88,6 +113,6 @@ describe('useJudgeSkipList', () => {
     });
 
     expect(changed).toBe(true);
-    expect(list.current.skippedEntryIds).toEqual([1]);
+    expect(list.current.skippedPairs).toEqual([]);
   });
 });
