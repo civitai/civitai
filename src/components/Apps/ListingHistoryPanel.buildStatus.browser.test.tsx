@@ -344,7 +344,6 @@ describe('D — "live" belongs to the currently published version only', () => {
     expect(page.getByTestId('apps-history-deploy-v_cur').element().textContent).toBe('live');
     expect(page.getByTestId('apps-history-deploy-v_old').elements()).toHaveLength(0);
     expect(page.getByTestId('apps-history-entry-v_old').element().textContent).toMatch(/· live/);
-    // A pending version has no build lifecycle to show.
     expect(page.getByTestId('apps-history-deploy-v_pend').elements()).toHaveLength(0);
   });
 });
