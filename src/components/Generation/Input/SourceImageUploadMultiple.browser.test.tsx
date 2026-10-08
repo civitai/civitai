@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, onTestFinished, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import {
@@ -360,19 +360,28 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
   // Invariant guard: an image that has not started uploading already held the generator before
   // the queued state existed.
   test('a queued card shows the Loader and holds the generator until its upload starts', async () => {
-    let resolveDims: (dims: { width: number; height: number }) => void = () => undefined;
+    const pendingChecks: ((dims: { width: number; height: number }) => void)[] = [];
+    const resolveDims = (dims: { width: number; height: number }) =>
+      pendingChecks.splice(0).forEach((resolve) => resolve(dims));
     // The dimension check (the one that passes options) stays pending, so the card stays queued.
     mocks.getImageDimensions.mockImplementation((_src: unknown, options?: unknown) =>
       options
-        ? new Promise((resolve) => (resolveDims = resolve))
+        ? new Promise((resolve) => pendingChecks.push(resolve))
         : Promise.resolve({ width: 1024, height: 1024 })
     );
+    // Settled however the test ends: a check left pending outlives the test, and its 30s bound
+    // then reports a timeout into whichever later test is running.
+    onTestFinished(() => resolveDims({ width: 1024, height: 1024 }));
     renderWithProviders(<Harness />);
     await pickFiles(1);
 
     await expect.poll(loaderCount).toBe(1);
+    // The render that first shows the Loader comes before the effect that marks the card's url as
+    // verifying, so wait for the mark itself. Between the two, the pick's own hold covers it.
+    expect(pendingNow()).toBe(true);
     // What `useImagesUploadingOrVerifying` reads to hold the cost estimate and submit.
-    expect(useImagesUploadingStore.getState().verifying).toHaveLength(1);
+    await vi.waitFor(() => expect(useImagesUploadingStore.getState().verifying).toHaveLength(1));
+    expect(pendingNow()).toBe(true);
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
 
     resolveDims({ width: 1024, height: 1024 });
@@ -1800,7 +1809,9 @@ describe('SourceImageUploadMultiple — a url that cannot be loaded', () => {
   });
 
   test('re-uploading an image already in the value, after a crop, reports origin:value', async () => {
-    const url = 'https://example.com/in-the-value.jpg';
+    // A url the preview can load (served by the test server): an unloadable one removes its own
+    // card from the value, and a confirm landing after that reads it as a new card.
+    const url = new URL('/test/fixtures/pixel.svg', window.location.origin).href;
     cachedUrls.push(url);
     // The dimension check (which passes options) succeeds; the upload's own load fails.
     mocks.getImageDimensions.mockImplementation((_src: unknown, options?: unknown) =>
