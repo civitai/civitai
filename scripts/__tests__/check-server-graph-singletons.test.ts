@@ -145,13 +145,14 @@ describe('watchlist entries describe reality', () => {
         expect(code).toMatch(new RegExp(String.raw`globalThis\.${key}\s*\?\?=`));
 
         // 🔴 The pin must be UNCONDITIONAL. The gate cannot see `isProd ? make() :
-        // (globalThis.KEY ??= make())`: `isProd` is a runtime value, so the dev-only branch
-        // survives the build and every emitted copy still mentions the key — measured, the
-        // gate reports OK on exactly that pre-#5540 shape. So reject an environment test
-        // anywhere in the statement that leads up to the pin.
-        expect(code).not.toMatch(
-          new RegExp(String.raw`\b(isProd|isDev|NODE_ENV)\b[^;]*globalThis\.${key}\b`)
-        );
+        // (globalThis.KEY ??= make())` or its `if (isProd) { … } else { …pin… }` twin:
+        // `isProd` is a runtime value, so the dev-only branch survives the build and every
+        // emitted copy still mentions the key — measured, the gate reports OK on that
+        // pre-#5540 shape. A statement-scoped regex misses the if/else form (its body holds
+        // semicolons), so ban the environment tokens from the whole module instead. Every
+        // SHARED_STATE module has none today. A trailing `// …isProd…` comment on a code line
+        // also trips this; that failure is loud and is fixed by rewording the comment.
+        expect(code).not.toMatch(/\b(isProd|isDev|NODE_ENV)\b/);
       } else {
         // A SINGLETON is a copy-count rule; a globalKey on it would be silently ignored.
         expect(entry).not.toHaveProperty('globalKey');
