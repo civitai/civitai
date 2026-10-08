@@ -85,7 +85,7 @@ export function getCrucibleTransactionDescription(text: string, crucible: Crucib
 
 const ENDING_SOON_MS = 24 * 60 * 60 * 1000;
 
-const STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = {
+export const CRUCIBLE_STATUS_BADGES: Record<CrucibleStatus, { label: string; color: string }> = {
   [CrucibleStatus.Pending]: { label: 'Upcoming', color: 'blue' },
   [CrucibleStatus.Active]: { label: 'Active', color: 'green' },
   [CrucibleStatus.Completed]: { label: 'Completed', color: 'gray' },
@@ -107,7 +107,7 @@ export function getCrucibleStatusBadge(
     if (msLeft <= ENDING_SOON_MS && isCrucibleFinalStretch({ startAt, endAt, now }))
       return { label: 'Ending soon', color: 'orange' };
   }
-  return STATUS_BADGES[status];
+  return CRUCIBLE_STATUS_BADGES[status];
 }
 
 /**
@@ -498,14 +498,14 @@ export function getCrucibleRatingLabel(nsfwLevel: number): string {
   return getCrucibleRatings(nsfwLevel).join(' / ');
 }
 
-export type CrucibleJudgingBadge = { kind: 'available' | 'caughtUp'; label: string; color: string };
+export type CrucibleJudgingBadge = { kind: 'available' | 'caughtUp'; label: string };
 
 /** Only for crucibles the viewer has judged: on any other, every pair is still open. */
 export function getCrucibleJudgingBadge(
   judging: Pick<CrucibleJudgingStatus, 'judged' | 'available' | 'votesUsedUp'> | undefined
 ): CrucibleJudgingBadge | null {
   if (!judging?.judged) return null;
-  if (judging.available) return { kind: 'available', label: 'Judging available', color: 'green' };
-  if (judging.votesUsedUp) return { kind: 'caughtUp', label: 'Caught up', color: 'gray' };
+  if (judging.available) return { kind: 'available', label: 'You have pairs to judge here' };
+  if (judging.votesUsedUp) return { kind: 'caughtUp', label: "You're caught up here" };
   return null;
 }

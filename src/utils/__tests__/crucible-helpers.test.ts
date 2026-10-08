@@ -685,13 +685,13 @@ describe('getCrucibleJudgingBadge', () => {
   it('says judging is available while pairs are left', () => {
     expect(
       getCrucibleJudgingBadge({ judged: true, available: true, votesUsedUp: false })
-    ).toMatchObject({ kind: 'available', label: 'Judging available' });
+    ).toMatchObject({ kind: 'available', label: 'You have pairs to judge here' });
   });
 
   it('says caught up once the votes are used up', () => {
     expect(
       getCrucibleJudgingBadge({ judged: true, available: false, votesUsedUp: true })
-    ).toMatchObject({ kind: 'caughtUp', label: 'Caught up' });
+    ).toMatchObject({ kind: 'caughtUp', label: "You're caught up here" });
   });
 
   it('shows nothing when no pairs are left only because entries are hidden', () => {
