@@ -26,26 +26,36 @@ const log = createLogger('signals', 'cyan');
  *   HALF_OPEN → (trial shed by the queue) → HALF_OPEN, trial slot released
  *
  * What counts toward TRIP_THRESHOLD (the breaker exists to stop calling a SICK
- * backend; shedding excess DEMAND is the queue bound's job). The one test of
- * "the backend did this": fn() HELD ITS SLOT for at least half the deadline
- * (BACKEND_EVIDENCE_MIN_RUN_FRACTION) and then failed. Only slow failures fill
- * the queue, so only they say a queue-side failure is the backend's fault.
+ * backend; shedding excess DEMAND is the queue bound's job). Queue-side
+ * failures count only when there is BACKEND EVIDENCE in the window, and
+ * evidence is recorded by exactly two signals:
+ *   (1) fn() HELD ITS SLOT for at least half the deadline
+ *       (BACKEND_EVIDENCE_MIN_RUN_FRACTION) and then failed (timed out or
+ *       rejected) — only slow failures fill the queue;
+ *   (2) a STREAK of started calls timing out with no fn() success in between
+ *       reaches 2 × SIGNALS_CALL_CONCURRENCY (BACKEND_EVIDENCE_STREAK_SLOTS) —
+ *       two full generations of slots died without one success. This catches a
+ *       hang that begins while the pod is already saturated: then every call
+ *       reaches its slot late, so (1) never fires, but nothing succeeds either.
+ *       A healthy saturated backend keeps completing calls, which resets it.
+ * Outcomes:
  *   - backend timeout — deadline fired after fn() had >= half the deadline to
- *     run: ALWAYS counts, and is backend evidence.
- *   - slow fn() rejection — fn() rejected after running >= half the deadline:
- *     never counts by itself (fn errors never did), but is backend evidence.
- *   - queue-side failure — a queue-full rejection, a deadline that expired
- *     while still queued, or a deadline that fired after fn() started with
- *     less than half the deadline left (a late start: the time went to the
- *     queue, not the backend): counts ONLY if the window holds backend evidence.
- *   - fast fn() rejection (e.g. an instant `fetch failed`): neither counts nor
- *     is evidence — it freed its slot at once, so it cannot be why the queue is
- *     full.
+ *     run: ALWAYS counts, and is evidence (1).
+ *   - slow fn() rejection — rejected after running >= half the deadline:
+ *     never counts by itself (fn errors never did), but is evidence (1).
+ *   - late-start timeout — deadline fired after fn() started with less than
+ *     half the deadline left (the time went to the queue): a queue-side
+ *     failure, and feeds the streak (2).
+ *   - queue-side failure — a late-start timeout, a queue-full rejection, or a
+ *     deadline that expired while still queued: counts ONLY with evidence.
+ *   - fast fn() rejection (e.g. an instant `fetch failed`): neither counts,
+ *     is evidence, nor touches the streak — it freed its slot at once, so it
+ *     cannot be why the queue is full.
  *   So a healthy burst far past the queue bound (e.g. a synchronized client
  *   reconnect after recovery, even one following a fast-failing outage) is
- *   shed and never opens the circuit, while a real outage — whose slot holders
- *   hang to the deadline — trips it. Evidence is pruned with the same window as
- *   failures and cleared when the circuit CLOSES.
+ *   shed and never opens the circuit, while a hang — from an idle or an
+ *   already-saturated pool — trips it. Evidence is pruned with the same window
+ *   as failures; evidence and the streak are cleared when the circuit CLOSES.
  *   - A HALF_OPEN trial that suffers a queue-side failure probed nothing, so it
  *     is NOT a failed trial: it releases `trialInFlight` and the circuit stays
  *     HALF_OPEN; the next caller becomes the trial. A trial whose fn() rejects
@@ -214,10 +224,11 @@ type Circuit = {
   state: CircuitState;
   // Unix ms timestamps of recent counted failures. Pruned on each access.
   failures: number[];
-  // Unix ms timestamps of recent BACKEND failures (fn() ran and timed out, or
-  // fn() rejected) — the evidence that lets queue-side failures count. Pruned
-  // with the same window as `failures`.
+  // Unix ms timestamps of recent backend EVIDENCE (header comment) — what lets
+  // queue-side failures count. Pruned with the same window as `failures`.
   backendFailures: number[];
+  // Started calls (fn() ran) that timed out since the last fn() success.
+  timeoutStreak: number;
   // ms-since-epoch; only meaningful when state === 'OPEN'.
   cooldownUntil: number;
   // While HALF_OPEN, whether the single trial slot is currently in flight.
@@ -229,6 +240,7 @@ const circuit: Circuit = {
   state: 'CLOSED',
   failures: [],
   backendFailures: [],
+  timeoutStreak: 0,
   cooldownUntil: 0,
   trialInFlight: false,
 };
@@ -265,6 +277,7 @@ function transition(c: Circuit, next: CircuitState, now: number) {
   } else if (next === 'CLOSED') {
     c.failures = [];
     c.backendFailures = [];
+    c.timeoutStreak = 0;
     c.cooldownUntil = 0;
     c.trialInFlight = false;
   }
@@ -302,6 +315,9 @@ function admitCall(): { admitted: boolean; isTrial: boolean } {
 // SIGNALS_CALL_TIMEOUT_MS before a failure is attributed to the backend
 // (header comment). Below it, the call's time went to the queue.
 const BACKEND_EVIDENCE_MIN_RUN_FRACTION = 0.5;
+// A streak of this many × SIGNALS_CALL_CONCURRENCY started-call timeouts with
+// no fn() success in between is also backend evidence (header comment).
+const BACKEND_EVIDENCE_STREAK_SLOTS = 2;
 
 /**
  * How a wrapped call ended, from the circuit's point of view:
@@ -309,15 +325,16 @@ const BACKEND_EVIDENCE_MIN_RUN_FRACTION = 0.5;
  *   fastError      — fn() rejected (or threw) after < half the deadline
  *   backendError   — fn() rejected after running >= half the deadline
  *   backendTimeout — deadline fired; fn() had >= half the deadline to run
+ *   lateTimeout    — deadline fired; fn() started with < half the deadline left
  *   queueFull      — rejected at entry, queue bound reached; fn() never ran
- *   queueExpired   — deadline fired while queued, or fn() started with less
- *                    than half the deadline left (late start)
+ *   queueExpired   — deadline fired while still queued; fn() never ran
  */
 type CallOutcome =
   | 'success'
   | 'fastError'
   | 'backendError'
   | 'backendTimeout'
+  | 'lateTimeout'
   | 'queueFull'
   | 'queueExpired';
 
@@ -331,7 +348,10 @@ function classifyOutcome(
   // out call stopped holding it there). 0 if fn() never ran.
   const heldFor = startedAt === undefined ? 0 : Math.min(Date.now(), deadlineAt) - startedAt;
   const backendHeld = heldFor >= env.SIGNALS_CALL_TIMEOUT_MS * BACKEND_EVIDENCE_MIN_RUN_FRACTION;
-  if (timedOut) return backendHeld ? 'backendTimeout' : 'queueExpired';
+  if (timedOut) {
+    if (startedAt === undefined) return 'queueExpired';
+    return backendHeld ? 'backendTimeout' : 'lateTimeout';
+  }
   if (rejected) return backendHeld ? 'backendError' : 'fastError';
   return 'success';
 }
@@ -341,12 +361,25 @@ function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
   const now = Date.now();
   pruneFailures(c, now);
 
-  if (outcome === 'backendTimeout' || outcome === 'backendError') {
+  // Streak signal (2): started calls timing out with no success in between.
+  if (outcome === 'success') {
+    c.timeoutStreak = 0;
+  } else if (outcome === 'backendTimeout' || outcome === 'lateTimeout') {
+    c.timeoutStreak++;
+  }
+  const streakIsEvidence =
+    c.timeoutStreak >= env.SIGNALS_CALL_CONCURRENCY * BACKEND_EVIDENCE_STREAK_SLOTS;
+  // Held-slot signal (1) or streak signal (2) → backend evidence.
+  if (
+    outcome === 'backendTimeout' ||
+    outcome === 'backendError' ||
+    (outcome === 'lateTimeout' && streakIsEvidence)
+  ) {
     c.backendFailures.push(now);
   }
-  const shed = outcome === 'queueFull' || outcome === 'queueExpired';
+  const shed = outcome === 'queueFull' || outcome === 'queueExpired' || outcome === 'lateTimeout';
   // See the header comment: a backend timeout always counts; a queue-side
-  // failure counts only when backend evidence is already in the window.
+  // failure counts only when backend evidence is in the window.
   const counted = outcome === 'backendTimeout' || (shed && c.backendFailures.length > 0);
   if (counted) {
     c.failures.push(now);
