@@ -56,9 +56,10 @@ function workerLog(type: string, detail?: string) {
 // --------------------------------
 let connectionState: SignalConnectionState = { state: null };
 let connectedUserId: number | null = null;
-// Most recently fetched token any tab sent, read on every (re)connect attempt: a token captured
-// when the connection was built can expire, and start retries would then fail forever. Ranked by
-// fetch time, not arrival — an old tab re-sending its page-load token must not displace a newer one.
+// Most recently fetched token any tab sent, read on every (re)connect attempt, so a tab that fetched a
+// fresh token (e.g. one reloaded during an outage) is used by the next retry. Signals tokens do not
+// expire. Ranked by fetch time, not arrival — an old tab re-sending its page-load token must not
+// displace a newer one.
 let latestToken = { token: '', fetchedAt: 0 };
 let connection: HubConnection | null = null;
 const events: Record<string, (data: unknown) => void> = {};

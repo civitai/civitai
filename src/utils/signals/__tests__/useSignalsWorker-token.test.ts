@@ -329,6 +329,25 @@ describe('useSignalsWorker: signals token re-mint', () => {
     expect(state.invalidations).toEqual([]);
   });
 
+  it('a tab joining a connected worker never fetches a token', async () => {
+    state.token = {
+      data: undefined,
+      status: 'pending',
+      error: null,
+      isFetching: false,
+      dataUpdatedAt: 0,
+      errorUpdatedAt: 0,
+    };
+    await render();
+    // Mounted, before the worker has reported any state.
+    expect(state.options.enabled).toBe(false);
+    await fromWorker({ type: 'worker:ready', version: '2.3' });
+    expect(state.options.enabled).toBe(false);
+    // The shared worker is already connected (another tab holds the token).
+    await fromWorker({ type: 'connection:state', state: 'connected' });
+    expect(state.options.enabled).toBe(false);
+  });
+
   it('a tab loaded while the worker is reconnecting may fetch a token; one that was connected may not', async () => {
     // So a reload during an outage can hand the worker a fresh token: a lost connection now stays
     // 'reconnecting' instead of ever reaching 'closed'.

@@ -162,7 +162,7 @@ export function createSignalsDebug(deps: SignalsDebugDeps) {
           'connection',
           'warn',
           stateDetail,
-          'the worker is retrying on its backoff; watch log() for progress'
+          'the worker retries on its backoff (watch log()); __signals.reconnect() skips the wait'
         );
       else add('connection', 'fail', stateDetail, '__signals.reconnect()');
 

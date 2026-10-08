@@ -357,6 +357,24 @@ describe('signals worker: connections that drop before they are stable', () => {
     ]);
   });
 
+  it('after a debug:reconnect, a later drop is still retried on the backoff', async () => {
+    await connectStably();
+    await send({ type: 'debug:reconnect' });
+    await init(2); // the tab answers 'closed'; the rebuilt connection connects
+    await runFor(61_000);
+    const connection = hub.connections.at(-1)!;
+    expect(connection.state).toBe('Connected');
+
+    // The deliberate stop is over: an ordinary drop must not be ignored as if it were one.
+    port.postMessage.mockClear();
+    hub.up = false;
+    const t1 = Date.now();
+    connection.drop();
+    await runFor(10_000);
+    expect(statesSent()).toEqual(['reconnecting']);
+    expect(startsSince(t1, connection)).toEqual([3_000, 9_000]);
+  });
+
   it('debug:reconnect reports closed (so tabs re-init), not a drop', async () => {
     await connectStably();
     port.postMessage.mockClear();
