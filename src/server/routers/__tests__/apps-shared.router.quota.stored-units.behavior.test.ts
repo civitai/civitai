@@ -283,8 +283,9 @@ async function seedUsedBytes(value: number) {
  * a constant with no ratio to exploit, and would make every guard in this file pass
  * against the pre-fix router.
  *
- * `data` is the opaque, unmoderated half of the value, so it can carry an arbitrary
- * JSON shape without the content-safety belt having an opinion about it.
+ * `data` is the half of the value the title/body belt never reads (and, with the
+ * data-moderation flags off as they are here, nothing else does either), so it can carry
+ * an arbitrary JSON shape without the content-safety belt having an opinion about it.
  */
 const ones = (n: number) => Array.from({ length: n }, () => 1);
 const wireBytes = (value: SharedValue) => Buffer.byteLength(JSON.stringify(value), 'utf8');
