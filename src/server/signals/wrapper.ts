@@ -327,7 +327,6 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
     throw new SignalsCallTimeoutError('concurrency', 'Signals call queue full — failing fast');
   }
 
-  outstanding++;
   const endTimer = signalsCallDurationHistogram.startTimer();
   const deadlineAt = Date.now() + env.SIGNALS_CALL_TIMEOUT_MS;
   let timer: NodeJS.Timeout | undefined;
@@ -345,6 +344,9 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   });
   deadline.catch(() => undefined);
 
+  // Increment immediately before the `try` whose `finally` decrements it —
+  // anything that could throw in between would leak a slot of the queue bound.
+  outstanding++;
   try {
     return await Promise.race([
       limiter(async () => {

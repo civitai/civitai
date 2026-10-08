@@ -77,10 +77,42 @@ describe('withSignals', () => {
     // threshold-1 circuit.
     await expect(withSignals(fn)).resolves.toBe('token');
 
+    // Let any deadline timer a completed call failed to clear fire: a leaked
+    // timer would count a healthy call as a timeout.
+    await vi.advanceTimersByTimeAsync(DEFAULT_ENV.SIGNALS_CALL_TIMEOUT_MS * 2);
+
     expect(fn).toHaveBeenCalledTimes(2);
     expect(count('signals_call_timeouts_total')).toBe(0);
     expect(count('signals_call_queue_rejections_total')).toBe(0);
     expect(count('signals_circuit_trips_total')).toBe(0);
+  });
+
+  it('an error from fn is rethrown unchanged and does not count toward the circuit', async () => {
+    const { withSignals, SignalsCallTimeoutError } = await load({
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+    });
+    const boom = new Error('signals said 500');
+
+    await expect(withSignals(() => Promise.reject(boom))).rejects.toBe(boom);
+    await expect(withSignals(() => Promise.reject(boom))).rejects.not.toBeInstanceOf(
+      SignalsCallTimeoutError
+    );
+    // Threshold 1, yet the circuit is still CLOSED: app errors are not outages.
+    await expect(withSignals(async () => 'ok')).resolves.toBe('ok');
+    expect(count('signals_circuit_trips_total')).toBe(0);
+  });
+
+  it('the queue bound is concurrency + max queue (not max queue alone)', async () => {
+    const { withSignals } = await load({ SIGNALS_CALL_CONCURRENCY: 3, SIGNALS_CALL_MAX_QUEUE: 2 });
+
+    // 3 running + 2 queued are all admitted…
+    const admitted = [1, 2, 3, 4, 5].map(() => track(withSignals(hang)));
+    // …the 6th is shed.
+    const sixth = track(withSignals(async () => 'x'));
+    await Promise.resolve();
+    expect(admitted.every((a) => !a.settled)).toBe(true);
+    expect((sixth.error as Error | undefined)?.message).toMatch(/queue full/);
+    expect(count('signals_call_queue_rejections_total')).toBe(1);
   });
 
   it('a call queued behind a busy slot times out at the deadline from entry and never runs fn', async () => {
@@ -226,5 +258,44 @@ describe('withSignals', () => {
     await vi.advanceTimersByTimeAsync(1000);
     await expect(withSignals(async () => 'd')).resolves.toBe('d');
     await expect(withSignals(async () => 'e')).resolves.toBe('e');
+  });
+
+  it('under event-loop lag, a HALF_OPEN trial that reaches its slot past its deadline never runs and re-opens the circuit', async () => {
+    let releaseA!: (v: string) => void;
+    const { withSignals, SignalsCallTimeoutError } = await load({
+      SIGNALS_CALL_MAX_QUEUE: 1,
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+      SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 1,
+    });
+
+    // A holds the slot, B queues behind it, C overflows → trip (OPEN).
+    track(withSignals(() => new Promise<string>((r) => (releaseA = r))));
+    track(withSignals(hang));
+    track(withSignals(async () => 'c'));
+    await vi.advanceTimersByTimeAsync(0); // let p-limit start A
+    expect(count('signals_circuit_trips_total')).toBe(1);
+    // A finishes; B (hanging) takes the slot until its deadline.
+    releaseA('a');
+    await vi.advanceTimersByTimeAsync(0);
+
+    // Wall clock passes the cooldown with no timers run → the next call is
+    // the HALF_OPEN trial, queued behind B.
+    vi.setSystemTime(Date.now() + 1000);
+    const trialFn = vi.fn(async () => 'trial');
+    const trial = track(withSignals(trialFn));
+
+    // Event-loop lag: the wall clock jumps well past the trial's deadline
+    // before any timer callback runs. B's timer then frees the slot first.
+    vi.setSystemTime(Date.now() + 10_000);
+    await vi.advanceTimersByTimeAsync(DEFAULT_ENV.SIGNALS_CALL_TIMEOUT_MS);
+
+    expect(trial.error).toBeInstanceOf(SignalsCallTimeoutError);
+    expect((trial.error as InstanceType<typeof SignalsCallTimeoutError>).reason).toBe('timeout');
+    expect(trialFn).not.toHaveBeenCalled();
+    expect(count('signals_circuit_trips_total')).toBe(2); // failed trial → OPEN
+
+    // Not stuck: after the next cooldown a fresh trial runs and closes it.
+    vi.setSystemTime(Date.now() + 1000);
+    await expect(withSignals(async () => 'ok')).resolves.toBe('ok');
   });
 });
