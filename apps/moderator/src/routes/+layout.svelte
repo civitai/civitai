@@ -45,6 +45,7 @@
   import type { NavLink } from '$lib/server/access';
   import { isNavLinkActive, isPathActive } from '$lib/nav-links';
   import { sidebarCounts, refreshSidebarCounts } from '$lib/sidebar-counts.svelte';
+  import UserCardPopover from '$lib/components/user-card/UserCardPopover.svelte';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -261,6 +262,8 @@
 <!-- Success confirmations: a write that changes nothing on screen (a publish toggle, a saved banner)
      otherwise gives the operator no signal that it landed. -->
 <Toaster position="bottom-right" />
+
+{#if data.canSeeUserCard}<UserCardPopover />{/if}
 
 <style>
   .nav-progress-bar {

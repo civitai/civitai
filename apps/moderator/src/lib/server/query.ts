@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { escapeLike } from './like';
 import { MAX_INT4 } from './users.service';
 
 // Every lookup page takes the same search term the same way. Four routes had this line verbatim, and
@@ -80,6 +81,5 @@ export function parseQuery<T extends z.ZodType>(
   return schema.parse(obj);
 }
 
-/** A `%term%` operand with LIKE's own wildcards escaped. A pasted email holding `_` would otherwise
- *  match any character in that position, which silently widens the result set rather than erroring. */
-export const containsLike = (term: string) => `%${term.replace(/([\\%_])/g, '\\$1')}%`;
+/** A `%term%` operand with LIKE's own wildcards escaped. */
+export const containsLike = (term: string) => `%${escapeLike(term)}%`;

@@ -1,23 +1,12 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import LookupSearch from '$lib/components/LookupSearch.svelte';
-  import { LINK_CLASS, dateTime } from '$lib/format';
-  import { getBrowsingLevelLabel } from '@civitai/shared';
+  import UserCard from '$lib/components/user-card/UserCard.svelte';
   import { enhance } from '$app/forms';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
-  import { chatAuditChatUrl, userUrl } from '$lib/entity-url';
   import type { LayoutData } from './$types';
   import { ADMIN_SECTIONS, DEFAULT_SECTION, SECTIONS, SECTION_LINKS } from './sections';
-  import {
-    Sheet,
-    SheetContent,
-    SheetHeader,
-    SheetTitle,
-  } from '@civitai/ui/components/ui/sheet/index.js';
-  import type { Jsonified } from '$lib/format';
-  import type { CsamReportRow } from '$lib/server/user-account.service';
 
   let { data, children }: { data: LayoutData; children: import('svelte').Snippet } = $props();
 
@@ -27,27 +16,6 @@
   // a section change would land the moderator on an empty lookup.
   const href = (slug: string) =>
     data.q ? `/retool/user-lookup/${slug}?q=${encodeURIComponent(data.q)}` : `/retool/user-lookup/${slug}`;
-
-  // Collapsed by default: the chip is the signal, the ids are what you want once it has fired.
-  let showModChats = $state(false);
-
-  const identity = $derived(data.result?.identity ?? null);
-  const profileUrl = $derived(
-    identity?.username ? userUrl(data.civitaiUrl, identity.username) : null
-  );
-
-  // The chip carries a count and nothing else, which is the one thing a moderator cannot act on. The
-  // rows are fetched only once it is opened — the endpoint returns the report's CLASSIFICATION, not
-  // its material.
-  let csamOpen = $state(false);
-  const csamReports = $derived(
-    csamOpen && identity
-      ? fetch(`/api/user-csam-reports/${identity.id}`).then(
-          (r): Promise<Jsonified<CsamReportRow>[]> =>
-            r.ok ? r.json() : Promise.reject(new Error(String(r.status)))
-        )
-      : null
-  );
 </script>
 
 <header class="page-header">
@@ -67,153 +35,27 @@
   <section class="rounded-xl border border-dark-4 bg-dark-6 p-5">
     <p class="text-sm text-dark-2">No user matches <code>{data.q}</code>.</p>
   </section>
-{:else if identity}
+{:else if data.result}
   <!-- The subject stays on screen in every section, so an action is never taken without the account
        it applies to being visible. -->
-  <div class="mb-4 flex flex-wrap items-baseline gap-x-3 gap-y-1 rounded-xl border border-dark-4 bg-dark-6 px-5 py-3">
-    <h2 class="text-lg font-semibold text-white">
-      {#if profileUrl}
-        <a href={profileUrl} target="_blank" rel="noreferrer" class={LINK_CLASS}>
-          {identity.username}
-        </a>
-      {:else}
-        (no username)
+  <!-- Keyed: a `?q=` search does not remount the layout, and the card's open CSAM sheet would carry
+       over to — and fetch for — the next account. -->
+  {#key data.result.identity.id}
+  <UserCard card={data.result} class="mb-4">
+    {#snippet actions()}
+      <!-- Retool kept Force Logout in the persistent header: it is the thing you reach for while
+           reading something else. `?/forceLogout` resolves against the current section route, which
+           defines the action, so this works from every section. Sessions only — it does not mute, ban
+           or change the account. -->
+      {#if data.canAct && data.result}
+        <form method="POST" action="?/forceLogout" use:enhance>
+          <input type="hidden" name="userId" value={data.result.identity.id} />
+          <Button type="submit" size="xs" variant="outline">Force logout</Button>
+        </form>
       {/if}
-    </h2>
-    <code class="text-sm text-dark-2">#{identity.id}</code>
-    {#if identity.bannedAt}
-      <!-- Retool's "Banned for CSAM" was its own chip. The reason decides what a moderator does next —
-           a Nudify ban and a SexualMinor ban are not the same conversation — so it rides on the badge
-           rather than sitting one section away under Admin. -->
-      <Badge variant="destructive">
-        banned{identity.banReason ? `: ${identity.banReason}` : ''}
-      </Badge>
-      {#if identity.banReason?.startsWith('SexualMinor')}
-        <Badge variant="destructive">CSAM ban</Badge>
-      {/if}
-    {/if}
-    <!-- Outside the `bannedAt` block on purpose: a contest ban leaves the account otherwise in good
-         standing, so it is the one enforcement state that is invisible everywhere else on this page. -->
-    {#if identity.contestBannedAt}
-      <Badge variant="secondary">contest banned</Badge>
-    {/if}
-    <!-- Retool put both of these in the persistent header. A CSAM report against the account is the
-         single most important thing on the screen, and a Pending restriction is a SYSTEM mute nobody
-         has ruled on — without it that account reads as an unexplained manual mute. -->
-    {#if identity.csamReportCount > 0}
-      <button type="button" onclick={() => (csamOpen = true)} class="cursor-pointer">
-        <Badge variant="destructive" class="underline decoration-dotted underline-offset-2">
-          CSAM report{identity.csamReportCount > 1 ? ` ×${identity.csamReportCount}` : ''}
-        </Badge>
-      </button>
-    {/if}
-    {#if identity.muted}<Badge variant="destructive">muted</Badge>{/if}
-    {#if identity.restrictionStatus}
-      <Badge variant={identity.restrictionStatus === 'Pending' ? 'destructive' : 'secondary'}>
-        {identity.restrictionType ?? 'restriction'}: {identity.restrictionStatus}
-      </Badge>
-    {/if}
-    <!-- Retool's Quick Info. Not accepting the TOS is normal for a new account and abnormal for an
-         old one, and leaderboard exclusion is the first thing a cheating investigation asks about. -->
-    {#if !identity.onboarding}<Badge variant="secondary">TOS not accepted</Badge>{/if}
-    {#if identity.excludeFromLeaderboards}
-      <Badge variant="secondary">excluded from leaderboards</Badge>
-    {/if}
-    {#if identity.deletedAt}<Badge variant="secondary">deleted</Badge>{/if}
-    {#if identity.isModerator}<Badge variant="secondary">moderator</Badge>{/if}
-    {#if data.result?.curator.isCurator}<Badge variant="secondary">curator</Badge>{/if}
-    <!-- The rest of Retool's persistent header: prior enforcement, what they pay, and how to reach
-         them. Each was section-local, so judging an account meant visiting three tabs first. -->
-    {#if data.result?.strikes.count}
-      <Badge variant="destructive">
-        {data.result.strikes.count} active strike{data.result.strikes.count > 1 ? 's' : ''}
-        ({data.result.strikes.points} pt{data.result.strikes.points > 1 ? 's' : ''})
-      </Badge>
-    {/if}
-    <!-- All-time beside active, so a cleared account still shows its history. It was labelled
-         "legacy" and fed by a count that spans BOTH stores, so it read as Retool-era while including
-         every modern strike too — and after the 2026-08-21 import there is no separate era to name. -->
-    {#if data.result?.strikeCountAllTime}
-      <Badge variant="secondary">{data.result.strikeCountAllTime} all-time</Badge>
-    {/if}
-    {#if data.result?.subscription?.productName}
-      <!-- Status is carried, not assumed: a cancelled subscription must not read as a paying one. -->
-      <Badge variant="secondary">
-        {data.result.subscription.productName}{data.result.subscription.status === 'active'
-          ? ''
-          : ` (${data.result.subscription.status})`}
-      </Badge>
-    {/if}
-    <!-- Retool's "Talked to a mod" header button, which opened a list of the chat ids. The fact alone
-         is not the useful half: finding the conversation otherwise means searching Chat Audit by
-         username and guessing which thread. -->
-    {#if data.result?.modContact.chats}
-      <button type="button" onclick={() => (showModChats = !showModChats)}>
-        <!-- Red, like a ban: the mod team reads this chip as enforcement history, not as neutral
-             metadata, and it sat in the same grey as the browsing level. -->
-        <Badge variant="destructive">
-          spoke with a mod ×{data.result.modContact.chats}
-          <span aria-hidden="true">{showModChats ? '▾' : '▸'}</span>
-        </Badge>
-      </button>
-    {/if}
-    {#if identity.browsingLevel}
-      <Badge variant="secondary">Viewing: {getBrowsingLevelLabel(identity.browsingLevel)}</Badge>
-    {/if}
-    {#if identity.email}
-      <span class="text-xs text-dark-2">{identity.email}</span>
-    {/if}
-
-    <!-- Retool kept Force Logout in the persistent header, not one section away: it is the thing you
-         reach for while reading something else. `?/forceLogout` resolves against the current section
-         route, which defines the action, so this works from every section. Sessions only — it does not
-         mute, ban or change the account. -->
-    {#if data.canAct}
-      <form method="POST" action="?/forceLogout" use:enhance class="ml-auto self-center">
-        <input type="hidden" name="userId" value={identity.id} />
-        <Button type="submit" size="xs" variant="outline">Force logout</Button>
-      </form>
-    {/if}
-  </div>
-
-  {#if showModChats && data.result}
-    {@const contact = { ...data.result.modContact, chats: data.result.modContact.chats ?? 0 }}
-    <ul class="mb-2 flex flex-wrap gap-x-3 gap-y-1 text-sm">
-      {#each contact.chatIds as id (id)}
-        <li><a href={chatAuditChatUrl(id)} class={LINK_CLASS}>chat {id}</a></li>
-      {/each}
-      {#if contact.chats > contact.chatIds.length}
-        <li class="text-xs text-dark-2">
-          +{contact.chats - contact.chatIds.length} more, in the Chat section
-        </li>
-      {/if}
-    </ul>
-  {/if}
-
-  <!-- The ticket asked for open reports "very clearly at the top", and actionable from here. A report
-       nobody has ruled on changes what every other panel on this page means. -->
-  {#if identity.openReportCount > 0}
-    <div
-      class="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200"
-      role="status"
-    >
-      <span class="flex flex-wrap items-center gap-2">
-        {identity.openReportCount} open report{identity.openReportCount > 1 ? 's' : ''} against this
-        account.
-        <!-- The sentence is the count and nothing else, per the mod team. The moderator who filed is
-             still the anti-overlap signal this banner exists for, so it stays as a chip rather than as
-             prose telling them what to conclude from it. -->
-        {#if identity.openReportModerators}
-          <Badge variant="outline">filed by {identity.openReportModerators}</Badge>
-        {/if}
-      </span>
-      <!-- The account's OWN drill-down, not the 500-row queue: this is where the report can be
-           actioned with their content in front of you, which is what "actionable from here" meant. -->
-      <a href="/retool/user-reports?user={identity.id}" class={LINK_CLASS}>
-        Work this account's reports
-      </a>
-    </div>
-  {/if}
+    {/snippet}
+  </UserCard>
+  {/key}
 
   <!-- A fixed-width pane here does not stack below `lg`; pinned by
        `src/__tests__/two-pane-stacking.test.ts`, which finds this container by `data-two-pane`
@@ -277,74 +119,3 @@
     </div>
   </div>
 {/if}
-
-<Sheet bind:open={csamOpen}>
-  <SheetContent side="right" class="w-full overflow-y-auto sm:max-w-lg">
-    <SheetHeader>
-      <SheetTitle>CSAM reports</SheetTitle>
-    </SheetHeader>
-    <div class="flex flex-col gap-4 px-4 pb-6 text-sm">
-      <p class="text-xs text-dark-2">
-        What each report classified this account under, and whether it was sent. The reported material
-        is not shown here.
-      </p>
-      {#if csamReports}
-        {#await csamReports}
-          <p class="text-dark-2">Loading reports…</p>
-        {:then reports}
-          {#if reports.length === 0}
-            <p class="text-dark-2">No report rows — the count and the table disagree.</p>
-          {:else}
-            {#each reports as r (r.id)}
-              <div class="rounded-lg border border-dark-4 bg-dark-6 p-4">
-                <div class="flex flex-wrap items-baseline gap-x-2">
-                  <span class="font-medium text-white">#{r.id}</span>
-                  <Badge variant="secondary">{r.type}</Badge>
-                  {#if r.reportSentAt}
-                    <Badge variant="destructive">sent {dateTime(r.reportSentAt)}</Badge>
-                  {:else}
-                    <Badge variant="outline">not sent</Badge>
-                  {/if}
-                  {#if r.archivedAt}<Badge variant="secondary">archived</Badge>{/if}
-                  {#if r.contentRemovedAt}<Badge variant="secondary">content removed</Badge>{/if}
-                </div>
-                <dl class="mt-3 grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs">
-                  <dt class="text-dark-2">Filed</dt>
-                  <dd class="text-dark-0">
-                    {dateTime(r.createdAt)}{r.reportedByUsername ? ` by ${r.reportedByUsername}` : ''}
-                  </dd>
-                  {#if r.minorDepiction}
-                    <dt class="text-dark-2">Minor depiction</dt>
-                    <dd class="text-dark-0">{r.minorDepiction}</dd>
-                  {/if}
-                  {#if r.contents.length}
-                    <dt class="text-dark-2">Contents</dt>
-                    <dd class="text-dark-0">{r.contents.join(', ')}</dd>
-                  {/if}
-                  <dt class="text-dark-2">Attached</dt>
-                  <dd class="text-dark-0">
-                    {r.imageCount} image{r.imageCount === 1 ? '' : 's'}, {r.modelVersionCount} model version{r.modelVersionCount ===
-                      1
-                      ? ''
-                      : 's'}{r.userActivityCount
-                      ? `, ${r.userActivityCount.toLocaleString()} activity ${
-                          r.userActivityCount === 1 ? 'entry' : 'entries'
-                        }`
-                      : ''}
-                  </dd>
-                </dl>
-                {#if r.reportId}
-                  <a href="/reports/user?q={r.reportId}" class="mt-3 inline-block text-xs {LINK_CLASS}">
-                    Originating report #{r.reportId}
-                  </a>
-                {/if}
-              </div>
-            {/each}
-          {/if}
-        {:catch}
-          <p class="text-red-300">Could not load the CSAM reports for this account.</p>
-        {/await}
-      {/if}
-    </div>
-  </SheetContent>
-</Sheet>
