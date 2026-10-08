@@ -285,6 +285,29 @@ describe('dedupe-server-chunks', () => {
     expect(r.err).toContain(`_bad._.js: stub target ${target} ${message}`);
   });
 
+  it('leaves identical files that are not module.exports=[ chunks alone', () => {
+    const body = 'globalThis.x=1;\nmodule.exports=[1,()=>"x"];\n';
+    write('chunks/_a._.js', body);
+    write('chunks/_b._.js', body);
+
+    const r = run(server);
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain('stubbed 0 duplicates');
+    expect(r.out).toContain('2 skipped (not a module.exports=[ chunk)');
+    expect(read('chunks/_b._.js')).toBe(body);
+  });
+
+  it('--dry-run still fails (exit 1) on a dangling stub already on disk', () => {
+    write('chunks/_real._.js', chunk('_real._.js', `1,()=>"x"`));
+    write('chunks/_dangling._.js', stubFor('_missing._.js'));
+
+    const r = run(server, '--dry-run');
+
+    expect(r.code).toBe(1);
+    expect(r.err).toContain('_dangling._.js: stub target _missing._.js does not exist');
+  });
+
   it('parseStub accepts only the exact stub shape', () => {
     expect(parseStub(Buffer.from(stubFor('_a._.js')))).toBe('_a._.js');
     // Marker text whose require() names a different file is not one of our stubs.

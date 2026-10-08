@@ -46,6 +46,10 @@
  * (`[turbopack]_runtime.js`) are never touched: each one owns a module registry, and they read
  * `__filename`.
  *
+ * Only files that begin `module.exports=[` (the chunk format above) are candidates; any other
+ * shape is skipped and counted, so a future change of chunk format degrades to "no dedupe"
+ * rather than to a stub whose assumptions no longer hold.
+ *
  * Every candidate is byte-compared against its canonical (after stripping the trailing
  * sourceMappingURL comment) before it is replaced — a hash match alone never replaces a file.
  *
@@ -75,6 +79,11 @@ export const STUB_MARKER = '// dedupe-server-chunks: identical to ';
 
 /** The runtime files are module registries and read `__filename`; never stub one. */
 export const isRuntimeFile = (name) => name === '[turbopack]_runtime.js';
+
+const CHUNK_PREFIX = Buffer.from('module.exports=[');
+
+/** True for a Turbopack server chunk: a file that only assigns `module.exports` an array. */
+export const isChunkFormat = (buf) => buf.subarray(0, CHUNK_PREFIX.length).equals(CHUNK_PREFIX);
 
 /** Content of the stub that replaces a duplicate of `canonicalName` (a sibling file). */
 export function stubFor(canonicalName) {
@@ -160,11 +169,19 @@ export function dedupeServerChunks(serverDir, { dryRun = false } = {}) {
   // key = `${directory}\0${sha256 of normalised bytes}` → sorted file paths.
   const groups = new Map();
   let existingStubs = 0;
+  let otherFormat = 0;
   for (const file of files) {
     if (isRuntimeFile(basename(file))) continue;
     const buf = readFileSync(file);
     if (parseStub(buf) !== null) {
       existingStubs++;
+      continue;
+    }
+    // Only a pure `module.exports=[…]` chunk is known to have no load-time behaviour that
+    // depends on its own path. Anything else is left alone, so a future chunk format is
+    // skipped rather than stubbed on an assumption.
+    if (!isChunkFormat(buf)) {
+      otherFormat++;
       continue;
     }
     const hash = createHash('sha256').update(normalise(buf)).digest('hex');
@@ -195,15 +212,15 @@ export function dedupeServerChunks(serverDir, { dryRun = false } = {}) {
     chunkFiles: files.length,
     distinct: groups.size,
     existingStubs,
+    otherFormat,
     stubbed,
     bytesReplaced,
     dryRun,
   };
-  if (!dryRun) {
-    const problems = verifyStubs(chunksDir);
-    if (problems.length) {
-      throw new DedupeError(1, `stub verification failed:\n  ${problems.join('\n  ')}`, summary);
-    }
+  // Also under --dry-run: a dangling stub already on disk must never read as healthy.
+  const problems = verifyStubs(chunksDir);
+  if (problems.length) {
+    throw new DedupeError(1, `stub verification failed:\n  ${problems.join('\n  ')}`, summary);
   }
   return summary;
 }
@@ -229,7 +246,7 @@ function main(argv) {
     console.log(
       `dedupe-server-chunks: ${s.chunkFiles} chunk files, ${s.distinct} distinct contents, ` +
         `${dryRun ? 'would stub' : 'stubbed'} ${s.stubbed} duplicates (${mib} MiB), ` +
-        `${s.existingStubs} already stubbed`
+        `${s.existingStubs} already stubbed, ${s.otherFormat} skipped (not a module.exports=[ chunk)`
     );
     return 0;
   } catch (err) {
