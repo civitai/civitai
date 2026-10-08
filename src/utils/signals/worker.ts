@@ -19,6 +19,7 @@ import type {
   WorkerOutgoingMessage,
 } from './types';
 import { PORT_STALE_AFTER_MS, SIGNALS_WORKER_VERSION } from './types';
+import { BackoffRetry, createHubReconnectPolicy, HUB_CONNECT_BACKOFF } from './backoff';
 import { EventEmitter } from './utils';
 
 // --------------------------------
@@ -283,6 +284,7 @@ function getWorkerStatus(): SignalWorkerStatus {
     hubState: connection?.state ?? null,
     connectionId: connection?.connectionId ?? null,
     connectedUserId,
+    connectRetry: connectRetry.getStatus(),
     portCount: ports.size,
     registeredEvents: Object.keys(events),
     topics: Object.fromEntries(getWantedTopics()),
@@ -298,6 +300,14 @@ function getWorkerStatus(): SignalWorkerStatus {
 // --------------------------------
 // Connection
 // --------------------------------
+// One schedule for every `start()` attempt, whoever asks for it. Each tab sends `connection:init`
+// on load and on every 'closed', so starting on each of those let page loads during an outage add
+// attempts on top of the retry loop; now they wait for the next scheduled attempt instead.
+const connectRetry = new BackoffRetry(() => void connect(), HUB_CONNECT_BACKOFF);
+// Retries SignalR's automatic reconnect has made in the current outage. Carried into `connectRetry`
+// when it gives up, so the hand-over keeps the cadence instead of restarting at the 3s step.
+let reconnectRetryCount = 0;
+
 async function connect() {
   if (!connection) {
     setConnectionState({ state: 'closed', message: 'missing SignalR connection' });
@@ -307,11 +317,18 @@ async function connect() {
   try {
     workerLog('connection:starting');
     await connection.start();
+    connectRetry.succeeded();
     setConnectionState({ state: 'connected' });
     onConnected();
   } catch (err) {
-    workerLog('connection:start-failed', (err as Error).message);
-    setTimeout(() => connect(), 5000);
+    connectRetry.failed();
+    const { failures, nextAttemptAt } = connectRetry.getStatus();
+    workerLog(
+      'connection:start-failed',
+      `${(err as Error).message}; attempt ${failures}, next in ${
+        nextAttemptAt ? Math.round((nextAttemptAt - Date.now()) / 1000) : '?'
+      }s`
+    );
   }
 }
 
@@ -336,6 +353,7 @@ const buildHubConnection = async ({
       await connection.stop();
       connection = null;
     }
+    connectRetry.reset();
   }
 
   if (connection) return connection;
@@ -355,11 +373,17 @@ const buildHubConnection = async ({
       },
     })
     .configureLogging(LogLevel.Trace)
-    .withAutomaticReconnect([0, 2, 10, 18, 30, 45, 60, 90])
+    .withAutomaticReconnect(
+      createHubReconnectPolicy(({ previousRetryCount }) => {
+        reconnectRetryCount = previousRetryCount;
+      })
+    )
     .build();
 
   connection.onreconnected(() => {
     workerLog('connection:reconnected');
+    reconnectRetryCount = 0;
+    connectRetry.succeeded();
     setConnectionState({ state: 'connected' });
     onConnected();
   });
@@ -369,6 +393,10 @@ const buildHubConnection = async ({
   });
   connection.onclose((error) => {
     workerLog('connection:closed', error?.message);
+    // Only a close with an error follows a failed automatic reconnect; `stop()` closes without one.
+    // The policy's last call, the one that gave up, saw every failed attempt of this outage.
+    if (error) connectRetry.carryOver(reconnectRetryCount);
+    reconnectRetryCount = 0;
     setConnectionState({ state: 'closed', message: JSON.stringify(error) });
   });
   connection.on('Pong', () => {
@@ -481,7 +509,8 @@ const start = async (port: MessagePort) => {
         userId: data.userId,
         tokenFetchedAt: data.tokenFetchedAt,
       });
-      await connect();
+      // A newer token needs no attempt of its own: every attempt reads `latestToken`.
+      connectRetry.request();
     } else if (data.type === 'event:register') {
       registerEvents([data.target]);
     } else if (data.type === 'beforeunload') {
@@ -514,6 +543,8 @@ const start = async (port: MessagePort) => {
       postMessage({ type: 'debug:server-pong', ...(await serverPing()) });
     } else if (data.type === 'debug:reconnect') {
       workerLog('debug:reconnect');
+      // A manual reconnect is the one attempt that skips the backoff.
+      connectRetry.reset();
       await dropConnection('Forced reconnect (debug)');
     }
   };
