@@ -46,17 +46,19 @@ function isPrivateGeneration(blob: BlobData) {
 }
 
 // A failed or inconclusive check stores nothing: the output stays hidden until the rating
-// reaches the workflow data, and a remount retries.
+// reaches the workflow data, and a remount retries. Videos are too large to hold, so their body
+// is dropped once the headers arrive and the <video> streams `src` itself.
 async function check(blob: BlobData, src: string) {
   if (inFlight.has(src) || verdicts.has(blob.id)) return;
   inFlight.add(src);
   try {
     const response = await fetch(src, { mode: 'cors', credentials: 'omit' });
     const verdict = parseBlobHeaderVerdict(response);
+    if (blob.type === 'video') void response.body?.cancel();
     if (!verdict) return;
     if (greenBlockedReason(verdict, isPrivateGeneration(blob))) {
       blockedIds = new Set(blockedIds).add(blob.id);
-    } else {
+    } else if (blob.type === 'image') {
       objectUrls.set(src, URL.createObjectURL(await response.blob()));
     }
     verdicts.set(blob.id, verdict);
@@ -69,7 +71,8 @@ async function check(blob: BlobData, src: string) {
 }
 
 function needsCheck(blob: BlobData, green: boolean) {
-  return green && blob.type === 'image' && blob.available && !blob.nsfwLevel && !blob.blockedReason;
+  const visual = blob.type === 'image' || (blob.type === 'video' && blob.mediaType !== 'audio');
+  return green && visual && blob.available && !blob.nsfwLevel && !blob.blockedReason;
 }
 
 function headerBlockedReason(blob: BlobData) {

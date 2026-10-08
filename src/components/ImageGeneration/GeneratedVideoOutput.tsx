@@ -6,6 +6,7 @@ import type { StepData, VideoBlob } from '~/shared/orchestrator/workflow-data';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 
 import { getStepMeta } from './GenerationForm/generation.utils';
+import { useBlobHeaderCheckedSrc } from './utils/blobHeaderCheck';
 
 export function GeneratedVideoOutput({
   image,
@@ -24,6 +25,8 @@ export function GeneratedVideoOutput({
   onLoaded?: () => void;
   loaded?: boolean;
 }) {
+  const checked = useBlobHeaderCheckedSrc(image, image.url);
+
   function handleDragVideo(e: DragEvent<HTMLVideoElement>) {
     const url = image.url;
     const meta = getStepMeta(step);
@@ -31,9 +34,11 @@ export function GeneratedVideoOutput({
     e.dataTransfer.setData('text/uri-list', url);
   }
 
+  if (checked.status !== 'ok') return null;
+
   return (
     <EdgeMedia2
-      src={image.url}
+      src={checked.src}
       type="video"
       alt=""
       className={clsx(
