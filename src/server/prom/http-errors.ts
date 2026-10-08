@@ -256,14 +256,17 @@ declare global {
 // Pinned on globalThis for the same reason as `httpErrorCounter` above.
 //
 // Labels: `path` (not `route`) holds the bare procedure path, the same label name and value
-// `trpc_procedure_duration_seconds` uses, so this divides by that histogram's `_count` per path
-// with no relabelling. Cardinality is the allowlist's size by construction: only allowlisted
+// `trpc_procedure_duration_seconds` uses. The label SETS still differ (this one adds `code`),
+// so a bare `a / b` matches nothing: aggregate both sides first,
+//   sum by (path) (rate(<this>[5m])) / sum by (path) (rate(<histogram>_count[5m]))
+// The histogram only exists where `TRPC_PROCEDURE_METRICS` is enabled, so read the ratio over
+// those deployments. Cardinality is the allowlist's size by construction: only allowlisted
 // pairs are ever incremented (see `recordUnloggedTrpcClientError`).
 export const trpcUnloggedClientErrorCounter: client.Counter<string> =
   globalThis.__civitaiTrpcUnloggedClientErrorCounter ??
   (globalThis.__civitaiTrpcUnloggedClientErrorCounter = new client.Counter({
     name: UNLOGGED_NAME,
-    help: 'tRPC client-fault errors whose Axiom log line is deliberately skipped as uninformative (see EXPECTED_NOT_FOUND_LOG_SKIPS), by procedure path and tRPC code. UNSAMPLED, one increment per procedure error. These are NOT in civitai_app_http_errors_total (5xx only) and NOT in Axiom, so this is their only count. `path` matches trpc_procedure_duration_seconds, so rate(this) / rate(that _count) is the per-procedure share of calls.',
+    help: 'tRPC client-fault errors whose Axiom log line is deliberately skipped as uninformative (see EXPECTED_NOT_FOUND_LOG_SKIPS), by procedure path and tRPC code. UNSAMPLED, one increment per procedure error. These are NOT in civitai_app_http_errors_total (5xx only) and NOT in Axiom, so this is their only count. `path` matches trpc_procedure_duration_seconds; aggregate both sides by path before dividing (this metric also has `code`), i.e. sum by (path) of each rate.',
     labelNames: ['path', 'code'],
   }));
 
