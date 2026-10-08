@@ -118,14 +118,18 @@ function useTotalGenerationCost(store: GenerationStore) {
   return (data?.cost?.total ?? 0) + totalTip;
 }
 
-function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
-  const { isLoading, isError, refetch } = useWhatIfContext();
+export function ConnectedBuzzTypeSelector({ store }: { store: GenerationStore }) {
+  const { isLoading, isError, refetch, canEstimateCost, gateBlocked } = useWhatIfContext();
   const cost = useTotalGenerationCost(store);
   return (
     <BuzzTypeSelector
       cost={cost}
       loading={isLoading}
       error={isError}
+      // The whatIf query is disabled in both cases, so no estimate is coming. Its other disable
+      // reasons are transient (resources/images loading), hide this box (no user), or render a
+      // different footer (noSubmit workflows).
+      unavailable={!canEstimateCost || gateBlocked}
       onRetry={() => refetch()}
       tourTarget={GEN_BUZZ_KEY}
     />
@@ -366,7 +370,7 @@ function BaseModelWarnings() {
 // Submit button
 // =============================================================================
 
-function SubmitButton({
+export function SubmitButton({
   store,
   isLoading: isSubmitting,
   onSubmit,
