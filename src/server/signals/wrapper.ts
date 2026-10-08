@@ -2,7 +2,11 @@ import pLimit from 'p-limit';
 import client from 'prom-client';
 import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
-import { registerCounter, registerHistogram } from '~/server/prom/client';
+import {
+  registerCounter,
+  registerCounterWithLabels,
+  registerHistogram,
+} from '~/server/prom/client';
 
 const log = createLogger('signals', 'cyan');
 
@@ -63,9 +67,11 @@ const log = createLogger('signals', 'cyan');
  * grain init):
  *   SIGNALS_CALL_TIMEOUT_MS       5000  (Meili: 2500) — total deadline from
  *                                       withSignals() entry: queue wait + call
- *   SIGNALS_CALL_CONCURRENCY      30    (Meili: 50)
+ *   SIGNALS_CALL_CONCURRENCY      30    (Meili: 50)  — 'default' lane
  *   SIGNALS_CALL_MAX_QUEUE        200   (Meili: unbounded) — live queued calls
- *                                       beyond this reject at 0ms
+ *                                       beyond this reject at 0ms ('default')
+ *   SIGNALS_TOKEN_CALL_CONCURRENCY 30   — 'token' lane (getAccessToken only)
+ *   SIGNALS_TOKEN_CALL_MAX_QUEUE  200   — 'token' lane queue bound
  *   SIGNALS_CIRCUIT_WINDOW_SECONDS 60   (Meili: 30)
  *   SIGNALS_CIRCUIT_TRIP_THRESHOLD 10
  *   SIGNALS_CIRCUIT_COOLDOWN_SECONDS 30
@@ -79,6 +85,19 @@ const log = createLogger('signals', 'cyan');
  * cannot FINISH within SIGNALS_CALL_TIMEOUT_MS of entry rejects with
  * SignalsCallTimeoutError('timeout') — and if it was still queued, its fn()
  * never runs. Queue-side failures feed the circuit per the rules above.
+ *
+ * LANES: each call runs in a lane with its OWN p-limit limiter, concurrency
+ * and queue bound, so a getToken reconnect storm cannot crowd out signal
+ * pushes. 'token' is used ONLY by getAccessToken (signals.service.ts); every
+ * other caller (signal pushes, chat, training webhooks, orchestrator) uses
+ * 'default'. The token lane's defaults equal the single limiter getToken used
+ * to share (30 / 200), so getToken sees the same bounds as before; the
+ * default lane keeps its own 30 / 200. A pod can therefore hold up to 60
+ * signals calls in flight (30 per lane) instead of 30. The CIRCUIT BREAKER is
+ * SHARED: a sick backend stops both lanes, and every lane's outcomes feed it.
+ * Metrics carry a `lane` label where they are per-lane (active, queue depth,
+ * queue rejections, queue expirations); sum() over the label gives the
+ * pod-wide figure the single-lane metric used to report.
  *
  * SCOPE: wrap ONLY the actual `fetch(SIGNALS_ENDPOINT/...)` call. Do NOT wrap
  * surrounding DB/Redis work — those are independent dependencies and should not
@@ -113,30 +132,69 @@ export class SignalsCallTimeoutError extends Error {
   }
 }
 
-const limiter = pLimit(env.SIGNALS_CALL_CONCURRENCY);
+export type SignalsLane = 'default' | 'token';
+const LANE_NAMES: readonly SignalsLane[] = ['default', 'token'];
 
-// Calls inside withSignals() that are queued or running and have not yet
-// settled. Bounds the queue instead of `limiter.pendingCount`, which (a) lags a
-// microtask behind enqueue even when a slot is free and (b) still counts calls
-// that already timed out while queued — those are drained without running fn()
-// but would otherwise make a dead backlog look like a full queue.
-let outstanding = 0;
+type Lane = {
+  limiter: ReturnType<typeof pLimit>;
+  concurrency: () => number;
+  maxQueue: () => number;
+  // Calls in this lane that are queued or running and have not yet settled.
+  // Bounds the queue instead of `limiter.pendingCount`, which lags a microtask
+  // behind enqueue even when a slot is free (a synchronous burst would read as
+  // queued and be shed spuriously).
+  outstanding: number;
+  // Calls in this lane still waiting for a slot (live: excludes calls that
+  // already settled while queued). Reported as signals_call_queue_depth.
+  queued: number;
+};
+
+const lanes: Record<SignalsLane, Lane> = {
+  default: {
+    limiter: pLimit(env.SIGNALS_CALL_CONCURRENCY),
+    concurrency: () => env.SIGNALS_CALL_CONCURRENCY,
+    maxQueue: () => env.SIGNALS_CALL_MAX_QUEUE,
+    outstanding: 0,
+    queued: 0,
+  },
+  token: {
+    limiter: pLimit(env.SIGNALS_TOKEN_CALL_CONCURRENCY),
+    concurrency: () => env.SIGNALS_TOKEN_CALL_CONCURRENCY,
+    maxQueue: () => env.SIGNALS_TOKEN_CALL_MAX_QUEUE,
+    outstanding: 0,
+    queued: 0,
+  },
+};
 
 // ────────────────────────────────────────────────────────────────────────────
-// Observability — single-backend, no label
+// Observability — single backend; per-lane metrics carry a `lane` label
 // ────────────────────────────────────────────────────────────────────────────
 
+// BACKEND timeouts only: fn() was started and the deadline fired. A call that
+// never reached the backend (expired while queued / not started for lack of
+// budget) is signals_call_queue_expirations_total instead.
 const signalsCallTimeoutsCounter = registerCounter({
   name: 'signals_call_timeouts_total',
-  help: 'Signals wrapped-call timeouts (deadline from entry exceeded or not reachable: queue wait + call)',
+  help: 'Signals backend timeouts (fn() started, deadline from entry exceeded)',
 });
 
-// Calls rejected at 0ms because SIGNALS_CALL_MAX_QUEUE live calls were already
-// waiting for a slot. Separate from the circuit-rejection counter so a storm
-// that fills the queue is distinguishable from an OPEN circuit.
-const signalsCallQueueRejectionsCounter = registerCounter({
+// Calls rejected at 0ms because the lane's queue bound was reached. Separate
+// from the circuit-rejection counter so a storm that fills a queue is
+// distinguishable from an OPEN circuit.
+const signalsCallQueueRejectionsCounter = registerCounterWithLabels({
   name: 'signals_call_queue_rejections_total',
-  help: 'Signals calls rejected at 0ms because the per-pod queue was full',
+  help: 'Signals calls rejected at 0ms because the lane queue was full',
+  labelNames: ['lane'] as const,
+});
+
+// Calls that waited in the queue and never reached the backend: the deadline
+// fired while queued, or the call reached its slot with less than half its
+// deadline left and was not started. They never touched the backend, so they
+// are NOT signals_call_timeouts_total.
+const signalsCallQueueExpirationsCounter = registerCounterWithLabels({
+  name: 'signals_call_queue_expirations_total',
+  help: 'Signals calls that expired in the queue or were not started for lack of deadline budget',
+  labelNames: ['lane'] as const,
 });
 
 // Active/queue gauges are sampled lazily on /metrics scrape so the hot path
@@ -162,15 +220,35 @@ function unlabeledGauge(name: string, help: string, collect: (g: client.Gauge<st
   }
 }
 
+function laneGauge(name: string, help: string, value: (lane: Lane) => number) {
+  const full = `civitai_app_${name}`;
+  try {
+    return new client.Gauge({
+      name: full,
+      help,
+      labelNames: ['lane'],
+      collect() {
+        for (const lane of LANE_NAMES) this.set({ lane }, value(lanes[lane]));
+      },
+    });
+  } catch {
+    return client.register.getSingleMetric(full) as client.Gauge<string>;
+  }
+}
+
 if (!global.signalsWrapperGaugesRegistered) {
-  unlabeledGauge('signals_call_active', 'In-flight wrapped signals calls', (g) => {
-    g.set(limiter.activeCount);
+  laneGauge('signals_call_active', 'Occupied limiter slots per lane', (lane) => {
+    return lane.limiter.activeCount;
   });
-  unlabeledGauge(
+  // The wrapper's own live count of waiting calls — the population the queue
+  // bound limits. limiter.pendingCount reports the same number on a real event
+  // loop (a queued call cannot settle before it is dequeued: FIFO + one
+  // deadline length); this keeps gauge and bound on one definition.
+  laneGauge(
     'signals_call_queue_depth',
-    'Queued (not-yet-running) wrapped signals calls',
-    (g) => {
-      g.set(limiter.pendingCount);
+    'Live queued (waiting for a slot) signals calls per lane',
+    (lane) => {
+      return lane.queued;
     }
   );
   unlabeledGauge(
@@ -201,8 +279,10 @@ const signalsCircuitTripsCounter = registerCounter({
 });
 
 // Per-call rejections while the circuit is OPEN or HALF_OPEN-with-trial-busy.
-// Kept SEPARATE from signals_call_timeouts_total — that counter's documented
-// meaning is "backend timed out at SIGNALS_CALL_TIMEOUT_MS". Conflating
+// Kept SEPARATE from signals_call_timeouts_total — that counter means "fn()
+// was started and the backend timed out at SIGNALS_CALL_TIMEOUT_MS"; calls that
+// never reached the backend are not in it (queue rejections / expirations have
+// their own counters). Conflating
 // circuit-open rejections (which never touch the backend) would inflate it
 // at request-arrival rate during OPEN and falsely trigger any alert keyed on
 // rate(signals_call_timeouts_total). Operators wanting "all fast-fail events"
@@ -393,7 +473,11 @@ function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
  * orphan fetch promise no longer hogs an event-loop slot for the full
  * router-timeout duration.
  *
- * Queue: bounded at SIGNALS_CALL_MAX_QUEUE live waiting calls. The deadline
+ * Lane: `opts.lane` picks the limiter + queue bound ('default' unless given;
+ * 'token' is reserved for getAccessToken — see LANES in the header).
+ *
+ * Queue: bounded per lane (SIGNALS_CALL_MAX_QUEUE / SIGNALS_TOKEN_CALL_MAX_QUEUE
+ * live waiting calls). The deadline
  * runs from entry, so a call that waits in the queue past it — or reaches its
  * slot with less than half of it left — rejects with
  * SignalsCallTimeoutError('timeout') and its fn() is never invoked (no
@@ -402,7 +486,12 @@ function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
  * backend evidence in the window (header comment); a shed HALF_OPEN trial
  * always releases `trialInFlight`.
  */
-export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
+export async function withSignals<T>(
+  fn: () => Promise<T>,
+  opts: { lane?: SignalsLane } = {}
+): Promise<T> {
+  const laneName = opts.lane ?? 'default';
+  const lane = lanes[laneName];
   // Circuit breaker gate — runs synchronously before the pLimit acquire.
   const decision = admitCall();
   if (!decision.admitted) {
@@ -411,10 +500,10 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   }
   const isTrial = decision.isTrial;
 
-  // Queue bound. `outstanding` counts running + live-queued calls, so the
-  // queue is full once it reaches concurrency + max queue.
-  if (outstanding >= env.SIGNALS_CALL_CONCURRENCY + env.SIGNALS_CALL_MAX_QUEUE) {
-    signalsCallQueueRejectionsCounter.inc();
+  // Queue bound. `outstanding` counts the lane's running + live-queued calls,
+  // so the lane's queue is full once it reaches concurrency + max queue.
+  if (lane.outstanding >= lane.concurrency() + lane.maxQueue()) {
+    signalsCallQueueRejectionsCounter.inc({ lane: laneName });
     recordCallOutcome(isTrial, 'queueFull');
     throw new SignalsCallTimeoutError('concurrency', 'Signals call queue full — failing fast');
   }
@@ -427,13 +516,25 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   // for any reason — with `timedOut` these classify the outcome (classifyOutcome).
   let startedAt: number | undefined;
   let rejected = false;
+  // Still waiting for a slot (counted in lane.queued until it gets one or the
+  // call settles first).
+  let waiting = true;
+  const stopWaiting = () => {
+    if (waiting) {
+      waiting = false;
+      lane.queued--;
+    }
+  };
   // One deadline for the whole call, armed at entry: it covers queue wait AND
   // execution. It rejects both the outer race (the caller's promise) and the
   // inner race (which releases the limiter slot).
   const deadline = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
       timedOut = true;
-      signalsCallTimeoutsCounter.inc();
+      // Backend timeout only if fn() was started; otherwise the call never
+      // left the queue.
+      if (startedAt !== undefined) signalsCallTimeoutsCounter.inc();
+      else signalsCallQueueExpirationsCounter.inc({ lane: laneName });
       reject(new SignalsCallTimeoutError('timeout'));
     }, env.SIGNALS_CALL_TIMEOUT_MS);
     timer.unref?.();
@@ -442,15 +543,17 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
 
   // Increment immediately before the `try` whose `finally` decrements it —
   // anything that could throw in between would leak a slot of the queue bound.
-  outstanding++;
+  lane.outstanding++;
+  lane.queued++;
   try {
     return await Promise.race([
-      limiter(async () => {
+      lane.limiter(async () => {
+        stopWaiting();
         // Deadline already fired while queued: the caller has its rejection and
-        // the timeout was counted. (Not reachable on a real event loop — FIFO
+        // the expiry was counted. (Not reachable on a real event loop — FIFO
         // + one deadline length means every slot frees by our deadline, holder
         // first on a tie — but it keeps the check below from counting the
-        // timeout twice if timers ever fire back to back.)
+        // expiry twice if timers ever fire back to back.)
         if (timedOut) return deadline;
         // Minimum start budget (header comment): less than half the deadline
         // left → never call fn() (no outbound fetch for a caller that has
@@ -458,7 +561,7 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
         // also covers a slot that frees in the same ms as our own deadline:
         // the slot holder's timer can fire just before ours does.
         if (deadlineAt - Date.now() < minBudgetMs()) {
-          signalsCallTimeoutsCounter.inc();
+          signalsCallQueueExpirationsCounter.inc({ lane: laneName });
           throw new SignalsCallTimeoutError(
             'timeout',
             'Signals call could not start with enough of its deadline left'
@@ -482,7 +585,8 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
     throw err;
   } finally {
     if (timer) clearTimeout(timer);
-    outstanding--;
+    stopWaiting();
+    lane.outstanding--;
     // EMERGENCY 2026-05-30: a metric-observation error MUST NOT propagate
     // into the app request path. We observed prom-client Histogram.observe
     // throwing `Cannot read properties of undefined (reading 'length')` at

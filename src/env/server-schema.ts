@@ -570,6 +570,13 @@ export const serverSchema = z
     // rejection counts toward the circuit only when the window also holds a
     // real backend failure, so a healthy burst is shed without opening it.
     SIGNALS_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
+    // Separate lane (own limiter + queue) for signals.getToken / getAccessToken
+    // only, so a client reconnect storm cannot crowd out signal pushes. Defaults
+    // equal the shared limiter getToken used before (30 / 200), so getToken's
+    // bounds are unchanged; the 'default' lane keeps SIGNALS_CALL_*. The circuit
+    // breaker stays shared across lanes. See src/server/signals/wrapper.ts.
+    SIGNALS_TOKEN_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
+    SIGNALS_TOKEN_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
     // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
     // If `SIGNALS_CIRCUIT_TRIP_THRESHOLD` SignalsCallTimeoutErrors accumulate
     // within `SIGNALS_CIRCUIT_WINDOW_SECONDS`, the circuit OPENs and all calls

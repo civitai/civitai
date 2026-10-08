@@ -14,17 +14,22 @@ const envMock = vi.hoisted(() => ({} as Record<string, number>));
 vi.mock('~/env/server', () => ({ env: envMock }));
 
 // Hand-listed rather than `importOriginal`: the real `~/server/prom/client`
-// imports the DB pools at load, and the wrapper only needs these two helpers.
-// Each counter is captured by name so tests can assert which fast-fail path ran.
+// imports the DB pools at load, and the wrapper only needs these helpers.
+// Each counter is captured by name so tests can assert which fast-fail path ran
+// (labelled counters record their label set as the inc() argument).
 const counters = vi.hoisted(() => new Map<string, { inc: ReturnType<typeof vi.fn> }>());
-vi.mock('~/server/prom/client', () => ({
-  registerCounter: ({ name }: { name: string }) => {
+vi.mock('~/server/prom/client', () => {
+  const register = ({ name }: { name: string }) => {
     const c = { inc: vi.fn() };
     counters.set(name, c);
     return c;
-  },
-  registerHistogram: () => ({ startTimer: () => () => undefined }),
-}));
+  };
+  return {
+    registerCounter: register,
+    registerCounterWithLabels: register,
+    registerHistogram: () => ({ startTimer: () => () => undefined }),
+  };
+});
 
 vi.mock('~/utils/logging', () => ({ createLogger: () => () => undefined }));
 
@@ -32,20 +37,45 @@ const DEFAULT_ENV = {
   SIGNALS_CALL_TIMEOUT_MS: 1000,
   SIGNALS_CALL_CONCURRENCY: 1,
   SIGNALS_CALL_MAX_QUEUE: 50,
+  SIGNALS_TOKEN_CALL_CONCURRENCY: 1,
+  SIGNALS_TOKEN_CALL_MAX_QUEUE: 50,
   SIGNALS_CIRCUIT_TRIP_THRESHOLD: 100,
   SIGNALS_CIRCUIT_WINDOW_SECONDS: 60,
   SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 5,
 };
 
+// The lane gauges are real prom-client gauges whose collect() reads the module
+// instance that created them. prom-client is not reset by vi.resetModules, so
+// drop them before each load so the fresh module registers its own.
+const GAUGES = [
+  'civitai_app_signals_call_active',
+  'civitai_app_signals_call_queue_depth',
+  'civitai_app_signals_circuit_state',
+];
+
 async function load(overrides: Partial<typeof DEFAULT_ENV> = {}) {
   for (const k of Object.keys(envMock)) delete envMock[k];
   Object.assign(envMock, DEFAULT_ENV, overrides);
+  const promClient = (await import('prom-client')).default;
+  for (const g of GAUGES) promClient.register.removeSingleMetric(g);
+  delete (globalThis as { signalsWrapperGaugesRegistered?: boolean })
+    .signalsWrapperGaugesRegistered;
   vi.resetModules();
   counters.clear();
   return import('~/server/signals/wrapper');
 }
 
 const count = (name: string) => counters.get(name)?.inc.mock.calls.length ?? 0;
+const countLane = (name: string, lane: string) =>
+  counters.get(name)?.inc.mock.calls.filter(([l]) => l?.lane === lane).length ?? 0;
+
+/** Current value of a lane gauge, read the way a /metrics scrape does. */
+async function laneGauge(name: string, lane: string) {
+  const promClient = (await import('prom-client')).default;
+  const metric = promClient.register.getSingleMetric(`civitai_app_${name}`);
+  const { values } = await metric!.get();
+  return values.find((v) => v.labels.lane === lane)?.value;
+}
 
 /** A call that never settles on its own — holds a limiter slot until the deadline. */
 const hang = () => new Promise<never>(() => undefined);
@@ -155,7 +185,9 @@ describe('withSignals', () => {
     // abandoned call must not fire its outbound fetch.
     await vi.advanceTimersByTimeAsync(10_000);
     expect(queuedFn).not.toHaveBeenCalled();
-    expect(count('signals_call_timeouts_total')).toBe(2);
+    // A was started → backend timeout; B never left the queue → expiration.
+    expect(count('signals_call_timeouts_total')).toBe(1);
+    expect(countLane('signals_call_queue_expirations_total', 'default')).toBe(1);
   });
 
   it('a call that reaches its slot with >= half its budget left runs on the REMAINING budget, not a fresh deadline', async () => {
@@ -192,7 +224,9 @@ describe('withSignals', () => {
     expect(b.error).toBeInstanceOf(SignalsCallTimeoutError);
     expect((b.error as InstanceType<typeof SignalsCallTimeoutError>).reason).toBe('timeout');
     expect(bFn).not.toHaveBeenCalled();
-    expect(count('signals_call_timeouts_total')).toBe(1);
+    // Never reached the backend: a queue expiration, not a backend timeout.
+    expect(count('signals_call_timeouts_total')).toBe(0);
+    expect(countLane('signals_call_queue_expirations_total', 'default')).toBe(1);
     expect(count('signals_circuit_trips_total')).toBe(0); // threshold 1, no evidence
 
     // The slot was freed immediately: a new call runs at once.
@@ -213,22 +247,25 @@ describe('withSignals', () => {
     expect(count('signals_call_timeouts_total')).toBe(0);
   });
 
-  it('a timeout is counted once even if the deadline fires before the queued call is dequeued (fake-timer only ordering)', async () => {
+  it('a queue expiry is counted once even if the deadline fires before the queued call is dequeued (fake-timer only ordering)', async () => {
     // Real Node runs microtasks between timer callbacks, so a slot always
     // frees before a later-entered call's own deadline fires. A SYNCHRONOUS
     // fake-timer advance fires both timers back to back, reaching the
     // `if (timedOut)` guard in the limiter task — this pins that it prevents
     // double-counting the timeout.
     const { withSignals } = await load();
-    track(withSignals(hang));
+    track(withSignals(hang, { lane: 'token' }));
     const bFn = vi.fn(hang);
-    track(withSignals(bFn));
+    track(withSignals(bFn, { lane: 'token' }));
     await vi.advanceTimersByTimeAsync(0);
     vi.advanceTimersByTime(1000);
     await vi.advanceTimersByTimeAsync(0);
 
     expect(bFn).not.toHaveBeenCalled();
-    expect(count('signals_call_timeouts_total')).toBe(2);
+    // A: backend timeout. B: its deadline fired while queued → one expiration,
+    // counted once (the guard stops the budget check counting it again).
+    expect(count('signals_call_timeouts_total')).toBe(1);
+    expect(countLane('signals_call_queue_expirations_total', 'token')).toBe(1);
   });
 
   it('rejects at 0ms with reason "concurrency" once the queue is full, without running fn', async () => {
@@ -362,7 +399,9 @@ describe('withSignals', () => {
     // Every started call succeeded; the 17 not started were rejected unrun.
     expect(ok).toHaveBeenCalledTimes(6);
     expect(calls.filter((c) => c.value === 'ok')).toHaveLength(6);
-    expect(count('signals_call_timeouts_total')).toBe(17);
+    // The 17 never started are queue expirations, not backend timeouts.
+    expect(count('signals_call_timeouts_total')).toBe(0);
+    expect(countLane('signals_call_queue_expirations_total', 'default')).toBe(17);
     expect(count('signals_circuit_trips_total')).toBe(0);
     await expect(withSignals(async () => 'after')).resolves.toBe('after');
   });
@@ -461,7 +500,9 @@ describe('withSignals', () => {
     const calls = [1, 2, 3, 4, 5].map(() => track(withSignals(hang)));
     await vi.advanceTimersByTimeAsync(1000);
     expect(calls.every((c) => c.settled)).toBe(true);
-    expect(count('signals_call_timeouts_total')).toBe(5);
+    // 1 started (backend timeout) + 4 that never left the queue.
+    expect(count('signals_call_timeouts_total')).toBe(1);
+    expect(count('signals_call_queue_expirations_total')).toBe(4);
     expect(count('signals_circuit_trips_total')).toBe(1);
 
     const gatedFn = vi.fn(async () => 'x');
@@ -669,5 +710,133 @@ describe('withSignals', () => {
     await expect(withSignals(async () => 'ok')).resolves.toBe('ok');
     await expect(withSignals(async () => 'ok2')).resolves.toBe('ok2');
     expect(count('signals_circuit_rejections_total')).toBe(0);
+  });
+
+  it('a HALF_OPEN trial that hangs past its deadline re-opens the circuit', async () => {
+    const { withSignals } = await load({
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+      SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 1,
+    });
+
+    track(withSignals(hang));
+    await vi.advanceTimersByTimeAsync(1000); // backend timeout → OPEN
+    expect(count('signals_circuit_trips_total')).toBe(1);
+    await vi.advanceTimersByTimeAsync(1000); // cooldown → next call is the trial
+
+    const trialFn = vi.fn(hang);
+    const trial = track(withSignals(trialFn));
+    await vi.advanceTimersByTimeAsync(1000); // the trial itself hits its deadline
+    expect(trialFn).toHaveBeenCalledTimes(1);
+    expect(trial.error).toBeDefined();
+    expect(count('signals_circuit_trips_total')).toBe(2); // HALF_OPEN → OPEN
+    await expect(withSignals(async () => 'x')).rejects.toThrow(/circuit open/);
+  });
+
+  describe('lanes', () => {
+    it("a storm in the 'token' lane does not crowd out the 'default' lane", async () => {
+      const { withSignals } = await load({
+        SIGNALS_TOKEN_CALL_MAX_QUEUE: 0,
+        SIGNALS_CALL_MAX_QUEUE: 0,
+      });
+
+      // Token lane: one slot busy, then a storm of token calls is shed.
+      track(withSignals(hang, { lane: 'token' }));
+      const storm = Array.from({ length: 5 }, () =>
+        track(withSignals(async () => 't', { lane: 'token' }))
+      );
+      await Promise.resolve();
+      expect(
+        storm.every((s) => (s.error as Error | undefined)?.message?.includes('queue full'))
+      ).toBe(true);
+      expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(5);
+
+      // A push on the default lane still gets a slot and completes.
+      const pushFn = vi.fn(async () => 'pushed');
+      await expect(withSignals(pushFn)).resolves.toBe('pushed');
+      expect(pushFn).toHaveBeenCalledTimes(1);
+      expect(countLane('signals_call_queue_rejections_total', 'default')).toBe(0);
+    });
+
+    it("a full 'default' lane does not block token mints", async () => {
+      const { withSignals } = await load({ SIGNALS_CALL_MAX_QUEUE: 0 });
+
+      track(withSignals(hang)); // default lane: the only slot
+      const shed = track(withSignals(async () => 'p'));
+      await Promise.resolve();
+      expect((shed.error as Error | undefined)?.message).toMatch(/queue full/);
+
+      await expect(withSignals(async () => 'token', { lane: 'token' })).resolves.toBe('token');
+      expect(countLane('signals_call_queue_rejections_total', 'default')).toBe(1);
+      expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(0);
+    });
+
+    it('each lane is bounded by its OWN concurrency + max queue', async () => {
+      const { withSignals } = await load({
+        SIGNALS_CALL_CONCURRENCY: 1,
+        SIGNALS_CALL_MAX_QUEUE: 1,
+        SIGNALS_TOKEN_CALL_CONCURRENCY: 2,
+        SIGNALS_TOKEN_CALL_MAX_QUEUE: 3,
+      });
+
+      // token: 2 + 3 admitted, the 6th shed. default: 1 + 1 admitted, the 3rd shed.
+      const token = Array.from({ length: 6 }, () => track(withSignals(hang, { lane: 'token' })));
+      const def = Array.from({ length: 3 }, () => track(withSignals(hang)));
+      await Promise.resolve();
+      expect(token.filter((t) => t.settled)).toHaveLength(1);
+      expect(def.filter((d) => d.settled)).toHaveLength(1);
+      // …and each lane's limiter really runs its own concurrency.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await laneGauge('signals_call_active', 'token')).toBe(2);
+      expect(await laneGauge('signals_call_active', 'default')).toBe(1);
+      expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(1);
+      expect(countLane('signals_call_queue_rejections_total', 'default')).toBe(1);
+    });
+
+    it('the circuit breaker is SHARED: a sick backend seen by one lane stops the other', async () => {
+      const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1 });
+
+      track(withSignals(hang, { lane: 'token' }));
+      await vi.advanceTimersByTimeAsync(1000); // token-lane backend timeout → OPEN
+      expect(count('signals_circuit_trips_total')).toBe(1);
+
+      const pushFn = vi.fn(async () => 'p');
+      await expect(withSignals(pushFn)).rejects.toThrow(/circuit open/);
+      expect(pushFn).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('metrics', () => {
+    it('active and queue depth are reported per lane, and the queue drains to 0', async () => {
+      const { withSignals } = await load({ SIGNALS_CALL_CONCURRENCY: 1 });
+
+      // default lane: 1 running + 3 waiting. token lane: 1 running + 1 waiting.
+      track(withSignals(hang));
+      [1, 2, 3].forEach(() => track(withSignals(hang)));
+      track(withSignals(hang, { lane: 'token' }));
+      track(withSignals(hang, { lane: 'token' }));
+      await vi.advanceTimersByTimeAsync(0);
+      expect(await laneGauge('signals_call_queue_depth', 'default')).toBe(3);
+      expect(await laneGauge('signals_call_queue_depth', 'token')).toBe(1);
+      expect(await laneGauge('signals_call_active', 'default')).toBe(1);
+      expect(await laneGauge('signals_call_active', 'token')).toBe(1);
+
+      // Everything hits its deadline; nothing is left waiting or running.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(await laneGauge('signals_call_queue_depth', 'default')).toBe(0);
+      expect(await laneGauge('signals_call_queue_depth', 'token')).toBe(0);
+      expect(await laneGauge('signals_call_active', 'default')).toBe(0);
+    });
+
+    it('a backend timeout and a queue expiration are counted apart, per lane', async () => {
+      const { withSignals } = await load();
+
+      track(withSignals(hang, { lane: 'token' })); // started → backend timeout
+      track(withSignals(hang, { lane: 'token' })); // never started → expiration
+      await vi.advanceTimersByTimeAsync(1000);
+
+      expect(count('signals_call_timeouts_total')).toBe(1);
+      expect(countLane('signals_call_queue_expirations_total', 'token')).toBe(1);
+      expect(countLane('signals_call_queue_expirations_total', 'default')).toBe(0);
+    });
   });
 });
