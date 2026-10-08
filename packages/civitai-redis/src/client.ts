@@ -1695,8 +1695,9 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system') {
   //
   // SINGLE-SINGLETON INVARIANT — registering only the FIRST getClient('system') set is sufficient
   // because the app builds exactly ONE sys client per process: `createRedisClients` is called once
-  // (src/server/redis/client.ts `make()`, memoized — prod evaluates the module const once, dev
-  // caches on global.__civitaiRedisClients, build builds nothing), and `createSysRedis` has zero
+  // (src/server/redis/client.ts `make()`, memoized on globalThis.__civitaiRedisClients in every
+  // environment — this module is evaluated once per bundler module graph, so a module-scope memo
+  // would not be enough; build builds nothing), and `createSysRedis` has zero
   // callers (civitai-auth uses createCacheRedis → cache-only). So there is never a second, unwatched
   // sys client. If a future caller builds an ADDITIONAL sys client, this guard would leave it
   // unwatched — revisit the guard (key it per client set) at that point.
