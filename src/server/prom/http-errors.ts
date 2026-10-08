@@ -207,3 +207,85 @@ export function recordTrpcError(error: unknown, path?: string): void {
     /* never throw from telemetry */
   }
 }
+
+// ---------------------------------------------------------------------------
+// Expected tRPC 404s: skipped from the Axiom ingest, counted here instead
+// ---------------------------------------------------------------------------
+//
+// Some procedures answer NOT_FOUND as a normal outcome rather than a fault. The tRPC
+// `onError` skips the Axiom ingest for exactly the (path, code) pairs below, because at their
+// volume the per-error JSON.stringify(input) + ingest is pure cost: the line says nothing the
+// status code doesn't.
+//
+// `recordTrpcError` above counts only >= 500, so once the log line is skipped nothing else
+// records these errors. The counter below is that record: it lets the expected-404 rate be
+// re-derived (and a change in it noticed) without paying for a log line per error.
+
+/**
+ * The (procedure path, code) pairs whose Axiom ingest the tRPC `onError` skips. Exact matches
+ * only — never a prefix, never "every NOT_FOUND". Adding a procedure is one line here; the
+ * test pins the full set, so the addition is visible in review.
+ *
+ * - `image.getGenerationData` / NOT_FOUND: an image with no generation metadata is an ordinary
+ *   answer, and a large share of the procedure's calls get it.
+ */
+export const EXPECTED_NOT_FOUND_LOG_SKIPS: ReadonlyArray<{
+  readonly path: string;
+  readonly code: TRPCError['code'];
+}> = [{ path: 'image.getGenerationData', code: 'NOT_FOUND' }];
+
+/**
+ * Whether the tRPC `onError` should skip the Axiom ingest for this error as an expected 404.
+ * Requires a real TRPCError AND an exact allowlisted (path, code) pair, so it cannot widen into
+ * a blanket NOT_FOUND skip that would hide genuine client-fault bugs on other procedures.
+ */
+export function shouldSkipExpectedNotFoundLog(path: string | undefined, error: unknown): boolean {
+  if (path === undefined || !(error instanceof TRPCError)) return false;
+  return EXPECTED_NOT_FOUND_LOG_SKIPS.some(
+    (entry) => entry.path === path && entry.code === error.code
+  );
+}
+
+const UNLOGGED_NAME = 'civitai_app_trpc_unlogged_client_errors_total';
+
+declare global {
+  // eslint-disable-next-line no-var
+  var __civitaiTrpcUnloggedClientErrorCounter: client.Counter<string> | undefined;
+}
+
+// Pinned on globalThis for the same reason as `httpErrorCounter` above.
+//
+// Labels: `path` (not `route`) holds the bare procedure path, the same label name and value
+// `trpc_procedure_duration_seconds` uses, so this divides by that histogram's `_count` per path
+// with no relabelling. Cardinality is the allowlist's size by construction: only allowlisted
+// pairs are ever incremented (see `recordUnloggedTrpcClientError`).
+export const trpcUnloggedClientErrorCounter: client.Counter<string> =
+  globalThis.__civitaiTrpcUnloggedClientErrorCounter ??
+  (globalThis.__civitaiTrpcUnloggedClientErrorCounter = new client.Counter({
+    name: UNLOGGED_NAME,
+    help: 'tRPC client-fault errors whose Axiom log line is deliberately skipped as an expected outcome (see EXPECTED_NOT_FOUND_LOG_SKIPS), by procedure path and tRPC code. UNSAMPLED, one increment per procedure error. These are NOT in civitai_app_http_errors_total (5xx only) and NOT in Axiom, so this is their only count. `path` matches trpc_procedure_duration_seconds, so rate(this) / rate(that _count) is the per-procedure share of calls.',
+    labelNames: ['path', 'code'],
+  }));
+
+// Seed every allowlisted series at 0, so "none skipped yet" reads as 0 rather than `no data`.
+// `inc(…, 0)` is a no-op on a series that already exists, so a module re-evaluation is safe.
+try {
+  for (const { path, code } of EXPECTED_NOT_FOUND_LOG_SKIPS) {
+    trpcUnloggedClientErrorCounter.inc({ path, code }, 0);
+  }
+} catch {
+  /* never throw from telemetry */
+}
+
+/**
+ * Count one error whose Axiom ingest `onError` skipped. Counts ONLY allowlisted pairs, so it
+ * cannot grow label cardinality whatever it is called with. Never throws.
+ */
+export function recordUnloggedTrpcClientError(error: unknown, path?: string): void {
+  try {
+    if (!shouldSkipExpectedNotFoundLog(path, error)) return;
+    trpcUnloggedClientErrorCounter.inc({ path: path as string, code: (error as TRPCError).code });
+  } catch {
+    /* never throw from telemetry */
+  }
+}
