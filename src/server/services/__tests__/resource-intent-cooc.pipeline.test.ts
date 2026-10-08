@@ -90,6 +90,9 @@ describe('cooc build pipeline', () => {
     // says "model", so it never indexes. "rare0" (version 2000's trigger) appears only on images
     // attaching model 1000, so it is removed everywhere, while "rare4", on the same images, is kept
     // and pairs with model 1000.
+    // 'model' and 'ctrl' share their 23 images, all attaching model 1001 ("Model 2001"): the control
+    // token pairs with it, the model-name token is removed.
+    expect(c.vocab).toContain('ctrl');
     expect(c.vocab).not.toContain('model');
     expect(c.vocab).not.toContain('rare0');
     const t = c.vocab.indexOf('rare4');
@@ -126,6 +129,60 @@ describe('cooc build pipeline', () => {
     expect((await db.query(`SELECT 1 FROM "ResourceIntentCoocSnapshot"`)).rows).toEqual([]);
     const real = await buildCoocSnapshot({ ...production(), query: imageDb().query, sql });
     expect(real.contentHash).toBe(dry.contentHash);
+  });
+
+  it('a row exactly at trainStart is inside the window', async () => {
+    const { db, sql } = await freshDb();
+    const trainStart = new Date(
+      PROD_TRAIN_END.getTime() - RESOURCE_INTENT_COOC_SPEC.trainDays * DAY
+    );
+    const injected = {
+      imageId: 999_996,
+      createdAt: trainStart,
+      prompt: 'tok00001',
+      att: [{ modelId: 1000, modelType: 'LORA', versionId: 2000 }],
+    };
+    const s = await buildCoocSnapshot({
+      ...production(),
+      query: imageDb({ injectFirstBatch: [injected] }).query,
+      sql,
+    });
+    expect([s.trainRows, s.created]).toEqual([901, true]);
+    const [row] = (
+      await db.query<{ trainCreatedAtMin: Date }>(
+        `SELECT "trainCreatedAtMin" FROM "ResourceIntentCoocSnapshot"`
+      )
+    ).rows;
+    expect(row.trainCreatedAtMin.getTime()).toBe(trainStart.getTime());
+  });
+
+  it('a batch longer than the yield interval is tokenised in full', async () => {
+    const { sql } = await freshDb();
+    const s = await buildCoocSnapshot({
+      ...production({ dryRun: true }),
+      query: imageDb({ images: 2_345 }).query,
+      sql,
+    });
+    expect([s.trainRows, s.batches]).toEqual([2_345, 1]);
+  });
+
+  it('the train end is the UTC date, whatever the process time zone', () => {
+    const tz = process.env.TZ;
+    try {
+      for (const zone of ['Pacific/Kiritimati', 'Pacific/Pago_Pago', 'UTC']) {
+        process.env.TZ = zone;
+        // 23:30Z is already the next local day at +14; 00:30Z is still the previous one at -11.
+        expect(defaultCoocTrainEnd(new Date('2026-10-01T23:30:00Z')).toISOString()).toBe(
+          '2026-09-30T00:00:00.000Z'
+        );
+        expect(defaultCoocTrainEnd(new Date('2026-10-01T00:30:00Z')).toISOString()).toBe(
+          '2026-09-30T00:00:00.000Z'
+        );
+      }
+    } finally {
+      if (tz === undefined) delete process.env.TZ;
+      else process.env.TZ = tz;
+    }
   });
 
   describe('a build that fails leaves a failed row, never a ready one', () => {

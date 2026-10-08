@@ -1,11 +1,11 @@
 /**
  * The co-occurrence index's tokeniser, ported from the offline screen that measured it. Training
  * and query tokens must come out of these exact rules or the counts stop meaning what was measured;
- * `__tests__/resource-intent-cooc.tokenize.seam.test.ts` compares every function here with the
+ * `src/server/services/__tests__/resource-intent-cooc.tokenize.seam.test.ts` compares every function here with the
  * screen's own source.
  *
- * 🔴 KEEP THIS MODULE A LEAF (no imports): the spec hash, the builder and a future request path all
- * load it.
+ * 🔴 KEEP THIS MODULE A LEAF (no imports): the request path will load it, and must not pull in the
+ * builder or the DB graph with it.
  */
 
 /** NFKD, strip combining marks, lowercase, every run of non-letter/non-digit → one space. */

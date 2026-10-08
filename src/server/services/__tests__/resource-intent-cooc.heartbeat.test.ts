@@ -159,4 +159,30 @@ describe('cooc retention heartbeat', () => {
     );
     expect(route).toContain("import '~/server/prom/resource-intent-cooc.metrics';");
   });
+
+  it('a failed read keeps the last value and waits a minute before trying again', async () => {
+    let t = 0;
+    let fail = false;
+    const read = vi.fn(async () => {
+      if (fail) throw new Error('db down');
+      return NOW;
+    });
+    const { gauge, refresh } = createCoocRetentionHeartbeatGauge(
+      read,
+      new client.Registry(),
+      () => t
+    );
+    await gauge.get();
+    await refresh();
+    expect(await values(gauge)).toEqual([NOW.getTime() / 1000]);
+    fail = true;
+    t = 60_000;
+    await gauge.get();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
+    await new Promise((r) => setImmediate(r)); // let the failed read settle
+    expect(await values(gauge)).toEqual([NOW.getTime() / 1000]);
+    t = 119_000;
+    await values(gauge);
+    expect(read).toHaveBeenCalledTimes(2);
+  });
 });

@@ -5,7 +5,7 @@ import { applyCoocRetention, type CoocSql } from './store';
 
 /**
  * The retention sweep's heartbeat, persisted in `KeyValue` (in `getJobDate`'s encoding) so it
- * survives pod restarts; `~/server/prom/resource-intent-cooc.metrics` reads it back at scrape time.
+ * survives pod restarts; `~/server/prom/resource-intent-cooc.metrics` exports it.
  * Written only after a sweep succeeds, so a sweep that throws (including one that leaves an
  * overdue study row) or never runs leaves it stale for a staleness alert to catch.
  */

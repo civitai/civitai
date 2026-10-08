@@ -7,7 +7,7 @@ import type { CoocModelText } from './tokenize';
 /**
  * Builder side of the resource-intent co-occurrence index: the training-row sampler, the
  * counts, and the snapshot payload. A port of the offline screen's draw loop and its
- * reference index builder; the seam tests in `__tests__/resource-intent-cooc.*.test.ts`
+ * reference index builder; the seam tests in `src/server/services/__tests__/resource-intent-cooc.*.test.ts`
  * hold each piece to the screen's output.
  *
  * Takes its parameters as arguments rather than importing `./spec`, because `./spec` hashes
@@ -16,7 +16,7 @@ import type { CoocModelText } from './tokenize';
 
 /**
  * The conditions of the M3 registration's `GOLDSET_ELIGIBLE_IMAGE` after its rolling-window
- * line, byte for byte (`__tests__/resource-intent-cooc.eligibility.test.ts` compares them). The
+ * line, byte for byte (`src/server/services/__tests__/resource-intent-cooc.eligibility.test.ts` compares them). The
  * draw replaces that window with explicit `[trainStart, trainEnd)` bounds.
  */
 export const COOC_ELIGIBLE_REST = `  AND i."hideMeta" = false
@@ -54,15 +54,15 @@ export function mulberry32(seed: number) {
 
 export type CoocRawQuery = (sql: Prisma.Sql) => Promise<unknown[]>;
 
-/** The screen's retry, ported with its 2 s / 4 s backoff. */
-async function retry<T>(fn: () => Promise<T>, tries = 3): Promise<T> {
+/** The screen's retry, ported: 3 tries, waiting `delayMs` then twice that. */
+export async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
       return await fn();
     } catch (e) {
       last = e;
-      if (i < tries - 1) await new Promise((r) => setTimeout(r, 2000 * (i + 1)));
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, delayMs * (i + 1)));
     }
   }
   throw last;
@@ -84,6 +84,7 @@ export type CoocDrawParams = {
   idBatch: number;
   maxBatches: number;
   onBatch: (rows: CoocDrawRow[]) => Promise<void>;
+  retryDelayMs?: number;
 };
 
 export type CoocDrawStats = {
@@ -101,7 +102,7 @@ export type CoocDrawStats = {
  * binary search on the primary key, so the window costs one tiny indexed read per step.
  */
 export async function drawTrainingRows(p: CoocDrawParams): Promise<CoocDrawStats> {
-  const q = <T>(sql: Prisma.Sql) => retry(() => p.query(sql) as Promise<T[]>);
+  const q = <T>(sql: Prisma.Sql) => coocRetry(() => p.query(sql) as Promise<T[]>, p.retryDelayMs);
   const maxIdRow = await q<{ max: number | null }>(Prisma.sql`SELECT max(id) AS max FROM "Image"`);
   const maxId = Number(maxIdRow[0]?.max ?? 0);
   let boundQueries = 0;
@@ -169,7 +170,7 @@ export async function fetchVersionText(
   const out = new Map<number, CoocModelText>();
   for (let i = 0; i < versionIds.length; i += VERSION_TEXT_CHUNK) {
     const chunk = versionIds.slice(i, i + VERSION_TEXT_CHUNK);
-    const vs = (await retry(() =>
+    const vs = (await coocRetry(() =>
       query(Prisma.sql`
       SELECT mv.id, mv."trainedWords", m.name AS "modelName" FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
       WHERE mv.id = ANY(${chunk}::int[])`)

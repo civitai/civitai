@@ -399,6 +399,13 @@ describe('cooc pin rules (store and CHECK)', () => {
     ).rejects.toThrow(/58 days/);
   });
 
+  it('a study pin at or before the build is rejected by the CHECK', async () => {
+    const { db } = await freshDb();
+    await expect(insertRaw(db, 'study', `now() - interval '1 second'`)).rejects.toThrow(
+      /kind_pin_check/
+    );
+  });
+
   it('a production row with a pin is rejected by the store and by the CHECK', async () => {
     const { db, sql } = await freshDb();
     await expect(begin(sql, 'production', { pinnedUntil: ahead(5) })).rejects.toThrow(

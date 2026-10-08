@@ -6,8 +6,8 @@ import { instrumentationRegistry } from '~/server/prom/client';
 // Side-effect import: registers the challenge state gauges (collect()-based) on the default
 // registry so they are present + scraped even before the first challenge op runs this session.
 import '~/server/prom/challenge.metrics';
-// Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue
-// at scrape time).
+// Side-effect import: registers the co-occurrence retention heartbeat gauge (read from KeyValue,
+// cached for a minute).
 import '~/server/prom/resource-intent-cooc.metrics';
 // Side-effect import: registers the session-resolution metrics, including the UNLABELLED
 // session_legacy_decode_total. Unlabelled counters only carry their "healthy is an observable 0" meaning if

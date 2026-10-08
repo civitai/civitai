@@ -43,6 +43,8 @@ import {
   buildResourceIntentCoocJob,
   resourceIntentCoocRetentionJob,
 } from '~/server/jobs/build-resource-intent-cooc';
+import { Prisma } from '@prisma/client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import { FLIPT_FEATURE_FLAGS } from '~/server/flipt/client';
 
 const run = (job: unknown) => (job as { run: () => Promise<unknown> }).run();
@@ -94,8 +96,11 @@ describe('resource-intent-cooc-retention job', () => {
     expect(await run(resourceIntentCoocRetentionJob)).toEqual({ deleted: 2, tableMissing: false });
     expect(mockSweep).toHaveBeenCalledTimes(1);
     const [sql, kv, now] = mockSweep.mock.calls[0];
-    expect(typeof sql.query).toBe('function');
-    expect(kv).toHaveProperty('keyValue');
+    expect(kv).toBe(dbMock.dbWrite);
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([] as never);
+    await sql.query(Prisma.sql`SELECT 1`);
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
     expect(Math.abs(Date.now() - (now as Date).getTime())).toBeLessThan(10_000);
     expect(mockIsFlipt).not.toHaveBeenCalled();
     expect((resourceIntentCoocRetentionJob as unknown as { cron: string }).cron).toBe('30 4 * * *');

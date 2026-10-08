@@ -19,11 +19,11 @@
 -- build of identical data therefore have distinct hashes.
 --
 -- `kind` and `status` are TEXT rather than enums. The CHECKs hold the rules the app also
--- enforces: a study row is always pinned, for at most 58 days from its build (with the
--- daily retention sweep and a ~26 h staleness alert on its heartbeat, which must be
--- provisioned outside this repo, a missed sweep alerts before any study row reaches 60
--- days); a production row is never pinned;
--- a ready row carries its hash, payload and counts.
+-- enforces: a study row is always pinned, ending after its build and at most 58 days
+-- from it (with the daily retention sweep and a ~26 h staleness alert on its heartbeat,
+-- which must be provisioned outside this repo, a missed sweep alerts before any study
+-- row reaches 60 days); a production row is never pinned; a ready row carries its hash,
+-- payload, training ids, row count and created-at bounds.
 
 SET lock_timeout = '3s';
 
@@ -65,6 +65,7 @@ BEGIN
         ALTER TABLE "ResourceIntentCoocSnapshot" ADD CONSTRAINT "ResourceIntentCoocSnapshot_kind_pin_check"
             CHECK (
                 ("kind" = 'study' AND "pinnedUntil" IS NOT NULL
+                    AND "pinnedUntil" > "builtAt"
                     AND "pinnedUntil" <= "builtAt" + interval '58 days')
                 OR ("kind" = 'production' AND "pinnedUntil" IS NULL)
             );

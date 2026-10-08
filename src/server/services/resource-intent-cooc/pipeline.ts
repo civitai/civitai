@@ -68,8 +68,8 @@ export function defaultCoocTrainEnd(now: Date) {
 }
 
 /**
- * Validate → (unless dry run) record the build → draw → tokenise → count → serialise → mark it
- * ready, or failed on any error. Each drawn batch is tokenised as it arrives, so prompts are not
+ * Validate → (unless dry run) record the build → draw → tokenise → count → serialise → complete it
+ * (ready, or 'duplicate' of an existing snapshot), or mark it failed on any error. Each drawn batch is tokenised as it arrives, so prompts are not
  * all held at once. Retention is a separate job.
  */
 export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBuildSummary> {
@@ -79,7 +79,9 @@ export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBui
   if (!Number.isInteger(opts.seed) || opts.seed < 0 || opts.seed > 2 ** 31 - 1)
     throw new Error('seed must be an integer in [0, 2^31 - 1]');
   if (opts.kind === 'production' && opts.trainEnd)
-    throw new Error('a production build cannot be backdated: it always trains up to yesterday');
+    throw new Error(
+      'a production build cannot be backdated: it always trains up to defaultCoocTrainEnd'
+    );
   const trainEnd = opts.trainEnd ?? defaultCoocTrainEnd(now);
   if (trainEnd.getTime() > now.getTime() - spec.gapDays * DAY_MS)
     throw new Error(`trainEnd must be at least ${spec.gapDays} day(s) before now`);

@@ -143,6 +143,14 @@ describe('cooc index seam: shipped == screen reference', () => {
     expect(build100(6).vocab).not.toContain('tok00001');
   });
 
+  it('an accumulator finalizes once and takes no rows after', () => {
+    const acc = new CoocCountAccumulator(RESOURCE_INTENT_COOC_SPEC.addonTypes);
+    acc.add(['tok00001'], [[1, 'LORA']]);
+    acc.finalize(RESOURCE_INTENT_COOC_SPEC);
+    expect(() => acc.finalize(RESOURCE_INTENT_COOC_SPEC)).toThrow(/already finalized/);
+    expect(() => acc.add(['tok00002'], [[1, 'LORA']])).toThrow(/already finalized/);
+  });
+
   it('a role with no types, or null types, gets no candidates', () => {
     const q = golden.queries.find((x) => x.ranking.length > 5) as Golden['queries'][number];
     expect(rankCooc(scores, q.q, null, 300)).toEqual([]);

@@ -158,4 +158,29 @@ describe('cooc sampler seam: shipped == screen', () => {
       'AND EXISTS (SELECT 1 FROM "ImageResourceNew" r WHERE r."imageId" = i.id)'
     );
   });
+
+  it('the draw absorbs up to two failures of a statement, not three', async () => {
+    const flaky = (failures: number) => {
+      const t = fakeTable(500);
+      let n = 0;
+      return async (sql: Prisma.Sql) => {
+        if (sql.sql.includes('WITH s AS') && n++ < failures) throw new Error('replica blip');
+        return t.query(sql);
+      };
+    };
+    const draw = (failures: number) =>
+      drawTrainingRows({
+        query: flaky(failures),
+        trainStart: new Date(T0 + 100 * HOUR),
+        trainEnd: new Date(T0 + 300 * HOUR),
+        seed: 1,
+        target: 10,
+        idBatch: 20,
+        maxBatches: 1,
+        onBatch: async () => undefined,
+        retryDelayMs: 0,
+      });
+    await expect(draw(2)).resolves.toMatchObject({ batches: 1 });
+    await expect(draw(3)).rejects.toThrow('replica blip');
+  });
 });

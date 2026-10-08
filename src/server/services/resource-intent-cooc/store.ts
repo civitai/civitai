@@ -264,11 +264,11 @@ function servedOrder(a: RetentionRow, b: RetentionRow) {
 /**
  * Which rows retention deletes at `now`:
  * - the served snapshot (the row `latestReadySnapshotId` reads) never;
- * - other ready production snapshots once built more than 28 days ago;
- * - study rows, of any status, once their pin has passed (or with no pin, or 58 days after the
- *   build);
- * - other rows that are not ready ('building', 'failed', 'duplicate'), once built more than 7
- *   days ago.
+ * - other ready production snapshots once older than `COOC_PRODUCTION_RETENTION_DAYS`;
+ * - study rows, of any status, once their pin has passed (or with no pin, or
+ *   `COOC_MAX_PIN_DAYS` after the build);
+ * - other rows that are not ready ('building', 'failed', 'duplicate'), once older than
+ *   `COOC_NOT_READY_RETENTION_DAYS`.
  */
 export function selectCoocSnapshotsToDelete(rows: readonly RetentionRow[], now: Date): string[] {
   const t = now.getTime();

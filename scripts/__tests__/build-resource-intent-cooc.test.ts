@@ -150,4 +150,26 @@ describe('build-resource-intent-cooc flags', () => {
       expect(mockRelease).not.toHaveBeenCalled();
     });
   });
+
+  it('a study build passes its kind, train end, pin and seed through unchanged', async () => {
+    mockBuild.mockResolvedValue({ contentHash: 'h' });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    await main([
+      '--kind',
+      'study',
+      '--pin-until',
+      '2026-11-20T00:00:00Z',
+      '--train-end',
+      '2026-09-07T03:00:22.835Z',
+      '--seed',
+      '7',
+    ]);
+    expect(mockBuild).toHaveBeenLastCalledWith({
+      kind: 'study',
+      trainEnd: new Date('2026-09-07T03:00:22.835Z'),
+      pinnedUntil: new Date('2026-11-20T00:00:00Z'),
+      seed: 7,
+      dryRun: false,
+    });
+  });
 });

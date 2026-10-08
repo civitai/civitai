@@ -8,7 +8,7 @@ import { createJob } from './job';
 
 export const buildResourceIntentCoocJob = createJob(
   'build-resource-intent-cooc',
-  // Weekly; COOC_PRODUCTION_RETENTION_DAYS (28) is sized for this cadence.
+  // Weekly; COOC_PRODUCTION_RETENTION_DAYS is sized for this cadence.
   '0 5 * * 2',
   async () => {
     if (!(await isFlipt(FLIPT_FEATURE_FLAGS.RESOURCE_INTENT_COOC_BUILD)))
@@ -20,9 +20,9 @@ export const buildResourceIntentCoocJob = createJob(
       dryRun: false,
     });
   },
-  // A concurrent second build would draw the same window again and end as a 'duplicate' row, so
-  // the lock saves replica load, not correctness. 90 min covers a worst-case draw (200 batches with
-  // retries). The build does not poll `checkIfCanceled`, so it finishes if the scheduler hangs up.
+  // A concurrent second build would repeat the whole replica draw (normally ending 'duplicate');
+  // that load is the harm the held lock prevents. The build does not poll `checkIfCanceled`, so it
+  // finishes if the scheduler hangs up.
   { lockExpiration: 90 * 60, keepLockOnDisconnect: true }
 );
 

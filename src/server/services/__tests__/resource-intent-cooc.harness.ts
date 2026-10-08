@@ -140,7 +140,10 @@ export function fakeImageDb(opts: {
           (id): CoocDrawRow => ({
             imageId: id,
             createdAt: createdAt(id),
-            prompt: `tok${pad(id % 17)} tok${pad(id % 5)} shared model rare${id % 40}`,
+            // 'model' and 'ctrl' only on the 23 images with id % 40 === 1, which all attach model 1001.
+            prompt: `tok${pad(id % 17)} tok${pad(id % 5)} shared rare${id % 40}${
+              id % 40 === 1 ? ' model ctrl' : ''
+            }`,
             att: [
               {
                 modelId: 1000 + (id % 4),
