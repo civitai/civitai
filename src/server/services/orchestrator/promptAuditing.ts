@@ -11,6 +11,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
 import {
   auditPromptEnriched,
+  isBlankAuditInput,
   isOverLengthRefusal,
   isSoftBlock,
   type PromptTrigger,
@@ -299,9 +300,10 @@ export async function classifyPromptServer(
 ): Promise<PromptClassification> {
   const { prompt, negativePrompt, isGreen, moderationSource } = options;
 
-  // Mirrors `auditPromptServer`'s own early return: an empty prompt is never audited, so the
-  // honest answer to "what would the audit do" is pass — with no reads at all.
-  if (!prompt || !prompt.trim()) {
+  // Mirrors `auditPromptServer`'s own early return: when the prompt AND the negative prompt are
+  // both empty there is nothing to audit, so the honest answer to "what would the audit do" is
+  // pass — with no reads at all. An empty prompt beside a non-empty negative prompt is audited.
+  if (isBlankAuditInput(prompt, negativePrompt)) {
     return {
       outcome: 'pass',
       source: null,
@@ -385,13 +387,21 @@ export async function classifyPromptServer(
   // Run external moderation service. Fails OPEN: a classifier error is treated as "not flagged".
   // `error.message` is read exactly as the pre-split code read it, untyped, so a non-Error
   // rejection reports the same (possibly undefined) message it always did.
+  //
+  // The classifier is sent the prompt only — never the negative prompt. So when the prompt is empty
+  // (the negative prompt alone brought the input here) there is no text to send and it is not
+  // called: the regex layer above is the whole audit for that input. Keyed on the RAW prompt, so a
+  // non-empty prompt reaches the classifier exactly as before, even if benign-phrase stripping
+  // emptied the audited copy.
   let externalError: PromptClassification['externalError'] = null;
-  const { flagged, categories } = await extModeration
-    .moderatePrompt(auditedPrompt ?? prompt, moderationSource)
-    .catch((error) => {
-      externalError = { message: error.message };
-      return { flagged: false, categories: [] as string[] };
-    });
+  const { flagged, categories } = !prompt?.trim()
+    ? { flagged: false, categories: [] as string[] }
+    : await extModeration
+        .moderatePrompt(auditedPrompt ?? prompt, moderationSource)
+        .catch((error) => {
+          externalError = { message: error.message };
+          return { flagged: false, categories: [] as string[] };
+        });
 
   if (flagged) {
     const externalTriggers: PromptTrigger[] = categories.map((cat) => ({
@@ -448,8 +458,9 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
     moderationSource,
   } = options;
 
-  // Skip auditing if prompt is empty (will be caught by validation elsewhere)
-  if (!prompt || !prompt.trim()) {
+  // Skip auditing only when there is nothing to audit — the prompt AND the negative prompt both
+  // empty. An empty prompt beside a non-empty negative prompt is still audited.
+  if (isBlankAuditInput(prompt, negativePrompt)) {
     return;
   }
 
