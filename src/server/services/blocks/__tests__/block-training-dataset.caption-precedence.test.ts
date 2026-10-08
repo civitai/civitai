@@ -36,7 +36,10 @@ vi.mock('~/server/services/user-restriction.service', () => ({
   applyPendingReviewMute: mockApplyPendingReviewMute,
 }));
 
-import { packCaptionsForAudit, prepareBlockTrainingDataset } from '../block-training-dataset.service';
+import {
+  packCaptionsForAudit,
+  prepareBlockTrainingDataset,
+} from '../block-training-dataset.service';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
 import { BLOCK_TRAINING_DATASET_MAX_ITEMS } from '~/server/schema/blocks/workflow.schema';
 import { BLOCK_TRAINING_CAPTION_MAX_CHARS } from '~/server/schema/blocks/training-dataset.schema';
