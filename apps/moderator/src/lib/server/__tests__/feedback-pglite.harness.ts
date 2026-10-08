@@ -42,18 +42,22 @@ const MIGRATIONS = join(HERE, '../../../../../../packages/civitai-db-schema/pris
 const migration = (name: string) => readFileSync(join(MIGRATIONS, name, 'migration.sql'), 'utf8');
 
 /**
- * The two tables `Feedback`'s foreign keys point at, cut to what these tests touch.
+ * The tables `Feedback`'s foreign keys point at, cut to what these tests touch.
  *
- * `User` and `ModActivity` are stand-ins — their real DDL drags in most of the schema and neither
- * is under test here. `Bug` is NOT a stand-in: it is the real `20260521120000_add_bug_table`
- * migration, because `promoteFeedbackToBug` inserts into it and the point of the test is that the
- * insert satisfies every NOT NULL the real table declares. `DomainColor` is declared because that
- * migration's `domain` column is typed on it.
+ * `User`, `ModActivity` and `app_listings` are stand-ins — their real DDL drags in most of the
+ * schema and none is under test here (`app_listings` exists only so the app-block migration's
+ * `Feedback_appListingId_fkey` has a target; its real key is TEXT, as here). `Bug` is NOT a
+ * stand-in: it is the real `20260521120000_add_bug_table` migration, because `promoteFeedbackToBug`
+ * inserts into it and the point of the test is that the insert satisfies every NOT NULL the real
+ * table declares. `DomainColor` is declared because that migration's `domain` column is typed on it.
  */
 const PRELUDE = `
 CREATE TABLE "User" (
   "id" SERIAL PRIMARY KEY,
   "username" TEXT
+);
+CREATE TABLE "app_listings" (
+  "id" TEXT PRIMARY KEY
 );
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY,
@@ -86,6 +90,45 @@ export async function freshFeedbackDb(): Promise<PGlite> {
   // The migration under test. Applied by hand per environment — this is the only place anything
   // executes it.
   await db.exec(migration('20260911120000_feedback_triage'));
+  return db;
+}
+
+/** The app-block migration, applied by hand per environment in TWO separately-run parts. */
+const APP_LISTING_MIGRATION = '20261011120000_feedback_app_listing';
+/** The header line that opens Part 2 in that file — the split point. */
+const PART_2_MARKER = '\n-- Part 2 — ';
+
+/**
+ * The app-block migration's two parts, split where the file itself splits them.
+ *
+ * They cannot be one `exec`: a multi-statement simple query is an implicit transaction block, and
+ * Part 2's `CREATE INDEX CONCURRENTLY` refuses to run inside one — which is the same reason a human
+ * runs them separately. PGlite DOES execute `CREATE INDEX CONCURRENTLY` on its own (measured on
+ * 0.4.6: the index comes back `indisvalid = true`), so Part 2 runs here verbatim, not a stand-in.
+ *
+ * Throws unless the marker occurs exactly once, so a reworded header fails loudly here instead of
+ * silently applying the whole file as "Part 1".
+ */
+export function appListingMigrationParts(): { part1: string; part2: string } {
+  const sql = migration(APP_LISTING_MIGRATION);
+  const at = sql.indexOf(PART_2_MARKER);
+  if (at === -1 || sql.indexOf(PART_2_MARKER, at + 1) !== -1) {
+    throw new Error(
+      `expected exactly one "${PART_2_MARKER.trim()}" header in ${APP_LISTING_MIGRATION}`
+    );
+  }
+  return { part1: sql.slice(0, at), part2: sql.slice(at) };
+}
+
+/**
+ * `freshFeedbackDb` plus `20261011120000_feedback_app_listing` — Part 1, then Part 2 — exactly as a
+ * human applies it. The only place anything executes that SQL.
+ */
+export async function freshAppFeedbackDb(): Promise<PGlite> {
+  const db = await freshFeedbackDb();
+  const { part1, part2 } = appListingMigrationParts();
+  await db.exec(part1);
+  await db.exec(part2);
   return db;
 }
 

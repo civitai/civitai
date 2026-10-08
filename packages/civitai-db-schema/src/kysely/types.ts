@@ -2767,9 +2767,11 @@ export type Feedback = {
   handledAt: Timestamp | null;
   bugId: number | null;
   /**
-   * The `app-block` area only (the `Feedback_app_columns_check` CHECK keeps the app columns NULL on every
-   * other area). Always the PARENT listing, never a shadow revision. SetNull, not Cascade: deleting a
-   * listing must not destroy the report for moderators.
+   * The `app-block` area only: the `Feedback_app_columns_check` CHECK requires this and the seven app
+   * columns below (appBlockVersion, appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById,
+   * ownerFlaggedAt, hiddenFromOwnerAt) to be NULL unless `area` is 'app-block'; it requires nothing of
+   * an app-block row. Always the PARENT listing, never a shadow revision. SetNull, not Cascade:
+   * deleting a listing must not destroy the report for moderators.
    */
   appListingId: string | null;
   /**

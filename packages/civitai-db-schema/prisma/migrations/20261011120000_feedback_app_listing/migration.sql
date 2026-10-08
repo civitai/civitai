@@ -25,28 +25,65 @@
 -- one adds more Prisma access, so treat the SQL as a prerequisite of the deploy.
 -- Pre-applying is safe: nothing reads or writes these columns until then.
 --
--- 🔴 TWO PARTS. Part 1 may run inside a transaction. Part 2 is
--- `CREATE INDEX CONCURRENTLY`, which Postgres refuses inside a transaction block
--- — run it as its own statement (psql without `-1`, or a separate retool query
--- with transaction wrapping off), then run the verification query at the bottom
--- and confirm `indisvalid = true`. A failed concurrent build leaves an INVALID
--- index that `IF NOT EXISTS` will then silently skip: if `indisvalid` is false,
--- `DROP INDEX CONCURRENTLY "Feedback_appListingId_createdAt_idx";` and re-run Part 2.
+-- 🔴 TWO PARTS, run separately.
+--   Part 1 is its own transaction (`BEGIN` ... `COMMIT` below) and MUST be run as
+--   written, including the `BEGIN`: its `SET LOCAL lock_timeout` only takes effect
+--   inside a transaction block (outside one Postgres warns and ignores it, so the
+--   ALTERs would wait for their locks indefinitely). Run the whole block in one go
+--   (psql, or one retool query).
+--   Part 2 is `CREATE INDEX CONCURRENTLY`, which Postgres refuses inside a
+--   transaction block — run it as its own statement AFTER Part 1 has committed
+--   (psql without `-1`, or a separate retool query with transaction wrapping off),
+--   and NOT under a lock_timeout: it takes a brief lock at both ends of the build,
+--   and a timeout there fails dirty, leaving an INVALID index behind (see
+--   `20260824120000_user_email_domain_index`). The `SET LOCAL` in Part 1 ends at
+--   its `COMMIT`, so it cannot leak into Part 2; if your session sets a
+--   lock_timeout of its own, `SET lock_timeout = 0;` before Part 2. Then run the
+--   verification query at the bottom and confirm `indisvalid = true`. A failed
+--   concurrent build leaves an INVALID index that `IF NOT EXISTS` will then
+--   silently skip: if `indisvalid` is false,
+--   `DROP INDEX CONCURRENTLY "Feedback_appListingId_createdAt_idx";` and re-run Part 2.
 --
 -- Idempotent: `IF NOT EXISTS` on every column and the index; the constraints go
 -- through `pg_constraint` guards, because `ALTER TABLE ... ADD CONSTRAINT` has no
 -- `IF NOT EXISTS` form in Postgres.
 --
 -- `ADD COLUMN ... NULL` with no default is metadata-only in Postgres 11+, so every
--- column is O(1) regardless of row count. The FK and CHECK additions each take a
--- brief lock on "Feedback" while they validate; every existing row trivially
--- satisfies them because the columns they constrain are created NULL above, so a
+-- column is O(1) regardless of row count. Every existing row trivially satisfies the
+-- FKs and CHECKs because the columns they constrain are created NULL above, so a
 -- plain `ADD CONSTRAINT` (not `NOT VALID` + `VALIDATE`) is used, as in
--- `20260911120000_feedback_triage`.
+-- `20260911120000_feedback_triage`; each still scans "Feedback" once to validate.
+--
+-- LOCKS — on THREE tables, brief, but not zero, all held until Part 1's COMMIT:
+--   * "Feedback": ACCESS EXCLUSIVE (ADD COLUMN, ADD CHECK) — reads AND writes of
+--     "Feedback" wait.
+--   * "User" and "app_listings": SHARE ROW EXCLUSIVE, taken by each
+--     `ADD CONSTRAINT ... FOREIGN KEY` on the table it REFERENCES — writes
+--     (INSERT/UPDATE/DELETE) to those tables wait; reads do not.
+-- The danger is the QUEUE, not the hold: if a long write transaction already holds
+-- a row lock on "User", the FK's lock request waits behind it, and every later
+-- "User" write queues behind the waiting request. `SET LOCAL lock_timeout = '3s'`
+-- caps each lock wait at 3s, so Part 1 aborts instead of stalling every writer
+-- queued behind it. So:
+--   1. First check for long-running write transactions, e.g.
+--        SELECT pid, now() - xact_start AS age, state, left(query, 80)
+--          FROM pg_stat_activity
+--         WHERE xact_start < now() - interval '5 seconds' AND state <> 'idle'
+--         ORDER BY xact_start;
+--   2. Run it off-peak.
+--   3. On `canceling statement due to lock timeout`, nothing was applied (one
+--      transaction; it rolls back whole): wait and re-run Part 1.
 
 -- ------------------------------------------------------------
--- Part 1 — columns and constraints (transaction-safe)
+-- Part 1 — columns and constraints. ONE transaction, run as written.
 -- ------------------------------------------------------------
+
+BEGIN;
+
+-- SET LOCAL, not SET: a bare SET is session-scoped, so it would leave a 3s lock_timeout on
+-- whatever the operator runs next in the same session — Part 2 included, where a timeout
+-- leaves an INVALID index.
+SET LOCAL lock_timeout = '3s';
 
 -- The PARENT listing the feedback is about. Always the seat listing, never a
 -- shadow revision (`revisionOfId IS NOT NULL`) — a cross-row rule a CHECK cannot
@@ -90,19 +127,26 @@ BEGIN
     ALTER TABLE "Feedback" ADD CONSTRAINT "Feedback_ownerStatus_check"
       CHECK ("ownerStatus" IS NULL OR "ownerStatus" IN ('acknowledged', 'resolved', 'wont_fix'));
   END IF;
-  -- App-only columns appear only on app-block rows. Deliberately NOT
+  -- All eight columns this migration adds must be NULL unless "area" = 'app-block'.
+  -- One-directional: it requires nothing OF an app-block row. Deliberately NOT
   -- "area = 'app-block' ⇒ appListingId IS NOT NULL": ON DELETE SET NULL must be
-  -- able to null it when the listing is deleted.
+  -- able to null it when the listing is deleted (and "ownerStatusById" when the
+  -- user is), and setting a column NULL can never violate this CHECK.
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Feedback_app_columns_check') THEN
     ALTER TABLE "Feedback" ADD CONSTRAINT "Feedback_app_columns_check"
       CHECK ("area" = 'app-block'
-             OR ("appListingId" IS NULL AND "ownerStatus" IS NULL AND "ownerFlaggedAt" IS NULL
+             OR ("appListingId" IS NULL AND "appBlockVersion" IS NULL AND "appBlockSha" IS NULL
+                 AND "ownerStatus" IS NULL AND "ownerStatusAt" IS NULL
+                 AND "ownerStatusById" IS NULL AND "ownerFlaggedAt" IS NULL
                  AND "hiddenFromOwnerAt" IS NULL));
   END IF;
 END $$;
 
+COMMIT;
+
 -- ------------------------------------------------------------
--- Part 2 — owner-inbox index. OUTSIDE a transaction.
+-- Part 2 — owner-inbox index. OUTSIDE a transaction, after Part 1 commits, and
+-- with NO lock_timeout (see the header).
 -- ------------------------------------------------------------
 -- "This listing's feedback, newest first". Partial: only app rows carry the
 -- column, so every other area costs the index nothing. It also serves the

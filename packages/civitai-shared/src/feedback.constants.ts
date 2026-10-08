@@ -16,8 +16,10 @@
 // so removing the slug fails there with an array diff rather than silently.
 //
 // `app-block` is private per-app feedback about one App Block, read by the app's owner and by
-// moderators. Unlike the other areas its rows carry `Feedback.appListingId` (a DB CHECK keeps the
-// app-only columns NULL on every other area), and it is NOT meant to be written through the generic
+// moderators. Unlike the other areas its rows carry `Feedback.appListingId` (the DB CHECK
+// `Feedback_app_columns_check` requires all eight app columns — appListingId, appBlockVersion,
+// appBlockSha, ownerStatus, ownerStatusAt, ownerStatusById, ownerFlaggedAt, hiddenFromOwnerAt — to be
+// NULL on every other area), and it is NOT meant to be written through the generic
 // `feedback.create` — a dedicated procedure resolves the listing server-side. Listing it here makes
 // the shared area enum accept the slug, so the generic `feedback.create` / `feedback.getArea`
 // inputs refuse it explicitly (`genericFeedbackAreaSchema` in src/server/schema/feedback.schema.ts)
