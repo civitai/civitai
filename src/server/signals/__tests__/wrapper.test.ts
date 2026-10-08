@@ -199,14 +199,14 @@ describe('withSignals', () => {
     await expect(withSignals(async () => 'next')).resolves.toBe('next');
   });
 
-  it('a call that reaches its slot with 60% of its budget left IS started (the floor is half the deadline, not more)', async () => {
+  it('a call that reaches its slot with 55% of its budget left IS started (the floor sits at most just above half)', async () => {
     const { withSignals } = await load();
 
-    // A succeeds at t=400; B (entered 0) then has 600ms of 1000 left ≥ 500.
-    track(withSignals(() => new Promise<string>((r) => setTimeout(() => r('a'), 400))));
+    // A succeeds at t=450; B (entered 0) then has 550ms of 1000 left ≥ 500.
+    track(withSignals(() => new Promise<string>((r) => setTimeout(() => r('a'), 450))));
     const bFn = vi.fn(() => new Promise<string>((r) => setTimeout(() => r('b'), 100)));
     const b = track(withSignals(bFn));
-    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(550);
 
     expect(bFn).toHaveBeenCalledTimes(1);
     expect(b.value).toBe('b');

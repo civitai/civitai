@@ -49,9 +49,9 @@ const log = createLogger('signals', 'cyan');
  *   healthy-but-overloaded backend are shed and never open the circuit, AS
  *   LONG AS every call's latency — tail included — stays under half the
  *   deadline: every call they start then completes. Under overload a call may
- *   start with only half the deadline left, so a single call slower than that
- *   is a backend timeout (evidence) by design, and the shed traffic then
- *   counts. A hang — from an idle or an already-saturated pool — trips it:
+ *   start with only half the deadline left, so a call slower than its
+ *   remaining budget becomes a backend timeout (evidence) by design, and the
+ *   shed traffic then counts. A hang — from an idle or an already-saturated pool — trips it:
  *   the calls it starts time out. Evidence is pruned with the same window as
  *   failures and cleared when the circuit CLOSES.
  *   - A HALF_OPEN trial that suffers a queue-side failure probed nothing, so it
