@@ -2015,6 +2015,23 @@ describe('AppListingDetailBody — moderator menu section', () => {
     expect(dropdown.textContent).not.toContain('Relist');
   });
 
+  test('an OWNER who is also a MODERATOR gets "Visibility" and NOT "Set visibility" — the other mod items stay', async () => {
+    // Same viewer shape as MOD, differing only in the id: 5 is `base().creator.id`.
+    mocks.currentUser = { ...MOD, id: 5 };
+    const { within } = await renderScoped(<AppListingDetailBody detail={base({})} />);
+    const dropdown = (await openMenu(within)) as HTMLElement;
+    expect(
+      dropdown.querySelector('[data-testid="apps-listing-owner-visibility"]')?.textContent
+    ).toContain('Visibility');
+    // Positive control: the moderator section is there, so the absence is set-visibility's.
+    expect(dropdown.querySelector(`[data-testid="${MESSAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${UNPUBLISH}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${HIDE}-menu-item"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${MANAGE_ITEM}"]`)).not.toBeNull();
+    expect(dropdown.querySelector(`[data-testid="${VISIBILITY_ITEM}"]`)).toBeNull();
+    expect(dropdown.textContent).not.toContain('Set visibility');
+  });
+
   test('🔴 the two takedown items are TELLABLE APART in the rendered menu', async () => {
     // 🔴 The defect this exists for is not a missing button, it is two adjacent buttons a
     // moderator cannot choose between. They have the same immediate effect and differ

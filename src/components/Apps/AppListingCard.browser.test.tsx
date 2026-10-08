@@ -1154,6 +1154,23 @@ describe('AppListingCard', () => {
     expect(page.getByTestId('apps-listing-owner-visibility').elements()).toHaveLength(0);
   });
 
+  test('an OWNER who is also a MODERATOR gets "Visibility" and NOT "Set visibility" — the other mod items stay', async () => {
+    mocks.currentUser = { ...OWNER, isModerator: true };
+    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
+    await openCardMenu();
+    await expect
+      .element(page.getByTestId('apps-listing-owner-visibility'))
+      .toHaveTextContent('Visibility');
+    // The rest of the moderator section is present, so the absence below is about
+    // set-visibility alone and not a missing moderator section.
+    await expect.element(page.getByTestId('apps-listing-mod-message-owner')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-hide-menu-item')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-unpublish-menu-item')).toBeInTheDocument();
+    await expect.element(page.getByTestId('apps-listing-mod-manage')).toBeInTheDocument();
+    expect(page.getByTestId('apps-listing-mod-visibility').elements()).toHaveLength(0);
+    expect(document.body.textContent).not.toContain('Set visibility');
+  });
+
   test('🔴 the owner picker’s read is OFF until the item is clicked, then loads that listing', async () => {
     mocks.currentUser = OWNER;
     mocks.authoringContext = {

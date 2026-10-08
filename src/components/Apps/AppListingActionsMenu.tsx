@@ -67,7 +67,9 @@ import { isAppReviewer } from '~/shared/utils/app-blocks-access';
  * whether "Leave a review" and "Report" are offered — and the card says no: those
  * two are about one app the viewer has chosen to look at, and the card is one tile
  * of ~24 being scanned. Everything else, Edit and the whole moderator section
- * included, is the same on both surfaces.
+ * included, is the same on both surfaces. (Within the moderator section, "Set
+ * visibility" is withheld from the listing's own owner on both surfaces alike — they
+ * get the owner "Visibility" item instead; see `appListingDetailModActions`.)
  *
  * 🔴 THE MODALS ARE OWNED HERE, AS SIBLINGS OF THE `Menu`, NOT OF A `Menu.Item`.
  * A Mantine `Menu.Dropdown` is UNMOUNTED when the menu closes, so a modal
@@ -237,11 +239,15 @@ function useAppListingMenuGates(
   // the subset these surfaces implement, and answers empty for a non-moderator and
   // in preview. The gate is `isAppReviewer` — the existing named predicate — and it
   // is COSMETIC: every proc behind these items is `moderatorProcedure` plus an
-  // inner `isModerator` recheck, which is the actual boundary.
+  // inner `isModerator` recheck, which is the actual boundary. `viewerOwnsListing` is
+  // the same `isOwner` that gates the owner items, so an owner-moderator gets the owner
+  // "Visibility" item and not the moderator "Set visibility" (the rest of the moderator
+  // section is unchanged for them).
   const modActions = appListingDetailModActions({
     isModerator: isAppReviewer(currentUser),
     preview,
     kind: listing.kind,
+    viewerOwnsListing: isOwner,
   });
 
   return {

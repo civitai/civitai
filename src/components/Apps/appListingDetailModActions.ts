@@ -197,16 +197,22 @@ export function detailListingStatus(input: { preview: boolean }): 'approved' | n
  * proc behind these items is `moderatorProcedure` plus an inner `isModerator` recheck,
  * which is the real boundary — but rendering a control a viewer's session cannot use is
  * its own defect, so it is spelled here once rather than at each item.
+ *
+ * `viewerOwnsListing` drops `set-visibility` and nothing else: an owner already has the
+ * owner "Visibility" item for their own listing, so a moderator who owns it is offered
+ * the moderator picker only on listings they do NOT own. Required, with no default, so
+ * every caller has to answer it.
  */
 export function appListingDetailModActions(input: {
   isModerator: boolean;
   preview: boolean;
   kind: string;
+  viewerOwnsListing: boolean;
 }): DetailSurfaceModAction[] {
   if (!input.isModerator) return [];
   const status = detailListingStatus({ preview: input.preview });
   if (status === null) return [];
-  return listingModActions({
+  const actions = listingModActions({
     status,
     kind: input.kind,
     // This surface never holds a publish REQUEST, so it can never offer `review`.
@@ -220,12 +226,13 @@ export function appListingDetailModActions(input: {
     // direction is withhold, not offer.
     //
     // This surface has no honest source for either value — it is handed `{isModerator,
-    // preview, kind}` and nothing else. Do not invent one: a real value here would be a claim
+    // preview, kind, viewerOwnsListing}` and nothing else. Do not invent one: a real value here would be a claim
     // about a listing this function cannot see. Widening the input is the correct move if this
     // surface ever needs to offer `purge`.
     appBlockId: null,
     hasPendingBlockRequest: true,
   }).filter(isDetailSurfaceModAction);
+  return input.viewerOwnsListing ? actions.filter((a) => a !== 'set-visibility') : actions;
 }
 
 /** Type guard for the surface subset — a narrowing `includes`, kept out of the filter. */
