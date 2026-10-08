@@ -463,7 +463,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       />
 
       <div className="-mt-3 flex h-[calc(100%+0.75rem)] flex-col overflow-y-auto md:overflow-hidden">
-        <div className="shrink-0 py-2.5">
+        <div className="shrink-0 pb-1 pt-2.5">
           <Container size="xl">
             <div
               data-judge-chrome
@@ -522,7 +522,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
           </Container>
         </div>
 
-        <Container size="xl" className="flex w-full flex-1 flex-col py-4 md:min-h-0">
+        <Container size="xl" className="flex w-full flex-1 flex-col pb-4 pt-1 md:min-h-0">
           {voteError && (
             <Alert
               icon={<IconAlertCircle size={18} />}
