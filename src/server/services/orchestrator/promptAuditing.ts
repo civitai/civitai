@@ -11,6 +11,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { normalizeText } from '~/utils/normalize-text';
 import {
   auditPromptEnriched,
+  isOverLengthRefusal,
   isSoftBlock,
   type PromptTrigger,
   type PromptTriggerCategory,
@@ -50,6 +51,19 @@ const GREEN_SFW_REDIRECT =
 const BLOCKED_PROMPTS_WINDOW_DAYS = 30;
 const BLOCKED_PROMPTS_TTL = 60 * 60 * 24 * BLOCKED_PROMPTS_WINDOW_DAYS;
 const LEGACY_MISSING_NEGATIVE_PROMPT = '{error capturing negativePrompt}';
+
+// Shown for a regex refusal that names neither a trigger nor a reason (see classifyPromptServer).
+const UNSPECIFIED_REGEX_REFUSAL = 'Prompt failed the content audit';
+
+// An over-length refusal is recorded with only this much of each prompt. The refusal exists
+// because the input is unboundedly large, so storing it whole would hand that payload to the
+// audit log — and from there to the blocked-prompt list, which is re-seeded from that log.
+const OVER_LENGTH_RECORDED_CHARS = 2000;
+const truncateForRecord = (text: string | undefined) =>
+  text != null && text.length > OVER_LENGTH_RECORDED_CHARS
+    ? `${text.slice(0, OVER_LENGTH_RECORDED_CHARS)}… [truncated from ${text.length} chars]`
+    : text;
+
 const RESET_MARKER = '__RESET__';
 
 function getBlockedPromptsKey(userId: number) {
@@ -231,7 +245,10 @@ export interface PromptClassification {
   /** Which check produced the block. `null` exactly when `outcome` is `pass`. */
   source: PromptClassificationSource | null;
   triggers: PromptTrigger[];
-  /** The user-facing reasons, one per trigger, in trigger order. */
+  /**
+   * The user-facing reasons, one per trigger, in trigger order — except a trigger-less regex
+   * refusal (hard, `triggers: []`), which carries the regex layer's own reasons instead.
+   */
   blockedFor: string[];
   /**
    * The external classifier's categories as it returned them, whenever it RAN — including when it
@@ -265,6 +282,8 @@ export interface ClassifyPromptOptions {
  * moderation). `auditPromptServer` is a wrapper over this, so the two cannot drift.
  *
  * Ordering, which is the part that matters:
+ * - a regex refusal (`success: false`) is ALWAYS a block — a trigger-less one is HARD. It is
+ *   never left to the external classifier alone.
  * - a HARD regex block short-circuits: the external classifier is not called.
  * - a SOFT regex block does NOT short-circuit. External moderation runs first and, if it flags
  *   with at least one category, its block wins; otherwise the held soft block is the verdict.
@@ -297,12 +316,15 @@ export async function classifyPromptServer(
     source: PromptClassificationSource,
     triggers: PromptTrigger[],
     categories: string[],
-    externalError: PromptClassification['externalError']
+    externalError: PromptClassification['externalError'],
+    // Only for a trigger-less regex refusal, whose reasons cannot come from its triggers.
+    blockedFor: string[] = triggers.map((t) => t.message)
   ): PromptClassification => ({
+    // `isSoftBlock([])` is false, so a trigger-less verdict is hard.
     outcome: isSoftBlock(triggers) ? 'soft' : 'hard',
     source,
     triggers,
-    blockedFor: triggers.map((t) => t.message),
+    blockedFor,
     categories,
     externalError,
   });
@@ -328,15 +350,30 @@ export async function classifyPromptServer(
   ]);
 
   // Run regex-based audit (enriched to capture structured trigger data)
-  const { triggers, success } = auditPromptEnriched(
-    auditedPrompt ?? prompt,
-    auditedNegativePrompt,
-    checkProfanity
-  );
+  const {
+    triggers,
+    success,
+    blockedFor: regexBlockedFor,
+  } = auditPromptEnriched(auditedPrompt ?? prompt, auditedNegativePrompt, checkProfanity);
 
   let softRegexTriggers: PromptTrigger[] | null = null;
 
-  if (!success && triggers.length > 0) {
+  // 🔴 FAIL CLOSED: a regex refusal is a block even when it names no trigger. Gating the block
+  // on `triggers.length > 0` handed a trigger-less refusal to the external classifier alone —
+  // how over-length input once skipped the regex layer. With no trigger there is nothing that
+  // could make it soft, so it is HARD. `blockedFor` falls back to the regex layer's own reasons
+  // here (the one verdict where it is not one-per-trigger), so the user still sees why.
+  if (!success && triggers.length === 0) {
+    return verdict(
+      'regex',
+      [],
+      [],
+      null,
+      regexBlockedFor.length > 0 ? regexBlockedFor : [UNSPECIFIED_REGEX_REFUSAL]
+    );
+  }
+
+  if (!success) {
     // A hard block short-circuits. A soft one must NOT — returning here would
     // skip the external classifier below, so appending any overridable word
     // ("… pee") to a prompt would buy a click-through past it. Hold the block
@@ -495,6 +532,27 @@ export async function auditPromptServer(options: AuditPromptOptions): Promise<vo
       // never reaches the recording in the `else`. A false-positive rate computed from
       // that data is a rate for .red and .blue only.
       message = `Your prompt was flagged: ${error.blockedFor.join(', ')}.\n\n${GREEN_SFW_REDIRECT}`;
+    } else if (isOverLengthRefusal(error.triggers ?? [])) {
+      // A SIZE refusal, not content evidence: the regex layer refused the input unscanned. It
+      // is recorded for audit like a soft block — count 0 and no blocked-prompt counter write,
+      // so it cannot trigger the auto-mute here — and with each prompt truncated, so the
+      // unbounded payload the refusal exists to stop is never stored whole. No escalating
+      // warning tail either: that tail reports the counter, which this did not touch.
+      // ⚠ Like a soft block's row, the audit row is NOT distinguishable once recorded: a cold
+      // `seedBlockedPromptsFromClickHouse` rebuilds the counter from every row in the window.
+      await reportProhibitedRequest({
+        prompt: truncateForRecord(prompt) ?? '',
+        negativePrompt: truncateForRecord(negativePrompt),
+        userId,
+        isModerator,
+        track,
+        source: 'Regex',
+        count: 0,
+        remixOfId,
+        inputImages,
+        inputVideo,
+      });
+      message = `Your prompt was flagged: ${error.blockedFor.join(', ')}`;
     } else {
       const source = error.type === 'external' ? 'External' : 'Regex';
 
