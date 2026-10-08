@@ -47,9 +47,12 @@ export const HUB_RECONNECT_GIVE_UP_MS = 5 * 60_000;
 
 /**
  * A connection only resets the backoff once it has stayed up this long. A hub that accepts the
- * handshake and then drops the connection (a failing `OnConnectedAsync`, a hung backend) would
- * otherwise reset every client to the first, near-instant step on every cycle — a reconnect loop
- * with no backoff at all. A connection lost sooner counts as one more failure instead.
+ * handshake and then drops the connection (e.g. a failing `OnConnectedAsync`, or one that stops
+ * answering and hits the client's 30s server timeout) would otherwise reset every client to the
+ * first, near-instant step on every cycle — a reconnect loop with no backoff at all. A connection
+ * lost sooner counts as one more failure instead. Not covered: a connection that outlives this but
+ * never hears from the hub; the worker's staleness check drops that after ~3-4 min, so it cycles at
+ * most that often — below this schedule's own steady state.
  */
 export const HUB_STABLE_CONNECTION_MS = 60_000;
 

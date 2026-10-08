@@ -88,6 +88,10 @@ export function useSignalsWorker(options?: {
   const accessToken = tokenQuery.data?.accessToken;
   // Re-mints since the hub last accepted a connection; picks the next step of the backoff below.
   const tokenRefreshAttemptRef = useRef(0);
+  // Whether this tab has ever held a real token. The worker keeps the last one it was given, so a tab
+  // whose re-mint came back degraded (`{}`) still has a token in play and stays on the slow schedule.
+  const hadTokenRef = useRef(false);
+  if (accessToken) hadTokenRef.current = true;
 
   const emitterRef = useRef(new EventEmitter());
   const debugStateRef = useRef<SignalsWorkerDebugState>();
@@ -201,17 +205,18 @@ export function useSignalsWorker(options?: {
     };
   }, [worker]);
 
-  // While the connection stays closed, re-fetch the token on a jittered backoff. Without a token —
-  // the degraded `{}` response, or a failed fetch — no connection is ever opened and no further
-  // 'closed' arrives, so this is the only way the tab recovers (it used to need a reload): ~5-30s
-  // after the close, doubling to a 10 min ceiling. A token the tab already holds is retried by the
-  // worker as is and re-minted only as a slow safety net (see TOKEN_REVALIDATE_BACKOFF). Re-minting on
+  // While the connection stays closed, re-fetch the token on a jittered backoff. A tab that has
+  // never held a token (the degraded `{}` response, or a failed fetch) never opens a connection and
+  // gets no further 'closed', so this is the only way it recovers (it used to need a reload): ~5-30s
+  // after the close, doubling to a 10 min ceiling. Once a tab has had a token, the worker keeps
+  // retrying with it, so it is re-minted only as a slow safety net (TOKEN_REVALIDATE_BACKOFF) — even
+  // if a re-mint comes back `{}`. Re-minting on
   // every 'closed' instead, in every tab at once, multiplied `signals.getToken` ~50x in one outage.
   // Each settled fetch re-arms the timer with the next step. Deliberately keyed on the query's own
   // state only — anything that re-rendered more often would keep pushing the timer back and the
   // refresh would never fire.
   const tokenIsFetching = tokenQuery.isFetching;
-  const hasToken = !!accessToken;
+  const tokenInPlay = !!accessToken || hadTokenRef.current;
   useEffect(() => {
     if (connection === 'connected') {
       // Like the worker's own backoff, reset only once the connection has proved stable: a hub that
@@ -222,7 +227,7 @@ export function useSignalsWorker(options?: {
       return () => clearTimeout(timer);
     }
     if (!userId || connection !== 'closed' || tokenIsFetching) return;
-    const config = hasToken ? TOKEN_REVALIDATE_BACKOFF : TOKEN_REFRESH_BACKOFF;
+    const config = tokenInPlay ? TOKEN_REVALIDATE_BACKOFF : TOKEN_REFRESH_BACKOFF;
     const timer = setTimeout(() => {
       tokenRefreshAttemptRef.current += 1;
       queryUtils.signals.getToken.invalidate();
@@ -231,7 +236,7 @@ export function useSignalsWorker(options?: {
   }, [
     userId,
     connection,
-    hasToken,
+    tokenInPlay,
     tokenIsFetching,
     tokenQuery.dataUpdatedAt,
     tokenQuery.errorUpdatedAt,

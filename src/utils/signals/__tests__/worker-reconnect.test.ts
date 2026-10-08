@@ -390,4 +390,30 @@ describe('signals worker: connections that drop before they are stable', () => {
     expect(dumps[0].connectRetry?.failures).toBeGreaterThan(0);
     expect(dumps[0].connectRetry?.nextAttemptAt).toBeNull();
   });
+
+  it('a successful automatic reconnect clears its retry count', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(1);
+    hub.up = true;
+    await init();
+    const connection = hub.connections[0];
+    await runFor(61_000);
+    const policy = hub.reconnectArg as SignalR.IRetryPolicy;
+    for (const n of [0, 1, 2])
+      policy.nextRetryDelayInMilliseconds({
+        previousRetryCount: n,
+        elapsedMilliseconds: n * 10_000,
+        retryReason: new Error('lost'),
+      });
+    connection.reconnectedCallbacks.forEach((cb) => cb('id')); // reconnected on the 3rd try
+    await runFor(61_000); // and stayed up
+
+    // A later close that skips the reconnect loop (server Close, reconnect not allowed) must not
+    // replay those 2 retries as failures.
+    connection.state = 'Disconnected';
+    connection.closeCallbacks.forEach((cb) => cb(new Error('server closed the connection')));
+    const t1 = Date.now();
+    await init(2);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(startTimes(t1, hub.connections.at(-1)!)).toEqual([0]);
+  });
 });

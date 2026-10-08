@@ -312,4 +312,15 @@ describe('useSignalsWorker: signals token re-mint', () => {
     await advance(130_000);
     expect(state.invalidations.slice(2).map((t) => t - t1)).toEqual([120_000]);
   });
+
+  it('a tab that held a token stays on the slow schedule when a re-mint comes back degraded', async () => {
+    await mount({ accessToken: 't1' });
+    await fromWorker({ type: 'connection:state', state: 'connected' });
+    state.nextToken = {}; // the signals service is the thing that is down
+    const t0 = Date.now();
+    await fromWorker({ type: 'connection:state', state: 'closed' });
+    await advance(35 * 60_000);
+    // The worker still holds t1, so a `{}` answer is no reason to re-mint every few minutes.
+    expect(state.invalidations.map((t) => t - t0)).toEqual([600_000, 1_800_000]);
+  });
 });
