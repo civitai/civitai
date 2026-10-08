@@ -436,8 +436,8 @@ export type AppListing = {
    * PURPOSE, AND THAT
    * IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
    * declares in its default SELECT/RETURNING, so while this was an ordinary field every
-   * `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
-   * on this tree, 17 of them WRITES — and during the manual-apply window that is
+   * `appListing` call that returns rows with no explicit `select` emitted it - 18 such sites
+   * on this tree, 17 of them WRITES - and during the manual-apply window that is
    * `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
    * delist all 500d on the PR preview. Stripping the field makes every one of those sites
    * immune by construction. The column is reached ONLY by raw SQL, in
