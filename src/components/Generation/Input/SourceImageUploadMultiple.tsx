@@ -21,7 +21,7 @@ import {
 } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
 import { fetchBlobAsFile } from '~/utils/file-utils';
-import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
+import { SIGN_IN_TO_UPLOAD_MESSAGE, uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import type { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import {
   ImagePrepError,
@@ -39,6 +39,7 @@ import { IconFileSearch, IconPalette, IconPhoto, IconUpload, IconX } from '@tabl
 import { getRandomId } from '~/utils/string-helpers';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageCropModal } from '~/components/Generation/Input/ImageCropModal';
+import { openSignInToUpload, useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { DrawingEditorModal } from './DrawingEditor/DrawingEditorModal';
 import { ImageMetadataModal, type ImageMetadataApply } from './ImageMetadataModal';
 import type { DrawingElement, DrawingElementSchema } from './DrawingEditor/drawing.types';
@@ -307,6 +308,9 @@ export function SourceImageUploadMultiple({
   const isSingleMode = max === 1 && !children && !isSlotsMode;
   const [uploads, setUploads] = useState<ImagePreview[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const { signedOut, requireSignIn } = useSignInToUpload();
+  // Set when an image arrived without a user gesture (a data: url in the value) while signed out.
+  const [signInRequired, setSignInRequired] = useState(false);
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
   const isCroppingRef = useRef(false);
   // Counts crop sessions that ended, so the crop/upload effect can start a card queued while the
@@ -739,7 +743,10 @@ export function SourceImageUploadMultiple({
     // Remove data: URLs from value and feed them through the upload pipeline
     const remaining = value.filter((v) => !v.url.startsWith('data:'));
     onChange?.(remaining.length > 0 ? remaining : null);
-    handleChange(dataUrlItems.map((v) => v.url));
+    handleChange(
+      dataUrlItems.map((v) => v.url),
+      { userStarted: false }
+    );
   }, [value]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // TODO - better error messaging
@@ -803,6 +810,26 @@ export function SourceImageUploadMultiple({
     const earlyUploadIds = pending.map((u) => u.id);
     const isPendingCard = (x: ImagePreview) => !!x.id && earlyUploadIds.includes(x.id);
 
+    function cancelCrop() {
+      // Clear early uploading markers
+      for (const id of earlyUploadIds) {
+        setImageUploading(id, false);
+        trackedUploadingIdsRef.current.delete(id);
+      }
+
+      // Remove pending upload indicators
+      setUploads((prev) => prev.filter((x) => !isPendingCard(x)));
+
+      // Remove the pending URLs from value
+      const latest = valueRef.current;
+      if (latest) {
+        const reverted = latest.filter((img) => !pendingUrlSet.has(img.url));
+        onChange?.(reverted.length > 0 ? reverted : null);
+      }
+
+      endCropping();
+    }
+
     dialogStore.trigger({
       id: 'image-crop-modal',
       component: ImageCropModal,
@@ -834,6 +861,10 @@ export function SourceImageUploadMultiple({
               toUpload.push({ index: i, src, originalUrl: src, id: getRandomId() });
             }
           }
+
+          // A crop of an image already in the value can open without a pick, so this confirm can be
+          // the first upload a signed-out user starts.
+          if (toUpload.length && requireSignIn()) return cancelCrop();
 
           if (toUpload.length) {
             // Show cropping indicators, preserving any unrelated uploads.
@@ -928,32 +959,21 @@ export function SourceImageUploadMultiple({
             endCropping();
           }
         },
-        onCancel: () => {
-          // Clear early uploading markers
-          for (const id of earlyUploadIds) {
-            setImageUploading(id, false);
-            trackedUploadingIdsRef.current.delete(id);
-          }
-
-          // Remove pending upload indicators
-          setUploads((prev) => prev.filter((x) => !isPendingCard(x)));
-
-          // Remove the pending URLs from value
-          const latest = valueRef.current;
-          if (latest) {
-            const reverted = latest.filter((img) => !pendingUrlSet.has(img.url));
-            onChange?.(reverted.length > 0 ? reverted : null);
-          }
-
-          endCropping();
-        },
+        onCancel: cancelCrop,
         aspectRatios,
       },
     });
   }
 
-  // handle adding new urls or files — just show previews, effects handle the rest
-  function handleChange(items: (string | File)[]) {
+  // handle adding new urls or files — just show previews, effects handle the rest.
+  // `userStarted: false` is an image that arrived without a gesture (a data: url in the value).
+  function handleChange(items: (string | File)[], { userStarted = true } = {}) {
+    // Signed out, nothing is queued: no upload starts and no card holds the generator.
+    if (signedOut) {
+      if (userStarted) requireSignIn();
+      else setSignInRequired(true);
+      return;
+    }
     // A new pick of a url whose read failed before is a new attempt: it is read again and goes
     // through the crop check like any pick (not started as "unreadable"), and a failure is reported.
     const urls = new Set(items.filter((src): src is string => typeof src === 'string'));
@@ -978,6 +998,7 @@ export function SourceImageUploadMultiple({
 
   // handle drawing upload for individual images
   async function handleDrawingUpload(index: number, drawingBlob: Blob, elements: DrawingElement[]) {
+    if (requireSignIn()) return;
     const response = await uploadOrchestratorImage(drawingBlob, getRandomId());
 
     if (response.url && response.available) {
@@ -993,6 +1014,7 @@ export function SourceImageUploadMultiple({
   // without touching value. Slot dropzone loading state is rendered from the
   // `uploads` list (matched by slotIndex), not from value.
   async function handleSlotUpload(entries: { slotIndex: number; src: File | string }[]) {
+    if (requireSignIn()) return;
     // Validate file sizes
     for (const { src } of entries) {
       if (src instanceof File && src.size > maxOrchestratorImageFileSize) {
@@ -1433,6 +1455,17 @@ export function SourceImageUploadMultiple({
     return <div className="flex gap-2">{slots.map((slot, index) => renderSlot(slot, index))}</div>;
   };
 
+  const signInAlert = signInRequired && (
+    <Alert color="blue">
+      <div className="flex items-center justify-between gap-2">
+        <Text size="sm">{SIGN_IN_TO_UPLOAD_MESSAGE}</Text>
+        <Button size="compact-sm" onClick={openSignInToUpload}>
+          Sign in
+        </Button>
+      </div>
+    </Alert>
+  );
+
   return (
     <Provider
       value={{
@@ -1445,7 +1478,7 @@ export function SourceImageUploadMultiple({
         aspect,
         cropToFirstImage,
         aspectRatios,
-        onChange: handleChange,
+        onChange: (items) => handleChange(items),
         enableDrawing,
         handleDrawingUpload,
         annotations,
@@ -1461,6 +1494,7 @@ export function SourceImageUploadMultiple({
         <div className="flex w-full flex-col gap-2" id={id}>
           {renderSlotsMode()}
           {_error && <Alert color="red">{_error}</Alert>}
+          {signInAlert}
           {imagesMissingMetadataCount > 0 && (
             <Alert color="yellow" title="We couldn't detect valid metadata in one or more images.">
               Outputs based on these images must be PG, PG-13, or they will be blocked and you will
@@ -1472,6 +1506,7 @@ export function SourceImageUploadMultiple({
         <div className="flex w-full flex-col gap-2" id={id}>
           {renderSingleMode()}
           {_error && <Alert color="red">{_error}</Alert>}
+          {signInAlert}
           {imagesMissingMetadataCount > 0 && (
             <Alert color="yellow" title="We couldn't detect valid metadata in this image.">
               Outputs based on this image must be PG, PG-13, or they will be blocked and you will
@@ -1484,6 +1519,7 @@ export function SourceImageUploadMultiple({
           {children?.(previewItems)}
 
           {_error && <Alert color="red">{_error}</Alert>}
+          {signInAlert}
           {imagesMissingMetadataCount > 0 && (
             <Alert
               color="yellow"

@@ -1,7 +1,19 @@
-import { Alert, Badge, Button, FileInput, Group, Image, Loader, Modal, Stack, Text } from '@mantine/core';
+import {
+  Alert,
+  Badge,
+  Button,
+  FileInput,
+  Group,
+  Image,
+  Loader,
+  Modal,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { IconAlertTriangle, IconBolt, IconCheck, IconUpload } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useSignInToUpload } from '~/components/Login/useSignInToUpload';
 import { uploadConsumerBlob } from '~/utils/consumer-blob-upload';
 import { getImageDimensions } from '~/utils/image-utils';
 import { imageToJpegBlob, resizeImage } from '~/shared/utils/canvas-utils';
@@ -42,6 +54,7 @@ export default function BlockGenerationSourceUploadModal({
   const [status, setStatus] = useState<UploadStatus>('idle');
   const [message, setMessage] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const { requireSignIn } = useSignInToUpload();
 
   // Guard against a resolved upload landing after the modal unmounts / a new
   // upload supersedes it (epoch bump) — and clean up the object-URL preview.
@@ -54,7 +67,7 @@ export default function BlockGenerationSourceUploadModal({
   }, []);
 
   async function handleFile(file: File | null) {
-    if (!file) return;
+    if (!file || requireSignIn()) return;
     const epoch = ++epochRef.current;
     if (objectUrlRef.current) URL.revokeObjectURL(objectUrlRef.current);
     const localPreview = URL.createObjectURL(file);
