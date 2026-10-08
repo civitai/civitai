@@ -2505,7 +2505,29 @@ export function countRemainingPairs({
   return Math.max(0, Math.min(unjudgedPairs, byEntry, byVotes));
 }
 
-export type JudgingPairCount = { remainingPairs: number; visibleEntries: number; judged: boolean };
+/** Pairs this judge voted on where both entries are still visible to them. */
+export function countJudgedPairs({
+  entryIds,
+  votedPairKeys,
+}: {
+  entryIds: number[];
+  votedPairKeys: string[];
+}) {
+  const visible = new Set(entryIds);
+  let judged = 0;
+  for (const key of votedPairKeys) {
+    const [a, b] = key.split(':').map(Number);
+    if (visible.has(a) && visible.has(b)) judged++;
+  }
+  return judged;
+}
+
+export type JudgingPairCount = {
+  remainingPairs: number;
+  judgedPairs: number;
+  visibleEntries: number;
+  judged: boolean;
+};
 
 /**
  * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
@@ -2564,6 +2586,7 @@ export async function countJudgingPairs({
         votedPairKeys,
         maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
       }),
+      judgedPairs: countJudgedPairs({ entryIds: visible, votedPairKeys }),
       visibleEntries: visible.length,
       judged: votedPairKeys.length > 0,
     });
@@ -2605,7 +2628,7 @@ export const getJudgingProgress = async ({
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
-    return { remainingPairs: 0, votesUsedUp: false };
+    return { remainingPairs: 0, judgedPairs: 0, votesUsedUp: false };
 
   const viewerLevel = getEffectiveBrowsingLevel({
     isGreen,
@@ -2620,6 +2643,7 @@ export const getJudgingProgress = async ({
   // hiding entries, not this judge's votes running out.
   return {
     remainingPairs,
+    judgedPairs: counted?.judgedPairs ?? 0,
     votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2,
   };
 };
