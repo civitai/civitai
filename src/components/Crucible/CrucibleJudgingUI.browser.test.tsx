@@ -68,6 +68,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
 });
 
 const { CrucibleJudgingUI } = await import('~/components/Crucible/CrucibleJudgingUI');
+const { CrucibleJudgingBriefing } = await import('~/components/Crucible/CrucibleJudgingBriefing');
 
 const srcOf = (id: number) => `0000000${id}-0000-4000-8000-000000000000`;
 
@@ -911,6 +912,93 @@ describe('CrucibleJudgingUI — hotkeys', () => {
     await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
     await settle();
     expect(onSkip).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('CrucibleJudgingUI — keys the arena does not own', () => {
+  const pressOn = (target: Element, key: string, code: string) => {
+    const event = new KeyboardEvent('keydown', { key, code, bubbles: true, cancelable: true });
+    target.dispatchEvent(event);
+    return event;
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+  const briefing = () => document.querySelector('[role="dialog"]');
+
+  function BriefingHarness({ onVote, onSkip }: { onVote: OnVote; onSkip: () => void }) {
+    const [open, setOpen] = useState(true);
+    return (
+      <>
+        <div data-judge-chrome>
+          <button type="button" data-testid="chrome-button">
+            Rules
+          </button>
+        </div>
+        <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={onSkip} />
+        {open && (
+          <CrucibleJudgingBriefing
+            name="Test crucible"
+            theme=""
+            image={null}
+            contentType={'video' as never}
+            nsfwLevel={1}
+            browsingLevel={1}
+            onDismiss={() => setOpen(false)}
+          />
+        )}
+      </>
+    );
+  }
+
+  test('an arrow key behind the briefing casts the vote and closes the briefing', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    expect(briefing()).toBeTruthy();
+
+    pressOn(document.documentElement, 'ArrowLeft', 'ArrowLeft');
+
+    await vi.waitFor(() => expect(briefing()).toBeNull());
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVote.mock.calls[0][0]).toBe(1);
+  });
+
+  test('the briefing focuses its start button and is modal', async () => {
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={vi.fn()} />);
+    await vi.waitFor(() => expect(briefing()).toBeTruthy());
+
+    expect(briefing()!.getAttribute('aria-modal')).toBe('true');
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Start judging'));
+  });
+
+  test('Space on the focused start button closes the briefing without skipping', async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+    await vi.waitFor(() => expect(document.activeElement?.textContent).toBe('Start judging'));
+
+    const event = pressOn(document.activeElement!, ' ', 'Space');
+
+    await vi.waitFor(() => expect(briefing()).toBeNull());
+    await settle();
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+  });
+
+  test('Space on a page header control is left to that control', async () => {
+    const onSkip = vi.fn();
+    renderWithProviders(<BriefingHarness onVote={vi.fn()} onSkip={onSkip} />);
+    await expectBothCardsRendered();
+    const chromeButton = document.querySelector('[data-testid="chrome-button"]')!;
+
+    const event = pressOn(chromeButton, ' ', 'Space');
+    await settle();
+
+    expect(onSkip).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
+
+    // Negative control: the same press with focus nowhere in particular still skips.
+    pressOn(document.body, ' ', 'Space');
+    await vi.waitFor(() => expect(onSkip).toHaveBeenCalledTimes(1));
   });
 });
 

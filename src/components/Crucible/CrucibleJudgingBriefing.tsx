@@ -3,7 +3,7 @@ import { useReducedMotion } from '@mantine/hooks';
 import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
 import { LazyMotion } from 'motion/react';
 import { div as MotionDiv } from 'motion/react-m';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { CrucibleContentBadges } from '~/components/Crucible/CrucibleContentBadges';
 import { JUDGING_RULES } from '~/components/Crucible/judging-rules';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -14,6 +14,8 @@ import {
 import type { MediaType } from '~/shared/utils/prisma/enums';
 
 const loadMotion = () => import('~/utils/lazy-motion').then((res) => res.default);
+// The arena's own hotkeys. Not swallowed here, so the press that closes the card still does its job.
+const DISMISS_KEYS = new Set(['Escape', '1', '2', 'ArrowLeft', 'ArrowRight', ' ']);
 
 type Props = {
   name: string;
@@ -26,10 +28,7 @@ type Props = {
   onDismiss: () => void;
 };
 
-/**
- * Shown once per crucible over the dimmed arena. The first 1 or 2 press dismisses it without being
- * swallowed, so the arena's own hotkey still casts that vote.
- */
+/** Shown once per crucible over the dimmed arena. */
 export function CrucibleJudgingBriefing({
   name,
   theme,
@@ -40,11 +39,16 @@ export function CrucibleJudgingBriefing({
   onDismiss,
 }: Props) {
   const motionOn = !useReducedMotion(true);
+  const startRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    startRef.current?.focus();
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
-      if (e.key === 'Escape' || e.key === '1' || e.key === '2') onDismiss();
+      if (DISMISS_KEYS.has(e.key)) onDismiss();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -60,8 +64,9 @@ export function CrucibleJudgingBriefing({
         {/* Scale and lift only: an opacity entrance would hide the card if the motion chunk fails. */}
         <MotionDiv
           role="dialog"
+          aria-modal="true"
           aria-label={`How judging ${name} works`}
-          className="pointer-events-auto flex w-full max-w-md flex-col gap-3 rounded-xl border border-[#373a40] bg-[#25262b] p-5 shadow-2xl"
+          className="pointer-events-auto flex w-full max-w-[560px] flex-col gap-3 rounded-xl border border-[#373a40] bg-[#25262b] p-5 shadow-2xl"
           initial={motionOn ? { scale: 0.96, y: 8 } : false}
           animate={{ scale: 1, y: 0 }}
           transition={{ duration: 0.2, ease: 'easeOut' }}
@@ -112,7 +117,7 @@ export function CrucibleJudgingBriefing({
           </ul>
 
           <div className="flex flex-col items-center gap-1.5 pt-1">
-            <Button fullWidth onClick={onDismiss}>
+            <Button ref={startRef} fullWidth onClick={onDismiss}>
               Start judging
             </Button>
             <Text size="xs" c="dimmed">

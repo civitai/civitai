@@ -10,6 +10,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useHotkeys, useReducedMotion } from '@mantine/hooks';
+import type { HotkeyItem } from '@mantine/hooks';
 import {
   IconPlayerSkipForward,
   IconPhotoOff,
@@ -68,6 +69,12 @@ const PLUS_ONE_MS = 600;
 const ignoreKeyRepeat = (action: () => void) => (event: KeyboardEvent) => {
   if (!event.repeat) action();
 };
+
+// Space on a focused control outside the arena (the page header, a menu, the briefing) belongs to
+// that control; the hotkey listens on the whole document and would skip the pair instead.
+const isChromeTarget = (event: KeyboardEvent) =>
+  event.target instanceof Element &&
+  !!event.target.closest('[role="dialog"], [role="menu"], [data-judge-chrome]');
 
 export type CrucibleJudgingUIProps = {
   pair: JudgingPairData;
@@ -240,20 +247,32 @@ export function CrucibleJudgingUI({
     onSkip({ unavailable: anyUnavailable });
   }, [isDisabled, onSkip, anyUnavailable]);
 
+  // Mantine would preventDefault before the handler runs, which also cancels a focused button's own
+  // Space activation, so this one prevents only when it acts.
+  const spaceHotkey: HotkeyItem = [
+    'Space',
+    (event: KeyboardEvent) => {
+      if (isChromeTarget(event)) return;
+      event.preventDefault();
+      if (!event.repeat) handleSkip();
+    },
+    { preventDefault: false },
+  ];
+
   // Keyboard shortcuts
   useHotkeys(
     voteLocked
       ? [
           // Skip stays live while voting is locked: a judge facing an entry that won't load, or
           // who does not want to watch either clip through, needs a way past the pair.
-          ['Space', ignoreKeyRepeat(handleSkip)],
+          spaceHotkey,
         ]
       : [
           ['1', ignoreKeyRepeat(() => handleVote('left'))],
           ['ArrowLeft', ignoreKeyRepeat(() => handleVote('left'))],
           ['2', ignoreKeyRepeat(() => handleVote('right'))],
           ['ArrowRight', ignoreKeyRepeat(() => handleVote('right'))],
-          ['Space', ignoreKeyRepeat(handleSkip)],
+          spaceHotkey,
         ],
     // VIDEO on top of Mantine's defaults: a focused video player answers Space with play/pause and
     // the arrows with seek, and every one of those is also bound here — so without it, pausing a

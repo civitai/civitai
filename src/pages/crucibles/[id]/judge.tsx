@@ -124,6 +124,14 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     markBriefingSeen(id, window.localStorage);
     setBriefingOpen(false);
   }, [id]);
+  // A ref rather than the attribute: React 18 has no `inert` prop. A callback ref, because the
+  // arena mounts after the crucible loads, later than the briefing state is first read.
+  const arenaRef = useCallback(
+    (el: HTMLDivElement | null) => {
+      if (el) el.inert = briefingOpen;
+    },
+    [briefingOpen]
+  );
 
   // Held in state rather than derived during render: `new Date()` differs between the server and
   // the client, so deriving it inline is a hydration mismatch.
@@ -447,8 +455,11 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       <div className="-mt-3 flex h-[calc(100%+0.75rem)] flex-col overflow-y-auto md:overflow-hidden">
         <div className="shrink-0 border-b border-[#373a40] bg-[#25262b] py-2.5">
           <Container size="xl">
-            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
-              <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div
+              data-judge-chrome
+              className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2"
+            >
+              <div className="flex min-w-0 flex-1 items-center gap-3 max-md:basis-full">
                 <ActionIcon
                   component={Link}
                   href={getCrucibleUrl(id, crucible.name)}
@@ -561,11 +572,12 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
             </Alert>
           ) : (
             <div className="relative flex flex-1 flex-col md:min-h-0">
-              <CrucibleJudgingUI
-                className={clsx(
-                  'flex-1 md:min-h-0',
-                  briefingOpen && 'pointer-events-none select-none opacity-25'
-                )}
+              <div ref={arenaRef} className="flex flex-1 flex-col md:min-h-0">
+                <CrucibleJudgingUI
+                  className={clsx(
+                    'flex-1 md:min-h-0',
+                    briefingOpen && 'pointer-events-none select-none opacity-25'
+                  )}
                 pair={pair}
                 isLoading={isLoadingPair || isVoting}
                 disabled={isVoting || !!voteError}
@@ -592,7 +604,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                     )}
                   </div>
                 }
-              />
+                />
+              </div>
               {briefingOpen && (
                 <CrucibleJudgingBriefing
                   name={crucible.name}
