@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { GeneratedOutput } from '~/components/ImageGeneration/GeneratedOutput';
 import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/workflow-data';
 import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
+import { useBlobHeaderBlockedIds } from '~/components/ImageGeneration/utils/blobHeaderCheck';
 import { matchesMarkerTags } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -23,6 +24,7 @@ export function Feed() {
     isRefetching,
     isError,
   } = useGeneratedRequestsContext();
+  const headerBlockedIds = useBlobHeaderBlockedIds();
 
   const images = useMemo(
     () =>
@@ -31,10 +33,12 @@ export function Feed() {
       requests.flatMap((r) =>
         r.succeededOutput.filter(
           (img): img is ImageBlob | VideoBlob | AudioBlob =>
-            img.type !== 'model3d' && matchesMarkerTags(img, markerTags)
+            img.type !== 'model3d' &&
+            !headerBlockedIds.has(img.id) &&
+            matchesMarkerTags(img, markerTags)
         )
       ),
-    [requests, markerTags]
+    [requests, markerTags, headerBlockedIds]
   );
 
   if (isError)

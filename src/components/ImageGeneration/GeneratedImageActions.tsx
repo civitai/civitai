@@ -9,6 +9,7 @@ import {
   useActions,
   useSelection,
 } from '~/components/ImageGeneration/utils/generationImage.select';
+import { useBlobHeaderUnresolvedFilter } from '~/components/ImageGeneration/utils/blobHeaderCheck';
 import { downloadGeneratedImages } from '~/components/ImageGeneration/utils/downloadGeneratedImages';
 import type { UpdateImageStepMetadataArgs } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
@@ -44,10 +45,15 @@ export function GeneratedImageActions({
   const showCreatePostError = useShowCreatePostError();
   const { data, markerTags } = useGetTextToImageRequests();
   const { running, helpers, returnUrl } = useTourContext();
+  const isHeaderUnresolved = useBlobHeaderUnresolvedFilter();
   const selectableImages = useMemo(
     () =>
-      data.flatMap((wf) => wf.succeededOutput.filter((img) => matchesMarkerTags(img, markerTags))),
-    [data, markerTags]
+      data.flatMap((wf) =>
+        wf.succeededOutput.filter(
+          (img) => !isHeaderUnresolved(img) && matchesMarkerTags(img, markerTags)
+        )
+      ),
+    [data, markerTags, isHeaderUnresolved]
   );
   const selected = useSelection();
   const { setSelected } = useActions();

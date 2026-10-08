@@ -39,6 +39,7 @@ import {
   useDeleteTextToImageRequest,
   useUpdateWorkflow,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useBlobHeaderBlockedReason } from '~/components/ImageGeneration/utils/blobHeaderCheck';
 import type { TransactionInfo, WorkflowStatus } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
@@ -626,13 +627,9 @@ function StepOutputs({
           [classes.asSidebar]: !features.largerGenerationImages,
         })}
       >
-        {displayImages.map((image) =>
-          image.blockedReason === 'siteRestricted' ? (
-            <SiteRestrictedBlock key={image.id} image={image} />
-          ) : (
-            <GeneratedOutput key={image.id} image={image} />
-          )
-        )}
+        {displayImages.map((image) => (
+          <GeneratedOutputTile key={image.id} image={image} request={request} />
+        ))}
         <BlockedBlocks
           blockedReasons={blockedReasons.filter((r) => r !== 'siteRestricted')}
           workflowId={request.id}
@@ -805,6 +802,27 @@ function countOccurrences(arr: string[]): Record<string, number> {
     acc[str] = (acc[str] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
+}
+
+function GeneratedOutputTile({
+  image,
+  request,
+}: {
+  image: ImageBlob | VideoBlob | AudioBlob;
+  request: WorkflowData;
+}) {
+  const headerBlockedReason = useBlobHeaderBlockedReason(image);
+  if (image.blockedReason === 'siteRestricted' || headerBlockedReason === 'siteRestricted')
+    return <SiteRestrictedBlock image={image} />;
+  if (headerBlockedReason)
+    return (
+      <BlockedBlocks
+        blockedReasons={[headerBlockedReason]}
+        workflowId={request.id}
+        transactions={request.transactions}
+      />
+    );
+  return <GeneratedOutput image={image} />;
 }
 
 /**

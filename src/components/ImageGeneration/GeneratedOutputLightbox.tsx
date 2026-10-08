@@ -10,6 +10,7 @@ import {
   matchesMarkerTags,
   useGetTextToImageRequestsImages,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useBlobHeaderBlockedIds } from '~/components/ImageGeneration/utils/blobHeaderCheck';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 import { GeneratedOutput } from './GeneratedOutput';
@@ -26,6 +27,7 @@ export default function GeneratedOutputLightbox({
   const { requests, markerTags, isLoading } = useGetTextToImageRequestsImages();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
+  const headerBlockedIds = useBlobHeaderBlockedIds();
 
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
 
@@ -40,10 +42,12 @@ export default function GeneratedOutputLightbox({
       (requests ?? []).flatMap((r) =>
         r.succeededOutput.filter(
           (img): img is ImageBlob | VideoBlob | AudioBlob =>
-            img.type !== 'model3d' && matchesMarkerTags(img, markerTags)
+            img.type !== 'model3d' &&
+            !headerBlockedIds.has(img.id) &&
+            matchesMarkerTags(img, markerTags)
         )
       ),
-    [requests, markerTags]
+    [requests, markerTags, headerBlockedIds]
   );
 
   useEffect(() => {
