@@ -295,7 +295,15 @@ function reportImagePrepFailure(
     new Error(`source image prep failed: ${error.stage}${error.timedOut ? ':timeout' : ''}`),
     {
       name: 'source-image-prep',
-      message: [source, type, size, error.timedOut ? undefined : errorName, ...urlFields]
+      message: [
+        source,
+        type,
+        size,
+        error.timedOut ? undefined : errorName,
+        ...urlFields,
+        // Whether the Files fallback was offered for it (Android only).
+        error.stage === 'pick-unreadable' ? `android:${isAndroidDevice()}` : undefined,
+      ]
         .filter(Boolean)
         .join(' '),
       resolveStack: false,
@@ -334,8 +342,14 @@ export function SourceImageUploadMultiple({
   const { signedOut, requireSignIn } = useSignInToUpload();
   // Set when an image arrived without a user gesture (a data: url in the value) while signed out.
   const [signInRequired, setSignInRequired] = useState(false);
-  // Set when a picked file could not be read; a slot pick keeps its slot for the Files fallback.
-  const [unreadablePick, setUnreadablePick] = useState<{ slotIndex?: number } | null>(null);
+  // Set when picked files could not be read; a slot pick keeps their slots, in pick order, for the
+  // Files fallback.
+  const [unreadablePick, setUnreadablePick] = useState<{
+    count: number;
+    slotIndices?: number[];
+  } | null>(null);
+  // Picks whose files are being probed for readability, before anything is queued for them.
+  const [picksProbing, setPicksProbing] = useState(0);
   const [missingAiMetadata, setMissingAiMetadata] = useState<Record<string, boolean>>({});
   const isCroppingRef = useRef(false);
   // Counts crop sessions that ended, so the crop/upload effect can start a card queued while the
@@ -504,17 +518,22 @@ export function SourceImageUploadMultiple({
   // Holds the generator from the pick until the image is in the value, under one key per mount that
   // no upload id can take. The per-upload marker set inside uploadOrchestratorImage starts after an
   // await and ends before the value write, and each gap reads as "nothing pending" (the cost box
-  // flickers to its idle state). Derived from `uploads`, so every way a card stops being pending —
-  // in the value, errored, removed, crop cancelled — releases it; unmount clears it below.
+  // flickers to its idle state). It starts at the pick itself: while a pick's files are probed for
+  // readability (card or slot) nothing is in `uploads` yet, so `picksProbing` covers that window,
+  // and the probe's end and the first `uploads` write land in one render. Otherwise derived from
+  // card `uploads`, so every way a card stops being pending — in the value, errored, removed, crop
+  // cancelled, unreadable — releases it; unmount clears it below.
   const cardsPendingKey = useMemo(() => `cards:${getRandomId()}`, []);
-  const cardsPending = uploads.some(
-    (u) =>
-      u.slotIndex === undefined &&
-      (u.status === 'queued' ||
-        u.status === 'uploading' ||
-        u.status === 'cropping' ||
-        (u.status === 'complete' && !value?.some((v) => v.url === u.url)))
-  );
+  const cardsPending =
+    picksProbing > 0 ||
+    uploads.some(
+      (u) =>
+        u.slotIndex === undefined &&
+        (u.status === 'queued' ||
+          u.status === 'uploading' ||
+          u.status === 'cropping' ||
+          (u.status === 'complete' && !value?.some((v) => v.url === u.url)))
+    );
   useEffect(() => {
     setImageUploading(cardsPendingKey, cardsPending);
     if (cardsPending) trackedUploadingIdsRef.current.add(cardsPendingKey);
@@ -1003,26 +1022,29 @@ export function SourceImageUploadMultiple({
     }
     const files = items.filter((src): src is File => typeof src !== 'string');
     if (!files.length) return queueItems(items);
+    setPicksProbing((n) => n + 1);
     return splitUnreadablePicks(files).then(({ unreadable }) => {
-      const rejected = rejectUnreadablePicks(unreadable, {});
+      setPicksProbing((n) => n - 1);
+      const rejected = rejectUnreadablePicks(unreadable);
       queueItems(items.filter((src) => typeof src === 'string' || !rejected.has(src)));
     });
   }
 
   /**
-   * Reports picked files the browser cannot read and shows the Files fallback for them; a pick with
-   * none clears it. Returns the rejected files, which are not queued.
+   * Reports picked files the browser cannot read and shows the unreadable-pick alert for them (with
+   * the Files fallback on Android); a pick with none clears it. Returns the rejected files, which
+   * are not queued.
    */
   function rejectUnreadablePicks(
     unreadable: { file: File; error: DOMException }[],
-    target: { slotIndex?: number }
+    slotIndices?: number[]
   ) {
     for (const { file, error } of unreadable)
       reportImagePrepFailure(
         new ImagePrepError('pick-unreadable', false, error.message, { cause: error }),
         file
       );
-    setUnreadablePick(unreadable.length ? target : null);
+    setUnreadablePick(unreadable.length ? { count: unreadable.length, slotIndices } : null);
     return new Set<File>(unreadable.map(({ file }) => file));
   }
 
@@ -1082,11 +1104,14 @@ export function SourceImageUploadMultiple({
     let entries = pickedEntries;
     const files = entries.flatMap(({ src }) => (src instanceof File ? [src] : []));
     if (files.length) {
+      // Counted as pending from here: the slot's own uploading marker is set only after the probe.
+      setPicksProbing((n) => n + 1);
       const { unreadable } = await splitUnreadablePicks(files);
-      const firstUnreadable = entries.find(({ src }) =>
-        unreadable.some(({ file }) => file === src)
-      );
-      const rejected = rejectUnreadablePicks(unreadable, { slotIndex: firstUnreadable?.slotIndex });
+      setPicksProbing((n) => n - 1);
+      const unreadableSlots = entries
+        .filter(({ src }) => unreadable.some(({ file }) => file === src))
+        .map(({ slotIndex }) => slotIndex);
+      const rejected = rejectUnreadablePicks(unreadable, unreadableSlots);
       entries = entries.filter(({ src }) => typeof src === 'string' || !rejected.has(src));
       if (!entries.length) return;
     }
@@ -1278,21 +1303,20 @@ export function SourceImageUploadMultiple({
     setUploads((items) => items.filter((x) => x.slotIndex !== slotIndex));
   }
 
-  // Files picked through the fallback go to the slot or card list the unreadable pick was meant for.
+  // Files picked through the fallback go to the slots, in order, or the card list the unreadable pick
+  // was meant for. The alert has already refused a selection with a file of the wrong type or size,
+  // so the alert is cleared only for a selection that is taken.
   function handleUnreadableFallback(files: File[]) {
     const target = unreadablePick;
     setUnreadablePick(null);
     setError(null);
-    const fitting = files.filter((file) => {
-      const tooLarge = file.size > maxOrchestratorImageFileSize;
-      if (tooLarge) setError(`Images should not exceed ${maxSizeFormatted}`);
-      return !tooLarge;
-    });
-    if (!fitting.length) return;
-    if (target?.slotIndex !== undefined)
-      return handleSlotUpload([{ slotIndex: target.slotIndex, src: fitting[0] }]);
+    const slotIndices = target?.slotIndices;
+    if (slotIndices?.length)
+      return handleSlotUpload(
+        files.slice(0, slotIndices.length).map((src, i) => ({ slotIndex: slotIndices[i], src }))
+      );
     const remaining = Math.max(0, max - previewItems.length);
-    return handleChange(fitting.slice(0, remaining));
+    return handleChange(files.slice(0, remaining));
   }
 
   // Single mode render - VideoInput-style layout
@@ -1543,7 +1567,11 @@ export function SourceImageUploadMultiple({
   const unreadablePickAlert = unreadablePick && (
     <UnreadablePickAlert
       accept={IMAGE_MIME_TYPE}
-      multiple={unreadablePick.slotIndex === undefined && max > 1}
+      count={unreadablePick.count}
+      maxSize={maxOrchestratorImageFileSize}
+      multiple={
+        unreadablePick.slotIndices?.length ? unreadablePick.slotIndices.length > 1 : max > 1
+      }
       disabled={disabled}
       onFiles={handleUnreadableFallback}
     />

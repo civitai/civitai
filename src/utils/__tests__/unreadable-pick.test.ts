@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   boundedFileFields,
   probeUnreadablePick,
   splitUnreadablePicks,
+  UNREADABLE_PROBE_TIMEOUT_MS,
+  unreadablePickMessage,
 } from '~/utils/unreadable-pick';
 
 /** A file whose 16-byte probe read rejects with `error`. */
@@ -30,6 +32,70 @@ describe('probeUnreadablePick', () => {
 
   it('is undefined for a file that reads', async () => {
     expect(await probeUnreadablePick(new File(['abc'], 'a.jpg'))).toBeUndefined();
+  });
+
+  describe('a read that never settles', () => {
+    afterEach(() => vi.useRealTimers());
+    /** A file whose probe read stays pending forever, like a cloud photo still downloading. */
+    function stalledFile() {
+      const file = new File([new Uint8Array(32)], 'slow.jpg', { type: 'image/jpeg' });
+      file.slice = () => {
+        const part = new Blob();
+        part.arrayBuffer = () => new Promise<ArrayBuffer>(() => undefined);
+        return part;
+      };
+      return file;
+    }
+
+    it('counts as readable once the probe gives up, and not before', async () => {
+      vi.useFakeTimers();
+      let result: string = 'pending';
+      void probeUnreadablePick(stalledFile()).then((r) => (result = r ? 'unreadable' : 'readable'));
+
+      await vi.advanceTimersByTimeAsync(UNREADABLE_PROBE_TIMEOUT_MS - 1);
+      expect(result).toBe('pending');
+      await vi.advanceTimersByTimeAsync(1);
+      expect(result).toBe('readable');
+    });
+
+    it('keeps a stalled file with the readable ones', async () => {
+      vi.useFakeTimers();
+      const slow = stalledFile();
+      const split = splitUnreadablePicks([slow]);
+      await vi.advanceTimersByTimeAsync(UNREADABLE_PROBE_TIMEOUT_MS);
+      expect(await split).toEqual({ readable: [slow], unreadable: [] });
+    });
+
+    it('is bounded by a short injected timeout too', async () => {
+      expect(await probeUnreadablePick(stalledFile(), 5)).toBeUndefined();
+    });
+  });
+
+  it('a read that throws instead of rejecting counts as readable', async () => {
+    const file = new File(['abc'], 'a.jpg');
+    file.slice = () => {
+      throw new Error('boom');
+    };
+    expect(await probeUnreadablePick(file)).toBeUndefined();
+  });
+});
+
+describe('unreadablePickMessage', () => {
+  it.each([
+    [
+      1,
+      true,
+      "Your phone's photo picker gave us a file we can't open. Choose it from Files instead.",
+    ],
+    [
+      3,
+      true,
+      "Your phone's photo picker gave us 3 files we can't open. Choose them from Files instead.",
+    ],
+    [1, false, "We couldn't open this file. Try choosing it again."],
+    [2, false, "We couldn't open 2 of these files. Try choosing them again."],
+  ])('%i file(s), android %s', (count, android, expected) => {
+    expect(unreadablePickMessage(count, android)).toBe(expected);
   });
 });
 

@@ -2,18 +2,32 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
-import { chooseFiles, makeUnreadableFilesFail } from '../../../../test/unreadable-files';
+import {
+  chooseFiles,
+  makeSlowFilesStall,
+  makeUnreadableFilesFail,
+} from '../../../../test/unreadable-files';
 import type * as ApplicationError from '~/utils/application-error';
+import type * as DeviceHelpers from '~/utils/device-helpers';
 
 /**
  * The post editor (and every other MediaDropzone) must not hand on a file the photo picker made
  * unreadable: some Android photo pickers return a File whose every read rejects with
- * NotReadableError, while the same photo chosen from the Files app reads fine. The user is offered
- * the Files chooser instead (a file input with no image-only `accept`), and each such pick is
+ * NotReadableError, while the same photo chosen from the Files app reads fine. On Android the user
+ * is offered the Files chooser instead (a file input with no image-only `accept`), and each such pick is
  * reported once with bounded fields.
  */
 
-const mocks = vi.hoisted(() => ({ reportApplicationError: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  reportApplicationError: vi.fn(),
+  /** Android unless a test says otherwise: the Files fallback is offered only there. */
+  android: true,
+}));
+
+vi.mock('~/utils/device-helpers', async (orig) => ({
+  ...(await orig<typeof DeviceHelpers>()),
+  isAndroidDevice: () => mocks.android,
+}));
 
 vi.mock('~/utils/application-error', async (orig) => ({
   ...(await orig<typeof ApplicationError>()),
@@ -24,6 +38,8 @@ vi.mock('~/utils/application-error', async (orig) => ({
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 // eslint-disable-next-line import/first
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
+// eslint-disable-next-line import/first
+import { UNREADABLE_PROBE_TIMEOUT_MS } from '~/utils/unreadable-pick';
 
 const PICK_MESSAGE =
   "Your phone's photo picker gave us a file we can't open. Choose it from Files instead.";
@@ -62,6 +78,7 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
 
   beforeEach(() => {
     onDrop.mockReset();
+    mocks.android = true;
     mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
     restoreReads = makeUnreadableFilesFail();
   });
@@ -104,10 +121,53 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
       [
         'media pick failed: pick-unreadable',
         'media-pick',
-        'picked-file image/jpeg <5MB NotReadableError',
+        'picked-file image/jpeg <5MB NotReadableError android:true',
       ],
     ]);
   });
+
+  test('off Android: a neutral message, no Files chooser, and still reported', async () => {
+    mocks.android = false;
+    renderDropzone();
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+
+    await expect
+      .element(
+        page.getByText("We couldn't open this file. Try choosing it again.", { exact: true })
+      )
+      .toBeVisible();
+    expect(page.getByRole('button', { name: 'Choose from Files' }).elements()).toHaveLength(0);
+    expect(document.querySelector('[data-testid="unreadable-pick-files-input"]')).toBeNull();
+    expect(page.getByText(PICK_MESSAGE).elements()).toHaveLength(0);
+    expect(onDrop).not.toHaveBeenCalled();
+    expect(reports()).toEqual([
+      [
+        'media pick failed: pick-unreadable',
+        'media-pick',
+        'picked-file image/jpeg <5MB NotReadableError android:false',
+      ],
+    ]);
+  });
+
+  test(
+    'a pick whose read stalls is handed on once the probe gives up',
+    async () => {
+      restoreReads();
+      restoreReads = makeSlowFilesStall();
+      renderDropzone();
+      await chooseFiles(dropzoneInput(), [imageFile('slow-0.jpg')]);
+      expect(onDrop).not.toHaveBeenCalled();
+
+      await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1), {
+        timeout: UNREADABLE_PROBE_TIMEOUT_MS + 3_000,
+      });
+      expect(onDrop.mock.calls[0][0].map(({ file }: { file: File }) => file.name)).toEqual([
+        'slow-0.jpg',
+      ]);
+      expect(reports()).toEqual([]);
+    },
+    UNREADABLE_PROBE_TIMEOUT_MS + 10_000
+  );
 
   test('alongside a readable pick: only the readable one is handed on', async () => {
     renderDropzone();
@@ -144,6 +204,8 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
       .element(page.getByText("That file type isn't supported here.", { exact: true }))
       .toBeVisible();
     expect(onDrop).not.toHaveBeenCalled();
+    // The fallback stays, so the user can choose again.
+    await expectFilesFallbackOffered();
   });
 
   test('the Files button is disabled while the dropzone is loading', async () => {
@@ -157,17 +219,28 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
     await expect.element(page.getByRole('button', { name: 'Choose from Files' })).toBeEnabled();
   });
 
-  test("files chosen from Files keep the dropzone's size and count limits", async () => {
-    renderDropzone({ maxSize: 100, maxFiles: 1 });
+  test("a selection from Files over the dropzone's size limit is refused, and the fallback stays", async () => {
+    renderDropzone({ maxSize: 100 });
     await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
     await expectFilesFallbackOffered();
 
     const tooLarge = new File([new Uint8Array(101)], 'big.jpg', { type: 'image/jpeg' });
-    await chooseFiles(filesFallbackInput(), [
-      tooLarge,
-      imageFile('photo-0.jpg'),
-      imageFile('photo-1.jpg'),
-    ]);
+    await chooseFiles(filesFallbackInput(), [tooLarge, imageFile('photo-0.jpg')]);
+    // The fallback stays (checked first: a cleared alert takes its error text with it).
+    await new Promise((r) => setTimeout(r, 300));
+    await expectFilesFallbackOffered();
+    await expect
+      .element(page.getByText('Files should not exceed 100 B.', { exact: true }))
+      .toBeVisible();
+    expect(onDrop).not.toHaveBeenCalled();
+  });
+
+  test("files chosen from Files keep the dropzone's count limit", async () => {
+    renderDropzone({ maxFiles: 1 });
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-0.jpg'), imageFile('photo-1.jpg')]);
     await vi.waitFor(() => expect(onDrop).toHaveBeenCalledTimes(1));
     expect(onDrop.mock.calls[0][0].map(({ file }: { file: File }) => file.name)).toEqual([
       'photo-0.jpg',

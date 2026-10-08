@@ -2,7 +2,11 @@ import { useState } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
-import { chooseFiles, makeUnreadableFilesFail } from '../../../../test/unreadable-files';
+import {
+  chooseFiles,
+  makeSlowFilesStall,
+  makeUnreadableFilesFail,
+} from '../../../../test/unreadable-files';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
 import type * as CanvasUtils from '~/shared/utils/canvas-utils';
 import type * as ImageUtils from '~/utils/image-utils';
@@ -12,6 +16,7 @@ import type * as AuthHelpers from '~/utils/auth-helpers';
 import type * as ConsumerBlobUpload from '~/utils/consumer-blob-upload';
 import type * as SessionProviderModule from '~/providers/SessionProvider';
 import type * as ClientEnv from '~/env/client';
+import type * as DeviceHelpers from '~/utils/device-helpers';
 
 /**
  * A failed source-image upload must end on an error card with the spinner cleared, and must not
@@ -30,6 +35,13 @@ const mocks = vi.hoisted(() => ({
   sessionLoading: false,
   /** A loadable local url the uploader treats as already uploaded (no network request). */
   orchestratorUrl: '',
+  /** Android unless a test says otherwise: the Files fallback is offered only there. */
+  android: true,
+}));
+
+vi.mock('~/utils/device-helpers', async (orig) => ({
+  ...(await orig<typeof DeviceHelpers>()),
+  isAndroidDevice: () => mocks.android,
 }));
 
 vi.mock('~/utils/consumer-blob-upload', async (orig) => ({
@@ -113,6 +125,8 @@ import {
   useImagesUploadingStore,
 } from '~/components/Generation/Input/SourceImageUploadMultiple';
 // eslint-disable-next-line import/first
+import { UNREADABLE_PROBE_TIMEOUT_MS } from '~/utils/unreadable-pick';
+// eslint-disable-next-line import/first
 import { maxOrchestratorImageFileSize } from '~/server/common/constants';
 // eslint-disable-next-line import/first
 import {
@@ -125,6 +139,7 @@ const PRESIGN_ERROR = 'Failed to get upload URL';
 beforeEach(() => {
   mocks.currentUser = { id: 1 };
   mocks.sessionLoading = false;
+  mocks.android = true;
   mocks.openLoginPopup.mockReset();
 });
 
@@ -1333,8 +1348,8 @@ describe('SourceImageUploadMultiple — signed out', () => {
 /**
  * Some Android photo pickers hand the page a File no API can read (every read rejects with
  * NotReadableError), while the same photo chosen from the Files app reads fine. Such a pick must not
- * start anything; the user is offered a Files chooser (a file input with no image-only `accept`)
- * instead, and each such pick is reported once.
+ * start anything; on Android the user is offered a Files chooser instead (a file input with no
+ * image-only `accept`), elsewhere only a message, and each such pick is reported once.
  */
 describe('SourceImageUploadMultiple — a pick the photo picker made unreadable', () => {
   const PICK_MESSAGE =
@@ -1370,7 +1385,7 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
   const PICK_REPORT = [
     'source image prep failed: pick-unreadable',
     'source-image-prep',
-    'picked-file image/jpeg <5MB NotReadableError',
+    'picked-file image/jpeg <5MB NotReadableError android:true',
   ];
 
   async function expectFilesFallbackOffered() {
@@ -1445,9 +1460,11 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
       .element(page.getByText("That file type isn't supported here.", { exact: true }))
       .toBeVisible();
     await expectNothingStarted();
+    // The fallback stays, so the user can choose again.
+    await expectFilesFallbackOffered();
   });
 
-  test('files chosen from Files keep the size limit and the image count', async () => {
+  test('a selection from Files with a file over the size limit is refused, and the fallback stays', async () => {
     renderWithProviders(<PendingHarness max={2} />);
     await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
     await expectFilesFallbackOffered();
@@ -1455,37 +1472,57 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
     const tooLarge = new File([new Uint8Array(maxOrchestratorImageFileSize + 1)], 'big.jpg', {
       type: 'image/jpeg',
     });
+    await chooseFiles(filesFallbackInput(), [tooLarge, imageFile('photo-0.jpg')]);
+    // The fallback stays (checked first: a cleared alert takes its error text with it).
+    await sleep(300);
+    await expectFilesFallbackOffered();
+    await expect.element(page.getByText(/^Files should not exceed /)).toBeVisible();
+    await expectNothingStarted();
+
+    // Choosing again from the same fallback works.
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-0.jpg')]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+  });
+
+  test('files chosen from Files keep the image count', async () => {
+    renderWithProviders(<PendingHarness max={2} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
     await chooseFiles(filesFallbackInput(), [
-      tooLarge,
       imageFile('photo-0.jpg'),
       imageFile('photo-1.jpg'),
       imageFile('photo-2.jpg'),
     ]);
-    await expect.element(page.getByText(/^Images should not exceed /)).toBeVisible();
     await vi.waitFor(() => expect(uploads).toHaveLength(2));
     await sleep(300);
     expect(mocks.uploadConsumerBlob).toHaveBeenCalledTimes(2);
   });
 
+  test('off Android: a neutral message, no Files chooser, and still reported', async () => {
+    mocks.android = false;
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+
+    await expect
+      .element(
+        page.getByText("We couldn't open this file. Try choosing it again.", { exact: true })
+      )
+      .toBeVisible();
+    expect(page.getByRole('button', { name: 'Choose from Files' }).elements()).toHaveLength(0);
+    expect(document.querySelector('[data-testid="unreadable-pick-files-input"]')).toBeNull();
+    expect(page.getByText(PICK_MESSAGE).elements()).toHaveLength(0);
+    await expectNothingStarted();
+    expect(reports()).toEqual([
+      [
+        PICK_REPORT[0],
+        PICK_REPORT[1],
+        'picked-file image/jpeg <5MB NotReadableError android:false',
+      ],
+    ]);
+  });
+
   test('into a slot: nothing starts, and a file chosen from Files fills that slot', async () => {
-    function SlotHarness() {
-      const [value, setValue] = useState<ImageValue[]>([]);
-      const onChange = (next: ImageValue[]) =>
-        setValue((prev) => {
-          if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
-          lastValue = next ?? [];
-          return next;
-        });
-      return (
-        <div data-testid="source-images">
-          <ImageUploadMultipleInput
-            value={value}
-            onChange={onChange}
-            slots={[{ label: 'First frame' }, { label: 'Last frame' }]}
-          />
-        </div>
-      );
-    }
     renderWithProviders(<SlotHarness />);
     await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
 
@@ -1503,7 +1540,114 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
     await sleep(500);
     expect(mocks.getImageDimensions.mock.calls.filter(([src]) => src === uploaded)).toEqual([]);
   });
+
+  test('several unreadable files dropped on the slots: the Files fallback fills each of their slots', async () => {
+    renderWithProviders(<SlotHarness />);
+    await chooseFiles(dropzoneInput(), [
+      imageFile('unreadable-0.jpg'),
+      imageFile('unreadable-1.jpg'),
+    ]);
+
+    await expect
+      .element(
+        page.getByText(
+          "Your phone's photo picker gave us 2 files we can't open. Choose them from Files instead.",
+          { exact: true }
+        )
+      )
+      .toBeVisible();
+    await expectNothingStarted();
+    expect(reports()).toEqual([PICK_REPORT, PICK_REPORT]);
+    expect(filesFallbackInput().multiple).toBe(true);
+
+    await chooseFiles(filesFallbackInput(), [imageFile('photo-0.jpg'), imageFile('photo-1.jpg')]);
+    await vi.waitFor(() => expect(uploads).toHaveLength(2));
+    const urls = [await loadableImageUrl(), await loadableImageUrl()];
+    uploads.forEach((u, i) => u.resolve({ url: urls[i], available: true }));
+    await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual(urls));
+  });
 });
+
+/**
+ * The readability probe must not hold a pick forever: a read that has not settled within
+ * UNREADABLE_PROBE_TIMEOUT_MS (a cloud-only photo still downloading) goes on to the normal pipeline.
+ * And while the probe runs, the generator is already held (the pick counts as pending).
+ */
+describe('SourceImageUploadMultiple — a pick whose read stalls', () => {
+  let restoreReads = () => undefined as void;
+  let unsubscribe = () => undefined as void;
+
+  beforeEach(() => {
+    uploads = [];
+    lastValue = [];
+    useImagesUploadingStore.setState({ uploading: [], verifying: [] });
+    unsubscribe = useImagesUploadingStore.subscribe(() => undefined);
+    mocks.uploadConsumerBlob
+      .mockReset()
+      .mockImplementation(
+        () => new Promise((resolve, reject) => uploads.push({ resolve, reject, settled: false }))
+      );
+    mocks.getImageDimensions.mockReset().mockResolvedValue({ width: 1024, height: 1024 });
+    mocks.reportApplicationError.mockReset().mockResolvedValue(undefined);
+    mocks.dialogTrigger.mockReset();
+    restoreReads = makeSlowFilesStall();
+  });
+  afterEach(() => {
+    restoreReads();
+    unsubscribe();
+  });
+
+  const PROBE_WAIT = { timeout: UNREADABLE_PROBE_TIMEOUT_MS + 3_000 };
+  const reports = () => mocks.reportApplicationError.mock.calls;
+
+  test.each([
+    ['a card', () => <PendingHarness max={3} />],
+    ['a slot', () => <SlotHarness />],
+  ])('into %s: held pending while the probe runs', async (_, render) => {
+    renderWithProviders(render());
+    await chooseFiles(dropzoneInput(), [imageFile('slow-0.jpg')]);
+
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(pendingNow()).toBe(true);
+  });
+
+  test.each([
+    ['a card', () => <PendingHarness max={3} />],
+    ['a slot', () => <SlotHarness />],
+  ])(
+    'into %s: goes on to upload once the probe gives up',
+    async (_, render) => {
+      renderWithProviders(render());
+      await chooseFiles(dropzoneInput(), [imageFile('slow-0.jpg')]);
+
+      await vi.waitFor(() => expect(uploads).toHaveLength(1), PROBE_WAIT);
+      const uploaded = await loadableImageUrl();
+      uploads[0].resolve({ url: uploaded, available: true });
+      await vi.waitFor(() => expect(lastValue.map((v) => v.url)).toEqual([uploaded]));
+      expect(reports()).toEqual([]);
+    },
+    UNREADABLE_PROBE_TIMEOUT_MS + 10_000
+  );
+});
+
+function SlotHarness() {
+  const [value, setValue] = useState<ImageValue[]>([]);
+  const onChange = (next: ImageValue[]) =>
+    setValue((prev) => {
+      if (JSON.stringify(prev) === JSON.stringify(next)) return prev;
+      lastValue = next ?? [];
+      return next;
+    });
+  return (
+    <div data-testid="source-images">
+      <ImageUploadMultipleInput
+        value={value}
+        onChange={onChange}
+        slots={[{ label: 'First frame' }, { label: 'Last frame' }]}
+      />
+    </div>
+  );
+}
 
 /** The upload measures the image it uploads, so its url is not downloaded again to measure it. */
 describe('SourceImageUploadMultiple — an uploaded image', () => {

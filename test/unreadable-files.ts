@@ -19,6 +19,24 @@ export function makeUnreadableFilesFail() {
 }
 
 /**
+ * A part sliced from a File named `slow…` never finishes reading, the way a cloud-only photo can
+ * stall while its provider downloads it. Only slices stall (what the readability probe reads), so
+ * the rest of the upload pipeline runs normally.
+ */
+export function makeSlowFilesStall() {
+  const { slice } = Blob.prototype;
+  Blob.prototype.slice = function (this: Blob, ...args: Parameters<Blob['slice']>) {
+    const part = slice.apply(this, args);
+    if (this instanceof File && this.name.startsWith('slow'))
+      part.arrayBuffer = () => new Promise<ArrayBuffer>(() => undefined);
+    return part;
+  };
+  return () => {
+    Blob.prototype.slice = slice;
+  };
+}
+
+/**
  * Picks files the way the browser's chooser does, keeping these File objects: `userEvent.upload`
  * serialises each file and the page receives new ones, so a file set up to fail its reads would not
  * arrive as one.

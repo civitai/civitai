@@ -52,7 +52,7 @@ export type LoginLinkOptions = {
   reason?: LoginRedirectReason;
 };
 
-export const trackedReasons = ['image-gen', 'image-upload', 'train-model', 'blur-toggle'] as const;
+export const trackedReasons = ['image-gen', 'train-model', 'blur-toggle'] as const;
 
 export function getLoginLink({ returnUrl, reason }: LoginLinkOptions) {
   return `/login?${QS.stringify({ returnUrl, reason })}`;

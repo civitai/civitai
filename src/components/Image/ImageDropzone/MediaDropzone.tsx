@@ -16,12 +16,12 @@ import { isAndroidDevice } from '~/utils/device-helpers';
 import { reportApplicationError } from '~/utils/application-error';
 import { boundedFileFields, splitUnreadablePicks } from '~/utils/unreadable-pick';
 
-/** Bounded fields only: the picked file's type (from a short list) and size bucket. */
+/** Bounded fields only: the picked file's type (from a short list), size bucket, and platform. */
 function reportUnreadablePick(file: File) {
   const { type, size } = boundedFileFields(file);
   void reportApplicationError(new Error('media pick failed: pick-unreadable'), {
     name: 'media-pick',
-    message: `picked-file ${type} ${size} NotReadableError`,
+    message: `picked-file ${type} ${size} NotReadableError android:${isAndroidDevice()}`,
     resolveStack: false,
   });
 }
@@ -44,7 +44,8 @@ export function MediaDropzone({
   const settings = useMediaUploadSettingsContext();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
-  const [unreadablePick, setUnreadablePick] = useState(false);
+  // How many files of the last pick could not be read.
+  const [unreadableCount, setUnreadableCount] = useState(0);
   // Replaces image/* and video/* with .jpg, .png, .mp4, etc.
   // zips do not show up correctly without these extra 2 "zip" files, but we don't want to show them
   const fileExtensions = accept
@@ -79,15 +80,15 @@ export function MediaDropzone({
   async function handleDrop(files: File[]) {
     const { readable, unreadable } = await splitUnreadablePicks(files);
     for (const { file } of unreadable) reportUnreadablePick(file);
-    setUnreadablePick(unreadable.length > 0);
+    setUnreadableCount(unreadable.length);
     if (readable.length) onDrop(readable.map((file) => ({ file })));
   }
 
-  // The Files chooser bypasses the dropzone's own limits, so they are applied here.
+  // The Files chooser bypasses the dropzone's own limits: the alert refuses a file over `maxSize`,
+  // and the count is applied here.
   function handleFallbackFiles(files: File[]) {
-    const { maxSize, maxFiles } = dropzoneProps;
-    const fitting = files.filter((file) => maxSize === undefined || file.size <= maxSize);
-    return handleDrop(maxFiles ? fitting.slice(0, maxFiles) : fitting);
+    const { maxFiles } = dropzoneProps;
+    return handleDrop(maxFiles ? files.slice(0, maxFiles) : files);
   }
 
   // #region [render]
@@ -147,9 +148,11 @@ export function MediaDropzone({
           </div>
         </div>
       </Dropzone>
-      {unreadablePick && (
+      {unreadableCount > 0 && (
         <UnreadablePickAlert
           accept={accept}
+          count={unreadableCount}
+          maxSize={dropzoneProps.maxSize}
           multiple
           disabled={dropzoneProps.disabled || dropzoneProps.loading}
           onFiles={handleFallbackFiles}
