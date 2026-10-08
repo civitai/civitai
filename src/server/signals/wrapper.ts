@@ -56,12 +56,12 @@ const log = createLogger('signals', 'cyan');
  *   deadline: every call they start then completes. Under overload a call may
  *   start with only half the deadline left, so a call slower than its
  *   remaining budget becomes a backend timeout (evidence) by design, and the
- *   shed traffic then counts. Backend timeouts are shared across lanes, so this
- *   applies across them too: a token-lane call slower than its remaining
- *   budget opens the circuit for pushes as well. A hang — from an idle or an
- *   already-saturated pool — trips it:
- *   the calls it starts time out. Evidence is pruned with the same window as
- *   failures and cleared when the circuit CLOSES.
+ *   shed traffic then counts (default lane only). Token-lane backend
+ *   timeouts count toward the shared threshold too, so enough token calls
+ *   slower than their remaining budget can open the circuit for pushes.
+ *   A hang — from an idle or an already-saturated pool — trips it: the calls
+ *   it starts time out. Evidence is pruned with the same window as failures
+ *   and cleared when the circuit CLOSES.
  *   - A HALF_OPEN trial that suffers a queue-side failure probed nothing, so it
  *     is NOT a failed trial: it releases `trialInFlight` and the circuit stays
  *     HALF_OPEN; the next caller becomes the trial. A trial whose fn() rejects

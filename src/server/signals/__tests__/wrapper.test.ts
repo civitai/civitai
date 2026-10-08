@@ -827,7 +827,7 @@ describe('withSignals', () => {
       expect(push.value).toBe('pushed');
     });
 
-    it('token calls that expire in the queue / are not started never count either', async () => {
+    it('token calls not started for lack of budget never count either', async () => {
       const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 2 });
       const ok600 = () => new Promise<string>((r) => setTimeout(() => r('ok'), 600));
 
