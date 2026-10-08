@@ -6,6 +6,7 @@ import type { ImageBlob, StepData } from '~/shared/orchestrator/workflow-data';
 import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 
 import { getStepMeta } from './GenerationForm/generation.utils';
+import { useBlobHeaderCheckedSrc } from './utils/blobHeaderCheck';
 
 export function GeneratedImageOutput({
   image,
@@ -22,6 +23,11 @@ export function GeneratedImageOutput({
   onLoaded?: () => void;
   loaded?: boolean;
 }) {
+  const checked = useBlobHeaderCheckedSrc(
+    image,
+    isLightbox ? image.url : image.previewUrl ?? image.url
+  );
+
   function handleDragImage(e: DragEvent<HTMLImageElement>) {
     const url = image.url;
     const meta = getStepMeta(step);
@@ -62,9 +68,11 @@ export function GeneratedImageOutput({
     }
   }
 
+  if (checked.status !== 'ok') return null;
+
   return (
     <EdgeMedia2
-      src={isLightbox ? image.url : image.previewUrl ?? image.url}
+      src={checked.src}
       type="image"
       alt=""
       className={clsx(

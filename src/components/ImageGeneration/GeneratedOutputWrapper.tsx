@@ -12,6 +12,7 @@ import {
   useIsSelecting,
 } from '~/components/ImageGeneration/utils/generationImage.select';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { useBlobHeaderUnresolved } from '~/components/ImageGeneration/utils/blobHeaderCheck';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
@@ -47,6 +48,7 @@ export function GeneratedOutputWrapper({
   const { select } = useActions();
   const { running, helpers } = useTourContext();
   const available = image.available;
+  const hideControls = useBlobHeaderUnresolved(image) || !!image.blockedReason;
 
   const handleClick = (e?: { shiftKey?: boolean }) => {
     if (!image || !available || isLightbox) return;
@@ -185,7 +187,7 @@ export function GeneratedOutputWrapper({
             })}
             {isLightbox && !loaded && <Loader className="absolute inset-0 m-auto" size="lg" />}
 
-            {!isLightbox && !image.blockedReason && (
+            {!isLightbox && !hideControls && (
               <label className="absolute left-3 top-3" data-tour="gen:select">
                 <Checkbox
                   className={classes.checkbox}
@@ -199,7 +201,7 @@ export function GeneratedOutputWrapper({
                 />
               </label>
             )}
-            {!image.blockedReason && (
+            {!hideControls && (
               <Menu zIndex={400} withinPortal>
                 <Menu.Target>
                   <div className="absolute right-3 top-3">
@@ -219,7 +221,7 @@ export function GeneratedOutputWrapper({
             )}
           </div>
 
-          {!image.blockedReason && (
+          {!hideControls && (
             <GeneratedOutputActions
               output={image}
               state={state}
