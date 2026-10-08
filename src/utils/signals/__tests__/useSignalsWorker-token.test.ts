@@ -329,13 +329,16 @@ describe('useSignalsWorker: signals token re-mint', () => {
     expect(state.invalidations).toEqual([]);
   });
 
-  it('a tab loaded while the worker is reconnecting may fetch a token; a connected one may not', async () => {
+  it('a tab loaded while the worker is reconnecting may fetch a token; one that was connected may not', async () => {
     // So a reload during an outage can hand the worker a fresh token: a lost connection now stays
     // 'reconnecting' instead of ever reaching 'closed'.
     await mount({ accessToken: 't1' });
     await fromWorker({ type: 'connection:state', state: 'reconnecting' });
     expect(state.options.enabled).toBe(true);
     await fromWorker({ type: 'connection:state', state: 'connected' });
+    expect(state.options.enabled).toBe(false);
+    // The hub drops: tabs that were connected must not all fetch at that same instant.
+    await fromWorker({ type: 'connection:state', state: 'reconnecting' });
     expect(state.options.enabled).toBe(false);
   });
 });

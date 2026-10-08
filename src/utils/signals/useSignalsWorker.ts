@@ -75,11 +75,16 @@ export function useSignalsWorker(options?: {
   const [staleScriptRetry, setStaleScriptRetry] = useState(0);
   const staleScriptTimerRef = useRef<ReturnType<typeof setTimeout>>();
   const [reconnectCount, setReconnectCount] = useState(0);
-  // A tab fetches its token (once — the query never goes stale) unless the worker is connected. That
-  // includes 'reconnecting': a lost connection never reaches 'closed' any more, so a tab loaded during
-  // an outage must still be able to hand the worker a fresh token — that is what lets a reload recover
-  // from a token the hub stopped accepting. Tabs already holding a token do not refetch.
-  const shouldInitialize = connection === 'closed' || connection === 'reconnecting';
+  // A tab fetches its token (once — the query never goes stale) when the worker is 'closed', or
+  // 'reconnecting' in a tab that has never seen it connected. A lost connection never reaches
+  // 'closed' any more, so a tab loaded during an outage must still be able to hand the worker a fresh
+  // token — that is what lets a reload recover from a token the hub stopped accepting. A tab that was
+  // already connected when the hub dropped stays quiet: the worker holds a working token, and every
+  // such tab fetching at the instant of the drop would be a synchronized burst.
+  const sawConnectedRef = useRef(false);
+  if (connection === 'connected') sawConnectedRef.current = true;
+  const shouldInitialize =
+    connection === 'closed' || (connection === 'reconnecting' && !sawConnectedRef.current);
 
   const queryUtils = trpc.useUtils();
   const tokenQuery = trpc.signals.getToken.useQuery(undefined, {
