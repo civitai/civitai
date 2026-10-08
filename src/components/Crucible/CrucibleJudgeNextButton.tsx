@@ -11,14 +11,15 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showErrorNotification, showInfoNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-/** Drops the judge into the newest open crucible that still has pairs for them. */
 type Props = {
   /** Leaves this crucible out, so "next" from a judge page never lands back on it. */
   excludeCrucibleId?: number;
-  variant?: 'button' | 'link';
+  /** `primary` is the filled call to action, for where moving on is the main next step. */
+  variant?: 'button' | 'link' | 'primary';
   label?: string;
 };
 
+/** Drops the judge into the newest open crucible that still has pairs for them. */
 export function CrucibleJudgeNextButton({
   excludeCrucibleId,
   variant = 'button',
@@ -77,6 +78,20 @@ export function CrucibleJudgeNextButton({
         color="blue"
         size="compact-sm"
         rightSection={<IconArrowRight size={14} />}
+        loading={loading}
+        onClick={handleClick}
+      >
+        {label}
+      </Button>
+    );
+  }
+
+  if (variant === 'primary') {
+    return (
+      <Button
+        variant="filled"
+        color="blue"
+        rightSection={<IconArrowRight size={16} />}
         loading={loading}
         onClick={handleClick}
       >

@@ -76,11 +76,12 @@ export function CrucibleJudgeStreak({ streak, resetAt, className }: Props) {
           )}
         </AnimatePresence>
 
+        {/* Outside the remounting badge: a live region that remounts is not announced. */}
+        <span aria-live="polite" className="inline-flex">
         <MotionDiv
           // Remounting on each reset replays the shake once per skip.
           key={resetAt}
           data-testid="judge-streak"
-          aria-live="polite"
           className={clsx(
             'inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-sm font-semibold transition-[background-color,border-color,box-shadow,color] duration-300',
             isReset ? resetClass : isStreakBlazing(streak) ? blazingClass : tierClass[tier]
@@ -104,6 +105,7 @@ export function CrucibleJudgeStreak({ streak, resetAt, className }: Props) {
           </MotionSpan>
           {label}
         </MotionDiv>
+        </span>
       </div>
     </LazyMotion>
   );

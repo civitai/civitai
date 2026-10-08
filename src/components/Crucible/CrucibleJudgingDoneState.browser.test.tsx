@@ -6,14 +6,15 @@ import type * as BrowsingLevelModule from '~/components/BrowsingLevel/BrowsingLe
 import type * as HiddenPreferencesModule from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY } from '~/shared/constants/crucible.constants';
 
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
-    crucible: {
-      getJudgingSuggestions: { useQuery: () => ({ data: [], isLoading: false }) },
-    },
-  },
-}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const { makeTrpcProxy } = await import('../../../test/trpcProxyStub');
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: makeTrpcProxy({
+      'crucible.getJudgingSuggestions': { useQuery: () => ({ data: [], isLoading: false }) },
+    }),
+  };
+});
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof BrowsingLevelModule>()),
@@ -29,10 +30,16 @@ vi.mock('~/components/Crucible/CrucibleJudgeNextButton', () => ({
   CrucibleJudgeNextButton: ({
     label,
     excludeCrucibleId,
+    variant,
   }: {
     label: string;
     excludeCrucibleId: number;
-  }) => <button data-exclude={excludeCrucibleId}>{label}</button>,
+    variant?: string;
+  }) => (
+    <button data-exclude={excludeCrucibleId} data-variant={variant}>
+      {label}
+    </button>
+  ),
 }));
 
 const { CrucibleJudgingDoneState } = await import('~/components/Crucible/CrucibleJudgingDoneState');
@@ -78,6 +85,7 @@ describe('CrucibleJudgingDoneState', () => {
       (b) => b.textContent === 'Next crucible'
     );
     expect(next?.getAttribute('data-exclude')).toBe('1');
+    expect(next?.getAttribute('data-variant')).toBe('primary');
     expect(document.body.textContent).not.toContain('more crucible');
   });
 

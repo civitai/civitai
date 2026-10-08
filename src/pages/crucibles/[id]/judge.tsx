@@ -659,10 +659,11 @@ function SwitchCrucibleMenu({ crucibleId }: { crucibleId: number }) {
   // Fetched on first open: most judges never open this menu.
   const [requested, setRequested] = useState(false);
   const { data, isLoading } = trpc.crucible.getJudgingSuggestions.useQuery(
-    { excludeCrucibleId: crucibleId, browsingLevel, limit: 4 },
+    // Over-fetched: hidden preferences filter client-side, and 4 could all be hidden.
+    { excludeCrucibleId: crucibleId, browsingLevel, limit: 12 },
     { enabled: requested, refetchOnWindowFocus: false }
   );
-  const { items: suggestions } = useApplyHiddenPreferences({ type: 'crucibles', data });
+  const suggestions = useApplyHiddenPreferences({ type: 'crucibles', data }).items.slice(0, 4);
 
   return (
     <Menu position="bottom-end" width={260} withinPortal onOpen={() => setRequested(true)}>
@@ -795,13 +796,14 @@ function getTimeRemaining(endAt: Date): string {
   const days = Math.floor(diff / (1000 * 60 * 60 * 24));
   const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
 
+  const hrs = `${hours} ${hours === 1 ? 'hr' : 'hrs'}`;
   if (days > 0) {
-    return `${days} days ${hours} hrs`;
+    return `${days} ${days === 1 ? 'day' : 'days'} ${hrs}`;
   }
 
   const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
   if (hours > 0) {
-    return `${hours} hrs ${minutes} min`;
+    return `${hrs} ${minutes} min`;
   }
 
   return `${minutes} min`;

@@ -542,8 +542,9 @@ function ImageCard({
             <EdgeMedia
               src={entry.image.url}
               type={entry.image.type}
-              anim={false}
-              width={450}
+              // Same width and anim as the entry itself, so this is a cache hit, not a second download.
+              anim
+              width={600}
               className="size-full scale-110 object-cover opacity-30 blur-2xl"
               style={{ maxWidth: 'none' }}
             />

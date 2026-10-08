@@ -66,10 +66,12 @@ export function CrucibleJudgingDoneState({
 }: Props) {
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading } = trpc.crucible.getJudgingSuggestions.useQuery(
-    { excludeCrucibleId: crucibleId, browsingLevel, limit: 4 },
+    // Over-fetched: hidden preferences filter client-side, and 4 could all be hidden.
+    { excludeCrucibleId: crucibleId, browsingLevel, limit: 12 },
     { refetchOnWindowFocus: false }
   );
   const { items: suggestedCrucibles } = useApplyHiddenPreferences({ type: 'crucibles', data });
+  const shownCrucibles = suggestedCrucibles.slice(0, 4);
 
   return (
     <div className="mx-auto max-w-4xl py-8 text-center">
@@ -121,7 +123,11 @@ export function CrucibleJudgingDoneState({
             >
               Back to crucible
             </Button>
-            <CrucibleJudgeNextButton excludeCrucibleId={crucibleId} label="Next crucible" />
+            <CrucibleJudgeNextButton
+              excludeCrucibleId={crucibleId}
+              variant="primary"
+              label="Next crucible"
+            />
           </div>
           {suggestedCrucibles.length > 0 && (
             <Text size="sm" fw={600} c="green">
@@ -144,13 +150,13 @@ export function CrucibleJudgingDoneState({
         </Button>
       )}
 
-      {suggestedCrucibles.length > 0 && (
+      {shownCrucibles.length > 0 && (
         <>
           <Title order={4} className="mb-6 mt-8 text-left text-white">
             Continue Judging These Crucibles
           </Title>
           <div className="grid grid-cols-2 gap-4 text-left lg:grid-cols-4">
-            {suggestedCrucibles.map((c) => (
+            {shownCrucibles.map((c) => (
               <div key={c.id} className="flex flex-col gap-2">
                 <CrucibleCard data={c} />
                 <Button component={Link} href={`/crucibles/${c.id}/judge`} fullWidth>
