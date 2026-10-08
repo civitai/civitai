@@ -189,6 +189,25 @@ describe('ideogram.handler', () => {
   });
 });
 
+describe('hunyuan.handler', () => {
+  // Unnamed, the orchestrator ran its own default build, so coverage on the site's default
+  // decided nothing: every submit failed once that build lost coverage.
+  it('names the ecosystem default model', async () => {
+    const steps = await dispatch({ workflow: 'txt2vid', ecosystem: 'HyV1', prompt: 'a cat' });
+    expect(firstInput(steps)).toMatchObject({ engine: 'hunyuan', model: 'urn:air:test:1313562' });
+  });
+
+  it('a saved fp8 selection still submits the default', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'HyV1',
+      prompt: 'a cat',
+      model: 1314512,
+    });
+    expect(firstInput(steps)).toMatchObject({ model: 'urn:air:test:1313562' });
+  });
+});
+
 describe('the dispatcher itself', () => {
   // A new family added without a case arm must not fall through to whatever the switch
   // ends on. This string is the only thing standing between that and a silent mis-route.
