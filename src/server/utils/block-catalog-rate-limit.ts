@@ -544,7 +544,7 @@ export async function checkBlockPostAppRateLimit(
 // a share of the catalog one, for the same three reasons the poll bucket argues:
 //
 //   1. WRONG COUPLING. A catalog read is one Meili query; a resource-intent call
-//      is up to TWO vendor LLM round trips plus the matcher, and each one costs
+//      is up to THREE vendor LLM calls plus the matcher, and each one costs
 //      real money on the OpenRouter account. Sharing a bucket would make the
 //      catalog endpoints' effective ceiling a function of LLM spend decisions.
 //   2. DIFFERENT SIZING QUANTITY. The catalog ceiling is sized against a human

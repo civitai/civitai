@@ -225,8 +225,8 @@ export type AppBlockEndpoint =
   | 'generation_resources'
   // The resource-intent primitive (`POST /api/v1/blocks/resource-intent`). Its
   // OWN label rather than folding into 'generation_resources': that route is a
-  // bounded id-keyed rehydrate, this one is up to TWO vendor LLM round trips
-  // plus a Meili search, so its latency is dominated by an external service —
+  // bounded id-keyed rehydrate, this one is up to two sequential vendor round trips (up to three calls)
+  // plus up to two Meili searches, so its latency is dominated by an external service —
   // merging them would bury the only block route that can be slow for a
   // vendor-billing reason inside a constant-time read's p95.
   | 'resource_intent'

@@ -10,6 +10,7 @@ import {
 } from '~/server/meilisearch/client';
 import {
   clampResourceIntentCap,
+  RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT,
   RESOURCE_INTENT_ROLE_OPTIONS,
   type ResourceIntentCriteria,
   type ResourceIntentRole,
@@ -33,7 +34,8 @@ import type { ModelSearchIndexRecord } from '~/server/search-index/models.search
  * deterministic VERSION pool, order that pool against the `ResourceInsight`
  * labels, and return a capped shortlist for Jev stage 3.
  *
- * Gates (brief §3.3) — Jev output can reorder/drop within this set, never add:
+ * Gates (brief §3.3), applied to the shortlist AND `basePool`. Jev output only orders
+ * within them, never adds:
  *   - availability != Private (the index is published-only by construction)
  *   - model-level nsfwLevel bits intersected with the caller's browsing level
  *     (the authoritative maturity clamp is computed by the caller from the
@@ -65,7 +67,7 @@ export type ResourceIntentShortlistEntry = {
 
 /**
  * Pool width as a multiple of the response cap, so a candidate the seed placed
- * outside the response can still be promoted into it.
+ * outside the shortlist can still be promoted into it.
  *
  * 🔴 The effective width is `min(cap * 2, RESOURCE_INTENT_MAX_SHORTLIST)`, which
  * starts shrinking at `cap = 128` and reaches 1x — i.e. reorder-the-visible-page
@@ -78,7 +80,10 @@ export type ResourceIntentShortlistEntry = {
  * also raises this re-rank's work bound, and the fetch bound with it. A second
  * ceiling here was deleted for being unreachable while that
  * constant stays under it; if it is ever raised past Meilisearch's own
- * `maxTotalHits`, a page silently truncates and the ceiling has to come back.
+ * `maxTotalHits`, a page silently truncates and the ceiling has to come back. The
+ * one exception is `seedBasePool`'s deep page: a fixed
+ * `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT` fetch outside this bound, under the same
+ * `maxTotalHits` caveat.
  */
 const RERANK_POOL_MULTIPLIER = 2;
 
@@ -260,16 +265,17 @@ function insightBucket(insight: ResourceIntentInsight, want: ResourceIntentWant)
  * (see the closing condition in `docs/resource-intent-primitive.md`).
  *
  * 🔴 This returns a permutation, but its CALLER slices to the response cap, so on a
- * pool wider than the cap the ordering decides WHICH candidates are returned and not
+ * pool wider than the cap the ordering decides WHICH candidates reach stage 3 and not
  * only in what order. That is the point of the wider pool; it also means a promotion
- * is an eviction, and the candidate evicted may be an unlabeled one.
+ * is an eviction from the shortlist, and the candidate evicted may be an unlabeled one.
+ * The response sees this only through stage 3's head; the fill is `basePool`.
  *
  * `qualityScore` separates candidates inside either labeled bucket, never for a
  * neutral one — reading it there would re-introduce exactly that burial, since there
  * is no quality score to compare an unlabeled candidate against.
  *
- * Tiebreaks on the seed order; `reorderShortlistByDistribution` in the calling
- * service tiebreaks the same way on THIS function's output, and the pipeline's
+ * Tiebreaks on the seed order; `combineStage3Answers` (`resource-intent-stage3.ts`)
+ * tiebreaks the same way on THIS function's output, and the pipeline's
  * determinism claim needs both.
  */
 export function applyInsightRanking(
@@ -328,11 +334,36 @@ async function searchShortlistModels(
   }
 }
 
+/**
+ * The first gate-passing version of each hit, one per model, in hit order, until `cap`
+ * models. Same gates as `expandShortlist`, which it calls per hit.
+ */
+export function expandOneVersionPerModel(
+  hits: ModelSearchIndexRecord[],
+  opts: { baseModels: readonly string[] | null; coverage: ResourceIntentCoverage; cap: number }
+): ResourceIntentShortlistEntry[] {
+  const entries: ResourceIntentShortlistEntry[] = [];
+  for (const hit of hits) {
+    if (entries.length >= opts.cap) break;
+    const [first] = expandShortlist([hit], { ...opts, cap: 1 });
+    if (first) entries.push(first);
+  }
+  return entries;
+}
+
+type ResourceIntentSeed = {
+  cap: number;
+  poolCap: number;
+  filter: string | null;
+  baseModels: string[] | null;
+  pool: ResourceIntentShortlistEntry[];
+};
+
 /** The candidate pool before any label is read, and the response cap it is later cut to. */
 async function seedResourceIntentPool(
   criteria: Pick<ResourceIntentCriteria, 'modelTypes' | 'baseModel'>,
   opts: { browsingLevel: number; coverage: ResourceIntentCoverage; cap: number }
-): Promise<{ cap: number; pool: ResourceIntentShortlistEntry[] }> {
+): Promise<ResourceIntentSeed> {
   const cap = clampResourceIntentCap(opts.cap);
   const poolCap = clampResourceIntentCap(cap * RERANK_POOL_MULTIPLIER);
   const baseModels = criteria.baseModel ? [criteria.baseModel] : null;
@@ -344,7 +375,25 @@ async function seedResourceIntentPool(
   });
   const hits = await searchShortlistModels(filter, poolCap);
   const pool = expandShortlist(hits, { baseModels, coverage: opts.coverage, cap: poolCap });
-  return { cap, pool };
+  return { cap, poolCap, filter, baseModels, pool };
+}
+
+/**
+ * The hybrid's fill, built exactly as the screen built its BASE pool: one
+ * `RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT`-document page under the seed's filter and sort,
+ * one version per model, the first `poolCap` models in popularity order. Always its own
+ * query, so it does not rely on the seed page being a prefix of it.
+ */
+async function seedBasePool(
+  seed: ResourceIntentSeed,
+  coverage: ResourceIntentCoverage
+): Promise<ResourceIntentShortlistEntry[]> {
+  const deep = await searchShortlistModels(seed.filter, RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT);
+  return expandOneVersionPerModel(deep, {
+    baseModels: seed.baseModels,
+    coverage,
+    cap: seed.poolCap,
+  });
 }
 
 /**
@@ -386,6 +435,8 @@ export type ResourceIntentMatchResult = {
    * pool cut to the cap, so the two arms share one seed.
    */
   pool: ResourceIntentShortlistEntry[];
+  /** The hybrid list's popularity fill — see `seedBasePool`. Independent of the label read. */
+  basePool: ResourceIntentShortlistEntry[];
 };
 
 export async function findResourceIntentCandidates(
@@ -397,21 +448,28 @@ export async function findResourceIntentCandidates(
   }
 ): Promise<ResourceIntentMatchResult> {
   if (criteria.role === 'none') {
-    return { entries: [], insightFallback: false, promotableVersions: 0, pool: [] };
+    return { entries: [], insightFallback: false, promotableVersions: 0, pool: [], basePool: [] };
   }
-  const { cap, pool } = await seedResourceIntentPool(criteria, opts);
+  const seed = await seedResourceIntentPool(criteria, opts);
+  const { cap, pool } = seed;
+  const [basePool, insightRead] = await Promise.all([
+    seedBasePool(seed, opts.coverage),
+    loadResourceInsights(pool.map((entry) => entry.versionId)).then(
+      (insights) => ({ insights }),
+      // Settled here, not in a try: the base pool must not wait on (or fail with) the label read.
+      (error: unknown) => ({ error })
+    ),
+  ]);
 
-  let insights: Map<number, ResourceIntentInsight>;
-  try {
-    insights = await loadResourceInsights(pool.map((entry) => entry.versionId));
-  } catch (error) {
+  if ('error' in insightRead) {
+    const { error } = insightRead;
     // The caller's only other option is a fully degraded response, so an
     // unreachable label table costs the ordering refinement and nothing else —
     // but it is REPORTED, not swallowed. The log alone reached nobody who could
     // act on it inside the request: the caller decides this response's cache TTL,
     // and a silent fallback got the full-success hour.
     //
-    // ⚠️ This catch is DELIBERATELY broader than the repo's other fail-soft reads
+    // ⚠️ This fallback is DELIBERATELY broader than the repo's other fail-soft reads
     // of a hand-applied table — `isMissingTableError` in
     // `src/server/services/blocks/app-access.service.ts` and `isUndefinedTable` in
     // `src/server/services/apps/app-storage.service.ts` both swallow only the
@@ -430,8 +488,15 @@ export async function findResourceIntentCandidates(
       },
       'temp-search'
     ).catch(() => undefined);
-    return { entries: pool.slice(0, cap), insightFallback: true, promotableVersions: 0, pool };
+    return {
+      entries: pool.slice(0, cap),
+      insightFallback: true,
+      promotableVersions: 0,
+      pool,
+      basePool,
+    };
   }
+  const { insights } = insightRead;
   return {
     entries: applyInsightRanking(pool, insights, criteria).slice(0, cap),
     insightFallback: false,
@@ -440,5 +505,6 @@ export async function findResourceIntentCandidates(
       return insight !== undefined && insightBucket(insight, criteria) > 0;
     }).length,
     pool,
+    basePool,
   };
 }

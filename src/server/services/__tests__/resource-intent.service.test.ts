@@ -1,10 +1,13 @@
 import { createHash } from 'crypto';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as CoverageSource from '~/server/services/generation/coverage-source';
 import type * as JevModule from '~/server/services/ai/jev';
+import type * as SchemaModule from '~/server/schema/resource-intent.schema';
 
 /**
  * Service-flow tests for the resource-intent primitive. Pinned literal
@@ -60,11 +63,23 @@ const { getResourceIntent, resolveSuggestionLimit, resourceIntentCacheKey } = aw
 );
 
 /**
- * The matcher's RESULT shape. It returns `{ entries, insightFallback }` rather than
- * a bare array precisely so its fail-soft path is not silent at this seam, and the
- * default here is the success case — a test that wants the fallback passes `true`.
+ * The matcher's RESULT shape. It returns a result object rather than a bare array
+ * precisely so its fail-soft path is not silent at this seam, and the default here is
+ * the success case — a test that wants the fallback passes `true`. `pool` defaults to
+ * the entries themselves (popularity order = shortlist order) and `basePool` to empty,
+ * so the suggestions are exactly stage 3's head unless a test supplies a fill.
  */
-const matched = (entries: unknown[], insightFallback = false) => ({ entries, insightFallback });
+const matched = (
+  entries: unknown[],
+  insightFallback = false,
+  extra: { pool?: unknown[]; basePool?: unknown[] } = {}
+) => ({
+  entries,
+  insightFallback,
+  promotableVersions: 0,
+  pool: extra.pool ?? entries,
+  basePool: extra.basePool ?? [],
+});
 
 const INPUT = { prompt: 'a photorealistic portrait of a knight' } as const;
 const CTX = { browsingLevel: 3, coverage: { next: false, member: false } };
@@ -143,12 +158,63 @@ function mockStage1() {
   }));
 }
 
-function mockStage3(distribution: Record<string, number>, value = '0') {
-  mockAskJev.mockImplementationOnce(async () => ({
-    answers: [{ id: 'resourceVersion', type: 'choice' as const, value, distribution }],
-    usage: { promptTokens: 200, completionTokens: 20 },
-    model: 'typesafe/jev-1.13-20260917',
-  }));
+type ShortlistFixture = {
+  versionId: number;
+  modelName: string;
+  versionName: string;
+  modelType: string;
+  baseModel: string;
+};
+type Stage3Request = {
+  state: Record<string, string>;
+  questions: { options: string[]; optionDescriptions?: Record<string, string> }[];
+};
+
+/** The description the vendor saw for `option`. */
+function describedAs(question: Stage3Request['questions'][number], option: string) {
+  return question.optionDescriptions?.[option];
+}
+
+function stage3Responder(
+  byVersion: Record<number, number>,
+  none = 0,
+  shortlist: ShortlistFixture[] = SHORTLIST
+) {
+  return async (request: Stage3Request) => {
+    const question = request.questions[0];
+    const distribution: Record<string, number> = { none };
+    for (const option of question.options) {
+      if (option === 'none') continue;
+      const sent = shortlist.find(
+        (e) =>
+          `${e.modelName} — ${e.versionName} (${e.modelType}, ${e.baseModel})` ===
+          describedAs(question, option)
+      );
+      if (!sent) throw new Error(`stage-3 mock: unknown option ${option}`);
+      distribution[option] = byVersion[sent.versionId] ?? 0;
+    }
+    const value = Object.entries(distribution).sort((a, b) => b[1] - a[1])[0][0];
+    return {
+      answers: [{ id: 'resourceVersion', type: 'choice' as const, value, distribution }],
+      usage: { promptTokens: 200, completionTokens: 20 },
+      model: 'typesafe/jev-1.13-20260917',
+    };
+  };
+}
+
+/**
+ * Answers BOTH stage-3 calls (one per option order) with each VERSION's probability,
+ * whatever position it was sent in — so the averaged order is the `byVersion` order and
+ * a test reads the same whichever order the service sends first.
+ */
+function mockStage3(
+  byVersion: Record<number, number>,
+  none = 0,
+  shortlist: ShortlistFixture[] = SHORTLIST
+) {
+  const respond = stage3Responder(byVersion, none, shortlist);
+  mockAskJev.mockImplementationOnce(respond);
+  mockAskJev.mockImplementationOnce(respond);
 }
 
 beforeEach(() => {
@@ -217,14 +283,35 @@ describe('cache behavior', () => {
     const { RESOURCE_INTENT_SPEC_HASH, QUESTION_SPEC_VERSION } = await import(
       '~/server/schema/resource-intent.schema'
     );
+    const { RESOURCE_INTENT_STAGE3_SPEC_HASH } = await import(
+      '~/server/services/resource-intent-stage3'
+    );
     const base = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
     const expected = createHash('sha256')
-      .update(['p', 'SDXL 1.0', '3', '50', RESOURCE_INTENT_SPEC_HASH].join('|'))
+      .update(
+        [
+          'p',
+          'SDXL 1.0',
+          '3',
+          '50',
+          RESOURCE_INTENT_SPEC_HASH,
+          RESOURCE_INTENT_STAGE3_SPEC_HASH,
+        ].join('|')
+      )
       .digest('hex');
     expect(resourceIntentCacheKey(base)).toBe(`packed:caches:jev-resource-intent:v1:${expected}`);
     // And the control: the version integer is NOT what the key carries.
     const withVersion = createHash('sha256')
-      .update(['p', 'SDXL 1.0', '3', '50', String(QUESTION_SPEC_VERSION)].join('|'))
+      .update(
+        [
+          'p',
+          'SDXL 1.0',
+          '3',
+          '50',
+          String(QUESTION_SPEC_VERSION),
+          RESOURCE_INTENT_STAGE3_SPEC_HASH,
+        ].join('|')
+      )
       .digest('hex');
     expect(resourceIntentCacheKey(base)).not.toBe(
       `packed:caches:jev-resource-intent:v1:${withVersion}`
@@ -276,7 +363,7 @@ describe('cache behavior', () => {
 
   it('passes the resolved cap to the matcher and honours limit end-to-end', async () => {
     mockStage1();
-    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockStage3({ 11: 0.6, 22: 0.4 });
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
     mockGetResourceData.mockResolvedValue([genResource(11), genResource(22)]);
 
@@ -466,7 +553,7 @@ describe('cache behavior', () => {
   // control arm is what stops `EX: 60` unconditionally from passing.
   it('🔴 a label-read fallback caches for 60s, and is NOT reported as degraded', async () => {
     mockStage1();
-    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockStage3({ 11: 0.6, 22: 0.4 });
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST, true));
     mockGetResourceData.mockResolvedValue([genResource(11), genResource(22)]);
 
@@ -489,7 +576,7 @@ describe('cache behavior', () => {
     redisMock.redis.packed.set.mockClear();
     mockAskJev.mockReset();
     mockStage1();
-    mockStage3({ '0': 0.6, '1': 0.4, none: 0 });
+    mockStage3({ 11: 0.6, 22: 0.4 });
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
 
     const ok = await getResourceIntent(INPUT, CTX);
@@ -522,11 +609,15 @@ describe('degradation — fail closed, fail empty', () => {
   it('a hydration failure degrades instead of leaking a partial list', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
     mockGetResourceData.mockRejectedValue(new Error('db down'));
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(true);
     expect(result.suggestions).toEqual([]);
+    // Stage 3 DID run before hydration failed; a degraded row still carries no stage-3 none.
+    const row = (mockInsert.mock.calls[0][0] as { values: Record<string, unknown>[] }).values[0];
+    expect(row.stage3NoneProbability).toBeNull();
+    expect(row.stage1NoneProbability).toBeNull();
   });
 
   // 🔴 The two failures COMBINED, which is the only path on which `insightFallback`
@@ -543,7 +634,7 @@ describe('degradation — fail closed, fail empty', () => {
   it('🔴 a label-read fallback followed by a LATER failure degrades, and still records the fallback', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST, true));
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
     mockGetResourceData.mockRejectedValue(new Error('db down'));
 
     const result = await getResourceIntent(INPUT, CTX);
@@ -563,7 +654,7 @@ describe('degradation — fail closed, fail empty', () => {
     mockAskJev.mockReset();
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
 
     const plain = await getResourceIntent(INPUT, CTX);
 
@@ -618,7 +709,7 @@ describe('stage flow', () => {
   it('stage 3 reorders the shortlist by the distribution (gate-passing entries only)', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '1': 0.6, '0': 0.3, none: 0.1 }, '1');
+    mockStage3({ 22: 0.6, 11: 0.3 }, 0.1);
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
     );
@@ -642,15 +733,18 @@ describe('stage flow', () => {
     expect(mockGetResourceData.mock.calls[0][0]).toEqual([22, 11]);
   });
 
-  it('a stage-3 "none" argmax returns empty suggestions without being degraded', async () => {
+  it('🔴 a stage-3 "none" argmax KEEPS the list and reports the averaged none mass', async () => {
+    // The arm screen measured "none argmax ⇒ empty" costing hit@10.
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '0': 0.3, '1': 0.2, none: 0.5 }, 'none');
+    mockStage3({ 11: 0.3, 22: 0.2 }, 0.5);
+    mockGetResourceData.mockImplementation(async (ids: number[]) =>
+      ids.map((id) => genResource(id))
+    );
     const result = await getResourceIntent(INPUT, CTX);
     expect(result.degraded).toBe(false);
-    expect(result.suggestions).toEqual([]);
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([11, 22]);
     expect(result.noneProbability).toBe(0.5);
-    expect(mockGetResourceData).not.toHaveBeenCalled();
   });
 
   it('an empty shortlist skips stage 3 entirely (no forced fits)', async () => {
@@ -662,29 +756,127 @@ describe('stage flow', () => {
     expect(mockAskJev).toHaveBeenCalledTimes(1);
   });
 
-  it('stage 3 never offers more than the vendor option budget minus the none fallback', async () => {
-    const { STAGE3_MAX_RANKED } = await import('~/server/schema/resource-intent.schema');
-    const { buildStage3Question } = await import('~/server/services/resource-intent.service');
-    const bigShortlist = Array.from({ length: STAGE3_MAX_RANKED + 50 }, (_, i) => ({
-      versionId: i + 1,
-      modelId: 1,
-      modelName: `m${i}`,
-      versionName: 'v',
-      baseModel: 'SDXL 1.0',
-      modelType: 'LORA',
-      thumbsUpCount: 1,
+  it('an empty shortlist with a popularity pool returns the pool top cap, no stage 3', async () => {
+    mockStage1();
+    const base = [31, 32, 33].map((n) => ({ ...SHORTLIST[0], versionId: n, modelId: n }));
+    mockFindCandidates.mockResolvedValue(matched([], false, { basePool: base }));
+    mockGetResourceData.mockImplementation(async (ids: number[]) =>
+      ids.map((id) => genResource(id))
+    );
+    const result = await getResourceIntent({ ...INPUT, limit: 2 }, CTX);
+    expect(mockAskJev).toHaveBeenCalledTimes(1);
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([31, 32]);
+    expect(result.noneProbability).toBe(0.1);
+  });
+
+  it('🔴 stage 3 is TWO calls: popularity order and its reverse, state {prompt, role, styleFamily}', async () => {
+    // Shortlist in RE-RANK order 22, 11; the seed pool (popularity) has 11 first. So the
+    // popularity call sends 11 then 22, and the reverse call 22 then 11.
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(
+      matched([SHORTLIST[1], SHORTLIST[0]], false, { pool: [SHORTLIST[0], SHORTLIST[1]] })
+    );
+    mockStage3({ 11: 0.5, 22: 0.5 });
+    mockGetResourceData.mockImplementation(async (ids: number[]) =>
+      ids.map((id) => genResource(id))
+    );
+    const result = await getResourceIntent(INPUT, CTX);
+
+    expect(mockAskJev).toHaveBeenCalledTimes(3);
+    const stage3 = mockAskJev.mock.calls.slice(1).map((c) => c[0] as Stage3Request);
+    expect(stage3.map((r) => r.state)).toEqual([
+      { prompt: INPUT.prompt, role: 'style', styleFamily: 'anime_manga' },
+      { prompt: INPUT.prompt, role: 'style', styleFamily: 'anime_manga' },
+    ]);
+    expect(stage3.map((r) => r.questions[0].optionDescriptions)).toEqual([
+      {
+        '0': 'LoRA One — v1 (LORA, SDXL 1.0)',
+        '1': 'LoRA Two — v1 (LORA, SDXL 1.0)',
+        none: 'None of the listed resources fits: each is the wrong character, subject, style or purpose for this prompt.',
+      },
+      {
+        '0': 'LoRA Two — v1 (LORA, SDXL 1.0)',
+        '1': 'LoRA One — v1 (LORA, SDXL 1.0)',
+        none: 'None of the listed resources fits: each is the wrong character, subject, style or purpose for this prompt.',
+      },
+    ]);
+    // Both average 0.5: the tie goes to the SHORTLIST (re-rank) order, 22 before 11.
+    expect(result.suggestions.map((s) => s.versionId)).toEqual([22, 11]);
+  });
+
+  it('either stage-3 call failing degrades the whole response (fail closed)', async () => {
+    const { JevError } = await import('~/server/services/ai/jev');
+    for (const failing of [0, 1]) {
+      mockAskJev.mockReset();
+      loggingMock.logToAxiom.mockClear();
+      mockStage1();
+      mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
+      const answer = stage3Responder({ 11: 0.7, 22: 0.2 }, 0.1);
+      const timeout = async () => {
+        throw new JevError('timeout', 'Jev call exceeded 2000ms');
+      };
+      mockAskJev.mockImplementationOnce(failing === 0 ? timeout : answer);
+      mockAskJev.mockImplementationOnce(failing === 1 ? timeout : answer);
+
+      const result = await getResourceIntent(INPUT, CTX);
+
+      expect(mockAskJev).toHaveBeenCalledTimes(3);
+      expect(result.degraded).toBe(true);
+      expect(result.suggestions).toEqual([]);
+      expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'resource-intent-degraded',
+          degradedReason: 'jev_timeout',
+        }),
+        'temp-search'
+      );
+    }
+  });
+
+  it('🔴 HYBRID_10: stage 3 picks the first 10 distinct MODELS, the popularity pool fills to the cap', async () => {
+    // 12 shortlist versions over 11 models (model 1 twice), and a popularity pool whose
+    // first entry repeats a head model. Every probability is distinct, so the head order
+    // is the probability order.
+    const shortlist = Array.from({ length: 12 }, (_, i) => ({
+      ...SHORTLIST[0],
+      versionId: 100 + i,
+      modelId: i === 1 ? 1 : i + 1,
+      modelName: `Head ${i}`,
     }));
-    const question = buildStage3Question(bigShortlist);
-    // 254 ranked entries + 'none' = exactly the vendor's 255-option budget.
-    expect(question.options).toHaveLength(255);
-    expect(question.options.at(-1)).toBe('none');
-    expect(question.options[0]).toBe('0');
+    const byVersion = Object.fromEntries(shortlist.map((e, i) => [e.versionId, (12 - i) / 100]));
+    const basePool = [
+      { ...SHORTLIST[0], versionId: 900, modelId: 3, modelName: 'Base 3' },
+      ...Array.from({ length: 60 }, (_, i) => ({
+        ...SHORTLIST[0],
+        versionId: 1000 + i,
+        modelId: 500 + i,
+        modelName: `Base ${i}`,
+      })),
+    ];
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched(shortlist, false, { basePool }));
+    mockStage3(byVersion, 0.22, shortlist);
+    mockGetResourceData.mockImplementation(async (ids: number[]) =>
+      ids.map((id) => genResource(id))
+    );
+
+    const result = await getResourceIntent(INPUT, CTX);
+    const versionIds = result.suggestions.map((s) => s.versionId);
+
+    expect(versionIds).toHaveLength(50);
+    // Head: versions 100..111 minus 101 (model 1 again) → the first 10 distinct models.
+    expect(versionIds.slice(0, 10)).toEqual([100, 102, 103, 104, 105, 106, 107, 108, 109, 110]);
+    // Fill: 900 is model 3, already placed, so the fill starts at 1000 and runs 40 deep.
+    expect(versionIds[10]).toBe(1000);
+    expect(versionIds[49]).toBe(1039);
+    expect(versionIds).not.toContain(900);
+    expect(versionIds).not.toContain(111);
   });
 
   it('hydration re-applies the gates: a non-public version is dropped, not shipped', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
     mockGetResourceData.mockImplementation(async () => [
       // 11 is public and fine; 22 comes back without access (e.g. index lag) — it must vanish.
       genResource(11),
@@ -703,7 +895,7 @@ describe('stage flow', () => {
   it('🔴 drops a mature-FLAGGED model whose cover image is SFW', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
     // The reachable case the sibling test above CANNOT produce. `pickPreviewImage`
     // only ever returns an image already visible at the ceiling, so an image level
     // of 4 against a SFW ceiling is not something production can hand us — while
@@ -731,7 +923,7 @@ describe('stage flow', () => {
     // emits no image field.
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
     );
@@ -775,7 +967,7 @@ describe('shadow event', () => {
   it('records the pinned model, spec hash and suggestion ids to ClickHouse', async () => {
     mockStage1();
     mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
-    mockStage3({ '0': 0.7, '1': 0.2, none: 0.1 });
+    mockStage3({ 11: 0.4, 22: 0.3 }, 0.3);
     mockGetResourceData.mockImplementation(async (ids: number[]) =>
       ids.map((id) => genResource(id))
     );
@@ -807,14 +999,53 @@ describe('shadow event', () => {
       injectionPresent: 0,
       shortlistCount: 2,
       suggestionIds: [11, 22],
-      noneProbability: 0.1,
+      // Stage 1's role.none (0.1) and stage 3's averaged none (0.3), in their OWN columns;
+      // distinct values, so a swap of the two columns goes red.
+      noneProbability: 0.3,
+      stage1NoneProbability: 0.1,
+      stage3NoneProbability: 0.3,
       browsingLevel: 3,
       specVersion: 1,
       criteriaVersion: 2,
     });
     expect(row.specHash).toMatch(/^[0-9a-f]{64}$/);
+    const { RESOURCE_INTENT_STAGE3_SPEC_HASH } = await import(
+      '~/server/services/resource-intent-stage3'
+    );
+    expect(row.stage3SpecHash).toBe(RESOURCE_INTENT_STAGE3_SPEC_HASH);
+    expect(row.stage3SpecHash).not.toBe(row.specHash);
     expect(row.promptHash).toMatch(/^[0-9a-f]{64}$/);
     expect(row).not.toHaveProperty('prompt');
+  });
+
+  it('🔴 writes exactly the columns the two shadow migrations declare', async () => {
+    // A key the table lacks loses the row silently (async insert), so pin row ↔ DDL.
+    const dir = path.resolve(__dirname, '../../clickhouse/migrations');
+    const create = readFileSync(path.join(dir, '2026-09-29-resource-intent-shadow.sql'), 'utf8');
+    const alter = readFileSync(
+      path.join(dir, '2026-10-08-resource-intent-shadow-stage3.sql'),
+      'utf8'
+    );
+    const created = create
+      .slice(create.indexOf('resourceIntentShadow\n(') + 'resourceIntentShadow\n('.length)
+      .split('\n)\nENGINE')[0]
+      .split('\n')
+      .map((l) => l.trim())
+      .filter((l) => l && !l.startsWith('--'))
+      .map((l) => l.split(/\s+/)[0]);
+    const added = [...alter.matchAll(/ADD COLUMN IF NOT EXISTS (\w+)/g)].map((m) => m[1]);
+    expect(created).toHaveLength(21);
+    expect(added).toEqual(['stage3SpecHash', 'stage1NoneProbability', 'stage3NoneProbability']);
+
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
+    mockStage3({ 11: 0.7, 22: 0.2 }, 0.1);
+    mockGetResourceData.mockImplementation(async (ids: number[]) =>
+      ids.map((id) => genResource(id))
+    );
+    await getResourceIntent(INPUT, CTX);
+    const row = (mockInsert.mock.calls[0][0] as { values: Record<string, unknown>[] }).values[0];
+    expect(new Set(Object.keys(row))).toEqual(new Set([...created, ...added]));
   });
 
   it('degrades the shadow row instead of failing the request when ClickHouse is down', async () => {
@@ -850,7 +1081,7 @@ describe('shadow event', () => {
       insightFallback: false,
       intent: {
         needsResource: 0.9,
-        role: { value: 'style', distribution: { style: 1 } },
+        role: { value: 'style', distribution: { style: 0.75, none: 0.25 } },
         styleFamily: { value: 'anime_manga', distribution: { anime_manga: 1 } },
         contentType: { value: 'portrait_character', distribution: { portrait_character: 1 } },
         specificity: 3,
@@ -889,6 +1120,11 @@ describe('shadow event', () => {
     const row = (mockInsert.mock.calls[0][0] as { values: Record<string, unknown>[] }).values[0];
     expect(row.shortlistCount).toBe(1);
     expect(row.suggestionIds).toEqual([31]);
+    // Stage 1's none comes from the cached intent; stage 3's is not cached, so a hit
+    // records NULL rather than a value this request never computed.
+    expect(row.stage1NoneProbability).toBe(0.25);
+    expect(row.stage3NoneProbability).toBeNull();
+    expect(row.noneProbability).toBe(0.1);
   });
 });
 
@@ -899,6 +1135,24 @@ describe('degradation reasons', () => {
     await getResourceIntent(INPUT, CTX);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'resource-intent-degraded', degradedReason: 'jev_timeout' }),
+      'temp-search'
+    );
+  });
+
+  it('a stage-3 answer of the wrong kind degrades as jev_stage3_shape', async () => {
+    mockStage1();
+    mockFindCandidates.mockResolvedValue(matched(SHORTLIST));
+    const noul = async () => ({
+      answers: [{ id: 'resourceVersion', type: 'noul' as const, value: 0.5 }],
+      usage: { promptTokens: 1, completionTokens: 1 },
+      model: 'typesafe/jev-1.13-20260917',
+    });
+    mockAskJev.mockImplementationOnce(noul);
+    mockAskJev.mockImplementationOnce(noul);
+    const result = await getResourceIntent(INPUT, CTX);
+    expect(result.degraded).toBe(true);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ degradedReason: 'jev_stage3_shape' }),
       'temp-search'
     );
   });
@@ -952,5 +1206,31 @@ describe('coverage resolution', () => {
     });
     await getResourceIntent(INPUT, { browsingLevel: 3 });
     expect(coverageSource.coverageAudience).not.toHaveBeenCalled();
+  });
+});
+
+// Last in the file: it re-imports the service under a doctored schema.
+describe('stage-3 spec hash in the cache key', () => {
+  it('🔴 rewording stage 3 moves the cache key; an identical re-import does not', async () => {
+    const input = { prompt: 'p', baseModel: 'SDXL 1.0', browsingLevel: 3, cap: 50 };
+    const keyWith = async (overrides: Record<string, string>) => {
+      vi.resetModules();
+      vi.doMock('~/server/schema/resource-intent.schema', async (importOriginal) => ({
+        ...(await importOriginal<typeof SchemaModule>()),
+        ...overrides,
+      }));
+      const fresh = await import('~/server/services/resource-intent.service');
+      vi.doUnmock('~/server/schema/resource-intent.schema');
+      return fresh.resourceIntentCacheKey(input);
+    };
+    const current = resourceIntentCacheKey(input);
+    // Control: the re-import machinery alone does not move the key.
+    expect(await keyWith({})).toBe(current);
+    expect(
+      await keyWith({ RESOURCE_INTENT_STAGE3_INSTRUCTIONS: 'Which listed resource fits best?' })
+    ).not.toBe(current);
+    expect(
+      await keyWith({ RESOURCE_INTENT_STAGE3_NONE_DESCRIPTION: 'Nothing listed fits.' })
+    ).not.toBe(current);
   });
 });

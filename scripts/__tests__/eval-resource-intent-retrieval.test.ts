@@ -1186,7 +1186,7 @@ describe('runRetrievalArms — the two arms', () => {
     expect(outcome).toMatchObject({ status: 'scored', popularityModelIds: [1, 2] });
   });
 
-  it('🔴 ONE seed per prompt: POPULARITY is the pool PURPOSE ranked, and the index is hit once', async () => {
+  it('🔴 ONE seed per prompt: POPULARITY is the pool PURPOSE ranked, from the first page', async () => {
     // A second seed call would return a DIFFERENT pool, so two seeds are visible.
     const pools = [
       [CORPUS[0], CORPUS[1], CORPUS[2], CORPUS[3]],
@@ -1204,7 +1204,9 @@ describe('runRetrievalArms — the two arms', () => {
       labeledModelIds: new Set(),
     });
     expect(outcome).toMatchObject({ status: 'scored', popularityModelIds: [1, 2, 3, 4] });
-    expect(searchCalls()).toHaveLength(1);
+    // The only other search is the matcher's hybrid-fill page, which neither arm reads. An
+    // arm that re-read that page instead is caught by `popularityModelIds` above.
+    expect(searchCalls().map((c) => c.limit)).toEqual([100, 500]);
   });
 
   it('🔴 the one seed both arms share searches under the gate filter derived from the criteria', async () => {
@@ -1219,10 +1221,13 @@ describe('runRetrievalArms — the two arms', () => {
       browsingLevel: ARM_OPTS.browsingLevel,
       coverage: COVERAGE,
     });
-    // One seed page per prompt, shared by both arms.
-    expect(searchCalls().map((c) => c.filter)).toEqual([gate]);
-    expect(searchCalls().map((c) => c.sort)).toEqual([['metrics.thumbsUpCount:desc']]);
-    expect(searchCalls().map((c) => c.limit)).toEqual([100]);
+    // One seed page per prompt, shared by both arms, then the matcher's hybrid-fill page.
+    expect(searchCalls().map((c) => c.filter)).toEqual([gate, gate]);
+    expect(searchCalls().map((c) => c.sort)).toEqual([
+      ['metrics.thumbsUpCount:desc'],
+      ['metrics.thumbsUpCount:desc'],
+    ]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([100, 500]);
   });
 
   it('caps both arms at the same response width, out of the same pool width', async () => {
@@ -1233,7 +1238,7 @@ describe('runRetrievalArms — the two arms', () => {
       labeledModelIds: new Set(),
     });
     expect(outcome).toMatchObject({ purposeModelIds: [4, 1], popularityModelIds: [1, 2] });
-    expect(searchCalls().map((c) => c.limit)).toEqual([4]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([4, 500]);
   });
 
   it('the POPULARITY arm expands versions like the matcher: requested baseModel only, one model once', async () => {
@@ -1731,7 +1736,7 @@ describe('main — the --execute gate', () => {
     });
     // Control: the two coverages really produce different filters, so this can tell them apart.
     expect(resolvedGate).not.toBe(defaultGate);
-    expect(searchCalls().map((c) => c.filter)).toEqual([resolvedGate]);
+    expect(searchCalls().map((c) => c.filter)).toEqual([resolvedGate, resolvedGate]);
   });
 
   it('🔴 end to end: one matched draw, the endpoint stage 1, both arms, the report', async () => {
@@ -1794,8 +1799,8 @@ describe('main — the --execute gate', () => {
     expect(gate).toContain(
       `nsfwLevel IN [${Flags.instanceToArray(allBrowsingLevelsFlag).join(', ')}]`
     );
-    expect(searchCalls().map((c) => c.filter)).toEqual([gate]);
-    expect(searchCalls().map((c) => c.limit)).toEqual([100]);
+    expect(searchCalls().map((c) => c.filter)).toEqual([gate, gate]);
+    expect(searchCalls().map((c) => c.limit)).toEqual([100, 500]);
 
     const report = log.mock.calls.map((call) => String(call[0])).join('\n');
     // Part one: the first ceil(2/2) = 1 matched row + no unmatched rows.
