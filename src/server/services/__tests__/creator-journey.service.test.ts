@@ -1,5 +1,14 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const chQuery = vi.hoisted(() => vi.fn());
+vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClickhouseClient>()),
+  clickhouse: { query: chQuery },
+}));
+
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import type * as ClickhouseClient from '~/server/clickhouse/client';
 import {
   buildActivityProgress,
   buildSecretMilestones,
@@ -9,6 +18,7 @@ import {
   maskUnearnedMilestone,
 } from '~/server/services/creator-journey.service';
 import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
+import { judgeVoteCountSql } from '~/server/services/creator-milestone-detectors';
 
 const definition = (overrides: Partial<Parameters<typeof maskUnearnedMilestone>[0]> = {}) => ({
   key: 'hidden:remix',
@@ -540,5 +550,94 @@ describe('buildActivityProgress', () => {
   it('has no closest next once everything is earned', () => {
     const held = new Map(definitions.map((d) => [d.key, null]));
     expect(buildActivityProgress(definitions, held, values).closestNext).toBeNull();
+  });
+});
+
+describe('judge votes', () => {
+  const judgeRank = (threshold: number) => ({
+    ...definition({
+      key: `community:crucible-votes-${threshold}`,
+      track: 'community',
+      threshold,
+      hidden: false,
+      hint: null,
+    }),
+    name: `${threshold} Votes`,
+    cosmetic: null,
+  });
+
+  beforeEach(() => {
+    chQuery.mockReset();
+    dbMock.dbRead.$queryRawUnsafe.mockResolvedValue([] as never);
+    dbMock.dbRead.userCreatorMilestone.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.creatorMilestone.findMany.mockImplementation((async (args: {
+      where?: { key?: unknown };
+    }) => (args?.where?.key ? [judgeRank(5000), judgeRank(500), judgeRank(1000)] : [])) as never);
+  });
+
+  it("shows the viewer's own Crucible vote count against every judge rank", async () => {
+    chQuery.mockResolvedValue({ json: async () => [{ votes: '640' }] });
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(chQuery).toHaveBeenCalledTimes(1);
+    expect(chQuery).toHaveBeenCalledWith({
+      query: judgeVoteCountSql,
+      query_params: { userId: 42 },
+      format: 'JSONEachRow',
+      abort_signal: expect.any(AbortSignal),
+      clickhouse_settings: { max_execution_time: 5 },
+    });
+    expect(
+      activity.milestones.map(({ key, measure, current }) => ({ key, measure, current }))
+    ).toEqual([
+      { key: 'community:crucible-votes-500', measure: 'votes', current: 640 },
+      { key: 'community:crucible-votes-1000', measure: 'votes', current: 640 },
+      { key: 'community:crucible-votes-5000', measure: 'votes', current: 640 },
+    ]);
+    // 640 has passed 500, which the nightly job has not granted yet, so 1k is the target.
+    expect(activity.closestNext).toMatchObject({ key: 'community:crucible-votes-1000' });
+  });
+
+  // The mock answers any SQL, and a failed query reads as zero votes, so the text is what pins it.
+  it("counts only the viewer's own attributed votes, bound by the parameter it sends", () => {
+    expect(judgeVoteCountSql).toBe(`SELECT count() AS votes FROM crucible_votes
+  WHERE userId = {userId:UInt32}`);
+  });
+
+  // ClickHouse is a second store behind one page; its outage must not take the page down.
+  it('still loads, at zero votes, when ClickHouse fails', async () => {
+    chQuery.mockRejectedValue(new Error('ClickHouse unavailable'));
+    loggingMock.logToAxiom.mockClear();
+
+    const { activity } = await getCreatorJourney(42);
+
+    expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'creator-journey-judge-votes' })
+    );
+  });
+
+  // The shared client would otherwise wait minutes on a stalled connection, holding the page.
+  it('gives up on a stalled ClickHouse after six seconds', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      chQuery.mockImplementation(
+        ({ abort_signal }: { abort_signal: AbortSignal }) =>
+          new Promise((_, reject) =>
+            abort_signal.addEventListener('abort', () => reject(new Error('aborted')))
+          )
+      );
+      const journey = getCreatorJourney(42);
+      await vi.advanceTimersByTimeAsync(5_999);
+      expect(chQuery.mock.calls[0][0].abort_signal.aborted).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      // Asserted before awaiting, so a longer deadline fails here instead of hanging the test.
+      expect(chQuery.mock.calls[0][0].abort_signal.aborted).toBe(true);
+      const { activity } = await journey;
+      expect(activity.milestones.map((m) => m.current)).toEqual([0, 0, 0]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

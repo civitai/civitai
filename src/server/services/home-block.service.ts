@@ -51,6 +51,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
+import { capPerUser } from '~/shared/utils/cap-per-user';
 import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
@@ -293,15 +294,31 @@ const FEED_FETCH_DEFAULT = 28;
  * says is what ships — a `limit` of 42 fetches 42.
  *
  * The value has to sit well above the rendered slice (`rows * HOME_BLOCK_ITEMS_PER_ROW`), because
- * `maxPerUser` and the viewer's own hidden-preferences filter both thin the pool after the fetch,
- * and the fetch applies no per-creator cap of its own — so the head of the pool is
- * creator-concentrated. Measured on the two live blocks: 454066 (7 slots) fills at 7, but 454065
- * (14 slots) needs 21, and its first 7 items come from only 4 creators.
+ * `maxPerUser` and the viewer's own hidden-preferences filter both thin the pool after the fetch.
+ * Outside "new & upcoming" blocks the fetch applies no per-creator cap of its own, so the head of
+ * the pool is creator-concentrated.
  *
  * Exported for unit tests.
  */
 export function resolveFeedFetchLimit(limit?: number) {
   return Math.min(limit ?? FEED_FETCH_DEFAULT, FEED_FETCH_CEILING);
+}
+
+// "New & upcoming" blocks exist to show creators without an established following. Sorted by
+// reactions alone, the pool went to a handful of the board's biggest accounts (2026-10-07: 42
+// images from 15 of 200 creators, one holding 14), and the client's per-view cap only rotated
+// which two of theirs showed. So these blocks cap each creator's share of the pool itself, not
+// just of the view, and the images block caps followers in its creator list.
+// The models board (`new_creators`) applies the same < 1000 rule in its own Leaderboard.query SQL,
+// which lives in the database: retune both together.
+const NEW_CREATORS_MAX_FOLLOWERS = 1000;
+// Filling 42 at 2 per creator took the top 98 ranked images on 2026-10-07.
+const NEW_CREATORS_POOL_OVERFETCH = 3;
+const NEW_CREATORS_POOL_FETCH_CEILING = 150;
+
+/** Exported for unit tests. */
+export function newCreatorsPoolFetchLimit(limit: number) {
+  return Math.min(limit * NEW_CREATORS_POOL_OVERFETCH, NEW_CREATORS_POOL_FETCH_CEILING);
 }
 
 // Both model-carrying home blocks take this pair. The images come straight from the shared
@@ -496,6 +513,8 @@ export const getHomeBlockData = async ({
       if (!feed) return null;
 
       const limit = resolveFeedFetchLimit(feed.limit);
+      const poolMaxPerUser = feed.newCreators ? feed.maxPerUser : undefined;
+      const fetchLimit = poolMaxPerUser ? newCreatorsPoolFetchLimit(limit) : limit;
       // `[]` means "no filter" here, but the two consumers disagree about that: the images
       // path guards on `.length` and skips the filter, while model.service guards on
       // truthiness and strips every version off every model, ejecting the whole block.
@@ -506,25 +525,30 @@ export const getHomeBlockData = async ({
         const { items } = await getAllImagesIndex({
           ...imageFeedDefaults,
           browsingLevel: feedBrowsingLevel(feed.browsingLevel),
-          limit,
+          limit: fetchLimit,
           domain: input.domain,
           sort: (feed.sort as ImageSort) ?? ImageSort.MostReactions,
           period: feed.period ?? MetricTimeframe.Week,
           newCreators: feed.newCreators,
+          newCreatorsMaxFollowers: feed.newCreators ? NEW_CREATORS_MAX_FOLLOWERS : undefined,
           types: feed.types,
           baseModels,
           user,
           headers: { src: 'getHomeBlockData:feed' },
         });
 
-        return { ...homeBlock, metadata, feedItems: { entity: 'images' as const, items } };
+        return {
+          ...homeBlock,
+          metadata,
+          feedItems: { entity: 'images' as const, items: capPerUser(items, limit, poolMaxPerUser) },
+        };
       }
 
       const { items } = await getModelsWithImagesAndModelVersions({
         input: {
           ...modelFeedDefaults,
           browsingLevel: feedBrowsingLevel(feed.browsingLevel),
-          limit,
+          limit: fetchLimit,
           sort: (feed.sort as ModelSort) ?? ModelSort.HighestRated,
           period: feed.period ?? MetricTimeframe.Week,
           newCreators: feed.newCreators,
@@ -535,7 +559,11 @@ export const getHomeBlockData = async ({
         ...slimModelImages,
       });
 
-      return { ...homeBlock, metadata, feedItems: { entity: 'models' as const, items } };
+      return {
+        ...homeBlock,
+        metadata,
+        feedItems: { entity: 'models' as const, items: capPerUser(items, limit, poolMaxPerUser) },
+      };
     }
     case HomeBlockType.CosmeticShop: {
       const cosmeticShopSectionMeta = metadata.cosmeticShopSection;

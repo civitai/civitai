@@ -154,3 +154,19 @@ export async function checkSharedReportRateLimit(
     SHARED_REPORT_RATE_LIMIT_WINDOW_SECONDS
   );
 }
+
+// STORE ITEMS (app sub-listings): every publish/edit by one user for one parent app, in an
+// hourly and a daily bucket. Lives here to share the fixed-window counter; it is not a
+// shared-storage op.
+export const SUB_LISTING_WRITE_HOURLY_MAX = 30;
+export const SUB_LISTING_WRITE_DAILY_MAX = 100;
+
+export async function checkSubListingWriteRateLimit(
+  userId: number,
+  parentListingId: string
+): Promise<SharedStorageRateLimitResult> {
+  const base = `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:sub-listing-write:${parentListingId}:${userId}`;
+  const hourly = await checkFixedWindow(`${base}:h`, SUB_LISTING_WRITE_HOURLY_MAX, 60 * 60);
+  if (!hourly.allowed) return hourly;
+  return checkFixedWindow(`${base}:d`, SUB_LISTING_WRITE_DAILY_MAX, 24 * 60 * 60);
+}

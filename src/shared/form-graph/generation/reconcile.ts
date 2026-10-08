@@ -116,6 +116,14 @@ export function deriveWorkflowFromModel(
   ) {
     return { workflow: 'img2vid' };
   }
+  // Vidu Q4 has no text-to-video or last-frame input: both land on plain img2vid
+  if (
+    current.ecosystem === 'Vidu' &&
+    id === viduVersionIds.q4 &&
+    (current.workflow === 'txt2vid' || current.workflow === 'img2vid:first-last')
+  ) {
+    return { workflow: 'img2vid' };
+  }
   const table = current.ecosystem ? workflowScopedVersions[current.ecosystem] : undefined;
   if (!table || id == null) return undefined;
   const workflow = current.workflow ?? 'txt2img';

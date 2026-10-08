@@ -2,6 +2,8 @@ import { describe, expect, test, vi, beforeEach } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import type * as AuthHelpers from '~/utils/auth-helpers';
+import type * as SessionProviderModule from '~/providers/SessionProvider';
 
 /**
  * BlockGenerationSourceUploadModal — the UNSCANNED `generationSource` upload path.
@@ -23,6 +25,25 @@ const mocks = vi.hoisted(() => ({
   imageToJpegBlob: vi.fn(),
   persistMutate: vi.fn(),
   gateMutate: vi.fn(),
+  openLoginPopup: vi.fn(),
+  /** Signed in unless a test signs out. */
+  currentUser: { id: 1 } as { id: number } | null,
+}));
+
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
+
+// Outside a provider useSession reports 'loading'; resolved here from the mocked user.
+vi.mock('~/providers/SessionProvider', async (orig) => ({
+  ...(await orig<typeof SessionProviderModule>()),
+  useSession: () => ({
+    data: undefined,
+    status: mocks.currentUser ? 'authenticated' : 'unauthenticated',
+    update: async () => null,
+  }),
+}));
+vi.mock('~/utils/auth-helpers', async (orig) => ({
+  ...(await orig<typeof AuthHelpers>()),
+  openLoginPopup: mocks.openLoginPopup,
 }));
 
 vi.mock('~/utils/consumer-blob-upload', () => ({
@@ -100,6 +121,8 @@ const JPEG_BLOB = new Blob(['jpeg-bytes'], { type: 'image/jpeg' });
 describe('BlockGenerationSourceUploadModal (generationSource — unscanned source)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
+    mocks.currentUser = { id: 1 };
+    mocks.openLoginPopup.mockReset();
     mocks.uploadConsumerBlob.mockReset();
     mocks.getImageDimensions.mockReset();
     mocks.persistMutate.mockReset();
@@ -201,5 +224,20 @@ describe('BlockGenerationSourceUploadModal (generationSource — unscanned sourc
     expect(onResolved).not.toHaveBeenCalled();
     expect(mocks.persistMutate).not.toHaveBeenCalled();
     expect(mocks.gateMutate).not.toHaveBeenCalled();
+  });
+
+  test('signed out: choosing an image opens sign-in instead of uploading', async () => {
+    mocks.currentUser = null;
+    const onResolved = vi.fn();
+    openModal(onResolved);
+    await userEvent.upload(await fileInputEl(), makeImageFile());
+
+    await vi.waitFor(() => expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1));
+    const here = window.location.pathname + window.location.search + window.location.hash;
+    expect(mocks.openLoginPopup).toHaveBeenCalledWith(here, 'image-upload');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(mocks.resizeImage).not.toHaveBeenCalled();
+    expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(onResolved).not.toHaveBeenCalled();
   });
 });

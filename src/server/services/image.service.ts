@@ -14,7 +14,10 @@ import {
   filterViewableModelVersions,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
-import { keepPendingAppealFlags } from '~/server/services/image-appeal-flag';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -1066,13 +1069,13 @@ export async function handleBlockImages({
         .updateMany({
           where: { id: { in: ids } },
           data: {
-            needsReview: null,
             ingestion: 'Blocked',
             nsfwLevel: NsfwLevel.Blocked,
             blockedFor: BlockedReason.Moderated,
             updatedAt: new Date(),
           },
         })
+        .then(() => clearReviewFlagsOnBlock(ids))
         .then(() => keepPendingAppealFlags(ids)),
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
@@ -1580,6 +1583,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   user?: SessionUser;
   // Request color, used to pick which "new & upcoming" board backs `newCreators`.
   domain?: DomainColor;
+  // Server-only: not in the tRPC schema, so a client cannot set or lift it.
+  newCreatorsMaxFollowers?: number;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -1767,6 +1772,7 @@ const getAllImagesUncaptured = async (
     generation,
     reviewId,
     newCreators,
+    newCreatorsMaxFollowers,
     domain,
     prioritizedUserIds,
     include,
@@ -1879,7 +1885,9 @@ const getAllImagesUncaptured = async (
         })
       : false,
     userId && followed ? getUserFollows(userId) : undefined,
-    newCreators ? getNewCreatorUserIds({ entity: 'images', domain }) : undefined,
+    newCreators
+      ? getNewCreatorUserIds({ entity: 'images', domain, maxFollowers: newCreatorsMaxFollowers })
+      : undefined,
     collectionId
       ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
       : undefined,
@@ -2840,7 +2848,7 @@ async function prepareImageFeedRequest(
  * image query the rows are loaded with; the feed's paging and period are dropped from it.
  */
 async function serveImagesFromFeedService(
-  searchInput: CapturableSearchInput & { domain?: DomainColor },
+  searchInput: CapturableSearchInput & { domain?: DomainColor; newCreatorsMaxFollowers?: number },
   hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
   route: FeedPrimaryRoute
 ) {
@@ -2849,7 +2857,11 @@ async function serveImagesFromFeedService(
   const [followedUserIds, newCreatorUserIds, hub] = await Promise.all([
     searchInput.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
     searchInput.newCreators
-      ? getNewCreatorUserIds({ entity: 'images', domain: searchInput.domain })
+      ? getNewCreatorUserIds({
+          entity: 'images',
+          domain: searchInput.domain,
+          maxFollowers: searchInput.newCreatorsMaxFollowers,
+        })
       : undefined,
     searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId) : undefined,
   ]);
@@ -3327,6 +3339,7 @@ export const makeMeiliImageSearchSort = (
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
   domain?: DomainColor;
+  newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -3881,6 +3894,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     newCreators,
+    newCreatorsMaxFollowers,
     hubId,
     domain,
     // TODO check the unused stuff in here
@@ -3976,7 +3990,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   // set is global per domain rather than per viewer. An unpopulated board returns
   // nothing rather than degrading to the unfiltered feed.
   if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    const newCreatorIds = await getNewCreatorUserIds({
+      entity: 'images',
+      domain,
+      maxFollowers: newCreatorsMaxFollowers,
+    });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
@@ -4513,6 +4531,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     blockedFor,
     // TODO check the unused stuff in here
     newCreators,
+    newCreatorsMaxFollowers,
     hubId,
     domain,
   } = input;
@@ -4593,7 +4612,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 
   if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    const newCreatorIds = await getNewCreatorUserIds({
+      entity: 'images',
+      domain,
+      maxFollowers: newCreatorsMaxFollowers,
+    });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }

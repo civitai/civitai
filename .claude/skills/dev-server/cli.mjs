@@ -15,6 +15,7 @@ import {
   parseMaxWorkersFlag,
 } from './scripts/test-queue.mjs';
 import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { daemonFetch } from './scripts/daemon-http.mjs';
 import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -74,7 +75,7 @@ const DAEMON_URL = resolveDaemonUrl();
 async function daemonRequest(path, options = {}) {
   const url = `${DAEMON_URL}${path}`;
   try {
-    const response = await fetch(url, {
+    const response = await daemonFetch(url, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
     });

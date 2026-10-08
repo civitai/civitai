@@ -80,6 +80,7 @@ import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import { generationStatusSchema } from '~/server/schema/generation.schema';
 import type { GenerationStatus, GenerationStatusMode } from '~/server/schema/generation.schema';
 import type { TextToImageResponse } from '~/server/services/orchestrator/types';
+import { buildWorkflowTips } from '~/server/services/orchestrator/workflow-tips';
 import {
   getWorkflow,
   setWorkflowDownloadPriority,
@@ -122,6 +123,7 @@ import { stripBenignPhrases } from '~/server/services/blocklist.service';
 import { normalizeText } from '~/utils/normalize-text';
 import { ecosystemByKey } from '~/shared/constants/basemodel.constants';
 import { toStepMetadata } from '~/shared/utils/resource.utils';
+import { anyTipEligible } from '~/shared/utils/creator-tip';
 import { randomInt } from 'crypto';
 import { MAX_RANDOM_SEED } from '~/shared/constants/generation.constants';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
@@ -606,6 +608,7 @@ type ResourceValidationResult = {
   rawAirResources: RawAirResource[];
   isPrivateGeneration: boolean;
   hasPoiResource: boolean;
+  hasTipEligibleResource: boolean;
 };
 
 /**
@@ -634,6 +637,7 @@ async function validateAndEnrichResources(
       rawAirResources: [],
       isPrivateGeneration: false,
       hasPoiResource: false,
+      hasTipEligibleResource: false,
     };
   }
 
@@ -700,6 +704,8 @@ async function validateAndEnrichResources(
     rawAirResources,
     isPrivateGeneration: hasPrivateOrEpoch,
     hasPoiResource: resources.some((r) => r.model.poi),
+    // Raw-AIR epochs are not ModelVersions, so the orchestrator has no creator to tip for them.
+    hasTipEligibleResource: anyTipEligible(resources),
   };
 }
 
@@ -1310,20 +1316,26 @@ export async function createWorkflowStepsFromGraph({
    * with the step-build path instead of leaking decisions out as flags.
    */
   tags: string[];
+  hasTipEligibleResource: boolean;
 }> {
   data = expandAvatarData(data);
 
   // Validate and enrich resources
   const resourceIds = collectResourceIds(data);
   // Span localizes the gen-path park: resource validation/enrichment sub-step.
-  const { enrichedResources, rawAirResources, isPrivateGeneration, hasPoiResource } =
-    await withSpan('gen:createSteps:validateResources', () =>
-      validateAndEnrichResources(resourceIds, user, {
-        resources: collectRawAirResources(data),
-        orchestratorToken,
-        requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
-      })
-    );
+  const {
+    enrichedResources,
+    rawAirResources,
+    isPrivateGeneration,
+    hasPoiResource,
+    hasTipEligibleResource,
+  } = await withSpan('gen:createSteps:validateResources', () =>
+    validateAndEnrichResources(resourceIds, user, {
+      resources: collectRawAirResources(data),
+      orchestratorToken,
+      requestEcosystem: 'ecosystem' in data ? data.ecosystem : undefined,
+    })
+  );
 
   // Check for POI in prompt
   const prompt = 'prompt' in data ? (data.prompt as string) : undefined;
@@ -1545,6 +1557,7 @@ export async function createWorkflowStepsFromGraph({
       steps: wrappedSteps,
       workflowMetadata,
       tags: extraTags,
+      hasTipEligibleResource,
     };
   });
 }
@@ -1924,6 +1937,7 @@ export async function generateFromGraph({
     steps,
     workflowMetadata,
     tags: assemblyTags,
+    hasTipEligibleResource,
   } = await createWorkflowStepsFromGraph({
     data,
     computedKeys,
@@ -1954,9 +1968,7 @@ export async function generateFromGraph({
     ...customTags,
   ].filter(isDefined);
 
-  // Build tips object if provided
-  const tips =
-    civitaiTip || creatorTip ? { civitai: civitaiTip ?? 0, creators: creatorTip ?? 0 } : undefined;
+  const tips = buildWorkflowTips({ civitaiTip, creatorTip, hasTipEligibleResource });
 
   // Check if private generation (from workflow metadata)
   const isPrivateGeneration = !!(workflowMetadata as { isPrivateGeneration?: boolean })

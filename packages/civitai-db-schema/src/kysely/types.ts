@@ -400,6 +400,7 @@ export type Appeal = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
 };
@@ -435,8 +436,8 @@ export type AppListing = {
    * PURPOSE, AND THAT
    * IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
    * declares in its default SELECT/RETURNING, so while this was an ordinary field every
-   * `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
-   * on this tree, 17 of them WRITES — and during the manual-apply window that is
+   * `appListing` call that returns rows with no explicit `select` emitted it - 18 such sites
+   * on this tree, 17 of them WRITES - and during the manual-apply window that is
    * `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
    * delist all 500d on the PR preview. Stripping the field makes every one of those sites
    * immune by construction. The column is reached ONLY by raw SQL, in
@@ -613,6 +614,38 @@ export type AppReviewAgentReport = {
   prior_report_id: string | null;
   token_usage: unknown | null;
   cost_usd: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppSubListing = {
+  id: string;
+  parent_listing_id: string;
+  item_key: string;
+  author_user_id: number;
+  title: string;
+  tagline: string | null;
+  image_id: number | null;
+  sub_path: string;
+  content_rating: string | null;
+  pending_title: string | null;
+  pending_tagline: string | null;
+  pending_image_id: number | null;
+  pending_sub_path: string | null;
+  pending_content_rating: string | null;
+  pending_submitted_at: Timestamp | null;
+  edit_rejection_reason: string | null;
+  status: Generated<string>;
+  status_reason: string | null;
+  moderated_by_id: number | null;
+  moderated_at: Timestamp | null;
+  approved_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppSubListingParent = {
+  parent_listing_id: string;
+  enabled: Generated<boolean>;
+  max_per_author: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -4766,6 +4799,8 @@ export type UserRestriction = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Timestamp | null;
 };
@@ -4940,6 +4975,8 @@ export type DB = {
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
   app_review_agent_reports: AppReviewAgentReport;
+  app_sub_listing_parents: AppSubListingParent;
+  app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   AppPageAccess: AppPageAccess;

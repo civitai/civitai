@@ -45,8 +45,10 @@ import type {
   SubmitVoteSchema,
   CancelCrucibleSchema,
   RemoveCrucibleEntrySchema,
+  WithdrawCrucibleEntrySchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
+import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
 import {
   clipLengthAllowed,
   CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
@@ -358,7 +360,7 @@ export const createCrucible = async ({
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
-  if (!isModerator) assertSfwCrucibleText([name, description], nsfwLevel);
+  if (!isModerator) assertSfwCrucibleText([name, description ?? ''], nsfwLevel);
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
   assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
@@ -759,7 +761,7 @@ export const updateCrucible = async ({
   const next = {
     ...current,
     ...Object.fromEntries(provided.map((key) => [key, changes[key]])),
-  } as typeof current & { name?: string; description?: string };
+  } as typeof current & { name?: string; description?: string | null };
 
   const buzzType = crucible.buzzType as CrucibleBuzzType;
   // Only a requested level is checked: a text-scan escalation can put R on the stored mask, and that
@@ -769,7 +771,8 @@ export const updateCrucible = async ({
   assertCrucibleSettings(next);
 
   const nextName = changes.name ?? crucible.name;
-  const nextDescription = changes.description ?? crucible.description ?? '';
+  const nextDescription =
+    changes.description === undefined ? crucible.description : changes.description;
   // Only a real text change resets the verdict: an unchanged resubmit dedups on its content hash,
   // so no callback would ever move it back to Scanned.
   const textChanged =
@@ -779,7 +782,7 @@ export const updateCrucible = async ({
     isModerator,
     surface: 'crucible',
   });
-  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription], next.nsfwLevel);
+  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription ?? ''], next.nsfwLevel);
   // Only newly added ones: a required model unpublished later shouldn't block editing the rest.
   const addedResources = next.allowedResources.filter(
     (versionId) => !current.allowedResources.includes(versionId)
@@ -1065,8 +1068,10 @@ export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
-  /** Also counts entries whose image was deleted, as `submitEntry`'s limit does. */
+  /** Entries whose image was deleted or withdrawn don't count, as in `submitEntry`'s limit. */
   viewerEntryCount: number;
+  /** Every entry the caller ever made here, for the free-entry math: a reopened slot is paid. */
+  viewerEntriesSoFar: number;
   /** Empty until completed. No user ids: a winner's entry may be hidden from this viewer. */
   prizeWinners: CrucibleDisplayPrize[];
 };
@@ -1110,7 +1115,7 @@ export const getCrucibleDetail = async ({
 
   if (!crucible) return null;
 
-  const [paidEntryCounts, { viewerEntries, viewerEntryCount }] = await Promise.all([
+  const [paidEntryCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all([
     getPaidEntryCounts([id]),
     userId
       ? dbRead.crucibleEntry
@@ -1121,9 +1126,9 @@ export const getCrucibleDetail = async ({
           })
           .then((entries) => ({
             viewerEntries: entries.filter(hasEntryImage),
-            viewerEntryCount: entries.length,
+            viewerEntriesSoFar: entries.length,
           }))
-      : { viewerEntries: [], viewerEntryCount: 0 },
+      : { viewerEntries: [], viewerEntriesSoFar: 0 },
   ]);
 
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
@@ -1150,7 +1155,8 @@ export const getCrucibleDetail = async ({
     ...crucible,
     paidEntryCount,
     viewerEntries,
-    viewerEntryCount,
+    viewerEntryCount: viewerEntries.length,
+    viewerEntriesSoFar,
     prizeWinners,
   };
 };
@@ -1798,21 +1804,25 @@ export const submitEntry = async ({
       return throwBadRequestError(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
     }
 
-    // Validate max total entries hasn't been reached
-    if (crucible.maxTotalEntries && crucible._count.entries >= crucible.maxTotalEntries) {
+    // An entry whose image was deleted or withdrawn keeps its fee in the pool but frees its slot.
+    if (
+      crucible.maxTotalEntries &&
+      crucible._count.entries >= crucible.maxTotalEntries &&
+      (await dbWrite.crucibleEntry.count({ where: { crucibleId, imageId: { not: null } } })) >=
+        crucible.maxTotalEntries
+    ) {
       return throwBadRequestError('This crucible has reached its maximum number of entries');
     }
 
     // The primary, under the lock: a replica that has not seen this user's last entry would
     // hand out a free slot they already used.
-    const userEntryCount = await dbWrite.crucibleEntry.count({
-      where: {
-        crucibleId,
-        userId,
-      },
-    });
+    // A freed slot is paid again: the free-entry math counts every entry ever made.
+    const [userEntryCount, liveUserEntryCount] = await Promise.all([
+      dbWrite.crucibleEntry.count({ where: { crucibleId, userId } }),
+      dbWrite.crucibleEntry.count({ where: { crucibleId, userId, imageId: { not: null } } }),
+    ]);
 
-    if (userEntryCount >= crucible.entryLimit) {
+    if (liveUserEntryCount >= crucible.entryLimit) {
       return throwBadRequestError(
         `You have reached the maximum of ${crucible.entryLimit} ${
           crucible.entryLimit === 1 ? 'entry' : 'entries'
@@ -2504,6 +2514,95 @@ export function countRemainingPairs({
   return Math.max(0, Math.min(unjudgedPairs, byEntry, byVotes));
 }
 
+/** Pairs this judge voted on where both entries are still visible to them. */
+export function countJudgedPairs({
+  entryIds,
+  votedPairKeys,
+}: {
+  entryIds: number[];
+  votedPairKeys: string[];
+}) {
+  const visible = new Set(entryIds);
+  let judged = 0;
+  for (const key of votedPairKeys) {
+    const [a, b] = key.split(':').map(Number);
+    if (visible.has(a) && visible.has(b)) judged++;
+  }
+  return judged;
+}
+
+export type JudgingPairCount = {
+  remainingPairs: number;
+  judgedPairs: number;
+  visibleEntries: number;
+  judged: boolean;
+};
+
+/**
+ * Pairs left for one judge across several crucibles: two Redis reads each, then one entries query.
+ * Recomputed on every call rather than kept in sync on vote, because a new entry, a re-scan or the
+ * viewer's browsing level all change the count without a vote. `judgedOnly` keeps the entries
+ * query off crucibles the judge never voted in, which the feed asks about most.
+ */
+export async function countJudgingPairs({
+  crucibleIds,
+  userId,
+  viewerLevel,
+  judgedOnly = false,
+}: {
+  crucibleIds: number[];
+  userId: number;
+  viewerLevel: number;
+  judgedOnly?: boolean;
+}) {
+  const counts = new Map<number, JudgingPairCount>();
+  const uniqueIds = [...new Set(crucibleIds)];
+  if (!uniqueIds.length) return counts;
+
+  const judgeState = await Promise.all(
+    uniqueIds.map(async (id) => {
+      const [judgeEntryVotes, votedPairKeys = []] = await Promise.all([
+        sysRedis.hGetAll(getJudgeEntryVotesKey(id, userId)),
+        sysRedis.sMembers(getVotedPairsKey(id, userId)),
+      ]);
+      return { id, judgeEntryVotes, votedPairKeys };
+    })
+  );
+  const counted = judgedOnly
+    ? judgeState.filter(({ votedPairKeys }) => votedPairKeys.length > 0)
+    : judgeState;
+  if (!counted.length) return counts;
+
+  const entries = await dbRead.$queryRaw<{ crucibleId: number; id: number }[]>`
+    SELECT ce."crucibleId", ce.id
+    FROM "CrucibleEntry" ce
+    JOIN "Crucible" c ON c.id = ce."crucibleId"
+    JOIN "Image" i ON i.id = ce."imageId"
+    WHERE ce."crucibleId" IN (${Prisma.join(counted.map(({ id }) => id))})
+      AND ce."userId" != ${userId}
+      AND ${visibleEntryImageSql(Prisma.sql`c."nsfwLevel"`, viewerLevel)}
+  `;
+
+  const entryIds = new Map<number, number[]>(counted.map(({ id }) => [id, []]));
+  for (const { crucibleId, id } of entries) entryIds.get(crucibleId)?.push(id);
+
+  for (const { id: crucibleId, judgeEntryVotes, votedPairKeys } of counted) {
+    const visible = entryIds.get(crucibleId) ?? [];
+    counts.set(crucibleId, {
+      remainingPairs: countRemainingPairs({
+        entryIds: visible,
+        judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
+        votedPairKeys,
+        maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+      }),
+      judgedPairs: countJudgedPairs({ entryIds: visible, votedPairKeys }),
+      visibleEntries: visible.length,
+      judged: votedPairKeys.length > 0,
+    });
+  }
+  return counts;
+}
+
 export const getJudgingProgress = async ({
   crucibleId,
   userId,
@@ -2538,34 +2637,81 @@ export const getJudgingProgress = async ({
   )
     throw throwNotFoundError('Crucible not found');
   if (crucible.status !== CrucibleStatus.Active || (crucible.endAt && crucible.endAt <= new Date()))
-    return { remainingPairs: 0, votesUsedUp: false };
+    return { remainingPairs: 0, judgedPairs: 0, votesUsedUp: false };
 
-  const visibleImage = visibleEntryImageSql(
-    crucible.nsfwLevel,
-    getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel })
-  );
-  const [entries, judgeEntryVotes, votedPairKeys] = await Promise.all([
-    dbRead.$queryRaw<{ id: number }[]>`
-      SELECT ce.id
-      FROM "CrucibleEntry" ce
-      JOIN "Image" i ON i.id = ce."imageId"
-      WHERE ce."crucibleId" = ${crucibleId}
-        AND ce."userId" != ${userId}
-        AND ${visibleImage}
-    `,
-    sysRedis.hGetAll(getJudgeEntryVotesKey(crucibleId, userId)),
-    sysRedis.sMembers(getVotedPairsKey(crucibleId, userId)),
-  ]);
-
-  const remainingPairs = countRemainingPairs({
-    entryIds: entries.map(({ id }) => id),
-    judgeEntryVotes: (judgeEntryVotes ?? {}) as Record<string, string>,
-    votedPairKeys,
-    maxVotesPerEntry: CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+  const viewerLevel = getEffectiveBrowsingLevel({
+    isGreen,
+    isLoggedIn: true,
+    requested: browsingLevel,
   });
+  const counted = (await countJudgingPairs({ crucibleIds: [crucibleId], userId, viewerLevel })).get(
+    crucibleId
+  );
+  const remainingPairs = counted?.remainingPairs ?? 0;
   // Fewer than two visible entries also counts zero pairs, but that is the browsing level
   // hiding entries, not this judge's votes running out.
-  return { remainingPairs, votesUsedUp: remainingPairs === 0 && entries.length >= 2 };
+  return {
+    remainingPairs,
+    judgedPairs: counted?.judgedPairs ?? 0,
+    votesUsedUp: remainingPairs === 0 && (counted?.visibleEntries ?? 0) >= 2,
+  };
+};
+
+/** What the crucible cards show a judge: whether each open crucible still has pairs for them. */
+export const getJudgingStatuses = async ({
+  crucibleIds,
+  browsingLevel,
+  userId,
+  isGreen = false,
+  isModerator = false,
+  blockedByUserIds,
+}: GetJudgingStatusesSchema & {
+  userId: number;
+  isGreen?: boolean;
+  isModerator?: boolean;
+  blockedByUserIds?: number[];
+}): Promise<CrucibleJudgingStatus[]> => {
+  const crucibles = await dbRead.crucible.findMany({
+    where: {
+      id: { in: crucibleIds },
+      status: CrucibleStatus.Active,
+      // Status lags the clock until finalize-crucibles runs.
+      OR: [{ endAt: null }, { endAt: { gt: new Date() } }],
+    },
+    select: {
+      id: true,
+      userId: true,
+      textNsfw: true,
+      nsfwLevel: true,
+      ingestion: true,
+      image: { select: { ingestion: true } },
+    },
+  });
+  const viewer = { viewerId: userId, isModerator, isGreen, blockedByUserIds };
+  const open = crucibles.filter(
+    (crucible) =>
+      !isCrucibleHiddenByScan(crucible, viewer) &&
+      !isCrucibleOffSite(crucible, viewer) &&
+      !isCrucibleBlockedForViewer(crucible, viewer)
+  );
+
+  const counts = await countJudgingPairs({
+    crucibleIds: open.map(({ id }) => id),
+    userId,
+    viewerLevel: getEffectiveBrowsingLevel({ isGreen, isLoggedIn: true, requested: browsingLevel }),
+    judgedOnly: true,
+  });
+  return open.flatMap(({ id }) => {
+    const counted = counts.get(id);
+    if (!counted) return [];
+    const { remainingPairs, visibleEntries, judged } = counted;
+    return {
+      crucibleId: id,
+      judged,
+      available: remainingPairs > 0,
+      votesUsedUp: remainingPairs === 0 && visibleEntries >= 2,
+    };
+  });
 };
 
 type RatedEntry = EntryForJudging & { votes: number; judgeVotes: number };
@@ -2623,6 +2769,7 @@ export const getJudgingPair = async ({
   crucibleId,
   userId,
   excludeEntryIds,
+  skippedPairs = [],
   browsingLevel,
   judgingSessionId,
   isGreen = false,
@@ -2693,7 +2840,10 @@ export const getJudgingPair = async ({
   );
   // Authors enter near-identical variants, so two entries by one author read to a judge as the
   // same clip twice. Such a pair is served only once no cross-author pair is left.
-  const search = async (exclusions?: number[]) => {
+  const search = async (exclusions?: number[], avoidPairKeys: string[] = []) => {
+    const unservable = avoidPairKeys.length
+      ? new Set([...votedPairs, ...avoidPairKeys])
+      : votedPairs;
     let sameAuthor: ReturnType<typeof pickUnjudgedPair> = null;
     for (let attempt = 0; attempt < MAX_SAMPLE_ATTEMPTS; attempt++) {
       const sample = await fetchEntrySample(
@@ -2705,11 +2855,11 @@ export const getJudgingPair = async ({
       );
       const candidates = sample.filter(underJudgeCap).map(rate);
       const anchors = sample.filter((entry) => !underJudgeCap(entry)).map(rate);
-      const crossAuthor = pickUnjudgedPair(candidates, anchors, votedPairs, {
+      const crossAuthor = pickUnjudgedPair(candidates, anchors, unservable, {
         allowSameAuthor: false,
       });
       if (crossAuthor) return crossAuthor;
-      sameAuthor ??= pickUnjudgedPair(candidates, anchors, votedPairs, { allowSameAuthor: true });
+      sameAuthor ??= pickUnjudgedPair(candidates, anchors, unservable, { allowSameAuthor: true });
       // A short sample already held every entry, so another draw returns the same set.
       if (sample.length < SAMPLE_SIZE) break;
     }
@@ -2718,9 +2868,21 @@ export const getJudgingPair = async ({
 
   // A skip means "not now": once only skipped entries are left, they come back instead of the
   // judge being told there is nothing left to judge. It outranks the author rule, so a same-author
-  // pair is served before a skipped entry returns: re-serving the pair just skipped makes Skip
-  // look broken.
-  const pair = (await search(excludeEntryIds)) ?? (excludeEntryIds?.length ? await search() : null);
+  // pair is served before a skipped entry returns.
+  // In a small crucible the skip list soon covers every entry. The skipped pairs themselves stay
+  // out for as long as another pair is left, the oldest returning first: dropping every skip at
+  // once re-served the pair just skipped, and pairing is near-deterministic, so Skip stuck on it.
+  const exclusions = excludeEntryIds ?? [...new Set(skippedPairs.flat())];
+  const searchSkippedEntries = async () => {
+    let avoid = skippedPairs.map(([a, b]) => createPairKey(a, b));
+    for (; avoid.length; avoid = avoid.slice(Math.ceil(avoid.length / 2))) {
+      const found = await search(undefined, avoid);
+      if (found) return found;
+    }
+    return search();
+  };
+  const pair =
+    (await search(exclusions)) ?? (exclusions.length ? await searchSkippedEntries() : null);
   if (!pair) return null;
   const { a: imageA, b: imageB, anchorEntryId } = pair;
 
@@ -3950,6 +4112,47 @@ export const removeCrucibleEntry = async ({
   return { entryId, crucibleId, refundedAmount: fee };
 };
 
+/**
+ * The entrant takes back their own entry. Unlike a moderator's removal there is no refund: the row
+ * stays with its fee, so the pool keeps it and a later entry in the freed slot is paid again.
+ */
+export const withdrawCrucibleEntry = async ({
+  entryId,
+  userId,
+}: WithdrawCrucibleEntrySchema & { userId: number }) => {
+  const entry = await dbWrite.crucibleEntry.findUnique({
+    where: { id: entryId },
+    select: { crucibleId: true, userId: true, imageId: true },
+  });
+  if (!entry || entry.userId !== userId || entry.imageId === null)
+    throw throwNotFoundError('Entry not found');
+  const { crucibleId, imageId } = entry;
+
+  const withdrawn = await dbWrite.$transaction(async (tx) => {
+    // Holds the crucible row, so finalize can't rank the entry while it's being withdrawn.
+    const running = await tx.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Crucible"
+      WHERE id = ${crucibleId}
+        AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+        AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+      FOR UPDATE
+    `;
+    if (!running.length) throw throwBadRequestError(NOT_RUNNING);
+    const { count } = await tx.crucibleEntry.updateMany({
+      where: { id: entryId, userId, imageId: { not: null } },
+      data: { imageId: null },
+    });
+    return count > 0;
+  });
+  if (!withdrawn) throw throwNotFoundError('Entry not found');
+
+  await revealCrucibleEntryPosts({ imageId });
+
+  logToAxiom({ type: 'info', name: 'crucible-entry-withdrawn', crucibleId, entryId, userId, imageId });
+
+  return { entryId, crucibleId };
+};
+
 /** Keyed per crucible, so a re-run reaches only entrants whose refund was still pending. */
 const notifyEntrantsOfCancellation = (
   crucible: CrucibleNameScan & { id: number; userId: number; entries: { userId: number }[] },
@@ -4630,6 +4833,9 @@ export const getJudgeStats = async ({
   };
 };
 
+// Enough to cover every open crucible today; the caught-up filter runs after the SQL limit.
+const JUDGING_SUGGESTION_CANDIDATES = 50;
+
 /**
  * Still judgeable by this viewer, and inside their browsing level on both the crucible's rating and
  * its cover — the rule the landing feed applies client-side in useApplyHiddenPreferences.
@@ -4679,13 +4885,26 @@ export const getJudgingSuggestions = async ({
         ) judgeable
       ) = 2
     ORDER BY c."createdAt" DESC, c.id DESC
-    LIMIT ${limit}
+    LIMIT ${JUDGING_SUGGESTION_CANDIDATES}
   `;
   if (!rows.length) return [];
 
+  const counts = await countJudgingPairs({
+    crucibleIds: rows.map(({ id }) => id),
+    userId,
+    viewerLevel: browsingLevel,
+    judgedOnly: true,
+  });
+  // An uncounted candidate was never judged, and the SQL above guarantees it two judgeable entries.
+  const ids = rows
+    .map(({ id }) => id)
+    .filter((id) => (counts.get(id)?.remainingPairs ?? 1) > 0)
+    .slice(0, limit);
+  if (!ids.length) return [];
+
   return withPaidEntryCount(
     await dbRead.crucible.findMany({
-      where: { id: { in: rows.map(({ id }) => id) } },
+      where: { id: { in: ids } },
       select: crucibleListSelect,
       orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
     })

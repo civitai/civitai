@@ -38,7 +38,6 @@ import {
 
 export const CRUCIBLE_CREATE_STEP_COUNT = 4;
 export const CRUCIBLE_CREATE_DRAFT_KEY = 'crucible_new';
-export const CRUCIBLE_NO_DESCRIPTION = 'No description provided';
 
 export const entryFeeRangeLabel = `${CRUCIBLE_MIN_ENTRY_FEE.toLocaleString()}–${CRUCIBLE_MAX_ENTRY_FEE.toLocaleString()} Buzz`;
 
@@ -244,7 +243,7 @@ export function toCrucibleSubmitValues(values: CrucibleCreateFormValues) {
   const isVideo = values.contentType === MediaType.video;
   return {
     name: values.name.trim(),
-    description: values.description?.trim() || CRUCIBLE_NO_DESCRIPTION,
+    description: values.description?.trim() || undefined,
     coverImage: values.coverImage ?? undefined,
     heroImage: values.heroImage ?? undefined,
     nsfwLevel: values.nsfwLevel,
@@ -342,7 +341,7 @@ export function crucibleToFormValues(crucible: CrucibleEditSource): CrucibleCrea
 /** `null` clears a value; an absent key leaves it unchanged. */
 export type CrucibleUpdateChanges = {
   name?: string;
-  description?: string;
+  description?: string | null;
   coverImage?: CrucibleImageSchema;
   heroImage?: CrucibleImageSchema | null;
   nsfwLevel?: number;

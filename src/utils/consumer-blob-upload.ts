@@ -25,6 +25,9 @@ const PRESIGN_TIMEOUT_MS = 15_000;
 const RESPONSE_TIMEOUT_MS = 5 * 60_000;
 const MAX_ATTEMPTS = 2;
 
+/** Shown when an upload is refused because the user is signed out. */
+export const SIGN_IN_TO_UPLOAD_MESSAGE = 'Sign in to upload images.';
+
 type SupportedContentType = (typeof SUPPORTED_CONTENT_TYPES)[number];
 
 /** `kind` is built only from fixed strings and integer statuses, so it is safe to log as-is. */
@@ -58,6 +61,8 @@ export async function getConsumerBlobUploadUrl(): Promise<ConsumerBlobPresignRes
       throw new ConsumerBlobUploadError(
         response.status === 400 || response.status === 403
           ? await response.text()
+          : response.status === 401
+          ? SIGN_IN_TO_UPLOAD_MESSAGE
           : 'Failed to get upload URL',
         `presign-http-${response.status}`,
         shouldRetryPartError(failure),

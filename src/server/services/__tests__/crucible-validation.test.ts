@@ -160,10 +160,29 @@ describe('createCrucibleInputSchema', () => {
     );
   });
 
-  it('rejects a missing description', () => {
+  it.each([
+    ['omitted', undefined],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['null', null],
+  ])('stores no description when it is %s', (_, description) => {
+    const result = createCrucibleInputSchema.safeParse({ ...validCreateInput, description });
+    expect(result.success).toBe(true);
+    expect(result.data?.description ?? null).toBeNull();
+  });
+
+  it('trims the description', () => {
     expect(
-      createCrucibleInputSchema.safeParse({ ...validCreateInput, description: '' }).success
-    ).toBe(false);
+      createCrucibleInputSchema.parse({ ...validCreateInput, description: '  A theme  ' })
+        .description
+    ).toBe('A theme');
+  });
+
+  it('clears a blank description on update and leaves an absent one unchanged', () => {
+    expect(updateCrucibleSchema.parse({ id: 1, description: '  ' }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: null }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: ' New ' }).description).toBe('New');
+    expect(updateCrucibleSchema.parse({ id: 1 })).not.toHaveProperty('description');
   });
 
   it('rejects a negative entry fee', () => {
@@ -1366,6 +1385,79 @@ describe('submitEntry — free entries', () => {
     expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
       where: { crucibleId: 1, userId: 42 },
     });
+  });
+
+  // Entries whose image is gone (deleted or withdrawn), counted per the where clause.
+  const withGoneEntries = ({ all, live }: { all: number; live: number }) =>
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { imageId?: unknown };
+    }) => ('imageId' in args.where ? live : all)) as never);
+
+  it('reopens the slot of an entry whose image is gone, and charges the entry made in it', async () => {
+    withGoneEntries({ all: 3, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('still charges a re-entry when the gone entry was the free one', async () => {
+    withGoneEntries({ all: 1, live: 0 });
+
+    await submit();
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('accepts while live entries are under the limit, however many entries were made', async () => {
+    withGoneEntries({ all: 5, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses once the live entries reach the limit', async () => {
+    withGoneEntries({ all: 4, live: 3 });
+
+    await expect(submit()).rejects.toThrow(/maximum of 3 entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("doesn't count entries whose image is gone toward the crucible's total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      entryLimit: 3,
+      freeEntriesPerUser: 1,
+      maxTotalEntries: 10,
+      _count: { entries: 10 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 9)) as never);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
+      where: { crucibleId: 1, imageId: { not: null } },
+    });
+  });
+
+  it("refuses once the crucible's live entries reach its total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryLimit: 3,
+      maxTotalEntries: 10,
+      _count: { entries: 12 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 10)) as never);
+
+    await expect(submit()).rejects.toThrow(/reached its maximum number of entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 });
 

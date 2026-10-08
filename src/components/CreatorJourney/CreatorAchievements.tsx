@@ -22,6 +22,7 @@ const tracks = [
     measures: ['downloads', 'followers', 'reactions'],
   },
   { key: 'earn', title: 'Earn', accent: '#7950f2', measures: ['revenue'] },
+  { key: 'community', title: 'Community', accent: '#228be6', measures: ['votes'] },
 ] as const satisfies ReadonlyArray<{
   key: string;
   title: string;
@@ -50,6 +51,11 @@ const measureCopy: Record<
     label: 'Sales',
     current: (n) => `${numberWithCommas(n)} Buzz`,
     unit: 'Buzz in shop sales',
+  },
+  votes: {
+    label: 'Crucible votes',
+    current: (n) => `${numberWithCommas(n)} cast`,
+    unit: 'votes',
   },
 };
 

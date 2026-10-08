@@ -48,6 +48,7 @@ import { isAppBlocksSharedStorageEnabled } from '~/server/services/app-blocks-fl
 import { assertSharedWriteTrust } from '~/server/services/blocks/block-write-trust.service';
 import { sessionClient } from '~/server/auth/session-client';
 import type { SessionUser } from '~/types/session';
+import type { SyncSubListingForSharedRowArgs } from '~/server/services/blocks/app-sub-listing.service';
 import {
   assertSharedTextSafe,
   SharedContentBlockedError,
@@ -1145,6 +1146,7 @@ export async function withdrawSharedRow(
 
   const pool = requireAppsDb();
   const client = await pool.connect();
+  let deleted: boolean;
   try {
     await client.query('BEGIN');
     await client.query(`SET LOCAL app.current_app_block_id = ${pgQuoteLiteral(appBlockId)}`);
@@ -1153,12 +1155,36 @@ export async function withdrawSharedRow(
       [key, uid]
     );
     await client.query('COMMIT');
-    return { ok: true as const, deleted: (result.rowCount ?? 0) > 0 };
+    deleted = (result.rowCount ?? 0) > 0;
   } catch (err) {
     await client.query('ROLLBACK').catch(() => {});
     throw err;
   } finally {
     client.release();
+  }
+  if (deleted) {
+    await syncStoreItem({ appBlockId, itemKey: key, change: 'withdrawn', authorUserId: uid });
+  }
+  return { ok: true as const, deleted };
+}
+
+/**
+ * The item's store card (an app sub-listing) follows an in-app withdraw or moderator hide,
+ * from the server, so the store never depends on the app to clean up. Best-effort: the
+ * shared-storage write has already committed in the apps database.
+ */
+async function syncStoreItem(args: SyncSubListingForSharedRowArgs): Promise<void> {
+  try {
+    const { syncSubListingForSharedRow } = await import(
+      '~/server/services/blocks/app-sub-listing.service'
+    );
+    await syncSubListingForSharedRow(args);
+  } catch (err) {
+    logToAxiom({
+      name: 'app-sub-listing-shared-sync-failed',
+      type: 'error',
+      message: err instanceof Error ? err.message : String(err),
+    }).catch(() => null);
   }
 }
 
@@ -1513,6 +1539,15 @@ export const appsModRouter = router({
           client.release();
         }
       }
+
+      // Hidden or deleted in the app ⇒ hidden in the store, whether or not this call changed
+      // the shared row (it may have been hidden already).
+      await syncStoreItem({
+        appBlockId: block.id,
+        itemKey: input.key,
+        change: 'hidden',
+        moderatorId: ctx.user.id,
+      });
 
       // File the Report row (kept even after a hard delete — key is not FK'd here).
       await insertSharedReport(schema, {

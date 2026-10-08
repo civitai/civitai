@@ -622,6 +622,8 @@ model User {
   appListingReportsReported          AppListingReport[]         @relation("AppListingReportReporter")
   appListingReportsResolved          AppListingReport[]         @relation("AppListingReportResolver")
   appListingModerationEvents         AppListingModerationEvent[] @relation("AppListingModEventActor")
+  appSubListingsAuthored             AppSubListing[]             @relation("AppSubListingAuthor")
+  appSubListingsModerated            AppSubListing[]             @relation("AppSubListingModerator")
   // App Listing Collaborators — editor seats held / issued, the ownership audit
   // trail this user acted in or was targeted by, and any transfer they are party to.
   appCollaboratorSeats               AppCollaborator[]          @relation("AppCollaboratorMember")
@@ -2007,6 +2009,8 @@ model Image {
   appListingIcons        AppListing[]           @relation("AppListingIcon")
   appListingCovers       AppListing[]           @relation("AppListingCover")
   appListingScreenshots  AppListingScreenshot[] @relation("AppListingScreenshot")
+  appSubListingImages        AppSubListing[] @relation("AppSubListingImage")
+  appSubListingPendingImages AppSubListing[] @relation("AppSubListingPendingImage")
   crucibles              Crucible[]             @relation("CrucibleImage")
   crucibleHeroes         Crucible[]             @relation("CrucibleHeroImage")
   crucibleEntries        CrucibleEntry[]
@@ -3078,8 +3082,8 @@ model AppListing {
   /// PURPOSE, AND THAT
   /// IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
   /// declares in its default SELECT/RETURNING, so while this was an ordinary field every
-  /// `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
-  /// on this tree, 17 of them WRITES — and during the manual-apply window that is
+  /// `appListing` call that returns rows with no explicit `select` emitted it - 18 such sites
+  /// on this tree, 17 of them WRITES - and during the manual-apply window that is
   /// `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
   /// delist all 500d on the PR preview. Stripping the field makes every one of those sites
   /// immune by construction. The column is reached ONLY by raw SQL, in
@@ -3179,6 +3183,8 @@ model AppListing {
   collaborators      AppCollaborator[]
   ownershipEvents    AppOwnershipEvent[]
   ownershipTransfers AppOwnershipTransfer[]
+  subListings        AppSubListing[]      @relation("AppSubListings")
+  subListingParent   AppSubListingParent? @relation("AppSubListingParentSwitch")
 
   // Marketplace read-path indexes (future P2 read path).
   @@index([status, kind], map: "app_listings_status_kind_idx")
@@ -3401,6 +3407,66 @@ model AppListingModerationEvent {
   // Correlate events back to the report that triggered them.
   @@index([reportId], map: "app_listing_mod_events_report_idx")
   @@map("app_listing_moderation_events")
+}
+
+/// App Store sub-listings: per-parent switch. No row (or `enabled = false`) means the parent
+/// may not publish sub-listings and the store shows none of its children. Rows are created by
+/// hand. MANUAL-APPLY (`20261010120000_app_sub_listings`); every reader degrades while the
+/// table is absent.
+model AppSubListingParent {
+  parentListingId String     @id @map("parent_listing_id")
+  parentListing   AppListing @relation("AppSubListingParentSwitch", fields: [parentListingId], references: [id], onDelete: Cascade)
+  enabled         Boolean    @default(false)
+  maxPerAuthor    Int        @default(20) @map("max_per_author")
+  createdAt       DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@map("app_sub_listing_parents")
+}
+
+/// App Store sub-listing: one item a parent app places in the store as its own card.
+///
+/// The live columns are what the store renders. An edit to an APPROVED row is staged in the
+/// `pending*` columns (a complete snapshot while `pendingSubmittedAt` is set) so the last
+/// approved version stays live until a moderator approves the edit. Status / rating CHECKs
+/// live only in the migration .sql (canonical code sets in `app-sub-listing.constants.ts`).
+/// MANUAL-APPLY (`20261010120000_app_sub_listings`).
+model AppSubListing {
+  id                   String     @id // asl_<ULID>
+  parentListingId      String     @map("parent_listing_id")
+  parentListing        AppListing @relation("AppSubListings", fields: [parentListingId], references: [id], onDelete: Cascade)
+  itemKey              String     @map("item_key")
+  authorUserId         Int        @map("author_user_id")
+  author               User       @relation("AppSubListingAuthor", fields: [authorUserId], references: [id], onDelete: Cascade)
+  title                String
+  tagline              String?
+  imageId              Int?       @map("image_id")
+  image                Image?     @relation("AppSubListingImage", fields: [imageId], references: [id], onDelete: SetNull)
+  subPath              String     @map("sub_path")
+  contentRating        String?    @map("content_rating")
+  pendingTitle         String?    @map("pending_title")
+  pendingTagline       String?    @map("pending_tagline")
+  pendingImageId       Int?       @map("pending_image_id")
+  pendingImage         Image?     @relation("AppSubListingPendingImage", fields: [pendingImageId], references: [id], onDelete: SetNull)
+  pendingSubPath       String?    @map("pending_sub_path")
+  pendingContentRating String?    @map("pending_content_rating")
+  pendingSubmittedAt   DateTime?  @map("pending_submitted_at") @db.Timestamptz(6)
+  editRejectionReason  String?    @map("edit_rejection_reason")
+  status               String     @default("pending")
+  statusReason         String?    @map("status_reason")
+  moderatedById        Int?       @map("moderated_by_id")
+  moderatedBy          User?      @relation("AppSubListingModerator", fields: [moderatedById], references: [id], onDelete: SetNull)
+  moderatedAt          DateTime?  @map("moderated_at") @db.Timestamptz(6)
+  approvedAt           DateTime?  @map("approved_at") @db.Timestamptz(6)
+  createdAt            DateTime   @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt            DateTime   @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  @@unique([parentListingId, itemKey], map: "app_sub_listings_parent_item_key")
+  @@index([status, createdAt], map: "app_sub_listings_queue_idx")
+  @@index([authorUserId], map: "app_sub_listings_author_idx")
+  @@index([imageId], map: "app_sub_listings_image_idx")
+  @@index([pendingImageId], map: "app_sub_listings_pending_image_idx")
+  @@map("app_sub_listings")
 }
 
 /// App Blocks — agentic mod code-review report (P0 persistence layer).
@@ -6532,6 +6598,7 @@ model Appeal {
   resolvedBy        Int?
   resolvedByUser    User?        @relation("resolvedAppeals", fields: [resolvedBy], references: [id], onDelete: SetNull)
   resolvedMessage   String?
+  resolvedReason    String?
   internalNotes     String?
   buzzTransactionId String?
 
@@ -8257,6 +8324,8 @@ model UserRestriction {
   resolvedAt      DateTime?
   resolvedBy      Int?
   resolvedMessage String?
+  resolvedReason  String?
+  internalNotes   String?
   userMessage     String?
   userMessageAt   DateTime?
 
@@ -8269,6 +8338,8 @@ enum UserRestrictionStatus {
   Pending
   Upheld
   Overturned
+  // Not a ruling: closed by `deleteUser`, reopened to Pending by `restoreUser`.
+  AccountDeleted
 }
 
 // Moderator-curated allowlist for false-positive prompt triggers

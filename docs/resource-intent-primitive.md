@@ -1,8 +1,8 @@
 # Resource-intent primitive (Jev)
 
-**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. The candidate POOL is seeded by popularity alone and the labels act only through the re-rank on it; see [Label ordering](#label-ordering) for why. M3 (the gold-set study) grades stage-1 agreement AND carries a pre-registered two-arm retrieval comparison (the shipped matcher against its popularity seed alone); its registration v2 judged the previous, purpose-first seed NOT MET, and registration v3 (not yet run) grades the popularity seed — see [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison). M4/M5 are gated follow-ons — see [Rollout](#rollout).
+**Status:** **M1 + the M2 consume seam** — the primitive and its REST surface, dark behind `resourceIntentJev` (default-deny), with the shortlist now ordered against the `ResourceInsight` labels. Stage 3 is the screened R4c design and the suggestions are the HYBRID_10 list — see [Stage 3 and the hybrid list](#stage-3-and-the-hybrid-list-hybrid_10). The candidate POOL is seeded by popularity alone and the labels act only through the re-rank on it; see [Label ordering](#label-ordering) for why. M3 (the gold-set study) grades stage-1 agreement AND carries a pre-registered two-arm retrieval comparison (the shipped matcher against its popularity seed alone); its registration v2 judged the previous, purpose-first seed NOT MET, and registration v3 (not yet run) grades the popularity seed — see [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison). M4/M5 are gated follow-ons — see [Rollout](#rollout).
 
-A versioned, headless API primitive: **prompt → intent + criteria → civitai resource suggestions**. A prompt becomes a typed intent (what kinds of resources it wants, with full probability distributions), the intent compiles into a deterministic shortlist over the model search index, and a second judgment ranks the shortlist. `none` is a first-class answer at every stage — most prompts need no resource.
+A versioned, headless API primitive: **prompt → intent + criteria → civitai resource suggestions**. A prompt becomes a typed intent (what kinds of resources it wants, with full probability distributions), the intent compiles into a deterministic shortlist over the model search index, and a second judgment (two calls, averaged) picks the head of the list, which the popularity pool fills to the cap. `none` is a first-class answer at stage 1, where it returns no suggestions; stage 3's `none` is reported but never empties the list. Most prompts need no resource.
 
 The judgment model is [TypeSafe Jev](https://openrouter.ai) (`typesafe/jev-1.13`) via OpenRouter — a bounded-judgment vendor: Choice (full distribution over ≤255 options), Score (ordered rubric), Noul (P(yes)). It cannot generate prose, count, or compare dates, so everything structural stays in deterministic code.
 
@@ -14,15 +14,21 @@ Three consequences worth knowing before you read the rest of this document: `que
 
 ```
 POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
-  → [redis cache, key sha256(prompt|baseModel|browsingLevel|cap|specHash), TTL 1h]
+  → [redis cache, key sha256(prompt|baseModel|browsingLevel|cap|specHash|stage3SpecHash), TTL 1h]
   → Jev request #1: 6 questions, one round trip      (src/server/services/ai/jev.ts)
   → criteria (versioned object, criteriaVersion: 2)  (src/server/schema/resource-intent.schema.ts)
-  → matcher: Meilisearch models_v9 filtered, sorted by thumbs-up (one page)
+  → matcher: Meilisearch models_v9 filtered, sorted by thumbs-up (one page; a second
+      500-document page for basePool, every miss that reaches the matcher — see HYBRID_10)
       → version pool ≤ 2 x cap
       → ordered against ResourceInsight via `dbRead` (the Postgres read replica)
       → shortlist ≤ min(limit||50, 255) versions
-  → Jev request #2: one Choice over the shortlist, `none` fallback
-  → response {intent, criteria, suggestions[], model, criteriaVersion, insightFallback}
+      → basePool: its own 500-doc page, popularity order, 1 version per model,
+        ≤ 2 x cap models (max 255)
+  → Jev requests #2 and #3, in parallel: one Choice over the shortlist per option order
+      (popularity, reverse), described `none`, probabilities averaged
+  → HYBRID_10: stage 3's first 10 distinct models, basePool fills to the cap
+  → response {intent, criteria, suggestions[], noneProbability, model, criteriaVersion,
+              insightFallback}
   → shadow event → ClickHouse resourceIntentShadow   (graceful fallback to structured log)
 ```
 
@@ -32,7 +38,8 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 | `src/server/schema/resource-intent.schema.ts`            | Question spec v1, criteria schema, role→ModelType mapping, spec hash.                                                               |
 | `src/server/services/resource-intent.service.ts`         | Cache → stage 1 → criteria → matcher → stage 3 → hydration → shadow event. Plain async function; reusable without the REST surface. |
 | `src/server/services/resource-intent-stage1.ts`          | Stage 1 as pure functions (request, answer parse, criteria compile), shared by the service and the M3 study. Imports only the schema and a jev type, so a standalone script can load it. |
-| `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity-seeded pool + `ResourceInsight` ordering + hard cap.                                              |
+| `src/server/services/resource-intent-stage3.ts`          | Stage 3 (R4c question, option orders, averaging) and the HYBRID_10 merge as pure functions, plus `RESOURCE_INTENT_STAGE3_SPEC_HASH`. Light, like stage 1, so a study script can import it. |
+| `src/server/services/resource-intent-matcher.service.ts` | Deterministic gates + popularity-seeded pool + `ResourceInsight` ordering + hard cap, and the hybrid's one-version-per-model `basePool`. |
 | `src/pages/api/v1/blocks/resource-intent.ts`             | Block-token REST surface.                                                                                                           |
 | `scripts/label-resource-insights.ts`                     | The offline batch pass that WRITES `ResourceInsight`, and enqueues the labeled MODELS for reindex. Run manually; spends vendor budget on every invocation, dry run included. |
 | `scripts/eval-resource-intent-goldset.ts`                | M3 gold-set study runner. No-ops without `--execute`. Samples the gold and grades stage-1 agreement, then runs the retrieval comparison below. |
@@ -44,12 +51,12 @@ POST /api/v1/blocks/resource-intent {prompt, baseModel?, limit?}
 
 1. **Pin the model.** `typesafe/jev-1.13` (numbered). `jev-latest` never appears in code. ⚠️ **This rule used to read "the client sends `allowFallbacks: false`, so OpenRouter cannot route the call to a different model while we record ours", and that is RETRACTED** — it described the chat/completions transport, which could never have worked at all (see the transport note below). The decisions endpoint's only proven request shape is `{model, state, questions}`, and sending an unverified `provider` key to a strictly-validated alpha endpoint is how the original defect happened. The pin is now enforced on the **response** instead: the vendor reports the build that answered (`typesafe/jev-1.13-20260917` for the pinned `typesafe/jev-1.13`), `askJev` fails closed on anything that is not the pin or a dated build of it, and `JevResponse.model` carries that vendor-reported build rather than our constant. That observes what actually ran instead of requesting a routing promise.
 2. **Fail closed, fail empty.** Any Jev error/timeout/malformed response returns HTTP 200 with `degraded: true` and `suggestions: []`. Never a stack trace, never fabricated suggestions. 🔴 A **label**-read failure is deliberately NOT a degrade: on its own it produces a complete response with a real intent and real suggestions, flagged `insightFallback: true`, and `degraded` keeps meaning "the vendor path failed" so the invariants above (`suggestions: []`, `intent`/`criteria` `null`, `model: 'jev-unavailable'`) stay true of every degraded row. ⚠️ The two are not exclusive: a label read can fail and a LATER stage degrade anyway, giving `degraded: true` **with** `insightFallback: true` and no suggestions — so `insightFallback` is only interpretable when `degraded` is false. Both take a short cache TTL, for different reasons — see [Caching](#caching-rate-limits-flag).
-3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher. Hydration re-checks exactly TWO of them — `hasAccess` and the maturity ceiling. Coverage, baseModel and the celebrity exclusion are NOT re-checked there, and `canGenerate` is present on the hydrated resource and unread. ⚠️ **No principle separates the two re-checked gates from the three that are not.** An earlier draft of this line said the re-checked ones are "the ones whose indexed value can lag"; that is false — the source comment beside the check says the _coverage_ filter is a superset that can lag, and coverage is gated on indexed Meili fields exactly like the rest. So the honest statement is that a version whose coverage lapsed since the last index build can still be suggested. Treat that as an accepted gap with no stated justification, not as a designed boundary — and if you close it, `canGenerate` is already on the object. Jev output can only reorder/drop within the gate-passing set, never add — the stage-3 option list contains exactly the shortlisted keys plus `none`, so an unknown version is unrepresentable.
-4. **`none` is a first-class answer.** Stage-1 `role` includes `none`; stage 3 includes `none`. An argmax of `none` returns empty suggestions _without_ `degraded`.
-5. **Stable question IDs + spec hash.** `QUESTION_SPEC_VERSION` plus a sha256 over the question spec ride every response and shadow row; a question edit invalidates old analytics instead of blending with them. 🔴 **The spec term in the CACHE KEY is the hash, not the version** — the hash moves on any spec edit, the hand-maintained integer only moves when someone remembers, and until that was fixed a reworded prompt would have left pre-edit entries served for their full hour under the new spec _and_ stamped into the shadow table with the new hash, which is precisely the blend this rule exists to prevent.
+3. **Deterministic gates always win.** Availability (no Private), the token's `maxBrowsingLevel` maturity clamp (authoritative — no client maturity field is read), region restriction, canGenerate coverage, baseModel compatibility (caller-supplied, never Jev output), and the hard-coded `celebrity` tag exclusion are applied in the matcher. Hydration re-checks exactly TWO of them — `hasAccess` and the maturity ceiling. Coverage, baseModel and the celebrity exclusion are NOT re-checked there, and `canGenerate` is present on the hydrated resource and unread. ⚠️ **No principle separates the two re-checked gates from the three that are not.** An earlier draft of this line said the re-checked ones are "the ones whose indexed value can lag"; that is false — the source comment beside the check says the _coverage_ filter is a superset that can lag, and coverage is gated on indexed Meili fields exactly like the rest. So the honest statement is that a version whose coverage lapsed since the last index build can still be suggested. Treat that as an accepted gap with no stated justification, not as a designed boundary — and if you close it, `canGenerate` is already on the object. Jev output only orders the stage-3 head and never adds: its options are positional keys into the gate-passing shortlist (plus `none`), and the `basePool` fill passes the same gates, so an unknown version is unrepresentable.
+4. **`none` is a first-class answer at stage 1.** A stage-1 `role` argmax of `none` returns empty suggestions _without_ `degraded`. Stage 3 also offers a described `none`, but its averaged mass is only REPORTED (`noneProbability`, and the shadow's `stage3NoneProbability`) and never empties the list: the offline arm screen measured "stage-3 `none` argmax ⇒ empty" costing hit@10, and it was dropped.
+5. **Stable question IDs + spec hash.** `QUESTION_SPEC_VERSION` plus a sha256 over the question spec ride every response and shadow row; a question edit invalidates old analytics instead of blending with them. 🔴 **The spec term in the CACHE KEY is the hash, not the version** — the hash moves on any spec edit, the hand-maintained integer only moves when someone remembers, and until that was fixed a reworded prompt would have left pre-edit entries served for their full hour under the new spec _and_ stamped into the shadow table with the new hash, which is precisely the blend this rule exists to prevent. Stage 3 has its own hash, `RESOURCE_INTENT_STAGE3_SPEC_HASH`, in the cache key and the shadow row (`stage3SpecHash`). It hashes what the stage-3 functions RENDER on a fixed fixture — the question and criteria, `none`, the state keys, the averaging and tie-break, the merge — so an edit to any of them moves it without a hand-kept list to update.
 6. **Reject unknown answer keys.** Every response parse rejects keys outside the question set, distributions must sum to ~1 (±0.02) over the offered options, scores/nouls must be in range. Confidence is never a permission slip: no resource is admitted or refused on one. A label row's `confidence` does gate whether that row is read for ORDERING — against `RESOURCE_INSIGHT_MIN_PROMOTE_CONFIDENCE` on the promote side and `RESOURCE_INSIGHT_MIN_DEMOTE_CONFIDENCE` on the demote side, **two constants holding the same value today** — and a row below the floor for its direction is treated as if the version were unlabeled. The precise claim is that **no deterministic gate is applied or relaxed on a confidence**: no filter, drop or maturity decision reads it. It is NOT the weaker-sounding "changes rank and nothing else", because the shortlist is a fixed-width page cut out of a wider pool, so rank decides admission to the response.
 7. **Adversarial state.** The prompt is user text. The `injectionPresent` Noul is asked and logged; deterministic rules own every consequence. Jev's judgment never feeds back into state.
-8. **No invariants across calls.** Full distributions are logged; nothing probabilistic is combined in code.
+8. **No invariants across calls.** Full distributions are logged. The one probabilistic combination in code is stage 3's mean over its two option orders, which is what was screened.
 
 ## Question spec v1
 
@@ -64,13 +71,24 @@ All six in one request; state is ONLY the prompt (+ optional baseModel string):
 | `specificity`      | score  | 1–5, scored against the 5-point `criteria` rubric in the schema file (quoted nowhere here, so a reword cannot leave a stale copy), `integer: true` |
 | `injectionPresent` | noul   | P(prompt contains instructions aimed at an AI system)                                                                                              |
 
-The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. ⚠️ **None of them are given to stage 3** — that sentence used to say they were and it is false: stage 3's `state` is `{ prompt }` alone and `buildStage3Question`'s text carries only the shortlist. The code sends _less_ user-derived context than this doc claimed, which is benign in direction but misleading to the next fixer. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and whether any mapping earns its false-exclusions is for a future study — neither part of M3 tests a filter mapping.
+The role compiles to a ModelType filter (`ROLE_MODEL_TYPES` in the schema file — exhaustive, `none` → no matcher run, unknown → no filter). `role` and `styleFamily` are carried in criteria and are the two axes the label ordering compares against; `contentType`/`specificity` are recorded on the shadow event only. Stage 3's `state` is `{ prompt, role, styleFamily }`; `contentType` and `specificity` are not given to it. They also do not yet filter the search — the search index carries no normalized style attribute to filter on (a style taxonomy does exist, in `ResourceInsight`, and the label ordering reads it), and whether any mapping earns its false-exclusions is for a future study — neither part of M3 tests a filter mapping.
+
+## Stage 3 and the hybrid list (HYBRID_10)
+
+This is the design the offline arm screen measured, ported as-is; the measurement itself lives with the study, not here.
+
+- **Question (R4c).** One Choice over the shortlist with positional keys and each candidate's `modelName — versionName (type, baseModel)` in the wire `criteria`, not in the instructions; `none` carries its own description. `state = {prompt, role, styleFamily}`.
+- **Two option orders, averaged.** The shortlist is sent once in popularity order (its position in the seed pool) and once in the exact reverse, as two parallel calls under the usual per-call timeout. Each candidate's probability is the mean over the two; ties go to the shortlist (re-rank) order. Either call failing degrades the WHOLE response (`degraded: true`, no suggestions), as any Jev failure does, and nothing is retried. The screen differs here: it retried each stage-3 call up to 3 times, so its measured lists never include a degrade; production's no-retry, fail-closed contract is kept.
+- **Hybrid list.** The head is stage 3's first 10 distinct MODELS (a later version of a placed model is skipped); then the matcher's `basePool` — popularity order, the first gate-passing version of each model — fills to the cap, skipping placed models. A shortlist with fewer than 10 models is taken whole; an empty shortlist returns `basePool`'s top `cap`. The matcher builds `basePool` exactly as the screen built its BASE pool: its own 500-document page under the seed's filter and sort, reduced to one version per model, the first `2 × cap` models (capped at 255) in popularity order. It runs alongside the label read.
+- **Cost.** Stage 3 is now **2 vendor calls per uncached request** (3 with stage 1). The screen's vendor-reported cost was about **$0.00011 per stage-3 call** over a 50-option shortlist, so about **$0.00022 per uncached request for stage 3**, plus about $0.000045 for stage 1. Cache hits cost nothing. A longer shortlist (a larger `limit`) costs more per call. Every uncached request that reaches the matcher also makes **one more Meilisearch query**, the 500-document `basePool` page, in parallel with the label read; it returns whole model documents, so its payload is the largest in the request.
+- **Shadow.** `stage3SpecHash`, `stage1NoneProbability` and `stage3NoneProbability` (split, because `noneProbability` holds stage 3's value when it ran and stage 1's otherwise; `stage3NoneProbability` is NULL on a cache hit, since it is not cached) need `src/server/clickhouse/migrations/2026-10-08-resource-intent-shadow-stage3.sql`, applied by hand before the flag is opened anywhere.
+- **Response.** Unchanged in shape. `noneProbability` keeps its meaning (stage 3's averaged value when it ran, else stage 1's). The cache key does move (stage-3 hash), so a deploy starts cold.
 
 ## Caching, rate limits, flag
 
 - **Cache:** full responses under `packed:caches:jev-resource-intent:v1:<sha256>`, TTL 1h. Degraded responses cache for 60s only — a transient vendor failure must not pin an empty result to a prompt for an hour. **A label-read fallback (`insightFallback: true`) takes 60s too**, via its *own* constant `INSIGHT_FALLBACK_CACHE_TTL_SECONDS`: an unordered response must not be pinned for an hour while the analogous vendor failure gets a minute. The flag rides inside the cached blob, so a replay reports what the computation did rather than a fresh `false`.
-- 🔴 **The two short TTLs are separate constants at the same value, because their RETRY COSTS are not alike** and a TTL buys retry cost, not response quality. The label read sits *between* the two Jev round trips, so a fallback miss has already paid stage 1 and goes on to pay stage 3 in full — two billed vendor calls plus the search query and hydration — where the dominant degraded case (stage-1 Jev throwing) costs one abandoned call and nothing downstream. The benefit inverts as well: a degraded response is useless so a fast retry is worth paying for, while a fallback response is fully usable and merely unranked. **Consequence to weigh before opening the flag:** against a *recurring* fault a repeated prompt re-runs the whole pipeline up to 60× per hour instead of once, and one trigger is not transient at all — an unapplied `ResourceInsight` migration is one of M2's operational preconditions and is the default state of a fresh environment. Two things that would make this measurable rather than reasoned do not exist yet: no shadow column or metric for the state (only a fire-and-forget log), and no single-flight around the cache's compute. The value is deliberately left at 60s and un-jittered — those are judgments for whoever opens the flag.
-- **Rate limit:** per-`blockInstanceId` LLM bucket (`:llm:` sub-namespace, 30 req/60s, fail-open) — a request is up to two vendor round trips, so it does not share the catalog bucket.
+- 🔴 **The two short TTLs are separate constants at the same value, because their RETRY COSTS are not alike** and a TTL buys retry cost, not response quality. The label read sits *between* stage 1 and stage 3, so a fallback miss has already paid stage 1 and goes on to pay stage 3 in full — three billed vendor calls plus two search queries (the seed page and the 500-document `basePool` page) and hydration — where the dominant degraded case (stage-1 Jev throwing) costs one abandoned call and nothing downstream. The benefit inverts as well: a degraded response is useless so a fast retry is worth paying for, while a fallback response is fully usable and merely unranked. **Consequence to weigh before opening the flag:** against a *recurring* fault a repeated prompt re-runs the whole pipeline up to 60× per hour instead of once, and one trigger is not transient at all — an unapplied `ResourceInsight` migration is one of M2's operational preconditions and is the default state of a fresh environment. Two things that would make this measurable rather than reasoned do not exist yet: no shadow column or metric for the state (only a fire-and-forget log), and no single-flight around the cache's compute. The value is deliberately left at 60s and un-jittered — those are judgments for whoever opens the flag.
+- **Rate limit:** per-`blockInstanceId` LLM bucket (`:llm:` sub-namespace, 30 req/60s, fail-open) — a request is up to three vendor calls, so it does not share the catalog bucket.
 - **Flag:** `resourceIntentJev` in `feature-flags.service.ts` (`availability: []`, fliptKey `resource-intent-jev`). Flipt owns the decision; an unknown flag or unreachable Flipt denies. The flag is checked **before** the cache read — a dark endpoint never reads and never spends. The Flipt flag definition itself is a separate flipt-state change and must ship default-OFF.
 
 ## Label ordering
@@ -212,7 +230,7 @@ measured against the database. The distinct-model count is the number that
 decides the real cost, and a corpus run should derive it first.
 
 The pool is wider than the response — `min(cap × 2, 255)` — so the ordering can
-promote a candidate the seed placed outside the response rather than only
+promote a candidate the seed placed outside the shortlist rather than only
 reshuffling the visible page. 🔴 Read that bound literally: the widening shrinks
 from `cap = 128` and is **1× at the maximum accepted `limit` of 255**, where the
 ordering really can only reshuffle the visible page. It is the default cap of 50
@@ -279,8 +297,11 @@ than the cap the ordering decides *which* resources are suggested, not only thei
 order — a promotion into a fixed-width page is an eviction out of it, and what gets
 evicted may be an unlabeled candidate. The SEED excludes too, by popularity: a labeled
 match less popular than the pool's last member never reaches the ordering. What is
-bounded is the WIDTH: one page of at most `poolCap` documents, one round trip under
-`MEILI_RESOURCE_SELECT_TIMEOUT_MS`.
+bounded is the WIDTH: one seed page of at most `poolCap` documents, plus one
+`RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT` page for `basePool`, each under
+`MEILI_RESOURCE_SELECT_TIMEOUT_MS`. ⚠️ Since HYBRID_10 the ordering reaches the response
+only through stage 3's head (≤ 10 models, ties broken in re-rank order); the fill past
+it is `basePool`, in popularity order, which no label touches.
 
 Four details that are decisions, not oversights.
 
@@ -397,7 +418,10 @@ run", never "did it change the answer".
 
 🔴 And a count of actionable rows is still not a reorder signal: at the default cap
 half the pool sits outside the response, so demoting a candidate the seed had already
-placed there moves nothing the caller sees while counting as actionable. A class
+placed there moves nothing the caller sees while counting as actionable. (Since
+HYBRID_10 the returned list is not the shortlist: positions past stage 3's head come from
+`basePool`, which the labels never touch, so clause (i) below has to be read against the
+stage-3 head, the only part the ordering can reach.) A class
 defined that way dilutes the treatment arm with responses identical to the control
 and biases the measured effect toward zero — the same failure one step further in.
 
@@ -467,8 +491,8 @@ v3 asks a new question of the popularity-seed matcher, in brief:
   (ii) superiority on MRR@50 — an exact two-sided sign test over prompts whose reciprocal
   rank differs, holds iff up > down AND p < 0.05. Otherwise **NOT MET**.
 - **VOID** takes precedence: a registered value was overridden (the pilot included),
-  fewer than 667 prompts scored, infrastructure exclusions above 10% of drawn prompts, or
-  the positive control fails.
+  fewer than 1334 prompts scored (2000 drawn × 66.7%), infrastructure exclusions above 10%
+  of drawn prompts, or the positive control fails.
 - **Positive control** — on what PURPOSE actually reads: VOID if fewer than 10% of scored
   prompts had at least one pool version the re-rank promotes (a `ResourceInsight` label at
   or above the promote floor agreeing on role or style family). The matcher reports that
@@ -478,20 +502,34 @@ v3 asks a new question of the popularity-seed matcher, in brief:
   prompt's top 10; the arms now differ only by the re-rank, so identical heads are expected
   on most prompts (as a proxy: reciprocal ranks @50 tied on 220 of the offline replay's 254
   prompts), and the count is printed without deciding anything.
-- **Power** comes from planning assumptions taken from the same best-of-18 offline
-  254-prompt replay that selected this design, so they are optimistic (hit@10 discordance
-  13 of 254; MRR non-ties 13.4%, 68% favouring PURPOSE), at a planning n of 822 scored —
-  the v2 registered run's scored count: ≈ 0.81 for (i), ≈ 0.97 for (ii). At the 667
-  scored floor, power for (i) is ≈ 0.74. The text derives all three from the constants.
+- **Power** comes from the 100-prompt pilot's nuisance rates — 80 of 100 drawn scored,
+  hit@10 discordance 8 of 80 (10.0%), MRR non-ties 22 of 80 (27.5%) — at a planning n of
+  1600 scored (2000 drawn × 80%): ≈ 0.81 for (i), ≈ 1.00 for (ii). At the 1334 scored
+  floor, power for (i) is ≈ 0.75. Those figures for (i) hold only at the pilot's point
+  estimate of 8/80. The exact (Clopper-Pearson) 95% interval for that discordance is
+  4.4%–18.8%, and across it power for (i) runs from ≈ 0.98 down to ≈ 0.58 at 1600 scored,
+  and from ≈ 0.97 down to ≈ 0.52 at the floor. The text computes the interval from the pilot
+  counts. The one effect-size input, 68% of MRR non-ties
+  favouring PURPOSE, is still the planning value from the best-of-18 offline 254-prompt
+  replay that selected this design, so it is optimistic; the pilot's effect estimate was
+  not used. The text derives all of these from the constants.
+- **Re-planned once, 2026-10-07, before any registered run.** The registration as first
+  committed planned 1000 drawn (667 scored floor, planning n 822, discordance 13 of 254 =
+  5.1%, non-ties 13.4%). The pilot measured 80.0% scored, 10.0% discordance and 27.5%
+  non-ties; at those point estimates 1000 drawn scores ~800 and power for (i) falls to ≈ 0.56. Under
+  the registration's own pilot rule the sample was re-planned to 2000 drawn from those
+  nuisance rates alone; the registration text carries the dated record.
 
 The labeled/unlabeled breakdown is reported but never decisive.
 
-**Run the pilot first.** Before the registered run, run
-`--execute --retrieval-sample 100` — no new flags; the override stamps the report as not
-the registered run, so its verdict is VOID by construction. Its report prints the scored
-fraction, the hit@10 discordant rate and the MRR non-tie rate against the planning values,
-and only a pilot below them prints the re-plan banner. Re-plan, if needed, only in a new
-commit dated before the registered run, and say why in it.
+**The pilot has run.** The pilot is `--execute --retrieval-sample 100` — no new flags;
+the override stamps the report as not the registered run, so its verdict is VOID by
+construction. Its report prints the scored fraction, the hit@10 discordant rate and the
+MRR non-tie rate against the planning values, and only a pilot below them prints the
+re-plan banner. The rule is to re-plan only in a new commit dated before the registered
+run, and say why in it. v3's pilot ran, and its nuisance rates became the planning
+values in the one 2026-10-07 re-plan above. A report now compares against those
+re-planned values, so the registered run is what comes next.
 
 **Coverage must resolve as the endpoint's does, or the run does not happen.** Both arms
 filter on generation coverage from `coverageAudience(undefined)`, which reads Flipt through
@@ -524,7 +562,7 @@ confound the pre-registration states.
 - **M2:** `ResourceInsight` + the labeling script, then the matcher ordering that reads them. Code done. 🔴 **Two OPERATIONAL preconditions are not, and neither is automatic:** `packages/civitai-db-schema/prisma/migrations/20260929170000_resource_insights/migration.sql` is applied by hand per environment, and `scripts/label-resource-insights.ts` must have been run there. Until both hold in a given environment the ordering is wired but has nothing to read, which is a data state, not a code state — and the two are distinguishable from outside: an unapplied migration makes the read FAIL, so the matcher logs `resource-intent-insight-read-failed`, sets `insightFallback: true` and the response caches for 60s; an unrun labelling pass makes the read SUCCEED and return nothing, which is `insightFallback: false` on the full-hour TTL and silently preserves the seed order. An environment stuck on the second therefore looks healthy, by design. **The index projection** — `insight.qualityScore`, `insight.role` and `insight.styleFamily` are projected by the models index; the score is in `modelsSortableAttributes` and all three in `modelsFilterableAttributes`. The matcher no longer reads any of them (its seed is popularity alone), so an index lacking those settings does not affect it, and nothing else reads them either; they are left in place.
 - **M3:** the gold-set study — stage-1 agreement, plus the pre-registered two-arm retrieval comparison that grades the resource-meaning layer's last closing clause, quoted in that section. Registration v2 judged the previous, purpose-first seed NOT MET; registration v3 grades the popularity seed and has not been run. Run it only once the seed it grades serves from a `release` build; the decision rule is fixed in [The M3 study](#the-m3-study-a-pre-registered-retrieval-comparison).
 - **M4 (suggestions UI)** — NOT implemented. Closing condition: M1 merged + shadow volume ≥1k/day for 7 days + p95 end-to-end ≤2s.
-  🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying two vendor round trips plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.
+  🔴 **The p95 half of that condition moves under a label-read fault, and no shadow column records why.** In an environment where the `ResourceInsight` migration is unapplied — which this doc elsewhere calls the default state of a fresh environment — a label read that is *issued* fails, so those responses take the 60s fallback TTL instead of the 1h success TTL, and per-key recomputes rise to **up to** 60/hour, each paying three vendor calls plus search plus hydration. Because `writeShadowEvent` fires on cache hits too, the shadow population's miss share rises and its `latencyMs` p95 rises with it. **Do not read a p95 regression as an M4 failure without first checking that the label read is succeeding in that environment**; the shadow table cannot distinguish the two.
   ⚠️ **The volume half is NOT affected, and the clause above is the reason:** the shadow write is unconditional, so rows/day tracks calls/day and is invariant to the miss rate. A volume reading stays trustworthy under this fault — do not discount it.
   ⚠️ **And the 60s signature is absent for two response classes, so its absence does not prove the migration is applied.** A `role: 'none'` answer short-circuits before the matcher runs, and an empty pool skips the label read entirely (it returns before touching the database — this branch's own test pins that as "NOT a fallback: the read did not fail, it never happened"). Both keep the 1h TTL with `insightFallback: false`. A fresh environment is at least as likely to have an unseeded search index as an unapplied migration; the matcher no longer reads the index's `insight.*` fields, so an unseeded index changes nothing here and every response keeps the hour.
 - **M5 (auto-attach)** — NOT implemented, and never before BOTH: the threshold study shows per-slice precision ≥0.9 at the chosen operating point AND ≥2 weeks of live shadow agreement ≥80%.
@@ -535,8 +573,10 @@ Unit suites (fixture-based, no external calls):
 
 - `src/server/services/ai/__tests__/jev.test.ts` — fail-closed parsing, model pin, timeout.
 - `src/server/services/__tests__/resource-intent-matcher.service.test.ts` — gates, determinism, cap, the label ordering, its two confidence floors, and the label-read fallback it reports.
-- `src/server/services/__tests__/resource-intent-matcher.seed.test.ts` — the popularity-only seed (one page, no role filter, no quality key) against an in-memory index, including that role matches which would fill the pool do not evict the popular models, and that the re-rank still reorders the pool.
-- `src/server/services/__tests__/resource-intent.service.test.ts` — cache, degradation, stage flow, the fallback's cache TTL.
+- `src/server/services/__tests__/resource-intent-matcher.seed.test.ts` — the popularity-only seed (one seed page plus `basePool`'s 500-document page, both under the gate filter and popularity sort, no role filter, no quality key) against an in-memory index, including that role matches which would fill the pool do not evict the popular models, and that the re-rank still reorders the pool.
+- `src/server/services/__tests__/resource-intent.service.test.ts` — cache (including the stage-3 spec hash in the key), degradation, stage flow (two stage-3 calls, `none` keeping the list, the HYBRID_10 head and fill), the fallback's cache TTL.
+- `src/server/services/__tests__/resource-intent-stage3.test.ts` — the R4c question and state, the two option orders, averaging and tie-break, the HYBRID_10 merge, and the pinned `RESOURCE_INTENT_STAGE3_SPEC_HASH`.
+- `src/server/services/__tests__/resource-intent-hybrid.seam.test.ts` — the service, the real matcher (seed, label re-rank, `basePool`) and the real Jev wire parse together, checked against a verbatim copy of the offline screen's functions on synthetic rows.
 - `src/server/services/__tests__/resource-intent-insight-rerank.test.ts` — the service and the REAL matcher together: a label changes the order of a served response, and a label-read failure takes the 60s TTL rather than the hour. The two suites above each mock the other side, so neither can see either of those.
 - `src/server/__tests__/blocks/resource-intent.endpoint.test.ts` — auth/clamp mirror, deny-before-spend.
 - `scripts/__tests__/eval-resource-intent-goldset.tsx-smoke.test.ts` — spawns the gold-set script under `tsx` (the real entry point) and checks, from a module-load trace, that the dry run loads neither the database nor the search client (on any host), and that it prints its queries and the pre-registration and exits 0 with every `PRISMA_*` variable removed. The in-process suites cannot see a load-time import cycle; this can.

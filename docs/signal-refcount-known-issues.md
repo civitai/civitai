@@ -6,9 +6,10 @@ Post-implementation notes on the refcount + retry change in [SignalsProvider.tsx
 
 - `SignalProvider` owns a `Map<topic, refCount>` + a `Map<topic, notify>` + a `Map<topic, retryState>` + a `Map<topic, lastConfirmedAt>`.
 - `registerTopic` / `releaseTopic` replace direct `worker.topicRegister` / `worker.topicUnsubscribe` calls from `useSignalTopic`.
-- **Reconnect-driven re-registration**: the provider watches connection state and re-registers every active topic on each `'connected'` transition (initial connect, reconnect, or worker identity change).
-- **50s keep-alive interval**: the hub drops each registration 60s after the last `subscribe` call, so a single provider-level `setInterval` refreshes every active topic at 50s. One timer for all topics; skips while disconnected.
-- **Retry on hub-side failures**: the worker now emits a `topic:status` message after every `topicInvoke`. The provider listens; on `ok: false` (except `no-connection`), it schedules an exponential-backoff retry (up to 4 attempts, capped at 30s). Successful registers clear the retry; `no-connection` failures are left to the reconnect effect.
+- **The worker keeps each tab's topics** (per `MessagePort`). It re-subscribes every wanted topic on each `'connected'` transition, and only unsubscribes a topic when no tab wants it. The provider re-sends its topics only when its worker port changes.
+- **Stale tabs**: tabs heartbeat every 30s; the worker drops the topics of a port silent for 3 minutes (a crashed or discarded tab never sends `beforeunload`) and sends `port:reset` if that tab wakes, so it re-registers. Keep-alive skips topics whose previous subscribe is still awaiting the hub, and a `timeout` failure is not retried by the provider.
+- **50s keep-alive interval in the worker**: the hub drops each registration 60s after the last `subscribe` call, so the worker refreshes every wanted topic at 50s. It lives in the worker because hidden tabs throttle timers to about once a minute, which overshot the TTL when it ran in the provider.
+- **Retry on hub-side failures**: the worker now emits a `topic:status` message after every `topicInvoke`. The provider listens; on `ok: false` (except `no-connection`), it schedules an exponential-backoff retry (up to 4 attempts, capped at 30s). Successful registers clear the retry; `no-connection` failures are covered by the worker's re-subscribe on reconnect.
 - Fixes the silent stale-data window when one of several duplicate subscribers unmounts.
 
 ---
@@ -17,7 +18,7 @@ Post-implementation notes on the refcount + retry change in [SignalsProvider.tsx
 
 ### [x] 1. Keep-alive captures the first subscriber's `notify` value — RESOLVED
 
-The provider now maintains `topicNotify: Map<topic, boolean | undefined>` and uses last-write-wins: every `registerTopic` call overwrites the stored value, and the reconnect + retry paths read from the map. A subscriber passing `notify=false` after one passing `notify=true` will flip the re-registered value correctly.
+The provider now maintains `topicNotify: Map<topic, boolean | undefined>` and uses last-write-wins: every `registerTopic` call overwrites the stored value, and the worker-change and retry paths read from the map. A subscriber passing `notify=false` after one passing `notify=true` will flip the re-registered value correctly.
 
 ---
 
@@ -29,7 +30,7 @@ The provider now maintains `topicNotify: Map<topic, boolean | undefined>` and us
 
 **Concrete impact**: On a card-heavy page or during a burst of mounts, the wire sees duplicate register messages. Not broken, just wasteful. The hub also emits a `topic:status` event per register call, so the duplicate register messages produce duplicate status messages back.
 
-**Fix (when needed)**: move the `worker.topicRegister` call inside the `if (count === 0)` branch of `registerTopic`. The reconnect effect handles resilience against the hub losing state. Skipped today because the behavior mirrors the previous (non-refcounted) code and avoids surprise.
+**Fix (when needed)**: move the `worker.topicRegister` call inside the `if (count === 0)` branch of `registerTopic`. The worker's re-subscribe and keep-alive handle resilience against the hub losing state. Skipped today because the behavior mirrors the previous (non-refcounted) code and avoids surprise.
 
 ---
 
@@ -47,7 +48,7 @@ There are no longer any periodic timers to leak. The only per-topic timer state 
 
 **Concrete impact**: For a feed with 50 mounted cards at the moment the worker connects, all 50 cleanups and 50 setups fire in the same commit. Net state is correct (refcounts settle back to their pre-transition values) but there's a brief moment during cleanup where refcount hits 0 before setup takes it back up. Nothing currently observes the refcount transitions, so this is benign — just surprising during debugging.
 
-Note: the reconnect effect ALSO fires on worker change, re-registering every topic. With this churn, a fresh-worker topic can receive 2+ register messages in the same tick (one from the cleanup/setup, one from the reconnect effect). Idempotent at the hub but stacks with item 2.
+Note: the provider's worker-change effect ALSO re-registers every topic. With this churn, a fresh-worker topic can receive 2+ register messages in the same tick (one from the cleanup/setup, one from that effect). Idempotent at the hub but stacks with item 2.
 
 **Fix (when needed)**: access `worker` via a ref instead of closure, so the callbacks stay identity-stable across worker transitions. Bigger change than it sounds because the worker-change handler then needs to reconcile existing subscriptions with the new worker explicitly.
 
@@ -81,7 +82,7 @@ Note: the reconnect effect ALSO fires on worker change, re-registering every top
 
 **Confirmed**: the SignalR hub drops each topic registration 60 seconds after the last `subscribe` call. Reconnect-driven re-registration alone is insufficient on long-lived sessions where the connection stays up but registrations age out.
 
-**Mitigation**: a single provider-level `setInterval` runs at `KEEP_ALIVE_INTERVAL_MS = 50_000` (10s margin under the 60s TTL) and iterates `topicRefs.current`, calling `worker.topicRegister(topic, notify)` for each active topic. The interval skips when `status !== 'connected'` — the reconnect effect picks up the slack on the next `'connected'` transition.
+**Mitigation**: the worker runs one `setInterval` at `TOPIC_KEEP_ALIVE_INTERVAL = 50_000` (10s margin under the 60s TTL) and re-subscribes every topic any tab wants. It skips while not connected; the worker re-subscribes everything on the next `'connected'` transition. It first ran in the provider, where a hidden tab's throttled timer could fire more than 60s apart.
 
 **Trade-off vs. the old design**: the old code had one `useInterval(60_000)` per subscribed card (`MetricSubscriptionProviderInner` + each direct `useSignalTopic`). On a 200-card feed that was 200 timers and 200 register calls per minute. Now: 1 timer total and one register call per *active topic* per minute (post-refcount, identical topics share a single registration). Wire traffic is bounded by topic count, not subscriber count.
 
@@ -119,9 +120,9 @@ The hub is expected to tolerate duplicate registers. Each `topic:status` event n
 
 ## Alternatives considered
 
-- **Refcounting in the worker**: moves the logic into the web-worker side. Rejected — harder to test, and the current `SignalProvider` already owns the related `registeredTopics` state.
+- **Refcounting in the worker**: moves the logic into the web-worker side. Rejected — harder to test, and the current `SignalProvider` already owns the related `registeredTopics` state. The worker does track which topics each tab wants (one set per port, for keep-alive and cross-tab unsubscribe), but per-component refcounts stay in the provider.
 - **Callback-based `useSignalTopic(topic, cb)`**: unify with `useSignalConnection`'s pattern. Cleaner architecturally but a big refactor (provider needs to route topic-scoped messages, every existing caller migrates). Not done today. Tracked in conversation, not as a concrete concern.
-- **Per-card keep-alive timers**: the pre-existing approach (one `useInterval(60_000)` per `useSignalTopic` consumer). Replaced by a single provider-level 50s interval that iterates all active topics. Reconnect-driven re-registration handles connection-state transitions on top of that.
+- **Per-card keep-alive timers**: the pre-existing approach (one `useInterval(60_000)` per `useSignalTopic` consumer). Replaced by a single 50s interval in the worker that re-subscribes all wanted topics, plus a worker-side re-subscribe on every reconnect.
 
 ---
 

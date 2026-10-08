@@ -19,6 +19,7 @@ type DetectorParams = {
   modelDownloads: Record<string, never>;
   userMetric: { metric: (typeof USER_METRICS)[number] };
   shopRevenue: Record<string, never>;
+  judgeVotes: Record<string, never>;
 };
 
 export type MilestoneDetector = keyof DetectorParams;
@@ -36,6 +37,7 @@ export type MilestoneRegistryEntry = {
 const SCORE_TIERS_LAUNCHED_AT = new Date('2026-10-06T00:00:00Z');
 const ACTIVITY_LAUNCHED_AT = new Date('2026-10-07T00:00:00Z');
 const SHOP_LAUNCHED_AT = new Date('2026-10-08T00:00:00Z');
+const JUDGE_LAUNCHED_AT = new Date('2026-10-09T00:00:00Z');
 
 const scoreTier = (): MilestoneRegistryEntry => ({
   detector: 'scoreSnapshot',
@@ -69,6 +71,12 @@ const shopRevenue = (): MilestoneRegistryEntry => ({
   launchedAt: SHOP_LAUNCHED_AT,
 });
 
+const judgeVotes = (): MilestoneRegistryEntry => ({
+  detector: 'judgeVotes',
+  params: {},
+  launchedAt: JUDGE_LAUNCHED_AT,
+});
+
 export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = {
   ...Object.fromEntries(SCORE_TIERS.map((tier) => [scoreTierKey(tier.slug), scoreTier()])),
 
@@ -97,6 +105,12 @@ export const creatorMilestoneRegistry: Record<string, MilestoneRegistryEntry> = 
   'earn:shop-sales-500000': shopRevenue(),
   'earn:shop-sales-1000000': shopRevenue(),
   'earn:shop-sales-2000000': shopRevenue(),
+
+  'community:crucible-votes-500': judgeVotes(),
+  'community:crucible-votes-1000': judgeVotes(),
+  'community:crucible-votes-5000': judgeVotes(),
+  'community:crucible-votes-10000': judgeVotes(),
+  'community:crucible-votes-25000': judgeVotes(),
 };
 
 export type ActivityMeasure =
@@ -105,7 +119,8 @@ export type ActivityMeasure =
   | 'downloads'
   | 'followers'
   | 'reactions'
-  | 'revenue';
+  | 'revenue'
+  | 'votes';
 
 export const publishedEntityMeasures = {
   model: 'models',
@@ -130,6 +145,8 @@ export function activityMeasureOf(entry: MilestoneRegistryEntry): ActivityMeasur
       return userMetricMeasures[entry.params.metric];
     case 'shopRevenue':
       return 'revenue';
+    case 'judgeVotes':
+      return 'votes';
   }
 }
 

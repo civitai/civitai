@@ -44,6 +44,7 @@ export const qwenVersionIds = {
 export const viduVersionIds = {
   q1: 2623839,
   q3: 2741273,
+  q4: 3392572,
 } as const;
 
 export const happyHorseVersionIds = {

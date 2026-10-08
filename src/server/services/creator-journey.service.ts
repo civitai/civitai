@@ -1,4 +1,6 @@
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import type { FirstPublishCardInput } from '~/server/schema/creator-journey.schema';
 import { FIRST_PUBLISH_CARD_DAYS } from '~/shared/constants/creator-journey.constants';
 import { ArticleStatus, ModelStatus } from '~/shared/utils/prisma/enums';
@@ -15,7 +17,10 @@ import {
   activityMeasureOf,
   creatorMilestoneRegistry,
 } from '~/server/services/creator-milestone-registry';
-import { activityValuesSql } from '~/server/services/creator-milestone-detectors';
+import {
+  activityValuesSql,
+  judgeVoteCountSql,
+} from '~/server/services/creator-milestone-detectors';
 import type { ShowcaseSource } from '~/server/services/creator-showcase.service';
 import {
   getVisibleShowcaseRows,
@@ -107,9 +112,48 @@ const activityMeasures = new Map(
 
 export type ActivityValues = Record<ActivityMeasure, number>;
 
+type PostgresActivityValues = Omit<ActivityValues, 'votes'>;
+
+const JUDGE_VOTES_TIMEOUT_SECONDS = 5;
+
+async function getJudgeVotes(userId: number) {
+  if (!clickhouse) return 0;
+  // The shared client waits minutes for a stalled connection; the page should not.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), (JUDGE_VOTES_TIMEOUT_SECONDS + 1) * 1000);
+  try {
+    const response = await clickhouse.query({
+      query: judgeVoteCountSql,
+      query_params: { userId },
+      format: 'JSONEachRow',
+      abort_signal: controller.signal,
+      clickhouse_settings: { max_execution_time: JUDGE_VOTES_TIMEOUT_SECONDS },
+    });
+    const [row] = (await response.json()) as { votes?: unknown }[];
+    const votes = Number(row?.votes ?? 0);
+    return Number.isSafeInteger(votes) ? Math.min(votes, 2147483647) : 0;
+  } catch (e) {
+    // The page still loads; the vote ladder reads as no votes until ClickHouse answers.
+    logToAxiom({
+      type: 'error',
+      name: 'creator-journey-judge-votes',
+      message: e instanceof Error ? e.message : String(e),
+    });
+    return 0;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function getActivityValues(userId: number): Promise<ActivityValues> {
-  const [row] = await dbRead.$queryRawUnsafe<ActivityValues[]>(activityValuesSql, userId);
-  return row ?? { models: 0, articles: 0, downloads: 0, followers: 0, reactions: 0, revenue: 0 };
+  const [[row], votes] = await Promise.all([
+    dbRead.$queryRawUnsafe<PostgresActivityValues[]>(activityValuesSql, userId),
+    getJudgeVotes(userId),
+  ]);
+  return {
+    ...(row ?? { models: 0, articles: 0, downloads: 0, followers: 0, reactions: 0, revenue: 0 }),
+    votes,
+  };
 }
 
 /**

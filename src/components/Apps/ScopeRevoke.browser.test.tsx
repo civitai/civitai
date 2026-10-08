@@ -1018,6 +1018,10 @@ describe('the exempt-note fragments are a usable discriminator', () => {
     // invisible HERE — but not unguarded: the note map's keys are pinned against the server's exempt
     // set in `components/Apps/__tests__/scopeConsentRows.test.ts`.
     'goods:read:self',
+    // Listed for the same reason as `goods:read:self`: fragmenting it would mean a fifth exempt row
+    // in the fixture. Coverage here is now 4 of 9; the key set is still pinned against the server's
+    // exempt list in `scopeConsentRows.test.ts`.
+    'apps:store:items:write',
   ];
 
   test('🔴 every FIXED_SCOPE_NOTES key is either fragmented or knowingly listed as not', () => {

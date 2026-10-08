@@ -1,6 +1,7 @@
 import {
   cancelCrucibleHandler,
   removeCrucibleEntryHandler,
+  withdrawCrucibleEntryHandler,
   updateCrucibleHandler,
   checkEntryEligibilityHandler,
   getCreateEligibilityHandler,
@@ -18,6 +19,7 @@ import {
   getMinVotesToPlaceHandler,
   getRequiredModelsHandler,
   getJudgingProgressHandler,
+  getJudgingStatusesHandler,
   getUserActiveCruciblesHandler,
   getUserCrucibleStatsHandler,
   submitEntryHandler,
@@ -30,11 +32,13 @@ import {
   getCrucibleEntriesSchema,
   cancelCrucibleSchema,
   removeCrucibleEntrySchema,
+  withdrawCrucibleEntrySchema,
   updateCrucibleSchema,
   createCrucibleInputSchema,
   getCrucibleByIdSchema,
   getCrucibleRequiredModelsSchema,
   getJudgingProgressSchema,
+  getJudgingStatusesSchema,
   getCruciblesInfiniteSchema,
   getFeaturedCrucibleSchema,
   getJudgesCountSchema,
@@ -126,6 +130,13 @@ export const crucibleRouter = router({
     .input(getJudgingProgressSchema)
     .query(getJudgingProgressHandler),
 
+  // protectedProcedure: a read on the feed, so a muted user must not get FORBIDDEN here.
+  getJudgingStatuses: protectedProcedure
+    .use(isFlagProtected('crucible'))
+    .use(rateLimit({ limit: 60, period: 60 }))
+    .input(getJudgingStatusesSchema)
+    .query(getJudgingStatusesHandler),
+
   submitVote: guardedProcedure
     .use(isFlagProtected('crucible'))
     .use(rateLimit({ limit: 60, period: 60 }))
@@ -141,6 +152,11 @@ export const crucibleRouter = router({
     .use(isFlagProtected('crucible'))
     .input(removeCrucibleEntrySchema)
     .mutation(removeCrucibleEntryHandler),
+
+  withdrawEntry: guardedProcedure
+    .use(isFlagProtected('crucible'))
+    .input(withdrawCrucibleEntrySchema)
+    .mutation(withdrawCrucibleEntryHandler),
 
   update: guardedProcedure
     .use(isFlagProtected('crucible'))

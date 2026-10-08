@@ -15,6 +15,7 @@ import { EventEmitter } from 'events';
 import { spawn, execFileSync } from 'child_process';
 import { closeSync, existsSync, openSync, readSync, unlinkSync } from 'fs';
 import { join } from 'path';
+import { fileURLToPath } from 'url';
 import { tmpdir } from 'os';
 import { randomUUID } from 'crypto';
 import { StringDecoder } from 'string_decoder';
@@ -389,10 +390,15 @@ export function parseMaxWorkersFlag(raw) {
 export const CACHE_MODES = ['off', 'shadow', 'on'];
 
 // The WORKTREE's copy, not the daemon's: the sequencer and fs tracker come from that tree's
-// vitest config, and all three must share one key definition (scripts/test-cache/core.mjs) or
-// every lookup misses. A tree without the files simply runs uncached.
+// vitest config and import the tree's vitest, and the reporter must speak their protocol. A tree
+// without the files simply runs uncached.
 export const cacheReporterPath = (worktree) =>
   join(worktree, 'scripts', 'test-cache', 'reporter.mjs');
+
+// See scripts/test-cache/load-core.mjs.
+export const sharedCacheCorePath = fileURLToPath(
+  new URL('../../../../scripts/test-cache/core.mjs', import.meta.url)
+);
 
 /**
  * The reporter arguments a queued unit run should carry. The reporter is passed on the command line
@@ -419,8 +425,12 @@ export function defaultStartRun({
   const emitter = new EventEmitter();
   const isWindows = process.platform === 'win32';
   const pnpm = isWindows ? 'pnpm.cmd' : 'pnpm';
-  const { script, capWorkers, resultCache, maxWorkersCeiling = null } =
-    RUN_KINDS[normalizeKind(kind)];
+  const {
+    script,
+    capWorkers,
+    resultCache,
+    maxWorkersCeiling = null,
+  } = RUN_KINDS[normalizeKind(kind)];
   const argv = [
     'run',
     script,
@@ -455,6 +465,9 @@ export function defaultStartRun({
         CIVITAI_TEST_QUEUE: '0',
         // Read by the worktree's vitest config, sequencer, tracker and reporter alike.
         CIVITAI_TEST_CACHE: RUN_KINDS[normalizeKind(kind)].resultCache ? cacheMode : 'off',
+        // Set or cleared, never inherited: a cached run's own children would otherwise pass it on.
+        CIVITAI_TEST_CACHE_CORE:
+          resultCache && existsSync(sharedCacheCorePath) ? sharedCacheCorePath : undefined,
       },
       // The same fd twice: one file description, one shared offset, so the two streams append in
       // the order they were actually written. See createOutputCapture.
@@ -938,7 +951,9 @@ export class TestQueue {
         const kind = this.runs.get(id)?.kind;
         if (!kind) return false;
         if (this.runningFor(kind) >= this.limits[kind]) return false;
-        return this.runningForGroup(RUN_KINDS[kind].group) < this.groupLimits[RUN_KINDS[kind].group];
+        return (
+          this.runningForGroup(RUN_KINDS[kind].group) < this.groupLimits[RUN_KINDS[kind].group]
+        );
       });
       if (next === undefined) break;
       this.order.splice(this.order.indexOf(next), 1);
@@ -1139,7 +1154,9 @@ function normalizeMaxWorkers(value) {
  */
 function normalizeGroupName(group) {
   if (!Object.prototype.hasOwnProperty.call(RUN_GROUPS, group)) {
-    throw new Error(`unknown run group: ${group} (want one of ${Object.keys(RUN_GROUPS).join(', ')})`);
+    throw new Error(
+      `unknown run group: ${group} (want one of ${Object.keys(RUN_GROUPS).join(', ')})`
+    );
   }
   return group;
 }

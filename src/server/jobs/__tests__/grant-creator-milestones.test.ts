@@ -34,7 +34,12 @@ import {
   memoizedAudience,
   queryClickhouse,
 } from '~/server/jobs/grant-creator-milestones';
-import { activityDetectorGroups } from '~/server/services/creator-milestone-detectors';
+import {
+  activityDetectorGroups,
+  judgeVoteGroups,
+} from '~/server/services/creator-milestone-detectors';
+
+const codeGroups = () => [...activityDetectorGroups(), ...judgeVoteGroups(queryClickhouse)];
 
 beforeEach(() => {
   mocks.kv.clear();
@@ -101,7 +106,7 @@ describe('grant-creator-milestones', () => {
     );
     await grantCreatorMilestones.run({} as never).result;
     await grantCreatorMilestones.run({} as never).result;
-    const groups = activityDetectorGroups().length;
+    const groups = codeGroups().length;
     expect(seen).toHaveLength(2 * groups);
     expect(new Set(seen.slice(0, groups)).size).toBe(1);
     expect(seen[0]).not.toBe(seen[groups]);
@@ -111,7 +116,7 @@ describe('grant-creator-milestones', () => {
     grantCreatorMilestones.run({} as never).result as Promise<Record<string, unknown> | undefined>;
 
   it('runs every group even when one fails, then fails the run naming it', async () => {
-    const groups = activityDetectorGroups();
+    const groups = codeGroups();
     mocks.runActivityGroup.mockImplementation(async (group: { id: string }) => {
       if (group.id === groups[0].id) throw new Error('boom');
       return { granted: 0 };
@@ -127,6 +132,39 @@ describe('grant-creator-milestones', () => {
     loggingMock.logToAxiom.mock.calls
       .map(([entry]) => entry)
       .filter((entry) => entry.name === 'creator-milestone-stored');
+
+  it('runs the judge ranks alongside the activity groups, reading the real ClickHouse', async () => {
+    mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
+    await run();
+    const judge = mocks.runActivityGroup.mock.calls
+      .map(([group]) => group)
+      .find((group) => group.keys.includes('community:crucible-votes-500'));
+    mocks.clickhouseQuery.mockResolvedValue({ json: async () => [] });
+    const readPg = {
+      cancellableQuery: async () => ({ result: async () => [{ min: 500 }], cancel: vi.fn() }),
+    };
+    expect(await judge.candidates(readPg)).toEqual([]);
+    expect(mocks.clickhouseQuery).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: expect.stringContaining('FROM crucible_votes WHERE userId > 0'),
+        clickhouse_settings: expect.objectContaining({ readonly: '1' }),
+      })
+    );
+    expect(mocks.runActivityGroup.mock.calls.map(([group]) => group.keys)).toContainEqual([
+      'community:crucible-votes-500',
+      'community:crucible-votes-1000',
+      'community:crucible-votes-5000',
+      'community:crucible-votes-10000',
+      'community:crucible-votes-25000',
+    ]);
+  });
+
+  // The nightly check reads these entries by key; a code group reported as stored is a false row.
+  it('reports only stored definitions as stored, never the row-by-row judge group', async () => {
+    mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
+    await run();
+    expect(storedReports()).toEqual([]);
+  });
 
   it('runs stored groups after the code ones, and a skipped one does not fail the run', async () => {
     mocks.loadStoredMilestoneGroups.mockResolvedValue([storedGroup]);
@@ -148,7 +186,7 @@ describe('grant-creator-milestones', () => {
       },
     ]);
     expect(mocks.runActivityGroup.mock.calls.map(([group]) => group.id)).toEqual([
-      ...activityDetectorGroups().map((group) => group.id),
+      ...codeGroups().map((group) => group.id),
       storedGroup.id,
     ]);
   });
@@ -169,7 +207,7 @@ describe('grant-creator-milestones', () => {
     );
     mocks.runActivityGroup.mockResolvedValue({ granted: 0 });
     await run();
-    expect(mocks.runActivityGroup).toHaveBeenCalledTimes(activityDetectorGroups().length);
+    expect(mocks.runActivityGroup).toHaveBeenCalledTimes(codeGroups().length);
   });
 
   // A stored query nobody can read in the repo is watched by its timing instead.

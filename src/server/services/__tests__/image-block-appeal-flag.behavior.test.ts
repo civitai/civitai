@@ -75,6 +75,7 @@ const updateMany =
 const APPEALED = 41;
 const FLAGGED = 42;
 const DECIDED = 43;
+const REVIEW_FLAGGED = 44;
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -142,7 +143,8 @@ beforeEach(async () => {
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 7, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor'),
-      (${DECIDED}, 9, 'Blocked', 'moderated', 32, NULL);
+      (${DECIDED}, 9, 'Blocked', 'moderated', 32, NULL),
+      (${REVIEW_FLAGGED}, 10, 'Scanned', NULL, 4, 'csam');
     -- APPEALED also carries an earlier, decided appeal; FLAGGED shares its id with a post's appeal.
     INSERT INTO "Appeal" ("entityType", "entityId", "userId", status, "buzzTransactionId") VALUES
       ('Image', ${APPEALED}, 7, 'Approved', NULL),
@@ -212,6 +214,32 @@ describe('handleBlockImages', () => {
   });
 });
 
+// Only that flag's own queue or a filed report may clear it; the purge holds the image until then.
+describe('blocking keeps the moderator-only review flag', () => {
+  it('handleBlockImages', async () => {
+    await handleBlockImages({ ids: [REVIEW_FLAGGED, FLAGGED] });
+
+    expect(await imageRow(REVIEW_FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+  });
+
+  it('setTosViolationHandler', async () => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      nsfwLevel: 4,
+      userId: 10,
+      postId: null,
+      pHash: null,
+      post: null,
+    } as never);
+
+    await setTosViolationHandler({
+      input: { id: REVIEW_FLAGGED },
+      ctx: { user: { id: 2, isModerator: true }, ip: '127.0.0.1', track: { images: vi.fn() } },
+    } as never);
+
+    expect(await imageRow(REVIEW_FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+  });
+});
+
 describe('setTosViolationHandler', () => {
   it('does not leave a pending appeal the appeals queue cannot reach', async () => {
     dbMock.dbRead.image.findFirst.mockResolvedValue({
@@ -229,6 +257,23 @@ describe('setTosViolationHandler', () => {
 
     expect(await strandedAppeals()).toEqual([]);
     expect((await imageRow(APPEALED)).ingestion).toBe('Blocked');
+  });
+
+  it('still clears another review flag', async () => {
+    dbMock.dbRead.image.findFirst.mockResolvedValue({
+      nsfwLevel: 4,
+      userId: 8,
+      postId: null,
+      pHash: null,
+      post: null,
+    } as never);
+
+    await setTosViolationHandler({
+      input: { id: FLAGGED },
+      ctx: { user: { id: 2, isModerator: true }, ip: '127.0.0.1', track: { images: vi.fn() } },
+    } as never);
+
+    expect(await imageRow(FLAGGED)).toEqual({ needsReview: null, ingestion: 'Blocked' });
   });
 });
 
