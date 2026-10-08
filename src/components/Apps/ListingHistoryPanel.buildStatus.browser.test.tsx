@@ -332,16 +332,18 @@ describe('D — "live" belongs to the currently published version only', () => {
     renderEntries([
       // A newer approved LISTING edit is not a version: it must not take the live chip.
       version({ id: 'l_edit', source: 'listing', deployState: null, version: null }),
-      version({ id: 'v_pend', status: 'pending', deployState: null, version: '3.0.0' }),
+      // A lifecycle value on a non-approved row must still not produce a chip.
+      version({ id: 'v_pend', status: 'pending', deployState: 'building', version: '3.0.0' }),
       version({ id: 'v_cur', deployState: 'live', version: '2.0.0' }),
       version({ id: 'v_old', deployState: 'live', version: '1.0.0' }),
     ]);
-    // Every row has rendered once the oldest one has; then read synchronously, so the
-    // listing edit stealing the "published" slot fails here by name rather than by timeout.
-    await expect.element(page.getByTestId('apps-history-entry-v_old')).toHaveTextContent(/· live/);
+    // All rows commit in one render, so read them synchronously: a misplaced chip fails by
+    // name, not by timeout.
+    await expect.element(page.getByTestId('apps-history-entry-v_old')).toBeInTheDocument();
     expect(page.getByTestId('apps-history-deploy-v_cur').elements()).toHaveLength(1);
     expect(page.getByTestId('apps-history-deploy-v_cur').element().textContent).toBe('live');
     expect(page.getByTestId('apps-history-deploy-v_old').elements()).toHaveLength(0);
+    expect(page.getByTestId('apps-history-entry-v_old').element().textContent).toMatch(/· live/);
     // A pending version has no build lifecycle to show.
     expect(page.getByTestId('apps-history-deploy-v_pend').elements()).toHaveLength(0);
   });
