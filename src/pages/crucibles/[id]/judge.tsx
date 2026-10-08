@@ -506,7 +506,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                 <JudgingRulesButton />
                 <SwitchCrucibleMenu crucibleId={id} />
                 <CrucibleJudgeNextButton
-                  excludeCrucibleId={id}
+                  cycleFrom={{ id, createdAt: crucible.createdAt }}
                   variant="link"
                   label="Next crucible"
                 />
@@ -548,6 +548,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
               <CrucibleJudgingDoneState
                 crucibleId={id}
                 crucibleName={crucible.name}
+                crucibleCreatedAt={crucible.createdAt}
                 sessionVotes={sessionVotes}
                 onlyOwnEntries={onlyOwnEntries}
                 votesUsedUp={progress?.votesUsedUp ?? false}

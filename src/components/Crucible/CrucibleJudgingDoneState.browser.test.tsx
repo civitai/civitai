@@ -29,14 +29,18 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', async (impor
 vi.mock('~/components/Crucible/CrucibleJudgeNextButton', () => ({
   CrucibleJudgeNextButton: ({
     label,
-    excludeCrucibleId,
+    cycleFrom,
     variant,
   }: {
     label: string;
-    excludeCrucibleId: number;
+    cycleFrom?: { id: number; createdAt: Date };
     variant?: string;
   }) => (
-    <button data-exclude={excludeCrucibleId} data-variant={variant}>
+    <button
+      data-cycle-id={cycleFrom?.id}
+      data-cycle-created-at={cycleFrom?.createdAt.toISOString()}
+      data-variant={variant}
+    >
       {label}
     </button>
   ),
@@ -51,6 +55,7 @@ const render = (
     <CrucibleJudgingDoneState
       crucibleId={1}
       crucibleName="Test Crucible"
+      crucibleCreatedAt={new Date('2026-10-01T00:00:00.000Z')}
       sessionVotes={props.sessionVotes ?? 0}
       onlyOwnEntries={props.onlyOwnEntries ?? false}
       votesUsedUp={props.votesUsedUp ?? false}
@@ -84,7 +89,8 @@ describe('CrucibleJudgingDoneState', () => {
     const next = [...document.querySelectorAll('button')].find(
       (b) => b.textContent === 'Next crucible'
     );
-    expect(next?.getAttribute('data-exclude')).toBe('1');
+    expect(next?.getAttribute('data-cycle-id')).toBe('1');
+    expect(next?.getAttribute('data-cycle-created-at')).toBe('2026-10-01T00:00:00.000Z');
     expect(next?.getAttribute('data-variant')).toBe('primary');
     expect(document.body.textContent).not.toContain('more crucible');
   });

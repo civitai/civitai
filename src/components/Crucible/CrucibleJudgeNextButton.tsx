@@ -5,6 +5,8 @@ import { useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { filterPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { pickNextCrucible } from '~/components/Crucible/judging-next-crucible';
+import type { CrucibleCyclePoint } from '~/components/Crucible/judging-next-crucible';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -12,16 +14,19 @@ import { showErrorNotification, showInfoNotification } from '~/utils/notificatio
 import { trpc } from '~/utils/trpc';
 
 type Props = {
-  /** Leaves this crucible out, so "next" from a judge page never lands back on it. */
-  excludeCrucibleId?: number;
+  /**
+   * The crucible being judged. "Next" steps from it through the open crucibles in order, so
+   * repeated presses visit each one. Without it, the newest crucible with pairs is picked.
+   */
+  cycleFrom?: CrucibleCyclePoint;
   /** `primary` is the filled call to action, for where moving on is the main next step. */
   variant?: 'button' | 'link' | 'primary';
   label?: string;
 };
 
-/** Drops the judge into the newest open crucible that still has pairs for them. */
+/** Drops the judge into an open crucible that still has pairs for them. */
 export function CrucibleJudgeNextButton({
-  excludeCrucibleId,
+  cycleFrom,
   variant = 'button',
   label = 'Start Judging',
 }: Props = {}) {
@@ -38,12 +43,12 @@ export function CrucibleJudgeNextButton({
     setLoading(true);
     try {
       const suggestions = await utils.crucible.getJudgingSuggestions.fetch(
-        { browsingLevel, limit: 12, excludeCrucibleId },
+        { browsingLevel, limit: 12 },
         { staleTime: 0 }
       );
       // Hidden users, tags and words are client-side only; the server can't apply them.
       // filterPreferences returns every feed's item union; useApplyHiddenPreferences casts the same way.
-      const [next] = filterPreferences({
+      const visible = filterPreferences({
         type: 'crucibles',
         data: suggestions,
         hiddenPreferences,
@@ -53,6 +58,7 @@ export function CrucibleJudgeNextButton({
         poiDisabled: browsingSettingsAddons.settings.disablePoi,
         minorDisabled: browsingSettingsAddons.settings.disableMinor,
       }).items as typeof suggestions;
+      const next = cycleFrom ? pickNextCrucible(visible, cycleFrom) : visible[0];
       if (!next) {
         showInfoNotification({
           title: 'Nothing to judge right now',

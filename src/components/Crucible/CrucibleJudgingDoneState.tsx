@@ -52,6 +52,7 @@ function CaughtUpCheck() {
 type Props = {
   crucibleId: number;
   crucibleName: string;
+  crucibleCreatedAt: Date;
   sessionVotes: number;
   onlyOwnEntries: boolean;
   votesUsedUp: boolean;
@@ -60,6 +61,7 @@ type Props = {
 export function CrucibleJudgingDoneState({
   crucibleId,
   crucibleName,
+  crucibleCreatedAt,
   sessionVotes,
   onlyOwnEntries,
   votesUsedUp,
@@ -124,7 +126,7 @@ export function CrucibleJudgingDoneState({
               Back to crucible
             </Button>
             <CrucibleJudgeNextButton
-              excludeCrucibleId={crucibleId}
+              cycleFrom={{ id: crucibleId, createdAt: crucibleCreatedAt }}
               variant="primary"
               label="Next crucible"
             />
