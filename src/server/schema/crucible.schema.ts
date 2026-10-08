@@ -414,6 +414,9 @@ export const removeCrucibleEntrySchema = z.object({
   entryId: z.number(),
 });
 
+export type WithdrawCrucibleEntrySchema = z.infer<typeof withdrawCrucibleEntrySchema>;
+export const withdrawCrucibleEntrySchema = removeCrucibleEntrySchema;
+
 // Schema for user crucible stats (no input needed - uses authenticated user)
 export type GetUserCrucibleStatsSchema = z.infer<typeof getUserCrucibleStatsSchema>;
 export const getUserCrucibleStatsSchema = z.object({});
