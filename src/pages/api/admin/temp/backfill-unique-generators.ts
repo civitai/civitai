@@ -24,16 +24,26 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
  * Idempotent: re-running writes the same values, and `WHERE ... IS DISTINCT FROM`
  * means a second pass touches nothing and recomputes nothing.
  *
+ * RESUMABLE, because it has to be. There are hundreds of thousands of models to
+ * cover and every ingress in front of this will cut the connection long before a
+ * single pass finishes. A killed request keeps the batches it already committed but
+ * restarts from the first model, so without paging the run never converges. Drive it
+ * with `maxModels` and feed `nextStartId` back as `startId` until it comes back null.
+ *
  * GET/POST /api/admin/temp/backfill-unique-generators?token=$WEBHOOK_TOKEN
  *   batchSize  models per batch (1-20000, default 5000)
  *   minGens    only models with at least this many generations (default 1).
  *              Raise it to do the models that can actually be inflated first.
+ *   startId    resume at this modelId (default 0)
+ *   maxModels  stop after this many models and report nextStartId (default 0 = all)
  *   dryRun     true = report what would change, write nothing (default false)
  */
 
 const schema = z.object({
   batchSize: z.coerce.number().min(1).max(20000).optional().default(5000),
   minGens: z.coerce.number().min(0).optional().default(1),
+  startId: z.coerce.number().min(0).optional().default(0),
+  maxModels: z.coerce.number().min(0).optional().default(0),
   // z.coerce.boolean() treats "false" as true — compare the raw string instead.
   dryRun: z
     .string()
@@ -43,21 +53,24 @@ const schema = z.object({
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
-  const { batchSize, minGens, dryRun } = schema.parse(req.query);
+  const { batchSize, minGens, startId, maxModels, dryRun } = schema.parse(req.query);
   if (!clickhouse) {
     res.status(500).json({ error: 'ClickHouse client not available' });
     return;
   }
 
   const started = Date.now();
+  // One row past maxModels, so a full page can be told apart from the last one.
   const targets = await pgDbWrite.query<{ modelId: number }>(
-    `SELECT "modelId" FROM "ModelMetric" WHERE "generationCount" >= $1 ORDER BY "modelId"`,
-    [minGens]
+    `SELECT "modelId" FROM "ModelMetric"
+       WHERE "generationCount" >= $1 AND "modelId" >= $2
+       ORDER BY "modelId" ${maxModels ? 'LIMIT $3' : ''}`,
+    maxModels ? [minGens, startId, maxModels + 1] : [minGens, startId]
   );
-  const batches = chunk(
-    targets.rows.map((r) => r.modelId),
-    batchSize
-  );
+  const all = targets.rows.map((r) => r.modelId);
+  const page = maxModels ? all.slice(0, maxModels) : all;
+  const nextStartId = maxModels && all.length > maxModels ? all[maxModels] : null;
+  const batches = chunk(page, batchSize);
 
   let scanned = 0;
   let updated = 0;
@@ -112,6 +125,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   res.status(200).json({
     dryRun,
     minGens,
+    startId,
+    nextStartId,
+    done: nextStartId === null,
     batches: batches.length,
     modelsScanned: scanned,
     modelsWithGenerators: withGenerators,
