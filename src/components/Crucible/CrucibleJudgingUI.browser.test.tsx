@@ -102,11 +102,11 @@ const advance = async (side: 0 | 1, clicks: number) => {
 const card = (side: 'left' | 'right') =>
   document.querySelector<HTMLElement>(`[aria-label="Vote for ${side} video"]`);
 
-// Anchored on the CARD's aria-label, not on the button's text. The text is "Vote" or
-// "Watch Ns more" depending on the very gate under test, so a text matcher made the button vanish
-// exactly when an assertion needed it — and every `toBeUndefined` then passed vacuously.
+// Anchored on the button's side, not on its text. The text is "Vote" or "Watch Ns more"
+// depending on the very gate under test, so a text matcher made the button vanish exactly when an
+// assertion needed it — and every `toBeUndefined` then passed vacuously.
 const voteButton = (side: 'left' | 'right') =>
-  card(side)?.querySelector<HTMLButtonElement>('[data-testid="judge-vote"]') ?? null;
+  document.querySelector<HTMLButtonElement>(`[data-testid="judge-vote"][data-side="${side}"]`);
 
 const mediaStatus = (side: 'left' | 'right') =>
   card(side)?.querySelector<HTMLElement>('[data-media-status]')?.dataset.mediaStatus;
@@ -312,10 +312,7 @@ describe('CrucibleJudgingUI — minimum view time', () => {
   });
 });
 
-const skipPairButton = () =>
-  [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) =>
-    b.textContent?.includes('Skip Pair')
-  );
+const skipPairButton = () => document.querySelector<HTMLButtonElement>('[data-testid="judge-skip"]');
 
 describe('CrucibleJudgingUI — clip already judged this session', () => {
   const pairWithWatch = (left: number, right: number) =>
@@ -409,6 +406,62 @@ describe('CrucibleJudgingUI — repeated clicks', () => {
     await pastFeedbackDelay();
 
     expect(onVote).toHaveBeenCalledTimes(1);
+  });
+
+  test('two clicks on an image inside the feedback delay cast one vote', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={{ left: entry(1, 'image'), right: entry(2, 'image') } as never}
+        onVote={onVote}
+        onSkip={vi.fn()}
+      />
+    );
+    const imageCard = () => document.querySelector<HTMLElement>('[aria-label="Vote for left image"]');
+    await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
+
+    imageCard()!.click();
+    imageCard()!.click();
+    await pastFeedbackDelay();
+
+    expect(onVote).toHaveBeenCalledTimes(1);
+    expect(onVote.mock.calls[0][0]).toBe(1);
+  });
+
+  test('onVoteCast reports the chosen side before the vote lands', async () => {
+    const onVote = vi.fn();
+    const onVoteCast = vi.fn();
+    renderWithProviders(
+      <CrucibleJudgingUI
+        pair={pairOf(1, 2)}
+        onVote={onVote}
+        onVoteCast={onVoteCast}
+        onSkip={vi.fn()}
+      />
+    );
+    await expectBothCardsRendered();
+
+    voteButton('right')!.click();
+
+    expect(onVoteCast).toHaveBeenCalledTimes(1);
+    expect(onVoteCast).toHaveBeenCalledWith('right');
+    expect(onVote).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+    expect(onVoteCast).toHaveBeenCalledTimes(1);
+  });
+
+  test('a click on a video does not vote; the vote button still does', async () => {
+    const onVote = vi.fn();
+    renderWithProviders(<CrucibleJudgingUI pair={pairOf(1, 2)} onVote={onVote} onSkip={vi.fn()} />);
+    await expectBothCardsRendered();
+    expect(voteButton('left')!.disabled, 'precondition: voting is open').toBe(false);
+
+    video('left').click();
+    await pastFeedbackDelay();
+    expect(onVote).not.toHaveBeenCalled();
+
+    voteButton('left')!.click();
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
   });
 
   test('takes the next vote once the first has landed', async () => {
