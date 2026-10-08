@@ -1464,6 +1464,23 @@ describe('SourceImageUploadMultiple — a pick the photo picker made unreadable'
     await expectFilesFallbackOffered();
   });
 
+  test('a selection from Files mixing an image with another type is refused whole', async () => {
+    renderWithProviders(<PendingHarness max={3} />);
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    await chooseFiles(filesFallbackInput(), [
+      imageFile('photo-0.jpg'),
+      new File(['x'], 'notes.txt', { type: 'text/plain' }),
+    ]);
+    // Not even the image is uploaded (checked first: an upload would clear the alert and its error).
+    await expectNothingStarted();
+    await expect
+      .element(page.getByText("That file type isn't supported here.", { exact: true }))
+      .toBeVisible();
+    await expectFilesFallbackOffered();
+  });
+
   test('a selection from Files with a file over the size limit is refused, and the fallback stays', async () => {
     renderWithProviders(<PendingHarness max={2} />);
     await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);

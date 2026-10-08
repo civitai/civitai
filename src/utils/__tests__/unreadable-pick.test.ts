@@ -49,7 +49,7 @@ describe('probeUnreadablePick', () => {
 
     it('counts as readable once the probe gives up, and not before', async () => {
       vi.useFakeTimers();
-      let result: string = 'pending';
+      let result = 'pending';
       void probeUnreadablePick(stalledFile()).then((r) => (result = r ? 'unreadable' : 'readable'));
 
       await vi.advanceTimersByTimeAsync(UNREADABLE_PROBE_TIMEOUT_MS - 1);

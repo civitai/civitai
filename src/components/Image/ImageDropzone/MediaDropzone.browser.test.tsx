@@ -208,6 +208,24 @@ describe('MediaDropzone — a pick the photo picker made unreadable', () => {
     await expectFilesFallbackOffered();
   });
 
+  test('a selection from Files mixing an image with another type is refused whole', async () => {
+    renderDropzone();
+    await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
+    await expectFilesFallbackOffered();
+
+    await chooseFiles(filesFallbackInput(), [
+      imageFile('photo-0.jpg'),
+      new File(['x'], 'notes.txt', { type: 'text/plain' }),
+    ]);
+    // Not even the image is handed on (checked first: a hand-on would clear the alert and its error).
+    await new Promise((r) => setTimeout(r, 300));
+    expect(onDrop).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByText("That file type isn't supported here.", { exact: true }))
+      .toBeVisible();
+    await expectFilesFallbackOffered();
+  });
+
   test('the Files button is disabled while the dropzone is loading', async () => {
     renderDropzone();
     await chooseFiles(dropzoneInput(), [imageFile('unreadable-0.jpg')]);
