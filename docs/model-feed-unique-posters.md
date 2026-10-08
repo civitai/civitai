@@ -53,59 +53,59 @@ same trap the download divisor fell into (`model-feed-hot-ranking.md` §13).
 **The weight is not settled.** 1/8 of equal weight came out of one simulation against a bounded
 candidate pool. It gets a proper sweep once the real column exists.
 
-## 3. Why it cannot be cheap
+## 3. Where the count can come from
 
-Three measurements, each of which removes an option.
+Three measurements, and one piece of history that turned out to matter more than any of them.
 
 **ClickHouse cannot supply it.** `images` carries `userId` and a `resources` array, but in the last
 30 days it holds only `Delete`, `DeleteTOS` and `Restore` events — no creates. `images_created` has
 `id, mediaType, createdAt, nsfw, userId, version, nsfwLevel` and **no resources**. So the
 image→resource link exists only in Postgres.
 
-**The Postgres source is large.** `ImageResourceNew` is **453 million rows / 42 GB**, indexed on
-`("modelVersionId", "imageId")`.
+**The Postgres source is large.** `ImageResourceNew` is **450 million rows / 42 GB**, indexed on
+`("modelVersionId", "imageId")`. The dev database holds a full-size copy, so dev timings carry over.
 
-**A periodic full rollup is not a small job.** A set-based aggregate — `ImageResourceNew` joined to
+**A one-shot full aggregate is not viable.** The set-based form — `ImageResourceNew` joined to
 `Image` and `Post`, grouped by `modelId` with `count(DISTINCT "userId")` — did not finish inside the
-replica's 60-second statement timeout for a **single 100,000-wide `modelId` slice**. The per-model
-correlated form runs about 0.5 s/model, which is days for a full pass. Neither is a job we can run
-hourly.
+prod replica's 60-second statement timeout for a **single 100,000-wide `modelId` slice`**. The
+per-model correlated form runs about 0.5 s/model, which is days for a full pass.
 
-There is also a dead precedent: `ModelVersionMetric.imageCount` has a rollup for almost exactly this
-query, **commented out** in `src/server/metrics/model.metrics.ts`. It was disabled in `212656ff4d`
-(2025-03-13), whose message is "check in" — the reason is not recorded. That rollup had the right
-shape, including `m."userId" != i."userId"` to exclude the creator's own gallery. Finding out why it
-was switched off is step 0; if it was cost, that is the same wall as above, and reviving it unchanged
-would hit it again.
+### The history: this was built once and abandoned mid-migration
 
-## 4. Design: maintain it incrementally, backfill once
+`ModelVersionMetric.imageCount` has a rollup for nearly this exact query, **commented out** in
+`src/server/metrics/model.metrics.ts`. It was disabled in `212656ff4d` (2025-03-13), whose message
+is "check in". The reason is not in the message, but the surrounding commits make it plain:
 
-The read has to be O(1) at feed time, so the count is stored and kept current by writes, never
-aggregated on demand.
+- the dead code reads the **old `"ImageResource"` table**;
+- the very next commit on that file is `90032c5489`, *"code changes and migration for table
+  ImageResourceNew"*;
+- nothing under `src/server/metrics/` references the old table any more;
+- `ModelVersionMetric.imageCount` is nonzero on only **86,152 of 1,174,457** rows, frozen since, while
+  the table's other columns were updated minutes ago.
 
-### A pair table
+So it was not switched off for cost. It was commented out while the table underneath it was being
+replaced, and never re-pointed at the new one. That answers §5.1 and changes the design below.
 
-```sql
-CREATE TABLE "ModelUniquePoster" (
-    "modelId" INT NOT NULL,
-    "userId"  INT NOT NULL,
-    PRIMARY KEY ("modelId", "userId")
-);
-```
+**And the dead rollup was already incremental.** It does not scan anything: `getAffected(ctx,
+'ModelVersion')` selects only the versions whose images were posted since the job's last run, and
+recomputes just those. That is exactly the mechanism this plan was going to build from scratch —
+ongoing maintenance is already solved, in code, in this repo.
 
-One row per (model, person who has published an image with it). Sized from the sample — a median of
-1 poster per model with a heavy tail, call it single-digit millions of rows, which is small next to
-the 453 M it summarises.
+## 4. Design: revive the rollup, don't build a new one
 
-### Maintained on post publish, not on resource insert
+### What changes from the dead version
 
-A trigger on `ImageResourceNew` is the wrong hook: the row exists before its post is published, and
-publication is the event that makes an image count. The write belongs where a post is published —
-walk that post's images' resources and `INSERT … ON CONFLICT DO NOTHING` one pair per
-(model, poster), skipping the model's own owner.
+1. **Read `ImageResourceNew`** instead of `"ImageResource"`. That is the whole reason it is dead.
+2. **Aggregate per model, not per version.** `count(DISTINCT "userId")` does not sum: a person who
+   posts for v1 and v2 is one poster, so per-version uniques cannot be added up. The target is
+   `ModelMetric`, not `ModelVersionMetric`.
+3. **Count distinct posters, not images** — `count(DISTINCT i."userId")` in place of the image count.
+   §2 is why.
+4. **No timeframes.** `ModelVersionMetric` carries a `timeframe` column; `ModelMetric` does not, so
+   this is all-time only and the `CROSS JOIN enum_range` and `timeframeSum` machinery goes away.
 
-The volume makes this free: **2.7 M images from 37,799 posters in 30 days** (~90 k/day, about one per
-second), and a post carries at most a few dozen resource links.
+Everything else carries over unchanged, including `m."userId" != i."userId"` to exclude the creator's
+own gallery and the published-post predicate — both already correct in the dead code.
 
 ### A counter column, so the existing trigger does the rest
 
@@ -114,22 +114,87 @@ ALTER TABLE "ModelMetric" ADD COLUMN "uniquePosterCount" INT NOT NULL DEFAULT 0;
 ```
 
 Then add `uniquePosterCount` to `model_metric_hot_score()`'s expression and to its
-`BEFORE INSERT OR UPDATE OF` column list. Everything downstream is unchanged: the score stays
-trigger-owned, the `ModelBaseModelMetric` mirror copies `hotScore` and needs no edit, and the
-migration keeps the apply-before-deploy property that made the Hot sort shippable
-(`model-feed-hot-ranking.md` §11).
+`BEFORE INSERT OR UPDATE OF` column list. Nothing downstream changes: the score stays trigger-owned,
+the `ModelBaseModelMetric` mirror copies `hotScore` and needs no edit, and the migration keeps the
+apply-before-deploy property that made the Hot sort shippable (`model-feed-hot-ranking.md` §11).
 
-### The one-time backfill is the expensive part
+A `NOT NULL DEFAULT 0` column also means the score stays valid from the moment the column exists —
+every model simply scores as though nobody has posted for it until the backfill fills it in.
 
-Populating `ModelUniquePoster` from 453 M rows is a single offline pass, batched by `modelId` with a
-commit per batch, run as a script rather than inside the migration. **Trial it on dev and measure
-before scheduling anything on prod** — §3 says a 100 k-wide slice exceeds 60 s, so this is hours at
-least, and the batch width and index strategy should come from a measured run, not an estimate.
+### The one-time backfill: measured, and the obvious shapes are the slow ones
+
+The incremental task keeps the column current *going forward*; it does not populate 722,738 published
+models' history. That is the one expensive job, and two plausible shapes for it are both unusable.
+
+**Set-based, sliced by `modelId` — unusable.** A single 50,000-wide slice did not finish in 5 minutes
+on dev. `EXPLAIN` shows the planner ignoring `("modelVersionId", "imageId")` entirely:
+
+```
+GroupAggregate
+  -> Gather Merge -> Sort (rows=10,846,319)
+       -> Parallel Hash Join
+            -> Parallel Seq Scan on "ImageResourceNew"  (rows=187,816,667)
+            -> Parallel Index Only Scan on "ModelVersion"  (rows=13,574)
+```
+
+It hash-joins all 42 GB against the slice's versions, correctly — those versions own millions of
+image rows between them and a scan beats that many index descents. So **every slice pays for a full
+table scan**, and sixty slices scan 42 GB sixty times. The batching that makes the `hotScore`
+backfill safe makes this one quadratic.
+
+**Set-based, narrowed to recent models — also unusable, and for a different reason than expected.**
+Restricting to models published in the last 90 days still times out, and still seq-scans: the plan is
+the same shape. Selecting fewer models does not stop the planner hash-joining the whole table. Set
+size is not what decides the access path here.
+
+**Per-model `LATERAL` — this is the one.** A correlated subquery per model forces the index, whatever
+the set size. Measured on dev, 300-model samples:
+
+| Model age | Cost per model | Median posters | Max |
+| --- | ---: | ---: | ---: |
+| under 90 days | **8 ms** | 0 | 51 |
+| 1–2 years | 74 ms | 2 | 3,260 |
+| over 3 years | 36 ms | 1 | 1,441 |
+
+Old models cost more because they own more images. Extrapolated, single-threaded:
+
+| Scope | Models | Estimated |
+| --- | ---: | ---: |
+| published in the last 90 days | 62,896 | **~8 minutes** |
+| published in the last 180 days | 119,691 | ~15–30 minutes |
+| every published model | 722,738 | ~8 hours |
+
+So the full backfill is feasible after all — hours, not days, and parallelisable by `modelId` range
+across a few workers. The narrow one is minutes. Either works; start narrow, because the feed cannot
+surface a model older than about six months anyway (the live top 100 reaches back 69 days,
+`model-feed-hot-ranking.md` §13) and the incremental task picks up anything that gets a new post
+later.
+
+A secondary cost, once the access path is right: `count(DISTINCT "userId")` forces a `GroupAggregate`
+over a large sort. Pre-aggregating with `GROUP BY "modelId", "userId"` and counting groups avoids it.
+
+### The signal is sparse where the feed looks
+
+Worth knowing before tuning the weight: **the median model under 90 days old has 0 unique posters**,
+and the maximum in that sample was 51. The 1–2 year cohort has a median of 2 and a maximum of 3,260.
+
+So on a recency-weighted feed this signal is silent for most of the models in contention and speaks
+only for the ones that have picked up real third-party use. That is arguably what it should do — it
+is a bonus for traction, not a baseline — but it means it cannot do much work at the very top, and a
+weight tuned against the §2 simulation may overstate its reach on live data. Re-measure after the
+backfill, not before.
+
+### What a pair table would have bought, and why it is not needed
+
+An earlier draft proposed `ModelUniquePoster (modelId, userId)` maintained on post publish. With the
+incremental rollup alive, that is redundant machinery: it solves ongoing maintenance, which is
+already solved, and it does not help the backfill, which is the part that costs. It would only earn
+its keep if deletes have to decrement exactly — see §5.4.
 
 ## 5. Open questions
 
-1. **Why was the `imageCount` rollup disabled?** Blocking. If it was cost, that constrains the
-   backfill; if it was correctness, that may constrain the definition.
+1. ~~**Why was the `imageCount` rollup disabled?**~~ **Answered** (§3): abandoned mid-migration when
+   `ImageResource` became `ImageResourceNew`, not a cost or correctness decision.
 2. **Sockpuppets.** Unique posters is harder to game than image count but not free — the attack is
    one image each from many throwaway accounts, and it is *cheaper* than the attack it replaces.
    Likely needs a floor on which accounts count (age, or some prior activity). Needs its own look
@@ -168,9 +233,8 @@ divisor fix — so that risk arrives *with* the window, not before it.
 1. **Establish why the old rollup was disabled**, and decide declared-vs-detected and the delete
    policy (§5.1, §5.3, §5.4).
    *Closing condition:* each of the three written down in this doc with a decision and a reason.
-2. **Trial the backfill on dev** — pair table, batched population, measured.
-   *Closing condition:* a measured wall-clock for a full dev pass, and a batch size that holds row
-   locks for under a second.
+2. ~~**Trial the backfill on dev.**~~ **Done** — per-model `LATERAL`, 8 ms/model for recent models,
+   ~8 minutes for the 90-day scope. The set-based shapes were measured and rejected (§4).
 3. **Tune the weight** against the real column, as a sweep rather than a single simulation.
    *Closing condition:* a table like §2's across at least five weights, chosen on the base-model mix
    and the generation-heavy count together.
