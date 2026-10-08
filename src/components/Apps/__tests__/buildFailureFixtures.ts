@@ -9,21 +9,21 @@ import {
  * log excerpt. Each `*_EXCERPT` is that sanitized excerpt — what the author is shown.
  *
  * The excerpts are what the pipeline actually delivered to authors, with anything that
- * identifies the build platform removed: the scanner's product and version lines are
- * dropped, the scanner and image file names in the marker line are replaced by generic
- * words, and the vulnerable package in the table is replaced by a neutral name. The table
- * layout, the `SCAN-BLOCKED` marker, the pre-check message and the `Build None` headline
- * are kept verbatim, because those are what the classifier reads.
+ * identifies the build platform removed: the scanner's own notice lines are dropped,
+ * everything after the `SCAN-BLOCKED` marker is reworded generically, and the vulnerable
+ * package in the table is replaced by a neutral name. The table layout (in the raw input),
+ * the `SCAN-BLOCKED` marker, the pre-check message and the `Build None` headline are kept
+ * verbatim, because those are what the classifier reads.
  *
- * `Build None` is real: the callback reports the PUSH step's status, so every failure in
- * an earlier step (fetch, manifest check, build, scan) arrives as `None`.
+ * `Build None` is real: the reported status is the final publish step's, so a run that
+ * failed before it arrives as `None`.
  */
 
 /** A blocking security-scan finding in a platform-provided package. */
 const SCAN_BLOCKED_RAW = [
   ' Library      Vulnerability  Severity  Status  Installed Version  Fixed Version   Title',
   ' libexample   CVE-2000-0001  HIGH      fixed   1.0.0-r0           1.0.1-r0        libexample: ...',
-  'SCAN-BLOCKED (F10): the security scan found un-ignored HIGH/CRITICAL vulnerabilities in the app image -- failing the build BEFORE publish. See the table above.',
+  'SCAN-BLOCKED: the security scan found blocking vulnerabilities in the app image -- failing the build before publish. See the table above.',
 ].join('\n');
 export const SCAN_BLOCKED_DETAIL = buildFailureDeployDetail('None', SCAN_BLOCKED_RAW);
 export const SCAN_BLOCKED_EXCERPT = sanitizeBuildFailureReason(SCAN_BLOCKED_RAW) as string;

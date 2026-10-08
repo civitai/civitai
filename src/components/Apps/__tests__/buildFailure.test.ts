@@ -27,7 +27,7 @@ import {
 
 /**
  * `describeBuildFailure` — the one place a failed version's stored detail becomes author
- * copy. Every fixture is a stored value the build callback really writes (see
+ * copy. Fixtures other than `HOSTILE_*` are values the server writes (see
  * `buildFailureFixtures`), so these pin the mapping for the shapes production produces.
  */
 

@@ -31,7 +31,7 @@ import {
  * an honest headline for `Build None`, a cause that never defaults to the author, and elapsed
  * time while a build runs.
  *
- * Fixtures are stored `deploy_detail` values the build callback really writes
+ * Fixtures other than `HOSTILE_*` are values the server writes
  * (`__tests__/buildFailureFixtures.ts`). The clock is pinned through the view's `now` prop.
  * The `component` project loads no CSS, so layout claims here rest on inline styles only.
  */
@@ -170,7 +170,7 @@ describe('A — a failed version says what happened and whose move it is', () =>
     renderEntries([version({ id: 'v_null', deployDetail: null })]);
     const block = failureBlock('v_null');
     await expect.element(block).toHaveTextContent(/couldn't determine the cause/);
-    expect(block.element().textContent).not.toMatch(/resubmit/i);
+    expect(block.element().textContent).not.toMatch(/resubmit|submit a new version/i);
   });
 });
 
@@ -188,9 +188,7 @@ describe('🔴 A — the excerpt is tenant bytes, rendered as literal text', () 
     expect(document.querySelector('[data-testid="apps-history-list"] img')).toBeNull();
     // The long line wraps inside its box rather than widening the page.
     expect(getComputedStyle(el).overflowWrap).toBe('anywhere');
-    expect(el.getBoundingClientRect().width).toBeLessThanOrEqual(
-      document.documentElement.clientWidth
-    );
+    expect(el.scrollWidth).toBeLessThanOrEqual(el.clientWidth);
   });
 
   test('a multi-line excerpt keeps its newlines and is height-capped', async () => {
@@ -238,7 +236,7 @@ describe('B — a STRANDED version stops masquerading as healthy', () => {
       .toHaveTextContent('build never started');
     const alert = page.getByTestId('apps-history-stranded-v_str');
     await expect.element(alert).toHaveTextContent(/contact a moderator/i);
-    expect(alert.element().textContent).not.toMatch(/resubmit/i);
+    expect(alert.element().textContent).not.toMatch(/resubmit|submit a new version/i);
   });
 
   test('DARK-SAFE: a freshly approved null-state version is unchanged', async () => {
@@ -280,6 +278,31 @@ describe('C — a running build shows how long it has been going', () => {
     expect(page.getByTestId('apps-history-elapsed-v_stuck').elements()).toHaveLength(0);
   });
 
+  test('deploying shows elapsed time WITHOUT the whole-build range (its clock restarted)', async () => {
+    renderEntries([
+      version({ id: 'v_dep', deployState: 'deploying', deployUpdatedAt: new Date(NOW - 45_000) }),
+    ]);
+    const elapsed = page.getByTestId('apps-history-elapsed-v_dep');
+    await expect.element(elapsed).toHaveTextContent('45s');
+    expect(elapsed.element().textContent).not.toMatch(/usually/);
+  });
+
+  test('without a pinned clock the elapsed time moves on its own', async () => {
+    mocks.entries = [
+      version({
+        id: 'v_tick',
+        deployState: 'building',
+        deployUpdatedAt: new Date(Date.now() - 5_000),
+      }),
+    ];
+    renderWithProviders(<ListingHistoryPanel appListingId="apl_tick" />);
+    const elapsed = page.getByTestId('apps-history-elapsed-v_tick');
+    await expect.element(elapsed).toBeInTheDocument();
+    const first = elapsed.element().textContent;
+    // A state ARRIVING (a later reading), never one that leaves — see testing.md.
+    await expect.poll(() => elapsed.element().textContent, { timeout: 5_000 }).not.toBe(first);
+  });
+
   test('the history read polls while a version builds, and stops once nothing is in flight', async () => {
     mocks.entries = [
       version({ id: 'v_poll', deployState: 'building', deployUpdatedAt: new Date(Date.now()) }),
@@ -307,6 +330,8 @@ describe('C — a running build shows how long it has been going', () => {
 describe('D — "live" belongs to the currently published version only', () => {
   test('the newest approved version is live; an older live one keeps the plain state', async () => {
     renderEntries([
+      // A newer approved LISTING edit is not a version: it must not take the live chip.
+      version({ id: 'l_edit', source: 'listing', deployState: null, version: null }),
       version({ id: 'v_pend', status: 'pending', deployState: null, version: '3.0.0' }),
       version({ id: 'v_cur', deployState: 'live', version: '2.0.0' }),
       version({ id: 'v_old', deployState: 'live', version: '1.0.0' }),
@@ -314,6 +339,7 @@ describe('D — "live" belongs to the currently published version only', () => {
     await expect.element(page.getByTestId('apps-history-deploy-v_cur')).toHaveTextContent('live');
     expect(page.getByTestId('apps-history-deploy-v_old').elements()).toHaveLength(0);
     await expect.element(page.getByTestId('apps-history-entry-v_old')).toHaveTextContent(/· live/);
+    expect(page.getByTestId('apps-history-deploy-l_edit').elements()).toHaveLength(0);
     // A pending version has no build lifecycle to show.
     expect(page.getByTestId('apps-history-deploy-v_pend').elements()).toHaveLength(0);
   });

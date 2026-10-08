@@ -2215,7 +2215,7 @@ export async function listApprovedRequests(opts: ListPendingRequestsOptions = {}
       forgejoCommitSha: true,
       // Build/deploy lifecycle — additive. The Approved tab is where a moderator
       // sees that an approved app never actually built (deployState null =
-      // STRANDED) and can re-trigger it; without these three the queue shows a
+      // STRANDED) and can re-trigger it; without these two the queue shows a
       // uniformly-healthy list of approvals regardless of what actually shipped.
       //
       // 🔴 `deployDetail` IS NOT SELECTED. It carries the tenant-influenced build-log
@@ -3544,13 +3544,6 @@ export async function markRequestDeployState(
 // ---------------------------------------------------------------------------
 // MOD-ONLY BUILD RE-TRIGGER — recover an APPROVED request whose build never ran.
 // ---------------------------------------------------------------------------
-
-/**
- * Re-exported from its shared home so existing importers keep working; the value
- * moved so the author-facing classifier (`~/components/Apps/buildFailure`) can match
- * it without importing this server module. Rationale: see the constant's docstring.
- */
-export { RETRIGGER_FAILED_AUTHOR_DETAIL };
 
 /** Typed failure from {@link retriggerBuild}; `code` drives the tRPC mapping. */
 export class RetriggerBuildError extends Error {

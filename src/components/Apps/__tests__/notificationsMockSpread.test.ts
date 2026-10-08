@@ -40,9 +40,9 @@ import { describe, expect, it } from 'vitest';
  *
  * WHY A LEDGER AND NOT A REPO-WIDE RULE. Measured with the detector below: 44 test files
  * carry a non-spreading `~/utils/notifications` factory at `ba6ce2b835`; #5102 converted the
- * 5 in `FIXED_BY_5102` and #5358 four more, and deleting `MySubmissionsList` removed two, leaving the
- * 33 in `TOLERATED`. A repo-wide "must spread" check would be red on all 33 — and a permanently-red gate is worse than no gate, which is the whole
- * subject of #5102. So the tolerated set is enumerated instead, and the assertion is EQUALITY
+ * 5 in `FIXED_BY_5102` and #5358 four more, and two more went when their suites were deleted,
+ * leaving the 33 in `TOLERATED`. A repo-wide "must spread" check would be red on all 33 —
+ * and a permanently-red gate is worse than no gate, which is the whole subject of #5102. So the tolerated set is enumerated instead, and the assertion is EQUALITY
  * in both directions: adding a new wholesale factory fails this test, and converting one
  * without editing the ledger also fails it, so the count here stays true. Per the tier note
  * above, that failure is a red test someone has to read — it is not a merge gate, and this
@@ -95,8 +95,7 @@ const FIXED_BY_5102 = [
  * rather than as a failing assertion — the whole-file silent skip this guard exists to make
  * visible. It was noticed only because sibling files in the same run stayed green.
  *
- * Two more came off when `MySubmissionsList` and its two suites were deleted outright, so the
- * ledger now holds 33 entries, of which 30 are `.browser.test.tsx` and 3 run in the node tier
+ * 33 entries, of which 30 are `.browser.test.tsx` and 3 run in the node tier
  * (`creator-announcement-mutations`, `useCFImageUpload`, `useFormStorage`). Both numbers get
  * quoted, so keep them apart: "30 browser suites left to convert" and "a 33-entry ledger" are
  * the same fact counted over different sets, not a discrepancy. Conversion is tracked in

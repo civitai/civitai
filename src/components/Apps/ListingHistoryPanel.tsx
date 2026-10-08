@@ -121,7 +121,10 @@ export type ListingHistoryPanelViewProps = {
   now?: number;
 };
 
-/** The usual wall time of a build + deploy, shown beside the elapsed time. */
+/**
+ * The usual wall time of a whole build + deploy. Shown only while `building`: the elapsed
+ * clock restarts at each state transition, so beside `deploying` it would undercount.
+ */
 export const TYPICAL_BUILD_HINT = 'usually 1–4 min';
 
 /** Which entries this view tracks the build/deploy lifecycle for. */
@@ -175,7 +178,8 @@ function versionBuildStatus(e: ListingHistoryEntry, isCurrentlyPublished: boolea
       {badge}
       {elapsed != null && (
         <Text size="xs" c="dimmed" data-testid={`apps-history-elapsed-${e.id}`}>
-          {formatElapsed(elapsed)} · {TYPICAL_BUILD_HINT}
+          {formatElapsed(elapsed)}
+          {row.deployState === 'building' ? ` · ${TYPICAL_BUILD_HINT}` : null}
         </Text>
       )}
     </Group>
@@ -388,8 +392,8 @@ export function ListingHistoryPanel({ appListingId }: { appListingId: string }) 
     { appListingId },
     {
       retry: false,
-      // While an approved version builds or deploys, poll so its chip and failure detail
-      // arrive without a reload: the shared 5s/30s/stop cadence (`deployRefetchInterval`).
+      // Poll while any approved version is in flight (`deployRefetchInterval`) so its
+      // chip and failure detail arrive without a reload.
       refetchInterval: (q) => deployRefetchInterval(historyLifecycleRows(q.state.data)),
     }
   );

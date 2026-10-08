@@ -15,8 +15,8 @@ import {
  * WHAT THE STORED DETAIL CAN BE, enumerated from its writers:
  *   - `Build <status>` + optional blank line + sanitized log excerpt —
  *     `buildFailureDeployDetail` in `~/server/services/blocks/build-failure-reason`.
- *     🔴 `<status>` is the PUSH step's status, so a failure in any EARLIER step arrives as
- *     `Build None`. It says nothing about the cause, so it is never rendered.
+ *     🔴 `<status>` is the status of the run's final publish step, so a failure before it
+ *     arrives as `Build None`. It says nothing about the cause, so it is never rendered.
  *   - one of {@link DEPLOY_FAILURE_DETAIL} — the image built, the deploy didn't.
  *   - {@link RETRIGGER_FAILED_AUTHOR_DETAIL} — a moderator re-trigger never reached the
  *     build service.
@@ -109,7 +109,6 @@ export function describeBuildFailure(
 
   const separator = detail.indexOf('\n\n');
   const head = separator === -1 ? detail : detail.slice(0, separator);
-  // Not trimmed: a leading space can be a table column's alignment.
   const tail = separator === -1 ? '' : detail.slice(separator + 2);
   const rest = tail.trim().length > 0 ? tail : null;
 

@@ -1,8 +1,7 @@
 /**
  * Pure helpers for the App Blocks build/deploy lifecycle, shown to an app's team on
  * the listing's History tab and to moderators on the review queue. Kept free of
- * React so the staleness + poll-cadence logic — the part that churned across two
- * audit-fix passes — is unit-testable on its own.
+ * React so the staleness + poll-cadence logic is unit-testable on its own.
  */
 
 import {

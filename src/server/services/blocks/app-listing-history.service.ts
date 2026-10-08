@@ -84,8 +84,8 @@ export type ListingHistoryEntry = {
    *
    * 🔴 TENANT-INFLUENCED BYTES (a sanitized build-log excerpt). This read authorizes
    * owner ∪ accepted seat, so an app's collaborators see it too — deliberately: they
-   * work on the same code. Moderator reads (`listVersionHistory`, `listApprovedRequests`)
-   * do not select the column at all.
+   * work on the same code. The moderator lists (`listVersionHistory`,
+   * `listApprovedRequests`) do not select it.
    */
   deployDetail: string | null;
   /**

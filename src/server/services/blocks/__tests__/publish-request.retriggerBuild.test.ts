@@ -603,7 +603,9 @@ describe('retriggerBuild — the trigger failure must not leak internals to the 
   });
 
   it('stores the FIXED author-facing message — identical whatever was thrown', async () => {
-    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import('../publish-request.service');
+    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import(
+      '~/shared/constants/app-block-deploy.constants'
+    );
 
     mockTriggerBuild.mockRejectedValue(new Error(`trigger 502 Bad Gateway: ${RECEIVER_BODY}`));
     await expectRejectCode(callRetrigger(), 'TRIGGER_FAILED');
@@ -619,7 +621,9 @@ describe('retriggerBuild — the trigger failure must not leak internals to the 
   });
 
   it('the stored detail survives sanitizeBuildFailureReason unchanged (the invariant)', async () => {
-    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import('../publish-request.service');
+    const { RETRIGGER_FAILED_AUTHOR_DETAIL } = await import(
+      '~/shared/constants/app-block-deploy.constants'
+    );
     const { sanitizeBuildFailureReason } = await import('../build-failure-reason');
     // The value is written THROUGH the sanitizer, so the stored bytes are
     // guaranteed printable + bounded like every other deploy_detail write.

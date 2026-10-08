@@ -31,7 +31,7 @@ export type DeployStatusRow = DeployLifecycleRow & { deployDetail?: string | nul
 /**
  * The build/deploy chip for an APPROVED version, or `null` when there is nothing to say
  * beyond "approved" (a non-approved row, a legacy row with no recorded lifecycle, a
- * freshly approved row still inside its grace window, or a live version that is no longer
+ * approved row with no state yet that is not old enough to count as stranded, or a live version that is no longer
  * the published one). Callers render the request status themselves.
  *
  * Order matters: STRANDED and STALLED are checked before the plain state, because both

@@ -54,7 +54,9 @@ type CallbackBody = {
   sha?: string;
   appBlockId?: string;
   imageRef?: string;
-  status?: string; // "Succeeded" / "Failed" / "Cancelled" / ... per Tekton
+  // "Succeeded" / "Failed" / "Cancelled" / ..., or "None" when the run failed
+  // before its final publish step (the reported status is that step's).
+  status?: string;
   // F5 — integer unix-epoch-SECONDS timestamp the SIGNER (the datapacket-talos
   // app-blocks-callback Tekton task) stamps INSIDE the body BEFORE the HMAC, so
   // it is covered by the signature. Validated for skew below. ABSENT/non-finite
@@ -191,7 +193,8 @@ export function expectedImageRef(slug: string, sha: string): string {
 // clears on a Job-creation failure. The TTL is only the backstop for the
 // can't-clear cases (apply 'timeout' where the Job may still run, or a
 // watcher-crash / pod-restart). Cross-window replay protection is the signed-`ts`
-// freshness check above, which (unlike this dedup) does not fail open.
+// freshness check above, which, unlike this dedup, does not depend on Redis (but
+// allows a callback with no `ts`).
 const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 6m apply)
 function applyDedupKey(appBlockId: string, sha: string): string {
   // Reuse the block rate-limit key family (same convention as workflow-completed).

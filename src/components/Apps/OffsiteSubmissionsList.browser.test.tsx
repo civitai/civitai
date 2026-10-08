@@ -501,3 +501,49 @@ describe('OffsiteSubmissionsList — row actions scroll rather than clip (S3)', 
     expect(table?.closest('.mantine-Card-root')).toBe(card);
   });
 });
+
+describe('OffsiteSubmissionsList — reviewer notes open in a modal, only when there are notes', () => {
+  test('approval notes are not inline; the button opens them under "Reviewer notes"', async () => {
+    const notes = 'Please tighten the manifest scopes before next version.';
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[live({ approvalNotes: notes })]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await expect.element(page.getByText('live-off', { exact: false })).toBeInTheDocument();
+    expect(page.getByText(notes, { exact: false }).elements()).toHaveLength(0);
+    await page.getByRole('button', { name: /see reviewer notes/i }).click();
+    await expect.element(page.getByText(notes, { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Reviewer notes', { exact: true })).toBeInTheDocument();
+  });
+
+  test('a rejection reason opens under "Reviewer feedback"', async () => {
+    const reason = 'Rejected: the external URL does not load.';
+    renderWithProviders(
+      <OffsiteSubmissionsList
+        submissions={[
+          makeOffsite({ id: 'r', slug: 'rej-off', status: 'rejected', rejectionReason: reason }),
+        ]}
+        onWithdraw={vi.fn()}
+        withdrawing={false}
+      />
+    );
+    await page.getByTestId('apps-offsite-submissions-section-rejected-toggle').click();
+    const btn = page.getByRole('button', { name: /see reviewer notes/i });
+    await expect.element(btn).toBeInTheDocument();
+    expect(page.getByText(reason, { exact: false }).elements()).toHaveLength(0);
+    await btn.click();
+    await expect.element(page.getByText(reason, { exact: false })).toBeInTheDocument();
+    await expect.element(page.getByText('Reviewer feedback', { exact: true })).toBeInTheDocument();
+  });
+
+  test('no notes, no button', async () => {
+    renderWithProviders(
+      <OffsiteSubmissionsList submissions={[live({})]} onWithdraw={vi.fn()} withdrawing={false} />
+    );
+    await expect.element(page.getByText('live-off', { exact: false })).toBeInTheDocument();
+    expect(page.getByRole('button', { name: /see reviewer notes/i }).elements()).toHaveLength(0);
+  });
+});

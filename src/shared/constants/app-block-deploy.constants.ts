@@ -82,7 +82,8 @@ export const DEPLOY_FAILURE_DETAIL = {
  * could not be handed to the build service.
  *
  * 🔴 FIXED STRING, never derived from the thrown error. `deploy_detail` is
- * owner-visible (the listing's History tab and `GET /api/v1/blocks/submissions`),
+ * owner-visible (the listing's History tab, `blocks.listMyPublishRequests` and
+ * `GET /api/v1/blocks/submissions`),
  * and the errors `triggerBuild` throws carry infrastructure detail. Those go to the
  * server log instead.
  *

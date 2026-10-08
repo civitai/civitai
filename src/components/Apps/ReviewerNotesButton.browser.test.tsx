@@ -5,12 +5,8 @@ import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
 
 /**
- * `ReviewerNotesButton` — reviewer notes open in a modal instead of rendering inline.
- *
- * RE-HOMED COVERAGE, not new: these cases lived in the deleted `MySubmissionsList` suite and
- * are re-pointed at the component's own module, which `OffsiteSubmissionsList` imports. The
- * deleted suite's "absent when there are no notes" case is not here: that was the list's
- * decision about whether to render the button, and it went with the list.
+ * `ReviewerNotesButton` — reviewer notes open in a modal instead of rendering inline. Whether
+ * to render the button at all is the caller's call (`OffsiteSubmissionsList`'s suite).
  */
 
 const { ReviewerNotesButton } = await import('./ReviewerNotesButton');

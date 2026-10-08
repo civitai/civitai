@@ -15,10 +15,6 @@ import { describeBuildFailure } from '~/components/Apps/buildFailure';
  * here through ordinary React text interpolation, which escapes. There is deliberately no
  * `dangerouslySetInnerHTML` on this path, so even a hostile excerpt renders as literal
  * characters.
- *
- * LAYOUT — the excerpt is capped at ~14rem of scrollable height and scrolls on BOTH axes
- * inside its own box, so a multi-KB stack trace or a very long line can never blow out
- * the surrounding layout or push the page into horizontal scroll.
  */
 export function DeployFailureDetail({
   detail,
@@ -42,9 +38,8 @@ export function DeployFailureDetail({
       <Stack gap={6}>
         <Text size="sm">{failure.guidance}</Text>
         {failure.excerpt && (
-          // A plain <pre> rather than Mantine's <Code block>: the excerpt needs
-          // `pre-wrap` + a hard height cap, and owning the styles outright keeps that
-          // guarantee independent of the component library's own CSS.
+          // Plain <pre>, not <Code block>: the wrap, the height cap and the both-axis
+          // scroll must not depend on Mantine's CSS.
           <pre
             data-testid={`${testId}-excerpt`}
             style={{

@@ -10,7 +10,7 @@
  * where the detail action matrix is actually pinned, mirroring
  * `appListingCardView`.
  *
- * DARK / parallel-run: consumed by the mod-only `/apps/store-preview/<slug>`
+ * DARK / parallel-run: rendered by the mod-only `/apps/store-preview/<slug>`
  * detail surface (`AppListingDetailBody`), which degrades gracefully to text when
  * an action carries no href.
  *
