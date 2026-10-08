@@ -312,14 +312,30 @@ describe('useSignalsWorker: signals token re-mint', () => {
     expect(state.invalidations.slice(2).map((t) => t - t1)).toEqual([120_000]);
   });
 
-  it("a replaced worker's null state hands it the cached token, without re-minting", async () => {
+  it('a replacement worker is handed the cached token, without a re-mint', async () => {
     await mount({ accessToken: 't1' });
+    // The tab gets a stale script back and retries with a fresh worker a minute later; the new worker
+    // has never connected, so it reports `null`.
+    await fromWorker({ type: 'worker:ready', version: 'stale' });
+    await advance(61_000);
+    expect(workers).toHaveLength(2);
     await fromWorker({ type: 'connection:state', state: null });
-    const inits = workers[0].port.postMessage.mock.calls
+    await fromWorker({ type: 'worker:ready', version: '2.3' });
+    const inits = workers[1].port.postMessage.mock.calls
       .map(([m]) => m)
       .filter((m) => m.type === 'connection:init');
     expect(inits.at(-1)).toMatchObject({ token: 't1' });
     await advance(60 * 60_000);
     expect(state.invalidations).toEqual([]);
+  });
+
+  it('a tab loaded while the worker is reconnecting may fetch a token; a connected one may not', async () => {
+    // So a reload during an outage can hand the worker a fresh token: a lost connection now stays
+    // 'reconnecting' instead of ever reaching 'closed'.
+    await mount({ accessToken: 't1' });
+    await fromWorker({ type: 'connection:state', state: 'reconnecting' });
+    expect(state.options.enabled).toBe(true);
+    await fromWorker({ type: 'connection:state', state: 'connected' });
+    expect(state.options.enabled).toBe(false);
   });
 });
