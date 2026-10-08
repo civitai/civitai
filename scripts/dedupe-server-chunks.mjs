@@ -197,8 +197,13 @@ export function dedupeServerChunks(serverDir, { dryRun = false } = {}) {
     else groups.set(key, [file]);
   }
 
+  if (files.length === runtimeFiles) {
+    throw new DedupeError(2, `no .js chunk files besides the runtime files under ${chunksDir}`);
+  }
   // Every non-runtime file in an unrecognised format means Turbopack's output changed shape:
   // the script can no longer see its input, so it must not report a quiet "nothing to do".
+  // A PARTIAL change (some files skipped) still exits 0 and shows only in the skipped count —
+  // deliberately, so one legitimate non-array file cannot fail every build.
   if (groups.size === 0 && existingStubs === 0 && otherFormat > 0) {
     throw new DedupeError(
       2,

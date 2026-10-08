@@ -231,6 +231,16 @@ describe('dedupe-server-chunks', () => {
     expect(run().code).toBe(2);
   });
 
+  it('exits 2 when the only .js files are runtime files', () => {
+    write('chunks/[turbopack]_runtime.js', 'module.exports=()=>({});\n');
+    write('chunks/_a._.cjs', chunk('_a._.cjs', `1,()=>"x"`));
+
+    const r = run(server);
+
+    expect(r.code).toBe(2);
+    expect(r.err).toContain('no .js chunk files besides the runtime files');
+  });
+
   it('exits 2 with usage on an extra positional argument, even over a valid tree', () => {
     write('chunks/_a._.js', chunk('_a._.js', `1,()=>"x"`));
 
