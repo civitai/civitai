@@ -43,6 +43,7 @@ import {
   useUserCash,
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { BankableBuzzMeter } from '~/components/Buzz/CreatorProgramV2/BankableBuzzMeter';
 import {
   CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
@@ -79,6 +80,7 @@ import {
   getExtractionFee,
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
+import { getBankCardLimits } from '~/shared/utils/creator-program.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   MIN_CREATOR_SCORE,
@@ -513,12 +515,14 @@ const BankBuzzCard = () => {
     }
   };
 
-  const remainingCap = banked?.cap?.cap ? banked.cap.cap - banked.total : 0;
-  const maxBankable = Math.min(
-    remainingCap,
-    banked?.bankable?.remaining ?? Infinity,
-    buzzAccount.balance ?? 0
-  );
+  const { maxBankable, meterBalance, meterCapRemaining } = getBankCardLimits({
+    accountBalances: accounts.map((account) => account.balance ?? 0),
+    selectedBalance: buzzAccount.balance ?? 0,
+    cap: banked?.cap?.cap,
+    bankedThisMonth: banked?.total ?? 0,
+    bankableRemaining: banked?.bankable?.remaining,
+    hasActiveMembership: !!hasActiveMembership,
+  });
 
   if (isLoading) {
     return (
@@ -628,10 +632,12 @@ const BankBuzzCard = () => {
           Max
         </Button>
         {banked?.bankable && (
-          <p className="text-xs text-dimmed">
-            Bankable Buzz left: {numberWithCommas(banked.bankable.remaining)}. Generation
-            compensation no longer counts toward banking.
-          </p>
+          <BankableBuzzMeter
+            balance={meterBalance}
+            bankableRemaining={banked.bankable.remaining}
+            capRemaining={meterCapRemaining}
+            onOpenInfo={() => dialogStore.trigger({ component: CreatorProgramCapsInfoModal })}
+          />
         )}
 
         <div className="mb-2 flex items-center gap-2">

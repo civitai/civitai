@@ -305,6 +305,18 @@ describe('uploadConsumerBlob', () => {
     }
   );
 
+  it('tells a signed-out user to sign in on a 401 presign, reported once and not retried', async () => {
+    presignMode = 'rejected';
+    rejectedStatus = 401;
+    const result = track(uploadConsumerBlob(jpeg()));
+    await vi.advanceTimersByTimeAsync(BACKOFF_MS);
+
+    expect(result.error?.message).toBe('Sign in to upload images.');
+    expect(presignCount).toBe(1);
+    expect(FakeXHR.instances).toHaveLength(0);
+    expect(kinds()).toEqual(['consumer blob upload failed: presign-http-401']);
+  });
+
   it('times out a hung presign request and throws after one retry', async () => {
     presignMode = 'hang';
     const result = track(uploadConsumerBlob(jpeg()));

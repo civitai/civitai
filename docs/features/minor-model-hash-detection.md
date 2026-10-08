@@ -248,8 +248,9 @@ Both use the same sentence, and both are deliberately vague:
 
 It names no hash, no matched model, and no source, and it does not enumerate the restrictions
 applied. Each of those details would tell a repeat uploader exactly which bytes to change. The
-Auto-flagged tab reviews automated flags for their first 30 days, and owner appeals land in an Appeals
-queue (`/api/mod/minor-flag/resolve-appeal`). Past the window, the moderator app's
+Auto-flagged tab reviews automated flags for their first 30 days, and owner appeals land in the moderator
+app's Model Flag Appeals page (`/models/flag-appeals`, which calls `/api/mod/minor-flag/resolve-appeal`).
+Appeals there cover minor flags from any source and real-person flags, so they are not a tab of this queue. Past the window, the moderator app's
 `/models/minor-hash-matches?q=<modelId>` lookup still offers Revert / Keep flagged for any model with a
 flag snapshot.
 

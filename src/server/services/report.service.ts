@@ -608,7 +608,9 @@ export function getLatestAppeal({
 
 export function reopenAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
-    where: { id },
+    // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
+    // moderator-only review flag. A reopen has no such check, so it must never reach an image.
+    where: { id, entityType: { not: EntityType.Image } },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
@@ -619,6 +621,9 @@ export function reopenAppeal({ id, message }: { id: number; message: string }) {
       resolvedAt: null,
       resolvedBy: null,
       resolvedMessage: null,
+      // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
+      resolvedReason: null,
+      internalNotes: null,
     },
   });
 }
@@ -938,6 +943,9 @@ export async function resolveEntityAppeal({
     switch (appeal.entityType) {
       case EntityType.Image:
         try {
+          // No moderator-only review-flag guard, unlike the moderator app's twin: a Pending image
+          // appeal cannot sit beside that flag (`createEntityAppeal` refuses, `reportCsamImages`
+          // closes it), so there is nothing here for one to protect.
           const updated = await dbWrite.image.update({
             where: { id: appeal.entityId },
             data: approved

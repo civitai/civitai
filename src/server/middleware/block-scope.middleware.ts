@@ -1093,12 +1093,14 @@ export function enforceContextBinding(
       case 'social:tip:self':
       case 'goods:read:self':
       case 'goods:purchase:self':
+      case 'apps:store:items:write':
       case 'user:read:self': {
         // Every :self scope requires an authenticated subject — there's no
         // anonymous "self" to read/tip. user:read:self joined this set
         // when /api/v1/blocks/me switched off buzz:read:self (audit I3), and
         // the goods pair joined it because an anonymous viewer has no balance
-        // to charge and no entitlements to hold.
+        // to charge and no entitlements to hold. Store items are published under
+        // the viewer's name, so there is no anonymous author either.
         if (claims.sub === ANON_SUBJECT) {
           throw forbidden(`${scope} requires authenticated subject`);
         }
@@ -2079,6 +2081,8 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'item',
   'list',
   'me',
+  // `/api/v1/blocks/sub-listings/mine` — the caller's own store items.
+  'mine',
   'models',
   'poll',
   // `/api/v1/blocks/resource-intent` — the Jev resource-intent primitive. Static:
@@ -2095,6 +2099,9 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'report',
   'set',
   'shared-storage',
+  // `/api/v1/blocks/sub-listings/{upsert,withdraw,mine}` — store items. Static: the item
+  // key rides the POST body, so no path segment carries a per-item value.
+  'sub-listings',
   'submit',
   'tip',
   'tip-allowance',
@@ -2102,6 +2109,7 @@ export const KNOWN_STATIC_ENDPOINT_SEGMENTS = new Set([
   'top',
   'unvote',
   'update',
+  'upsert',
   // The per-viewer checkpoint override write. Like `app-storage`, nothing
   // identifying is in the path: the install and the viewer both come from the
   // JWT, and the only body field is a bounded integer — so there is no `:seg`

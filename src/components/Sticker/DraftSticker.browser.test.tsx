@@ -904,3 +904,45 @@ describe('the clearance reaches the element', () => {
  * that positions the draft in a viewport-realistic place and a deterministic
  * way to drive a second measure.
  */
+
+describe('previewing without the controls', () => {
+  test('hides the toolbar and the Place button, and brings them back', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    // `includeHidden`: a visibility-hidden control leaves the accessibility tree,
+    // so a plain role query stops finding it and the assertion fails on lookup.
+    const remove = page.getByRole('button', { name: 'Remove this sticker', includeHidden: true });
+    const place = page.getByRole('button', { name: 'Place', includeHidden: true });
+    await expect.element(remove).toBeVisible();
+
+    // The handles and knob are hidden by a separate wrapper from the toolbar.
+    const knob = document.querySelector<HTMLElement>('span.cursor-grab');
+    expect(knob, 'the rotate knob did not render').not.toBeNull();
+    const knobVisibility = () => getComputedStyle(knob as HTMLElement).visibility;
+    expect(knobVisibility()).toBe('visible');
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(remove).not.toBeVisible();
+    await expect.element(place).not.toBeVisible();
+    expect(knobVisibility()).toBe('hidden');
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(remove).toBeVisible();
+    expect(knobVisibility()).toBe('visible');
+  });
+
+  // Portalled, so hiding the cluster never reaches it.
+  test('hides an open opacity slider too', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    await page.getByRole('button', { name: "Set this sticker's opacity" }).click();
+    const slider = page.getByText('Opacity', { exact: true });
+    await expect.element(slider).toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(slider).not.toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(slider).toBeVisible();
+  });
+});

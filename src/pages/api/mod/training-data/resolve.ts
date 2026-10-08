@@ -5,6 +5,7 @@ import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 
 export default defineModeratorEndpoint('trainingData.resolve', {
   summary: "Resolve a version's training data to a signed download URL.",
@@ -21,7 +22,7 @@ export default defineModeratorEndpoint('trainingData.resolve', {
       .positive()
       .describe('The version whose training data to resolve.'),
   }),
-  async handler(input) {
+  async handler(input, { actor }) {
     const files = await dbRead.modelFile.findMany({
       where: { modelVersionId: input.modelVersionId, type: 'Training Data', dataPurged: false },
       select: { id: true, url: true, name: true, metadata: true },
@@ -34,7 +35,10 @@ export default defineModeratorEndpoint('trainingData.resolve', {
     if (!file) throw throwNotFoundError('No training data on this version');
 
     try {
-      const { url } = await resolveDownloadUrl(file.id, file.url, file.name);
+      const { url } = await resolveDownloadUrl(file.id, file.url, file.name, {
+        caller: 'training-data',
+        actor: resolveActorFor(actor),
+      });
       return { url, name: file.name, affected: { modelVersionIds: [input.modelVersionId] } };
     } catch (e) {
       // Storage resolver and delivery-worker fallback both rejected it: registered but not deliverable.

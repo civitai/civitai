@@ -305,3 +305,24 @@ describe('the access-denied bounce', () => {
     expect(safeReturnPath(back)).toBe(requested);
   });
 });
+
+describe('moved views', () => {
+  it.each([
+    ['/audit/generator-restrictions?type=scam&status=any', '/users/scam-restrictions?status=any'],
+    ['/models/minor-hash-matches?tab=appeals&q=7', '/models/flag-appeals?q=7'],
+  ])(
+    'redirects %s before the grant check, even for a role holding neither old page',
+    async (from, to) => {
+      guardCheck.mockResolvedValue({ status: 'ok', user: { id: 7, roles: ['moderator:nobody'] } });
+      const path = from.split('?')[0];
+      const event = eventFor({ path });
+      event.url.search = from.split('?')[1];
+      event.route.id = path;
+      const { response, resolve } = await run(event);
+
+      expect(resolve).not.toHaveBeenCalled();
+      expect(response.status).toBe(307);
+      expect(response.headers.get('location')).toBe(to);
+    }
+  );
+});

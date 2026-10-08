@@ -333,9 +333,14 @@ export const getJudgingStatusesSchema = z.object({
 
 export const getJudgingPairSchema = z.object({
   crucibleId: z.number(),
-  // Entry IDs to exclude from pair selection (e.g., recently skipped entries)
-  // These entries won't appear in the returned pair
+  // Superseded by `skippedPairs`; still read from clients loaded before it shipped.
   excludeEntryIds: z.array(z.number()).max(50).optional(),
+  // Recently skipped pairs, oldest first. Their entries are avoided while anything else is left,
+  // and the pairs themselves for as long as another pair is left.
+  skippedPairs: z
+    .array(z.tuple([z.number().int(), z.number().int()]))
+    .max(25)
+    .optional(),
   browsingLevel: z.number().int().min(0).optional(),
   judgingSessionId: judgingSessionIdSchema,
 });

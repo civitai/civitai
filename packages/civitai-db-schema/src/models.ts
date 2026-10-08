@@ -232,7 +232,7 @@ export type ComicEngagementType = "None" | "Notify" | "Hide";
 
 export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy" | "Horror" | "Mystery" | "Romance" | "SciFi" | "SliceOfLife" | "Thriller" | "Other";
 
-export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
+export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned" | "AccountDeleted";
 
 export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
 
@@ -697,6 +697,8 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appSubListingsAuthored?: AppSubListing[];
+  appSubListingsModerated?: AppSubListing[];
   appCollaboratorSeats?: AppCollaborator[];
   appCollaboratorInvitesSent?: AppCollaborator[];
   appOwnershipEventsActed?: AppOwnershipEvent[];
@@ -1587,6 +1589,8 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  appSubListingImages?: AppSubListing[];
+  appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
@@ -2194,6 +2198,8 @@ export interface AppListing {
   collaborators?: AppCollaborator[];
   ownershipEvents?: AppOwnershipEvent[];
   ownershipTransfers?: AppOwnershipTransfer[];
+  subListings?: AppSubListing[];
+  subListingParent?: AppSubListingParent | null;
 }
 
 export interface AppListingScreenshot {
@@ -2289,6 +2295,46 @@ export interface AppListingModerationEvent {
   before: JsonValue | null;
   after: JsonValue | null;
   createdAt: Date;
+}
+
+export interface AppSubListingParent {
+  parentListingId: string;
+  parentListing?: AppListing;
+  enabled: boolean;
+  maxPerAuthor: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppSubListing {
+  id: string;
+  parentListingId: string;
+  parentListing?: AppListing;
+  itemKey: string;
+  authorUserId: number;
+  author?: User;
+  title: string;
+  tagline: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  subPath: string;
+  contentRating: string | null;
+  pendingTitle: string | null;
+  pendingTagline: string | null;
+  pendingImageId: number | null;
+  pendingImage?: Image | null;
+  pendingSubPath: string | null;
+  pendingContentRating: string | null;
+  pendingSubmittedAt: Date | null;
+  editRejectionReason: string | null;
+  status: string;
+  statusReason: string | null;
+  moderatedById: number | null;
+  moderatedBy?: User | null;
+  moderatedAt: Date | null;
+  approvedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface AppReviewAgentReport {
@@ -4053,6 +4099,7 @@ export interface Appeal {
   resolvedBy: number | null;
   resolvedByUser?: User | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
 }
@@ -5373,6 +5420,8 @@ export interface UserRestriction {
   resolvedAt: Date | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Date | null;
 }

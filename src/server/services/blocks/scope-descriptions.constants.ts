@@ -83,6 +83,8 @@ export const SCOPE_DESCRIPTIONS: Record<string, string> = {
     "Publish posts to your profile from this app's own results — you approve each one",
   'goods:read:self': "See which of this app's items you already own",
   'goods:purchase:self': "Buy this app's items with your Buzz",
+  'apps:store:items:write':
+    'List items you made in this app in the Civitai App Store, under your name',
 };
 
 export const SLOT_DESCRIPTIONS: Record<string, string> = {

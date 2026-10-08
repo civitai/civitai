@@ -42,15 +42,18 @@ const FORBIDDEN_IN_DRY_RUN = ['src/server/db/client.ts', 'src/server/meilisearch
  * verdict block, the control and the power statement; nothing else pins the Sample,
  * Stage 1, Gold and Arms paragraphs, so this hash does. It is meant to be UPDATED ON
  * PURPOSE, in the same commit that amends the registration (and before any run under
- * it) — never to make an accidental change pass. Current value: v3 (registered
- * 2026-10-07: the popularity-seed matcher, the two co-primaries, the promotable-label
- * positive control, identical heads as a diagnostic only), taken from the dry run's own
- * stdout in the commit that registered it. Previous: v2,
+ * it) — never to make an accidental change pass. Current value: v3 as re-planned
+ * 2026-10-07 from the 100-prompt pilot's nuisance rates, before any registered run (2000
+ * drawn, a 1334 scored floor, the re-plan record), taken from the dry run's own stdout in
+ * the commit that re-planned it. Previous: v3 as registered 2026-10-07 (the
+ * popularity-seed matcher, the two co-primaries, the promotable-label positive control,
+ * identical heads as a diagnostic only; 1000 drawn),
+ * `fbedfe4b7b6fd5b46fbfa0dc1baa9721599f723a1f0f84e2a656f1f9a16e0b28`; v2,
  * `2ad9ecdaf6810d60fac1c073b76013156e5457ad7ddc6de248d50be82a17c467` (0ae482a241); v1,
  * `0e151995da2101c5e7fff68f150eda2cc8934e73e54e3e3799e04f3ef394ffb3` (c8bc91037f).
  */
 const REGISTERED_PREREGISTRATION_SHA256 =
-  'fbedfe4b7b6fd5b46fbfa0dc1baa9721599f723a1f0f84e2a656f1f9a16e0b28';
+  'c32df9f7a2b6f0ce842f65c1a74f8e46d71e3b6036c25816b58c7ae891ebc9e0';
 
 /** v2's text as registered — the record `renderRetrievalPreregistrationV2` must still print. */
 const V2_PREREGISTRATION_SHA256 =

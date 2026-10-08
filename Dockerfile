@@ -140,6 +140,20 @@ RUN mkdir -p /app/server-maps && \
     { find . -name '*.js.map' | tar -cf - -T - | tar -xf - -C /app/server-maps || true; } && \
     echo "Staged $(find /app/server-maps -name '*.js.map' | wc -l) server source maps ($(du -sh /app/server-maps | cut -f1))"
 
+# Duplicate server chunks -> one-line re-export stubs, in the SHIPPED tree only.
+#
+# Turbopack emits the same server chunk under many file names (the copies differ only in their
+# trailing sourceMappingURL comment), and its Node runtime loads chunks with `require(<path>)`.
+# Node caches by path, so every copy is compiled and its source kept on the heap. The script
+# replaces each duplicate with `module.exports=require("./<canonical>.js")`: every existing
+# reference still names a real file, and the runtime receives the canonical's own module array
+# (it registers factories by module id, so module identity is unchanged). See the script header.
+#
+# Runs after the gates and the map staging above, which read `.next/server`; this touches only
+# `.next/standalone/.next/server`. Exits 1 if a stub does not resolve to a real chunk, 2 if it
+# finds no chunks — both fail the build.
+RUN node scripts/dedupe-server-chunks.mjs /app/.next/standalone/.next/server
+
 ##### MAPS ARTIFACT (fetched on-demand; NOT part of the runtime image)
 #
 # A minimal `FROM scratch` image holding ONLY the staged server source maps,

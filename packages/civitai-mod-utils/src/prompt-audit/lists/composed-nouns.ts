@@ -20,7 +20,9 @@ export const composedNounGap = '([\\s|\\w]{0,200}|[^\\w]{1,200})';
  * The noun must start a word, or follow the adjective directly (`littlegirl`). Without
  * that, the gap's `\w` branch ends mid-word and `small curved crimson` reads as
  * `small … son`. Compounds the boundary would lose are spelled out in the list
- * (`(?:step|grand|god|half)?son`), and `(?!cowbo)` keeps `cowboy shot` from reading as `boy`.
+ * (`(?:step|grand|god|half)?son`). In the `boy` entry, `(?!cowbo)` keeps `cowboy shot` and
+ * `(?![-_]?shorts)` keeps `boyshorts` from reading as `boy`; `boy shorts` with a space still
+ * flags, since it cannot be told from `young boy, shorts`.
  */
 const gapToNounStart = `(?:${composedNounGap}(?<![a-zA-Z0-9])|)`;
 

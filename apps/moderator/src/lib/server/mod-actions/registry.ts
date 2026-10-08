@@ -37,7 +37,7 @@ const imageModerate: ModAction<z.infer<typeof imageModerateInput>> = {
   handler: async ({ ids, reviewAction, userId, ip, userAgent }) => {
     for (const imageId of ids) {
       // Delegated accept uses the smart default (removeMinorFlag is a spoke-only, minor-page option).
-      if (reviewAction === 'unblock') await acceptImage({ imageId, userId });
+      if (reviewAction === 'unblock') await acceptImage({ imageId, userId, restoreRemoved: true });
       else await blockImage({ imageId, userId, ip, userAgent });
     }
     return { count: ids.length };
