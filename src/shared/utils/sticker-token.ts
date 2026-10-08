@@ -1,4 +1,5 @@
-export const STICKER_SLUG_PATTERN = '[a-z0-9_]{2,32}';
+const STICKER_SLUG_CHARS = '[a-z0-9_]';
+export const STICKER_SLUG_PATTERN = `${STICKER_SLUG_CHARS}{2,32}`;
 
 // `:emoji:` is the pre-rename form. It is still read so anything already sent
 // keeps rendering; only `:sticker:` is ever written.
@@ -15,6 +16,20 @@ export const STICKER_SLUG_ERROR =
 
 export function isValidStickerSlug(slug: string) {
   return new RegExp(`^${STICKER_SLUG_PATTERN}$`).test(slug) && !/^\d+$/.test(slug);
+}
+
+/**
+ * A shop search reduced to what a slug can contain, so `:wave:` finds the
+ * sticker whose slug is `wave`. Undefined when the search could never be part
+ * of a slug (spaces, punctuation).
+ */
+export function stickerSlugSearchTerm(search: string) {
+  const term = search
+    .trim()
+    .toLowerCase()
+    .replace(/^:+|:+$/g, '');
+  // No length bound: a partial search can be shorter than a valid slug.
+  return new RegExp(`^${STICKER_SLUG_CHARS}+$`).test(term) ? term : undefined;
 }
 
 export function formatStickerToken(cosmeticId: number) {

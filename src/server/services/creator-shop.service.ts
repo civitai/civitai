@@ -24,7 +24,10 @@ import {
   wasLastReviewARejection,
 } from '~/server/services/creator-shop.data';
 import type { StickerEconomics } from '~/shared/utils/sticker-token';
-import { stickerEconomicsFromCosmeticData } from '~/shared/utils/sticker-token';
+import {
+  stickerEconomicsFromCosmeticData,
+  stickerSlugSearchTerm,
+} from '~/shared/utils/sticker-token';
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import {
@@ -1441,6 +1444,8 @@ export const getCommunityCosmetics = async ({
   const { take, skip } = getPagination(limit, page);
   // 'Pack' rides in the same filter but is not a CosmeticType.
   const realTypes = (cosmeticTypes ?? []).filter((t): t is CosmeticType => t !== PACK_FILTER_VALUE);
+  // Slugs are validated lowercase, so the JSON match can stay case-sensitive.
+  const slugTerm = query ? stickerSlugSearchTerm(query) : undefined;
   const where: Prisma.CosmeticShopItemWhereInput = {
     status: CosmeticShopItemStatus.Published,
     // Discovery surface that leads straight to checkout — a delisted item
@@ -1515,12 +1520,25 @@ export const getCommunityCosmetics = async ({
       // In `AND` rather than beside the branches above: a second top-level `OR`
       // key would replace the creator/pack one and widen the feed to every
       // official item.
+      // Same fields as `shopItemMatchesSearch`, which searches the client-held grids
+      // — except the description is matched as raw HTML here, not tag-stripped text.
       ...(query
         ? [
             {
               OR: [
                 { title: { contains: query, mode: Prisma.QueryMode.insensitive } },
+                { description: { contains: query, mode: Prisma.QueryMode.insensitive } },
                 { cosmetic: { name: { contains: query, mode: Prisma.QueryMode.insensitive } } },
+                ...(slugTerm
+                  ? [
+                      {
+                        cosmetic: {
+                          type: CosmeticType.Sticker,
+                          data: { path: ['slug'], string_contains: slugTerm },
+                        },
+                      },
+                    ]
+                  : []),
               ],
             },
           ]
