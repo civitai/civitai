@@ -3,6 +3,7 @@ import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as AuthHelpers from '~/utils/auth-helpers';
 import type * as ConsumerBlobUpload from '~/utils/consumer-blob-upload';
+import type * as SessionProviderModule from '~/providers/SessionProvider';
 
 // =============================================================================
 // tRPC MOCK PATTERN — the reusable template for data-driven component tests
@@ -69,10 +70,26 @@ vi.mock('~/utils/trpc', () => ({
 
 const auth = vi.hoisted(() => ({
   currentUser: { id: 1 } as { id: number } | null,
+  sessionLoading: false,
   openLoginPopup: vi.fn(),
   uploadConsumerBlob: vi.fn(),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => auth.currentUser }));
+
+// Outside a provider useSession reports 'loading'; resolved here from the mocked user unless a test
+// holds the session in its loading state.
+vi.mock('~/providers/SessionProvider', async (orig) => ({
+  ...(await orig<typeof SessionProviderModule>()),
+  useSession: () => ({
+    data: undefined,
+    status: auth.sessionLoading
+      ? 'loading'
+      : auth.currentUser
+      ? 'authenticated'
+      : 'unauthenticated',
+    update: async () => null,
+  }),
+}));
 vi.mock('~/utils/auth-helpers', async (orig) => ({
   ...(await orig<typeof AuthHelpers>()),
   openLoginPopup: auth.openLoginPopup,
@@ -209,6 +226,7 @@ describe('VideoInput — picking a video', () => {
   beforeEach(() => {
     useQueryMock.mockReset();
     useQueryMock.mockReturnValue(queryResult());
+    auth.currentUser = { id: 1 };
     auth.openLoginPopup.mockReset();
     auth.uploadConsumerBlob.mockReset().mockResolvedValue({ url: ORCH_URL, available: true });
   });

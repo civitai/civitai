@@ -3,6 +3,7 @@ import { page, userEvent } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import type * as AuthHelpers from '~/utils/auth-helpers';
+import type * as SessionProviderModule from '~/providers/SessionProvider';
 
 /**
  * BlockGenerationSourceUploadModal — the UNSCANNED `generationSource` upload path.
@@ -27,9 +28,25 @@ const mocks = vi.hoisted(() => ({
   openLoginPopup: vi.fn(),
   /** Signed in unless a test signs out. */
   currentUser: { id: 1 } as { id: number } | null,
+  sessionLoading: false,
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
+
+// Outside a provider useSession reports 'loading'; resolved here from the mocked user unless a test
+// holds the session in its loading state.
+vi.mock('~/providers/SessionProvider', async (orig) => ({
+  ...(await orig<typeof SessionProviderModule>()),
+  useSession: () => ({
+    data: undefined,
+    status: mocks.sessionLoading
+      ? 'loading'
+      : mocks.currentUser
+      ? 'authenticated'
+      : 'unauthenticated',
+    update: async () => null,
+  }),
+}));
 vi.mock('~/utils/auth-helpers', async (orig) => ({
   ...(await orig<typeof AuthHelpers>()),
   openLoginPopup: mocks.openLoginPopup,

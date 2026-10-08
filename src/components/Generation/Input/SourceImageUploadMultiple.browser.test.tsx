@@ -9,6 +9,7 @@ import type * as Constants from '~/server/common/constants';
 import type * as ApplicationError from '~/utils/application-error';
 import type * as AuthHelpers from '~/utils/auth-helpers';
 import type * as ConsumerBlobUpload from '~/utils/consumer-blob-upload';
+import type * as SessionProviderModule from '~/providers/SessionProvider';
 
 /**
  * A failed source-image upload must end on an error card with the spinner cleared, and must not
@@ -24,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   openLoginPopup: vi.fn(),
   /** Signed in unless a test signs out. */
   currentUser: { id: 1 } as { id: number } | null,
+  sessionLoading: false,
   /** A loadable local url the uploader treats as already uploaded (no network request). */
   orchestratorUrl: '',
 }));
@@ -34,6 +36,21 @@ vi.mock('~/utils/consumer-blob-upload', async (orig) => ({
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
+
+// Outside a provider useSession reports 'loading'; resolved here from the mocked user unless a test
+// holds the session in its loading state.
+vi.mock('~/providers/SessionProvider', async (orig) => ({
+  ...(await orig<typeof SessionProviderModule>()),
+  useSession: () => ({
+    data: undefined,
+    status: mocks.sessionLoading
+      ? 'loading'
+      : mocks.currentUser
+      ? 'authenticated'
+      : 'unauthenticated',
+    update: async () => null,
+  }),
+}));
 
 vi.mock('~/utils/auth-helpers', async (orig) => ({
   ...(await orig<typeof AuthHelpers>()),
@@ -95,6 +112,7 @@ const PRESIGN_ERROR = 'Failed to get upload URL';
 
 beforeEach(() => {
   mocks.currentUser = { id: 1 };
+  mocks.sessionLoading = false;
   mocks.openLoginPopup.mockReset();
 });
 
@@ -1213,6 +1231,53 @@ describe('SourceImageUploadMultiple — signed out', () => {
     expect(mocks.openLoginPopup).toHaveBeenCalledTimes(1);
     expect(mocks.openLoginPopup).toHaveBeenCalledWith(here(), 'image-gen');
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
+  });
+
+  test('the sign-in message goes once the session resolves signed in', async () => {
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const dataUrl = canvas.toDataURL('image/png');
+    sourceMetadataStore.setMetadata(dataUrl, { width: 1024, height: 1024 });
+    cachedUrls.push(dataUrl);
+    renderWithProviders(
+      <PendingHarness max={2} initialValue={[{ url: dataUrl, width: 1024, height: 1024 }]} />
+    );
+    await expect.element(page.getByText(SIGN_IN_MESSAGE, { exact: true })).toBeVisible();
+
+    // Signed in elsewhere (a session refetch); the next render reads the new user.
+    mocks.currentUser = { id: 1 };
+    const other = await loadableImageUrl();
+    cachedUrls.push(other);
+    pushValue({ url: other, width: 1024, height: 1024 });
+    await expect.poll(() => page.getByText(SIGN_IN_MESSAGE).elements().length).toBe(0);
+  });
+
+  // While the session is still loading a signed-in user cannot be told apart from a signed-out
+  // one, so nothing is refused: the upload goes ahead as before, and a real signed-out one gets
+  // the sign-in message from the refused presign request.
+  test('while the session loads, a data url in the value is uploaded, not dropped', async () => {
+    mocks.sessionLoading = true;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const dataUrl = canvas.toDataURL('image/png');
+    sourceMetadataStore.setMetadata(dataUrl, { width: 1024, height: 1024 });
+    cachedUrls.push(dataUrl);
+    renderWithProviders(
+      <PendingHarness initialValue={[{ url: dataUrl, width: 1024, height: 1024 }]} />
+    );
+
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    expect(page.getByText(SIGN_IN_MESSAGE).elements()).toHaveLength(0);
+    expect(mocks.openLoginPopup).not.toHaveBeenCalled();
+  });
+
+  test('while the session loads, a pick uploads rather than opening sign-in', async () => {
+    mocks.sessionLoading = true;
+    renderWithProviders(<PendingHarness max={3} />);
+    await pickFiles(1);
+
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    expect(mocks.openLoginPopup).not.toHaveBeenCalled();
   });
 
   // Control for the cases above: the same pick, signed in, uploads and asks for nothing.

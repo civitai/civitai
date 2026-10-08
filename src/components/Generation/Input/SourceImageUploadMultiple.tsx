@@ -1455,7 +1455,8 @@ export function SourceImageUploadMultiple({
     return <div className="flex gap-2">{slots.map((slot, index) => renderSlot(slot, index))}</div>;
   };
 
-  const signInAlert = signInRequired && (
+  // Only while still signed out: a session that resolves signed-in in place drops the message.
+  const signInAlert = signInRequired && signedOut && (
     <Alert color="blue">
       <div className="flex items-center justify-between gap-2">
         <Text size="sm">{SIGN_IN_TO_UPLOAD_MESSAGE}</Text>

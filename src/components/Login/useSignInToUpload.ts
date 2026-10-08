@@ -1,11 +1,11 @@
 import { useCallback } from 'react';
+import { openLoginHere } from '~/components/Login/requireLogin';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openLoginPopup } from '~/utils/auth-helpers';
+import { useSession } from '~/providers/SessionProvider';
 
-/** Opens the hub sign-in, returning to the current page, under the generator's login reason. */
+/** Opens sign-in for an upload, returning to the current page, under the generator's login reason. */
 export function openSignInToUpload() {
-  const here = window.location.pathname + window.location.search + window.location.hash;
-  openLoginPopup(here, 'image-gen');
+  openLoginHere('image-gen');
 }
 
 /**
@@ -14,9 +14,16 @@ export function openSignInToUpload() {
  * user, and the caller then stops instead of starting the upload. Call it only for an upload the
  * user started (a pick, drop, paste or confirm) — an upload started without a gesture shows a
  * sign-in message instead (`signedOut`), rather than opening a window the user did not ask for.
+ *
+ * The event-free counterpart of `requireLogin`, which needs a UI event that drop, crop and drawing
+ * callbacks do not have. While the session is still loading nobody counts as signed out, so a
+ * signed-in user's upload is never refused early; a real signed-out upload in that window gets the
+ * sign-in message from the refused presign request instead (`consumer-blob-upload`).
  */
 export function useSignInToUpload() {
-  const signedOut = !useCurrentUser();
+  const currentUser = useCurrentUser();
+  const { status } = useSession();
+  const signedOut = !currentUser && status !== 'loading';
   const requireSignIn = useCallback(() => {
     if (!signedOut) return false;
     openSignInToUpload();
