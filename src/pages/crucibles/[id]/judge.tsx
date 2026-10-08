@@ -682,8 +682,9 @@ function SwitchCrucibleMenu({ crucibleId }: { crucibleId: number }) {
       position="bottom-end"
       width={320}
       withinPortal
-      // The fixed width alone still overflows a phone; the label class lets a long name ellipsize.
-      classNames={{ dropdown: 'max-w-[calc(100vw-32px)]', itemLabel: 'min-w-0 truncate' }}
+      // The fixed width alone still overflows a phone. The label is a flex box, which ignores
+      // text-overflow, so the name ellipsizes in its own span.
+      classNames={{ dropdown: 'max-w-[calc(100vw-32px)]', itemLabel: 'min-w-0' }}
       onOpen={() => setRequested(true)}
     >
       <Menu.Target>
@@ -708,7 +709,7 @@ function SwitchCrucibleMenu({ crucibleId }: { crucibleId: number }) {
         ) : (
           suggestions.map((c) => (
             <Menu.Item key={c.id} component={Link} href={`/crucibles/${c.id}/judge`} title={c.name}>
-              {c.name}
+              <span className="block truncate">{c.name}</span>
             </Menu.Item>
           ))
         )}
