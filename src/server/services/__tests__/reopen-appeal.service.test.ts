@@ -52,4 +52,11 @@ describe('reopenAppeal', () => {
       resolvedMessage: null,
     });
   });
+
+  // The update returns the row to the appellant, and a stale label would count a Pending row as ruled.
+  it("clears the prior ruling's reason and moderator note", async () => {
+    await reopen();
+
+    expect(updateArgs().data).toMatchObject({ resolvedReason: null, internalNotes: null });
+  });
 });

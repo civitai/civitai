@@ -81,11 +81,15 @@ export async function resolveUserRestriction({
   userRestrictionId,
   status,
   resolvedMessage,
+  resolvedReason,
+  internalNotes,
   moderatorId,
 }: {
   userRestrictionId: number;
   status: UserRestrictionStatus;
   resolvedMessage?: string;
+  resolvedReason?: string;
+  internalNotes?: string;
   moderatorId: number;
 }) {
   const restriction = await dbWrite.userRestriction.findUnique({
@@ -124,7 +128,14 @@ export async function resolveUserRestriction({
   // both land, and an uphold overwriting an overturn re-mutes an account whose content was restored.
   const ruled = await dbWrite.userRestriction.updateMany({
     where: { id: userRestrictionId, status: UserRestrictionStatus.Pending },
-    data: { status, resolvedAt: new Date(), resolvedBy: moderatorId, resolvedMessage },
+    data: {
+      status,
+      resolvedAt: new Date(),
+      resolvedBy: moderatorId,
+      resolvedMessage,
+      resolvedReason,
+      internalNotes,
+    },
   });
   if (!ruled.count) throw throwBadRequestError('Restriction has already been resolved');
 
@@ -235,7 +246,7 @@ export async function resolveUserRestriction({
   logToAxiom({
     name: 'user-restriction-resolved',
     type: 'info',
-    details: { userRestrictionId, status, moderatorId, userId: restriction.userId },
+    details: { userRestrictionId, status, resolvedReason, moderatorId, userId: restriction.userId },
   });
 
   return { userId: restriction.userId };

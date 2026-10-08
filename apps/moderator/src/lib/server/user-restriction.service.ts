@@ -49,6 +49,8 @@ export type RestrictionRow = {
   createdAt: Date;
   resolvedAt: Date | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Date | null;
   triggers: RestrictionTriggerView[];
@@ -130,6 +132,8 @@ export async function getGenerationRestrictions(query: RestrictionQuery): Promis
         'ur.createdAt',
         'ur.resolvedAt',
         'ur.resolvedMessage',
+        'ur.resolvedReason',
+        'ur.internalNotes',
         'ur.userMessage',
         'ur.userMessageAt',
       ])

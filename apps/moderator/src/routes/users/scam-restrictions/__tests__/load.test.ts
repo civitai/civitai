@@ -83,11 +83,36 @@ describe('users/scam-restrictions actions — queue scope', () => {
     getGenerationRestrictions.mockResolvedValue({ items: [row('scam')], totalCount: 1 });
     resolveRestriction.mockResolvedValue({ ok: true });
 
-    const result = await actions!.resolve!(event({ userRestrictionId: '5', status: 'Overturned' }));
+    const result = await actions!.resolve!(
+      event({
+        userRestrictionId: '5',
+        status: 'Overturned',
+        resolvedReason: 'other',
+        internalNotes: 'not a scam account',
+      })
+    );
 
     expect(result).toEqual({ success: true });
     expect(resolveRestriction).toHaveBeenCalledWith(
-      expect.objectContaining({ userRestrictionId: 5, status: 'Overturned', userId: 42 })
+      expect.objectContaining({
+        userRestrictionId: 5,
+        status: 'Overturned',
+        userId: 42,
+        resolvedReason: 'other',
+        internalNotes: 'not a scam account',
+      })
     );
+  });
+
+  it('refuses a scam ruling with no reason, without ruling', async () => {
+    getGenerationRestrictions.mockResolvedValue({ items: [row('scam')], totalCount: 1 });
+
+    const result = (await actions!.resolve!(
+      event({ userRestrictionId: '5', status: 'Upheld' })
+    )) as { status: number; data: { error: string } };
+
+    expect(result.status).toBe(400);
+    expect(result.data.error).toMatch(/Pick a reason/);
+    expect(resolveRestriction).not.toHaveBeenCalled();
   });
 });

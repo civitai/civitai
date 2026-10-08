@@ -28,6 +28,8 @@ import { parseImageFlagValue } from '$lib/image-flags';
 import { isRatingLevel } from '$lib/nsfw-levels';
 import { updateImageNsfwLevel } from '$lib/server/image-nsfw-level';
 import { setImageFlag } from '$lib/server/user-actions.service';
+import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
+import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
 import { allBrowsingLevelsWithBlockedFlag } from '@civitai/shared';
 import { getPromptHighlightSegments } from '@civitai/mod-utils/prompt-audit';
 
@@ -158,6 +160,11 @@ export const load: PageServerLoad = async ({ params, url }) => {
 };
 
 // accept/block also resolve a coupled report when a `reportId` is posted: accept → Unactioned, block → Actioned.
+function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
+  const input = parseForm(z.object(resolutionReasonFields), form);
+  return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
+}
+
 export const actions: Actions = {
   accept: async ({ request, locals }) => {
     const form = await request.formData();
@@ -234,11 +241,14 @@ export const actions: Actions = {
       String(form.get('resolvedMessage') ?? '')
         .trim()
         .slice(0, 1000) || undefined;
+    const reason = parseResolutionReason(form, status);
+    if (typeof reason === 'string') return fail(400, { error: reason, imageId });
 
     const closed = await resolveImageAppeal({
       imageId,
       status,
       resolvedMessage,
+      ...reason,
       userId: locals.user.id,
     });
     if (!closed)
@@ -376,9 +386,17 @@ export const actions: Actions = {
     const form = await request.formData();
     const imageIds = parseIds(form.get('imageIds'));
     const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
+    const reason = parseResolutionReason(form, status);
+    if (typeof reason === 'string') return fail(400, { error: reason });
     const closed = await Promise.all(
       imageIds.map((imageId) =>
-        resolveImageAppeal({ imageId, status, userId: locals.user.id, deferAppealEmail: true })
+        resolveImageAppeal({
+          imageId,
+          status,
+          ...reason,
+          userId: locals.user.id,
+          deferAppealEmail: true,
+        })
       )
     );
     await sendBulkAppealEmails(closedAppellants(imageIds, closed), status === 'Approved');

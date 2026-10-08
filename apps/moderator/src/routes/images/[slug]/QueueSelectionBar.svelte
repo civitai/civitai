@@ -2,6 +2,8 @@
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { SvelteSet } from 'svelte/reactivity';
+  import RulingForm from '$lib/components/RulingForm.svelte';
+  import { appealRulingChoices } from '$lib/ruling-choices';
   import ImageCardModTools from './ImageCardModTools.svelte';
   import TosDeleteButton from './TosDeleteButton.svelte';
 
@@ -72,8 +74,22 @@
 
       <div class="ml-auto flex flex-wrap gap-2">
         {#if appeal}
-          {@render bulkButton('?/bulkResolveAppeal', imageIds, `Approve ${count}`, 'border-emerald-600/40 text-emerald-400 hover:bg-emerald-500/10', { status: 'Approved' })}
-          {@render bulkButton('?/bulkResolveAppeal', imageIds, `Reject ${count}`, 'border-rose-500/40 text-rose-400 hover:bg-rose-500/10', { status: 'Rejected' })}
+          <!-- One reason for the whole batch, so the batch must be one kind of case. Keyed so a reason
+               picked for one selection is not carried to the next. -->
+          {#key imageIds}
+            <RulingForm
+              subject="appeal"
+              choices={appealRulingChoices(count)}
+              action="?/bulkResolveAppeal"
+              enhancer={submit}
+              idPrefix="bulk-appeal"
+              size="xs"
+            >
+              {#snippet hidden()}
+                <input type="hidden" name="imageIds" value={imageIds} />
+              {/snippet}
+            </RulingForm>
+          {/key}
         {:else if verdictCount}
           {@render bulkButton('?/bulkAccept', verdictImageIds, `${acceptLabel} ${verdictCount}`, 'border-teal-600/40 text-teal-400 hover:bg-teal-500/10')}
           {#if minorQueue}

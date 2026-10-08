@@ -12,6 +12,8 @@
   import QueueSelectionBar from './QueueSelectionBar.svelte';
   import ReviewActions from './ReviewActions.svelte';
   import AppealActions from './AppealActions.svelte';
+  import type { RulingDraft } from '$lib/components/RulingForm.svelte';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
   import PromptHighlight from '$lib/components/PromptHighlight.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { isFlagOnlyRemaining } from '$lib/image-review';
@@ -35,12 +37,14 @@
   const keyOfItem = (item: { id: number; report?: { id: number } }) => item.report?.id ?? item.id;
   // imageId → appeal resolution message (bound to each appeal card's textarea).
   const messages = new SvelteMap<number, string>();
+  const drafts = new SvelteMap<number, RulingDraft<ResolutionVerdict<'appeal'>>>();
   // Multiselect: selected card keys (image id, or report id on the reported queue).
   const selected = new SelectionSet<string | number>();
   $effect(() => {
     data.items;
     acted.clear();
     messages.clear();
+    drafts.clear();
     selected.clear();
   });
 
@@ -342,7 +346,7 @@
           </div>
         {/if}
       </div>
-      <AppealActions {item} verdict={acted.get(keyOfItem(item))} {selected} {messages} {submit} />
+      <AppealActions {item} verdict={acted.get(keyOfItem(item))} {selected} {messages} {drafts} {submit} />
       {@render model3dAffordance(item)}
     {/snippet}
   </ImageQueueGrid>

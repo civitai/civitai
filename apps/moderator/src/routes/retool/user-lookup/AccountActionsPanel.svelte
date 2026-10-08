@@ -16,6 +16,9 @@
     unwiredRulingReason,
   } from '$lib/restriction-types';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import RulingForm, { emptyRulingDraft } from '$lib/components/RulingForm.svelte';
+  import { RESTRICTION_RULING_CHOICES } from '$lib/ruling-choices';
+  import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
 
   type Identity = NonNullable<LayoutData['result']>['identity'];
 
@@ -40,6 +43,7 @@
   let version = $state(0);
   let confirming = $state<'ban' | 'unban' | 'purge' | null>(null);
   let purgeConfirm = $state('');
+  let ruling = $state(emptyRulingDraft<ResolutionVerdict<'restriction'>>());
 
   // One flag for the whole panel: these actions all act on the same account, and none of them is safe to
   // interleave with another.
@@ -66,6 +70,7 @@
     onSuccess: () => {
       confirming = null;
       purgeConfirm = '';
+      ruling = emptyRulingDraft();
       version += 1;
     },
   });
@@ -112,37 +117,27 @@
             </a>.
           </p>
         {/if}
-        <form method="POST" action="?/resolveRestriction" use:enhance={form.enhance} class="grid gap-2">
-          <input type="hidden" name="userRestrictionId" value={identity.restrictionId} />
-          <input type="hidden" name="userId" value={identity.id} />
-          <Input
-            name="resolvedMessage"
-            placeholder="Message shown to the user with the ruling (optional)"
-            class="max-w-lg"
-          />
-          <div class="flex flex-wrap gap-2">
-            <!-- One field, two submits: a submit button contributes a single name/value pair. -->
-            <Button
-              type="submit"
-              name="status"
-              value="Overturned"
-              size="sm"
-              disabled={form.submitting || !!unwiredReason}
-            >
-              Overturn — lift it
-            </Button>
-            <Button
-              type="submit"
-              name="status"
-              value="Upheld"
-              size="sm"
-              variant="destructive"
-              disabled={form.submitting || !!unwiredReason}
-            >
-              Uphold — keep them muted
-            </Button>
-          </div>
-        </form>
+        <RulingForm
+          subject="restriction"
+          choices={RESTRICTION_RULING_CHOICES}
+          action="?/resolveRestriction"
+          enhancer={form.enhance}
+          idPrefix="lookup-restriction-{identity.restrictionId}"
+          disabled={form.submitting || !!unwiredReason}
+          bind:draft={ruling}
+        >
+          {#snippet hidden()}
+            <input type="hidden" name="userRestrictionId" value={identity.restrictionId} />
+            <input type="hidden" name="userId" value={identity.id} />
+          {/snippet}
+          {#snippet extra()}
+            <Input
+              name="resolvedMessage"
+              placeholder="Message shown to the user with the ruling (optional)"
+              class="max-w-lg"
+            />
+          {/snippet}
+        </RulingForm>
       </div>
     {/if}
 
