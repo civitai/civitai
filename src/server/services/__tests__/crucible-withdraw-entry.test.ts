@@ -1,3 +1,4 @@
+import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as PostService from '~/server/services/post.service';
@@ -41,7 +42,7 @@ beforeEach(() => {
   lockCrucible.mockResolvedValue([{ id: 7 }]);
   updateEntries.mockResolvedValue({ count: 1 });
   afterPostsPublish.mockResolvedValue(undefined);
-  dbMock.dbWrite.$queryRaw.mockResolvedValue([]);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 300, userId: ENTRANT }]);
 });
 
 describe('withdrawCrucibleEntry', () => {
@@ -61,6 +62,10 @@ describe('withdrawCrucibleEntry', () => {
     expect(dbMock.dbWrite.crucibleEntry.delete).not.toHaveBeenCalled();
     expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
     expect(result).toEqual({ entryId: 5, crucibleId: 7 });
+    // The entry's hidden post is published now rather than at the crucible's end.
+    const [, imageFilter] = dbMock.dbWrite.$queryRaw.mock.calls[0] as [unknown, Prisma.Sql];
+    expect(imageFilter.values).toEqual([70]);
+    expect(afterPostsPublish).toHaveBeenCalledWith([{ postId: 300, userId: ENTRANT }]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-withdrawn', entryId: 5, imageId: 70 })
     );
@@ -83,12 +88,14 @@ describe('withdrawCrucibleEntry', () => {
 
     await expect(withdraw()).rejects.toThrow(/only be removed while the crucible is running/);
     expect(updateEntries).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
   });
 
   it('reports not found when a concurrent withdraw got there first', async () => {
     updateEntries.mockResolvedValue({ count: 0 });
 
     await expect(withdraw()).rejects.toThrow('Entry not found');
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
     expect(loggingMock.logToAxiom).not.toHaveBeenCalledWith(
       expect.objectContaining({ name: 'crucible-entry-withdrawn' })
     );

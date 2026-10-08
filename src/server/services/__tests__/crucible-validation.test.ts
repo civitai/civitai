@@ -1413,6 +1413,12 @@ describe('submitEntry — free entries', () => {
     );
   });
 
+  it('accepts while live entries are under the limit, however many entries were made', async () => {
+    withGoneEntries({ all: 5, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
   it('refuses once the live entries reach the limit', async () => {
     withGoneEntries({ all: 4, live: 3 });
 
@@ -1437,6 +1443,21 @@ describe('submitEntry — free entries', () => {
     expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
       where: { crucibleId: 1, imageId: { not: null } },
     });
+  });
+
+  it("refuses once the crucible's live entries reach its total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryLimit: 3,
+      maxTotalEntries: 10,
+      _count: { entries: 12 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 10)) as never);
+
+    await expect(submit()).rejects.toThrow(/reached its maximum number of entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 });
 
