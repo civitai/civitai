@@ -373,9 +373,38 @@ describe('incrementSharedCounter — counter-key moderation', () => {
       code: 'BAD_REQUEST',
     });
     expect(mockClient.query).not.toHaveBeenCalled();
+    // ...SILENTLY: the caller did not write this key, so no Report row and no legal alert names them.
+    expect(reportReasons()).toEqual([]);
+    expect(
+      mockLog.mock.calls.some(
+        (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-storage-legal-block'
+      )
+    ).toBe(false);
   });
 
-  it('both flags on: a new key is scanned ONCE (inline), never again after the commit', async () => {
+  it('enforce: a NEW flagged key files the Report and legal alert against its writer', async () => {
+    setFlags({ enforce: true });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(reportReasons()).toEqual(['auto:counterKey:minor']);
+    expect(
+      mockLog.mock.calls.some(
+        (c) => (c[0] as { name?: string }).name === 'app-blocks-shared-storage-legal-block'
+      )
+    ).toBe(true);
+  });
+
+  it('both flags on behave as ENFORCE: a flagged key is refused, and scanned once', async () => {
+    setFlags({ shadow: true, enforce: true });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    await flushImmediates();
+    expect(mockFindBlocked).toHaveBeenCalledTimes(1);
+  });
+
+  it('both flags on: a new clean key is scanned ONCE (inline), never again after the commit', async () => {
     setFlags({ shadow: true, enforce: true });
     await expect(incrementSharedCounter('tok', 'playcount:7')).resolves.toEqual({
       key: 'playcount:7',

@@ -1466,6 +1466,15 @@ export async function incrementSharedCounter(
       uid,
       rowKey: key,
       surface: 'counter',
+      // 🔴 A REFUSED increment of a key that ALREADY EXISTS is refused SILENTLY — no Report row, no
+      // alert. The caller did not write that text; they are counting someone else's key (written
+      // before enforce, or during shadow), so a Report or legal alert would name the wrong user, and
+      // one per attempted increment of a popular key would flood the legal channel. The refusal
+      // itself is unconditional. Only consulted when there is a blocking hit, so the clean path pays
+      // no lookup. (The hit is still recorded, with this key, for an offline review.)
+      fileConsequences: async () =>
+        ((await pool.query(`SELECT 1 FROM ${schema}.shared_kv WHERE key = $1`, [key])).rowCount ??
+          0) === 0,
     });
   }
 
@@ -1853,6 +1862,8 @@ async function rejectSharedTextHit(
     uid: number;
     rowKey: string;
     surface: SharedDataSurface;
+    /** Whether a rejection files its Report row and alert. Default: always. */
+    fileConsequences?: () => Promise<boolean>;
   }
 ): Promise<void> {
   const enforcePatterns = scan.hits.some((h) => h.category === 'pattern')
@@ -1869,12 +1880,14 @@ async function rejectSharedTextHit(
   if (!hit) return;
 
   const field = ctx.surface === 'counter' ? 'counterKey' : 'data';
-  await fileSharedBlockConsequences(ctx, {
-    policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
-    category: hit.category,
-    reason: `auto:${field}:${hit.category}`,
-    field,
-  });
+  const file = ctx.fileConsequences ? await ctx.fileConsequences().catch(() => true) : true;
+  if (file)
+    await fileSharedBlockConsequences(ctx, {
+      policy: hit.category === 'audit_regex' ? 'audit' : hit.category,
+      category: hit.category,
+      reason: `auto:${field}:${hit.category}`,
+      field,
+    });
 
   const message =
     hit.category === 'link'
