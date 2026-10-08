@@ -327,15 +327,23 @@ export function CrucibleJudgingUI({
         color="blue"
         radius="xl"
         h={40}
-        className={clsx('px-4 font-semibold', selectedSide === side && 'bg-blue-500')}
+        className={clsx('min-w-0 flex-1 px-4 font-semibold', selectedSide === side && 'bg-blue-500')}
         data-testid="judge-vote"
         data-side={side}
         onClick={() => handleVote(side)}
         disabled={voteLocked}
       >
         <span className="flex items-center gap-2">
-          {seconds > 0 ? `Watch ${seconds}s more` : 'Vote'}
-          <Kbd size="xs" className="opacity-75">
+          {seconds > 0 ? (
+            // Shortened to "12s" on phones, where the full label overflows the HUD.
+            <span>
+              <span className="max-md:hidden">Watch </span>
+              {seconds}s<span className="max-md:hidden"> more</span>
+            </span>
+          ) : (
+            'Vote'
+          )}
+          <Kbd size="xs" className="opacity-75 max-md:hidden">
             {side === 'left' ? '1' : '2'}
           </Kbd>
         </span>
@@ -355,7 +363,7 @@ export function CrucibleJudgingUI({
           <div className={footerSlotClass}>{footerStart}</div>
 
           <div className="order-first flex justify-center md:order-none">
-            <div className="flex h-14 items-center gap-2 rounded-full border border-[#373A40] bg-[#2C2E33]/95 px-2 shadow-lg">
+            <div className="flex h-14 max-w-full items-center gap-2 rounded-full border border-[#373A40] bg-[#2C2E33]/95 px-2 shadow-lg">
               {voteButton('left')}
               <Tooltip
                 label="Skips this pair without voting. The pair may appear again later."
@@ -369,7 +377,8 @@ export function CrucibleJudgingUI({
                   data-testid="judge-skip"
                   onClick={handleSkip}
                   disabled={isDisabled}
-                  className="border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
+                  className="shrink-0 border-[#495057] bg-[#373a40] font-semibold text-[#c1c2c5] hover:border-[#5c636e] hover:bg-[#495057]"
+                  classNames={{ section: 'max-md:data-[position=right]:hidden' }}
                   leftSection={<IconPlayerSkipForward size={16} />}
                   rightSection={<Kbd size="xs">Space</Kbd>}
                 >

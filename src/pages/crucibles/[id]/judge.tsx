@@ -481,9 +481,9 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                     />
                   </div>
                 )}
-                <div className="min-w-0">
-                  <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
-                    <h1 className="min-w-0 truncate text-lg font-bold leading-tight text-white">
+                <div className="min-w-0 flex-1">
+                  <div className="flex min-w-0 flex-col gap-1 md:flex-row md:flex-wrap md:items-center md:gap-x-3">
+                    <h1 className="min-w-0 max-w-full truncate text-lg font-bold leading-tight text-white">
                       {crucible.name}
                     </h1>
                     <CrucibleContentBadges
@@ -499,7 +499,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                 </div>
               </div>
 
-              <div className="flex shrink-0 items-center gap-1">
+              <div className="flex shrink-0 flex-wrap items-center gap-1 max-md:w-full">
                 <JudgingRulesButton />
                 <SwitchCrucibleMenu crucibleId={id} />
                 <CrucibleJudgeNextButton
