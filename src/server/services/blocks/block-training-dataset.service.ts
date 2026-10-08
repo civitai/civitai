@@ -7,6 +7,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { classifyGatedImageForViewer } from '~/server/services/blocks/block-gated-images.logic';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
+import { MAX_AUDIT_PROMPT_LENGTH } from '~/utils/metadata/audit';
 import {
   BLOCK_TRAINING_DATASET_ID_REGEX,
   BLOCK_TRAINING_DATASET_MAX_ITEMS,
@@ -198,10 +199,52 @@ async function importTrainingImage(
 }
 
 /**
+ * Pack captions into newline-joined batches for the prompt audit, each at most
+ * `max` characters, so a schema-valid dataset (up to 50 captions of 1000 chars)
+ * is never refused for its combined SIZE — the audit hard-refuses any input over
+ * `MAX_AUDIT_PROMPT_LENGTH`. Greedy and order-preserving; empty captions are
+ * dropped. A caption is never split: one longer than `max` (unreachable under the
+ * schema) becomes a batch of its own, which the audit then refuses as over-length.
+ */
+export function packCaptionsForAudit(
+  captions: string[],
+  max: number = MAX_AUDIT_PROMPT_LENGTH
+): string[] {
+  const batches: string[] = [];
+  let current = '';
+  for (const caption of captions) {
+    if (caption.length === 0) continue;
+    if (current.length === 0) {
+      current = caption;
+    } else if (current.length + 1 + caption.length <= max) {
+      current += '\n' + caption;
+    } else {
+      batches.push(current);
+      current = caption;
+    }
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}
+
+/**
+ * A SOFT prompt-moderation refusal: `auditPromptServer` marks one structurally, with
+ * `cause.softBlock === true` on the thrown TRPCError (the same field trpc's
+ * errorFormatter lifts onto `data.softBlock`). Anything else thrown — a hard refusal, or
+ * an infrastructure failure — is not soft.
+ */
+function isSoftPromptRefusal(error: unknown): boolean {
+  if (!(error instanceof TRPCError)) return false;
+  return (error.cause as { softBlock?: unknown } | undefined)?.softBlock === true;
+}
+
+/**
  * Prepare a training dataset from the viewer's own images.
  *
- * `auditCaptions` is the caller's prompt-moderation pass over the joined captions
- * (it throws on a refusal); it runs BEFORE any orchestrator import, so a refused
+ * `auditCaptions` is the caller's prompt-moderation pass over newline-joined batches
+ * of captions (see `packCaptionsForAudit`); it throws on a refusal (a hard refusal in
+ * any batch wins over a soft one — see the loop below), and every batch
+ * runs BEFORE any orchestrator import, so a refused
  * caption set costs no upload. It is injected because the moderation call needs
  * request context (the viewer's domain strictness and moderator flag) that only the
  * caller has.
@@ -262,12 +305,24 @@ export async function prepareBlockTrainingDataset(input: {
   }
 
   // Captions are app-supplied text that becomes training data — moderated like a
-  // prompt, once over the whole set, before anything is uploaded.
-  const captionText = admitted
-    .map((a) => a.caption)
-    .filter((c) => c.length > 0)
-    .join('\n');
-  if (captionText.length > 0) await input.auditCaptions(captionText);
+  // prompt, over the whole set in batches under the audit's length cap, before
+  // anything is uploaded. Any refused batch refuses the request, and a HARD refusal in
+  // any batch takes precedence over a soft one in another: within one audit a hard term
+  // outranks a soft one (`isSoftBlock`), and batching must not let batch order decide
+  // which the request gets. So a hard refusal is rethrown at once; a soft one is held
+  // while the remaining batches are audited, and thrown (the first) only if none of them
+  // is hard.
+  const batches = packCaptionsForAudit(admitted.map((a) => a.caption));
+  let heldSoftRefusal: unknown = null;
+  for (const batch of batches) {
+    try {
+      await input.auditCaptions(batch);
+    } catch (e) {
+      if (!isSoftPromptRefusal(e)) throw e;
+      heldSoftRefusal ??= e;
+    }
+  }
+  if (heldSoftRefusal) throw heldSoftRefusal;
 
   const limit = pLimit(BLOCK_TRAINING_IMPORT_CONCURRENCY);
   const deadline = Date.now() + BLOCK_TRAINING_IMPORT_BUDGET_MS;
