@@ -1490,7 +1490,8 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.HyV1,
     defaults: {
-      model: { id: 1314512 },
+      // bf16, the build the orchestrator's Hunyuan engine has always run. The handler names it.
+      model: { id: 1313562 },
       modelLocked: true,
       engine: 'hunyuan',
     },
