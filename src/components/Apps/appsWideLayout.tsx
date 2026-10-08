@@ -239,6 +239,13 @@ export const APPS_MINE_COLUMNS: AppsTableColumns = [null, 5, 18, 9];
 export const APPS_MOD_LISTINGS_COLUMNS: AppsTableColumns = [null, 5, 5, 4, 13];
 
 /**
+ * The `/apps/review` SUB-LISTINGS table (`SubListingReviewQueue`). The item cell carries the
+ * before/after diff of a staged edit, so it takes the slack; the action cell holds up to three
+ * buttons.
+ */
+export const APPS_SUB_LISTING_QUEUE_COLUMNS: AppsTableColumns = [null, 12, 10, 22];
+
+/**
  * The revenue attributions table (`RevenuePanel`) — Date · [App] · **Scope** · Buzz ·
  * Gross · Your share · Status.
  *

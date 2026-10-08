@@ -93,6 +93,8 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'app_listing_screenshots',
   'app_listings',
   'app_review_agent_reports',
+  'app_sub_listing_parents',
+  'app_sub_listings',
   'block_user_settings',
   'block_user_subscriptions',
 ]);

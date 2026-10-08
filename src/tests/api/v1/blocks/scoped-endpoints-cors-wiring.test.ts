@@ -184,6 +184,23 @@ const ENDPOINTS: Array<{ module: string; requiredScope: string; allowOpaqueOrigi
     requiredScope: 'goods:read:self',
     allowOpaqueOrigin: true,
   },
+  // App Store items. Called from inside the app frame after a publish / withdraw and on
+  // mount (mine), from an opaque origin like the routes above.
+  {
+    module: '~/pages/api/v1/blocks/sub-listings/upsert',
+    requiredScope: 'apps:store:items:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/sub-listings/withdraw',
+    requiredScope: 'apps:store:items:write',
+    allowOpaqueOrigin: true,
+  },
+  {
+    module: '~/pages/api/v1/blocks/sub-listings/mine',
+    requiredScope: 'apps:store:items:write',
+    allowOpaqueOrigin: true,
+  },
   // The BALANCE self-read is a withBlockScope REST route again — restored so a
   // block can direct-fetch it without a page host in the middle — so it DOES
   // have CORS wiring to guard here. The other three buzz self-reads

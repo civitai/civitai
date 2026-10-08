@@ -27,6 +27,7 @@ const {
   mockAuditPromptServer,
   mockIsRevoked,
   mockLogToAxiom,
+  mockSyncSubListing,
 } = vi.hoisted(() => {
   // 🔴 THE SIGNATURE IS DECLARED VIA THE GENERIC, NOT AS UNUSED PARAMETERS. `pg`'s
   // `query(sql, params)` is what the router calls, and `vi.fn(async () => …)` infers a
@@ -98,6 +99,7 @@ const {
     mockLogToAxiom: vi.fn<(payload: unknown, stream?: string) => Promise<void>>(
       async () => undefined
     ),
+    mockSyncSubListing: vi.fn<(args: unknown) => Promise<void>>(async () => undefined),
   };
 });
 
@@ -143,6 +145,10 @@ vi.mock('~/server/services/block-revocation.service', () => ({
 }));
 vi.mock('~/server/logging/client', () => ({
   logToAxiom: (payload: unknown, stream?: string) => mockLogToAxiom(payload, stream),
+}));
+// The store-item mirror is a separate service; this file pins only that the router calls it.
+vi.mock('~/server/services/blocks/app-sub-listing.service', () => ({
+  syncSubListingForSharedRow: (args: unknown) => mockSyncSubListing(args),
 }));
 // NOTE: `report` no longer fires a mod-Discord webhook — it was redundant with the
 // Axiom emit below, so it and its reporter-free-text hardening (`sanitizeDiscordText`)
@@ -1305,6 +1311,62 @@ describe('item 5 apps.shared.report authz (write-trust gated)', () => {
     expect(report).toBeTruthy();
     // the reporter uid is the RESOLVED subject (42), never client input
     expect((report![1] as unknown[])[2]).toBe(42);
+  });
+});
+
+describe('the item’s store card follows an in-app withdraw or moderator hide', () => {
+  const modCaller = () =>
+    appsModRouter.createCaller(
+      fakeCtx({ id: 9, isModerator: true, bannedAt: null, deletedAt: null, muted: false }) as never
+    );
+
+  it('an author withdraw that deleted the row withdraws their store item', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockClient.query.mockImplementation(async (sql: string) =>
+      sql.startsWith('DELETE') ? { rows: [], rowCount: 1 } : { rows: [], rowCount: 0 }
+    );
+    await caller().withdraw({ blockToken: 't', key: 'gen-1' });
+    expect(mockSyncSubListing).toHaveBeenCalledTimes(1);
+    expect(mockSyncSubListing).toHaveBeenCalledWith({
+      appBlockId: 'apb_test',
+      itemKey: 'gen-1',
+      change: 'withdrawn',
+      authorUserId: 42,
+    });
+  });
+
+  it('a withdraw that deleted nothing (not the author) touches no store item', async () => {
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    await caller().withdraw({ blockToken: 't', key: 'someone-elses' });
+    expect(mockSyncSubListing).not.toHaveBeenCalled();
+  });
+
+  it.each(['hide', 'delete'] as const)('a moderator %s hides the store item', async (action) => {
+    mockDbRead.appBlock.findUnique.mockResolvedValueOnce({ id: 'apb_x', blockId: 'app-voting' });
+    await modCaller().purgeSharedRow({ appBlockId: 'apb_x', key: 'gen-1', action });
+    expect(mockSyncSubListing).toHaveBeenCalledTimes(1);
+    expect(mockSyncSubListing).toHaveBeenCalledWith({
+      appBlockId: 'apb_x',
+      itemKey: 'gen-1',
+      change: 'hidden',
+      moderatorId: 9,
+    });
+  });
+
+  it('a failing mirror never fails the in-app action', async () => {
+    mockSyncSubListing.mockRejectedValueOnce(new Error('store unavailable'));
+    mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+    mockClient.query.mockImplementation(async (sql: string) =>
+      sql.startsWith('DELETE') ? { rows: [], rowCount: 1 } : { rows: [], rowCount: 0 }
+    );
+    await expect(caller().withdraw({ blockToken: 't', key: 'gen-1' })).resolves.toEqual({
+      ok: true,
+      deleted: true,
+    });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'app-sub-listing-shared-sync-failed' }),
+      undefined
+    );
   });
 });
 
