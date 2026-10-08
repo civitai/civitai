@@ -158,22 +158,45 @@ describe('withSignals', () => {
     expect(count('signals_call_timeouts_total')).toBe(2);
   });
 
-  it('a call that reaches a slot late only gets the REMAINING budget, not a fresh deadline', async () => {
+  it('a call that reaches its slot with >= half its budget left runs on the REMAINING budget, not a fresh deadline', async () => {
     const { withSignals, SignalsCallTimeoutError } = await load();
 
-    track(withSignals(hang)); // holds the slot until t=1000
+    // A holds the slot until it succeeds at t=400.
+    track(withSignals(() => new Promise<string>((r) => setTimeout(() => r('a'), 400))));
     await vi.advanceTimersByTimeAsync(300);
     const lateFn = vi.fn(hang);
     const late = track(withSignals(lateFn)); // enters at t=300 → deadline t=1300
 
-    await vi.advanceTimersByTimeAsync(700); // t=1000: slot frees, late call starts
+    await vi.advanceTimersByTimeAsync(100); // t=400: slot frees, 900ms left ≥ 500
     expect(lateFn).toHaveBeenCalledTimes(1);
-    expect(late.settled).toBe(false);
 
-    await vi.advanceTimersByTimeAsync(299); // t=1299
+    await vi.advanceTimersByTimeAsync(899); // t=1299
     expect(late.settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(1); // t=1300 — not t=2000
+    await vi.advanceTimersByTimeAsync(1); // t=1300 — not t=1400
     expect(late.error).toBeInstanceOf(SignalsCallTimeoutError);
+  });
+
+  it('a call that reaches its slot with < half its budget left is never started: rejected then, and not a backend failure', async () => {
+    const { withSignals, SignalsCallTimeoutError } = await load({
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+    });
+
+    // A succeeds at t=600; B (entered 0) then has 400ms of 1000 left < 500.
+    const a = track(withSignals(() => new Promise<string>((r) => setTimeout(() => r('a'), 600))));
+    const bFn = vi.fn(hang);
+    const b = track(withSignals(bFn));
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(a.value).toBe('a');
+    // Rejected at t=600 — when it reached the slot — not at its 1000 deadline.
+    expect(b.error).toBeInstanceOf(SignalsCallTimeoutError);
+    expect((b.error as InstanceType<typeof SignalsCallTimeoutError>).reason).toBe('timeout');
+    expect(bFn).not.toHaveBeenCalled();
+    expect(count('signals_call_timeouts_total')).toBe(1);
+    expect(count('signals_circuit_trips_total')).toBe(0); // threshold 1, no evidence
+
+    // The slot was freed immediately: a new call runs at once.
+    await expect(withSignals(async () => 'next')).resolves.toBe('next');
   });
 
   it('rejects at 0ms with reason "concurrency" once the queue is full, without running fn', async () => {
@@ -289,26 +312,25 @@ describe('withSignals', () => {
     }
   );
 
-  it('a saturated burst on a healthy-but-slowish backend stays CLOSED (late starts are queue time, not backend failures)', async () => {
+  it('a saturated burst on a healthy-but-slowish backend stays CLOSED and never starts a call it cannot finish', async () => {
     const { withSignals } = await load({
       SIGNALS_CALL_CONCURRENCY: 3,
       SIGNALS_CALL_MAX_QUEUE: 20,
       SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
     });
 
-    // 300ms per call, 3 slots: waves start at 0/300/600/900ms. The 900ms wave
-    // starts with 100ms of budget left and times out — on a healthy backend.
+    // 300ms per call, 3 slots, all 23 enter at t=0: the waves at 0 and 300
+    // start (1000 / 700 ms left); at 600 only 400ms are left < 500, so the
+    // rest are not started.
     const ok = vi.fn(() => new Promise<string>((r) => setTimeout(() => r('ok'), 300)));
     const calls = Array.from({ length: 23 }, () => track(withSignals(ok)));
     await vi.advanceTimersByTimeAsync(2000);
 
     expect(calls.every((c) => c.settled)).toBe(true);
-    // Positive control: exactly the 900ms wave started late and timed out —
-    // 12 fn() starts, 9 successes ⇒ 3 late-start timeouts (the rest expired
-    // unstarted in the queue).
-    expect(ok).toHaveBeenCalledTimes(12);
-    expect(calls.filter((c) => c.value === 'ok')).toHaveLength(9);
-    // …and none of them opened the circuit.
+    // Every started call succeeded; the 17 not started were rejected unrun.
+    expect(ok).toHaveBeenCalledTimes(6);
+    expect(calls.filter((c) => c.value === 'ok')).toHaveLength(6);
+    expect(count('signals_call_timeouts_total')).toBe(17);
     expect(count('signals_circuit_trips_total')).toBe(0);
     await expect(withSignals(async () => 'after')).resolves.toBe('after');
   });
@@ -398,25 +420,6 @@ describe('withSignals', () => {
     expect(count('signals_circuit_trips_total')).toBe(1);
   });
 
-  it('a late start whose timer fires late (event-loop lag) is still a late start, not a backend timeout', async () => {
-    const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1 });
-
-    // A succeeds at 900ms; B, queued behind it, starts with 100ms of its
-    // 1000ms budget left. Then the loop stalls 5s before B's timer runs:
-    // fn() "held" the slot 5.1s of wall time, but only 100ms of its budget.
-    track(withSignals(() => new Promise<string>((r) => setTimeout(() => r('a'), 900))));
-    const bFn = vi.fn(hang);
-    const b = track(withSignals(bFn));
-    await vi.advanceTimersByTimeAsync(900);
-    expect(bFn).toHaveBeenCalledTimes(1);
-    vi.setSystemTime(Date.now() + 5000);
-    await vi.advanceTimersByTimeAsync(100);
-
-    expect(b.error).toBeDefined();
-    expect(count('signals_call_timeouts_total')).toBe(1);
-    expect(count('signals_circuit_trips_total')).toBe(0);
-  });
-
   it('calls expiring in the queue count toward the circuit when the calls ahead timed out', async () => {
     const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 3 });
 
@@ -472,7 +475,7 @@ describe('withSignals', () => {
       await vi.advanceTimersByTimeAsync(50);
     }
   }
-  const STREAK_ENV = {
+  const SATURATED_ENV = {
     SIGNALS_CALL_CONCURRENCY: 2,
     SIGNALS_CALL_MAX_QUEUE: 4,
     SIGNALS_CIRCUIT_TRIP_THRESHOLD: 3,
@@ -480,82 +483,38 @@ describe('withSignals', () => {
   const ok300 = () => new Promise<string>((r) => setTimeout(() => r('ok'), 300));
 
   it('a hang that begins while the pod is ALREADY saturated still trips the circuit', async () => {
-    const { withSignals } = await load(STREAK_ENV);
-    // Healthy-but-saturated for 3s, then the backend hangs. From then on every
-    // call reaches its slot late, so no call ever holds a slot >= half the
-    // deadline — only the no-success timeout streak can see the outage.
+    const { withSignals } = await load(SATURATED_ENV);
+    // Healthy-but-saturated for 3s, then the backend hangs. Calls that are
+    // started always have >= half their deadline, so the hung ones are
+    // backend timeouts even though the queue is full.
     await steadyArrivals(withSignals, 8000, (t) => (t < 3000 ? ok300 : hang));
     expect(count('signals_circuit_trips_total')).toBeGreaterThanOrEqual(1);
   });
 
-  it('steady saturation on a HEALTHY backend never trips (successes keep resetting the streak)', async () => {
-    const { withSignals } = await load(STREAK_ENV);
-    await steadyArrivals(withSignals, 8000, () => ok300);
-    // Positive control: the pod really was saturated (calls were shed).
+  it.each([
+    ['300ms', 300], // queue wait (Q/C)·L = 600 — calls start with budget to spare
+    ['450ms', 450], // L·(Q/C + 1) = 1350 > T: the geometry where late starts used to starve every call
+  ])('steady overload on a HEALTHY backend (%s latency) never trips', async (_label, latency) => {
+    const { withSignals } = await load(SATURATED_ENV);
+    let ok = 0;
+    await steadyArrivals(
+      withSignals,
+      8000,
+      () => () =>
+        new Promise<string>((r) =>
+          setTimeout(() => {
+            ok++;
+            r('ok');
+          }, latency)
+        )
+    );
+    // Positive controls: overloaded (calls shed) and still serving.
     expect(count('signals_call_queue_rejections_total')).toBeGreaterThan(0);
+    expect(ok).toBeGreaterThan(20);
     expect(count('signals_circuit_trips_total')).toBe(0);
   });
 
-  it('the streak is consecutive since the last success, and becomes evidence at exactly 2 × concurrency', async () => {
-    // concurrency 1 → evidence at a streak of 2 late-start timeouts.
-    const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1 });
-    const ok600 = () => new Promise<string>((r) => setTimeout(() => r('ok'), 600));
-
-    // A succeeds at 600. B (entered 0) starts late at 600 with 400ms left and
-    // times out at 1000 → streak 1. C (entered 100) starts late at 1000 with
-    // 100ms left and times out at 1100 → streak 2 → evidence → counted → trip.
-    track(withSignals(ok600));
-    track(withSignals(hang));
-    await vi.advanceTimersByTimeAsync(100);
-    track(withSignals(hang));
-    await vi.advanceTimersByTimeAsync(900); // t=1000: B timed out
-    expect(count('signals_call_timeouts_total')).toBe(1);
-    expect(count('signals_circuit_trips_total')).toBe(0); // streak 1 < 2
-    await vi.advanceTimersByTimeAsync(100); // t=1100: C timed out
-    expect(count('signals_call_timeouts_total')).toBe(2);
-    expect(count('signals_circuit_trips_total')).toBe(1); // streak 2 = 2 × 1
-  });
-
-  it('a success between late-start timeouts resets the streak', async () => {
-    const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1 });
-    const ok600 = () => new Promise<string>((r) => setTimeout(() => r('ok'), 600));
-
-    // late timeout (B @1000) → success (D @1600) → late timeout (E @2000).
-    // Two late timeouts, but never two in a row: no evidence, no trip.
-    track(withSignals(ok600));
-    track(withSignals(hang));
-    await vi.advanceTimersByTimeAsync(1000);
-    const d = track(withSignals(ok600));
-    track(withSignals(hang));
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(d.value).toBe('ok');
-    expect(count('signals_call_timeouts_total')).toBe(2);
-    expect(count('signals_circuit_trips_total')).toBe(0);
-  });
-
-  it('the streak is cleared when the circuit closes', async () => {
-    const { withSignals } = await load({
-      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
-      SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 1,
-    });
-    const ok600 = () => new Promise<string>((r) => setTimeout(() => r('ok'), 600));
-
-    // A full-budget hang → backend timeout → streak 1 → trip.
-    track(withSignals(hang));
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(count('signals_circuit_trips_total')).toBe(1);
-    // Cooldown, then a trial whose fn rejects → CLOSED (streak cleared).
-    await vi.advanceTimersByTimeAsync(1000);
-    await expect(withSignals(() => Promise.reject(new Error('x')))).rejects.toThrow();
-    // One late-start timeout: streak 1 again, not 2 → nothing counts.
-    track(withSignals(ok600));
-    track(withSignals(hang));
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(count('signals_call_timeouts_total')).toBe(2);
-    expect(count('signals_circuit_trips_total')).toBe(1);
-  });
-
-  it('a HALF_OPEN trial that starts LATE and times out is not a trial result: circuit stays HALF_OPEN', async () => {
+  it('a HALF_OPEN trial that reaches its slot with too little budget is not started: circuit stays HALF_OPEN', async () => {
     let releaseA!: (v: string) => void;
     const T = 4000;
     const { withSignals } = await load({
@@ -574,15 +533,15 @@ describe('withSignals', () => {
     expect(count('signals_circuit_trips_total')).toBe(1);
 
     // Cooldown ends (t=3400): A finishes, B takes the slot until 6400. The
-    // trial queues behind B and starts at 6400 with 1000ms of its 4000ms
-    // left — a late start — then times out at 7400.
+    // trial queues behind B and reaches the slot at 6400 with 1000ms of its
+    // 4000ms left < 2000 — so it is not started.
     await vi.advanceTimersByTimeAsync(1000);
     releaseA('a');
     await vi.advanceTimersByTimeAsync(0); // A settles, B takes the slot
     const trialFn = vi.fn(hang);
     const trial = track(withSignals(trialFn));
-    await vi.advanceTimersByTimeAsync(4000);
-    expect(trialFn).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(3000); // t=6400
+    expect(trialFn).not.toHaveBeenCalled();
     expect(trial.error).toBeDefined();
     expect(count('signals_circuit_trips_total')).toBe(1); // not re-opened…
 

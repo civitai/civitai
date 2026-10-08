@@ -555,8 +555,9 @@ export const serverSchema = z
     NOTIFICATIONS_TOKEN: isProd ? z.string().min(1) : z.string().optional(),
     // Per-call signals deadline in ms, measured from withSignals() entry — it
     // covers time spent queued for a concurrency slot as well as the call.
-    // Calls fail fast with SignalsCallTimeoutError once exceeded (a call still
-    // queued at the deadline never runs), instead of hanging until Traefik's
+    // Calls fail fast with SignalsCallTimeoutError once exceeded (a call that
+    // reaches its slot with less than half of it left is never started),
+    // instead of hanging until Traefik's
     // 30s router timeout fires. Default tuned for signals normal latency
     // (higher than Meili due to Orleans grain init).
     SIGNALS_CALL_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(5000),
