@@ -11,6 +11,7 @@ import {
   Title,
 } from '@mantine/core';
 import { useReducedMotion } from '@mantine/hooks';
+import { keepPreviousData } from '@tanstack/react-query';
 import { LazyMotion } from 'motion/react';
 import { div as MotionDiv } from 'motion/react-m';
 import type { InferGetServerSidePropsType } from 'next';
@@ -162,6 +163,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
     data: pairData,
     isLoading: isLoadingPair,
     isFetching: isFetchingPair,
+    isPlaceholderData: isPairPlaceholder,
     error: pairError,
     refetch: refetchPair,
   } = trpc.crucible.getJudgingPair.useQuery(
@@ -177,8 +179,13 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       // A skip list can recur once a vote takes an entry off it. Its cached pair is stale
       // (staleTime is Infinity app-wide), so nothing is kept once the input moves on.
       gcTime: 0,
+      // A skip changes the input, and a new input has no data: without this the arena dropped to
+      // its skeleton on every skip. The old pair stays up, locked, as it does while a vote lands.
+      // Its `data` is the old pair, never the new result, so the null check below still holds.
+      placeholderData: keepPreviousData,
     }
   );
+  const isPairPending = isLoadingPair || isPairPlaceholder;
 
   // Refreshed after each vote, which also picks up entries that arrived meanwhile.
   const { data: progress, refetch: refetchProgress } = trpc.crucible.getJudgingProgress.useQuery(
@@ -318,7 +325,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
   // read as "no pairs left" and ended the session on every skip.
   const handleSkip = useCallback(
     ({ unavailable }: { unavailable: boolean }) => {
-      if (isVoting || isLoadingPair || !pair) return;
+      if (isVoting || isPairPending || !pair) return;
 
       if (!unavailable && currentStreak > 0) {
         setCurrentStreak(0);
@@ -326,7 +333,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
       }
       skip(pair);
     },
-    [isVoting, isLoadingPair, pair, skip, currentStreak]
+    [isVoting, isPairPending, pair, skip, currentStreak]
   );
 
   // Check if all pairs judged on initial load
@@ -583,8 +590,8 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                     briefingOpen && 'pointer-events-none select-none opacity-25'
                   )}
                   pair={pair}
-                  isLoading={isLoadingPair || isVoting}
-                  disabled={isVoting || !!voteError}
+                  isLoading={isPairPending || isVoting}
+                  disabled={isVoting || isPairPlaceholder || !!voteError}
                   minViewSeconds={crucible.minViewSeconds}
                   onVote={handleVote}
                   onSkip={handleSkip}
