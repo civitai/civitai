@@ -1,9 +1,8 @@
 // App shim for @civitai/redis. The package owns its env schema + the typed client
 // wrappers and key definitions; the app injects behavior (debug logger + the Flipt
-// failover policy), owns the HMR singleton + Next build guard, and re-exports the
+// failover policy), owns the process singleton + Next build guard, and re-exports the
 // names existing call sites import from '~/server/redis/client'.
 import { createRedisClients, type RedisClients } from '@civitai/redis/client';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { createLogger } from '~/utils/logging';
@@ -31,11 +30,13 @@ const make = (): RedisClients =>
   });
 
 // Build guard is a Next.js concern → lives here, not in the package.
+// Process-global in EVERY environment, not just for dev HMR: the production server evaluates this
+// module once per bundler module graph in the same Node process, and each evaluation would otherwise
+// open its own connections.
+// It is also what keeps @civitai/redis's once-per-process self-heal watchdogs single.
 const clients: RedisClients = env.IS_BUILD
   ? { redis: undefined as never, sysRedis: undefined as never }
-  : isProd
-  ? make()
-  : (global.__civitaiRedisClients ??= make());
+  : (globalThis.__civitaiRedisClients ??= make());
 
 export const redis = clients.redis;
 export const sysRedis = clients.sysRedis;
