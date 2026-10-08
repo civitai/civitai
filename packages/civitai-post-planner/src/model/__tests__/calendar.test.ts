@@ -6,12 +6,15 @@ import {
   countByUtcDay,
   defaultView,
   formatRangeLabel,
+  mergeDraftInput,
   monthGrid,
   moveToDay,
   snapToFiveMinutes,
   stepAnchor,
+  toTimeInput,
   visibleRange,
   weekDays,
+  weeksOf,
   weekStart,
 } from '../calendar';
 
@@ -178,5 +181,35 @@ describe('shouldBlur', () => {
     expect(shouldBlur(4, 32, false, false)).toBe(true);
     expect(shouldBlur(4, 32, true, false)).toBe(false);
     expect(shouldBlur(32, 4, true, false)).toBe(true);
+  });
+});
+
+describe('weeksOf', () => {
+  it('chunks a grid into rows of seven', () => {
+    const weeks = weeksOf(monthGrid('2026-10-15', '2026-10-06'));
+    expect(weeks).toHaveLength(6);
+    expect(weeks.every((w) => w.length === 7)).toBe(true);
+    expect(weeks[1][0].key).toBe('2026-10-04');
+    expect(weeksOf([1, 2, 3, 4, 5, 6, 7, 8])).toEqual([[1, 2, 3, 4, 5, 6, 7], [8]]);
+  });
+});
+
+describe('toTimeInput / mergeDraftInput', () => {
+  it('formats a zero-padded local HH:MM', () => {
+    expect(toTimeInput(new Date(2026, 9, 8, 9, 5))).toBe('09:05');
+    expect(toTimeInput(new Date(2026, 9, 8, 23, 59))).toBe('23:59');
+  });
+
+  it('applies the date, the time, or both without touching the other', () => {
+    const base = new Date(2026, 9, 8, 21, 7, 30);
+    const dated = mergeDraftInput(base, '2026-11-02', null);
+    expect([dated.getFullYear(), dated.getMonth(), dated.getDate()]).toEqual([2026, 10, 2]);
+    expect([dated.getHours(), dated.getMinutes(), dated.getSeconds()]).toEqual([21, 7, 30]);
+    const timed = mergeDraftInput(base, null, '08:15');
+    expect([timed.getDate(), timed.getHours(), timed.getMinutes(), timed.getSeconds()]).toEqual([
+      8, 8, 15, 0,
+    ]);
+    expect(mergeDraftInput(base, null, null)).toEqual(base);
+    expect(mergeDraftInput(base, null, null)).not.toBe(base);
   });
 });

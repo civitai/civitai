@@ -1,4 +1,5 @@
 import { TRPCError } from '@trpc/server';
+import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { Tracker } from '~/server/clickhouse/client';
 import type { Context } from '~/server/createContext';
@@ -12,8 +13,8 @@ import { getRequestDomainColor } from '~/server/utils/server-domain';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type { SessionUser } from '~/types/session';
 
-// The REST twins of the planner procedures (/api/v1/posts/planner/*) exist for Creator Studio,
-// which has no tRPC client and forwards the shared session cookie. They call the procedures
+// The REST twin of the planner procedures (/api/v1/posts/planner/[action]) exists for Creator
+// Studio, which has no tRPC client and forwards the shared session cookie. It calls the procedures
 // through this caller so every guard — ban, onboarding, flag, token scope, the release checks —
 // is the procedure's own, never a second copy (docs/batch-scheduling-plan.md §2, finding 9).
 // The one guard this cannot inherit is `isAcceptableOrigin`: Creator Studio forwards server-side
@@ -67,20 +68,12 @@ export function requireJsonBody(req: NextApiRequest, res: NextApiResponse): bool
   return false;
 }
 
-const PLANNER_STATUS_BY_CODE: Partial<Record<TRPCError['code'], number>> = {
-  BAD_REQUEST: 400,
-  UNAUTHORIZED: 401,
-  FORBIDDEN: 403,
-  NOT_FOUND: 404,
-  CONFLICT: 409,
-};
-
 /** A refusal the spoke is meant to read keeps its message; anything else goes through the
  *  shared REST error path, which genericizes server faults. */
 export function handlePlannerError(res: NextApiResponse, error: unknown) {
   if (error instanceof TRPCError && !isDriverAuthoredMessage(error.message, error)) {
-    const status = PLANNER_STATUS_BY_CODE[error.code];
-    if (status) return res.status(status).json({ error: error.message, code: error.code });
+    const status = getHTTPStatusCodeFromError(error);
+    if (status < 500) return res.status(status).json({ error: error.message, code: error.code });
   }
   return handleEndpointError(res, error);
 }

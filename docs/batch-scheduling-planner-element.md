@@ -74,7 +74,7 @@ type PlannerLocation = {
 interface PlannerPost {
   id: number;
   title: string | null;
-  publishedAt: string;            // ISO instant; the element buckets into the viewer's local day
+  publishedAt: string; // ISO instant; the element buckets into the viewer's local day
   modelVersionId: number | null;
   nsfwLevel: number;
   imageCount: number;
@@ -84,8 +84,15 @@ interface PlannerPost {
 }
 
 interface PlannerPostDetail extends PlannerPost {
-  description: string | null;     // plain text; the server strips the stored rich-text markup
-  media: { id: number; url: string; type: 'image' | 'video' | 'audio'; nsfwLevel: number; width: number; height: number }[];
+  description: string | null; // plain text; the server strips the stored rich-text markup
+  media: {
+    id: number;
+    url: string;
+    type: 'image' | 'video' | 'audio';
+    nsfwLevel: number;
+    width: number;
+    height: number;
+  }[];
   model: { id: number; name: string; versionName: string } | null;
   resources: { id: number; name: string; type: string; modelId: number; versionId: number }[];
   tools: string[];
@@ -105,26 +112,33 @@ interface PlannerBackend {
   getPostDetail(id: number): Promise<PlannerPostDetail>;
   /** `expectedScope` is what the UI showed; the server answers a conflict when its own computation
    *  differs, so a stale replica cannot turn a chip drop into a release move. */
-  reschedule(req: { id: number; publishedAt: string; expectedScope: 'post' | 'version' | 'model' })
-    : Promise<{ publishedAt: string; scope: 'post' | 'version' | 'model'; movedPostIds: number[] }>;
-  publishNow(req: { id: number; expectedScope: 'post' | 'version' | 'model' })
-    : Promise<{ publishedAt: string; scope: 'post' | 'version' | 'model'; movedPostIds: number[] }>;
+  reschedule(req: {
+    id: number;
+    publishedAt: string;
+    expectedScope: 'post' | 'version' | 'model';
+  }): Promise<{ publishedAt: string; scope: 'post' | 'version' | 'model'; movedPostIds: number[] }>;
+  publishNow(req: {
+    id: number;
+    expectedScope: 'post' | 'version' | 'model';
+  }): Promise<{ publishedAt: string; scope: 'post' | 'version' | 'model'; movedPostIds: number[] }>;
   /** Release posts are never unscheduled or shifted here; they come back in `skippedReleaseIds`. */
   unschedule(ids: number[]): Promise<{ unscheduledIds: number[]; skippedReleaseIds: number[] }>;
-  shift(req: { ids: number[]; deltaMinutes: number })
-    : Promise<{ moved: { id: number; publishedAt: string }[]; skippedReleaseIds: number[] }>;
+  shift(req: {
+    ids: number[];
+    deltaMinutes: number;
+  }): Promise<{ moved: { id: number; publishedAt: string }[]; skippedReleaseIds: number[] }>;
 }
 
 interface PlannerHost {
   backend: PlannerBackend;
   config: {
-    userId?: number;              // scopes the remembered Show-mature choice on a shared device
-    imageLocation: string;        // Cloudflare Images base for covers
-    browsingLevel: number;        // covers above it render blurred
+    userId?: number; // scopes the remembered Show-mature choice on a shared device
+    imageLocation: string; // Cloudflare Images base for covers
+    browsingLevel: number; // covers above it render blurred
     /** Initial state of the "Show mature" toggle; the element remembers the viewer's choice per device
      *  and fires `show-mature-change`. It never writes the account's browsing settings. */
     showMature?: boolean;
-    composerAvailable: boolean;   // hides quick-add until the composer ships
+    composerAvailable: boolean; // hides quick-add until the composer ships
   };
   hrefFor(loc: PlannerLocation): string;
   navigate(loc: PlannerLocation): Promise<void>;
@@ -148,19 +162,21 @@ the element already updates its own view optimistically and reverts on a rejecte
 ## 4. Hosts
 
 ### Creator Studio (`/calendar`)
+
 - `+page.svelte` imports `@civitai/post-planner/define`, renders `<civitai-post-planner>` and binds
   `host` and `location` as properties (`bind:this` + assignment after mount; Svelte sets unknown
   attributes as properties when the element defines them). Flag-gated with
   `modFallbackFlagEnabled(POST_PLANNER_FLAG, user)`.
-- `backend` is a small client object whose methods fetch this app's own
-  `routes/api/planner/[action]`, a proxy over the main app's REST twins (below): the main app owns the
-  read query as well as the writes, so Creator Studio carries no Kysely read of its own. The proxy
-  forwards only the hub's session cookies, whitelists the read parameters, and takes writes only as
-  same-origin `application/json`. A `409` reaches the element as the server's message; the element
+- `backend` is `createPlannerBackend('/api/planner')` from `@civitai/post-planner/contract`, pointed
+  at this app's own `routes/api/planner/[action]`, a proxy over the main app's REST twin (below): the
+  main app owns the read query as well as the writes, so Creator Studio carries no Kysely read of its
+  own. The proxy forwards only the hub's session cookies, whitelists the read parameters, and takes
+  writes only as same-origin `application/json`; which actions are reads comes from the contract. A `409` reaches the element as the server's message; the element
   toasts it and reloads the range.
 - `<html data-theme="dark" class="dark">` in `app.html` is the app's posture for every element.
 
 ### Main app (`/user/schedule`)
+
 - `src/pages/user/schedule.tsx` renders the React binding from `@civitai/post-planner/react` inside
   `next/dynamic(..., { ssr: false })`, under `Page(..., { features: f => f.postPlanner })`. `backend` is
   tRPC (`post.getScheduled`, `post.reschedule`, `post.publishNow`, `post.unschedule`,
@@ -172,16 +188,18 @@ the element already updates its own view optimistically and reverts on a rejecte
   a Creator Studio dashboard tile pointing at its own `/calendar`.
 
 ### Main-app server (shared by both hosts)
+
 - tRPC procedures above in `post.router.ts`, each `isFlagProtected('postPlanner')`, reads on
   `TokenScope.MediaRead` and writes on `TokenScope.MediaWrite` with a shared rate limit.
   `post.reschedule` keeps the first pass's release logic (the sibling-scheduled-versions refusal, the
   post-write re-read) in a service function plus the `expectedScope` check; the release move itself
   runs the real `model.publish` / `modelVersion.publish` procedures through scoped callers, so their
   muted, email-verification, token-scope and ownership guards stay theirs.
-- REST twins for Creator Studio under `/api/v1/posts/planner/{scheduled,detail,schedule,unschedule,shift}`
-  built with `createCallerFactory(appRouter)` over an authenticated context, so the ban / onboarding /
-  muted / email-verification guards are the procedures' own. Cookie-authenticated POSTs must be
-  `application/json`.
+- One REST twin for Creator Studio, `/api/v1/posts/planner/[action]`, driven by the contract's action
+  table (`scheduled`, `detail` on GET; `schedule`, `unschedule`, `shift` on POST) and built with
+  `createCallerFactory(appRouter)` over an authenticated context, so the ban / onboarding / muted /
+  email-verification guards are the procedures' own. Cookie-authenticated POSTs must be
+  `application/json`. A main-app host can point `createPlannerBackend` at the same path.
 - Flag `postPlanner: { availability: ['mod'], fliptKey: 'post-planner' }`; Creator Studio reads the same
   Flipt key. No index work: production already carries two `Post(userId, publishedAt)` covering
   indexes and the list query uses one of them.
@@ -191,12 +209,15 @@ the element already updates its own view optimistically and reverts on a rejecte
 ```
 packages/civitai-post-planner/
   package.json         @civitai/post-planner; deps lit, @civitai/components, @civitai/shared;
-                       exports ".", "./define", "./react"
+                       exports ".", "./define", "./react", "./host", "./contract"
   src/
     civitai-post-planner.ts        the element (CivitaiElement subclass); one file until PR G splits
                                    it into views/ and parts/
     define.ts                      defineElement('civitai-post-planner', …)
     host.ts                        PlannerHost / PlannerBackend / PlannerLocation, hostLink
+    contract.ts (+ test)           the REST wire contract: action table, request/response types,
+                                   createPlannerBackend — shared by the main-app route, the Studio
+                                   proxy and any HTTP host
     react.ts                       @lit/react createComponent binding
     styles.ts                      the element's stylesheet on @civitai/theme tokens
     parts/media.ts                 blur rule, thumbnails, icons
@@ -216,14 +237,14 @@ packages/civitai-post-planner/
 
 ## 6. What carries over from the first pass
 
-| First pass (Svelte, Creator Studio) | Becomes |
-|------------------------------------|---------|
-| `routes/(app)/calendar/+page.svelte` (478 lines) | Lit views and parts in the package; the route is a thin host |
-| `lib/server/post-calendar.ts` Kysely read | `routes/api/planner/scheduled/+server.ts` |
-| `lib/post-calendar.ts` grid/month helpers (+ test) | `src/model/{buckets,ranges}.ts`, same logic, same tests ported |
-| `src/pages/api/v1/posts/schedule.ts` | service function behind `post.reschedule` / `post.publishNow`; REST twin via `createCallerFactory` |
-| `src/server/utils/post-reschedule.ts` (+ test) | already in `@civitai/shared/post-scheduling` (PR A) |
-| The 10 must-fix findings in the master plan §2 | fixed during the port; the client-side ones land once, in the element |
+| First pass (Svelte, Creator Studio)                | Becomes                                                                                            |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `routes/(app)/calendar/+page.svelte` (478 lines)   | Lit views and parts in the package; the route is a thin host                                       |
+| `lib/server/post-calendar.ts` Kysely read          | `routes/api/planner/scheduled/+server.ts`                                                          |
+| `lib/post-calendar.ts` grid/month helpers (+ test) | `src/model/{buckets,ranges}.ts`, same logic, same tests ported                                     |
+| `src/pages/api/v1/posts/schedule.ts`               | service function behind `post.reschedule` / `post.publishNow`; REST twin via `createCallerFactory` |
+| `src/server/utils/post-reschedule.ts` (+ test)     | already in `@civitai/shared/post-scheduling` (PR A)                                                |
+| The 10 must-fix findings in the master plan §2     | fixed during the port; the client-side ones land once, in the element                              |
 
 ## 7. Sequencing
 

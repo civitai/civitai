@@ -1,4 +1,5 @@
 import type { SessionUser } from '@civitai/auth';
+import { PLANNER_REST_PATH, type PlannerAction } from '@civitai/post-planner/contract';
 import { POST_PLANNER_FLAG } from '$lib/nav';
 import { callMainApp, type MainAppResult } from '$lib/server/main-app';
 import { modFallbackFlagEnabled } from '$lib/server/main-app-flags';
@@ -7,15 +8,8 @@ export function postPlannerEnabled(user: SessionUser): Promise<boolean> {
   return modFallbackFlagEnabled(POST_PLANNER_FLAG, user);
 }
 
-export const PLANNER_ACTIONS = ['scheduled', 'detail', 'schedule', 'unschedule', 'shift'] as const;
-export type PlannerAction = (typeof PLANNER_ACTIONS)[number];
-
-export function isPlannerAction(value: string): value is PlannerAction {
-  return (PLANNER_ACTIONS as readonly string[]).includes(value);
-}
-
 // Every planner read and write is owned by the main app (ownership, release fan-out, reindex, the
-// guards on publishing). This app only forwards the creator's session cookie to the REST twins.
+// guards on publishing). This app only forwards the creator's session cookie to the REST twin.
 export function callPlanner<T>(
   action: PlannerAction,
   cookie: string,
@@ -23,8 +17,8 @@ export function callPlanner<T>(
 ): Promise<MainAppResult<T>> {
   const path =
     init.method === 'GET'
-      ? `/api/v1/posts/planner/${action}?${init.query.toString()}`
-      : `/api/v1/posts/planner/${action}`;
+      ? `${PLANNER_REST_PATH}/${action}?${init.query.toString()}`
+      : `${PLANNER_REST_PATH}/${action}`;
   return callMainApp<T>(path, cookie, {
     method: init.method,
     body: init.method === 'POST' ? init.body : undefined,

@@ -13,6 +13,12 @@ export interface PlannerLocation {
   modelVersionId?: number;
 }
 
+export interface PlannerRelease {
+  scope: Exclude<PlannerScope, 'post'>;
+  modelName: string;
+  versionName: string;
+}
+
 export interface PlannerPost {
   id: number;
   title: string | null;
@@ -23,7 +29,7 @@ export interface PlannerPost {
   imageCount: number;
   cover: { url: string; type: 'image' | 'video' | 'audio' } | null;
   /** Set when the post goes live with a scheduled release and so moves with it. */
-  release: { scope: 'model' | 'version'; modelName: string; versionName: string } | null;
+  release: PlannerRelease | null;
 }
 
 export interface PlannerMedia {
@@ -63,6 +69,17 @@ export interface MoveResult {
   movedPostIds: number[];
 }
 
+/** Release posts are never unscheduled or shifted in bulk; they come back in `skippedReleaseIds`. */
+export interface UnscheduleResult {
+  unscheduledIds: number[];
+  skippedReleaseIds: number[];
+}
+
+export interface ShiftResult {
+  moved: { id: number; publishedAt: string }[];
+  skippedReleaseIds: number[];
+}
+
 export interface PlannerBackend {
   getScheduled(range: {
     from: string;
@@ -77,11 +94,8 @@ export interface PlannerBackend {
     expectedScope: PlannerScope;
   }): Promise<MoveResult>;
   publishNow(req: { id: number; expectedScope: PlannerScope }): Promise<MoveResult>;
-  unschedule(ids: number[]): Promise<{ unscheduledIds: number[]; skippedReleaseIds: number[] }>;
-  shift(req: { ids: number[]; deltaMinutes: number }): Promise<{
-    moved: { id: number; publishedAt: string }[];
-    skippedReleaseIds: number[];
-  }>;
+  unschedule(ids: number[]): Promise<UnscheduleResult>;
+  shift(req: { ids: number[]; deltaMinutes: number }): Promise<ShiftResult>;
 }
 
 export interface PlannerHost {

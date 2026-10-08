@@ -204,3 +204,27 @@ export function formatRangeLabel(view: PlannerView, anchor: string, locale?: str
       return `From ${start.toLocaleDateString(locale, { month: 'short', day: 'numeric' })}`;
   }
 }
+
+export function toTimeInput(date: Date): string {
+  return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+/** `base` with a date input's `YYYY-MM-DD` and/or a time input's `HH:MM` applied in local time. */
+export function mergeDraftInput(base: Date, date: string | null, time: string | null): Date {
+  const next = new Date(base);
+  if (date) {
+    const [year, month, day] = date.split('-').map(Number);
+    next.setFullYear(year, month - 1, day);
+  }
+  if (time) {
+    const [hours, minutes] = time.split(':').map(Number);
+    next.setHours(hours, minutes, 0, 0);
+  }
+  return next;
+}
+
+export function weeksOf<T>(days: T[]): T[][] {
+  const weeks: T[][] = [];
+  for (let i = 0; i < days.length; i += 7) weeks.push(days.slice(i, i + 7));
+  return weeks;
+}

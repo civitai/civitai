@@ -4,11 +4,11 @@
   import { page } from '$app/state';
   import type {
     CivitaiPostPlanner,
-    PlannerBackend,
     PlannerHost,
     PlannerLocation,
     PlannerView,
   } from '@civitai/post-planner';
+  import { createPlannerBackend } from '@civitai/post-planner/contract';
   import { civitaiUrl } from '$lib/model-url';
   import type { PageData } from './$types';
 
@@ -42,47 +42,8 @@
     return `/calendar?${params}`;
   }
 
-  async function call<T>(
-    action: string,
-    init:
-      | { method: 'GET'; query: Record<string, string | undefined> }
-      | { method: 'POST'; body: unknown }
-  ): Promise<T> {
-    const url =
-      init.method === 'GET'
-        ? `/api/planner/${action}?${new URLSearchParams(
-            Object.fromEntries(
-              Object.entries(init.query).filter(([, v]) => v !== undefined)
-            ) as Record<string, string>
-          )}`
-        : `/api/planner/${action}`;
-    const res = await fetch(url, {
-      method: init.method,
-      headers: init.method === 'POST' ? { 'content-type': 'application/json' } : undefined,
-      body: init.method === 'POST' ? JSON.stringify(init.body) : undefined,
-    });
-    if (!res.ok) {
-      const body = (await res.json().catch(() => null)) as {
-        error?: string;
-        message?: string;
-      } | null;
-      throw new Error(body?.error ?? body?.message ?? `Request failed (${res.status}).`);
-    }
-    return (await res.json()) as T;
-  }
-
-  const backend: PlannerBackend = {
-    getScheduled: ({ from, to, modelVersionId }) =>
-      call('scheduled', {
-        method: 'GET',
-        query: { from, to, modelVersionId: modelVersionId ? String(modelVersionId) : undefined },
-      }),
-    getPostDetail: (id) => call('detail', { method: 'GET', query: { id: String(id) } }),
-    reschedule: (req) => call('schedule', { method: 'POST', body: req }),
-    publishNow: (req) => call('schedule', { method: 'POST', body: { ...req, publishNow: true } }),
-    unschedule: (ids) => call('unschedule', { method: 'POST', body: { ids } }),
-    shift: (req) => call('shift', { method: 'POST', body: req }),
-  };
+  // This app's proxy over the main app's planner route; same wire shape, this app's session.
+  const backend = createPlannerBackend('/api/planner');
 
   // Absolute main-app URLs on purpose: the element opens anything non-relative in a new tab, which
   // is what a creator wants when hopping from the studio to the editor.

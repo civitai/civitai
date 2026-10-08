@@ -1,14 +1,11 @@
 import { error, json } from '@sveltejs/kit';
-import type { RequestHandler } from './$types';
 import {
-  callPlanner,
   isPlannerAction,
-  postPlannerEnabled,
-  sessionCookies,
-} from '$lib/server/post-planner';
-
-const READS = new Set(['scheduled', 'detail']);
-const READ_PARAMS = ['from', 'to', 'modelVersionId', 'id'];
+  isPlannerReadAction,
+  PLANNER_READ_PARAMS,
+} from '@civitai/post-planner/contract';
+import type { RequestHandler } from './$types';
+import { callPlanner, postPlannerEnabled, sessionCookies } from '$lib/server/post-planner';
 
 /** Same-site pages share the session cookie, so a write must look like this app's own fetch: JSON,
  *  and same-origin when the browser says where it came from. SvelteKit's CSRF check covers form
@@ -28,9 +25,9 @@ async function gate(locals: App.Locals, action: string) {
 
 export const GET: RequestHandler = async ({ locals, params, request, url }) => {
   const action = await gate(locals, params.action);
-  if (!READS.has(action)) error(405, 'Method not allowed');
+  if (!isPlannerReadAction(action)) error(405, 'Method not allowed');
   const query = new URLSearchParams();
-  for (const key of READ_PARAMS) {
+  for (const key of PLANNER_READ_PARAMS) {
     const value = url.searchParams.get(key);
     if (value !== null) query.set(key, value);
   }
@@ -44,7 +41,7 @@ export const GET: RequestHandler = async ({ locals, params, request, url }) => {
 
 export const POST: RequestHandler = async ({ locals, params, request }) => {
   const action = await gate(locals, params.action);
-  if (READS.has(action)) error(405, 'Method not allowed');
+  if (isPlannerReadAction(action)) error(405, 'Method not allowed');
   assertOwnWrite(request);
   const body = await request.json().catch(() => null);
   if (!body || typeof body !== 'object') error(400, 'Invalid request');

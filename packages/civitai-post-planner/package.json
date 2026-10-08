@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./define": "./src/define.ts",
     "./react": "./src/react.ts",
-    "./host": "./src/host.ts"
+    "./host": "./src/host.ts",
+    "./contract": "./src/contract.ts"
   },
   "scripts": {
     "test": "vitest run",
@@ -25,7 +26,9 @@
     "react": ">=18"
   },
   "peerDependenciesMeta": {
-    "react": { "optional": true }
+    "react": {
+      "optional": true
+    }
   },
   "devDependencies": {
     "vitest": "^4.1.11"

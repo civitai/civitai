@@ -29,47 +29,20 @@ import { ModelStatus } from '~/shared/utils/prisma/enums';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
 import { uniq, uniqBy } from 'lodash-es';
+import type {
+  MoveResult,
+  PlannerPost,
+  PlannerPostDetail,
+  PlannerRelease,
+  ScheduledRange,
+  ShiftResult,
+  UnscheduleResult,
+} from '@civitai/post-planner/host';
 
 // A burst scheduler posts 25+ a day; a six-week month grid must hold all of it before the UI has to
 // say "incomplete". A row serialises to ~210 bytes, so 1,500 is ~300 KiB before compression.
 const PLANNER_PAGE_LIMIT = 1500;
 export const SCHEDULE_CHANGED_MESSAGE = "This post's schedule changed. Refresh and try again.";
-
-export type PlannerRelease = {
-  scope: Exclude<PostScheduleScope, 'post'>;
-  modelName: string;
-  versionName: string;
-};
-
-export type PlannerPost = {
-  id: number;
-  title: string | null;
-  publishedAt: string;
-  modelVersionId: number | null;
-  nsfwLevel: number;
-  imageCount: number;
-  cover: { url: string; type: MediaType } | null;
-  release: PlannerRelease | null;
-};
-
-export type PlannerPostDetail = PlannerPost & {
-  description: string | null;
-  media: {
-    id: number;
-    url: string;
-    type: MediaType;
-    nsfwLevel: number;
-    width: number;
-    height: number;
-  }[];
-  model: { id: number; name: string; versionName: string } | null;
-  resources: { id: number; name: string; type: string; modelId: number; versionId: number }[];
-  tools: string[];
-  techniques: string[];
-  tags: string[];
-  /** Null until the post is live; posts have no stored view count, so this is reactions only. */
-  stats: { reactions: number; comments: number } | null;
-};
 
 type ReleaseRow = {
   versionStatus: ModelStatus | null;
@@ -132,7 +105,7 @@ export async function getScheduledPosts({
   from: Date;
   to: Date;
   modelVersionId?: number;
-}) {
+}): Promise<ScheduledRange> {
   const rows = await dbRead.$queryRaw<ScheduledPostRow[]>`
     SELECT
       p.id,
@@ -288,12 +261,6 @@ const schedulablePostSelect = {
   },
 } satisfies Prisma.PostSelect;
 
-export type PlannerScheduleResult = {
-  publishedAt: string;
-  scope: PostScheduleScope;
-  movedPostIds: number[];
-};
-
 type PublishCallers = {
   model: (ctx: Context) => ReturnType<typeof modelRouter.createCaller>;
   version: (ctx: Context) => ReturnType<typeof modelVersionRouter.createCaller>;
@@ -334,7 +301,7 @@ export async function reschedulePlannerPost({
   target: PostScheduleTarget;
   expectedScope: PostScheduleScope;
   ctx: ProtectedContext;
-}): Promise<PlannerScheduleResult> {
+}): Promise<MoveResult> {
   const { user } = ctx;
   const post = await dbWrite.post.findUnique({ where: { id }, select: schedulablePostSelect });
   if (!post || post.userId !== user.id) throw throwNotFoundError('Post not found');
@@ -420,9 +387,15 @@ async function loadOwnScheduledPosts({ ids, user }: { ids: number[]; user: Sessi
   return { standalone, skippedReleaseIds };
 }
 
-export async function unschedulePlannerPosts({ ids, user }: { ids: number[]; user: SessionUser }) {
+export async function unschedulePlannerPosts({
+  ids,
+  user,
+}: {
+  ids: number[];
+  user: SessionUser;
+}): Promise<UnscheduleResult> {
   const { standalone, skippedReleaseIds } = await loadOwnScheduledPosts({ ids, user });
-  if (!standalone.length) return { unscheduledIds: [] as number[], skippedReleaseIds };
+  if (!standalone.length) return { unscheduledIds: [], skippedReleaseIds };
 
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
     UPDATE "Post"
@@ -462,11 +435,10 @@ export async function shiftPlannerPosts({
   ids: number[];
   deltaMinutes: number;
   user: SessionUser;
-}) {
+}): Promise<ShiftResult> {
   const now = new Date();
   const { standalone, skippedReleaseIds } = await loadOwnScheduledPosts({ ids, user });
-  if (!standalone.length)
-    return { moved: [] as { id: number; publishedAt: string }[], skippedReleaseIds };
+  if (!standalone.length) return { moved: [], skippedReleaseIds };
 
   const targets = standalone.map((post) => ({
     id: post.id,

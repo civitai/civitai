@@ -103,6 +103,9 @@ const civitaiWorkspacePkgs = [
   // Same story as notifications: not symlinked into root node_modules, so without
   // this alias every suite touching the buzz chain fails to collect.
   'buzz',
+  // `@civitai/post-planner` (packages/civitai-post-planner) is imported by the planner REST route
+  // and its service; resolved through tsconfig paths in the app build, not symlinked into root.
+  'post-planner',
 ];
 const civitaiAlias = civitaiWorkspacePkgs.flatMap((p) => {
   const src = path.resolve(__dirname, `packages/civitai-${p}/src`).replace(/\\/g, '/');
