@@ -49,8 +49,18 @@ describe('countJudgingPairs', () => {
     const counts = await countJudgingPairs({ crucibleIds: [1, 2], userId: JUDGE, viewerLevel: 1 });
 
     expect(queryRaw).toHaveBeenCalledTimes(1);
-    expect(counts.get(1)).toEqual({ remainingPairs: 3, judgedPairs: 0, visibleEntries: 3, judged: false });
-    expect(counts.get(2)).toEqual({ remainingPairs: 0, judgedPairs: 1, visibleEntries: 2, judged: true });
+    expect(counts.get(1)).toEqual({
+      remainingPairs: 3,
+      judgedPairs: 0,
+      visibleEntries: 3,
+      judged: false,
+    });
+    expect(counts.get(2)).toEqual({
+      remainingPairs: 0,
+      judgedPairs: 1,
+      visibleEntries: 2,
+      judged: true,
+    });
   });
 
   it('reports judged pairs among visible entries only', async () => {
@@ -67,7 +77,12 @@ describe('countJudgingPairs', () => {
 
     const counts = await countJudgingPairs({ crucibleIds: [3], userId: JUDGE, viewerLevel: 1 });
 
-    expect(counts.get(3)).toEqual({ remainingPairs: 0, judgedPairs: 0, visibleEntries: 0, judged: false });
+    expect(counts.get(3)).toEqual({
+      remainingPairs: 0,
+      judgedPairs: 0,
+      visibleEntries: 0,
+      judged: false,
+    });
   });
 
   // No counter is stored, so a late entry re-opens pairs for a judge who was caught up.

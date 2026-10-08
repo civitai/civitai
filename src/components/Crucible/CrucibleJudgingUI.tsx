@@ -327,7 +327,10 @@ export function CrucibleJudgingUI({
         color="blue"
         radius="xl"
         h={40}
-        className={clsx('min-w-0 flex-1 px-4 font-semibold', selectedSide === side && 'bg-blue-500')}
+        className={clsx(
+          'min-w-0 flex-1 px-4 font-semibold',
+          selectedSide === side && 'bg-blue-500'
+        )}
         data-testid="judge-vote"
         data-side={side}
         onClick={() => handleVote(side)}

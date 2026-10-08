@@ -78,33 +78,33 @@ export function CrucibleJudgeStreak({ streak, resetAt, className }: Props) {
 
         {/* Outside the remounting badge: a live region that remounts is not announced. */}
         <span aria-live="polite" className="inline-flex">
-        <MotionDiv
-          // Remounting on each reset replays the shake once per skip.
-          key={resetAt}
-          data-testid="judge-streak"
-          className={clsx(
-            'inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-sm font-semibold transition-[background-color,border-color,box-shadow,color] duration-300',
-            isReset ? resetClass : isStreakBlazing(streak) ? blazingClass : tierClass[tier]
-          )}
-          animate={isReset && motionOn ? { x: [0, -6, 6, -6, 6, -6, 6, 0] } : undefined}
-          transition={{ duration: 0.45 }}
-        >
-          <MotionSpan
-            // Keyed by the count so every vote replays the pop.
-            key={streak}
-            className="inline-flex"
-            animate={streak > 0 && motionOn ? { scale: [1, 1.25, 1] } : undefined}
-            transition={{ duration: 0.35 }}
+          <MotionDiv
+            // Remounting on each reset replays the shake once per skip.
+            key={resetAt}
+            data-testid="judge-streak"
+            className={clsx(
+              'inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-sm font-semibold transition-[background-color,border-color,box-shadow,color] duration-300',
+              isReset ? resetClass : isStreakBlazing(streak) ? blazingClass : tierClass[tier]
+            )}
+            animate={isReset && motionOn ? { x: [0, -6, 6, -6, 6, -6, 6, 0] } : undefined}
+            transition={{ duration: 0.45 }}
           >
-            <IconFlame
-              size={16}
-              color={flameColor}
-              fill={streak > 0 ? flameColor : 'none'}
-              fillOpacity={0.3}
-            />
-          </MotionSpan>
-          {label}
-        </MotionDiv>
+            <MotionSpan
+              // Keyed by the count so every vote replays the pop.
+              key={streak}
+              className="inline-flex"
+              animate={streak > 0 && motionOn ? { scale: [1, 1.25, 1] } : undefined}
+              transition={{ duration: 0.35 }}
+            >
+              <IconFlame
+                size={16}
+                color={flameColor}
+                fill={streak > 0 ? flameColor : 'none'}
+                fillOpacity={0.3}
+              />
+            </MotionSpan>
+            {label}
+          </MotionDiv>
         </span>
       </div>
     </LazyMotion>

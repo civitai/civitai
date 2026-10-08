@@ -578,32 +578,32 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
                     'flex-1 md:min-h-0',
                     briefingOpen && 'pointer-events-none select-none opacity-25'
                   )}
-                pair={pair}
-                isLoading={isLoadingPair || isVoting}
-                disabled={isVoting || !!voteError}
-                minViewSeconds={crucible.minViewSeconds}
-                onVote={handleVote}
-                onSkip={handleSkip}
-                footerStart={
-                  <JudgingSessionStats
-                    sessionVotes={sessionVotes}
-                    totalPairsRated={(judgeStats?.totalPairsRated ?? 0) + sessionVotes}
-                    percentileRank={judgeStats?.percentileRank}
-                    judgedPairs={progress?.judgedPairs}
-                    remainingPairs={progress?.remainingPairs}
-                  />
-                }
-                footerEnd={
-                  <div className="flex flex-col items-start gap-1.5 md:items-end">
-                    <CrucibleJudgeStreak streak={currentStreak} resetAt={streakResetAt} />
-                    {timeRemaining && (
-                      <span className="inline-flex items-center gap-1 text-xs text-[#909296]">
-                        <IconHourglass size={14} />
-                        Ends in {timeRemaining}
-                      </span>
-                    )}
-                  </div>
-                }
+                  pair={pair}
+                  isLoading={isLoadingPair || isVoting}
+                  disabled={isVoting || !!voteError}
+                  minViewSeconds={crucible.minViewSeconds}
+                  onVote={handleVote}
+                  onSkip={handleSkip}
+                  footerStart={
+                    <JudgingSessionStats
+                      sessionVotes={sessionVotes}
+                      totalPairsRated={(judgeStats?.totalPairsRated ?? 0) + sessionVotes}
+                      percentileRank={judgeStats?.percentileRank}
+                      judgedPairs={progress?.judgedPairs}
+                      remainingPairs={progress?.remainingPairs}
+                    />
+                  }
+                  footerEnd={
+                    <div className="flex flex-col items-start gap-1.5 md:items-end">
+                      <CrucibleJudgeStreak streak={currentStreak} resetAt={streakResetAt} />
+                      {timeRemaining && (
+                        <span className="inline-flex items-center gap-1 text-xs text-[#909296]">
+                          <IconHourglass size={14} />
+                          Ends in {timeRemaining}
+                        </span>
+                      )}
+                    </div>
+                  }
                 />
               </div>
               {briefingOpen && (

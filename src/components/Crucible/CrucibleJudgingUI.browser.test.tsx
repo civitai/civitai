@@ -313,7 +313,8 @@ describe('CrucibleJudgingUI — minimum view time', () => {
   });
 });
 
-const skipPairButton = () => document.querySelector<HTMLButtonElement>('[data-testid="judge-skip"]');
+const skipPairButton = () =>
+  document.querySelector<HTMLButtonElement>('[data-testid="judge-skip"]');
 
 describe('CrucibleJudgingUI — clip already judged this session', () => {
   const pairWithWatch = (left: number, right: number) =>
@@ -418,7 +419,8 @@ describe('CrucibleJudgingUI — repeated clicks', () => {
         onSkip={vi.fn()}
       />
     );
-    const imageCard = () => document.querySelector<HTMLElement>('[aria-label="Vote for left image"]');
+    const imageCard = () =>
+      document.querySelector<HTMLElement>('[aria-label="Vote for left image"]');
     await vi.waitFor(() => expect(voteButton('left')!.disabled).toBe(false));
 
     imageCard()!.click();
