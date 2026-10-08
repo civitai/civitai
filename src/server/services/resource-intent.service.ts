@@ -102,7 +102,8 @@ const DEGRADED_CACHE_TTL_SECONDS = 60;
  * response QUALITY and are asymmetric on RETRY COST, which is what a TTL actually
  * buys. The label read sits BETWEEN stage 1 and stage 3, so an
  * `insightFallback` miss has already paid stage 1 and goes on to pay stage 3 in
- * full — three BILLED vendor calls, plus up to two Meilisearch queries and hydration. The
+ * full — three BILLED vendor calls, plus two Meilisearch queries (the seed page and `basePool`'s
+ * 500-document page) and hydration. The
  * dominant degraded case is stage-1 Jev throwing, which costs ONE call and that
  * one abandoned, with no stage 3, no search and no hydration. The benefit axis
  * inverts too: a degraded response is useless, so retrying it fast is worth

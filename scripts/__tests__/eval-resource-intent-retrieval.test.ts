@@ -1204,7 +1204,8 @@ describe('runRetrievalArms — the two arms', () => {
       labeledModelIds: new Set(),
     });
     expect(outcome).toMatchObject({ status: 'scored', popularityModelIds: [1, 2, 3, 4] });
-    // The only other search is the matcher's hybrid-fill page, which neither arm reads.
+    // The only other search is the matcher's hybrid-fill page, which neither arm reads. A
+    // second seed at limit 100 would show here; one at limit 500 would not.
     expect(searchCalls().map((c) => c.limit)).toEqual([100, 500]);
   });
 

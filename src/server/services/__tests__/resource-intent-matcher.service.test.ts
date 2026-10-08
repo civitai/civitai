@@ -949,6 +949,24 @@ describe('findResourceIntentCandidates — basePool, the hybrid fill', () => {
     expect(result.pool.map((e) => e.modelId)).toEqual([3, 7]);
   });
 
+  it('🔴 follows its OWN page when the two pages order tied documents differently', async () => {
+    // Nothing guarantees Meilisearch orders tied documents the same at limit 10 and 500,
+    // so the fake does not: the seed page leads 2, 1; the 500-document page 1, 2.
+    const docs = Array.from({ length: 30 }, (_, i) => hit(i + 1, [{ id: 1000 + i, ok: true }]));
+    const seedOrder = [docs[1], docs[0], ...docs.slice(2)];
+    searchWithSignal.mockImplementation(async (_index, _q, params: { limit: number }) => ({
+      hits: (params.limit === 500 ? docs : seedOrder).slice(0, params.limit),
+      estimatedTotalHits: docs.length,
+    }));
+    const result = await findResourceIntentCandidates(criteria, {
+      browsingLevel: 3,
+      coverage: COVERAGE,
+      cap: 5,
+    });
+    expect(result.basePool.map((e) => e.modelId)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(result.pool.map((e) => e.modelId)).toEqual([2, 1, 3, 4, 5, 6, 7, 8, 9, 10]);
+  });
+
   it('a failing deep page fails the call like any other search failure (the service degrades)', async () => {
     const corpus = Array.from({ length: 600 }, (_, i) =>
       hit(i + 1, [{ id: 1000 + i, ok: i === 2 }])
