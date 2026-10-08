@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/db/pgDb', () => ({
+  pgDbRead: {},
   pgDbReadLong: { cancellableQuery: vi.fn() },
   pgDbWrite: { query: vi.fn() },
 }));
