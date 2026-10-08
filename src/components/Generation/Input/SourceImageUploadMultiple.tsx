@@ -207,6 +207,9 @@ const iconSize = 18;
 const maxSizeFormatted = formatBytes(maxOrchestratorImageFileSize);
 
 const IMAGE_LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
+/** A local preparation step failed: the browser's own text ("failed to load image blob", …) is not shown. */
+const IMAGE_PREP_ERROR =
+  "Couldn't read this image on your device. Try a different file or a screenshot.";
 const IMAGE_PREP_TIMEOUT_ERROR =
   "Couldn't process this image on your device. Try a smaller photo or a screenshot.";
 /** Bound on each local step of preparing a source image (read, decode, encode, metadata). */
@@ -2021,9 +2024,13 @@ export async function uploadOrchestratorImage(
       url: typeof src === 'string' ? src : URL.createObjectURL(src),
       ...originalSize,
       available: false,
+      // A local preparation failure shows fixed text; the upload's own failures and size
+      // validation keep their messages.
       blockedReason:
-        error instanceof ImagePrepError && error.timedOut
-          ? IMAGE_PREP_TIMEOUT_ERROR
+        error instanceof ImagePrepError
+          ? error.timedOut
+            ? IMAGE_PREP_TIMEOUT_ERROR
+            : IMAGE_PREP_ERROR
           : error.message,
     };
   }

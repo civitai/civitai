@@ -196,7 +196,17 @@ describe('SourceImageUploadMultiple — failed uploads', () => {
     renderWithProviders(<Harness />);
     await pickFiles(1);
 
-    await expect.element(page.getByText('Image failed to load')).toBeVisible();
+    await expect
+      .element(
+        page.getByText(
+          "Couldn't read this image on your device. Try a different file or a screenshot.",
+          {
+            exact: true,
+          }
+        )
+      )
+      .toBeVisible();
+    expect(document.body.textContent).not.toContain('Image failed to load');
     await expect.poll(loaderCount).toBe(0);
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
   });
@@ -861,9 +871,14 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     ]);
   const PROCESS_ERROR =
     "Couldn't process this image on your device. Try a smaller photo or a screenshot.";
+  const PREP_ERROR =
+    "Couldn't read this image on your device. Try a different file or a screenshot.";
 
+  /** The card shows exactly `text`, and none of the browser's own error text. */
   async function expectFailedCard(text: string) {
-    await expect.element(page.getByText(text)).toBeVisible();
+    await expect.element(page.getByText(text, { exact: true })).toBeVisible();
+    for (const raw of ['Image failed to load', 'failed to load image blob', 'broke'])
+      expect(document.body.textContent).not.toContain(raw);
     await expect.poll(loaderCount).toBe(0);
     await vi.waitFor(() => expect(pendingNow()).toBe(false));
     expect(mocks.uploadConsumerBlob).not.toHaveBeenCalled();
@@ -881,7 +896,7 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     uploadReadsOnly(() => Promise.reject(new TypeError('Image failed to load')));
     renderWithProviders(<PendingHarness />);
     await pickFiles(1);
-    await expectFailedCard('Image failed to load');
+    await expectFailedCard(PREP_ERROR);
     expect(reports()).toEqual([
       ['source image prep failed: dims', 'picked-file image/jpeg <5MB TypeError'],
     ]);
@@ -897,7 +912,7 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
       );
       renderWithProviders(<PendingHarness />);
       await pickFiles(1);
-      await expectFailedCard(`${stage} broke`);
+      await expectFailedCard(PREP_ERROR);
       expect(reports()).toEqual([
         [`source image prep failed: ${stage}`, 'picked-file image/jpeg <5MB NotReadableError'],
       ]);
@@ -912,7 +927,7 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
     );
     renderWithProviders(<PendingHarness />);
     await pickFiles(1);
-    await expectFailedCard('Image failed to load');
+    await expectFailedCard(PREP_ERROR);
     expect(reports()).toEqual([
       ['source image prep failed: dims-after-encode', 'picked-file image/jpeg <5MB Error'],
     ]);
@@ -973,5 +988,16 @@ describe('SourceImageUploadMultiple — a source image that cannot be prepared',
 
     await vi.waitFor(() => expect(reports()).toHaveLength(1));
     expect(reports()).toEqual([['source image prep failed: decode', 'blob other <5MB other']]);
+  });
+
+  test("an upload failure keeps the upload's own message", async () => {
+    renderWithProviders(<PendingHarness />);
+    await pickFiles(1);
+    await vi.waitFor(() => expect(uploads).toHaveLength(1));
+    uploads[0].reject(new Error(PRESIGN_ERROR));
+    await expect.element(page.getByText(PRESIGN_ERROR, { exact: true })).toBeVisible();
+    await expect.poll(loaderCount).toBe(0);
+    expect(document.body.textContent).not.toContain(PREP_ERROR);
+    expect(reports()).toEqual([]);
   });
 });
