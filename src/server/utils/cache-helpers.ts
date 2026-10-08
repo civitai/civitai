@@ -17,7 +17,6 @@ import {
 import type { RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
 import { redis, REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
-import { createProcessLruStoreResolver } from '~/server/utils/process-lru-store';
 
 export type CacheTarget = 'main' | 'sys';
 
@@ -201,7 +200,6 @@ const { createCachedArray, createCachedObject } = createCacheBuilders({
     ).catch(() => undefined),
   log,
   clearByPattern: (pattern) => clearCacheByPattern(pattern),
-  l1Store: createProcessLruStoreResolver(),
 });
 
 export { createCachedArray, createCachedObject };

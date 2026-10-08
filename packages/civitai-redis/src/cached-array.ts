@@ -8,7 +8,7 @@
 // and so app-level test mocks of the redis client still intercept.
 import { chunk } from 'lodash-es';
 import { REDIS_KEYS, type RedisKeyTemplateCache } from './client';
-import { createLruCache, type LruStoreResolver } from './lru-cache';
+import { createLruCache } from './lru-cache';
 
 type AnyRecord = Record<string, any>;
 
@@ -123,8 +123,6 @@ export type CacheBuilderDeps = {
   log(...args: unknown[]): void;
   /** Backs flush(); the app owns pattern scanning (it is cluster- and target-aware). */
   clearByPattern(pattern: string): Promise<unknown>;
-  /** Backing-store resolver for the `localTtl` L1. Omit for a private L1 per cache. */
-  l1Store?: LruStoreResolver;
 };
 
 /**
@@ -220,7 +218,6 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
             fetchFn: () => {
               throw new Error(`createCachedArray L1 fetchFn must not be called [${key}]`);
             },
-            store: deps.l1Store,
           })
         : null;
 

@@ -29,17 +29,6 @@ export function roughSizeOf(value: unknown): number {
   return Math.max(1, json.length * 2 + 64);
 }
 
-/**
- * Supplies the backing store for a cache, given an identity for it and a factory for a fresh one. The
- * default builds a fresh store per `createLruCache` call; a resolver can hand back an existing one so
- * several wrappers (e.g. one per bundler module graph in a process) share entries and a byte budget.
- * `id` covers the name and every sizing option, so wrappers only ever share a store built identically.
- */
-export type LruStoreResolver = <V extends NonNullable<unknown>>(
-  id: string,
-  create: () => LRUCache<string, V>
-) => LRUCache<string, V>;
-
 /** Optional hit/miss reporting for the `fetch()` wrapper. */
 export type LruCacheMetrics = {
   hit(name: string): void;
@@ -80,8 +69,6 @@ export type LruCacheOptions<K, V extends NonNullable<unknown>> = {
   fetchFn: (input: K) => Promise<V>;
   /** Reported by `fetch()` only. Omit when driving the cache via get/set. */
   metrics?: LruCacheMetrics;
-  /** Backing-store resolver. Omit for a private store per call. */
-  store?: LruStoreResolver;
 };
 
 /**
@@ -113,37 +100,25 @@ export function createLruCache<K, V extends NonNullable<unknown>>(options: LruCa
     keyFn,
     fetchFn,
     metrics,
-    store,
   } = options;
 
-  const createStore = () =>
-    new LRUCache<string, V>({
-      max,
-      ttl: ttl > 0 ? ttl : undefined,
-      // A normal `get` prunes an expired entry as it reports the miss, which would throw away the very
-      // value the fetch-rejection fallback needs. Only enabled with `allowStale`, so nothing else changes
-      // its eviction behavior.
-      ...(allowStale ? { noDeleteOnStaleGet: true } : {}),
-      // Byte cap (deterministic heap bound), enabled only when maxSize is set — lru-cache requires a
-      // sizeCalculation whenever maxSize is present. Clamp the estimator to a positive integer.
-      ...(maxSize
-        ? {
-            maxSize,
-            sizeCalculation: (value: V, key: string) =>
-              Math.max(1, Math.round((sizeCalculation ?? roughSizeOf)(value, key))),
-          }
-        : {}),
-    });
-  const cache = store
-    ? store<V>(
-        `${name}|max=${max}|maxSize=${
-          maxSize ?? '-'
-        }|ttl=${ttl}|allowStale=${allowStale}|sizeCalculation=${
-          sizeCalculation ? 'custom' : 'default'
-        }`,
-        createStore
-      )
-    : createStore();
+  const cache = new LRUCache<string, V>({
+    max,
+    ttl: ttl > 0 ? ttl : undefined,
+    // A normal `get` prunes an expired entry as it reports the miss, which would throw away the very
+    // value the fetch-rejection fallback needs. Only enabled with `allowStale`, so nothing else changes
+    // its eviction behavior.
+    ...(allowStale ? { noDeleteOnStaleGet: true } : {}),
+    // Byte cap (deterministic heap bound), enabled only when maxSize is set — lru-cache requires a
+    // sizeCalculation whenever maxSize is present. Clamp the estimator to a positive integer.
+    ...(maxSize
+      ? {
+          maxSize,
+          sizeCalculation: (value: V, key: string) =>
+            Math.max(1, Math.round((sizeCalculation ?? roughSizeOf)(value, key))),
+        }
+      : {}),
+  });
 
   return {
     /** Get a value from cache or fetch it if not present */
