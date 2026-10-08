@@ -1167,16 +1167,26 @@ function getBaseClient(type: 'cache' | 'system') {
 
   // Sentinel observability — count topology changes + sub-client errors (PR #2331). Counters
   // come from the app's prom bridge (noop until it loads); deployment = pod HOSTNAME.
+  // The counter is resolved from the bridge at EVENT time, like every other Redis metric: the
+  // sys client is a process-wide singleton shared by every bundler runtime, so the bag present
+  // when it is BUILT may belong to a runtime whose registry /api/metrics does not scrape, or be
+  // republished later. A build-time capture would then count into an unscraped registry.
   if (isSysSentinel) {
-    const metrics = getRedisMetrics();
-    const noopCounter = { labels: () => ({ inc: () => undefined }) };
+    type LabeledCounter = RedisMetricsBridge['sysredisSentinelTopologyChangesCounter'];
+    const noopCounter: LabeledCounter = { labels: () => ({ inc: () => undefined }) };
+    const lateBound = (
+      pick: (m: RedisMetricsBridge | undefined) => LabeledCounter | undefined
+    ): LabeledCounter => ({
+      labels: (labels: Record<string, string>) =>
+        (pick(getRedisMetrics()) ?? noopCounter).labels(labels),
+    });
     attachSysSentinelListeners(
       baseClient as unknown as { on: (e: string, l: (e: any) => void) => unknown },
       {
         deployment: process.env.HOSTNAME ?? 'unknown',
         log,
-        topologyCounter: metrics?.sysredisSentinelTopologyChangesCounter ?? noopCounter,
-        errorCounter: metrics?.sysredisSentinelClientErrorsCounter ?? noopCounter,
+        topologyCounter: lateBound((m) => m?.sysredisSentinelTopologyChangesCounter),
+        errorCounter: lateBound((m) => m?.sysredisSentinelClientErrorsCounter),
       }
     );
   }
