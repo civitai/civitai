@@ -523,12 +523,13 @@ function ImageCard({
         )}
 
         {/* Keyed on the pair alone, which JudgingMedia already remounts on, so the entrance adds
-            no remount of its own. */}
+            no remount of its own. Scale only: `initial` renders before the lazy motion chunk
+            loads, and if it never does an opacity entrance leaves a live pair invisible. */}
         <MotionDiv
           key={pairKey}
           className="relative size-full"
-          initial={motionOn ? { opacity: 0, scale: 0.98 } : false}
-          animate={{ opacity: 1, scale: 1 }}
+          initial={motionOn ? { scale: 0.98 } : false}
+          animate={{ scale: 1 }}
           transition={{ duration: 0.25, ease: 'easeOut' }}
         >
           {isLoading ? (
