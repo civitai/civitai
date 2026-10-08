@@ -131,6 +131,18 @@ describe('updateCrucible — text scan', () => {
     );
   });
 
+  it('clears the description and rescans what is left', async () => {
+    dbMock.dbWrite.crucible.findUnique.mockResolvedValue({ name: 'Old name', description: null });
+
+    await edit({ description: null });
+
+    expect(written()).toMatchObject({ description: null, ingestion: 'Pending' });
+    expect(throwOnBlockedUserContent).toHaveBeenCalledWith(
+      ['Old name', null],
+      expect.objectContaining({ surface: 'crucible' })
+    );
+  });
+
   it('leaves the verdict alone when the text is unchanged', async () => {
     await edit({ name: 'Old name', description: 'Old description', coverImage: { url: 'x' } });
 

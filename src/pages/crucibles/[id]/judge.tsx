@@ -50,7 +50,6 @@ import { CrucibleJudgingDoneState } from '~/components/Crucible/CrucibleJudgingD
 import { CrucibleJudgingUI } from '~/components/Crucible/CrucibleJudgingUI';
 import { useJudgeSkipList } from '~/components/Crucible/judge-skip-list';
 import { CrucibleJudgingBriefing } from '~/components/Crucible/CrucibleJudgingBriefing';
-import { CRUCIBLE_NO_DESCRIPTION } from '~/components/Crucible/crucible-create-form';
 import { hasSeenBriefing, markBriefingSeen } from '~/components/Crucible/judging-briefing';
 import { JUDGING_RULES } from '~/components/Crucible/judging-rules';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -450,9 +449,7 @@ function CrucibleJudgePage({ id }: InferGetServerSidePropsType<typeof getServerS
 
   const onlyOwnEntries = judgeableEntryCount < 2;
   const showDoneState = allPairsJudged || onlyOwnEntries;
-  const description = crucible.description ? removeTags(crucible.description).trim() : '';
-  // The create form stores this placeholder for a blank description; it is no theme to show.
-  const theme = description === CRUCIBLE_NO_DESCRIPTION ? '' : description;
+  const theme = crucible.description ? removeTags(crucible.description).trim() : '';
 
   return (
     <>

@@ -110,9 +110,11 @@ function FeaturedCrucibleHeroContent({ featured }: { featured: FeaturedCrucibleD
             </Text>
 
             {/* Description */}
-            <Text c="dimmed" size="sm" lineClamp={3} className="leading-relaxed">
-              {featured.description}
-            </Text>
+            {featured.description && (
+              <Text c="dimmed" size="sm" lineClamp={3} className="leading-relaxed">
+                {featured.description}
+              </Text>
+            )}
           </div>
 
           {/* Stats grid */}

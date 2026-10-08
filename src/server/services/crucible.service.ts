@@ -359,7 +359,7 @@ export const createCrucible = async ({
     throw throwBadRequestError('A green Buzz crucible can only allow PG and PG-13 content.');
 
   await throwOnBlockedUserContent([name, description], { isModerator, surface: 'crucible' });
-  if (!isModerator) assertSfwCrucibleText([name, description], nsfwLevel);
+  if (!isModerator) assertSfwCrucibleText([name, description ?? ''], nsfwLevel);
   await assertPublishedModelVersions(allowedResources ?? []);
   await assertRequiredModelsMakeContentType(allowedResources ?? [], contentType ?? MediaType.image);
   assertBaseModelsMakeContentType(allowedBaseModels, contentType ?? MediaType.image);
@@ -760,7 +760,7 @@ export const updateCrucible = async ({
   const next = {
     ...current,
     ...Object.fromEntries(provided.map((key) => [key, changes[key]])),
-  } as typeof current & { name?: string; description?: string };
+  } as typeof current & { name?: string; description?: string | null };
 
   const buzzType = crucible.buzzType as CrucibleBuzzType;
   // Only a requested level is checked: a text-scan escalation can put R on the stored mask, and that
@@ -770,7 +770,8 @@ export const updateCrucible = async ({
   assertCrucibleSettings(next);
 
   const nextName = changes.name ?? crucible.name;
-  const nextDescription = changes.description ?? crucible.description ?? '';
+  const nextDescription =
+    changes.description === undefined ? crucible.description : changes.description;
   // Only a real text change resets the verdict: an unchanged resubmit dedups on its content hash,
   // so no callback would ever move it back to Scanned.
   const textChanged =
@@ -780,7 +781,7 @@ export const updateCrucible = async ({
     isModerator,
     surface: 'crucible',
   });
-  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription], next.nsfwLevel);
+  if (!isModerator) assertSfwCrucibleText([nextName, nextDescription ?? ''], next.nsfwLevel);
   // Only newly added ones: a required model unpublished later shouldn't block editing the rest.
   const addedResources = next.allowedResources.filter(
     (versionId) => !current.allowedResources.includes(versionId)

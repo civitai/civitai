@@ -160,10 +160,29 @@ describe('createCrucibleInputSchema', () => {
     );
   });
 
-  it('rejects a missing description', () => {
+  it.each([
+    ['omitted', undefined],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['null', null],
+  ])('stores no description when it is %s', (_, description) => {
+    const result = createCrucibleInputSchema.safeParse({ ...validCreateInput, description });
+    expect(result.success).toBe(true);
+    expect(result.data?.description ?? null).toBeNull();
+  });
+
+  it('trims the description', () => {
     expect(
-      createCrucibleInputSchema.safeParse({ ...validCreateInput, description: '' }).success
-    ).toBe(false);
+      createCrucibleInputSchema.parse({ ...validCreateInput, description: '  A theme  ' })
+        .description
+    ).toBe('A theme');
+  });
+
+  it('clears a blank description on update and leaves an absent one unchanged', () => {
+    expect(updateCrucibleSchema.parse({ id: 1, description: '  ' }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: null }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: ' New ' }).description).toBe('New');
+    expect(updateCrucibleSchema.parse({ id: 1 })).not.toHaveProperty('description');
   });
 
   it('rejects a negative entry fee', () => {

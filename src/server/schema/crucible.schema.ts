@@ -128,9 +128,17 @@ const prizePositionsSchema = z
     'Prize percentages must add up to exactly 100%'
   );
 
+// Blank stores NULL; an absent key leaves the stored description unchanged on update.
+const crucibleDescriptionSchema = z
+  .string()
+  .trim()
+  .max(CRUCIBLE_DESCRIPTION_MAX_LENGTH)
+  .nullish()
+  .transform((value) => (value === undefined ? undefined : value || null));
+
 export const createCrucibleInputBaseSchema = z.object({
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema,
   heroImage: crucibleImageSchema.optional(),
   nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag),
@@ -338,7 +346,7 @@ export type UpdateCrucibleSchema = z.infer<typeof updateCrucibleSchema>;
 export const updateCrucibleSchema = z.object({
   id: z.number(),
   name: z.string().trim().nonempty().max(CRUCIBLE_NAME_MAX_LENGTH).optional(),
-  description: z.string().nonempty().max(CRUCIBLE_DESCRIPTION_MAX_LENGTH).optional(),
+  description: crucibleDescriptionSchema,
   coverImage: crucibleImageSchema.optional(),
   heroImage: crucibleImageSchema.nullish(),
   nsfwLevel: z.number().int().positive().max(allBrowsingLevelsFlag).optional(),
