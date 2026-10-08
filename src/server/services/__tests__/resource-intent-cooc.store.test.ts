@@ -23,7 +23,6 @@ import {
   CoocSnapshotHashMismatchError,
   CoocSnapshotKindMismatchError,
   CoocStudyDuplicateError,
-  createCoocSnapshotHolder,
   failCoocBuild,
   latestReadySnapshotId,
   loadCoocSnapshot,
@@ -755,36 +754,5 @@ describe('cooc study window guard', () => {
     expect(() =>
       assertSnapshotPrecedesWindow({ trainEnd: ago(10), trainCreatedAtMax: ago(10) }, ago(1), 1)
     ).toThrow(/at or after its trainEnd/);
-  });
-});
-
-describe('cooc snapshot holder', () => {
-  it('single-flight: concurrent first reads share one load; polls every 5 minutes; keeps the old value on error', async () => {
-    let t = 0;
-    let latest = 'A';
-    let fail = false;
-    const latestId = vi.fn(async () => {
-      if (fail) throw new Error('db down');
-      return latest;
-    });
-    const load = vi.fn(async (id: string) => `index-${id}`);
-    const onError = vi.fn();
-    const h = createCoocSnapshotHolder({ latestId, load, now: () => t, onError });
-    const [a, b] = await Promise.all([h.get(), h.get()]);
-    expect(a).toEqual({ id: 'A', value: 'index-A' });
-    expect(b).toBe(a);
-    expect(load).toHaveBeenCalledTimes(1);
-    latest = 'B';
-    t = 4 * 60_000;
-    expect((await h.get())?.id).toBe('A');
-    expect(latestId).toHaveBeenCalledTimes(1);
-    t = 5 * 60_000;
-    await h.get();
-    await vi.waitFor(async () => expect((await h.get())?.id).toBe('B'));
-    fail = true;
-    t = 11 * 60_000;
-    await h.get();
-    await vi.waitFor(() => expect(onError).toHaveBeenCalled());
-    expect((await h.get())?.id).toBe('B');
   });
 });

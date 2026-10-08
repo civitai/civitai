@@ -5,7 +5,7 @@ import { COOC_MAX_PAYLOAD_BYTES, deserializeCoocCounts, type CoocCounts } from '
 
 /**
  * `ResourceIntentCoocSnapshot` storage: the build lifecycle (begin → ready | failed | duplicate),
- * verified load, the served snapshot, retention, release and a single-flight in-process holder.
+ * verified load, the served snapshot, retention and release.
  *
  * Raw SQL so the tests run the migration's real CHECKs and partial unique index.
  *
@@ -46,7 +46,6 @@ export const COOC_STUDY_HARD_LIMIT_DAYS = 60;
 export const COOC_PRODUCTION_RETENTION_DAYS = 28;
 /** Rows that never became ready are deleted after this. */
 export const COOC_NOT_READY_RETENTION_DAYS = 7;
-export const COOC_HOLDER_POLL_MS = 5 * 60_000;
 
 export type CoocSnapshotMeta = {
   id: string;
@@ -366,49 +365,4 @@ export function assertSnapshotPrecedesWindow(
     throw new Error(
       `snapshot trainEnd ${meta.trainEnd.toISOString()} is not ${gapDays} day(s) before the window`
     );
-}
-
-/**
- * Holds the served snapshot in process. At most one refresh is in flight; a refresh runs when the
- * last one is older than `pollMs`. A failed refresh keeps the previous value.
- */
-export function createCoocSnapshotHolder<V>(opts: {
-  latestId: () => Promise<string | null>;
-  load: (id: string) => Promise<V>;
-  pollMs?: number;
-  now?: () => number;
-  onError?: (e: unknown) => void;
-}) {
-  const pollMs = opts.pollMs ?? COOC_HOLDER_POLL_MS;
-  const now = opts.now ?? Date.now;
-  let current: { id: string; value: V } | null = null;
-  let checkedAt = -Infinity;
-  let inflight: Promise<void> | null = null;
-
-  function refresh() {
-    inflight ??= (async () => {
-      try {
-        const id = await opts.latestId();
-        if (id === null) current = null;
-        else if (id !== current?.id) current = { id, value: await opts.load(id) };
-      } catch (e) {
-        opts.onError?.(e);
-      } finally {
-        checkedAt = now();
-        inflight = null;
-      }
-    })();
-    return inflight;
-  }
-
-  return {
-    /** The held snapshot; waits for a refresh only when nothing is held yet. */
-    async get(): Promise<{ id: string; value: V } | null> {
-      if (now() - checkedAt >= pollMs) {
-        const p = refresh();
-        if (!current) await p;
-      }
-      return current;
-    },
-  };
 }

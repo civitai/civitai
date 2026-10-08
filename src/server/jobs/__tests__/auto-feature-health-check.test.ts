@@ -1,7 +1,6 @@
 import { readFileSync } from 'fs';
 import { resolve } from 'path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type * as Job from '~/server/jobs/job';
 
 const mocks = vi.hoisted(() => ({
   isFlipt: vi.fn(async () => true),
@@ -12,8 +11,7 @@ vi.mock('~/server/flipt/client', () => ({
   isFlipt: mocks.isFlipt,
   FLIPT_FEATURE_FLAGS: { AUTO_FEATURE_IMAGES: 'auto-feature-images' },
 }));
-vi.mock('~/server/jobs/job', async (importOriginal) => ({
-  ...(await importOriginal<typeof Job>()),
+vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: () => Promise<unknown>) => ({ name, cron, run: fn }),
 }));
 

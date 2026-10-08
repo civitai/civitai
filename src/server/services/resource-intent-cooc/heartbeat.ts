@@ -1,5 +1,4 @@
 import type { PrismaClient } from '@prisma/client';
-import { jobDateFromKeyValue } from '~/server/jobs/job';
 
 import { applyCoocRetention, type CoocSql } from './store';
 
@@ -15,7 +14,10 @@ export type CoocHeartbeatStore = Pick<PrismaClient, 'keyValue'>;
 
 export async function readCoocRetentionHeartbeat(db: CoocHeartbeatStore): Promise<Date | null> {
   const row = await db.keyValue.findUnique({ where: { key: COOC_RETENTION_HEARTBEAT_KEY } });
-  return row ? jobDateFromKeyValue(row.value) : null;
+  // KeyValue.value is untyped Json; anything but a positive finite number is not a heartbeat
+  // (`Number(['1'])` is 1, so coercing instead of checking would invent a 1970 timestamp).
+  const ms = row?.value;
+  return typeof ms === 'number' && Number.isFinite(ms) && ms > 0 ? new Date(ms) : null;
 }
 
 /** One sweep: retention, then (only if it succeeded) the heartbeat. */

@@ -84,6 +84,9 @@ BEGIN
     END IF;
 END $$;
 
+-- The guard is what makes `builtAt` trustworthy: the 58-day pin CHECK and the 4-week
+-- production rotation both measure from it, so a manual edit must not be able to move it
+-- or rewrite a finished row.
 CREATE OR REPLACE FUNCTION "ResourceIntentCoocSnapshot_guard"() RETURNS trigger
 LANGUAGE plpgsql AS $$
 BEGIN

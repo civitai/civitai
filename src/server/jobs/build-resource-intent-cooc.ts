@@ -21,8 +21,10 @@ export const buildResourceIntentCoocJob = createJob(
     });
   },
   // A concurrent second build would repeat the whole replica draw (normally ending 'duplicate');
-  // that load is the harm the held lock prevents. The build does not poll `checkIfCanceled`, so it
-  // finishes if the scheduler hangs up.
+  // that load is the harm the held lock prevents. 90 min, not the 30 the screen's ~2 min draw
+  // suggests, because the worst case (200 batches, each retried twice) runs past an hour and the
+  // lock must outlive it; at a weekly cadence a long hold blocks nothing scheduled. The build does
+  // not poll `checkIfCanceled`, so it finishes if the scheduler hangs up.
   { lockExpiration: 90 * 60, keepLockOnDisconnect: true }
 );
 
