@@ -402,6 +402,14 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     expect(lookup?.[1]).toEqual([BAD_KEY]);
     // [id, key, reporter, reason]
     expect(reportRows()).toEqual([[expect.any(String), BAD_KEY, 77, 'auto:counterKey:minor']]);
+    // Deduped on the REASON too, so the author's own user report of the key (same reporter, same
+    // key, different reason) cannot occupy the slot and silence the legal alert.
+    const insert = mockPool.query.mock.calls.find((c) =>
+      String(c[0]).includes('shared_kv_reports')
+    );
+    expect(String(insert?.[0]).replace(/\s+/g, ' ')).toContain(
+      'WHERE reporter_user_id = $3 AND key = $2 AND reason = $4'
+    );
     expect(legalAlerts()).toEqual([expect.objectContaining({ userId: 77, field: 'counterKey' })]);
   });
 

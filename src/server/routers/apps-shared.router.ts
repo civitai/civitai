@@ -1794,7 +1794,7 @@ async function fileSharedBlockConsequences(
   let alertable = true;
   if (policy === 'minor' || policy === 'poi' || policy === 'audit') {
     if (block.dedupe && block.key) {
-      alertable = await insertUserSharedReportDeduped(ctx.schema, {
+      alertable = await insertAutoSharedReportDeduped(ctx.schema, {
         key: block.key,
         reporterUserId: ctx.uid,
         reason: block.reason,
@@ -1951,8 +1951,12 @@ async function insertSharedReport(
  *
  * `reporter_user_id` and `key` are both non-null on the user-report path (the
  * subject uid + a validated key), so `WHERE NOT EXISTS` is exact. It is scoped to
- * the (reporter, key) pair, so it never collides with the auto-report rows
- * (`key IS NULL`) or another user's report of the same key. NOTE (honest bound):
+ * the (reporter, key) pair, so it never collides with another user's report of the
+ * same key. ⚠️ It does NOT look at `reason`, so a keyed AUTO report
+ * (`insertAutoSharedReportDeduped`, an existing flagged counter key attributed to
+ * its author) makes that author's own later user report of the key a no-op — the
+ * harmless direction. The reverse must not happen, which is why the auto path has
+ * its own helper rather than this one. NOTE (honest bound):
  * under two TRULY-simultaneous identical reports READ COMMITTED can admit both —
  * the per-(user, app) report rate limit is the hard ceiling; this collapses the
  * common repeat-click / retry case, which is the actual report-spam vector.
@@ -1968,6 +1972,34 @@ async function insertUserSharedReportDeduped(
      WHERE NOT EXISTS (
        SELECT 1 FROM ${schema}.shared_kv_reports
        WHERE reporter_user_id = $3 AND key = $2
+     )`,
+    [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
+/**
+ * File an AUTO report row about a specific key, deduped per (reporter, key, REASON). Returns true
+ * iff a NEW row was filed, so the caller alerts once per distinct finding rather than once per
+ * attempt.
+ *
+ * 🔴 SEPARATE from `insertUserSharedReportDeduped`, whose slot is (reporter, key) alone. Sharing it
+ * let a user report suppress a legal alert: an author who files one benign report on their own key
+ * fills that slot, and every later auto refusal of the key would read as a duplicate and stay
+ * silent. Keying on the reason also keeps an earlier `audit` finding from swallowing a later
+ * `minor`/`poi` one on the same key. Same READ COMMITTED bound as the user helper.
+ */
+async function insertAutoSharedReportDeduped(
+  schema: string,
+  args: { key: string; reporterUserId: number; reason: string }
+): Promise<boolean> {
+  const pool = requireAppsDb();
+  const res = await pool.query(
+    `INSERT INTO ${schema}.shared_kv_reports (id, key, reporter_user_id, reason)
+     SELECT $1, $2, $3, $4
+     WHERE NOT EXISTS (
+       SELECT 1 FROM ${schema}.shared_kv_reports
+       WHERE reporter_user_id = $3 AND key = $2 AND reason = $4
      )`,
     [`skr_${newUlid()}`, args.key, args.reporterUserId, args.reason]
   );
