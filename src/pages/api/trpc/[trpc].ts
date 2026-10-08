@@ -114,7 +114,7 @@ const trpcHandler = createNextApiHandler({
       //
       // The signal is not lost: `recordTrpcError` above counts only 5xx, so the skipped errors
       // are counted in `civitai_app_trpc_unlogged_client_errors_total{path,code}` instead —
-      // `sum by (path)` of their rate over that of `trpc_procedure_duration_seconds_count` is
+      // `sum by (path)` of their rate over that of `civitai_app_trpc_procedure_duration_seconds_count` is
       // the 404 share (see the counter's comment in http-errors.ts for why both sides aggregate).
       if (shouldSkipExpectedNotFoundLog(path, error)) {
         recordUnloggedTrpcClientError(error, path);
