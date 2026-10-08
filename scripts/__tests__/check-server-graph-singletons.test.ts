@@ -143,6 +143,15 @@ describe('watchlist entries describe reality', () => {
           .replace(/^\s*\/\/.*$/gm, ''); // line comments
         const key = entry.globalKey!.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         expect(code).toMatch(new RegExp(String.raw`globalThis\.${key}\s*\?\?=`));
+
+        // 🔴 The pin must be UNCONDITIONAL. The gate cannot see `isProd ? make() :
+        // (globalThis.KEY ??= make())`: `isProd` is a runtime value, so the dev-only branch
+        // survives the build and every emitted copy still mentions the key — measured, the
+        // gate reports OK on exactly that pre-#5540 shape. So reject an environment test
+        // anywhere in the statement that leads up to the pin.
+        expect(code).not.toMatch(
+          new RegExp(String.raw`\b(isProd|isDev|NODE_ENV)\b[^;]*globalThis\.${key}\b`)
+        );
       } else {
         // A SINGLETON is a copy-count rule; a globalKey on it would be silently ignored.
         expect(entry).not.toHaveProperty('globalKey');
