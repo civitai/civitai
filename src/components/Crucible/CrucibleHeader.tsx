@@ -1,7 +1,7 @@
 import { Badge, Button, Container, Text, Title } from '@mantine/core';
 import { IconArrowLeft, IconPhoto, IconUsers, IconVideo } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { NavigateBack } from '~/components/BackButton/BackButton';
+import Link from 'next/link';
 import { CrucibleContextMenu } from '~/components/Crucible/CrucibleContextMenu';
 import { CrucibleFollowToggle } from '~/components/Crucible/CrucibleFollowToggle';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -130,19 +130,17 @@ export function CrucibleHeader({ crucible, className }: CrucibleHeaderProps) {
         className="relative z-10 flex w-full flex-col justify-between gap-6 pt-4"
       >
         <div className="flex items-center justify-between">
-          <NavigateBack url="/crucibles">
-            {({ onClick }) => (
-              <Button
-                variant="light"
-                color="gray"
-                size="compact-sm"
-                leftSection={<IconArrowLeft size={16} />}
-                onClick={onClick}
-              >
-                Back
-              </Button>
-            )}
-          </NavigateBack>
+          {/* Not `NavigateBack`: history here is usually the judge page, which links back to this one. */}
+          <Button
+            component={Link}
+            href="/crucibles"
+            variant="light"
+            color="gray"
+            size="compact-sm"
+            leftSection={<IconArrowLeft size={16} />}
+          >
+            Back
+          </Button>
           <div className="flex items-center gap-2">
             <CrucibleFollowToggle crucible={{ id: crucible.id, status: crucible.status }} />
             <CrucibleContextMenu
