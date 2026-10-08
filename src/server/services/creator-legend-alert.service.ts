@@ -2,7 +2,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { getCreatorJourneyConfig } from '~/server/services/creator-journey-config.service';
 import type { ScoreTierCrossing } from '~/server/services/creator-milestone-grant.service';
-import { LEGEND } from '~/server/services/creator-showcase.service';
+import { scoreTierKey } from '~/shared/constants/creator-journey.constants';
 import { createNotification } from '~/server/services/notification.service';
 
 /**
@@ -14,7 +14,9 @@ export async function alertNewLegends(
   crossings: Pick<ScoreTierCrossing, 'userId' | 'milestoneKey'>[]
 ) {
   const legendUserIds = [
-    ...new Set(crossings.filter((c) => c.milestoneKey === LEGEND).map((c) => c.userId)),
+    ...new Set(
+      crossings.filter((c) => c.milestoneKey === scoreTierKey('legend')).map((c) => c.userId)
+    ),
   ];
   if (!legendUserIds.length) return;
 
@@ -26,6 +28,8 @@ export async function alertNewLegends(
     select: { id: true, username: true },
   });
   for (const user of users) {
+    // The message links to the profile, which needs a username.
+    if (!user.username) continue;
     await createNotification({
       type: 'creator-legend-reached-staff',
       category: NotificationCategory.System,

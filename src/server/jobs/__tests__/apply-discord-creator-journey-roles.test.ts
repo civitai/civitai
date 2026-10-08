@@ -4,15 +4,16 @@ import type * as FlagService from '~/server/services/creator-journey-flag.servic
 import type * as ConfigService from '~/server/services/creator-journey-config.service';
 import type * as MetricExcluded from '~/server/services/metric-excluded-users.service';
 
-const { mockDiscord, mockPgRead, mockAudience, mockConfig } = vi.hoisted(() => ({
+const { mockDiscord, mockPgRead, mockAudience, mockConfig, mockExcluded } = vi.hoisted(() => ({
   mockDiscord: { getAllRoles: vi.fn(), addRoleToUser: vi.fn(), removeRoleFromUser: vi.fn() },
   mockPgRead: { cancellableQuery: vi.fn() },
   mockAudience: vi.fn(),
   mockConfig: vi.fn(),
+  mockExcluded: vi.fn(),
 }));
 
 vi.mock('~/server/integrations/discord', () => ({ discord: mockDiscord }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: mockPgRead }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: mockPgRead, pgDbReadLong: {}, pgDbWrite: {} }));
 vi.mock('~/server/jobs/job', () => ({
   createJob: (name: string, cron: string, fn: (e: unknown) => Promise<unknown>) => ({
     name,
@@ -30,10 +31,13 @@ vi.mock('~/server/services/creator-journey-config.service', async (importOrigina
 }));
 vi.mock('~/server/services/metric-excluded-users.service', async (importOriginal) => ({
   ...(await importOriginal<typeof MetricExcluded>()),
-  getMetricExcludedUserIdsOrThrow: vi.fn().mockResolvedValue([]),
+  getMetricExcludedUserIdsOrThrow: mockExcluded,
 }));
 
-import { applyDiscordCreatorJourneyRoles } from '~/server/jobs/apply-discord-roles';
+import {
+  applyDiscordCreatorJourneyRoles,
+  applyDiscordRoles,
+} from '~/server/jobs/apply-discord-roles';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/logging.mock';
 
@@ -43,20 +47,26 @@ const UNRELATED = { id: '100000000000000003', name: 'Creator' };
 const ROLES = [SUPERNOVA, LEGEND, UNRELATED];
 const CONFIG = { supernovaRoleId: SUPERNOVA.id, legendRoleId: LEGEND.id };
 
-type Row = { milestoneKey: string; userId: number; providerAccountId: string };
+type Row = {
+  milestoneKey: string;
+  userId: number;
+  isModerator: boolean;
+  providerAccountId: string;
+};
 type RawCall = [TemplateStringsArray, ...unknown[]];
 
 let holderRows: Row[];
 let accountsInRole: Record<string, string[]>;
 
-const supernova = (userId: number, providerAccountId: string): Row => ({
+const supernova = (userId: number, providerAccountId: string, isModerator = false): Row => ({
   milestoneKey: 'score:supernova',
   userId,
+  isModerator,
   providerAccountId,
 });
-const legend = (userId: number, providerAccountId: string): Row[] => [
-  supernova(userId, providerAccountId),
-  { milestoneKey: 'score:legend', userId, providerAccountId },
+const legend = (userId: number, providerAccountId: string, isModerator = false): Row[] => [
+  supernova(userId, providerAccountId, isModerator),
+  { milestoneKey: 'score:legend', userId, isModerator, providerAccountId },
 ];
 
 // Same decoding as apply-discord-roles.test.ts: only a grant binds the role as a JSON array.
@@ -76,11 +86,17 @@ function idsWritten(kind: 'grant' | 'revoke', roleName: string) {
     .sort();
 }
 
+/** Flipt unreachable: moderators are on without asking it, everyone else evaluates false. */
+const flagDown = async (_pg: unknown, userIds: number[]) =>
+  new Set(userIds.filter((id) => holderRows.some((r) => r.userId === id && r.isModerator)));
+
 beforeEach(() => {
   vi.clearAllMocks();
   holderRows = [];
   accountsInRole = {};
   mockConfig.mockResolvedValue(CONFIG);
+  mockExcluded.mockResolvedValue([]);
+  mockDiscord.getAllRoles.mockResolvedValue(ROLES);
   mockDiscord.addRoleToUser.mockResolvedValue(true);
   mockDiscord.removeRoleFromUser.mockResolvedValue(true);
   mockPgRead.cancellableQuery.mockImplementation(async () => ({
@@ -89,9 +105,10 @@ beforeEach(() => {
   }));
   mockAudience.mockImplementation(async (_pg: unknown, userIds: number[]) => new Set(userIds));
   dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+  dbMock.dbWrite.model.findMany.mockResolvedValue([]);
   // getAccountsInRole binds the role as a JSON array; answer per role.
   dbMock.dbWrite.$queryRaw.mockImplementation((async (
-    strings: TemplateStringsArray,
+    _strings: TemplateStringsArray,
     ...values: unknown[]
   ) => {
     const role = ROLES.find((r) => values.includes(JSON.stringify([r.name])));
@@ -101,7 +118,7 @@ beforeEach(() => {
   }) as never);
 });
 
-describe('applyDiscordCreatorJourneyRoles', () => {
+describe('applyDiscordCreatorJourneyRoles — grants', () => {
   it('grants a Legend both roles and a Supernova only Supernova', async () => {
     holderRows = [...legend(1, '111'), supernova(2, '222')];
 
@@ -111,9 +128,31 @@ describe('applyDiscordCreatorJourneyRoles', () => {
     expect(idsWritten('grant', 'Legend')).toEqual(['111']);
     expect(mockDiscord.addRoleToUser).toHaveBeenCalledWith('111', LEGEND.id);
     expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith('222', LEGEND.id);
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith(expect.anything(), UNRELATED.id);
   });
 
-  it('withholds the role from a holder the creator-journey flag is off for, and revokes it', async () => {
+  it('does not re-grant an account that already holds the role', async () => {
+    holderRows = [supernova(1, '111'), supernova(2, '222')];
+    accountsInRole = { Supernova: ['111'] };
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(idsWritten('grant', 'Supernova')).toEqual(['222']);
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalledWith('111', SUPERNOVA.id);
+  });
+
+  it('runs as part of the activity-roles job', async () => {
+    holderRows = legend(1, '111');
+    const [activityJob] = applyDiscordRoles as unknown as { run: () => Promise<unknown> }[];
+
+    await activityJob.run();
+
+    expect(mockDiscord.addRoleToUser).toHaveBeenCalledWith('111', LEGEND.id);
+  });
+});
+
+describe('applyDiscordCreatorJourneyRoles — revokes', () => {
+  it('withholds and revokes the role for a holder the flag is off for', async () => {
     holderRows = [supernova(1, '111'), supernova(2, '222')];
     accountsInRole = { Supernova: ['222'] };
     mockAudience.mockResolvedValue(new Set([1]));
@@ -124,6 +163,51 @@ describe('applyDiscordCreatorJourneyRoles', () => {
     expect(idsWritten('revoke', 'Supernova')).toEqual(['222']);
   });
 
+  // Moderators are on without asking Flipt, so an outage leaves them qualifying. Reading "everyone
+  // else is off" as real would strip every non-moderator holder for up to six hours.
+  it('revokes nobody for flag reasons when Flipt answers no to every holder that asks it', async () => {
+    holderRows = [supernova(1, '111', true), supernova(2, '222'), supernova(3, '333')];
+    accountsInRole = { Supernova: ['111', '222', '333'] };
+    mockAudience.mockImplementation(flagDown);
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+    expect(idsWritten('revoke', 'Supernova')).toEqual([]);
+  });
+
+  it('still revokes on lost standing while Flipt is down', async () => {
+    holderRows = [supernova(1, '111', true), supernova(2, '222')];
+    accountsInRole = { Supernova: ['111', '222', '999'] };
+    mockAudience.mockImplementation(flagDown);
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(idsWritten('revoke', 'Supernova')).toEqual(['999']);
+  });
+
+  // With two Legends, both being banned is a real state; the role must not outlive their standing.
+  it('revokes the last holders when none is in good standing any more', async () => {
+    holderRows = [];
+    accountsInRole = { Legend: ['111', '222'] };
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(idsWritten('revoke', 'Legend')).toEqual(['111', '222']);
+  });
+
+  it('refuses a bulk revoke past the blast-radius floor', async () => {
+    const holders = Array.from({ length: 12 }, (_, i) => `${200 + i}`);
+    holderRows = [supernova(1, '200')];
+    accountsInRole = { Supernova: holders };
+
+    await applyDiscordCreatorJourneyRoles(ROLES);
+
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyDiscordCreatorJourneyRoles — config and inputs', () => {
   it('skips only the tier whose role id is not configured', async () => {
     mockConfig.mockResolvedValue({ supernovaRoleId: SUPERNOVA.id });
     holderRows = legend(1, '111');
@@ -136,7 +220,7 @@ describe('applyDiscordCreatorJourneyRoles', () => {
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
   });
 
-  it('touches nothing when the configured id is not a role in the guild', async () => {
+  it('touches nothing when the configured ids are not roles in the guild', async () => {
     mockConfig.mockResolvedValue({
       supernovaRoleId: '200000000000000001',
       legendRoleId: '200000000000000002',
@@ -149,25 +233,41 @@ describe('applyDiscordCreatorJourneyRoles', () => {
     expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
   });
 
-  // Flipt unreachable evaluates the flag false for everyone. Under REVOKE_FLOOR holders,
-  // withinBlastRadius passes anything, so this is the only thing between an outage and a mass strip.
-  it('revokes nobody when no holder qualifies while the role has holders', async () => {
-    holderRows = [supernova(1, '111'), supernova(2, '222')];
+  // One role on both tiers would be granted by one pass and stripped by the other, every run.
+  it('touches nothing when both tiers point at the same role', async () => {
+    mockConfig.mockResolvedValue({ supernovaRoleId: SUPERNOVA.id, legendRoleId: SUPERNOVA.id });
+    holderRows = [...legend(1, '111'), supernova(2, '222')];
     accountsInRole = { Supernova: ['111', '222'] };
-    mockAudience.mockResolvedValue(new Set());
 
     await applyDiscordCreatorJourneyRoles(ROLES);
 
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
     expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
-    expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
   });
 
-  it('reads holders under the showcase standing rule', async () => {
-    await applyDiscordCreatorJourneyRoles(ROLES);
+  it('makes no Discord call when the metric-excluded list cannot be read', async () => {
+    mockExcluded.mockRejectedValue(new Error('clickhouse unavailable'));
+    accountsInRole = { Supernova: ['111'] };
+
+    await expect(applyDiscordCreatorJourneyRoles(ROLES)).rejects.toThrow('clickhouse unavailable');
+    expect(mockDiscord.addRoleToUser).not.toHaveBeenCalled();
+    expect(mockDiscord.removeRoleFromUser).not.toHaveBeenCalled();
+  });
+
+  it('reads holders under the showcase standing rule, with its bind values', async () => {
+    mockExcluded.mockResolvedValue([42, 43]);
+    const now = new Date('2026-10-08T12:00:00.000Z');
+
+    await applyDiscordCreatorJourneyRoles(ROLES, now);
 
     const [sql, params] = mockPgRead.cancellableQuery.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain(`a.provider = 'discord'`);
     expect(sql).toContain('NOT u.muted');
     expect(sql).toContain('"UserStrike"');
-    expect(params[0]).toEqual(['score:supernova', 'score:legend']);
+    expect(params).toEqual([
+      ['score:supernova', 'score:legend'],
+      [42, 43],
+      '2026-10-08 12:00:00.000',
+    ]);
   });
 });
