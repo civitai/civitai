@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 
 import { useAppContext } from '~/providers/AppProvider';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
@@ -48,18 +48,18 @@ function isPrivateGeneration(blob: BlobData) {
 // A failed or inconclusive check stores nothing: the output stays hidden until the rating
 // reaches the workflow data, and a remount retries.
 async function check(blob: BlobData, src: string) {
-  if (inFlight.has(src) || objectUrls.has(src)) return;
+  if (inFlight.has(src) || verdicts.has(blob.id)) return;
   inFlight.add(src);
   try {
     const response = await fetch(src, { mode: 'cors', credentials: 'omit' });
     const verdict = parseBlobHeaderVerdict(response);
     if (!verdict) return;
-    verdicts.set(blob.id, verdict);
     if (greenBlockedReason(verdict, isPrivateGeneration(blob))) {
       blockedIds = new Set(blockedIds).add(blob.id);
     } else {
       objectUrls.set(src, URL.createObjectURL(await response.blob()));
     }
+    verdicts.set(blob.id, verdict);
   } catch {
     // Network or CORS failure; see above.
   } finally {
@@ -111,15 +111,28 @@ export function useBlobHeaderCheckedSrc(blob: BlobData, src: string): CheckState
   useSyncExternalStore(subscribe, getVersion, getVersion);
   const enabled = needsCheck(blob, domain.green);
 
+  // The fetched copy is revoked once its <img> loads; this mount keeps rendering that URL so the
+  // element is not reloaded, while a later mount falls back to `src`.
+  const pinned = useRef<{ src: string; objectUrl?: string } | undefined>(undefined);
+
   useEffect(() => {
     if (enabled) void check(blob, src);
   }, [enabled, blob.id, src]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Keep an already-fetched copy once the rating arrives rather than downloading it again.
-  if (!enabled) return { status: 'ok', src: objectUrls.get(src) ?? src };
-  const blockedReason = headerBlockedReason(blob);
-  if (blockedReason) return { status: 'blocked', blockedReason };
-  const checkedSrc = objectUrls.get(src);
-  if (checkedSrc) return { status: 'ok', src: checkedSrc };
-  return { status: 'pending' };
+  if (enabled) {
+    const blockedReason = headerBlockedReason(blob);
+    if (blockedReason) return { status: 'blocked', blockedReason };
+    if (!verdicts.has(blob.id)) return { status: 'pending' };
+  }
+  if (pinned.current?.src !== src || !pinned.current.objectUrl)
+    pinned.current = { src, objectUrl: objectUrls.get(src) };
+  return { status: 'ok', src: pinned.current.objectUrl ?? src };
+}
+
+/** Frees the fetched copy behind `src`; call once its <img> has loaded. */
+export function releaseBlobHeaderCheckedSrc(src: string) {
+  const objectUrl = objectUrls.get(src);
+  if (!objectUrl) return;
+  URL.revokeObjectURL(objectUrl);
+  objectUrls.delete(src);
 }
