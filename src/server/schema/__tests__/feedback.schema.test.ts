@@ -1,6 +1,9 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
 import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
 import {
+  APP_BLOCK_FEEDBACK_AREA,
   FEEDBACK_AREAS,
   FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
   FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
@@ -9,6 +12,7 @@ import {
   FEEDBACK_NETWORK_ERROR_MAX_COUNT,
   FEEDBACK_NETWORK_INITIATOR_MAX_LENGTH,
   FEEDBACK_NETWORK_URL_MAX_LENGTH,
+  FEEDBACK_OWNER_STATUSES,
   FEEDBACK_PATH_MAX_LENGTH,
   FEEDBACK_SESSION_ID_MAX_LENGTH,
   feedbackAreaFlagKey,
@@ -498,11 +502,11 @@ describe('feedback schema — context bounds', () => {
  * report bounced.
  */
 describe('feedback areas', () => {
-  const areas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'];
+  const areas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report', 'app-block'];
 
   // Both halves hand-typed. Reading the expectation out of FEEDBACK_AREAS would make
   // this test follow any future edit instead of pinning the set.
-  it('are exactly the three declared surfaces', () => {
+  it('are exactly the four declared surfaces', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 
@@ -532,6 +536,60 @@ describe('feedback areas', () => {
     expect(feedbackAreaFlagKey('bitdex-image-feed')).toBe('feedback-area-bitdex-image-feed');
     expect(feedbackAreaFlagKey('apps-marketplace')).toBe('feedback-area-apps-marketplace');
     expect(feedbackAreaFlagKey('site-bug-report')).toBe('feedback-area-site-bug-report');
+    expect(feedbackAreaFlagKey('app-block')).toBe('feedback-area-app-block');
+  });
+});
+
+/**
+ * The developer-facing status of an `app-block` report. Stored as TEXT and constrained by a CHECK
+ * in a MANUAL-APPLY migration, so the SQL literal list and this constant are two hand-written
+ * copies of one vocabulary that nothing else compares: a value added here but not to the CHECK is a
+ * 23514 on the first owner who picks it, and a value dropped here leaves rows the app cannot label.
+ * Both are pinned against a hand-typed list, and the CHECK is read back out of the migration file.
+ */
+describe('feedback owner statuses', () => {
+  const MIGRATIONS = path.resolve(
+    __dirname,
+    '../../../../packages/civitai-db-schema/prisma/migrations'
+  );
+  const SUFFIX = '_feedback_app_listing';
+
+  function migrationSql(): string {
+    const dirs = fs.readdirSync(MIGRATIONS).filter((d) => d.endsWith(SUFFIX));
+    // Positive control: two copies would make "the literal is present" true of the wrong file.
+    expect(dirs, `expected exactly one *${SUFFIX} migration`).toHaveLength(1);
+    return fs.readFileSync(path.join(MIGRATIONS, dirs[0], 'migration.sql'), 'utf8');
+  }
+
+  /** The quoted literals inside the `IN (...)` of the named CHECK, in order. */
+  function checkLiterals(sql: string, constraint: string): string[] {
+    const at = sql.indexOf(`ADD CONSTRAINT "${constraint}"`);
+    expect(at, `constraint ${constraint} not found in the migration`).toBeGreaterThan(-1);
+    const inList = /IN \(([^)]*)\)/.exec(sql.slice(at));
+    expect(inList, `no IN (...) list after ${constraint}`).not.toBeNull();
+    return [...(inList?.[1] ?? '').matchAll(/'([^']*)'/g)].map((m) => m[1]);
+  }
+
+  it('are exactly acknowledged, resolved and wont_fix', () => {
+    expect([...FEEDBACK_OWNER_STATUSES]).toEqual(['acknowledged', 'resolved', 'wont_fix']);
+  });
+
+  it('match the CHECK the migration creates, value for value', () => {
+    expect(checkLiterals(migrationSql(), 'Feedback_ownerStatus_check')).toEqual([
+      ...FEEDBACK_OWNER_STATUSES,
+    ]);
+  });
+
+  it('keep the app-only columns to the area slug the app writes', () => {
+    expect(APP_BLOCK_FEEDBACK_AREA).toBe('app-block');
+    const sql = migrationSql();
+    const at = sql.indexOf('ADD CONSTRAINT "Feedback_app_columns_check"');
+    expect(at).toBeGreaterThan(-1);
+    expect(sql.slice(at, at + 200)).toContain(`"area" = '${APP_BLOCK_FEEDBACK_AREA}'`);
+  });
+
+  it('carry the manual-apply banner (these migrations are never auto-run)', () => {
+    expect(migrationSql()).toContain('MANUAL APPLY');
   });
 });
 
