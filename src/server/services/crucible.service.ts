@@ -45,6 +45,7 @@ import type {
   SubmitVoteSchema,
   CancelCrucibleSchema,
   RemoveCrucibleEntrySchema,
+  WithdrawCrucibleEntrySchema,
 } from '../schema/crucible.schema';
 import { calculateCrucibleSetupCost } from '../schema/crucible.schema';
 import type { CrucibleJudgingStatus, GetJudgingStatusesSchema } from '../schema/crucible.schema';
@@ -1067,8 +1068,10 @@ export type CrucibleDetail = CrucibleDetailRow & {
   paidEntryCount: number;
   /** The caller's own entries; everyone else's are paged through `getCrucibleEntries`. */
   viewerEntries: CrucibleEntryRow[];
-  /** Also counts entries whose image was deleted, as `submitEntry`'s limit does. */
+  /** Entries whose image was deleted or withdrawn don't count, as in `submitEntry`'s limit. */
   viewerEntryCount: number;
+  /** Every entry the caller ever made here, for the free-entry math: a reopened slot is paid. */
+  viewerEntriesSoFar: number;
   /** Empty until completed. No user ids: a winner's entry may be hidden from this viewer. */
   prizeWinners: CrucibleDisplayPrize[];
 };
@@ -1112,7 +1115,7 @@ export const getCrucibleDetail = async ({
 
   if (!crucible) return null;
 
-  const [paidEntryCounts, { viewerEntries, viewerEntryCount }] = await Promise.all([
+  const [paidEntryCounts, { viewerEntries, viewerEntriesSoFar }] = await Promise.all([
     getPaidEntryCounts([id]),
     userId
       ? dbRead.crucibleEntry
@@ -1123,9 +1126,9 @@ export const getCrucibleDetail = async ({
           })
           .then((entries) => ({
             viewerEntries: entries.filter(hasEntryImage),
-            viewerEntryCount: entries.length,
+            viewerEntriesSoFar: entries.length,
           }))
-      : { viewerEntries: [], viewerEntryCount: 0 },
+      : { viewerEntries: [], viewerEntriesSoFar: 0 },
   ]);
 
   const paidEntryCount = paidEntryCounts.get(id) ?? 0;
@@ -1152,7 +1155,8 @@ export const getCrucibleDetail = async ({
     ...crucible,
     paidEntryCount,
     viewerEntries,
-    viewerEntryCount,
+    viewerEntryCount: viewerEntries.length,
+    viewerEntriesSoFar,
     prizeWinners,
   };
 };
@@ -1800,21 +1804,25 @@ export const submitEntry = async ({
       return throwBadRequestError(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
     }
 
-    // Validate max total entries hasn't been reached
-    if (crucible.maxTotalEntries && crucible._count.entries >= crucible.maxTotalEntries) {
+    // An entry whose image was deleted or withdrawn keeps its fee in the pool but frees its slot.
+    if (
+      crucible.maxTotalEntries &&
+      crucible._count.entries >= crucible.maxTotalEntries &&
+      (await dbWrite.crucibleEntry.count({ where: { crucibleId, imageId: { not: null } } })) >=
+        crucible.maxTotalEntries
+    ) {
       return throwBadRequestError('This crucible has reached its maximum number of entries');
     }
 
     // The primary, under the lock: a replica that has not seen this user's last entry would
     // hand out a free slot they already used.
-    const userEntryCount = await dbWrite.crucibleEntry.count({
-      where: {
-        crucibleId,
-        userId,
-      },
-    });
+    // A freed slot is paid again: the free-entry math counts every entry ever made.
+    const [userEntryCount, liveUserEntryCount] = await Promise.all([
+      dbWrite.crucibleEntry.count({ where: { crucibleId, userId } }),
+      dbWrite.crucibleEntry.count({ where: { crucibleId, userId, imageId: { not: null } } }),
+    ]);
 
-    if (userEntryCount >= crucible.entryLimit) {
+    if (liveUserEntryCount >= crucible.entryLimit) {
       return throwBadRequestError(
         `You have reached the maximum of ${crucible.entryLimit} ${
           crucible.entryLimit === 1 ? 'entry' : 'entries'
@@ -4102,6 +4110,47 @@ export const removeCrucibleEntry = async ({
   });
 
   return { entryId, crucibleId, refundedAmount: fee };
+};
+
+/**
+ * The entrant takes back their own entry. Unlike a moderator's removal there is no refund: the row
+ * stays with its fee, so the pool keeps it and a later entry in the freed slot is paid again.
+ */
+export const withdrawCrucibleEntry = async ({
+  entryId,
+  userId,
+}: WithdrawCrucibleEntrySchema & { userId: number }) => {
+  const entry = await dbWrite.crucibleEntry.findUnique({
+    where: { id: entryId },
+    select: { crucibleId: true, userId: true, imageId: true },
+  });
+  if (!entry || entry.userId !== userId || entry.imageId === null)
+    throw throwNotFoundError('Entry not found');
+  const { crucibleId, imageId } = entry;
+
+  const withdrawn = await dbWrite.$transaction(async (tx) => {
+    // Holds the crucible row, so finalize can't rank the entry while it's being withdrawn.
+    const running = await tx.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "Crucible"
+      WHERE id = ${crucibleId}
+        AND status = ${CrucibleStatus.Active}::"CrucibleStatus"
+        AND ("endAt" IS NULL OR "endAt" > statement_timestamp())
+      FOR UPDATE
+    `;
+    if (!running.length) throw throwBadRequestError(NOT_RUNNING);
+    const { count } = await tx.crucibleEntry.updateMany({
+      where: { id: entryId, userId, imageId: { not: null } },
+      data: { imageId: null },
+    });
+    return count > 0;
+  });
+  if (!withdrawn) throw throwNotFoundError('Entry not found');
+
+  await revealCrucibleEntryPosts({ imageId });
+
+  logToAxiom({ type: 'info', name: 'crucible-entry-withdrawn', crucibleId, entryId, userId, imageId });
+
+  return { entryId, crucibleId };
 };
 
 /** Keyed per crucible, so a re-run reaches only entrants whose refund was still pending. */
