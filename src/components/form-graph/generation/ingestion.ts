@@ -23,6 +23,7 @@ import { seedRawAirResource } from '~/components/form-graph/generation/raw-air-s
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   workflowConfigByKey,
+  getRequiredFeatureFlagForWorkflow,
   isWorkflowAvailable,
   getEcosystemsForWorkflow,
 } from '~/shared/generation/config/workflows';
@@ -38,6 +39,11 @@ import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import type { GenerationStore } from './store';
 import { REMIX_RESET } from './remix-reset';
+import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
+import {
+  AVATAR_DEEP_LINK_PARAMS,
+  avatarDeepLinkFields,
+} from '~/shared/generation/avatar-deep-link';
 
 /**
  * The new lane's ingestion: everything that pushes data INTO the generator
@@ -130,6 +136,34 @@ export function useGenerationIngestion(store: GenerationStore) {
 
     seedRawAirResource({ air, workflowId, name });
   }, [features.generationAirResources]);
+
+  // `/generate?workflow=…` deep link for landing pages (avatar may also carry style and starter).
+  // Strips the params before applying, like the links above, and yields to already-queued data.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!window.location.pathname.startsWith('/generate')) return;
+
+    const url = new URL(window.location.href);
+    const workflow = url.searchParams.get('workflow');
+    if (!workflow) return;
+
+    const avatarFields = workflow === AVATAR_WORKFLOW ? avatarDeepLinkFields(url.searchParams) : {};
+
+    url.searchParams.delete('workflow');
+    for (const param of AVATAR_DEEP_LINK_PARAMS) url.searchParams.delete(param);
+    window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+
+    if (useGenerationGraphStore.getState().data) return;
+    if (!workflowConfigByKey.has(workflow)) return;
+    const flag = getRequiredFeatureFlagForWorkflow(workflow);
+    if (flag && features[flag as keyof typeof features] !== true) return;
+
+    store.set({ workflow });
+    // After the workflow, so the avatar fields exist to receive the values.
+    if (Object.keys(avatarFields).length) store.set(avatarFields);
+    generationGraphPanel.setView('generate');
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- a one-shot read of the landing URL
+  }, [store]);
 
   // Sync generation graph store data into the form
   // - Remix/Replay: full override (reset + set)

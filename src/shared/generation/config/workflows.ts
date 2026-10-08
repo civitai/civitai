@@ -275,6 +275,14 @@ export const workflowConfigs: WorkflowConfigs = {
     isNew: true,
   },
 
+  'img2img:avatar': {
+    label: 'Avatar',
+    description: 'Turn a portrait photo into a stylized avatar',
+    category: 'image',
+    ecosystemIds: [],
+    isNew: true,
+  },
+
   // ===========================================================================
   // Image Utility Workflows (Standalone, no generation)
   // ===========================================================================

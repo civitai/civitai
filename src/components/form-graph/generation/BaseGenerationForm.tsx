@@ -57,6 +57,7 @@ import { migrateV1GenerationStorage } from './migrate-v1-storage';
 import { useGenerationIngestion } from './ingestion';
 import { useOutputType, type GenerationStore } from './store';
 import { useWhatIfContext } from './WhatIfProvider';
+import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 
 /**
  * The BASE generation form: the entry component. Owns the store over the
@@ -118,6 +119,14 @@ export function BaseGenerationForm() {
   useEffect(() => () => storage?.dispose(), [storage]);
 
   const store = useForm(generationHub, { ext, storage }) as GenerationStore;
+  const workflow = useField<string>(store, 'workflow')?.value;
+  useEffect(() => {
+    useActiveGenerationForm.setState({ store, workflow });
+  }, [store, workflow]);
+  useEffect(
+    () => () => useActiveGenerationForm.setState({ store: undefined, workflow: undefined }),
+    []
+  );
 
   return (
     <FormProvider store={store}>

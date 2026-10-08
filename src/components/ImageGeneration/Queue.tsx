@@ -5,9 +5,17 @@ import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGeneratedRequestsContext } from '~/components/ImageGeneration/GeneratedRequestsProvider';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { AvatarQueue } from '~/components/AvatarGen/AvatarQueue';
+import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
+import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 
 export function Queue() {
+  const workflow = useActiveGenerationForm((state) => state.workflow);
+  return workflow === AVATAR_WORKFLOW ? <AvatarQueue /> : <StandardQueue />;
+}
+
+function StandardQueue() {
   const filters = useFiltersContext((state) => state.generation);
 
   const {

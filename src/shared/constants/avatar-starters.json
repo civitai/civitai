@@ -1,0 +1,3682 @@
+{
+  "anime-niji": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994694,
+        "url": "d835720b-7c5a-4729-8b66-b48ac0aad126"
+      },
+      "grey": {
+        "imageId": 144994697,
+        "url": "932a666b-e9be-48ca-882b-665bcfcad881"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994699,
+        "url": "9347cc08-ab65-4606-8215-d0714daf80c8"
+      },
+      "grey": {
+        "imageId": 144994700,
+        "url": "599a47a7-2024-45c4-a015-9e1bbfdf636b"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994701,
+        "url": "77912de0-a719-4376-9a15-736c048c5eea"
+      },
+      "grey": {
+        "imageId": 144994702,
+        "url": "e576ab9d-6e74-485f-8981-7d5dcb55aa19"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994703,
+        "url": "f8f1e904-04bc-402e-b95a-796a383bc8f4"
+      },
+      "grey": {
+        "imageId": 144994705,
+        "url": "390a8cf0-2bb1-4195-a12a-3552619d91c6"
+      }
+    }
+  ],
+  "anime-90s": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994706,
+        "url": "5099187e-208d-43ee-9ff2-3363c1dcb77d"
+      },
+      "grey": {
+        "imageId": 144994707,
+        "url": "3c97910a-4cf2-414e-9f54-d29c7e0abbf1"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994709,
+        "url": "00c1a4a7-674e-498b-8617-05d7b5e688f6"
+      },
+      "grey": {
+        "imageId": 144994711,
+        "url": "2fd145ca-6d75-447e-9459-e7a827c8477d"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994713,
+        "url": "60a9804f-527b-449e-9dc6-c82434c1a24c"
+      },
+      "grey": {
+        "imageId": 144994714,
+        "url": "cd0a1ee8-22a9-463b-a143-c6598d3f6690"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994716,
+        "url": "2637a98e-c8a8-45b8-9a7c-8d06fe9a5b17"
+      },
+      "grey": {
+        "imageId": 144994717,
+        "url": "4d317465-642e-406b-828f-ea72e3c94487"
+      }
+    }
+  ],
+  "anime-90s-scifi": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994718,
+        "url": "78c66bc6-2a09-493f-8fad-444604d14c9a"
+      },
+      "grey": {
+        "imageId": 144994722,
+        "url": "a3de1803-4604-4ca8-ad6a-67caa78e9bf8"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994724,
+        "url": "d88f621a-ada9-4098-a6a8-e6ad6e0d405e"
+      },
+      "grey": {
+        "imageId": 144994725,
+        "url": "ab96f10f-521d-47ca-a3d9-a3f0215e2fea"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994726,
+        "url": "d064cd4a-fa9c-4d29-a126-b9fd2075ecbc"
+      },
+      "grey": {
+        "imageId": 144994728,
+        "url": "49ccd6c1-b58d-4178-9ca3-32e3697a165f"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994730,
+        "url": "ee9b2c7b-bdff-4e84-9f1b-ff1324d134db"
+      },
+      "grey": {
+        "imageId": 144994731,
+        "url": "b90ef6c4-6bd2-4bca-ad2d-f33e3a22d6a8"
+      }
+    }
+  ],
+  "granblue": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994733,
+        "url": "5360102e-b4a8-489e-bc5b-cbd6c472e6c0"
+      },
+      "grey": {
+        "imageId": 144994734,
+        "url": "ab3525f2-d3a9-48f9-9552-efb78f1341d1"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994737,
+        "url": "ac533e0f-37d7-4ceb-b283-6c71f6a662e0"
+      },
+      "grey": {
+        "imageId": 144994739,
+        "url": "be29e22f-fba0-42fa-ad9a-85927ebc72fd"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994741,
+        "url": "18769409-2376-4a9f-aa8b-676d1858de4c"
+      },
+      "grey": {
+        "imageId": 144994743,
+        "url": "04af046f-66a7-48bb-90eb-adf2006bed59"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994744,
+        "url": "7e852b2a-eee9-4c30-a491-fd3f78af5f33"
+      },
+      "grey": {
+        "imageId": 144994746,
+        "url": "d0b245f6-4fd2-490a-8bab-a62510397985"
+      }
+    }
+  ],
+  "dragon-ball": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994749,
+        "url": "33ca716e-c026-49ce-a04c-b47a845ed3f3"
+      },
+      "grey": {
+        "imageId": 144994751,
+        "url": "1b8ad4bb-dc01-4f8b-969c-fae542905b2a"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994752,
+        "url": "1c9440cb-3d4f-433d-8ad3-e9598a45da90"
+      },
+      "grey": {
+        "imageId": 144994754,
+        "url": "2994f143-4181-4bac-bed3-492720c8a96f"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994755,
+        "url": "7ff5ef78-2dbc-4c09-96f1-b04d190aff49"
+      },
+      "grey": {
+        "imageId": 144994756,
+        "url": "63e8e45f-4e80-443f-a4b0-7b7083dd27a6"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994757,
+        "url": "46b8dd7b-bbda-43e7-8053-5aeb6df4f3a8"
+      },
+      "grey": {
+        "imageId": 144994759,
+        "url": "d5980039-f982-4187-b4f6-53f40d17153d"
+      }
+    }
+  ],
+  "ghibli-kiki": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994760,
+        "url": "86504f49-f50c-404e-ba09-7fa8e544b48f"
+      },
+      "grey": {
+        "imageId": 144994761,
+        "url": "bc2b1b78-5742-4632-9a8d-1702b0dff723"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994765,
+        "url": "e9946567-caea-462c-a012-37a601165a2f"
+      },
+      "grey": {
+        "imageId": 144994768,
+        "url": "a53aaaae-860c-45d7-a895-bb9db2735f03"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994771,
+        "url": "5f1f0da6-5d13-4328-95d2-96928d57dba9"
+      },
+      "grey": {
+        "imageId": 144994775,
+        "url": "8bfea14c-3508-4aa3-8ff1-dab8e4eea327"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994779,
+        "url": "ebfa1bd3-c556-4824-8fc4-5b5592731090"
+      },
+      "grey": {
+        "imageId": 144994786,
+        "url": "0ba0faad-8318-4525-8ad9-759fbe293231"
+      }
+    }
+  ],
+  "gpt-4o": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994791,
+        "url": "4cc8ae81-c5c4-43f2-95d2-b799e219e2b4"
+      },
+      "grey": {
+        "imageId": 144994793,
+        "url": "4d979237-1457-4f41-bae2-63fad61a397d"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994840,
+        "url": "8447b507-be0d-44ba-abd4-8b83dcaf654b"
+      },
+      "grey": {
+        "imageId": 144994841,
+        "url": "8ce95b79-8381-4427-a418-0cf69b022737"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994843,
+        "url": "c7818129-5416-4bb3-acf7-d3417148bb77"
+      },
+      "grey": {
+        "imageId": 144994844,
+        "url": "911e49c3-51d9-42aa-9a88-ad034b5dd40d"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994845,
+        "url": "852d2c56-92f3-4667-a06a-76543544b8ff"
+      },
+      "grey": {
+        "imageId": 144994846,
+        "url": "a7dab7ed-c46a-4611-876e-ea84e957ca50"
+      }
+    }
+  ],
+  "disney-renaissance": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994848,
+        "url": "f916cd1c-5cbd-49cb-aaf6-5ce1afdb35c6"
+      },
+      "grey": {
+        "imageId": 144994850,
+        "url": "050dd6a8-4677-4219-a05b-6c32263e9141"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994851,
+        "url": "da39bf07-af78-4aef-8e41-d9b87c200c7d"
+      },
+      "grey": {
+        "imageId": 144994852,
+        "url": "b6b154c0-c664-4de2-85c8-705e81610b7b"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994853,
+        "url": "23101a8f-d13e-4337-b0db-3462b0b2ff58"
+      },
+      "grey": {
+        "imageId": 144994856,
+        "url": "128b5a4e-ea62-44ab-b61b-52f157471746"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994857,
+        "url": "36b337ab-f775-4e86-a386-f0c5f6e0b159"
+      },
+      "grey": {
+        "imageId": 144994858,
+        "url": "3a4a3fca-2a90-4f65-9f09-2e7802b9d1de"
+      }
+    }
+  ],
+  "disney-mid-century": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994861,
+        "url": "4b83ce56-39d4-4d6b-a9e2-14df62715e1f"
+      },
+      "grey": {
+        "imageId": 144994862,
+        "url": "36909fb5-7c82-4a77-bb83-68d95c4f6e72"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994863,
+        "url": "b9fa0790-3933-44ee-a3fe-d645f8e15d88"
+      },
+      "grey": {
+        "imageId": 144994866,
+        "url": "53607f96-223c-439c-94c6-7613f5741b8c"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994867,
+        "url": "276fb4fb-e814-4c8b-bfed-7218481b9606"
+      },
+      "grey": {
+        "imageId": 144994868,
+        "url": "ac4ad5d2-64b0-40b6-a243-066dd99de95a"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994870,
+        "url": "da1ddb72-26f8-4903-a08d-b9ecc670d07d"
+      },
+      "grey": {
+        "imageId": 144994871,
+        "url": "1fd8e8a3-1e05-49c5-8703-8cea15bd02aa"
+      }
+    }
+  ],
+  "pixar-3d": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994873,
+        "url": "94a92bc1-e190-42ca-9cd1-9c104d7b5bc3"
+      },
+      "grey": {
+        "imageId": 144994875,
+        "url": "709d23d6-83ca-4643-b38f-944135e7fb42"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994876,
+        "url": "85a3b70d-6657-45d3-a75d-b1bd749bfea6"
+      },
+      "grey": {
+        "imageId": 144994877,
+        "url": "09e277ea-0e68-4f09-9a9f-9198c1a7de29"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994878,
+        "url": "19f17f46-5485-49cc-bdff-7bab00fe03c9"
+      },
+      "grey": {
+        "imageId": 144994879,
+        "url": "00635328-1503-48f4-9aeb-77869860e2be"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994880,
+        "url": "03db5a5f-1ad0-4308-8e09-cd3772fca0aa"
+      },
+      "grey": {
+        "imageId": 144994881,
+        "url": "4a0c94e0-c5a5-4d82-9d50-834dba36c6c8"
+      }
+    }
+  ],
+  "rick-and-morty": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994882,
+        "url": "b185faf3-0079-406f-b4fd-e083e9bb1f15"
+      },
+      "grey": {
+        "imageId": 144994883,
+        "url": "6eaf2589-bd9b-4517-be11-fe6cc4a5f561"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994884,
+        "url": "8fd57be3-f9bc-41c1-9e15-f8862d18d0c2"
+      },
+      "grey": {
+        "imageId": 144994885,
+        "url": "dfa97162-7715-40e3-980c-f0e8722a3b8d"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994886,
+        "url": "db1596f0-7f3a-4408-9c9f-5417ca90d125"
+      },
+      "grey": {
+        "imageId": 144994887,
+        "url": "da5b2e5f-b79f-4a1d-a351-218b74892481"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994888,
+        "url": "131994c1-d523-4f93-a827-58726d19244e"
+      },
+      "grey": {
+        "imageId": 144994889,
+        "url": "b3957fb8-9d8c-42c7-8fc1-989a20d67830"
+      }
+    }
+  ],
+  "sims": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994890,
+        "url": "82fa18af-d8ae-4e74-9e15-7c1a52399c79"
+      },
+      "grey": {
+        "imageId": 144994891,
+        "url": "9b01d3d4-7448-4e02-b17b-cde1a7bf49e1"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994893,
+        "url": "437fe32e-07af-419e-8a13-67f8baa53266"
+      },
+      "grey": {
+        "imageId": 144994894,
+        "url": "bd361da7-4f1b-4a2e-8640-555e2f2250fb"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994895,
+        "url": "85ab1c95-c939-4171-9f3a-61bb987229b4"
+      },
+      "grey": {
+        "imageId": 144994896,
+        "url": "1a12dccd-d7a1-4131-8185-3a4f2e6b49b8"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994897,
+        "url": "c90dfeab-f6d9-451e-b16e-9284a3bd98b4"
+      },
+      "grey": {
+        "imageId": 144994898,
+        "url": "8b00478b-1a68-477b-94e8-f6900440833b"
+      }
+    }
+  ],
+  "flat-cartoon": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994899,
+        "url": "55a4d18c-8b1e-4c03-b17f-7045a6259469"
+      },
+      "grey": {
+        "imageId": 144994900,
+        "url": "1b27b248-872d-451f-b2a0-84f7b8a0e717"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994903,
+        "url": "13fb0cfa-1c3a-4159-bc80-33fe437e20c6"
+      },
+      "grey": {
+        "imageId": 144994905,
+        "url": "21a7cb5d-8409-4086-9e67-3e3fdf1c9294"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994910,
+        "url": "6f8251f0-ffe4-47cb-9fc5-ea30f0913dad"
+      },
+      "grey": {
+        "imageId": 144994912,
+        "url": "9cfa56f2-79b6-4225-bcd1-15aa7cb39701"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994913,
+        "url": "748ba838-6c98-431b-bab3-11e9f768dcf7"
+      },
+      "grey": {
+        "imageId": 144994914,
+        "url": "b0277b85-49dd-48a9-a6ca-410b35649e0b"
+      }
+    }
+  ],
+  "anthropomorphic": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994915,
+        "url": "33564e16-d062-46c8-b8c5-3fc7e6576d29"
+      },
+      "grey": {
+        "imageId": 144994917,
+        "url": "036e2406-2944-4be3-b983-69c4e7db60c5"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994918,
+        "url": "2fc092da-14a8-4fd8-b05f-f1b81c971d16"
+      },
+      "grey": {
+        "imageId": 144994919,
+        "url": "287aa7b0-288e-49d1-bbc0-bd4135c6904d"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994921,
+        "url": "7a1ea954-a3ec-494e-95ca-4282054fac27"
+      },
+      "grey": {
+        "imageId": 144994923,
+        "url": "2cf92050-3cc8-4b76-8e63-4c6b3ce2ac02"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994926,
+        "url": "a3041eae-e8e7-49e6-b83d-115793169a9b"
+      },
+      "grey": {
+        "imageId": 144994927,
+        "url": "c1b47cc6-b02a-4d21-8c6c-2ecaf0c287e5"
+      }
+    }
+  ],
+  "cel-shaded": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994929,
+        "url": "d8afe7e4-74e8-42e0-85a7-e33064bcd250"
+      },
+      "grey": {
+        "imageId": 144994930,
+        "url": "5caa929f-ac6d-4d5d-a9f9-faaded30a706"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994934,
+        "url": "665cf347-4431-4efb-86dc-9f51833001c4"
+      },
+      "grey": {
+        "imageId": 144994936,
+        "url": "96bff119-435b-485e-aa9d-c05ed7e082cf"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994938,
+        "url": "574d7c7b-5cb9-4573-848e-931bc2f6a269"
+      },
+      "grey": {
+        "imageId": 144994939,
+        "url": "75474fb1-3a5b-4135-b06f-4c50b0b3092b"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994941,
+        "url": "0c503e14-a47f-4437-b132-b55fd2a57972"
+      },
+      "grey": {
+        "imageId": 144994942,
+        "url": "cfe951f1-d6fd-4f6a-9ad4-0ff173f52fc6"
+      }
+    }
+  ],
+  "tintin": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994944,
+        "url": "7c88487b-428d-4537-99b5-f6e4256d8767"
+      },
+      "grey": {
+        "imageId": 144994945,
+        "url": "16b7254c-7720-40fd-96d9-2cc11712e8ff"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994946,
+        "url": "5c3eebb7-f064-4c57-95bd-627e35d5dfc0"
+      },
+      "grey": {
+        "imageId": 144994947,
+        "url": "e7a067f8-a0da-493d-be3f-f3c93be186fa"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994949,
+        "url": "fe2c1e73-cc46-40b7-985b-a39505e03484"
+      },
+      "grey": {
+        "imageId": 144994950,
+        "url": "3af3ea5a-df4b-45bc-8da5-979fc7f89fc1"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994953,
+        "url": "6bd47cb7-c72e-424a-9004-e008c26cb46b"
+      },
+      "grey": {
+        "imageId": 144994954,
+        "url": "e61feb29-cfd0-4a31-8365-bd9765e05d69"
+      }
+    }
+  ],
+  "pulp-horror": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994955,
+        "url": "0b373fce-fa8d-4050-a5f3-bdf3316481f3"
+      },
+      "grey": {
+        "imageId": 144994956,
+        "url": "8428a053-8a16-49b7-9f70-dc1856a488ec"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994957,
+        "url": "9f291905-74ee-4d77-bc5d-c7cd24751f59"
+      },
+      "grey": {
+        "imageId": 144994958,
+        "url": "0f5d5219-65c7-4799-9b9d-705b42a7d75f"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994961,
+        "url": "85d058d7-a543-4433-ab2f-2090747dcfb8"
+      },
+      "grey": {
+        "imageId": 144994962,
+        "url": "6509dfc4-60ae-49a1-8c06-5f30a63e7059"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994963,
+        "url": "d031f397-8d70-4a5f-9fe0-e1d573850285"
+      },
+      "grey": {
+        "imageId": 144994964,
+        "url": "9f8c9a2e-2bb0-4314-ad79-a692ad777afc"
+      }
+    }
+  ],
+  "pop-art": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994965,
+        "url": "252a4666-2c3b-48e6-89a5-2a4bd007648d"
+      },
+      "grey": {
+        "imageId": 144994967,
+        "url": "3f1a56a6-0832-43b0-b976-0302f781b174"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994970,
+        "url": "6cfa1cce-ca81-46c3-a4cf-c8c106eac0b9"
+      },
+      "grey": {
+        "imageId": 144994971,
+        "url": "dc1ab4a7-ba60-4021-8456-a8c829e31690"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994972,
+        "url": "4ed0f350-9874-4a51-8df0-5dd6cb4e96b2"
+      },
+      "grey": {
+        "imageId": 144994973,
+        "url": "522e574f-7824-4cbe-acef-d0fbfe1cd03f"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994974,
+        "url": "da0315d4-5081-4b54-b6ce-319124b6ec3e"
+      },
+      "grey": {
+        "imageId": 144994976,
+        "url": "5596fbb7-4c46-4c66-b041-87be4684ab38"
+      }
+    }
+  ],
+  "propaganda": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994978,
+        "url": "6959656f-025e-4474-8cbf-1a0e131fdd00"
+      },
+      "grey": {
+        "imageId": 144994979,
+        "url": "a11f5476-f847-4f0a-8237-e9774736626c"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994980,
+        "url": "5f44767d-edcd-442e-9a47-9c37f4a1db51"
+      },
+      "grey": {
+        "imageId": 144994982,
+        "url": "ecd4804f-413e-4b0e-b8cc-ab6b0a99422f"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144994983,
+        "url": "6f1818e1-a194-492c-b176-624a4cb98dc0"
+      },
+      "grey": {
+        "imageId": 144994986,
+        "url": "432f848b-119b-4b2e-b182-6eb989bc1845"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144994988,
+        "url": "6541a003-91f1-4449-8f68-7c278da1a510"
+      },
+      "grey": {
+        "imageId": 144994991,
+        "url": "9d2c71ec-5f34-4195-8805-68b51f7bbe8d"
+      }
+    }
+  ],
+  "vector": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144994994,
+        "url": "5125dc41-1c5b-4675-9964-689279468c86"
+      },
+      "grey": {
+        "imageId": 144994995,
+        "url": "9ea009b1-276d-4ffb-8c41-4128542d1b87"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144994997,
+        "url": "c1093e60-c2bb-4d15-a02d-eec5250ebfd4"
+      },
+      "grey": {
+        "imageId": 144995001,
+        "url": "e2a8d142-1cf9-4f5d-b73e-80d1e0f3a189"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995003,
+        "url": "ec725676-8d8d-41c8-8738-8c9a459dac90"
+      },
+      "grey": {
+        "imageId": 144995005,
+        "url": "f5dcdafd-e497-4da5-a743-d02b6abcf174"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995008,
+        "url": "d9fb6a2f-2c36-43df-8a4a-c449c37ad1fa"
+      },
+      "grey": {
+        "imageId": 144995009,
+        "url": "d4ade7ce-7f68-40de-ad0f-062f3e7a03b4"
+      }
+    }
+  ],
+  "geometric": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995011,
+        "url": "dd501a7b-0873-40ab-a469-fa396238cc01"
+      },
+      "grey": {
+        "imageId": 144995012,
+        "url": "8a9a1fcc-007e-4db0-ac9b-16efc0e2de27"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995014,
+        "url": "ef0eb59e-d9fb-4e03-9639-782818f31615"
+      },
+      "grey": {
+        "imageId": 144995015,
+        "url": "263637bf-634f-45bd-b38f-75e825890e8f"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995018,
+        "url": "aa04071d-6399-47f8-81a5-2a19505baf6e"
+      },
+      "grey": {
+        "imageId": 144995019,
+        "url": "c6c703db-da93-421e-848b-8ce64c0b6dc2"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995021,
+        "url": "21a453bf-4f6f-4eea-98e8-110579feb6e9"
+      },
+      "grey": {
+        "imageId": 144995023,
+        "url": "cb9b3a70-d7b6-44ab-b31e-62e0b3040dbf"
+      }
+    }
+  ],
+  "sticker": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995025,
+        "url": "feecb631-15e4-481c-8ccd-d95c3fdd5d59"
+      },
+      "grey": {
+        "imageId": 144995026,
+        "url": "d88dc019-fda9-4f34-b006-bbc1fab45ce6"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995029,
+        "url": "e88709f0-3f9c-42d1-9c4c-502709762d9b"
+      },
+      "grey": {
+        "imageId": 144995031,
+        "url": "b49342d1-6a41-4a16-9107-cc8661738d26"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995034,
+        "url": "3c964511-dcb6-4714-b799-ccfe041e5b4c"
+      },
+      "grey": {
+        "imageId": 144995035,
+        "url": "3a13dc27-3342-4170-ab95-fda973bd04ce"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995036,
+        "url": "fc3c5619-7809-4bcb-94a8-e25ad42b96e2"
+      },
+      "grey": {
+        "imageId": 144995038,
+        "url": "8f310eeb-bf82-43b8-a6db-1895ddf2878b"
+      }
+    }
+  ],
+  "tattoo": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995040,
+        "url": "8bc9e76c-d18f-478c-94b9-f0cacf743ac4"
+      },
+      "grey": {
+        "imageId": 144995042,
+        "url": "d57aec24-8f0e-4ec7-8fe3-0acbb927561b"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995043,
+        "url": "726df4ff-604c-41a4-82b6-7a812bcf2c13"
+      },
+      "grey": {
+        "imageId": 144995045,
+        "url": "c46be1ae-f1b6-4fb4-a10a-0fb0391a29d8"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995047,
+        "url": "9267f605-4233-4054-bb2a-9ce7eff2cda4"
+      },
+      "grey": {
+        "imageId": 144995048,
+        "url": "92dda9d7-bf99-4c8c-a98f-a65ad7c2a83b"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995050,
+        "url": "c618918c-113d-45f3-ad8b-d6d76a15a328"
+      },
+      "grey": {
+        "imageId": 144995052,
+        "url": "e63a263e-22f0-4f7d-b664-5b7bffb56f1a"
+      }
+    }
+  ],
+  "graffiti": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995056,
+        "url": "da6b89ca-485a-4238-b26f-5abb32360d67"
+      },
+      "grey": {
+        "imageId": 144995057,
+        "url": "16516d25-5048-4a4d-bdf9-d49f5a9235e8"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995058,
+        "url": "74946e82-7f5e-44da-a9c9-3d046c27d3e3"
+      },
+      "grey": {
+        "imageId": 144995059,
+        "url": "fc3f0ff0-1dd5-482e-a7a8-a8f3c20acb91"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995060,
+        "url": "fd6e9cc3-19bb-4abf-bc36-e8515caa2cfe"
+      },
+      "grey": {
+        "imageId": 144995062,
+        "url": "27e04370-79f5-40f6-83dc-8688a06a11db"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995063,
+        "url": "9c1f8b0c-aca9-4105-b7b5-ddf6fa74466f"
+      },
+      "grey": {
+        "imageId": 144995064,
+        "url": "28e31ea9-b60c-4ad4-a46b-d4c3b34e89ee"
+      }
+    }
+  ],
+  "stained-glass": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995065,
+        "url": "d368dc60-89f7-4a6f-9c35-545ecac90b7e"
+      },
+      "grey": {
+        "imageId": 144995067,
+        "url": "b41b27dd-5188-4c66-8a42-c042fbbc1aa0"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995068,
+        "url": "29ce5f7f-94a4-44f4-8fad-e796051c1a5e"
+      },
+      "grey": {
+        "imageId": 144995069,
+        "url": "3af178d7-4c93-40da-9495-50f37a08c6c0"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995071,
+        "url": "e9310c2d-b9d9-4e97-a04a-c90b43e554ca"
+      },
+      "grey": {
+        "imageId": 144995072,
+        "url": "cbe655c1-26f4-4f0d-a0cc-2d194115dc83"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995074,
+        "url": "49044547-cc5f-4609-a9c6-42b8926edb1a"
+      },
+      "grey": {
+        "imageId": 144995075,
+        "url": "0b1feb7f-3ac9-4075-8e50-45e9d1e5d872"
+      }
+    }
+  ],
+  "mosaic": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995077,
+        "url": "9718828b-90fa-410a-9d4c-8378ff31ea47"
+      },
+      "grey": {
+        "imageId": 144995079,
+        "url": "fddcd63c-f17a-4191-b65e-fae09d858e52"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995084,
+        "url": "fd27b791-b052-4bae-b9a8-b9f29e90e172"
+      },
+      "grey": {
+        "imageId": 144995085,
+        "url": "56b83100-4a1e-4151-b589-b47e2da7bd0e"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995086,
+        "url": "5f060e05-4995-4482-8cb8-38a5293a34cd"
+      },
+      "grey": {
+        "imageId": 144995087,
+        "url": "a73e1149-5edb-43b4-a0d3-d4429687f935"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995091,
+        "url": "63443501-b3b9-4c67-b5d1-57e4917f7067"
+      },
+      "grey": {
+        "imageId": 144995092,
+        "url": "5a3fac81-1f42-49f9-b9e7-6dac93ef934e"
+      }
+    }
+  ],
+  "line-drawing": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995093,
+        "url": "555c2e58-a17e-49e3-b2fc-a6330b70134b"
+      },
+      "grey": {
+        "imageId": 144995097,
+        "url": "439a2ae0-8f4d-4525-bcd3-5c3e7c5ee45c"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995099,
+        "url": "b72a39dd-2ba0-4158-9cc1-ec65629dbcec"
+      },
+      "grey": {
+        "imageId": 144995102,
+        "url": "e22f0bc3-242c-4866-b134-efbfbf52f036"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995103,
+        "url": "5481be6b-04d9-40ce-be3a-5879c70a3c4f"
+      },
+      "grey": {
+        "imageId": 144995105,
+        "url": "d5537460-8b80-43e1-8db6-05a9e4e4d854"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995107,
+        "url": "8a1f4c12-353d-4d79-a30a-686caab6e701"
+      },
+      "grey": {
+        "imageId": 144995108,
+        "url": "49ca3774-bad6-4a1c-bb27-53531859f3f4"
+      }
+    }
+  ],
+  "friendly-sketch": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995110,
+        "url": "a0aa3d85-224c-4c6c-b08c-bc13850582b4"
+      },
+      "grey": {
+        "imageId": 144995113,
+        "url": "2e552871-fdb0-424c-9962-f9d67722bb6d"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995115,
+        "url": "413dae76-ab69-4b35-bcd3-c4c813960794"
+      },
+      "grey": {
+        "imageId": 144995117,
+        "url": "23d1db7e-14a8-4d88-920c-e75c8bea5239"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995119,
+        "url": "159351cf-7109-44e0-92bf-448cc3ddd0b2"
+      },
+      "grey": {
+        "imageId": 144995120,
+        "url": "214c2672-1cfc-4222-990d-03231eadb459"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995122,
+        "url": "5db8d0e1-ec48-4cb2-a199-e7db78efee88"
+      },
+      "grey": {
+        "imageId": 144995123,
+        "url": "8c2527cd-767c-47e7-8442-8c5c184e5e9a"
+      }
+    }
+  ],
+  "fantasy-graphite": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995124,
+        "url": "3836445a-9a9f-4a55-8fa6-21d55b05bf88"
+      },
+      "grey": {
+        "imageId": 144995125,
+        "url": "e1dec2e0-b44e-4a31-ab0b-ab5873f3d7a2"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995126,
+        "url": "8639cb69-a3b3-4f15-8cd7-179715064210"
+      },
+      "grey": {
+        "imageId": 144995127,
+        "url": "f87f917f-ae5f-417f-8e65-1d3157023633"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995128,
+        "url": "bbe29cf7-280b-4c98-ab1c-ea43cc22aa2e"
+      },
+      "grey": {
+        "imageId": 144995129,
+        "url": "130eedec-0640-472a-a786-e4c50f3f723f"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995130,
+        "url": "ef4abcd5-6c83-4651-8697-ef72698bc8b2"
+      },
+      "grey": {
+        "imageId": 144995131,
+        "url": "a66ab4bf-e2c4-4371-97a0-c203d6c01e56"
+      }
+    }
+  ],
+  "da-vinci": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995132,
+        "url": "dc80efbe-6696-46ea-b7d2-40d3c169c629"
+      },
+      "grey": {
+        "imageId": 144995133,
+        "url": "3752e41e-f2c9-42fc-adda-1bf29d540748"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995134,
+        "url": "ccd7b474-e571-401a-8531-8258c5a82305"
+      },
+      "grey": {
+        "imageId": 144995135,
+        "url": "6661e181-28eb-4e68-bf5a-d6442a015548"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995136,
+        "url": "d0f59d81-967a-4e83-bb4e-5f4df2853ca2"
+      },
+      "grey": {
+        "imageId": 144995137,
+        "url": "aa194f19-9963-4730-88f4-ec373303f99a"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995138,
+        "url": "d502c15e-e642-4f4f-95be-352c38cc5c9f"
+      },
+      "grey": {
+        "imageId": 144995139,
+        "url": "45ad80c2-2c44-4fa7-bdd0-159d7b76fcca"
+      }
+    }
+  ],
+  "etching": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995140,
+        "url": "5e8d0a76-95ec-4c10-b7a8-922fa8c0568f"
+      },
+      "grey": {
+        "imageId": 144995142,
+        "url": "da8626d5-d31a-4383-b271-6a6f4e2e2cf8"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995143,
+        "url": "b8c51a00-4805-4c18-977f-00499d310f0c"
+      },
+      "grey": {
+        "imageId": 144995144,
+        "url": "fc12d13b-ae67-41a0-a58d-485b7304d17c"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995145,
+        "url": "8ffacdb5-417b-4e60-b3d6-47be817f5066"
+      },
+      "grey": {
+        "imageId": 144995146,
+        "url": "f287bffe-65f7-47d9-a500-30d3cef9a4d6"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995147,
+        "url": "e6596c55-6135-4c94-937e-09b1c2003a55"
+      },
+      "grey": {
+        "imageId": 144995148,
+        "url": "ff3b9629-a07f-4dcd-aa7c-0b21b657c84a"
+      }
+    }
+  ],
+  "old-paper": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995149,
+        "url": "2ecaf73c-48dc-467b-bf92-55b8c65550aa"
+      },
+      "grey": {
+        "imageId": 144995150,
+        "url": "df1939a2-51ad-45e1-a824-89e8b4e95dc2"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995151,
+        "url": "3f5571df-d7b6-4dfd-ae8b-a7cfe2deddd3"
+      },
+      "grey": {
+        "imageId": 144995152,
+        "url": "b9fe6cf8-1bca-4ed2-84cc-92a05404bca0"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995153,
+        "url": "208bd5eb-3845-48e8-99e8-bf1b44db07de"
+      },
+      "grey": {
+        "imageId": 144995154,
+        "url": "d98f92c8-6f48-4f82-a551-095a7715805b"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995155,
+        "url": "c46e9757-b460-4592-9057-e6eeddb6d19b"
+      },
+      "grey": {
+        "imageId": 144995156,
+        "url": "3e8a3e49-1ac5-47d9-8ea2-5852ab9b8081"
+      }
+    }
+  ],
+  "childs-drawing": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995157,
+        "url": "31ec4559-89a5-40ca-9a56-3ee3af5fa665"
+      },
+      "grey": {
+        "imageId": 144995158,
+        "url": "e133b580-cf6a-473a-bc46-2a94520b91c8"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995159,
+        "url": "b618b9ee-7452-4410-a77a-33490036eda1"
+      },
+      "grey": {
+        "imageId": 144995160,
+        "url": "aa82e3e4-887b-44d2-ad7f-8fc79ea20fbb"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995161,
+        "url": "90fb6701-a202-4043-b094-70a160a38ccb"
+      },
+      "grey": {
+        "imageId": 144995162,
+        "url": "efeaecb4-0ea4-4773-aa2f-115692e7cefb"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995163,
+        "url": "c2d75be6-4d2b-4a4a-877a-5eb4f9cca8f5"
+      },
+      "grey": {
+        "imageId": 144995164,
+        "url": "6f7e40c2-5aa1-4433-bc2e-dbb9a2180f78"
+      }
+    }
+  ],
+  "crayon": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995166,
+        "url": "7506448a-83f5-4c03-8cfe-d21c1f2c0507"
+      },
+      "grey": {
+        "imageId": 144995167,
+        "url": "009723ab-e51c-4638-ba45-94ab77e12dd5"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995168,
+        "url": "c0ead78d-f922-43cc-8005-cf9f484f8ea3"
+      },
+      "grey": {
+        "imageId": 144995169,
+        "url": "1927bf10-6e89-4d17-9b71-db425a281d68"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995170,
+        "url": "36932b74-1206-4ea6-a890-9296574cc2d5"
+      },
+      "grey": {
+        "imageId": 144995171,
+        "url": "47c02a10-36d3-474e-be6a-a78e4d0ceef9"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995172,
+        "url": "cea722fc-6446-419f-8217-7621bd038faf"
+      },
+      "grey": {
+        "imageId": 144995173,
+        "url": "f6bceae4-7b46-44b1-8bc9-82e6ceb6df37"
+      }
+    }
+  ],
+  "rackham": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995174,
+        "url": "8e980474-baaa-4eeb-85a6-64d6a58bc390"
+      },
+      "grey": {
+        "imageId": 144995175,
+        "url": "e680a5ea-3f11-43d4-8d4c-5984aa2906e3"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995176,
+        "url": "92c4aedd-72c8-44a9-b2c3-bcf57423ea31"
+      },
+      "grey": {
+        "imageId": 144995177,
+        "url": "42ed701f-f738-486d-bcc9-c65081b166da"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995178,
+        "url": "80e13d44-b9fb-4965-a7ee-f8883a84bfdf"
+      },
+      "grey": {
+        "imageId": 144995179,
+        "url": "3a7ab0e5-4afd-4d97-b47e-5906a1b7583a"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995180,
+        "url": "ae7db7e0-22ea-479a-9368-97e6a9de294d"
+      },
+      "grey": {
+        "imageId": 144995181,
+        "url": "bc31794b-7df9-4dc8-b5f4-e4de48ffe17b"
+      }
+    }
+  ],
+  "watercolor": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995183,
+        "url": "7af59c28-6ede-4f44-a871-8270db13a998"
+      },
+      "grey": {
+        "imageId": 144995184,
+        "url": "dc762731-dbc6-49f8-9b72-a8906c397e5a"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995185,
+        "url": "08c3cf06-9022-4e7c-b4ef-26203ac15947"
+      },
+      "grey": {
+        "imageId": 144995186,
+        "url": "468ce248-dbeb-4bd5-b405-8fd56e600806"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995187,
+        "url": "db688ab7-6c81-4deb-a4b5-1a63c0ce367c"
+      },
+      "grey": {
+        "imageId": 144995188,
+        "url": "9f014eca-ad18-4ed5-a823-bfff8898f052"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995189,
+        "url": "827d34bf-54d4-417d-8f44-797b7311a249"
+      },
+      "grey": {
+        "imageId": 144995190,
+        "url": "0cadbf9f-a9cd-4385-b84a-f7c9c405b390"
+      }
+    }
+  ],
+  "watercolor-inks": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995191,
+        "url": "615649e3-995a-4585-a195-e8f2cd36fd75"
+      },
+      "grey": {
+        "imageId": 144995192,
+        "url": "3f455b37-7b28-4a0b-88c5-1214290a38e0"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995193,
+        "url": "75857e2c-4976-4511-9620-180a24775212"
+      },
+      "grey": {
+        "imageId": 144995194,
+        "url": "0b04892d-e6de-4ea4-b8fa-7ad431d0b5b8"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995195,
+        "url": "70334b55-28ae-4000-9187-968c87183851"
+      },
+      "grey": {
+        "imageId": 144995196,
+        "url": "e58c5701-58fb-428e-847d-d97d2d7d963d"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995197,
+        "url": "f83920f6-f7ca-4f74-8d8b-3708a7556e10"
+      },
+      "grey": {
+        "imageId": 144995198,
+        "url": "50c2cc07-84e6-4ef7-a5ca-c2aeb0f00f5f"
+      }
+    }
+  ],
+  "sumi-e": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995199,
+        "url": "a38a7a7e-8a3a-4a6b-a27b-b05677bedf2c"
+      },
+      "grey": {
+        "imageId": 144995200,
+        "url": "cc75e57e-70d7-4212-8b0d-a97c17ef0b6d"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995201,
+        "url": "92c6b90b-b349-4518-809c-54ccb8cac57c"
+      },
+      "grey": {
+        "imageId": 144995202,
+        "url": "2014cf23-86b7-477f-a615-c6e0ce8efd37"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995204,
+        "url": "1d416b58-c7fb-4f1f-a439-07f6fd039484"
+      },
+      "grey": {
+        "imageId": 144995205,
+        "url": "3fbb456a-9aa9-455f-a9de-8229c8ef7bad"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995206,
+        "url": "d67a5409-53ab-4662-a71f-702950309e28"
+      },
+      "grey": {
+        "imageId": 144995207,
+        "url": "116e1158-59e9-4571-ae2a-2c491740f934"
+      }
+    }
+  ],
+  "woodblock": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995209,
+        "url": "020d7055-688a-4af6-acd5-0140e0536507"
+      },
+      "grey": {
+        "imageId": 144995210,
+        "url": "b751d08c-db26-4d88-857b-3f2255aee8b6"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995211,
+        "url": "4ee0fd21-2d41-4cb5-8be5-44336ae2cffb"
+      },
+      "grey": {
+        "imageId": 144995212,
+        "url": "4d5a4f41-1cf6-4708-afd5-53ea015c2ec9"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995213,
+        "url": "4e937283-038d-4a12-a659-99547645a047"
+      },
+      "grey": {
+        "imageId": 144995214,
+        "url": "43f6206a-b8a1-4698-ad1b-3263c0fa25b6"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995215,
+        "url": "c7cde1fa-7bdc-4327-a8f0-bf3deb1b0a29"
+      },
+      "grey": {
+        "imageId": 144995216,
+        "url": "a5085545-2260-4960-8a86-8125bc9e324d"
+      }
+    }
+  ],
+  "impressionism": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995217,
+        "url": "7f1e458f-3573-4c4e-a264-9397d544583b"
+      },
+      "grey": {
+        "imageId": 144995218,
+        "url": "57ed1aea-4159-4d2c-a743-7c98bd60d406"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995219,
+        "url": "c382c34a-52cf-4fb5-8160-3dd385956e15"
+      },
+      "grey": {
+        "imageId": 144995220,
+        "url": "6ef65e1a-1890-4050-bb5d-47438b7a1d35"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995221,
+        "url": "3308002b-5e10-4a2c-a721-afacf22ddb01"
+      },
+      "grey": {
+        "imageId": 144995222,
+        "url": "05bd44ad-4688-482e-a75a-2023803d377b"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995223,
+        "url": "42208164-ed48-4388-b87b-4e4f33a9f25f"
+      },
+      "grey": {
+        "imageId": 144995224,
+        "url": "75e3a902-d5f0-4903-bbac-91c35ba35eae"
+      }
+    }
+  ],
+  "splash-paint": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995225,
+        "url": "f072d220-8aeb-439f-b7ea-6b1c147cd181"
+      },
+      "grey": {
+        "imageId": 144995226,
+        "url": "8997fd73-dc23-4bc3-b4f9-9f38ab9f2a03"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995227,
+        "url": "387f6937-e3b8-4b47-9059-391042e1ca65"
+      },
+      "grey": {
+        "imageId": 144995228,
+        "url": "1c35ff92-d816-48e1-92fc-579e418d8022"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995229,
+        "url": "510d7b18-b153-41b5-a164-3924dfac9223"
+      },
+      "grey": {
+        "imageId": 144995230,
+        "url": "37026ed1-4577-4efb-823e-c98efe578b52"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995231,
+        "url": "96820930-1a68-45c7-89a9-87464e979134"
+      },
+      "grey": {
+        "imageId": 144995232,
+        "url": "776ee94e-20e0-466c-a439-a12921fc5b17"
+      }
+    }
+  ],
+  "classic-oil": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995233,
+        "url": "0d6b78cf-49ba-482e-9748-e0f72b70a8b0"
+      },
+      "grey": {
+        "imageId": 144995234,
+        "url": "d95781c9-589c-4785-8fe3-8775273a2062"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995235,
+        "url": "caea7fc8-97f1-4fdc-94ab-8d5586a24c76"
+      },
+      "grey": {
+        "imageId": 144995236,
+        "url": "6a863c7c-e5d2-4403-86dc-fd0ab0b59894"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995237,
+        "url": "f3fa35cb-aefe-466e-8395-50cf9efe3dde"
+      },
+      "grey": {
+        "imageId": 144995238,
+        "url": "7946df82-effa-4447-bbd1-44cae7e57e38"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995239,
+        "url": "1750883e-ca1c-4d43-b50f-36d82d69a8b0"
+      },
+      "grey": {
+        "imageId": 144995240,
+        "url": "2e516a3c-45aa-4905-82ea-3b007dc20a0e"
+      }
+    }
+  ],
+  "art-nouveau": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995241,
+        "url": "6ba0816e-0fec-497d-a191-388f2f04f045"
+      },
+      "grey": {
+        "imageId": 144995242,
+        "url": "b043b497-b775-4883-bfa7-2113b23ec4dd"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995244,
+        "url": "332111de-cfcb-4184-8cdb-3e9c7e609d94"
+      },
+      "grey": {
+        "imageId": 144995245,
+        "url": "b52b30a6-1312-4799-8535-ac5990a1aa51"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995246,
+        "url": "c2d14606-1c2e-475c-bfcb-995ed993041e"
+      },
+      "grey": {
+        "imageId": 144995247,
+        "url": "5151815e-9305-4f28-9051-5f686b27fcff"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995248,
+        "url": "10d76d38-37ab-415c-864c-c0d7b6a1fc65"
+      },
+      "grey": {
+        "imageId": 144995249,
+        "url": "046a3708-394d-4337-81fe-2e3d00189b65"
+      }
+    }
+  ],
+  "art-deco": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995250,
+        "url": "4526f8d6-1559-42d7-b08b-ad3fef11ed73"
+      },
+      "grey": {
+        "imageId": 144995251,
+        "url": "9110b539-6d2e-4e33-a605-63217c46140b"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995253,
+        "url": "df457ff6-6d24-414d-a3ad-6faf8aaf4dca"
+      },
+      "grey": {
+        "imageId": 144995255,
+        "url": "015a6729-32f4-4a1d-86ca-131645b6a05e"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995256,
+        "url": "f53cebf9-6721-4250-bce8-34d6471516c5"
+      },
+      "grey": {
+        "imageId": 144995258,
+        "url": "809d69e3-8f84-4007-ae64-ef481f697baf"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995260,
+        "url": "80dc05eb-fa8e-451c-8ebc-e1deed35d776"
+      },
+      "grey": {
+        "imageId": 144995262,
+        "url": "e2780a82-ec11-4a04-83d0-764e0e5e2556"
+      }
+    }
+  ],
+  "delicate-whimsy": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995263,
+        "url": "1ee6dffa-0f9e-4657-b285-545eba36d576"
+      },
+      "grey": {
+        "imageId": 144995266,
+        "url": "08fd74ee-7d0f-4b01-9aa0-de7e4dee9595"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995270,
+        "url": "e0dcb816-be7e-4caa-b51b-70db371e2bbb"
+      },
+      "grey": {
+        "imageId": 144995271,
+        "url": "210773a5-72c8-4db0-8f27-299eb59cfeb9"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995273,
+        "url": "be6b4a9b-4500-4db0-becb-86638ab84056"
+      },
+      "grey": {
+        "imageId": 144995274,
+        "url": "619e3765-97b4-4358-9d11-dd6fb189d2f9"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995275,
+        "url": "954c6432-3237-4add-972a-a17b8b13a644"
+      },
+      "grey": {
+        "imageId": 144995277,
+        "url": "1a7ae2a3-61d9-420a-8d8f-bda7ee453b93"
+      }
+    }
+  ],
+  "creepy-cute": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995280,
+        "url": "5462be4b-acdc-4360-9b09-d5cba80d9cca"
+      },
+      "grey": {
+        "imageId": 144995281,
+        "url": "c7ace046-d446-493e-b776-0d9b6149181a"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995282,
+        "url": "686e0776-baf8-4647-9954-8a623f5b5fe4"
+      },
+      "grey": {
+        "imageId": 144995283,
+        "url": "98550b11-9205-4cd6-8aac-cad477bd40b4"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995284,
+        "url": "e09867fc-6d95-4db1-856e-f0dc439dda57"
+      },
+      "grey": {
+        "imageId": 144995285,
+        "url": "ff00700c-783a-47ae-a40a-858715e88d10"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995286,
+        "url": "21977817-3630-4af6-a92b-6409f11621ae"
+      },
+      "grey": {
+        "imageId": 144995287,
+        "url": "58bf3419-c2d0-497e-a183-d1cae9818832"
+      }
+    }
+  ],
+  "gothic-elegance": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995289,
+        "url": "23093939-7557-4db3-8e8b-3191403f463a"
+      },
+      "grey": {
+        "imageId": 144995290,
+        "url": "a71e571e-070d-4180-866f-59bf9a789dd9"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995291,
+        "url": "e42854d6-e3c4-45c3-bc64-74fa4fc4044d"
+      },
+      "grey": {
+        "imageId": 144995292,
+        "url": "a31221b7-2118-43e1-960e-c4eacd0dbb27"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995295,
+        "url": "116d51c5-ec6a-4549-adcc-56a6f2aca588"
+      },
+      "grey": {
+        "imageId": 144995296,
+        "url": "600ffa66-d255-42fa-8f82-7f20937bfb4b"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995298,
+        "url": "8ebbd578-8b66-44bc-8343-f60324eb7186"
+      },
+      "grey": {
+        "imageId": 144995300,
+        "url": "0c457cfd-8358-4e1e-beb8-103aa68c1177"
+      }
+    }
+  ],
+  "frazetta": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995301,
+        "url": "d41e9292-21e8-438c-a18b-e52b3e7b9525"
+      },
+      "grey": {
+        "imageId": 144995303,
+        "url": "7585d4fa-0b25-4879-b0f4-8b7b83a32f7c"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995304,
+        "url": "c04848eb-f6b7-4d84-89dd-b8220758f319"
+      },
+      "grey": {
+        "imageId": 144995306,
+        "url": "88f481df-a965-4e1f-9fad-e3e28676f2b9"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995308,
+        "url": "1fef5aff-6fd0-4ded-b3d3-4686099b419e"
+      },
+      "grey": {
+        "imageId": 144995309,
+        "url": "c28b705d-516e-4859-bea6-b6277e72f037"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995310,
+        "url": "2a079c10-d934-4502-afcf-947049593a18"
+      },
+      "grey": {
+        "imageId": 144995311,
+        "url": "d46ab6b3-cd9d-4df3-9401-e36eabcc283a"
+      }
+    }
+  ],
+  "dnd-painterly": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995312,
+        "url": "6ef8d616-4e97-424c-b7a5-4abfc5363b78"
+      },
+      "grey": {
+        "imageId": 144995313,
+        "url": "601881ad-043f-4ee2-8b57-1caa765ce371"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995314,
+        "url": "c6c376f3-bce0-4db7-ae4b-73330cbc9e2a"
+      },
+      "grey": {
+        "imageId": 144995315,
+        "url": "9bd5c2da-dd6b-4592-8b1c-4e6e5856eacb"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995316,
+        "url": "84ad8694-0245-494e-b5e6-a9597fb79653"
+      },
+      "grey": {
+        "imageId": 144995317,
+        "url": "b9b5a401-1794-4fa9-8891-823afc232168"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995318,
+        "url": "cfde1d32-8d0c-4024-81e3-a617428a60e9"
+      },
+      "grey": {
+        "imageId": 144995320,
+        "url": "da3bf53f-2df4-418c-b05e-0ad66bf4adc0"
+      }
+    }
+  ],
+  "wool": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995321,
+        "url": "9a4bef36-d30f-46ae-98e7-c3624757fb07"
+      },
+      "grey": {
+        "imageId": 144995322,
+        "url": "0ff21537-308c-4d6e-a323-e38c4aad893e"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995323,
+        "url": "91f984b6-13e9-4308-b45a-67e904b4d7bf"
+      },
+      "grey": {
+        "imageId": 144995324,
+        "url": "7943586b-3b0a-428d-b903-782918f3afbc"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995325,
+        "url": "91383523-4187-456d-be47-6b71ae3cba3f"
+      },
+      "grey": {
+        "imageId": 144995326,
+        "url": "d30353c9-746c-4f0f-9a79-21880b919e59"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995327,
+        "url": "f374574e-f1bf-467e-a652-a550f129ec6a"
+      },
+      "grey": {
+        "imageId": 144995328,
+        "url": "5583a9c9-47de-4eea-b47c-0be00dbda780"
+      }
+    }
+  ],
+  "plush": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995329,
+        "url": "968019a7-543e-490a-8952-49d6760e437b"
+      },
+      "grey": {
+        "imageId": 144995330,
+        "url": "c587a3f0-6541-4ef7-9faf-fba323f20ea6"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995331,
+        "url": "91b50475-f667-4ed2-8f34-3b1ddb7bce03"
+      },
+      "grey": {
+        "imageId": 144995332,
+        "url": "9a1638b2-22e4-4988-bd71-651eae06ed70"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995333,
+        "url": "06b86b4a-0e9a-4b0b-ac81-064705bd69e5"
+      },
+      "grey": {
+        "imageId": 144995334,
+        "url": "e60d4305-2844-4f08-bd70-f1851e919740"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995336,
+        "url": "9faa60d4-bf77-40e9-9540-e8af44b84e2d"
+      },
+      "grey": {
+        "imageId": 144995337,
+        "url": "b608499a-c770-4d10-81fc-080fbda33307"
+      }
+    }
+  ],
+  "embroidery": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995338,
+        "url": "c603951c-bb07-4f1e-8700-41182de9fa58"
+      },
+      "grey": {
+        "imageId": 144995339,
+        "url": "ae865e5f-5330-40b8-809e-62a8e75f716b"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995340,
+        "url": "5c184fe7-153f-4334-ae2e-614abc552085"
+      },
+      "grey": {
+        "imageId": 144995341,
+        "url": "da5b3305-533d-4f38-baa5-d86fdbd16a3b"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995342,
+        "url": "26d1c70c-283d-46f3-95b7-7c3d3e2a6d1f"
+      },
+      "grey": {
+        "imageId": 144995343,
+        "url": "eed94a81-4068-47b6-b17f-e7e35c841bbc"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995344,
+        "url": "6d8a1fae-a4c0-4905-ae20-21eca24be770"
+      },
+      "grey": {
+        "imageId": 144995345,
+        "url": "891a95fc-4a0b-40bf-a528-bd85701cb005"
+      }
+    }
+  ],
+  "paper": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995346,
+        "url": "fd0ff201-0065-48c6-ba7f-2ea3e8595542"
+      },
+      "grey": {
+        "imageId": 144995347,
+        "url": "f8a6d031-0861-4436-b881-79501f8fa792"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995348,
+        "url": "af2c471e-25f6-4cf2-9548-5e5e1f04d3ac"
+      },
+      "grey": {
+        "imageId": 144995349,
+        "url": "273b4adf-c2db-4a55-9d27-902bdf67e3d3"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995350,
+        "url": "b1ff8ea1-861d-42ba-a112-5d3085d1bf48"
+      },
+      "grey": {
+        "imageId": 144995351,
+        "url": "399b4a03-8807-41fa-8a83-a19231d0ce84"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995352,
+        "url": "00a046e8-f76e-4ee1-8547-98d5912d6813"
+      },
+      "grey": {
+        "imageId": 144995353,
+        "url": "dabcf179-b6da-4883-aae3-5a2a5b8da502"
+      }
+    }
+  ],
+  "claymation": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995354,
+        "url": "4aaa143f-0e7e-4b3e-837a-e5f31931687d"
+      },
+      "grey": {
+        "imageId": 144995355,
+        "url": "1bfb263c-1dd2-4bb1-8dd0-3d4c496f9762"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995357,
+        "url": "74a9a043-3acf-4d4c-b79c-6f9d71df5580"
+      },
+      "grey": {
+        "imageId": 144995358,
+        "url": "258f3b20-5761-4983-bbfb-b59d2cad4fef"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995359,
+        "url": "0cb5de94-b9bb-4f70-b84a-a4c1ce14bb0d"
+      },
+      "grey": {
+        "imageId": 144995360,
+        "url": "fe5ca5ad-d97d-4855-9713-6abf061b2608"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995361,
+        "url": "36c90877-1e47-486d-98a9-449cd334552d"
+      },
+      "grey": {
+        "imageId": 144995362,
+        "url": "b32a64e2-be04-41f8-a8fb-4c1a8bc9d4f3"
+      }
+    }
+  ],
+  "porcelain-doll": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995363,
+        "url": "bb925096-6cf9-4606-83c7-0759f27c2e8d"
+      },
+      "grey": {
+        "imageId": 144995364,
+        "url": "500950f0-c8a0-4e88-86bf-84c213c4f1c2"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995365,
+        "url": "15b05ab1-b7de-4146-af8c-bc05c4bc1a5b"
+      },
+      "grey": {
+        "imageId": 144995366,
+        "url": "f4fd448a-ee84-4565-9df4-ba8dd307dd35"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995367,
+        "url": "4a1274d8-7ce7-4948-8d5e-8663d0a132b5"
+      },
+      "grey": {
+        "imageId": 144995368,
+        "url": "81c8c24e-2d60-4b4e-bcca-0cfdec50eaf6"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995369,
+        "url": "a2d4d12f-f9f4-4b93-906f-ec8fbdd68ae8"
+      },
+      "grey": {
+        "imageId": 144995370,
+        "url": "2db10f2e-f4d2-48c2-84d2-ed9f4e83b377"
+      }
+    }
+  ],
+  "figurine": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995371,
+        "url": "b96736eb-ca69-43e1-bd4c-71630b3c3fe1"
+      },
+      "grey": {
+        "imageId": 144995372,
+        "url": "a15dc9e2-7e3e-436a-9ed4-92e226a38003"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995373,
+        "url": "d0bf4338-5f31-41b0-b7a5-f48c2a90f482"
+      },
+      "grey": {
+        "imageId": 144995374,
+        "url": "6679c693-c925-468a-8e1d-6ab269d15f13"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995375,
+        "url": "658728f9-1ad5-470b-9c61-a16512151079"
+      },
+      "grey": {
+        "imageId": 144995376,
+        "url": "a861a775-9578-47a3-a52c-a6569cb8944d"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995377,
+        "url": "049662b8-0f37-44fa-ba66-3f950eed1f8d"
+      },
+      "grey": {
+        "imageId": 144995378,
+        "url": "72c4cf33-68df-4f8c-9a88-49dd0bbb2527"
+      }
+    }
+  ],
+  "lego": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995379,
+        "url": "cdeaf437-a191-4af7-a770-bb73cb6049a5"
+      },
+      "grey": {
+        "imageId": 144995380,
+        "url": "75d6a851-354f-4f4b-815b-bd41acfeb44a"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995381,
+        "url": "5e9b7c3c-0bb3-48e9-a992-5dd1ec232c0c"
+      },
+      "grey": {
+        "imageId": 144995382,
+        "url": "5eb58e4c-0fb0-434d-a7b0-e4c12a81aa54"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995383,
+        "url": "e5d1f146-b578-42c4-8867-b47c06a79827"
+      },
+      "grey": {
+        "imageId": 144995384,
+        "url": "a85b5adf-65bc-4f57-ae8a-a0a5ee7335a8"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995385,
+        "url": "16b24ad4-d7d3-4de8-bcaf-525b1f4828b1"
+      },
+      "grey": {
+        "imageId": 144995386,
+        "url": "b32c68cc-4615-4a4b-9279-7b87d72f120f"
+      }
+    }
+  ],
+  "pixel-art": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995388,
+        "url": "e0420893-d13b-4561-bd94-626e95a2c984"
+      },
+      "grey": {
+        "imageId": 144995389,
+        "url": "f29bfca0-493c-4d1d-afc2-cbdad42ab2ae"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995390,
+        "url": "1388e838-1073-4242-a888-e98311f14188"
+      },
+      "grey": {
+        "imageId": 144995391,
+        "url": "b3a8bc61-dabf-4c6e-ad25-a516c8be53f2"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995392,
+        "url": "12a7e102-0ba0-450a-b201-18c552d68865"
+      },
+      "grey": {
+        "imageId": 144995394,
+        "url": "00d4f5fc-cf72-49dc-a445-4b72838d9db3"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995395,
+        "url": "c36b6474-58e0-4650-848c-31004349683a"
+      },
+      "grey": {
+        "imageId": 144995396,
+        "url": "52e8a3aa-2049-4f0b-96dc-831d316fa52a"
+      }
+    }
+  ],
+  "gameboy": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995397,
+        "url": "f58d0337-68e1-4cbc-a1b3-612b7ad0f0c9"
+      },
+      "grey": {
+        "imageId": 144995398,
+        "url": "b421aa17-b48b-461d-97b9-f72815d83de2"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995399,
+        "url": "95aa2558-ad8a-4f32-b1b2-f4cd1a6c9506"
+      },
+      "grey": {
+        "imageId": 144995402,
+        "url": "7626a9b3-627d-4846-8409-3e851ee0e254"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995403,
+        "url": "9a64f41c-ab1e-44a8-bf31-97a1d15b76c2"
+      },
+      "grey": {
+        "imageId": 144995405,
+        "url": "8c98667c-f320-455f-aac5-86ada7ab303e"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995408,
+        "url": "3a97097b-73dc-4f44-8e80-77c9cfa6f0eb"
+      },
+      "grey": {
+        "imageId": 144995409,
+        "url": "487d3490-bd6d-40e3-95d7-f47b70609b1f"
+      }
+    }
+  ],
+  "c64": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995410,
+        "url": "29047016-1a8e-4ab6-a6e4-bb76d8ac4968"
+      },
+      "grey": {
+        "imageId": 144995413,
+        "url": "f0c6c9c5-6728-40c9-a54f-1d6952f0ef90"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995414,
+        "url": "6767c518-e440-410d-93f6-ae040c928f6a"
+      },
+      "grey": {
+        "imageId": 144995416,
+        "url": "5030648a-118a-43b5-8c73-2d58f9c2e674"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995417,
+        "url": "5e57554e-e4bc-4e6e-8610-2374593e6871"
+      },
+      "grey": {
+        "imageId": 144995418,
+        "url": "356d525d-f9df-4d46-8830-effb7d80de59"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995420,
+        "url": "5211d933-a29b-4b7c-ab25-e3b2ccc344c7"
+      },
+      "grey": {
+        "imageId": 144995421,
+        "url": "cb8cb9de-2487-4124-bbc2-417389f13eb6"
+      }
+    }
+  ],
+  "psx": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995422,
+        "url": "0d946524-4a90-4060-bb99-d1f5e314fda9"
+      },
+      "grey": {
+        "imageId": 144995423,
+        "url": "141c90ba-b5a8-44a5-a28c-cdc6adc98aed"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995424,
+        "url": "3c7f0019-452f-4f82-a53f-b17ff7b79cdd"
+      },
+      "grey": {
+        "imageId": 144995425,
+        "url": "153a7ccc-9779-4d46-8bdd-2175b976c189"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995426,
+        "url": "b43acd81-b10a-4303-aa9c-5a568f76d520"
+      },
+      "grey": {
+        "imageId": 144995427,
+        "url": "b6dba57f-4cf6-4107-868d-e29e6160ba73"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995428,
+        "url": "5986d4d3-e1fc-4216-a565-0329ab09d5f4"
+      },
+      "grey": {
+        "imageId": 144995429,
+        "url": "c4f78417-e863-411b-b570-335ac12e4c6d"
+      }
+    }
+  ],
+  "low-poly": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995430,
+        "url": "d18d5cdd-e666-4242-924d-fb601c487dda"
+      },
+      "grey": {
+        "imageId": 144995431,
+        "url": "f7c4ce07-547c-405f-a22f-4e2cca7740b7"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995432,
+        "url": "d63a5698-24e3-46b5-aedd-53582390b7f7"
+      },
+      "grey": {
+        "imageId": 144995433,
+        "url": "416fac73-8ec2-4486-8c94-0e05bee2016e"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995434,
+        "url": "0d7b8aa9-88eb-4cbe-b308-6c77c77d6a3f"
+      },
+      "grey": {
+        "imageId": 144995435,
+        "url": "78f9929f-5df1-4efb-b74e-ed324f50c85c"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995436,
+        "url": "99d6a8f9-cb86-4f06-b6b6-c9ee6763f302"
+      },
+      "grey": {
+        "imageId": 144995437,
+        "url": "b9a95c5a-5dba-47f2-a741-c8b8463b573d"
+      }
+    }
+  ],
+  "isometric": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995438,
+        "url": "5835835f-e20e-49c8-ad12-b7070dc3455e"
+      },
+      "grey": {
+        "imageId": 144995439,
+        "url": "24a39d96-6429-4d6e-a38f-67b661ebfedf"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995440,
+        "url": "595e6397-68b1-4be1-98c2-6393688e9537"
+      },
+      "grey": {
+        "imageId": 144995441,
+        "url": "58fcfe08-2cfc-4e45-8f6e-a8736bd4619c"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995442,
+        "url": "2c725429-0006-4acb-bcb6-30f42af253a3"
+      },
+      "grey": {
+        "imageId": 144995443,
+        "url": "2a929196-f206-4caf-bf46-bc6aa558702c"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995444,
+        "url": "d27c2a2b-fc3b-4a70-a1cf-e8ddd7166693"
+      },
+      "grey": {
+        "imageId": 144995445,
+        "url": "b049a492-f65b-4060-9d1f-d5c6aa01441e"
+      }
+    }
+  ],
+  "technicolor-30s": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995446,
+        "url": "ff17802d-d221-40ac-8ea5-76286b6b3126"
+      },
+      "grey": {
+        "imageId": 144995447,
+        "url": "24b0dad8-0425-45cf-9927-ce6b86e224c4"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995448,
+        "url": "b69ca40c-7680-4e18-b03b-76c86517ae3c"
+      },
+      "grey": {
+        "imageId": 144995449,
+        "url": "f725bfe5-3ec4-4684-a883-5dcfa0500561"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995450,
+        "url": "9bc57df5-eb8d-46ec-a3f7-fa94979a4b92"
+      },
+      "grey": {
+        "imageId": 144995451,
+        "url": "7b81156b-eff0-4271-9a63-c544a134246e"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995452,
+        "url": "3423749d-341f-458c-b3cf-128294f68415"
+      },
+      "grey": {
+        "imageId": 144995453,
+        "url": "88059c61-88f7-4a25-bb67-69a6d18ae659"
+      }
+    }
+  ],
+  "noir-50s": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995455,
+        "url": "ba17017a-a9c5-4cc8-a38f-3108c31ba104"
+      },
+      "grey": {
+        "imageId": 144995456,
+        "url": "4c3c87a3-75a9-4b6d-9260-29021ebe2bf4"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995457,
+        "url": "b3eecebf-049b-4710-9994-faeadd51bac0"
+      },
+      "grey": {
+        "imageId": 144995458,
+        "url": "349484e1-dce3-46fd-a142-613c50c4d621"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995459,
+        "url": "7708ae65-91a2-4bd0-810e-07838731de33"
+      },
+      "grey": {
+        "imageId": 144995461,
+        "url": "1ea9b11a-d138-4e61-a43e-2a19d3e9f2f4"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995462,
+        "url": "d6b18397-6061-47a3-b233-e7b41c0c8bc8"
+      },
+      "grey": {
+        "imageId": 144995463,
+        "url": "abc54a3a-f312-4b24-b105-107016b34141"
+      }
+    }
+  ],
+  "psychedelic-60s": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995465,
+        "url": "14f2b09c-8d35-474a-9fb3-b83a4c112e41"
+      },
+      "grey": {
+        "imageId": 144995466,
+        "url": "9bfb9673-2abb-4a32-b39c-c793dc4279dd"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995467,
+        "url": "4e9ebcc1-06eb-49a2-9d61-3ff6b705ddef"
+      },
+      "grey": {
+        "imageId": 144995468,
+        "url": "03fd3a91-bbc9-4ad1-9494-878fcc6cc1bd"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995469,
+        "url": "435bdd23-5a0d-4fee-bd9e-4bc3b8307213"
+      },
+      "grey": {
+        "imageId": 144995470,
+        "url": "87e6742c-0398-48f5-976c-9b139b88f752"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995471,
+        "url": "82170166-6cde-430b-92b4-4b7875672776"
+      },
+      "grey": {
+        "imageId": 144995472,
+        "url": "8537d2ab-485b-4533-be82-950289e9f592"
+      }
+    }
+  ],
+  "sci-fi-70s": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995473,
+        "url": "1a263af3-3271-4d83-8d39-37d0e54c58b2"
+      },
+      "grey": {
+        "imageId": 144995474,
+        "url": "e43cb908-fd7f-4a9d-a842-9f20583d1777"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995475,
+        "url": "6011292b-3c79-4d65-8d81-097bab9f25cc"
+      },
+      "grey": {
+        "imageId": 144995478,
+        "url": "04a5ab95-8d6e-46b7-a574-2905b3aebdc0"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995479,
+        "url": "d2b93800-b6c0-43eb-b99c-60a13d7b182d"
+      },
+      "grey": {
+        "imageId": 144995480,
+        "url": "b7a05242-0964-497d-a95f-30e44aa39e76"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995482,
+        "url": "f83c4033-66fa-4f43-a682-4a1d09161108"
+      },
+      "grey": {
+        "imageId": 144995483,
+        "url": "d90a3a86-da70-43e2-95ae-77b764d8a3cb"
+      }
+    }
+  ],
+  "commercial-80s": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995484,
+        "url": "025ed9bf-8780-4bab-8e48-df975ab89fff"
+      },
+      "grey": {
+        "imageId": 144995486,
+        "url": "45ba95b0-3ae0-40ef-b63d-b7a744cbc26e"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995487,
+        "url": "e05edf7b-7016-4cd1-a29f-a772698db7e8"
+      },
+      "grey": {
+        "imageId": 144995488,
+        "url": "3166a12b-6efd-497f-a2d0-71ea61eb0a8f"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995490,
+        "url": "e6612ae4-4974-4f9f-bf67-47f8899bd719"
+      },
+      "grey": {
+        "imageId": 144995491,
+        "url": "1e62c160-b51e-44d3-8ca9-fa1276ba8e28"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995492,
+        "url": "99b6a4b4-ef17-42ad-bfa8-0dd7234cf1f6"
+      },
+      "grey": {
+        "imageId": 144995493,
+        "url": "408b2551-2b3c-4c12-89c0-b2637c1e9e79"
+      }
+    }
+  ],
+  "vhs": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995494,
+        "url": "418e42ce-39e1-48ee-aa3d-d9bbf0ccbbf5"
+      },
+      "grey": {
+        "imageId": 144995497,
+        "url": "830a2d9a-18c5-4ba5-bb55-85c293739de0"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995499,
+        "url": "19a5b209-efd3-49ea-8d57-f9d2b83cf8a1"
+      },
+      "grey": {
+        "imageId": 144995500,
+        "url": "0cbffc66-98b4-4ce8-b8ce-89f5ea22215e"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995501,
+        "url": "7eda4798-eed5-4d9e-935b-b75e83d31cbd"
+      },
+      "grey": {
+        "imageId": 144995503,
+        "url": "8fd0d0dd-f150-408d-8280-3b7176fb2307"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995504,
+        "url": "666bf0f6-7bca-4be5-993d-47575e455421"
+      },
+      "grey": {
+        "imageId": 144995505,
+        "url": "56593fcb-08eb-4741-bf6d-65ab48542d28"
+      }
+    }
+  ],
+  "vaporwave": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995507,
+        "url": "4e321f7b-ccfc-4171-8e25-2a384f892f70"
+      },
+      "grey": {
+        "imageId": 144995508,
+        "url": "aed83ad7-47a6-4a37-8bb1-b08ef8196adb"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995509,
+        "url": "ac5dd3ef-5770-42b0-a35f-faa37c2bb633"
+      },
+      "grey": {
+        "imageId": 144995510,
+        "url": "f56eceb2-651e-4e3d-975d-e83eeb017186"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995512,
+        "url": "f8aedc43-3ee0-4f0f-aeeb-244172bdd807"
+      },
+      "grey": {
+        "imageId": 144995513,
+        "url": "7a9bd743-d3d3-4222-a49b-5314aaf02d81"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995515,
+        "url": "d2d02f89-8777-4fab-8ef2-3c31fce6ba15"
+      },
+      "grey": {
+        "imageId": 144995516,
+        "url": "c98477dd-2160-4e35-a2fb-c9a9b0337b81"
+      }
+    }
+  ],
+  "neon-cyberpunk": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995517,
+        "url": "aef77d7f-16b6-4edf-aa4e-e9d1535507e1"
+      },
+      "grey": {
+        "imageId": 144995518,
+        "url": "4e98c289-0024-4108-8848-eaca7e367e81"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995521,
+        "url": "bc190163-7424-4633-bc4d-d1a6116e6045"
+      },
+      "grey": {
+        "imageId": 144995522,
+        "url": "4de047a8-19a1-4524-a817-65fd2772a097"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995525,
+        "url": "1f3cf9b0-01fc-46f0-9dbc-a5fbf0801f92"
+      },
+      "grey": {
+        "imageId": 144995526,
+        "url": "a6a5456e-debc-4b6d-aaef-7c244bfe46bc"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995527,
+        "url": "8806d4bc-20b3-4ec3-809f-6da704a71b31"
+      },
+      "grey": {
+        "imageId": 144995529,
+        "url": "0f7c2986-5563-47e7-8245-18fc4a003ad1"
+      }
+    }
+  ],
+  "neo-noir": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995530,
+        "url": "c62c4cab-6e63-466a-be47-85c0c76a21f4"
+      },
+      "grey": {
+        "imageId": 144995531,
+        "url": "08b881b9-98a7-4116-aef4-ec7f4dccdcc6"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995532,
+        "url": "25296953-bee1-4cbd-8cc6-619235c6020d"
+      },
+      "grey": {
+        "imageId": 144995533,
+        "url": "e7fddcdb-a5e9-4bac-8ff2-182e0f831b76"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995537,
+        "url": "368f9346-5ff6-4d7b-8d39-16fd8907ab7f"
+      },
+      "grey": {
+        "imageId": 144995538,
+        "url": "45a24d1d-ea22-4691-bc83-4312ca24478c"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995539,
+        "url": "0bfac9c1-8907-484a-b93c-3e3b86523e6a"
+      },
+      "grey": {
+        "imageId": 144995541,
+        "url": "41da8303-0c13-4d3b-8408-af3c58e220f2"
+      }
+    }
+  ],
+  "manga": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995544,
+        "url": "d488180c-e60f-4bc7-8dba-0aa3e16afe98"
+      },
+      "grey": {
+        "imageId": 144995545,
+        "url": "ceae4655-a8f8-4df5-869b-589dc5f341eb"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995546,
+        "url": "4626f04f-ea2d-46f8-a485-a2b7d7fe7185"
+      },
+      "grey": {
+        "imageId": 144995547,
+        "url": "dd74b284-883c-4639-8b1e-b93a7b252190"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995548,
+        "url": "b7737a6f-fd68-486d-bd53-d98a0ca424e0"
+      },
+      "grey": {
+        "imageId": 144995549,
+        "url": "ab062901-738f-4b2a-955c-2df448038d88"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995550,
+        "url": "8f2be165-00e0-4324-8f56-0381b6d0e8af"
+      },
+      "grey": {
+        "imageId": 144995551,
+        "url": "82529d3a-0609-45d8-967b-a156f581a957"
+      }
+    }
+  ],
+  "chibi": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995552,
+        "url": "81e37ce4-c440-41c0-99c5-04247a794edb"
+      },
+      "grey": {
+        "imageId": 144995553,
+        "url": "817cf5a5-f6bd-4041-b125-d27ab18a7ae3"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995554,
+        "url": "dbe4e66b-5f14-40e6-bdd9-1394e3a5a1e0"
+      },
+      "grey": {
+        "imageId": 144995555,
+        "url": "a7716cfa-4823-44e3-9abe-d4307c807698"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995556,
+        "url": "e74314e6-6f83-43ab-ad29-1a974ebf7a7a"
+      },
+      "grey": {
+        "imageId": 144995557,
+        "url": "83d837a0-5385-4f2c-ada7-01585f2f0961"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995558,
+        "url": "d5fc5c80-6e58-49d4-a06f-398f52181ff3"
+      },
+      "grey": {
+        "imageId": 144995559,
+        "url": "3b7a2ba5-3021-410f-93df-62259a4e3163"
+      }
+    }
+  ],
+  "headshot": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995560,
+        "url": "759c7329-e566-4664-a94d-fa226afd6334"
+      },
+      "grey": {
+        "imageId": 144995561,
+        "url": "9be986ed-8c3b-452a-a13a-ae6c4b04b37f"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995564,
+        "url": "96453ddf-4cb7-47cd-9d04-d5d5d172de8e"
+      },
+      "grey": {
+        "imageId": 144995565,
+        "url": "30cda772-24d5-4bc3-a579-8512fc05a6bf"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995567,
+        "url": "c73a23ee-87c5-4b59-8069-16734a7c93f6"
+      },
+      "grey": {
+        "imageId": 144995568,
+        "url": "725b9269-b7fa-41b5-9a6b-ad23da29b673"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995570,
+        "url": "4deeadbc-52ed-4b4a-bb04-b367664cc537"
+      },
+      "grey": {
+        "imageId": 144995571,
+        "url": "38c6ed48-8542-4fa9-87f1-23686be65e7b"
+      }
+    }
+  ],
+  "3d-emoji": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995572,
+        "url": "3ad7f9e2-2ffd-41a8-bb07-559413b1ce83"
+      },
+      "grey": {
+        "imageId": 144995574,
+        "url": "aa90e591-05ad-40ee-9dc8-aaeaff4436e7"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995577,
+        "url": "1bffbaa2-5867-4927-9abe-e376b4665753"
+      },
+      "grey": {
+        "imageId": 144995578,
+        "url": "770bd926-4cd7-4772-98a6-0015e3df4c5e"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995581,
+        "url": "d8abdb28-6143-4d1e-bb7f-57dde7855b7f"
+      },
+      "grey": {
+        "imageId": 144995584,
+        "url": "97cc3c2e-d8e8-45db-bcde-978a94543e83"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995586,
+        "url": "6204736b-53ce-41ee-8bf6-ced7176eb74c"
+      },
+      "grey": {
+        "imageId": 144995587,
+        "url": "112a4322-c667-43a7-b644-20740a77254d"
+      }
+    }
+  ],
+  "webtoon": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995588,
+        "url": "34d6d5e7-d4d8-4d4e-af33-0432909d78a3"
+      },
+      "grey": {
+        "imageId": 144995590,
+        "url": "27b44d0f-3cf0-403d-95fb-61d822753463"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995591,
+        "url": "96fa5b76-74cd-48e8-9115-bb9cabec07ce"
+      },
+      "grey": {
+        "imageId": 144995592,
+        "url": "394333d3-9130-4cb8-98ce-c8b66f934e41"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995594,
+        "url": "a67b652a-c19e-45f1-84dc-1b94aa29ad34"
+      },
+      "grey": {
+        "imageId": 144995595,
+        "url": "14555ef7-dcb0-4b15-9118-e01d9c790105"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995596,
+        "url": "afe565ad-836a-4dc6-96bf-c8e1738b2a70"
+      },
+      "grey": {
+        "imageId": 144995597,
+        "url": "7032bc81-6407-4d68-b90f-4e7757964e6d"
+      }
+    }
+  ],
+  "caricature": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995598,
+        "url": "c658a489-7225-4093-b2d5-b94d96020919"
+      },
+      "grey": {
+        "imageId": 144995599,
+        "url": "15158901-2fba-4dd5-91fc-c8fe78651de2"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995600,
+        "url": "8fcfdf1b-3c52-42b0-993f-5801c3705e64"
+      },
+      "grey": {
+        "imageId": 144995601,
+        "url": "739b5e8c-cfb2-417d-a74b-7c2fc73d60e2"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995602,
+        "url": "79afa3e2-4680-4963-bab9-16f40a0783f1"
+      },
+      "grey": {
+        "imageId": 144995603,
+        "url": "69557204-9b0f-41f4-b093-08061d393201"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995605,
+        "url": "6e89916d-0654-4e84-a27a-4afef4fc6a1d"
+      },
+      "grey": {
+        "imageId": 144995606,
+        "url": "2a31e1eb-01a6-4ea4-94d9-655914892b56"
+      }
+    }
+  ],
+  "superhero-comic": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995607,
+        "url": "52afc172-41bf-4333-ae71-c52839c58b26"
+      },
+      "grey": {
+        "imageId": 144995608,
+        "url": "eb477279-c657-4480-8289-9c9e87869f9f"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995609,
+        "url": "b8e04fe0-1a0a-41ff-ac9a-1a2ca7646348"
+      },
+      "grey": {
+        "imageId": 144995610,
+        "url": "cc4f215b-be6f-48de-9835-c267f54773ae"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995612,
+        "url": "68455365-07f7-498d-bc59-3be0a3dce460"
+      },
+      "grey": {
+        "imageId": 144995613,
+        "url": "1e4a6814-7ee5-4388-b846-45cab6221b72"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995614,
+        "url": "8dc41270-a9fe-4cb2-ab34-0ceb582e8981"
+      },
+      "grey": {
+        "imageId": 144995615,
+        "url": "d0a1d200-6f7c-4883-84f6-42ef9146afa9"
+      }
+    }
+  ],
+  "voxel": [
+    {
+      "character": "mara",
+      "colour": {
+        "imageId": 144995616,
+        "url": "bbcd2f8f-c733-4b4e-9de3-77c3fb6178dc"
+      },
+      "grey": {
+        "imageId": 144995617,
+        "url": "7538e8c4-d994-4012-8686-0dd15569a1cd"
+      }
+    },
+    {
+      "character": "dev",
+      "colour": {
+        "imageId": 144995618,
+        "url": "b94c66f0-2c6e-4dab-9d8b-2fb0321cb041"
+      },
+      "grey": {
+        "imageId": 144995619,
+        "url": "5ade83c3-ee87-41ea-a7de-126a0f54b407"
+      }
+    },
+    {
+      "character": "ines",
+      "colour": {
+        "imageId": 144995620,
+        "url": "5e94b139-aaed-4eab-aeca-b1e26926369a"
+      },
+      "grey": {
+        "imageId": 144995621,
+        "url": "a51b872f-bc37-42a0-8829-4735dabb2fd2"
+      }
+    },
+    {
+      "character": "theo",
+      "colour": {
+        "imageId": 144995622,
+        "url": "55f1155c-8681-4c45-8480-7177fd4a150c"
+      },
+      "grey": {
+        "imageId": 144995623,
+        "url": "76e0effc-f586-498b-91e3-fa8bc659e7c2"
+      }
+    }
+  ]
+}
