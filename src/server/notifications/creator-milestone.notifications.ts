@@ -20,6 +20,18 @@ export const creatorMilestoneNotifications = createNotificationProcessor({
       };
     },
   },
+  'creator-legend-reached-staff': {
+    displayName: 'New Legend (staff)',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) =>
+      details?.username
+        ? {
+            message: `${details.username} just became a Legend. Send them a note?`,
+            url: `/user/${details.username}`,
+          }
+        : undefined,
+  },
   'creator-milestone-reached': {
     displayName: 'Creator milestone reached',
     category: NotificationCategory.Milestone,
