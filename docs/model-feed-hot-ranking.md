@@ -1021,3 +1021,97 @@ They are not, and cannot be: a frozen publish date puts WAI-Simple-Illustrious a
 276 after the fix. That concern becomes real only if the time term is replaced with a windowed
 engagement, which is the next piece of work — see
 [model-feed-unique-posters.md](model-feed-unique-posters.md) §6.
+
+---
+
+## 14. Capping generations by distinct generators (2026-10-08)
+
+Migration `20261011120000`. A tester found a model near the top of the Hot feed with no likes,
+single-digit downloads and several hundred generations, and guessed the generations were the
+creator's own. They were: `orchestration.jobs` shows one generating user and it is the model's owner.
+
+This is a consequence of §13. Moving the generation divisor from /114 to /4.1 was right, but it
+raised what self-generating is worth by the same factor. A count of events is a count of effort, and
+one account can supply all of it.
+
+### How much of the feed it was
+
+| Top 100 | Count |
+| --- | ---: |
+| models with 100+ generations | 68 |
+| models with a single generating user | **7** |
+| of those, generated only by the owner | **4** |
+| worst case | 25,444 generations, 14 likes, 1 user |
+
+### The data already existed
+
+`daily_resource_generation_user_counts.users_state` holds a `uniq` state per model version, and
+`uniqMerge` over it matched `orchestration.jobs` exactly on every version checked. No new
+materialized view, no new pipeline.
+
+It cannot go through `ModelVersionMetric` the way `generationCount` does, because
+`getVersionAggregationTasks` **sums** version rows into `ModelMetric` and summing per-version distinct
+counts double-counts anyone who used two versions. The count is merged in ClickHouse instead —
+`transform()` maps each version to its model, `uniqMerge` collapses the states — and written straight
+to `ModelMetric`.
+
+### Choosing the constant
+
+`generation term = least(generationCount / 4.1, uniqueGeneratorCount * 100)`
+
+Generations per unique generator, over models with 100+ generations, merged properly: median **44**,
+p90 **460**, max **25,444**. Simulated over the 400 strongest candidates:
+
+| Cap (like-equivalents per generator) | Single-generator models left | Zero-like models left | Illustrious /100 | 500+ gens | Legit models clipped |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| none (live before) | 7 | 3 | 34 | 57 | 0 |
+| **100** | **0** | **0** | **34** | **53** | **1** |
+| 50 | 0 | 0 | 36 | 52 | 6 |
+| 25 | 0 | 0 | 33 | 47 | 9 |
+| 10 | 0 | 0 | 30 | 41 | 14 |
+
+100 is the gentlest cap that fully removes the exploit — the models it targets sit two orders of
+magnitude above p90, so nothing is gained by squeezing legitimate generation-heavy models. 50 buys
+two extra Illustrious slots for six clipped models; a reasonable alternative, and the constant is one
+number in a trigger with no deploy attached.
+
+Verified on dev after populating the top 3,000 candidates: 0 single-generator models in the top 100,
+56 of 2,459 populated rows capped, and 74 of the new top 100 holding their exact prior score — the
+cap is surgical rather than a reweighting.
+
+### What it does not fix
+
+A **two-account** pair still works. One zero-like model remained in dev's top 100 with 2 generators
+and 727 generations — 364 per account, above the median but under p90, so the cap at 100 lets it
+through. The cap raises the cost of the attack (accounts, plus ~410 generations each) without
+removing it. The sockpuppet floor in
+[model-feed-unique-posters.md](model-feed-unique-posters.md) §5 is the same problem and wants one
+answer for both signals.
+
+### A related question the cap does not answer
+
+A moderator pointed out that generation rates differ sharply by ecosystem — MiniMax H3 models earn
+far fewer generations per download than Illustrious ones — so weighting generations more heavily
+penalises ecosystems that are not generated on-site. The mechanism is real. The magnitude is small:
+median score change from the §13 divisor fix, for models published in the last 120 days with 10+
+likes, expressed as days of recency gained.
+
+| Base model | Models | Days of recency gained |
+| --- | ---: | ---: |
+| SDXL 1.0 | 383 | +4.2 |
+| Pony | 749 | +4.1 |
+| Illustrious | 24,448 | +3.8 |
+| NoobAI | 393 | +3.0 |
+| MiniMax H3 | 843 | +2.8 |
+| Krea 2 | 7,901 | +2.8 |
+| Qwen 2.1 | 147 | +2.7 |
+| Anima | 25,464 | +2.4 |
+
+Every ecosystem **gained**, because the download divisor also moved. The relative disadvantage for
+MiniMax H3 against Illustrious is about **one day** of recency, against a feed that reaches back 69
+days.
+
+What actually changed the mix is population, not penalty: Illustrious has 24,448 recent models to
+H3's 843, so lifting a huge population slightly displaces a small one from a fixed 100 slots. Fixing
+this properly means per-ecosystem divisors — the same machinery §13 rejected — and it should be
+weighed against the fact that the per-model effect is a single day.

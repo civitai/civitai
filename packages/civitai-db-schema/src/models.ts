@@ -1201,6 +1201,7 @@ export interface ModelMetric {
   status: ModelStatus;
   availability: Availability;
   hotScore: number | null;
+  uniqueGeneratorCount: number;
 }
 
 export interface ModelVersionMetric {

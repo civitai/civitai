@@ -3329,6 +3329,14 @@ export type ModelMetric = {
    * Int, not float — the keyset cursor parser runs parseInt on the sort token.
    */
   hotScore: number | null;
+  /**
+   * Distinct users who have generated with any version of this model, merged across
+   * versions rather than summed. Caps hotScore's generation term so one person — the
+   * owner included — cannot lift a model on their own generations. 0 means "not computed
+   * yet" and leaves the cap inert; populated by backfill-unique-generators and kept
+   * current by the Model metrics job.
+   */
+  uniqueGeneratorCount: Generated<number>;
 };
 export type ModelMetricDaily = {
   modelId: number;
