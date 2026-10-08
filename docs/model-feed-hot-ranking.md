@@ -88,15 +88,20 @@ version.
 ### The formula
 
 ```
-engagement = likes + downloads / 8.5 + generations / 114
+engagement = likes + downloads / 6.4 + generations / 4.1
 hot        = log10(1 + engagement) + extract(epoch FROM publishedAt) / T
 ```
 
 All three inputs are existing all-time `ModelMetric` columns (`thumbsUpCount`, `downloadCount`,
-`generationCount`). The divisors are the platform-wide ratios of each signal to likes: across
-published models there are about 8.5 downloads and 114 generations per like. Dividing by them
-gives each signal equal total weight, so generations, the largest raw number by two orders of
-magnitude, don't drown out everything else. They're a starting point to tune, not a decision.
+`generationCount`). The divisors are the **median per-model** ratios of each signal to likes, so
+all three carry equal weight on a typical model.
+
+The first version of this used the platform-wide **sum** ratios — 8.5 downloads and 117 generations
+per like. Those look like the same quantity and are not, and the difference broke the ranking (§13):
+generations are concentrated in a handful of checkpoints with billions apiece, so the sum ratio
+over-states the typical model's generation rate by about 28x. On the median published model — 56
+likes, 371 downloads, 231 generations — generations contributed **2%** of engagement and downloads
+43%. The median per-model ratios are 6.4 and 4.1, which put all three near a third each.
 
 - **Why it's cheap:** `publishedAt` never changes, so the passage of time adds the same amount to
   nobody's score. The relative order of two models only changes when one of them gains likes. The
@@ -590,9 +595,10 @@ today's list at all.
    changes which entries get seen. **Implementation:** list the model collection options explicitly
    instead of spreading `Object.values(ModelSort)`, so the two menus stop being coupled.
    `ModelSortHidden` is the wrong tool — it would also remove Hot from the feed dropdown.
-9. **Signal weights stay equal.** Likes + downloads/8.5 + generations/114, normalized to equal total
-   weight. Measured both ways: the top lists barely differ, because newly popular models rarely have
-   generations yet. Revisit when more of the catalogue is generatable on-site.
+9. **Signal weights stay equal — but the first divisors were wrong.** Likes + downloads/6.4 +
+   generations/4.1, normalized so each contributes equally to a *median* model. The original
+   reading here ("the top lists barely differ") was measured over a sample too small to show it and
+   is **false**: the divisors move the feed more than any other parameter. §13 has the correction.
 10. **Filtering semantics — superseded by §10.** This read "Hot filters on whole-model ratings,
     following Newest/Oldest", on the assumption the score would live only on `ModelMetric`.
     Measurement forced the score onto `ModelBaseModelMetric` as well, so with **one** base model Hot
@@ -625,7 +631,8 @@ pair, then delete `periodFallback`.
 
 - **Done (this branch): build the hot sort.** `ModelSort.Hot` is the client default on `/models` and
   tag pages; every path measured under 5 ms on dev (§10, §12); ordering approved 2026-10-07 (§9).
-  Still open until merged: an `EXPLAIN ANALYZE` on the prod replica after the migration (§11).
+  The migration is applied in production and verified on the replica — 0.5–5.6 ms across every path
+  (§11). Only the merge and deploy are left.
 - **Done (this branch): `T` and the signal weights.** One `T` at 1 month; likes, downloads and
   generations weighted equally.
 - **Done (this branch): migrate saved defaults.** The one-time rewrite and the `periodFallback`
@@ -752,8 +759,8 @@ strictly less divergence than §7 described.
 The score is computed by a BEFORE INSERT/UPDATE trigger on `ModelMetric`, not by the app:
 
 ```sql
-NEW."hotScore" := round((log(1 + NEW."thumbsUpCount" + NEW."downloadCount" / 8.5
-                             + NEW."generationCount" / 114.0)
+NEW."hotScore" := round((log(1 + NEW."thumbsUpCount" + NEW."downloadCount" / 6.4
+                             + NEW."generationCount" / 4.1)
                          + extract(epoch FROM NEW."publishedAt") / 2592000) * 10000)::int;
 ```
 
@@ -819,8 +826,41 @@ the retry block in `getModelsInfiniteHandler` are deleted in this same change.
 Revert the code; the columns, triggers and indexes are inert without it. There is no data migration to
 undo, and the localStorage rewrite is bounded to one exact sort/period pair.
 
-**Closing condition:** step 1 applied to production, both indexes present, and an `EXPLAIN ANALYZE` on
-the replica matching the dev numbers within an order of magnitude — before step 2 ships.
+### Step 1 verified in production (2026-10-07)
+
+Applied by hand, then checked on the replica.
+
+| Check | Result |
+| --- | --- |
+| `hotScore` NULL | **0** of 961,119 `ModelMetric`, **0** of 899,716 `ModelBaseModelMetric` |
+| `publishedAt` NULL | **6**, all orphan metric rows with no `Model`, none published, top score 3,010 |
+| Future-date clamp | 213 future rows, **none** scored above a `now()`-clamped recompute; `max_future` 6,914,848 < `max_published` 6,942,365 |
+| Triggers | all 3 attached |
+| Indexes | `feed_hot` 45 MB, `mbmm_feed_hot` 55 MB, both `indisvalid` — against 318 MB for `feed_highest_rated` alone |
+| Backfill procedure | dropped |
+
+`EXPLAIN ANALYZE` on the replica, green-site filters, first 101 rows, second of two runs:
+
+| Scenario | Index | Dev | **Prod** |
+| --- | --- | ---: | ---: |
+| default feed (path 1) | `feed_hot` | 0.68 ms | **0.75 ms** |
+| deep page (row 5,000) | `feed_hot` | 2.4 ms | **5.6 ms** |
+| one base model (6 tested) | `mbmm_feed_hot` | 1.1–4.3 ms | **0.50–0.82 ms** |
+| three base models (path 3) | `feed_hot` + pkey | 2.1 ms | **2.2 ms** |
+| flag-off shape | `feed_hot` + `ModelVersion` | 3.1 ms | **4.2 ms** |
+| control: today's default | `feed_highest_rated` | 15.4 ms | **12.6 ms** |
+
+Every path is an index-only scan on the intended index, no sort node, no seq scan, and every buffer a
+cache hit. Mid-sized base models — the 81 ms case that justified the mirror index (§10) — come in
+under 1 ms on prod, better than dev.
+
+One difference from dev: `Heap Fetches` is not 0 (325 on the default feed, 3,964 on the deep page).
+`ModelMetric` is upserted every minute, so the visibility map goes stale between autovacuums; the
+scan stays index-only and the fetches were all cache hits, which is why they cost nothing measurable.
+Dev read 0 only because the migration's vacuum had just run.
+
+**Closing condition:** met — step 1 applied to production, both indexes present and valid, and the
+replica matches the dev numbers. Step 2 is clear to ship.
 
 ---
 
@@ -905,3 +945,79 @@ Two additions to [§11](#11-zero-downtime-rollout) step 1:
 
 Both are verified on dev. The indexes stay plain `DESC` — no `NULLS LAST` anywhere, since the score
 can no longer be NULL.
+
+---
+
+## 13. Tester round (2026-10-08): the divisors were the bug
+
+Testers saw the feed on a preview build before PR #5523 merged. Nobody hit a correctness or
+performance problem — "seems to play nicely when combined with other filters" — but three people
+independently said the *mix* was wrong: too many Qwen and MiniMax H3 models, and you had to scroll a
+long way to reach an Illustrious one. They were right, and the cause was not the one that looked
+obvious.
+
+### What it was not: the recency weight
+
+The first hypothesis was that `T` = 30 days is too steep. Widening it makes Illustrious **worse**,
+because it admits *older* models from the same over-scored ecosystems:
+
+| `T` | Illustrious in top 100 | First Illustrious-only | Qwen/H3/Krea 2 |
+| ---: | ---: | ---: | ---: |
+| 30 days (shipped) | 14 | rank 11 | 83 |
+| 60 days | 8 | rank 33 | 92 |
+| 90 days | 3 | rank 69 | 92 |
+
+Measuring this first is what stopped a wrong fix shipping. The damage was in the engagement term.
+
+### What it was: sum ratios are not per-model ratios
+
+The divisors were set from site-wide **sum** ratios — total downloads ÷ total likes, total
+generations ÷ total likes. For downloads that is nearly right. For generations it is off by 28x,
+because the sums are dominated by a few checkpoints with billions of generations apiece:
+
+| | sum ratio (used at first) | median per-model ratio |
+| --- | ---: | ---: |
+| downloads per like | 8.5 | **6.4** |
+| generations per like | 117 | **4.1** |
+
+On the median published model — 56 likes, 371 downloads, 231 generations — `generations/114`
+contributed **2%** of engagement. The signal was effectively switched off, which is exactly what one
+tester said: *"Not sure I agree with downloads having so much weight compared to generations."*
+
+### Why it looked like a base-model problem
+
+Dividing every model's downloads by a single constant also converts ecosystem scarcity into apparent
+quality. Download-per-like is not uniform — 5.7 for Illustrious, 6.2 Pony, 7.3 Anima, against 17.3
+for MiniMax H3, 17.7 Qwen 2.1, 20.7 Wan — and 8.5 sits at the mature end because the corpus is
+mostly Illustrious, Pony and SD 1.5. A small ecosystem concentrates demand onto few models:
+Illustrious published 12,141 models in 45 days against Qwen 2.1's 160, and the median recent Qwen
+2.1 model (28 likes, 518 downloads) out-scored the **95th percentile** Illustrious model.
+
+### The fix and what it moved
+
+Two constants. Nothing else changed — no schema, no index, no application code, because the score
+lives in a trigger.
+
+| | Illustrious /100 | First Illustrious-only | Qwen/H3/Krea 2 | 500+ generations | Oldest in top 100 |
+| --- | ---: | ---: | ---: | ---: | --- |
+| sum ratios | 15 | rank 11 | 82 | 16 | 47 days |
+| **median ratios** | **33** | **rank 4** | **55** | **56** | **100 days** |
+
+All three complaints answered by one change, including the "freshness curve is too steep" one:
+correcting the divisors widened the engagement term's range from 5.15 to 6.31 log units, and that
+range *is* how far back the feed can reach. Widening `T` was the wrong lever for it.
+
+### Two findings that settled other questions
+
+**Version spam.** A tester expected Hot to reward creators who republish a "new version" every two
+weeks. It is the opposite — the *old* default was the vulnerable one. For the 10,107 models with 5+
+published versions, `lastVersionAt` (what `period: Month` filtered on) tracks the newest version in
+**10,079** cases; `Model.publishedAt` (what Hot uses) in **724**, sitting on average 290 days
+earlier. Republishing reset the old window and moves a Hot score by zero. A new version still earns
+real downloads and generations, which is uptake, not a free recency reset.
+
+**Perennial winners.** Another tester expected models like WAI-Illustrious to be permanently hot.
+They are not, and cannot be: a frozen publish date puts WAI-Simple-Illustrious at rank 973 today,
+276 after the fix. That concern becomes real only if the time term is replaced with a windowed
+engagement, which is the next piece of work — see
+[model-feed-unique-posters.md](model-feed-unique-posters.md) §6.

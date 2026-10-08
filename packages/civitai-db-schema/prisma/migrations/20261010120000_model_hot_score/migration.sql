@@ -1,6 +1,6 @@
 -- Hot sort for the model feed: a stored popularity score that favours newer models.
 --
---   engagement = thumbsUpCount + downloadCount / 8.5 + generationCount / 114
+--   engagement = thumbsUpCount + downloadCount / 6.4 + generationCount / 4.1
 --   hotScore   = round((log10(1 + engagement) + publishedAt_epoch / 2592000) * 10000)
 --
 -- The time term is the PUBLISH date, not the age, so the passage of time adds the same
@@ -10,6 +10,10 @@
 -- 🔴 APPLY THIS FILE BEFORE DEPLOYING THE CODE, and apply it WITHOUT
 -- --single-transaction: it contains CALL with internal COMMITs and two
 -- CREATE INDEX CONCURRENTLY, neither of which can run inside a transaction block.
+--
+-- Re-runnable over a copy that already has it: every object is CREATE OR REPLACE or
+-- IF NOT EXISTS, and the backfill defaults to force := true so it recomputes rows that
+-- already hold a score. Pass force := false only to resume an interrupted first run.
 --
 -- Safe to apply while the current build is running: nothing reads these columns yet.
 -- Prisma selects explicit column lists, so a client that predates the columns ignores
@@ -49,11 +53,16 @@ AS $function$
 BEGIN
     NEW."hotScore" := round(
         (
+            -- 6.4 and 4.1 are the MEDIAN per-model ratios of each signal to likes, so all
+            -- three carry equal weight on a typical model. The site-wide SUM ratios (8.5 and
+            -- 117) look like the same thing and are not: generations are concentrated in a
+            -- handful of checkpoints with billions apiece, so the sum ratio under-counted
+            -- generations ~28x and left them at 2% of a median model's engagement.
             log(
                 1
                 + NEW."thumbsUpCount"
-                + NEW."downloadCount" / 8.5
-                + NEW."generationCount" / 114.0
+                + NEW."downloadCount" / 6.4
+                + NEW."generationCount" / 4.1
             )
             -- least(..., NOW()) is guard 2. The coalesce is guard 1, and it falls back to
             -- the epoch rather than NOW(): a row with no publish date is unpublished or
@@ -233,7 +242,8 @@ $function$;
 -- Only "publishedAt" is assigned — trg_model_metric_hot_score computes the score from it.
 -- Dev timing: ~62 s for ModelMetric, ~35 s for ModelBaseModelMetric.
 
-CREATE OR REPLACE PROCEDURE public.backfill_model_hot_score(batch_size INT DEFAULT 250000)
+CREATE OR REPLACE PROCEDURE public.backfill_model_hot_score(batch_size INT DEFAULT 250000,
+                                                            force BOOLEAN DEFAULT true)
 LANGUAGE plpgsql
 AS $procedure$
 DECLARE
@@ -258,7 +268,8 @@ BEGIN
          WHERE mm."modelId" >= lo
            AND mm."modelId" < lo + batch_size
            AND (
-                mm."hotScore" IS NULL
+                force
+             OR mm."hotScore" IS NULL
              OR mm."publishedAt" IS DISTINCT FROM (
                     SELECT coalesce(m."publishedAt", m."createdAt")
                       FROM "Model" m
@@ -296,7 +307,7 @@ $procedure$;
 
 CALL public.backfill_model_hot_score();
 
-DROP PROCEDURE public.backfill_model_hot_score(INT);
+DROP PROCEDURE public.backfill_model_hot_score(INT, BOOLEAN);
 
 -- 6. Indexes ------------------------------------------------------------------
 --
