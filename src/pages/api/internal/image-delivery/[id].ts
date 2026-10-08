@@ -22,7 +22,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
 
   const { id } = results.data;
 
-  // `id` is the image url (the raw query keys on `WHERE url = $1`). Read-through Redis cache
+  // `id` is the image url. Read-through Redis cache
   // fronts the near-immutable url -> {id, url, hideMeta, type, mimeType} lookup; fails open
   // to the DB. `type`/`mimeType` let the caller tell a video from an image before it picks a
   // delivery path; `hideMeta` is unchanged, so a caller that reads only it is unaffected.
