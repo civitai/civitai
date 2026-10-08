@@ -229,6 +229,20 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     },
   });
 
+  const withdrawEntryMutation = trpc.crucible.withdrawEntry.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        title: 'Entry removed',
+        message: 'Your entry slot is open again.',
+      });
+      queryUtils.crucible.getById.invalidate({ id });
+      queryUtils.crucible.getEntries.invalidate({ crucibleId: id });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not remove entry', error: new Error(error.message) });
+    },
+  });
+
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
 
@@ -289,7 +303,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     entryLimit: maxUserEntries,
   });
   const nextEntryFree = isFreeCrucibleEntry({
-    entriesSoFar: userEntryCount,
+    entriesSoFar: crucible.viewerEntriesSoFar,
     freeEntriesPerUser: crucible.freeEntriesPerUser,
   });
 
@@ -320,6 +334,28 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       labels: { cancel: 'Keep it', confirm: 'Remove entry' },
       confirmProps: { color: 'red' },
       onConfirm: () => removeEntryMutation.mutate({ entryId: entry.id }),
+    });
+  };
+
+  const handleWithdrawEntry = (entry: CrucibleEntryData) => {
+    openConfirmModal({
+      title: 'Remove your entry',
+      children: (
+        <Stack gap="sm">
+          <Text size="sm">
+            Remove this entry from the crucible? It leaves judging and its slot opens up again.
+          </Text>
+          <Text size="sm" fw={600}>
+            {crucible.entryFee > 0
+              ? `There are no refunds, and entering again in this slot costs the full ${crucible.entryFee.toLocaleString()} Buzz fee.`
+              : "This can't be undone."}
+          </Text>
+        </Stack>
+      ),
+      centered: true,
+      labels: { cancel: 'Keep it', confirm: 'Remove entry' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => withdrawEntryMutation.mutate({ entryId: entry.id }),
     });
   };
 
@@ -440,6 +476,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 onEntryClick={openEntry}
                 status={crucible.status}
                 onRemoveEntry={canRemoveEntries ? handleRemoveEntry : undefined}
+                onWithdrawEntry={isOpen ? handleWithdrawEntry : undefined}
                 title="All Entries"
                 showRanks={rankingsVisible}
                 completed={crucible.status === CrucibleStatus.Completed}
@@ -708,6 +745,7 @@ const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBu
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
   currentEntryCount: crucible.viewerEntryCount,
+  entriesSoFar: crucible.viewerEntriesSoFar,
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,

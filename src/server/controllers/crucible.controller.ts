@@ -6,6 +6,7 @@ import type {
   GetCrucibleEntriesSchema,
   CancelCrucibleSchema,
   RemoveCrucibleEntrySchema,
+  WithdrawCrucibleEntrySchema,
   UpdateCrucibleSchema,
   GetFeaturedCrucibleSchema,
   CreateCrucibleInputSchema,
@@ -37,6 +38,7 @@ import {
   createCrucibleEntryPost,
   cancelCrucible,
   removeCrucibleEntry,
+  withdrawCrucibleEntry,
   updateCrucible,
   createCrucible,
   getCrucibleDetail,
@@ -320,6 +322,14 @@ export const removeCrucibleEntryHandler = ({
   input: RemoveCrucibleEntrySchema;
   ctx: ProtectedContext;
 }) => removeCrucibleEntry({ ...input, moderatorId: ctx.user.id });
+
+export const withdrawCrucibleEntryHandler = ({
+  input,
+  ctx,
+}: {
+  input: WithdrawCrucibleEntrySchema;
+  ctx: ProtectedContext;
+}) => withdrawCrucibleEntry({ ...input, userId: ctx.user.id });
 
 export const updateCrucibleHandler = async ({
   input,
