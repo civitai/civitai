@@ -32,7 +32,7 @@ describe('getCreatorJourneyConfig', () => {
   });
 
   it('rejects a numeric role id, which would lose precision in JSON', async () => {
-    findUnique.mockResolvedValue({ value: { legendRoleId: 1000000000000000001 } });
+    findUnique.mockResolvedValue({ value: { legendRoleId: 1e18 } });
     expect(await getCreatorJourneyConfig()).toEqual({});
   });
 
