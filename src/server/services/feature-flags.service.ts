@@ -390,6 +390,9 @@ const featureFlags = createFeatureFlags({
   // Creator Studio composer. Both apps must read the key `creator-announcements`
   // verbatim — a flag only one side honours ships the half-visible state.
   creatorAnnouncements: { availability: ['mod'], fliptKey: 'creator-announcements' },
+  // The post planner (docs/batch-scheduling-planner-element.md): the `post.*` planner procedures,
+  // their REST twins and both hosts. Creator Studio reads the same Flipt key.
+  postPlanner: { availability: ['mod'], fliptKey: 'post-planner', displayName: 'Post planner' },
   // Gates CREATING stickers, seeing them in shops, and the picker. Deliberately
   // does NOT gate rendering — a sticker already in a comment or DM must render
   // for everyone, or flipping this off orphans content that is already out there.

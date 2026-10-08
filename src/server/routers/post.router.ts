@@ -22,12 +22,19 @@ import {
   updatePostImageHandler,
 } from './../controllers/post.controller';
 import { applyUserPreferences, rateLimit } from './../middleware.trpc';
+import { CacheTTL } from '~/server/common/constants';
 import { getByIdSchema } from './../schema/base.schema';
 import {
   addPostTagSchema,
   addResourceToPostImageInput,
   createPostWithImagesSchema,
   getPostTagsSchema,
+  getScheduledPostsSchema,
+  plannerPostIdSchema,
+  plannerPublishNowSchema,
+  plannerRescheduleSchema,
+  plannerShiftSchema,
+  plannerUnscheduleSchema,
   postCreateSchema,
   postRateLimits,
   postsQuerySchema,
@@ -39,7 +46,14 @@ import {
   updatePostImageSchema,
 } from './../schema/post.schema';
 import { addPostImage, getPostEditDetail, getPostImageIds } from './../services/post.service';
-import { guardedProcedure, publicProcedure, verifiedProcedure } from './../trpc';
+import {
+  getPlannerPostDetail,
+  getScheduledPosts,
+  reschedulePlannerPost,
+  shiftPlannerPosts,
+  unschedulePlannerPosts,
+} from './../services/post-planner.service';
+import { guardedProcedure, isFlagProtected, publicProcedure, verifiedProcedure } from './../trpc';
 import { enqueueJobs } from '~/server/services/job-queue.service';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -192,6 +206,54 @@ export const postRouter = router({
     .input(updatePostCollectionTagIdInput)
     .use(isOwnerOrModerator)
     .mutation(updatePostCollectionTagIdHandler),
+  getScheduled: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getScheduledPostsSchema)
+    .use(isFlagProtected('postPlanner'))
+    .query(({ ctx, input }) => getScheduledPosts({ ...input, user: ctx.user })),
+  getPlannerDetail: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(plannerPostIdSchema)
+    .use(isFlagProtected('postPlanner'))
+    .query(({ ctx, input }) => getPlannerPostDetail({ ...input, user: ctx.user })),
+  reschedule: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerRescheduleSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) =>
+      reschedulePlannerPost({
+        id: input.id,
+        target: input.publishedAt,
+        expectedScope: input.expectedScope,
+        ctx,
+      })
+    ),
+  publishNow: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerPublishNowSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) =>
+      reschedulePlannerPost({
+        id: input.id,
+        target: 'now',
+        expectedScope: input.expectedScope,
+        ctx,
+      })
+    ),
+  unschedule: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerUnscheduleSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) => unschedulePlannerPosts({ ...input, user: ctx.user })),
+  shiftSchedule: verifiedProcedure
+    .meta({ requiredScope: TokenScope.MediaWrite })
+    .input(plannerShiftSchema)
+    .use(rateLimit({ limit: 60, period: CacheTTL.md }, undefined, { sharedKey: 'post:planner' }))
+    .use(isFlagProtected('postPlanner'))
+    .mutation(({ ctx, input }) => shiftPlannerPosts({ ...input, user: ctx.user })),
   enqueueNsfwLevelUpdate: moderatorProcedure.input(getByIdSchema).mutation(({ input }) =>
     enqueueJobs([
       {

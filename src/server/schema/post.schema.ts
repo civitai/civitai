@@ -309,3 +309,56 @@ export const updatePostCollectionTagIdInput = z.object({
   id: z.number(),
   collectionTagId: z.number(),
 });
+
+// Post planner (docs/batch-scheduling-planner-element.md §3). Coerced so the REST twins can hand
+// query strings and JSON bodies to the same procedures the tRPC hosts call.
+const PLANNER_MAX_RANGE_DAYS = 45;
+const PLANNER_MAX_BATCH = 200;
+const PLANNER_MAX_SHIFT_MINUTES = 90 * 24 * 60;
+const plannerId = z.coerce.number().int().positive();
+export const postScheduleScopeSchema = z.enum(['post', 'version', 'model']);
+
+export type GetScheduledPostsInput = z.infer<typeof getScheduledPostsSchema>;
+export const getScheduledPostsSchema = z
+  .object({
+    from: z.coerce.date(),
+    to: z.coerce.date(),
+    modelVersionId: plannerId.optional(),
+  })
+  .refine((range) => range.to > range.from, { message: '`to` must be after `from`' })
+  .refine(
+    (range) => range.to.getTime() - range.from.getTime() <= PLANNER_MAX_RANGE_DAYS * 86_400_000,
+    { message: `A planner range spans at most ${PLANNER_MAX_RANGE_DAYS} days` }
+  );
+
+export type PlannerPostIdInput = z.infer<typeof plannerPostIdSchema>;
+export const plannerPostIdSchema = z.object({ id: plannerId });
+
+export type PlannerRescheduleInput = z.infer<typeof plannerRescheduleSchema>;
+export const plannerRescheduleSchema = z.object({
+  id: plannerId,
+  publishedAt: z.coerce.date(),
+  expectedScope: postScheduleScopeSchema,
+});
+
+export type PlannerPublishNowInput = z.infer<typeof plannerPublishNowSchema>;
+export const plannerPublishNowSchema = z.object({
+  id: plannerId,
+  expectedScope: postScheduleScopeSchema,
+});
+
+export type PlannerUnscheduleInput = z.infer<typeof plannerUnscheduleSchema>;
+export const plannerUnscheduleSchema = z.object({
+  ids: z.array(plannerId).min(1).max(PLANNER_MAX_BATCH),
+});
+
+export type PlannerShiftInput = z.infer<typeof plannerShiftSchema>;
+export const plannerShiftSchema = z.object({
+  ids: z.array(plannerId).min(1).max(PLANNER_MAX_BATCH),
+  deltaMinutes: z.coerce
+    .number()
+    .int()
+    .refine((minutes) => minutes !== 0 && Math.abs(minutes) <= PLANNER_MAX_SHIFT_MINUTES, {
+      message: 'Shift between 1 minute and 90 days in either direction',
+    }),
+});
