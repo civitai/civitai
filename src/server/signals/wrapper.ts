@@ -23,6 +23,25 @@ const log = createLogger('signals', 'cyan');
  *   OPEN → (now >= cooldownUntil) → HALF_OPEN
  *   HALF_OPEN → (trial success) → CLOSED
  *   HALF_OPEN → (trial failure) → OPEN (new cooldown)
+ *   HALF_OPEN → (trial shed by the queue) → HALF_OPEN, trial slot released
+ *
+ * What counts toward TRIP_THRESHOLD (the breaker exists to stop calling a SICK
+ * backend; shedding excess DEMAND is the queue bound's job):
+ *   - backend timeout — fn() ran and the deadline fired: ALWAYS counts, and is
+ *     "backend evidence".
+ *   - fn() rejected (e.g. fetch failed): never counts by itself (unchanged), but
+ *     is "backend evidence".
+ *   - queue-full rejection, or a deadline that expired while still QUEUED (fn()
+ *     never ran): counts ONLY if the window already holds backend evidence.
+ *     Rule, deterministic: a queued expiry means the calls ahead were slow
+ *     OR demand outran a healthy backend; it is attributed to the backend only
+ *     when a backend timeout or fn() rejection is also in the window. So a
+ *     healthy burst (e.g. a synchronized client reconnect after recovery, far
+ *     past the queue bound) is shed by the queue and never opens the circuit,
+ *     while a real outage — whose slot holders time out — trips it.
+ *   - A HALF_OPEN trial that is shed (queue full) or expires in the queue probed
+ *     nothing, so it is NOT a failed trial: it releases `trialInFlight` and the
+ *     circuit stays HALF_OPEN; the next caller becomes the trial.
  *
  * Defaults are HIGHER than Meili because signals normally takes longer (Orleans
  * grain init):
@@ -43,7 +62,7 @@ const log = createLogger('signals', 'cyan');
  * never counted as a failure the circuit almost never opened. Now a call that
  * cannot FINISH within SIGNALS_CALL_TIMEOUT_MS of entry rejects with
  * SignalsCallTimeoutError('timeout') — and if it was still queued, its fn()
- * never runs. Queue-full rejections and timeouts both count toward the circuit.
+ * never runs. Queue-side failures feed the circuit per the rules above.
  *
  * SCOPE: wrap ONLY the actual `fetch(SIGNALS_ENDPOINT/...)` call. Do NOT wrap
  * surrounding DB/Redis work — those are independent dependencies and should not
@@ -187,6 +206,10 @@ type Circuit = {
   state: CircuitState;
   // Unix ms timestamps of recent counted failures. Pruned on each access.
   failures: number[];
+  // Unix ms timestamps of recent BACKEND failures (fn() ran and timed out, or
+  // fn() rejected) — the evidence that lets queue-side failures count. Pruned
+  // with the same window as `failures`.
+  backendFailures: number[];
   // ms-since-epoch; only meaningful when state === 'OPEN'.
   cooldownUntil: number;
   // While HALF_OPEN, whether the single trial slot is currently in flight.
@@ -197,6 +220,7 @@ type Circuit = {
 const circuit: Circuit = {
   state: 'CLOSED',
   failures: [],
+  backendFailures: [],
   cooldownUntil: 0,
   trialInFlight: false,
 };
@@ -208,11 +232,16 @@ function circuitCooldownMs() {
   return env.SIGNALS_CIRCUIT_COOLDOWN_SECONDS * 1000;
 }
 
+function pruneWindow(timestamps: number[], cutoff: number) {
+  let i = 0;
+  while (i < timestamps.length && timestamps[i] < cutoff) i++;
+  if (i > 0) timestamps.splice(0, i);
+}
+
 function pruneFailures(c: Circuit, now: number) {
   const cutoff = now - circuitWindowMs();
-  let i = 0;
-  while (i < c.failures.length && c.failures[i] < cutoff) i++;
-  if (i > 0) c.failures.splice(0, i);
+  pruneWindow(c.failures, cutoff);
+  pruneWindow(c.backendFailures, cutoff);
 }
 
 function transition(c: Circuit, next: CircuitState, now: number) {
@@ -227,6 +256,7 @@ function transition(c: Circuit, next: CircuitState, now: number) {
     c.trialInFlight = false;
   } else if (next === 'CLOSED') {
     c.failures = [];
+    c.backendFailures = [];
     c.cooldownUntil = 0;
     c.trialInFlight = false;
   }
@@ -260,26 +290,42 @@ function admitCall(): { admitted: boolean; isTrial: boolean } {
   return { admitted: true, isTrial: false };
 }
 
-function recordCallOutcome(isTrial: boolean, failed: boolean) {
+/**
+ * How a wrapped call ended, from the circuit's point of view:
+ *   success       — fn() resolved before the deadline
+ *   backendError  — fn() rejected before the deadline (e.g. fetch failed)
+ *   backendTimeout— fn() ran and the deadline fired
+ *   queueFull     — rejected at entry, queue bound reached; fn() never ran
+ *   queueExpired  — deadline fired while still queued; fn() never ran
+ */
+type CallOutcome = 'success' | 'backendError' | 'backendTimeout' | 'queueFull' | 'queueExpired';
+
+function recordCallOutcome(isTrial: boolean, outcome: CallOutcome) {
   const c = circuit;
   const now = Date.now();
   pruneFailures(c, now);
 
-  if (failed) {
+  if (outcome === 'backendTimeout' || outcome === 'backendError') {
+    c.backendFailures.push(now);
+  }
+  const shed = outcome === 'queueFull' || outcome === 'queueExpired';
+  // See the header comment: a backend timeout always counts; a queue-side
+  // failure counts only when backend evidence is already in the window.
+  const counted = outcome === 'backendTimeout' || (shed && c.backendFailures.length > 0);
+  if (counted) {
     c.failures.push(now);
   }
 
   if (isTrial) {
     c.trialInFlight = false;
-    if (failed) {
-      transition(c, 'OPEN', now);
-    } else {
-      transition(c, 'CLOSED', now);
-    }
+    // A shed trial never reached the backend, so it is not a trial result:
+    // stay HALF_OPEN and let the next caller probe.
+    if (shed) return;
+    transition(c, outcome === 'backendTimeout' ? 'OPEN' : 'CLOSED', now);
     return;
   }
 
-  if (c.state === 'CLOSED' && failed && c.failures.length >= env.SIGNALS_CIRCUIT_TRIP_THRESHOLD) {
+  if (c.state === 'CLOSED' && counted && c.failures.length >= env.SIGNALS_CIRCUIT_TRIP_THRESHOLD) {
     transition(c, 'OPEN', now);
   }
 }
@@ -305,10 +351,9 @@ function recordCallOutcome(isTrial: boolean, failed: boolean) {
  * runs from entry, so a call that waits in the queue past it rejects with
  * SignalsCallTimeoutError('timeout') and its fn() is never invoked (no
  * outbound fetch fires after the caller gave up). A full queue rejects at 0ms
- * with reason 'concurrency'. Both count as circuit failures, so a storm trips
- * the breaker and later calls fail fast at the gate. A HALF_OPEN trial that is
- * shed or times out in the queue records a failed trial (→ OPEN), so it can
- * never leave `trialInFlight` stuck.
+ * with reason 'concurrency'. Whether either counts toward the circuit depends on
+ * backend evidence in the window (header comment); a shed HALF_OPEN trial
+ * always releases `trialInFlight`.
  */
 export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   // Circuit breaker gate — runs synchronously before the pLimit acquire.
@@ -323,7 +368,7 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   // queue is full once it reaches concurrency + max queue.
   if (outstanding >= env.SIGNALS_CALL_CONCURRENCY + env.SIGNALS_CALL_MAX_QUEUE) {
     signalsCallQueueRejectionsCounter.inc();
-    recordCallOutcome(isTrial, true);
+    recordCallOutcome(isTrial, 'queueFull');
     throw new SignalsCallTimeoutError('concurrency', 'Signals call queue full — failing fast');
   }
 
@@ -331,6 +376,10 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
   const deadlineAt = Date.now() + env.SIGNALS_CALL_TIMEOUT_MS;
   let timer: NodeJS.Timeout | undefined;
   let timedOut = false;
+  // Whether fn() was invoked, and whether the call rejected for any reason —
+  // together with `timedOut` these classify the outcome for the circuit.
+  let ran = false;
+  let rejected = false;
   // One deadline for the whole call, armed at entry: it covers queue wait AND
   // execution. It rejects both the outer race (the caller's promise) and the
   // inner race (which releases the limiter slot).
@@ -363,12 +412,16 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
         // settles silently. Without this catch, a late rejection bubbles to
         // `unhandledRejection` — Node ≥15's default exit-on-unhandled would turn
         // our brownout protection into pod-crash amplification.
+        ran = true;
         const call = fn();
         call.catch(() => undefined);
         return await Promise.race([call, deadline]);
       }),
       deadline,
     ]);
+  } catch (err) {
+    rejected = true;
+    throw err;
   } finally {
     if (timer) clearTimeout(timer);
     outstanding--;
@@ -385,6 +438,9 @@ export async function withSignals<T>(fn: () => Promise<T>): Promise<T> {
     } catch {
       // intentionally swallowed
     }
-    recordCallOutcome(isTrial, timedOut);
+    recordCallOutcome(
+      isTrial,
+      timedOut ? (ran ? 'backendTimeout' : 'queueExpired') : rejected ? 'backendError' : 'success'
+    );
   }
 }

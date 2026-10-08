@@ -184,32 +184,76 @@ describe('withSignals', () => {
     await expect(withSignals(okFn)).resolves.toBe('ok');
   });
 
-  it('a storm of queue-full rejections trips the circuit; later calls fail fast at the gate', async () => {
+  it('a healthy burst far past the queue bound, with no backend failure, leaves the circuit CLOSED', async () => {
+    const { withSignals } = await load({
+      SIGNALS_CALL_MAX_QUEUE: 2,
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 3,
+    });
+
+    // 50 fast calls at once: 1 running + 2 queued are admitted, 47 are shed.
+    const burst = Array.from({ length: 50 }, (_, i) => track(withSignals(async () => i)));
+    await vi.advanceTimersByTimeAsync(0);
+    // 47 shed calls ≫ threshold 3, yet nothing points at the backend.
+    expect(count('signals_circuit_trips_total')).toBe(0);
+    expect(burst.filter((b) => b.settled && !b.error)).toHaveLength(3);
+    expect(count('signals_call_queue_rejections_total')).toBe(47);
+
+    const nextFn = vi.fn(async () => 'next');
+    await expect(withSignals(nextFn)).resolves.toBe('next');
+    expect(count('signals_circuit_rejections_total')).toBe(0);
+  });
+
+  it('queue-full rejections trip the circuit once a backend timeout is in the window', async () => {
     const { withSignals } = await load({
       SIGNALS_CALL_MAX_QUEUE: 0,
       SIGNALS_CIRCUIT_TRIP_THRESHOLD: 3,
     });
 
-    track(withSignals(hang)); // occupies the only slot
-    const storm = [1, 2, 3].map(() => track(withSignals(async () => 'x')));
+    // One real backend timeout: counted (1) and it is backend evidence.
+    const a = track(withSignals(hang));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(a.error).toBeDefined();
+    expect(count('signals_circuit_trips_total')).toBe(0);
+
+    // Slot busy again; two queue-full rejections now count → 3 → OPEN.
+    track(withSignals(hang));
+    const shed = [1, 2].map(() => track(withSignals(async () => 'x')));
     await Promise.resolve();
-    expect(storm.every((s) => s.settled && s.error)).toBe(true);
-    expect(count('signals_call_queue_rejections_total')).toBe(3);
+    expect(shed.every((s) => (s.error as Error | undefined)?.message?.includes('queue full'))).toBe(
+      true
+    );
     expect(count('signals_circuit_trips_total')).toBe(1);
 
     const gated = track(withSignals(async () => 'x'));
     await Promise.resolve();
-    expect((gated.error as Error).message).toMatch(/circuit open/);
-    expect(count('signals_circuit_rejections_total')).toBe(1);
-    // The gate, not the queue bound, rejected it.
-    expect(count('signals_call_queue_rejections_total')).toBe(3);
+    expect((gated.error as Error | undefined)?.message).toMatch(/circuit open/);
   });
 
-  it('calls timing out in the queue count toward the circuit', async () => {
+  it('a fn() rejection (e.g. fetch failed) is backend evidence: later queue-full rejections count', async () => {
+    const { withSignals } = await load({
+      SIGNALS_CALL_MAX_QUEUE: 0,
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 2,
+    });
+
+    await expect(withSignals(() => Promise.reject(new Error('fetch failed')))).rejects.toThrow(
+      'fetch failed'
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    expect(count('signals_circuit_trips_total')).toBe(0); // not counted by itself
+
+    track(withSignals(hang));
+    [1, 2].map(() => track(withSignals(async () => 'x')));
+    await Promise.resolve();
+    expect(count('signals_call_queue_rejections_total')).toBe(2);
+    expect(count('signals_circuit_trips_total')).toBe(1);
+  });
+
+  it('calls expiring in the queue count toward the circuit when the calls ahead timed out', async () => {
     const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 3 });
 
-    // 1 running + 4 queued; all five hit the deadline at t=1000. Before the
-    // fix only the running one could time out by then (1 < threshold).
+    // 1 running + 4 queued; all five hit the deadline at t=1000. The running
+    // one is a backend timeout (counted, evidence), so the 4 queued expiries
+    // count too. Without them: 1 < threshold.
     const calls = [1, 2, 3, 4, 5].map(() => track(withSignals(hang)));
     await vi.advanceTimersByTimeAsync(1000);
     expect(calls.every((c) => c.settled)).toBe(true);
@@ -221,46 +265,75 @@ describe('withSignals', () => {
     expect(gatedFn).not.toHaveBeenCalled();
   });
 
-  it('a HALF_OPEN trial rejected by the full queue re-opens the circuit instead of sticking trialInFlight', async () => {
+  it('a call expiring in the queue behind HEALTHY calls (no backend failure) does not count', async () => {
+    const { withSignals, SignalsCallTimeoutError } = await load({
+      SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
+    });
+
+    // A succeeds after 500ms. B queues behind it. Event-loop lag pushes the
+    // wall clock past B's deadline before A's completion is processed, so B
+    // reaches its slot already expired — pure local delay, healthy backend.
+    const a = track(withSignals(() => new Promise<string>((r) => setTimeout(() => r('a'), 500))));
+    const bFn = vi.fn(async () => 'b');
+    const b = track(withSignals(bFn));
+    await vi.advanceTimersByTimeAsync(0);
+    vi.setSystemTime(Date.now() + 2000);
+    await vi.advanceTimersByTimeAsync(1000);
+
+    expect(a.value).toBe('a');
+    expect(b.error).toBeInstanceOf(SignalsCallTimeoutError);
+    expect(bFn).not.toHaveBeenCalled();
+    // Threshold 1, but a demand/lag expiry is not a backend failure.
+    expect(count('signals_circuit_trips_total')).toBe(0);
+    await expect(withSignals(async () => 'ok')).resolves.toBe('ok');
+  });
+
+  it('a HALF_OPEN trial shed by the full queue releases the trial slot and stays HALF_OPEN', async () => {
     let releaseA!: (v: string) => void;
     const { withSignals } = await load({
       SIGNALS_CALL_TIMEOUT_MS: 60_000,
+      SIGNALS_CALL_CONCURRENCY: 2,
       SIGNALS_CALL_MAX_QUEUE: 0,
       SIGNALS_CIRCUIT_TRIP_THRESHOLD: 1,
       SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 1,
     });
 
+    // Backend evidence, then fill both slots and overflow → counted → OPEN.
+    await expect(withSignals(() => Promise.reject(new Error('fetch failed')))).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
     const a = track(withSignals(() => new Promise<string>((r) => (releaseA = r))));
-    // Queue full → failure → threshold 1 → OPEN. (track + assert rather than
-    // `await expect(...).rejects`, so a missing queue bound fails on an
-    // assertion instead of hanging until the test timeout.)
-    const b = track(withSignals(async () => 'b'));
+    track(withSignals(hang));
+    const c = track(withSignals(async () => 'c'));
     await Promise.resolve();
-    expect((b.error as Error | undefined)?.message).toMatch(/queue full/);
+    expect((c.error as Error | undefined)?.message).toMatch(/queue full/);
     expect(count('signals_circuit_trips_total')).toBe(1);
 
-    // Cooldown elapses → next call is the HALF_OPEN trial, but A still holds
-    // the only slot so the trial is shed by the queue bound.
+    // Cooldown elapses → this call is the HALF_OPEN trial, shed by the queue.
     await vi.advanceTimersByTimeAsync(1000);
-    const trialFn = vi.fn(async () => 'c');
+    const trialFn = vi.fn(async () => 'trial');
     const trial = track(withSignals(trialFn));
     await Promise.resolve();
     expect((trial.error as Error | undefined)?.message).toMatch(/queue full/);
     expect(trialFn).not.toHaveBeenCalled();
-    // Failed trial → OPEN again (a re-trip), not HALF_OPEN-with-trial-busy.
-    expect(count('signals_circuit_trips_total')).toBe(2);
+    // Not a failed trial: no re-trip…
+    expect(count('signals_circuit_trips_total')).toBe(1);
+    // …and the trial slot was released: the next caller is admitted as the new
+    // trial (shed by the queue again), not rejected by the gate.
+    const next = track(withSignals(async () => 'next'));
+    await Promise.resolve();
+    expect((next.error as Error | undefined)?.message).toMatch(/queue full/);
+    expect(count('signals_circuit_rejections_total')).toBe(0);
 
+    // Once a slot frees, the next trial probes the backend and closes it.
     releaseA('a');
     await vi.advanceTimersByTimeAsync(0);
     expect(a.value).toBe('a');
-
-    // After the next cooldown a fresh trial is admitted and closes the circuit.
-    await vi.advanceTimersByTimeAsync(1000);
     await expect(withSignals(async () => 'd')).resolves.toBe('d');
     await expect(withSignals(async () => 'e')).resolves.toBe('e');
+    expect(count('signals_circuit_trips_total')).toBe(1);
   });
 
-  it('under event-loop lag, a HALF_OPEN trial that reaches its slot past its deadline never runs and re-opens the circuit', async () => {
+  it('under event-loop lag, a HALF_OPEN trial that reaches its slot past its deadline never runs and releases the trial slot', async () => {
     let releaseA!: (v: string) => void;
     const { withSignals, SignalsCallTimeoutError } = await load({
       SIGNALS_CALL_MAX_QUEUE: 1,
@@ -268,7 +341,9 @@ describe('withSignals', () => {
       SIGNALS_CIRCUIT_COOLDOWN_SECONDS: 1,
     });
 
-    // A holds the slot, B queues behind it, C overflows → trip (OPEN).
+    // Backend evidence; then A holds the slot, B queues, C overflows → OPEN.
+    await expect(withSignals(() => Promise.reject(new Error('fetch failed')))).rejects.toThrow();
+    await vi.advanceTimersByTimeAsync(0);
     track(withSignals(() => new Promise<string>((r) => (releaseA = r))));
     track(withSignals(hang));
     track(withSignals(async () => 'c'));
@@ -292,10 +367,12 @@ describe('withSignals', () => {
     expect(trial.error).toBeInstanceOf(SignalsCallTimeoutError);
     expect((trial.error as InstanceType<typeof SignalsCallTimeoutError>).reason).toBe('timeout');
     expect(trialFn).not.toHaveBeenCalled();
-    expect(count('signals_circuit_trips_total')).toBe(2); // failed trial → OPEN
+    // An expired-in-queue trial probed nothing: no re-trip, slot released.
+    expect(count('signals_circuit_trips_total')).toBe(1);
 
-    // Not stuck: after the next cooldown a fresh trial runs and closes it.
-    vi.setSystemTime(Date.now() + 1000);
+    // Not stuck: the next caller is the new trial, runs, and closes it.
     await expect(withSignals(async () => 'ok')).resolves.toBe('ok');
+    await expect(withSignals(async () => 'ok2')).resolves.toBe('ok2');
+    expect(count('signals_circuit_rejections_total')).toBe(0);
   });
 });

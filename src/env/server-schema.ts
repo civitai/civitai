@@ -565,8 +565,9 @@ export const serverSchema = z
     SIGNALS_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
     // Per-pod cap on calls waiting for a SIGNALS_CALL_CONCURRENCY slot. When
     // full, further calls fail at 0ms with SignalsCallTimeoutError('concurrency')
-    // and count toward the circuit breaker, so a reconnect storm trips it
-    // instead of piling up requests that can only time out.
+    // instead of piling up requests that can only time out. A queue-full
+    // rejection counts toward the circuit only when the window also holds a
+    // real backend failure, so a healthy burst is shed without opening it.
     SIGNALS_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
     // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
     // If `SIGNALS_CIRCUIT_TRIP_THRESHOLD` SignalsCallTimeoutErrors accumulate
