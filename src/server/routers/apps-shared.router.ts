@@ -1469,7 +1469,7 @@ export async function incrementSharedCounter(
       // 🔴 WHO A REFUSAL IS ATTRIBUTED TO. A key that ALREADY EXISTS was written by someone else
       // (before enforce, or during shadow) and is still public via `getTop`, so its consequences
       // go to the key's AUTHOR — the anchor row's `author_user_id` — with the KEY on the Report so a
-      // moderator can purge it, and DEDUPED per (author, key) so a popular key's increments cannot
+      // moderator can purge it, and DEDUPED per (author, key, reason) so a popular key's increments cannot
       // flood the legal channel: the alert fires only when that Report row is new. A key that does
       // not exist yet is the caller's own write, attributed as any other hit. The refusal itself is
       // unconditional. Looked up only when there is a blocking hit, so the clean path pays nothing.
@@ -1784,7 +1784,7 @@ async function fileSharedBlockConsequences(
     /** The row the Report is about, when there is one. */
     key?: string | null;
     /**
-     * File at most one Report per (user, key), and alert only when this call filed it. For a
+     * File at most one Report per (user, key, reason), and alert only when this call filed it. For a
      * consequence that would otherwise repeat on every attempt at the same stored text.
      */
     dedupe?: boolean;
