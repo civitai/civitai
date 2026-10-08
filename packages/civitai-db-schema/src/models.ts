@@ -554,7 +554,6 @@ export interface User {
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
   feedbackOwnerStatus?: Feedback[];
-  feedbackHiddenFromOwner?: Feedback[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1973,8 +1972,6 @@ export interface Feedback {
   ownerStatusBy?: User | null;
   ownerFlaggedAt: Date | null;
   hiddenFromOwnerAt: Date | null;
-  hiddenFromOwnerById: number | null;
-  hiddenFromOwnerBy?: User | null;
 }
 
 export interface ApiKey {

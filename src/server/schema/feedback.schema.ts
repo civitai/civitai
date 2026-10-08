@@ -1,5 +1,6 @@
 import * as z from 'zod';
 import {
+  APP_BLOCK_FEEDBACK_AREA,
   FEEDBACK_AREAS,
   FEEDBACK_CONSOLE_ERROR_MAX_COUNT,
   FEEDBACK_CONSOLE_ERROR_MAX_LENGTH,
@@ -206,12 +207,41 @@ const feedbackContextSchema = z.object({
     .optional(),
 });
 
+export const GENERIC_FEEDBACK_APP_BLOCK_REFUSAL =
+  'App feedback is sent from the app itself, not through the general feedback form.';
+
+/**
+ * The area as the GENERIC `feedback.create` / `feedback.getArea` procedures accept it: every
+ * declared area EXCEPT `app-block`.
+ *
+ * 🔴 `app-block` is in `FEEDBACK_AREAS` (the moderator queue and the DB CHECK need the slug), but
+ * its rows must carry a server-resolved `appListingId` and are readable by the app's OWNER — so
+ * they may only be written by the dedicated app-feedback procedure, never by this route, which
+ * would store an owner-less row that no owner inbox can ever show. The refusal is here rather than
+ * "keep the `feedback-area-app-block` flag off" because a flag is configuration someone can turn
+ * on; this is not.
+ *
+ * WHY BOTH PROCEDURES. `getArea` and `create` are deliberately one seam (see
+ * `feedback.router.flag-context.test.ts`): a notice that reports an area enabled whose submit is
+ * then refused is the exact disagreement that test exists to prevent. The dedicated procedure
+ * calls `isFeedbackAreaEnabled` directly, so refusing the slug here costs it nothing.
+ *
+ * WHY A REFINE, NOT `feedbackAreaSchema.exclude([...])`. `exclude` would narrow
+ * `CreateFeedbackInput['area']`, the type the shared `createFeedback` service is written against,
+ * and its rejection reads exactly like an unknown slug's. The refine keeps the type, runs during
+ * input parsing (so BEFORE the flag lookup and before the service), and fails with its own message.
+ */
+const genericFeedbackAreaSchema = feedbackAreaSchema.refine(
+  (area) => area !== APP_BLOCK_FEEDBACK_AREA,
+  GENERIC_FEEDBACK_APP_BLOCK_REFUSAL
+);
+
 export type CreateFeedbackInput = z.infer<typeof createFeedbackSchema>;
 export const createFeedbackSchema = z.object({
-  area: feedbackAreaSchema,
+  area: genericFeedbackAreaSchema,
   message: z.string().trim().min(1).max(FEEDBACK_MESSAGE_MAX_LENGTH),
   context: feedbackContextSchema.optional(),
 });
 
 export type GetFeedbackAreaInput = z.infer<typeof getFeedbackAreaSchema>;
-export const getFeedbackAreaSchema = z.object({ area: feedbackAreaSchema });
+export const getFeedbackAreaSchema = z.object({ area: genericFeedbackAreaSchema });

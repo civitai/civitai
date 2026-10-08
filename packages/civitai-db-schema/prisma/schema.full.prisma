@@ -472,7 +472,6 @@ model User {
   feedback             Feedback[]
   feedbackHandled      Feedback[]                 @relation("FeedbackHandledBy")
   feedbackOwnerStatus  Feedback[]                 @relation("FeedbackOwnerStatusBy")
-  feedbackHiddenFromOwner Feedback[]               @relation("FeedbackHiddenFromOwnerBy")
   questions            Question[]
   answers              Answer[]
   commentsv2           CommentV2[]
@@ -2589,10 +2588,9 @@ model Feedback {
   ownerStatusBy       User?       @relation("FeedbackOwnerStatusBy", fields: [ownerStatusById], references: [id], onDelete: SetNull)
   /// The owner flagged this report as abusive, for moderators.
   ownerFlaggedAt      DateTime?
-  /// A moderator hid this report from the developer.
+  /// A moderator hid this report from the developer. Which moderator is recorded by the
+  /// append-only ModActivity row written on each hide/unhide, not by a column here.
   hiddenFromOwnerAt   DateTime?
-  hiddenFromOwnerById Int?
-  hiddenFromOwnerBy   User?       @relation("FeedbackHiddenFromOwnerBy", fields: [hiddenFromOwnerById], references: [id], onDelete: SetNull)
 
   @@index([area, status, createdAt(sort: Desc)])
   @@index([userId, createdAt(sort: Desc)])

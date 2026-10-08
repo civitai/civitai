@@ -19,8 +19,9 @@
 // moderators. Unlike the other areas its rows carry `Feedback.appListingId` (a DB CHECK keeps the
 // app-only columns NULL on every other area), and it is NOT meant to be written through the generic
 // `feedback.create` — a dedicated procedure resolves the listing server-side. Listing it here makes
-// the shared area schema accept the slug, so until the generic route refuses it explicitly, its
-// `feedback-area-app-block` flag must stay off.
+// the shared area enum accept the slug, so the generic `feedback.create` / `feedback.getArea`
+// inputs refuse it explicitly (`genericFeedbackAreaSchema` in src/server/schema/feedback.schema.ts)
+// whatever its `feedback-area-app-block` flag says; that flag gates only the dedicated procedure.
 export const FEEDBACK_AREAS = [
   'bitdex-image-feed',
   'apps-marketplace',

@@ -2790,10 +2790,10 @@ export type Feedback = {
    */
   ownerFlaggedAt: Timestamp | null;
   /**
-   * A moderator hid this report from the developer.
+   * A moderator hid this report from the developer. Which moderator is recorded by the
+   * append-only ModActivity row written on each hide/unhide, not by a column here.
    */
   hiddenFromOwnerAt: Timestamp | null;
-  hiddenFromOwnerById: number | null;
 };
 export type File = {
   id: Generated<number>;

@@ -1,7 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { describe, expect, it } from 'vitest';
-import { createFeedbackSchema, getFeedbackAreaSchema } from '~/server/schema/feedback.schema';
+import {
+  createFeedbackSchema,
+  GENERIC_FEEDBACK_APP_BLOCK_REFUSAL,
+  getFeedbackAreaSchema,
+} from '~/server/schema/feedback.schema';
 import {
   APP_BLOCK_FEEDBACK_AREA,
   FEEDBACK_AREAS,
@@ -510,13 +514,32 @@ describe('feedback areas', () => {
     expect([...FEEDBACK_AREAS]).toEqual(areas);
   });
 
-  it.each(areas)('accepts %s on the submit schema', (area) => {
+  // `app-block` is declared but is NOT a generic-route area: only the dedicated app-feedback
+  // procedure writes it. Hand-typed, like `areas`.
+  const genericAreas = ['bitdex-image-feed', 'apps-marketplace', 'site-bug-report'];
+
+  it.each(genericAreas)('accepts %s on the submit schema', (area) => {
     const parsed = createFeedbackSchema.parse({ area, message: 'something looked wrong' });
     expect(parsed.area).toBe(area);
   });
 
-  it.each(areas)('accepts %s on the getArea schema', (area) => {
+  it.each(genericAreas)('accepts %s on the getArea schema', (area) => {
     expect(getFeedbackAreaSchema.parse({ area }).area).toBe(area);
+  });
+
+  // Asserted on the guard's own message: an undeclared slug also fails these schemas, so a bare
+  // "it throws" could not tell this refusal from the enum's.
+  it('refuses app-block on both generic schemas, with the app-block refusal', () => {
+    const create = createFeedbackSchema.safeParse({ area: 'app-block', message: 'broken app' });
+    const get = getFeedbackAreaSchema.safeParse({ area: 'app-block' });
+    expect(create.success).toBe(false);
+    expect(get.success).toBe(false);
+    expect(create.error?.issues.map((i) => [i.path, i.message])).toEqual([
+      [['area'], GENERIC_FEEDBACK_APP_BLOCK_REFUSAL],
+    ]);
+    expect(get.error?.issues.map((i) => [i.path, i.message])).toEqual([
+      [['area'], GENERIC_FEEDBACK_APP_BLOCK_REFUSAL],
+    ]);
   });
 
   it('rejects an area that is not declared', () => {

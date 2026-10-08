@@ -1,7 +1,7 @@
 -- ============================================================
 -- Feedback → app-block area: per-app private feedback (owner + moderators)
 -- ============================================================
--- ADDITIVE ONLY. Nine NULLable columns, three foreign keys, two CHECKs and one
+-- ADDITIVE ONLY. Eight NULLable columns, two foreign keys, two CHECKs and one
 -- partial index on the existing "Feedback" table. No existing column is altered,
 -- no existing row is rewritten, and "Feedback_status_check" (the moderator triage
 -- vocabulary) is untouched.
@@ -12,7 +12,7 @@
 --   2. production
 --
 -- APPLY ORDER: apply BEFORE the code that declares these fields deploys. The
--- schema change in the same PR adds nine scalars to the Prisma `Feedback` model,
+-- schema change in the same PR adds eight scalars to the Prisma `Feedback` model,
 -- and a Prisma call on `feedback` with no explicit `select` emits
 -- `RETURNING <every scalar the MODEL declares>` — P2022 against an unmigrated
 -- database (the hazard `20260901120000_app_listing_beta` records). The hazard is
@@ -64,9 +64,10 @@ ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "ownerStatusAt"       TIMESTAMP(
 ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "ownerStatusById"     INTEGER      NULL;
 -- The owner flagged this report as abusive, for moderators.
 ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "ownerFlaggedAt"      TIMESTAMP(3) NULL;
--- A moderator hid this report from the developer.
+-- A moderator hid this report from the developer. No "who hid it" column: the
+-- moderator who hides or unhides is recorded by the append-only "ModActivity" row the
+-- server change writes on each action, and an unhide would null such a column anyway.
 ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "hiddenFromOwnerAt"   TIMESTAMP(3) NULL;
-ALTER TABLE "Feedback" ADD COLUMN IF NOT EXISTS "hiddenFromOwnerById" INTEGER      NULL;
 
 DO $$
 BEGIN
@@ -82,11 +83,6 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Feedback_ownerStatusById_fkey') THEN
     ALTER TABLE "Feedback" ADD CONSTRAINT "Feedback_ownerStatusById_fkey"
       FOREIGN KEY ("ownerStatusById") REFERENCES "User"("id")
-      ON DELETE SET NULL ON UPDATE CASCADE;
-  END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'Feedback_hiddenFromOwnerById_fkey') THEN
-    ALTER TABLE "Feedback" ADD CONSTRAINT "Feedback_hiddenFromOwnerById_fkey"
-      FOREIGN KEY ("hiddenFromOwnerById") REFERENCES "User"("id")
       ON DELETE SET NULL ON UPDATE CASCADE;
   END IF;
   -- Mirrors FEEDBACK_OWNER_STATUSES in packages/civitai-shared/src/feedback.constants.ts.
@@ -117,28 +113,27 @@ END $$;
 -- `WHERE "userId" = ? AND "createdAt" > ?` plus an "appListingId" filter, served
 -- by "Feedback_userId_createdAt_idx". No moderator index either: an app-block
 -- queue view (`WHERE "area" = 'app-block'`, by status, newest first) is served by
--- "Feedback_area_status_createdAt_idx". No index on the two new user-id FKs, the
--- same call `20260911120000_feedback_triage` made for "handledById".
+-- "Feedback_area_status_createdAt_idx". No index on the new user-id FK, the same
+-- call `20260911120000_feedback_triage` made for "handledById".
 CREATE INDEX CONCURRENTLY IF NOT EXISTS "Feedback_appListingId_createdAt_idx"
   ON "Feedback" ("appListingId", "createdAt" DESC)
   WHERE "appListingId" IS NOT NULL;
 
 -- ------------------------------------------------------------
 -- Verification (read-only) — run after both parts, per environment.
--- Expect: columns = 9, constraints = 5, and one index row with indisvalid = t.
+-- Expect: columns = 8, constraints = 4, and one index row with indisvalid = t.
 -- ------------------------------------------------------------
 -- SELECT count(*) AS columns
 --   FROM information_schema.columns
 --  WHERE table_schema = current_schema() AND table_name = 'Feedback'
 --    AND column_name IN ('appListingId', 'appBlockVersion', 'appBlockSha', 'ownerStatus',
 --                        'ownerStatusAt', 'ownerStatusById', 'ownerFlaggedAt',
---                        'hiddenFromOwnerAt', 'hiddenFromOwnerById');
+--                        'hiddenFromOwnerAt');
 -- SELECT count(*) AS constraints
 --   FROM pg_constraint
 --  WHERE conrelid = '"Feedback"'::regclass
 --    AND conname IN ('Feedback_appListingId_fkey', 'Feedback_ownerStatusById_fkey',
---                    'Feedback_hiddenFromOwnerById_fkey', 'Feedback_ownerStatus_check',
---                    'Feedback_app_columns_check');
+--                    'Feedback_ownerStatus_check', 'Feedback_app_columns_check');
 -- SELECT c.relname, i.indisvalid, i.indisready
 --   FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid
 --  WHERE c.relname = 'Feedback_appListingId_createdAt_idx';
