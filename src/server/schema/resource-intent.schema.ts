@@ -292,8 +292,8 @@ export const resourceIntentResponseSchema = z.strictObject({
    * up to three vendor calls per miss. Free for THIS field only because the
    * route is dark behind `resourceIntentJev`.
    *
-   * A new response field crosses builds without that mutual rejection only in a change
-   * that also moves the cache key (as `RESOURCE_INTENT_STAGE3_SPEC_HASH` did for the
+   * A new response field avoids rejection in either direction only in a change that
+   * also moves the cache key (as `RESOURCE_INTENT_STAGE3_SPEC_HASH` did for the
    * split `none` fields); the new build still starts with a cold cache.
    */
   insightFallback: z.boolean(),
