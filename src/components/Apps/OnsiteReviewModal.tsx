@@ -133,9 +133,9 @@ export type ApprovedRequest = ReviewedRequestCommon & {
   /** Build/deploy lifecycle for the approved version — `null` means either a
    *  legacy pre-feature row OR the STRANDED case (approved, but the build never
    *  started). Selected by `listApprovedRequests`; optional so older callers /
-   *  fixtures that omit it still typecheck. */
+   *  fixtures that omit it still typecheck. `deployDetail` is deliberately absent:
+   *  it carries the app's build-log excerpt, which moderator reads never select. */
   deployState?: string | null;
-  deployDetail?: string | null;
   deployUpdatedAt?: string | Date | null;
 };
 

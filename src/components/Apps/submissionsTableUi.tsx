@@ -1,4 +1,14 @@
-import { Badge, Button, Collapse, Group, Stack, Table, Text, TextInput, UnstyledButton } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  Collapse,
+  Group,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  UnstyledButton,
+} from '@mantine/core';
 import {
   IconArrowsSort,
   IconChevronDown,
@@ -19,10 +29,9 @@ import {
 } from '~/components/Apps/submissionsTable';
 
 /**
- * App Store Listings (W13) — shared /apps/my-submissions table UI atoms, used by
- * BOTH the onsite (`MySubmissionsList`) and offsite (`OffsiteSubmissionsList`)
- * tables so the filter box, the sortable headers, and the version-collapse toggle
- * look + behave identically. Pure presentational — all state lives in the parent
+ * App Store Listings (W13) — /apps/my-submissions table UI atoms (the filter box,
+ * the sortable headers, the version-collapse toggle), used by
+ * `OffsiteSubmissionsList`. Pure presentational — all state lives in the parent
  * list; the pure filter/sort/group logic lives in `submissionsTable.ts`.
  *
  * Accessibility: the sortable header is a real <button> inside a <th> carrying
@@ -237,9 +246,7 @@ function StatusSection({
 /**
  * Render a submissions list as status SECTIONS (Live → Pending → Rejected →
  * Withdrawn). Each non-empty bucket gets its own section + table (built by
- * `renderTable` from that bucket's groups); empty buckets render nothing. Shared by
- * both the onsite (`MySubmissionsList`) and offsite (`OffsiteSubmissionsList`)
- * lists so the section layout + collapse behavior are identical.
+ * `renderTable` from that bucket's groups); empty buckets render nothing.
  */
 export function StatusSections<T, B extends string = AnyStatusBucket>({
   buckets,

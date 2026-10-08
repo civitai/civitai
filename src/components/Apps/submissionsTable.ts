@@ -1,9 +1,8 @@
 /**
  * App Store Listings (W13) — /apps/my-submissions table view-model logic (PURE,
- * no React). Shared by BOTH lists (onsite `MySubmissionsList` + offsite
- * `OffsiteSubmissionsList`) so the text filter, the column comparators, and the
- * per-app version-collapse behave IDENTICALLY across them. Extracted so each piece
- * is unit-testable without mounting a table.
+ * no React), used by `OffsiteSubmissionsList` — the text filter, the column
+ * comparators, and the per-app version-collapse. Extracted so each piece is
+ * unit-testable without mounting a table.
  *
  * The two row shapes differ (onsite has a block id + version; offsite has a slug +
  * external URL), so every helper here is GENERIC over the row type `T` and reads

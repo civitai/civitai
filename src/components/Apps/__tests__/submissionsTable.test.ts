@@ -677,7 +677,7 @@ describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
 describe('both my-submissions tables scroll rather than clip (S3, structural)', () => {
   const APPS_DIR = path.resolve(__dirname, '..');
   const read = (file: string) => readFileSync(path.join(APPS_DIR, file), 'utf8');
-  const LISTS = ['MySubmissionsList.tsx', 'OffsiteSubmissionsList.tsx'] as const;
+  const LISTS = ['OffsiteSubmissionsList.tsx'] as const;
 
   /**
    * 🔴 EVERY assertion here is ANCHORED TO THE `<Table.ScrollContainer …>` OPENING
