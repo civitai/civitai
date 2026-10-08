@@ -2,9 +2,17 @@ import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { pgDbRead } from '~/server/db/pgDb';
 import type { DiscordRole } from '~/server/integrations/discord';
 import { discord } from '~/server/integrations/discord';
 import { logToAxiom } from '~/server/logging/client';
+import { creatorJourneyAudienceAmong } from '~/server/services/creator-journey-flag.service';
+import {
+  milestoneShowableUserSql,
+  toUtcTimestamp,
+} from '~/server/services/creator-milestone-exclusions';
+import { getCreatorJourneyDiscordConfig } from '~/server/services/discord-creator-journey-config.service';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createJob } from './job';
 
@@ -83,8 +91,105 @@ const applyDiscordActivityRoles = createJob(
       const removedCreators = existingCreators.filter((u) => !creator.has(u));
       await removeRoleFromAccounts(creatorRole, removedCreators);
     }
+
+    await applyDiscordCreatorJourneyRoles(discordRoles);
   }
 );
+
+// Tiers are cumulative milestones (a Legend also holds score:supernova), so a Legend holds both roles,
+// as a Top 10 holder also holds Top 100.
+const CREATOR_JOURNEY_TIERS = [
+  { milestoneKey: 'score:supernova', configField: 'supernovaRoleId' },
+  { milestoneKey: 'score:legend', configField: 'legendRoleId' },
+] as const;
+
+/**
+ * Discord account IDs per tier, for holders in good standing (the showcase's rule) whom the
+ * creator-journey flag is on for. Privacy opt-outs are deliberately not applied: the Legend role is
+ * also the key to the Legends channel, and hiding from the showcase or hiding a badge is not opting
+ * out of that.
+ */
+async function getCreatorJourneyRoleHolders(milestoneKeys: string[], now: Date) {
+  const excludedUserIds = await getMetricExcludedUserIdsOrThrow();
+  const query = await pgDbRead.cancellableQuery<{
+    milestoneKey: string;
+    userId: number;
+    providerAccountId: string;
+  }>(
+    `
+    SELECT ucm."milestoneKey", u.id AS "userId", a."providerAccountId"
+    FROM "UserCreatorMilestone" ucm
+    JOIN "User" u ON u.id = ucm."userId"
+    JOIN "Account" a ON a."userId" = u.id AND a.provider = 'discord'
+    WHERE ucm."milestoneKey" = ANY($1::text[])
+      AND ${milestoneShowableUserSql('u', { excludedUserIds: '$2', now: '$3' })}
+    `,
+    [milestoneKeys, excludedUserIds, toUtcTimestamp(now)]
+  );
+  const rows = await query.result();
+  const audience = await creatorJourneyAudienceAmong(pgDbRead, [
+    ...new Set(rows.map((row) => row.userId)),
+  ]);
+
+  const holders = new Map<string, Set<string>>(milestoneKeys.map((key) => [key, new Set()]));
+  for (const row of rows) {
+    if (audience.has(row.userId)) holders.get(row.milestoneKey)?.add(row.providerAccountId);
+  }
+  return holders;
+}
+
+export const applyDiscordCreatorJourneyRoles = async (
+  discordRoles: DiscordRole[],
+  now = new Date()
+) => {
+  const config = await getCreatorJourneyDiscordConfig();
+  const tiers = CREATOR_JOURNEY_TIERS.flatMap((tier) => {
+    const roleId = config[tier.configField];
+    const role = roleId ? discordRoles.find((r) => r.id === roleId) : undefined;
+    if (!role) {
+      logToAxiom({
+        type: 'error',
+        name: 'discord-role-sync-aborted',
+        error: {
+          reason: roleId ? 'configured role not found in guild' : 'role id not configured',
+          milestoneKey: tier.milestoneKey,
+        },
+      });
+      return [];
+    }
+    return [{ ...tier, role }];
+  });
+  if (!tiers.length) return;
+
+  const holders = await getCreatorJourneyRoleHolders(
+    tiers.map((tier) => tier.milestoneKey),
+    now
+  );
+
+  for (const { milestoneKey, role } of tiers) {
+    const qualifying = holders.get(milestoneKey) ?? new Set<string>();
+    const existing = await getAccountsInRole(role);
+
+    await addRoleToAccounts(
+      role,
+      [...qualifying].filter((id) => !existing.includes(id))
+    );
+
+    // An empty set while the role has holders is an outage (the flag evaluates false when Flipt is
+    // unreachable), not every holder leaving at once. Holder counts sit under REVOKE_FLOOR, so
+    // withinBlastRadius alone would let it through.
+    const removed = existing.filter((id) => !qualifying.has(id));
+    if (!qualifying.size && removed.length) {
+      logToAxiom({
+        type: 'error',
+        name: 'discord-role-sync-aborted',
+        error: { reason: 'no qualifying holders', role: role.name, holders: existing.length },
+      });
+      continue;
+    }
+    if (withinBlastRadius(role, removed, existing)) await removeRoleFromAccounts(role, removed);
+  }
+};
 
 // UserRank is rebuilt from every public board, but updateLeaderboardRank({ leaderboardIds }) — the hourly event
 // path — truncates it and refills it from that event's boards alone. Both leave a populated table, so row count
