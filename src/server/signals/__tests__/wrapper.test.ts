@@ -665,8 +665,14 @@ describe('withSignals', () => {
     releaseA('a');
     await vi.advanceTimersByTimeAsync(0);
     expect(a.value).toBe('a');
-    await expect(withSignals(async () => 'd')).resolves.toBe('d');
-    await expect(withSignals(async () => 'e')).resolves.toBe('e');
+    // track + advance (not `await expect().resolves`) so a regression fails on
+    // an assertion instead of hanging behind a held slot until the test timeout.
+    const d = track(withSignals(async () => 'd'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(d.value).toBe('d');
+    const e = track(withSignals(async () => 'e'));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(e.value).toBe('e');
     expect(count('signals_circuit_trips_total')).toBe(1);
   });
 
@@ -813,12 +819,32 @@ describe('withSignals', () => {
       track(withSignals(hang, { lane: 'token' }));
       Array.from({ length: 5 }, () => track(withSignals(async () => 't', { lane: 'token' })));
       await Promise.resolve();
-      expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(5);
       expect(count('signals_circuit_trips_total')).toBe(0);
+      expect(countLane('signals_call_queue_rejections_total', 'token')).toBe(5);
 
       const push = track(withSignals(async () => 'pushed'));
       await vi.advanceTimersByTimeAsync(0);
       expect(push.value).toBe('pushed');
+    });
+
+    it('token calls that expire in the queue / are not started never count either', async () => {
+      const { withSignals } = await load({ SIGNALS_CIRCUIT_TRIP_THRESHOLD: 2 });
+      const ok600 = () => new Promise<string>((r) => setTimeout(() => r('ok'), 600));
+
+      // One token-lane backend timeout: counted (1) and backend evidence.
+      track(withSignals(hang, { lane: 'token' }));
+      await vi.advanceTimersByTimeAsync(1000);
+
+      // t=1000: one token call holds the slot for 600ms; three more queue
+      // behind it and reach it at t=1600 with 400ms of 1000 left — not started.
+      track(withSignals(ok600, { lane: 'token' }));
+      const queuedFns = [1, 2, 3].map(() => vi.fn(hang));
+      queuedFns.forEach((fn) => track(withSignals(fn, { lane: 'token' })));
+      await vi.advanceTimersByTimeAsync(600);
+
+      expect(count('signals_circuit_trips_total')).toBe(0);
+      expect(countLane('signals_call_queue_expirations_total', 'token')).toBe(3);
+      expect(queuedFns.every((fn) => fn.mock.calls.length === 0)).toBe(true);
     });
 
     it('backend evidence from the token lane still lets DEFAULT-lane queue failures count', async () => {

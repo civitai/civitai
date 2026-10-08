@@ -47,7 +47,8 @@ const log = createLogger('signals', 'cyan');
  *     its slot at once, so it cannot be why the queue is full.
  *   - queue-side failure — a queue-full rejection, a deadline that expired
  *     while still queued, or a call not started for lack of budget (fn() never
- *     ran in any of them): counts ONLY if the window holds backend evidence.
+ *     ran in any of them): counts ONLY if the window holds backend evidence,
+ *     and never for the 'token' lane (see LANES below).
  *   So a healthy burst far past the queue bound (e.g. a synchronized client
  *   reconnect after recovery, even one following a fast-failing outage) and a
  *   healthy-but-overloaded backend are shed and never open the circuit, AS
@@ -55,7 +56,10 @@ const log = createLogger('signals', 'cyan');
  *   deadline: every call they start then completes. Under overload a call may
  *   start with only half the deadline left, so a call slower than its
  *   remaining budget becomes a backend timeout (evidence) by design, and the
- *   shed traffic then counts. A hang — from an idle or an already-saturated pool — trips it:
+ *   shed traffic then counts. Backend timeouts are shared across lanes, so this
+ *   applies across them too: a token-lane call slower than its remaining
+ *   budget opens the circuit for pushes as well. A hang — from an idle or an
+ *   already-saturated pool — trips it:
  *   the calls it starts time out. Evidence is pruned with the same window as
  *   failures and cleared when the circuit CLOSES.
  *   - A HALF_OPEN trial that suffers a queue-side failure probed nothing, so it
@@ -100,7 +104,12 @@ const log = createLogger('signals', 'cyan');
  * measure token DEMAND, and counting them would let a healthy token storm
  * open the circuit and shut down pushes — the crowding-out the lane exists to
  * prevent. A sick backend still trips it through the token lane's own backend
- * timeouts (~concurrency per deadline).
+ * timeouts (~concurrency per deadline). Limit: that protection holds while
+ * token latency, tail included, stays under the budget a queued token call
+ * starts with (>= half the deadline). A token call slower than that is a real
+ * backend timeout and DOES count — shared by design — so a token storm
+ * against a backend whose tail nears half the deadline can still open the
+ * circuit for pushes.
  * Metrics carry a `lane` label where they are per-lane (active, queue depth,
  * queue rejections, queue expirations); sum() over the label gives the
  * pod-wide figure the single-lane metric used to report.
@@ -496,8 +505,8 @@ function recordCallOutcome(isTrial: boolean, outcome: CallOutcome, lane: Lane) {
  * SignalsCallTimeoutError('timeout') and its fn() is never invoked (no
  * outbound fetch fires for a caller that gave up). A full queue rejects at 0ms
  * with reason 'concurrency'. Whether either counts toward the circuit depends on
- * backend evidence in the window (header comment); a shed HALF_OPEN trial
- * always releases `trialInFlight`.
+ * backend evidence in the window and on the lane (never for 'token'; header
+ * comment); a shed HALF_OPEN trial always releases `trialInFlight`.
  */
 export async function withSignals<T>(
   fn: () => Promise<T>,

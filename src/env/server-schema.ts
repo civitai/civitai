@@ -576,8 +576,10 @@ export const serverSchema = z
     // only, so a client reconnect storm cannot crowd out signal pushes. Defaults
     // equal the shared limiter getToken used before (30 / 200), so getToken's
     // bounds are unchanged; the 'default' lane keeps SIGNALS_CALL_*. The circuit
-    // breaker stays shared across lanes, but token-lane queue rejections never
-    // count toward it (they measure demand). See src/server/signals/wrapper.ts.
+    // breaker stays shared across lanes: token-lane queue-side failures never
+    // count toward it (they measure demand), but token-lane backend timeouts
+    // do — so a storm against a backend whose tail nears half the deadline can
+    // still open it for pushes. See src/server/signals/wrapper.ts.
     SIGNALS_TOKEN_CALL_CONCURRENCY: z.coerce.number().int().min(1).optional().default(30),
     SIGNALS_TOKEN_CALL_MAX_QUEUE: z.coerce.number().int().min(0).optional().default(200),
     // Single-backend circuit breaker for signals (see src/server/signals/wrapper.ts).
