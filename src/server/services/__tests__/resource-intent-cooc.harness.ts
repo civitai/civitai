@@ -140,7 +140,7 @@ export function fakeImageDb(opts: {
           (id): CoocDrawRow => ({
             imageId: id,
             createdAt: createdAt(id),
-            // 'model' and 'ctrl' only on the 23 images with id % 40 === 1, which all attach model 1001.
+            // 'model' and 'ctrl' only where id % 40 === 1; every such image attaches model 1001.
             prompt: `tok${pad(id % 17)} tok${pad(id % 5)} shared rare${id % 40}${
               id % 40 === 1 ? ' model ctrl' : ''
             }`,
@@ -160,7 +160,7 @@ export function fakeImageDb(opts: {
       return (s.values[0] as number[]).map((id) => ({
         id,
         trainedWords: id === 2000 ? ['rare0'] : null,
-        modelName: `Model ${id}`,
+        modelName: id === 9900 ? 'Base Checkpoint' : `Model ${id}`,
       }));
     }
     throw new Error(`unexpected query: ${text.slice(0, 80)}`);

@@ -7,8 +7,9 @@ import type { CoocModelText } from './tokenize';
 /**
  * Builder side of the resource-intent co-occurrence index: the training-row sampler, the
  * counts, and the snapshot payload. A port of the offline screen's draw loop and its
- * reference index builder; the seam tests in `src/server/services/__tests__/resource-intent-cooc.*.test.ts`
- * hold each piece to the screen's output.
+ * reference index builder; the seam tests in
+ * `src/server/services/__tests__/resource-intent-cooc.*.test.ts` hold each piece to the screen's
+ * output.
  *
  * Takes its parameters as arguments rather than importing `./spec`, because `./spec` hashes
  * what these functions produce.
@@ -16,8 +17,9 @@ import type { CoocModelText } from './tokenize';
 
 /**
  * The conditions of the M3 registration's `GOLDSET_ELIGIBLE_IMAGE` after its rolling-window
- * line, byte for byte (`src/server/services/__tests__/resource-intent-cooc.eligibility.test.ts` compares them). The
- * draw replaces that window with explicit `[trainStart, trainEnd)` bounds.
+ * line, byte for byte (compared by
+ * `src/server/services/__tests__/resource-intent-cooc.eligibility.test.ts`). The draw replaces
+ * that window with explicit `[trainStart, trainEnd)` bounds.
  */
 export const COOC_ELIGIBLE_REST = `  AND i."hideMeta" = false
   AND length(i.meta->>'prompt') > 0
@@ -55,7 +57,7 @@ export function mulberry32(seed: number) {
 export type CoocRawQuery = (sql: Prisma.Sql) => Promise<unknown[]>;
 
 /** The screen's retry, ported: 3 tries, waiting `delayMs` then twice that. */
-export async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
+async function coocRetry<T>(fn: () => Promise<T>, delayMs = 2000, tries = 3): Promise<T> {
   let last: unknown;
   for (let i = 0; i < tries; i++) {
     try {
@@ -165,15 +167,18 @@ const VERSION_TEXT_CHUNK = 20_000;
 /** Names and trigger words of the given versions. */
 export async function fetchVersionText(
   query: CoocRawQuery,
-  versionIds: readonly number[]
+  versionIds: readonly number[],
+  retryDelayMs?: number
 ): Promise<Map<number, CoocModelText>> {
   const out = new Map<number, CoocModelText>();
   for (let i = 0; i < versionIds.length; i += VERSION_TEXT_CHUNK) {
     const chunk = versionIds.slice(i, i + VERSION_TEXT_CHUNK);
-    const vs = (await coocRetry(() =>
-      query(Prisma.sql`
+    const vs = (await coocRetry(
+      () =>
+        query(Prisma.sql`
       SELECT mv.id, mv."trainedWords", m.name AS "modelName" FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.id = ANY(${chunk}::int[])`)
+      WHERE mv.id = ANY(${chunk}::int[])`),
+      retryDelayMs
     )) as { id: number; trainedWords: string[] | null; modelName: string }[];
     for (const v of vs) out.set(v.id, { modelName: v.modelName, trainedWords: v.trainedWords });
   }

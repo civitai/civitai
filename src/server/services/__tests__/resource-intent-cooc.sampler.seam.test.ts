@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   COOC_ELIGIBLE_REST,
   drawTrainingRows,
+  fetchVersionText,
   mulberry32,
   type CoocDrawRow,
 } from '~/server/services/resource-intent-cooc/build';
@@ -182,5 +183,21 @@ describe('cooc sampler seam: shipped == screen', () => {
       });
     await expect(draw(2)).resolves.toMatchObject({ batches: 1 });
     await expect(draw(3)).rejects.toThrow('replica blip');
+  });
+
+  it('the version-text lookup absorbs up to two failures, not three', async () => {
+    const flaky = (failures: number) => {
+      let n = 0;
+      return async (sql: Prisma.Sql) => {
+        if (n++ < failures) throw new Error('replica blip');
+        return (sql.values[0] as number[]).map((id) => ({
+          id,
+          trainedWords: null,
+          modelName: 'm',
+        }));
+      };
+    };
+    expect((await fetchVersionText(flaky(2), [1, 2], 0)).size).toBe(2);
+    await expect(fetchVersionText(flaky(3), [1, 2], 0)).rejects.toThrow('replica blip');
   });
 });

@@ -179,10 +179,18 @@ describe('cooc retention heartbeat', () => {
     t = 60_000;
     await gauge.get();
     await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-    await new Promise((r) => setImmediate(r)); // let the failed read settle
+    await new Promise((r) => setImmediate(r));
     expect(await values(gauge)).toEqual([NOW.getTime() / 1000]);
     t = 119_000;
     await values(gauge);
     expect(read).toHaveBeenCalledTimes(2);
+    // Reads resume after a failure and the exported value moves.
+    const later = new Date(NOW.getTime() + 86_400_000);
+    read.mockImplementation(async () => later);
+    t = 120_000;
+    await gauge.get();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(3));
+    await new Promise((r) => setImmediate(r));
+    expect(await values(gauge)).toEqual([later.getTime() / 1000]);
   });
 });

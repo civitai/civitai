@@ -86,12 +86,11 @@ describe('cooc build pipeline', () => {
 
     const c = (await loadCoocSnapshot(sql, s.contentHash, { kind: 'production', now: NOW })).counts;
     expect(c.N).toBe(900);
-    // Own-model tokens are removed in training. Every model is named "Model <n>" and every prompt
-    // says "model", so it never indexes. "rare0" (version 2000's trigger) appears only on images
-    // attaching model 1000, so it is removed everywhere, while "rare4", on the same images, is kept
-    // and pairs with model 1000.
-    // 'model' and 'ctrl' share their 23 images, all attaching model 1001 ("Model 2001"): the control
-    // token pairs with it, the model-name token is removed.
+    // Own-model tokens are removed in training. "rare0" (version 2000's trigger) appears only on
+    // images attaching model 1000, so it is removed everywhere, while "rare4", on the same images,
+    // is kept and pairs with model 1000. 'model' and 'ctrl' share their 23 images, all attaching
+    // model 1001 ("Model 2001", the only attachment whose name has "model"): the control token
+    // pairs with it, the model-name token is removed.
     expect(c.vocab).toContain('ctrl');
     expect(c.vocab).not.toContain('model');
     expect(c.vocab).not.toContain('rare0');
@@ -171,6 +170,9 @@ describe('cooc build pipeline', () => {
     try {
       for (const zone of ['Pacific/Kiritimati', 'Pacific/Pago_Pago', 'UTC']) {
         process.env.TZ = zone;
+        // A pool that ignores a runtime TZ change would make this test vacuous; fail instead.
+        const localDay = new Date('2026-10-01T23:30:00Z').getDate();
+        expect(localDay).toBe(zone === 'Pacific/Kiritimati' ? 2 : 1);
         // 23:30Z is already the next local day at +14; 00:30Z is still the previous one at -11.
         expect(defaultCoocTrainEnd(new Date('2026-10-01T23:30:00Z')).toISOString()).toBe(
           '2026-09-30T00:00:00.000Z'

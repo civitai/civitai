@@ -404,6 +404,9 @@ describe('cooc pin rules (store and CHECK)', () => {
     await expect(insertRaw(db, 'study', `now() - interval '1 second'`)).rejects.toThrow(
       /kind_pin_check/
     );
+    // builtAt is set to the same statement's now(), so a pin of now() is exactly the build.
+    await expect(insertRaw(db, 'study', 'now()')).rejects.toThrow(/kind_pin_check/);
+    await expect(insertRaw(db, 'study', `now() + interval '1 second'`)).resolves.toBeDefined();
   });
 
   it('a production row with a pin is rejected by the store and by the CHECK', async () => {

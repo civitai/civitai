@@ -1,8 +1,8 @@
 /**
  * The co-occurrence index's tokeniser, ported from the offline screen that measured it. Training
  * and query tokens must come out of these exact rules or the counts stop meaning what was measured;
- * `src/server/services/__tests__/resource-intent-cooc.tokenize.seam.test.ts` compares every function here with the
- * screen's own source.
+ * `src/server/services/__tests__/resource-intent-cooc.tokenize.seam.test.ts` compares every
+ * function here with the screen's own source.
  *
  * 🔴 KEEP THIS MODULE A LEAF (no imports): the request path will load it, and must not pull in the
  * builder or the DB graph with it.

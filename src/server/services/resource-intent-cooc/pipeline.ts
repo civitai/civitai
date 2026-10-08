@@ -68,9 +68,10 @@ export function defaultCoocTrainEnd(now: Date) {
 }
 
 /**
- * Validate → (unless dry run) record the build → draw → tokenise → count → serialise → complete it
- * (ready, or 'duplicate' of an existing snapshot), or mark it failed on any error. Each drawn batch is tokenised as it arrives, so prompts are not
- * all held at once. Retention is a separate job.
+ * Validate → (unless dry run) record the build → draw → tokenise → count → serialise →
+ * complete it (ready, or 'duplicate' of an existing snapshot), or mark it failed on any error.
+ * Each drawn batch is tokenised as it arrives, so prompts are not all held at once. Retention is
+ * a separate job.
  */
 export async function buildCoocSnapshot(opts: CoocBuildOptions): Promise<CoocBuildSummary> {
   const spec = RESOURCE_INTENT_COOC_SPEC;
