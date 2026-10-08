@@ -28,3 +28,26 @@ export function owedScoreTierSql(user: string, milestone: string) {
       WHERE held."userId" = ${user}.id AND held."milestoneKey" = ${milestone}.key
     )`;
 }
+
+/** `timestamp(3)` columns hold UTC wall time, so compare against a zoneless UTC literal. */
+export const toUtcTimestamp = (date: Date) => date.toISOString().replace('T', ' ').replace('Z', '');
+
+/**
+ * SQL predicate on a "User" row (aliased `alias`) whose milestones may be celebrated in public. That
+ * is stricter than the grant filter: muted, leaderboard-excluded, metric-suppressed and actively struck
+ * accounts keep their badges but are not put on show. `excludedUserIds` and `now` are the bind
+ * placeholders (e.g. `$2`) for the metric-suppressed ids and a `toUtcTimestamp` value.
+ */
+export function milestoneShowableUserSql(
+  alias: string,
+  { excludedUserIds, now }: { excludedUserIds: string; now: string }
+) {
+  return `${milestoneGrantableUserSql(alias)}
+      AND NOT ${alias}.muted
+      AND NOT ${alias}."excludeFromLeaderboards"
+      AND ${alias}.id <> ALL(${excludedUserIds}::int[])
+      AND NOT EXISTS (
+        SELECT 1 FROM "UserStrike" s
+        WHERE s."userId" = ${alias}.id AND s.status = 'Active' AND s."expiresAt" > ${now}::timestamp
+      )`;
+}

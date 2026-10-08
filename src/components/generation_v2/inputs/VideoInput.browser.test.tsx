@@ -1,6 +1,9 @@
 import { describe, expect, test, vi, beforeEach } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
+import type * as AuthHelpers from '~/utils/auth-helpers';
+import type * as ConsumerBlobUpload from '~/utils/consumer-blob-upload';
+import type * as SessionProviderModule from '~/providers/SessionProvider';
 
 // =============================================================================
 // tRPC MOCK PATTERN — the reusable template for data-driven component tests
@@ -65,6 +68,31 @@ vi.mock('~/utils/trpc', () => ({
   },
 }));
 
+const auth = vi.hoisted(() => ({
+  currentUser: { id: 1 } as { id: number } | null,
+  openLoginPopup: vi.fn(),
+  uploadConsumerBlob: vi.fn(),
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => auth.currentUser }));
+
+// Outside a provider useSession reports 'loading'; resolved here from the mocked user.
+vi.mock('~/providers/SessionProvider', async (orig) => ({
+  ...(await orig<typeof SessionProviderModule>()),
+  useSession: () => ({
+    data: undefined,
+    status: auth.currentUser ? 'authenticated' : 'unauthenticated',
+    update: async () => null,
+  }),
+}));
+vi.mock('~/utils/auth-helpers', async (orig) => ({
+  ...(await orig<typeof AuthHelpers>()),
+  openLoginPopup: auth.openLoginPopup,
+}));
+vi.mock('~/utils/consumer-blob-upload', async (orig) => ({
+  ...(await orig<typeof ConsumerBlobUpload>()),
+  uploadConsumerBlob: auth.uploadConsumerBlob,
+}));
+
 vi.mock('~/utils/media-preprocessors', () => ({
   getVideoData: vi.fn(async () => ({ videoWidth: 1280, videoHeight: 720 })),
 }));
@@ -95,7 +123,9 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
     renderWithProviders(<VideoInput value={undefined} onChange={vi.fn()} />);
 
     // Dropzone (empty state) renders, proving we mounted the no-video branch.
-    await expect.element(page.getByText('Drag a video here or click to select')).toBeInTheDocument();
+    await expect
+      .element(page.getByText('Drag a video here or click to select'))
+      .toBeInTheDocument();
 
     // The hook is still CALLED (hooks can't be conditional) but gated off.
     expect(useQueryMock).toHaveBeenCalled();
@@ -104,9 +134,7 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
   });
 
   test('query is DISABLED for a non-orchestrator URL (isOrchestratorUrl gate)', async () => {
-    renderWithProviders(
-      <VideoInput value={{ url: NON_ORCH_URL }} onChange={vi.fn()} />
-    );
+    renderWithProviders(<VideoInput value={{ url: NON_ORCH_URL }} onChange={vi.fn()} />);
 
     // Video preview branch mounted (our EdgeVideo stub).
     await expect.element(page.getByTestId('edge-video')).toBeInTheDocument();
@@ -119,9 +147,7 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
   });
 
   test('query is ENABLED for an orchestrator URL', async () => {
-    renderWithProviders(
-      <VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />
-    );
+    renderWithProviders(<VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />);
 
     // Await a render-committed assertion before reading mock.calls (render is
     // async-committed in browser mode; reading calls eagerly races the mount).
@@ -136,9 +162,7 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
   test('success: serverMetadata.fps drives the FPS badge', async () => {
     useQueryMock.mockReturnValue(queryResult({ data: { fps: 24, duration: 'PT2S' } }));
 
-    renderWithProviders(
-      <VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />
-    );
+    renderWithProviders(<VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />);
 
     // Case-sensitive regex so the literal "FPS" label is genuinely pinned
     // (a plain string query normalizes loosely and would pass on "24 fps").
@@ -148,9 +172,7 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
   test('no FPS badge when serverMetadata is absent', async () => {
     useQueryMock.mockReturnValue(queryResult({ data: undefined }));
 
-    renderWithProviders(
-      <VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />
-    );
+    renderWithProviders(<VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />);
 
     // Preview is up (orchestrator badge present) but no FPS overlay.
     await expect.element(page.getByText('From Generation')).toBeInTheDocument();
@@ -158,17 +180,11 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
   });
 
   test('error: metadataError renders the failure Alert', async () => {
-    useQueryMock.mockReturnValue(
-      queryResult({ error: { message: 'boom' } })
-    );
+    useQueryMock.mockReturnValue(queryResult({ error: { message: 'boom' } }));
 
-    renderWithProviders(
-      <VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />
-    );
+    renderWithProviders(<VideoInput value={{ url: ORCH_URL }} onChange={vi.fn()} />);
 
-    await expect
-      .element(page.getByText('Failed to load video metadata: boom'))
-      .toBeInTheDocument();
+    await expect.element(page.getByText('Failed to load video metadata: boom')).toBeInTheDocument();
   });
 
   test('success: fetched metadata + video dimensions propagate to onChange', async () => {
@@ -197,5 +213,54 @@ describe('VideoInput (data-driven / tRPC-backed)', () => {
         metadata: { fps: 24, width: 1280, height: 720, duration: 2 },
       })
     );
+  });
+});
+
+describe('VideoInput — picking a video', () => {
+  beforeEach(() => {
+    useQueryMock.mockReset();
+    useQueryMock.mockReturnValue(queryResult());
+    auth.currentUser = { id: 1 };
+    auth.openLoginPopup.mockReset();
+    auth.uploadConsumerBlob.mockReset().mockResolvedValue({ url: ORCH_URL, available: true });
+  });
+
+  async function pickVideo() {
+    const input = await vi.waitFor(() => {
+      const el = document.querySelector<HTMLInputElement>('input[type=file]');
+      if (!el) throw new Error('file input not found');
+      return el;
+    });
+    await userEvent.upload(
+      input,
+      new File([new Uint8Array([1])], 'clip.mp4', { type: 'video/mp4' })
+    );
+  }
+
+  test('signed out: opens sign-in instead of uploading', async () => {
+    auth.currentUser = null;
+    const onChange = vi.fn();
+    renderWithProviders(<VideoInput value={undefined} onChange={onChange} />);
+    await pickVideo();
+
+    await vi.waitFor(() => expect(auth.openLoginPopup).toHaveBeenCalledTimes(1));
+    const here = window.location.pathname + window.location.search + window.location.hash;
+    expect(auth.openLoginPopup).toHaveBeenCalledWith(here, 'image-upload');
+    await new Promise((r) => setTimeout(r, 200));
+    expect(auth.uploadConsumerBlob).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test('signed in: uploads and does not open sign-in', async () => {
+    auth.currentUser = { id: 1 };
+    const onChange = vi.fn();
+    renderWithProviders(<VideoInput value={undefined} onChange={onChange} />);
+    await pickVideo();
+
+    await vi.waitFor(() =>
+      expect(onChange).toHaveBeenCalledWith({ url: ORCH_URL, metadata: undefined })
+    );
+    expect(auth.uploadConsumerBlob).toHaveBeenCalledTimes(1);
+    expect(auth.openLoginPopup).not.toHaveBeenCalled();
   });
 });

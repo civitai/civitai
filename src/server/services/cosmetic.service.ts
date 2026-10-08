@@ -17,7 +17,7 @@ import type {
   EquipCosmeticInput,
   GetStickerCosmeticsInput,
   GetPaginatedCosmeticsInput,
-  SetCosmeticFlagInput,
+  SetStickerPlacementRatingInput,
 } from '~/server/schema/cosmetic.schema';
 import {
   articlesSearchIndex,
@@ -27,6 +27,10 @@ import {
 } from '~/server/search-index';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { STICKER_SLUG_ERROR, isValidStickerSlug } from '~/shared/utils/sticker-token';
+import {
+  STICKER_PLACEMENT_RATING_MASK,
+  stickerPlacementRatingFlags,
+} from '~/shared/constants/cosmetic-flags.constants';
 import type { StickerCosmetic } from '~/server/selectors/cosmetic.selector';
 import { simpleCosmeticSelect } from '~/server/selectors/cosmetic.selector';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
@@ -119,17 +123,17 @@ export async function getStickerAttribution({ ids }: GetStickerCosmeticsInput) {
 }
 
 /**
- * Sets or clears one moderator flag in a single statement, so two moderators
- * flipping different bits cannot overwrite each other's.
+ * Writes both placement-rating bits in one statement, so the two can never be
+ * set together and a moderator flipping some other bit is not overwritten.
  */
-export async function setCosmeticFlag({ id, flag, enabled }: SetCosmeticFlagInput) {
+export async function setStickerPlacementRating({ id, rating }: SetStickerPlacementRatingInput) {
   const [row] = await dbWrite.$queryRaw<{ flags: number }[]>`
     UPDATE "Cosmetic"
-    SET flags = CASE WHEN ${enabled} THEN flags | ${flag} ELSE flags & ~${flag}::int END
-    WHERE id = ${id}
+    SET flags = (flags & ~${STICKER_PLACEMENT_RATING_MASK}::int) | ${stickerPlacementRatingFlags[rating]}
+    WHERE id = ${id} AND type = 'Sticker'::"CosmeticType"
     RETURNING flags
   `;
-  if (!row) throw throwBadRequestError("That cosmetic doesn't exist");
+  if (!row) throw throwBadRequestError("That sticker doesn't exist");
 
   await cosmeticCache.refresh(id);
   return { id, flags: row.flags };

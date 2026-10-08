@@ -74,6 +74,7 @@ import type {
   GetMyTrainingModelsSchema,
   LimitOnly,
   MigrateResourceToCollectionInput,
+  MinorFlagSnapshot,
   ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
@@ -131,6 +132,10 @@ import {
   reconcileBlurbReferences,
 } from '~/server/services/blurb-materialize.service';
 import { submitModelTextModeration } from '~/server/services/model-moderation.adapter';
+import { summarizeTextScan } from '~/server/services/text-scan/moderator-summary';
+import { reassertModelPoiRestrictions } from '~/server/services/text-scan/actions/model-poi-minor';
+import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -2350,6 +2355,7 @@ export type ModelMinorActivity =
   | 'setMinor'
   | 'unsetMinor'
   | 'setMinorAutoHash'
+  | 'setMinorTextScan'
   | 'rollbackMinorAutoHash';
 
 export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
@@ -2359,10 +2365,11 @@ export const MINOR_FLAG_SNAPSHOT_KEY = 'minorFlagSnapshot';
 // this the change is unrecoverable, whether a job or a moderator made it.
 // `source` is what lets a bulk rollback undo only the automated flags and leave
 // deliberate moderator decisions alone.
-// Idempotent via the WHERE guard: a re-flag can never clobber the original
-// pre-state. Best-effort — losing the snapshot must block a later rollback, not
+// A re-flag of a model that is still minor never clobbers the original pre-state; a snapshot left
+// behind by an unset is replaced, or the new flag would inherit the old one's source and pre-state.
+// Best-effort — losing the snapshot must block a later rollback, not
 // the flag itself, so failures are logged rather than thrown.
-async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manual') {
+async function captureMinorFlagSnapshot(modelId: number, source: MinorFlagSnapshot['source']) {
   try {
     await dbWrite.$executeRaw`
       UPDATE "Model" m
@@ -2384,7 +2391,7 @@ async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manua
         )
       )
       WHERE m.id = ${modelId}
-        AND NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY})
+        AND (NOT (COALESCE(m.meta, '{}'::jsonb) ? ${MINOR_FLAG_SNAPSHOT_KEY}) OR NOT m.minor)
     `;
   } catch (error) {
     logToAxiom({
@@ -2396,6 +2403,12 @@ async function captureMinorFlagSnapshot(modelId: number, source: 'auto' | 'manua
   }
 }
 
+function minorFlagSource(activity: ModelMinorActivity | undefined): MinorFlagSnapshot['source'] {
+  if (activity === 'setMinorAutoHash') return 'auto';
+  if (activity === 'setMinorTextScan') return 'text-scan';
+  return 'manual';
+}
+
 export async function setModelMinor({
   id,
   minor,
@@ -2403,11 +2416,13 @@ export async function setModelMinor({
   activity,
   tracker,
   isModerator,
+  recordTextScanRuling,
 }: SetModelMinorInput & {
   userId: number;
   activity?: ModelMinorActivity;
   tracker?: Tracker;
   isModerator?: boolean;
+  recordTextScanRuling?: boolean;
 }) {
   const before = await dbRead.model.findUnique({
     where: { id },
@@ -2423,10 +2438,24 @@ export async function setModelMinor({
   });
   if (!before) throw throwNotFoundError(`No model with id ${id}`);
 
+  if (!minor && recordTextScanRuling) {
+    // Dynamic: model.service is imported almost everywhere; only this branch needs the profiles.
+    const { stampModeratorTextScanRuling } = await import(
+      '~/server/services/text-scan/actions/appeal-text-hash'
+    );
+    const stamped = await stampModeratorTextScanRuling({ modelId: id, userId, label: 'minor' });
+    if (!stamped)
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: 'moderator minor ruling not recorded: model text unreadable',
+        modelId: id,
+      }).catch(() => null);
+  }
+
   // Must run before the update below and before side effects propagate `minor`
   // to images, or the snapshot records post-flag state.
-  if (minor)
-    await captureMinorFlagSnapshot(id, activity === 'setMinorAutoHash' ? 'auto' : 'manual');
+  if (minor) await captureMinorFlagSnapshot(id, minorFlagSource(activity));
 
   const prevLockedProperties = before.lockedProperties ?? [];
   const lockedProperties = minor
@@ -2504,6 +2533,7 @@ export async function setModelMinor({
       .catch(() => null);
   }
   await applyModelFlagSideEffects({ before, after: result });
+  if (!minor && result.poi) await reassertModelPoiRestrictions(id);
 
   return result;
 }
@@ -2718,7 +2748,7 @@ export const upsertModel = async (
   }
 
   let profanityAutoNsfw = false;
-  if (!isModerator) {
+  if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -3207,12 +3237,14 @@ export async function applyModelContentChange({
     // This branch is the fan-out, which has neither — and the text it just wrote is text the
     // upsert's gate never saw. Without this, editing a blurb is a way to put profanity into a
     // published description while it keeps the SFW classification it earned with the old text.
-    const flagged = evaluateAutoNsfw({
-      name: stored.name,
-      description,
-      alreadyNsfw: stored.nsfw,
-      lockedProperties: stored.lockedProperties,
-    });
+    const flagged = (await legacyProfanityAutoNsfwApplies('Model', id))
+      ? evaluateAutoNsfw({
+          name: stored.name,
+          description,
+          alreadyNsfw: stored.nsfw,
+          lockedProperties: stored.lockedProperties,
+        })
+      : null;
     if (flagged) {
       const meta = {
         ...((stored.meta as MixedObject | null) ?? {}),
@@ -4874,6 +4906,7 @@ export async function migrateResourceToCollection({
   await modelsSearchIndex.queueUpdate(
     modelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
   );
+  modelIds.forEach((entityId) => scanEntityInBackground({ entityType: 'Model', entityId }));
 
   return { ok: true };
 }
@@ -4960,25 +4993,38 @@ export async function bustFeaturedModelsCache() {
 
 // Mod-only read of a model's moderation state — surfaces why a model is
 // locked / marked nsfw / hidden so mods can self-triage instead of escalating
-// (auto-actions like the profanity nsfw-lock are otherwise invisible to them).
+// (automated actions such as the profanity nsfw-lock or the text-scan nsfw flag are otherwise
+// invisible to them).
 export async function getModelModerationDetail({ id }: { id: number }) {
-  const model = await dbRead.model.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      name: true,
-      nsfw: true,
-      nsfwLevel: true,
-      status: true,
-      availability: true,
-      minor: true,
-      poi: true,
-      lockedProperties: true,
-      deletedAt: true,
-      deletedBy: true,
-      meta: true,
-    },
-  });
+  const [model, scan] = await Promise.all([
+    dbRead.model.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        name: true,
+        nsfw: true,
+        nsfwLevel: true,
+        status: true,
+        availability: true,
+        minor: true,
+        poi: true,
+        lockedProperties: true,
+        deletedAt: true,
+        deletedBy: true,
+        meta: true,
+      },
+    }),
+    dbRead.entityModeration.findUnique({
+      where: { entityType_entityId: { entityType: 'Model', entityId: id } },
+      select: {
+        status: true,
+        nsfwLevel: true,
+        triggeredLabels: true,
+        result: true,
+        updatedAt: true,
+      },
+    }),
+  ]);
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
 
   const meta = (model.meta ?? {}) as ModelMeta;
@@ -5005,6 +5051,7 @@ export async function getModelModerationDetail({ id }: { id: number }) {
         }
       : null,
     textModeration: meta.textModeration ?? null,
+    textScan: summarizeTextScan(scan),
     unpublishedAt: meta.unpublishedAt ?? null,
     unpublishedBy: meta.unpublishedBy ?? null,
     unpublishedReason: meta.unpublishedReason ?? null,
@@ -5181,6 +5228,7 @@ export const privateModelFromTraining = async ({
       result.id
     );
 
+    if (!user.isModerator) scanEntityInBackground({ entityType: 'Model', entityId: result.id });
     return withoutMinorHashMeta(result);
   } catch (error) {
     await dbWrite.model.update({

@@ -140,6 +140,44 @@ check(
   'no-skills-dir'
 );
 
+// -- the three states: set / served by the root .env / genuinely absent ------
+// The report over-reported before this: it checked only for a skill OWN .env, so three
+// skills that work fine by reading the root file were listed as missing credentials. A
+// report that cries wolf is one people stop reading, which is the failure it exists to
+// prevent.
+const rooted = tree('rooted', {
+  served: { '.env.example': 'SHARED_KEY=' },
+  unserved: { '.env.example': 'PRIVATE_KEY=' },
+  wiring: { '.env.example': '# skill-env: settings-only\nPORT=' },
+});
+writeFileSync(join(rooted, '.env'), 'SHARED_KEY=from-the-root');
+
+const states = Object.fromEntries(
+  survey(rooted).map((r) => [r.skill, r.viaRoot ? 'root' : r.has ? 'set' : r.wants ? 'absent' : 'n/a'])
+);
+check('a skill whose keys the root .env supplies is not reported absent', states.served, 'root');
+check('a skill whose keys the root .env lacks IS reported absent', states.unserved, 'absent');
+check('an example marked settings-only is not a credential gap', states.wiring, 'n/a');
+
+// the blocking key is named, because that is the actionable half
+check(
+  'the absent row knows which key is missing',
+  survey(rooted).find((r) => r.skill === 'unserved').missingFromRoot,
+  ['PRIVATE_KEY']
+);
+
+// and the same narrowing reaches `wt new`, which warns off this list
+const warnTarget = tree('warn', {
+  served: { '.env.example': 'SHARED_KEY=' },
+  unserved: { '.env.example': 'PRIVATE_KEY=' },
+});
+writeFileSync(join(warnTarget, '.env'), 'SHARED_KEY=from-the-root');
+check(
+  'wt new warns only about skills the root .env cannot serve',
+  syncSkillEnv(rooted, warnTarget).absent,
+  ['unserved']
+);
+
 rmSync(root, { recursive: true, force: true });
 console.log(failures ? `\n${failures} failure(s)` : '\nall checks passed');
 process.exit(failures ? 1 : 0);

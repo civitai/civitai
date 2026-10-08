@@ -1,9 +1,9 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Card, Center, Divider, Group, Select, Stack, Text, Title } from '@mantine/core';
 import { IconChevronDown, IconGift } from '@tabler/icons-react';
-import { useCallback, useRef } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   DowngradeFeedbackModal,
@@ -164,51 +164,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
       }),
   });
 
-  // Spotlight + border glow tracking
-  const cardRef = useRef<HTMLDivElement>(null);
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const borderGlowRef = useRef<HTMLDivElement>(null);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Inner spotlight on top section
-    const el = spotlightRef.current;
-    if (el) {
-      el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(190,75,219,0.12), transparent 70%)`;
-      el.style.opacity = '1';
-    }
-
-    // Border glow
-    const border = borderGlowRef.current;
-    if (border) {
-      border.style.background = `radial-gradient(400px circle at ${x}px ${y}px, rgba(190,75,219,0.15), transparent 70%)`;
-      border.style.opacity = '1';
-    }
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-    const border = borderGlowRef.current;
-    if (border) border.style.opacity = '0';
-  }, []);
-
   return (
-    <div
-      ref={cardRef}
-      className="relative h-full"
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-    >
-      {/* Border glow overlay */}
-      <div
-        ref={borderGlowRef}
-        className="pointer-events-none absolute -inset-px rounded-xl transition-opacity duration-500"
-        style={{ opacity: 0 }}
-      />
+    <SpotlightSurface className="h-full">
+      <SpotlightGlow className="-inset-px rounded-xl" color="rgba(190,75,219,0.15)" size={400} />
 
       <Card className="relative z-[1] h-full overflow-hidden rounded-xl border border-dark-4 p-0 dark:bg-dark-7">
         <Stack justify="space-between" className="h-full">
@@ -223,12 +181,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     'linear-gradient(135deg, rgba(190,75,219,0.1) 0%, rgba(190,75,219,0.02) 100%)',
                 }}
               />
-              {/* Spotlight glow */}
-              <div
-                ref={spotlightRef}
-                className="pointer-events-none absolute inset-0 transition-opacity duration-500"
-                style={{ opacity: 0 }}
-              />
+              <SpotlightGlow local color="rgba(190,75,219,0.12)" size={250} />
 
               <Stack gap="md" className="relative">
                 <Title className="text-center text-xl @sm:text-2xl" order={2} mb="sm">
@@ -415,6 +368,6 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
           </Stack>
         </Stack>
       </Card>
-    </div>
+    </SpotlightSurface>
   );
 }

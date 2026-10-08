@@ -26,6 +26,7 @@ import {
   grokVersionIds,
   happyHorseVersionIds,
   klingVersionIds,
+  minimaxVersionIds,
   viduVersionIds,
 } from '~/shared/generation/version-ids';
 import {
@@ -296,8 +297,8 @@ export const workflowConfigs: WorkflowConfigs = {
     description: 'Generate video from text',
     category: 'video',
     ecosystemIds: TXT2VID_IDS,
-    // Grok v2.0 is image-only.
-    excludeModelVersionIds: [grokVersionIds['v2.0']],
+    // Grok v2.0 is image-only; Vidu Q4 has no text-to-video.
+    excludeModelVersionIds: [grokVersionIds['v2.0'], viduVersionIds.q4],
   },
 
   img2vid: {
@@ -323,7 +324,14 @@ export const workflowConfigs: WorkflowConfigs = {
       ECO.MiniMaxH3,
       ECO.Flux3Video,
     ],
-    excludeModelVersionIds: [klingVersionIds.v1_6, klingVersionIds.v2, klingVersionIds.v2_5_turbo],
+    excludeModelVersionIds: [
+      klingVersionIds.v1_6,
+      klingVersionIds.v2,
+      klingVersionIds.v2_5_turbo,
+      // HeyGen and Vidu Q4 take a first frame only
+      minimaxVersionIds.heygen,
+      viduVersionIds.q4,
+    ],
     variantOf: 'img2vid',
   },
 

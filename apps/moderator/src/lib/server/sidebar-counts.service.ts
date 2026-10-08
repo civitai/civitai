@@ -7,7 +7,7 @@ import { getImageReviewCounts } from './image-review.service';
 import { countStuckIngestion, countIngestionErrorImages } from './ingestion.service';
 import { getImageRatingReviewCount } from './image-rating-review.service';
 import { countModeratorArticles } from './articles.service';
-import { getArticleRatingReviewCounts } from './article-rating-reviews.service';
+import { getRatingReviewCounts } from './rating-reviews.service';
 import { getReportCounts } from './reports.service';
 import { countNewFeedback } from './feedback.service';
 
@@ -27,7 +27,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     appeals,
     reported,
     articles,
-    articleRatings,
+    ratingReviews,
     reports,
     stuckIngestion,
     ingestionErrors,
@@ -59,7 +59,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
       .where('r.status', '=', 'Pending')
       .executeTakeFirst(),
     countModeratorArticles(),
-    getArticleRatingReviewCounts(),
+    getRatingReviewCounts(),
     getReportCounts(),
     // Bounded: neither count is served by an index alone; see `bounded`.
     bounded(countStuckIngestion),
@@ -77,7 +77,7 @@ async function fetchCounts(): Promise<SidebarCounts> {
     appeals: Number(appeals?.count ?? 0),
     reported: Number(reported?.count ?? 0),
     articles,
-    articleRatings: articleRatings.Pending,
+    ratingReviews: ratingReviews.Pending,
     feedbackNew,
     ...(stuckIngestion != null ? { stuckIngestion } : {}),
     ...(ingestionErrors != null ? { ingestionErrors } : {}),

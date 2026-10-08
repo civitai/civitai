@@ -41,6 +41,7 @@ import {
 import { withSpan } from '~/server/utils/otel-helpers';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata } from '~/server/schema/media.schema';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 export type CommentThread = {
   id: number;
@@ -441,6 +442,7 @@ export const upsertComment = async ({
       return created;
     });
 
+    queueScamScan({ entityType: 'CommentV2', entityId: created.id });
     return created;
   }
   // Wrapped so the edit's charge and the edit itself commit together.
@@ -461,6 +463,7 @@ export const upsertComment = async ({
     entityId: updated.id,
   });
 
+  queueScamScan({ entityType: 'CommentV2', entityId: updated.id });
   return updated;
 };
 
@@ -637,6 +640,23 @@ export const getComment = async ({
   if (!comment) throw throwNotFoundError();
   return comment;
 };
+
+export async function getCommentThreadBounty(
+  threadId: number
+): Promise<{ bountyId: number } | { entryId: number } | null> {
+  const thread = await dbRead.thread.findUnique({
+    where: { id: threadId },
+    select: {
+      bountyId: true,
+      bountyEntryId: true,
+      rootThread: { select: { bountyId: true, bountyEntryId: true } },
+    },
+  });
+  const bountyId = thread?.bountyId ?? thread?.rootThread?.bountyId;
+  if (bountyId) return { bountyId };
+  const entryId = thread?.bountyEntryId ?? thread?.rootThread?.bountyEntryId;
+  return entryId ? { entryId } : null;
+}
 
 export const deleteComment = ({ id }: { id: number }) => {
   return dbWrite.commentV2.delete({ where: { id } });

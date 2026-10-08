@@ -65,6 +65,7 @@ import {
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import type { ChatCreateChat } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 export type ChatAuditEventRow = {
   createdAt: string;
@@ -1104,6 +1105,7 @@ export const updateMessageHandler = async ({
       where: { id: existing.id },
       data: { content: trimmed, editedAt },
     });
+    if (isOwn) queueScamScan({ entityType: 'ChatMessage', entityId: existing.id });
 
     const before = truncateAuditValue(existing.content);
     const after = truncateAuditValue(trimmed);

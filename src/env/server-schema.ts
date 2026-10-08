@@ -391,6 +391,7 @@ export const serverSchema = z
     LOGGING: commaDelimitedStringArray(),
     IMAGE_SCANNING_CALLBACK: z.string().optional(),
     TEXT_MODERATION_CALLBACK: z.string().optional(),
+    TEXT_SCAN_CALLBACK: z.string().optional(),
     IMAGE_SCANNING_RETRY_DELAY: z.coerce.number().default(5),
     // Age-out threshold (minutes) for never-returning image scans. A scan verdict
     // arrives via the fire-and-forget /image-scan-result webhook; a fraction never
@@ -535,9 +536,7 @@ export const serverSchema = z
     // rather than the deferred retry that shedding the feed produces — a much
     // worse trade. Concurrency is high-but-bounded (a runaway backstop, not a
     // brownout guard) and the timeout stays well under Traefik's 30s router
-    // timeout so a hung backend still can't pin event-loop slots. ⚠️ That assumes one call
-    // per request: the resource-intent seed (`searchShortlistModels`) makes up to TWO
-    // sequential calls under this timeout, so its worst case is twice this value.
+    // timeout so a hung backend still can't pin event-loop slots.
     MEILI_RESOURCE_SELECT_CONCURRENCY: z.coerce.number().int().min(1).optional().default(500),
     MEILI_RESOURCE_SELECT_TIMEOUT_MS: z.coerce.number().int().min(1).optional().default(10_000),
     PODNAME: z.string().optional(),

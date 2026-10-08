@@ -96,7 +96,7 @@ const genResource = (id: number) => ({
   air: `air:${id}`,
 });
 
-// Served to both seed pages alike, so after the merge's dedupe this is the seed order.
+// Served as the seed page, so this is the seed order.
 const SEED_HITS = [hitFor(8801, 81001, 94), hitFor(8802, 82002, 57), hitFor(8803, 83003, 19)];
 
 beforeEach(() => {
@@ -106,9 +106,9 @@ beforeEach(() => {
     usage: { promptTokens: 100, completionTokens: 50 },
     model: 'typesafe/jev-1.13-20260917',
   }));
-  // A FLAT stage-3 distribution, so stage 3 reorders nothing and what the response
-  // carries is the order the matcher produced.
-  mockAskJev.mockImplementationOnce(async () => ({
+  // A FLAT stage-3 distribution for BOTH stage-3 calls, so stage 3 reorders nothing
+  // and what the response carries is the order the matcher produced.
+  mockAskJev.mockImplementation(async () => ({
     answers: [
       {
         id: 'resourceVersion',
@@ -176,7 +176,7 @@ describe('resource-intent — a label changes the served response', () => {
   // still load-bearing: the ordering test above expects the exact reverse of the
   // seed, so a mutant that ignores the labels and reverses the tiebreak passes it.
   // This is what fails. It covers BOTH tiebreaks, because the flat stage-3
-  // distribution leaves `reorderShortlistByDistribution` ordering on index too.
+  // distribution leaves `combineStage3Answers` ordering on index too.
   it('with no labels at all the response keeps the seed order — kills a reversed tiebreak', async () => {
     const result = await getResourceIntent(INPUT, CTX);
 

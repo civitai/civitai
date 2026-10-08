@@ -9,6 +9,7 @@ import {
   IconRefresh,
   IconShieldCheck,
   IconThumbUp,
+  IconUsers,
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { type MouseEvent, useState } from 'react';
@@ -17,12 +18,15 @@ import {
   REVIEW_QUEUE_MANAGE_HREF,
   TAKEDOWN_TESTID_STEM,
   appListingDetailModActions,
+  detailListingStatus,
   detailModActionLabel,
   type DetailTakedownAction,
 } from '~/components/Apps/appListingDetailModActions';
 import { canOwnerEditListing, getOwnerEditHref } from '~/components/Apps/appListingCardView';
 import { ListingTakedownModal } from '~/components/Apps/ListingTakedownModal';
+import { ListingVisibilityMenuModal } from '~/components/Apps/ListingVisibilityMenuModal';
 import { MessageAppOwnerModal } from '~/components/Apps/MessageAppOwnerModal';
+import { ModListingVisibilityModal } from '~/components/Apps/ModListingVisibilityModal';
 import {
   ReportListingModal,
   useCanReportListing,
@@ -63,7 +67,9 @@ import { isAppReviewer } from '~/shared/utils/app-blocks-access';
  * whether "Leave a review" and "Report" are offered — and the card says no: those
  * two are about one app the viewer has chosen to look at, and the card is one tile
  * of ~24 being scanned. Everything else, Edit and the whole moderator section
- * included, is the same on both surfaces.
+ * included, is the same on both surfaces. (Within the moderator section, "Set
+ * visibility" is withheld from the listing's own owner on both surfaces alike — they
+ * get the owner "Visibility" item instead; see `appListingDetailModActions`.)
  *
  * 🔴 THE MODALS ARE OWNED HERE, AS SIBLINGS OF THE `Menu`, NOT OF A `Menu.Item`.
  * A Mantine `Menu.Dropdown` is UNMOUNTED when the menu closes, so a modal
@@ -73,13 +79,13 @@ import { isAppReviewer } from '~/shared/utils/app-blocks-access';
  *
  * 🔴 THE MODALS MOUNT LAZILY — only once the menu has been opened at least once
  * ({@link everOpened}). This is not a micro-optimisation: the store grid renders
- * ~24 of these at a time, and the four modals between them pull the tRPC client
- * (`reportListing` / `upsertReview` / `messageAppOwner` / the takedown pair) and
- * a `matchMedia` subscription each. Mounting them per card would put ~96 modal
- * subtrees and ~24 media-query listeners on a page whose viewer will open at most
- * one of them. Nothing is lost: every one of these modals is reachable ONLY from
- * an item inside this menu, so "the menu has never been opened" implies "no modal
- * can be open". The gates are unchanged — each modal is still `&&`-ed to the same
+ * ~24 of these at a time, and the modals between them pull the tRPC client
+ * (`reportListing` / `upsertReview` / `messageAppOwner` / the takedown pair / the two
+ * visibility pickers) and a `matchMedia` subscription each. Mounting them per card
+ * would put up to six modal subtrees per card and ~24 media-query listeners on a page whose viewer
+ * will open at most one of them. Nothing is lost: every one of these modals is
+ * reachable ONLY from an item inside this menu, so "the menu has never been opened"
+ * implies "no modal can be open". The gates are unchanged — each modal is still `&&`-ed to the same
  * predicate as its trigger.
  */
 
@@ -151,6 +157,8 @@ export type AppListingActionsMenuProps = {
 type AppListingMenuGates = {
   showEdit: boolean;
   editHref: string | null;
+  /** Owner "Visibility" item — see the gate's comment for why it is owner-only here. */
+  showOwnerVisibility: boolean;
   canReview: boolean;
   canReport: boolean;
   modActions: ReturnType<typeof appListingDetailModActions>;
@@ -171,8 +179,8 @@ type AppListingMenuGates = {
  * with no consumer. `appListingMenuSurface.test.ts` fails if the card starts
  * branching its layout on menu visibility again.
  *
- * 🔴 STILL WRITTEN ONCE, for the reason that survives: `showMenu` is a four-term
- * disjunction over four separately-defined predicates, and a second copy of that
+ * 🔴 STILL WRITTEN ONCE, for the reason that survives: `showMenu` is a five-term
+ * disjunction over separately-defined predicates, and a second copy of that
  * expression anywhere is a predicate duplicated across call sites — the shape that
  * gets fixed at one site and stays wrong at the other.
  *
@@ -195,6 +203,12 @@ function useAppListingMenuGates(
   const isOwner = !!currentUser?.id && currentUser.id === listing.creatorUserId;
   const editHref = getOwnerEditHref(listing.kindData, listing.id);
   const showEdit = canOwnerEditListing({ isOwner }) && !!editHref;
+  // Owner "Visibility" item. 🔴 GATED ON `isOwner` ALONE BECAUSE THE REST OF THE
+  // PREDICATE CANNOT BE EVALUATED HERE: `showVisibility` also needs the listing's status,
+  // which neither DTO carries. `ListingVisibilityMenuModal` fetches the authoring context
+  // when the item is clicked and applies `showVisibility` to THAT row, so an ineligible
+  // listing gets an explanation in the modal rather than a picker.
+  const showOwnerVisibility = isOwner;
 
   // 🔴 The gates are the SAME predicates each affordance defines, imported rather
   // than re-derived, so the menu cannot disagree with them about who may act.
@@ -225,28 +239,35 @@ function useAppListingMenuGates(
   // the subset these surfaces implement, and answers empty for a non-moderator and
   // in preview. The gate is `isAppReviewer` — the existing named predicate — and it
   // is COSMETIC: every proc behind these items is `moderatorProcedure` plus an
-  // inner `isModerator` recheck, which is the actual boundary.
+  // inner `isModerator` recheck, which is the actual boundary. `viewerOwnsListing` is
+  // the same `isOwner` that gates the owner items, so an owner-moderator gets the owner
+  // "Visibility" item and not the moderator "Set visibility" (the rest of the moderator
+  // section is unchanged for them).
   const modActions = appListingDetailModActions({
     isModerator: isAppReviewer(currentUser),
     preview,
     kind: listing.kind,
+    viewerOwnsListing: isOwner,
   });
 
   return {
     showEdit,
     editHref,
+    showOwnerVisibility,
     canReview,
     canReport,
     modActions,
     // `modActions` is already empty in preview, so the leading `!preview` is not
     // what suppresses the mod section — it is the clause that suppresses the WHOLE
     // menu, on every surface.
-    showMenu: !preview && (showEdit || canReview || canReport || modActions.length > 0),
+    showMenu:
+      !preview &&
+      (showEdit || showOwnerVisibility || canReview || canReport || modActions.length > 0),
   };
 }
 
 /**
- * The `⋮` overflow menu: owner Edit, review, report, and the moderator section.
+ * The `⋮` overflow menu: owner Edit + Visibility, review, report, and the moderator section.
  *
  * Returns `null` when it would hold NO items — the same predicate the detail body
  * has always applied. Two consequences worth stating because they are decisions:
@@ -271,11 +292,8 @@ export function AppListingActionsMenu({
   triggerTooltip = false,
   stopPropagation = false,
 }: AppListingActionsMenuProps) {
-  const { showEdit, editHref, canReview, canReport, modActions, showMenu } = useAppListingMenuGates(
-    listing,
-    surface,
-    preview
-  );
+  const { showEdit, editHref, showOwnerVisibility, canReview, canReport, modActions, showMenu } =
+    useAppListingMenuGates(listing, surface, preview);
 
   // 🔴 The report affordance's STATE comes from `useReportListingAffordance`, not a
   // bare `useDisclosure`: the server allows one open report per reporter, so once a
@@ -294,6 +312,12 @@ export function AppListingActionsMenu({
   // they fire, so a viewer seeing both would have no way to tell which one they
   // were about to submit.
   const [takedown, setTakedown] = useState<DetailTakedownAction | null>(null);
+  const [ownerVisibilityOpened, ownerVisibilityModal] = useDisclosure(false);
+  const [modVisibilityOpened, modVisibilityModal] = useDisclosure(false);
+  // The status the moderator picker's review ceiling is computed from: this surface's own
+  // claim (`approved` on the live arm), the same input `appListingDetailModActions` used to
+  // admit `set-visibility`. `null` only in preview, where `modActions` is empty anyway.
+  const modStatus = detailListingStatus({ preview });
   // See the header: the modals mount only after the menu has been opened once.
   const [everOpened, setEverOpened] = useState(false);
 
@@ -357,6 +381,17 @@ export function AppListingActionsMenu({
                 data-testid="apps-listing-owner-edit"
               >
                 Edit
+              </Menu.Item>
+            )}
+            {/* Owner "Visibility" — opens the per-listing level picker. Its inputs are
+                fetched when clicked; see `ListingVisibilityMenuModal`. */}
+            {showOwnerVisibility && (
+              <Menu.Item
+                leftSection={<IconUsers size={14} stroke={1.5} />}
+                onClick={ownerVisibilityModal.open}
+                data-testid="apps-listing-owner-visibility"
+              >
+                Visibility
               </Menu.Item>
             )}
             {/* Review affordance (thumbs/recommend) — hidden for the owner, signed-out
@@ -434,6 +469,15 @@ export function AppListingActionsMenu({
                     {detailModActionLabel(action)}
                   </Menu.Item>
                 ))}
+                {modActions.includes('set-visibility') && (
+                  <Menu.Item
+                    leftSection={<IconUsers size={14} stroke={1.5} />}
+                    onClick={modVisibilityModal.open}
+                    data-testid="apps-listing-mod-visibility"
+                  >
+                    {detailModActionLabel('set-visibility')}
+                  </Menu.Item>
+                )}
                 {/* 🔴 THE INVERSE AFFORDANCE, AND IT IS A LINK RATHER THAN A BUTTON ON
                     PURPOSE. There is no relist/republish control here because there
                     cannot be one: `relistListing` acts on a `removed` listing, both
@@ -493,6 +537,25 @@ export function AppListingActionsMenu({
               action={takedown}
               listing={modListing}
               onClose={() => setTakedown(null)}
+            />
+          )}
+          {showOwnerVisibility && (
+            <ListingVisibilityMenuModal
+              listing={{ id: listing.id, slug: listing.slug }}
+              opened={ownerVisibilityOpened}
+              onClose={ownerVisibilityModal.close}
+            />
+          )}
+          {/* The same moderator picker the /apps/review mgmt table opens, reused. */}
+          {modActions.includes('set-visibility') && modStatus && (
+            <ModListingVisibilityModal
+              target={
+                modVisibilityOpened
+                  ? { id: listing.id, slug: listing.slug, status: modStatus }
+                  : null
+              }
+              onClose={modVisibilityModal.close}
+              onDone={() => undefined}
             />
           )}
         </>

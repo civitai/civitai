@@ -165,10 +165,12 @@ import {
 } from '~/server/utils/model-getall-images';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
+import { resolveFlagScanReasons } from '~/server/services/text-scan/flag-snapshot';
 import {
   filterModelMetaForClient,
   resolveMinorAppeal,
   resolveMinorFlagged,
+  resolvePoiFlagged,
 } from '~/server/utils/minor-flag-meta';
 import {
   allBrowsingLevelsFlag,
@@ -189,6 +191,7 @@ import {
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -557,6 +560,17 @@ export const getModelHandler = async ({
       // (and by whom) is not a visitor's business.
       minorFlagged: resolveMinorFlagged({
         isOwner,
+        minor: model.minor,
+        meta: model.meta as ModelMeta | null,
+      }),
+      poiFlagged: resolvePoiFlagged({
+        isOwner,
+        poi: model.poi,
+        meta: model.meta as ModelMeta | null,
+      }),
+      flagScanReasons: resolveFlagScanReasons({
+        isOwner,
+        poi: model.poi,
         minor: model.minor,
         meta: model.meta as ModelMeta | null,
       }),
@@ -1201,7 +1215,10 @@ export const getDownloadCommandHandler = async ({
     }
 
     const fileName = getDownloadFilename({ model, modelVersion, file, versionFiles: files });
-    const { url } = await resolveDownloadUrl(file.id, file.url, fileName);
+    const { url } = await resolveDownloadUrl(file.id, file.url, fileName, {
+      caller: 'link',
+      actor: resolveActorFor(ctx.user),
+    });
 
     const commands: CommandResourcesAdd[] = [];
     commands.push({
@@ -1236,8 +1253,12 @@ export const getDownloadCommandHandler = async ({
           name: additionalFileName,
           modelName: model.name,
           modelVersionName: modelVersion.name,
-          url: (await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName))
-            .url,
+          url: (
+            await resolveDownloadUrl(additionalFile.id, additionalFile.url, additionalFileName, {
+              caller: 'link',
+              actor: resolveActorFor(ctx.user),
+            })
+          ).url,
         },
       });
     }
@@ -1540,6 +1561,7 @@ export const setModelMinorHandler = async ({
       userId: ctx.user.id,
       tracker: ctx.track,
       isModerator: ctx.user.isModerator,
+      recordTextScanRuling: true,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

@@ -400,6 +400,7 @@ export type Appeal = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
 };
@@ -435,8 +436,8 @@ export type AppListing = {
    * PURPOSE, AND THAT
    * IS A FIX FOR A PRODUCTION 500, NOT A STYLE CHOICE. Prisma names every scalar the model
    * declares in its default SELECT/RETURNING, so while this was an ordinary field every
-   * `appListing` call that returns rows with no explicit `select` emitted it — 18 such sites
-   * on this tree, 17 of them WRITES — and during the manual-apply window that is
+   * `appListing` call that returns rows with no explicit `select` emitted it - 18 such sites
+   * on this tree, 17 of them WRITES - and during the manual-apply window that is
    * `prisma.appListing.create()` dying with P2022. It happened: off-site submit, approve and
    * delist all 500d on the PR preview. Stripping the field makes every one of those sites
    * immune by construction. The column is reached ONLY by raw SQL, in
@@ -613,6 +614,38 @@ export type AppReviewAgentReport = {
   prior_report_id: string | null;
   token_usage: unknown | null;
   cost_usd: string | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppSubListing = {
+  id: string;
+  parent_listing_id: string;
+  item_key: string;
+  author_user_id: number;
+  title: string;
+  tagline: string | null;
+  image_id: number | null;
+  sub_path: string;
+  content_rating: string | null;
+  pending_title: string | null;
+  pending_tagline: string | null;
+  pending_image_id: number | null;
+  pending_sub_path: string | null;
+  pending_content_rating: string | null;
+  pending_submitted_at: Timestamp | null;
+  edit_rejection_reason: string | null;
+  status: Generated<string>;
+  status_reason: string | null;
+  moderated_by_id: number | null;
+  moderated_at: Timestamp | null;
+  approved_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
+};
+export type AppSubListingParent = {
+  parent_listing_id: string;
+  enabled: Generated<boolean>;
+  max_per_author: Generated<number>;
   created_at: Generated<Timestamp>;
   updated_at: Generated<Timestamp>;
 };
@@ -1471,9 +1504,24 @@ export type Bounty = {
   poi: Generated<boolean>;
   complete: Generated<boolean>;
   refunded: Generated<boolean>;
+  /**
+   * When the award (or, with `refunded`, the refund) was recorded under the payout lock.
+   */
+  payoutRecordedAt: Timestamp | null;
+  /**
+   * When that payout's Buzz moved. Recorded but unsettled rows are retried by `bounty-payout-retry`.
+   */
+  payoutSettledAt: Timestamp | null;
+  /**
+   * The award's winner, captured when it is recorded: the entry it went to can be deleted first.
+   */
+  payoutWinnerUserId: number | null;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: Generated<string[]>;
+  meta: unknown | null;
 };
 export type BountyBenefactor = {
   userId: number;
@@ -1501,6 +1549,8 @@ export type BountyEntry = {
   locked: Generated<boolean>;
   description: string | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type BountyEntryMetric = {
   bountyEntryId: number;
@@ -1799,6 +1849,8 @@ export type Challenge = {
   invitation: string | null;
   coverImageId: number | null;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: Generated<number[]>;
   allowedNsfwLevel: Generated<number>;
   judgingPrompt: string | null;
@@ -2139,6 +2191,8 @@ export type Collection = {
   metadata: Generated<unknown>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Timestamp | null;
 };
 export type CollectionContributor = {
@@ -2478,6 +2532,10 @@ export type CreatorMilestone = {
   cosmeticId: number | null;
   sortOrder: Generated<number>;
 };
+export type CreatorMilestoneCosmetic = {
+  milestoneKey: string;
+  cosmeticId: number;
+};
 export type Crucible = {
   id: Generated<number>;
   userId: number;
@@ -2487,6 +2545,8 @@ export type Crucible = {
   heroImageId: number | null;
   buzzType: Generated<string>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: Generated<MediaType>;
   entryFee: Generated<number>;
   seededPrizePool: Generated<number>;
@@ -2494,6 +2554,8 @@ export type Crucible = {
   entryLimit: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
+  entryWarningPercent: Generated<number>;
+  entryCutoffPercent: Generated<number>;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: Generated<unknown>;
@@ -2678,6 +2740,7 @@ export type EntityModeration = {
   triggeredLabels: Generated<string[]>;
   result: unknown | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -3763,6 +3826,8 @@ export type Post = {
   unlisted: Generated<boolean>;
   availability: Generated<Availability>;
   nsfwLevel: Generated<number>;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
 };
 export type PostHelper = {
   postId: number;
@@ -4012,6 +4077,22 @@ export type QuestionReaction = {
   reaction: ReviewReactions;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
+};
+export type RatingReview = {
+  id: Generated<number>;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: Generated<ReportStatus>;
+  resolvedBy: number | null;
+  resolvedAt: Timestamp | null;
+  resolvedTextHash: string | null;
+  createdAt: Generated<Timestamp>;
 };
 export type RecommendedResource = {
   id: Generated<number>;
@@ -4429,6 +4510,14 @@ export type Technique = {
   enabled: Generated<boolean>;
   type: TechniqueType;
 };
+export type TextScanPrompt = {
+  id: Generated<number>;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type Thread = {
   id: Generated<number>;
   locked: Generated<boolean>;
@@ -4730,6 +4819,8 @@ export type UserRestriction = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Timestamp | null;
 };
@@ -4904,6 +4995,8 @@ export type DB = {
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
   app_review_agent_reports: AppReviewAgentReport;
+  app_sub_listing_parents: AppSubListingParent;
+  app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
   Appeal: Appeal;
   AppPageAccess: AppPageAccess;
@@ -5013,6 +5106,7 @@ export type DB = {
   CoveredCheckpoint: CoveredCheckpoint;
   CreatorGalleryHiddenUser: CreatorGalleryHiddenUser;
   CreatorMilestone: CreatorMilestone;
+  CreatorMilestoneCosmetic: CreatorMilestoneCosmetic;
   Crucible: Crucible;
   CrucibleEngagement: CrucibleEngagement;
   CrucibleEntry: CrucibleEntry;
@@ -5132,6 +5226,7 @@ export type DB = {
   QuestionMetric: QuestionMetric;
   QuestionRank: QuestionRank;
   QuestionReaction: QuestionReaction;
+  RatingReview: RatingReview;
   RecommendedResource: RecommendedResource;
   RedeemableCode: RedeemableCode;
   ReferralAttribution: ReferralAttribution;
@@ -5177,6 +5272,7 @@ export type DB = {
   TagsOnTags: TagsOnTags;
   TagStat: TagStat;
   Technique: Technique;
+  TextScanPrompt: TextScanPrompt;
   Thread: Thread;
   ThreadMute: ThreadMute;
   TipConnection: TipConnection;

@@ -493,6 +493,7 @@ describe('🔴 every HEADED table under /apps is enumerated, not remembered', ()
       'src/components/Apps/OffsiteReviewQueue.tsx#1',
       'src/components/Apps/OffsiteSubmissionsList.tsx#0',
       'src/components/Apps/ReportTabs.tsx#0',
+      'src/components/Apps/SubListingReviewQueue.tsx#0',
       'src/components/Apps/UnifiedReviewList.tsx#0',
     ]);
   });

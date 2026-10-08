@@ -13,6 +13,7 @@ import {
   getPrizePlaceColor,
   getPrizePlaceLimit,
   restrictContentLevelsToBuzzType,
+  toCrucibleSubmitValues,
   type CrucibleEditSource,
 } from '~/components/Crucible/crucible-create-form';
 import { NsfwLevel } from '~/server/common/enums';
@@ -40,6 +41,19 @@ function restore(draft: Record<string, unknown>) {
 }
 
 describe('crucible create draft restore', () => {
+  it('fills in the late-entry defaults for a draft saved before they existed', () => {
+    const { entryWarningPercent, entryCutoffPercent, ...older } = crucibleCreateDefaultValues;
+    const result = restore({ ...older, name: 'Neon city', entryWarningPercent: 'x' });
+
+    expect(result.success).toBe(true);
+    expect([entryWarningPercent, entryCutoffPercent], 'the defaults').toEqual([20, 10]);
+    expect(result.data).toMatchObject({
+      name: 'Neon city',
+      entryWarningPercent: 20,
+      entryCutoffPercent: 10,
+    });
+  });
+
   it('restores a complete draft, reviving the start date and keeping the step', () => {
     const startAt = new Date(Date.now() + 24 * HOUR);
     const coverImage = {
@@ -249,6 +263,20 @@ describe('getCrucibleCostBreakdown', () => {
   );
 });
 
+describe('toCrucibleSubmitValues', () => {
+  it.each(['', '   '])('omits a blank description (%j)', (description) => {
+    expect(
+      toCrucibleSubmitValues({ ...crucibleCreateDefaultValues, description }).description
+    ).toBeUndefined();
+  });
+
+  it('trims the description', () => {
+    expect(
+      toCrucibleSubmitValues({ ...crucibleCreateDefaultValues, description: ' Neon ' }).description
+    ).toBe('Neon');
+  });
+});
+
 describe('crucible edit', () => {
   const cover = { url: '4e7a1c2e-8f3b-4d5a-9c6e-2b1f0a9d8e7c', width: 1600, height: 900 };
   const crucible: CrucibleEditSource = {
@@ -262,6 +290,8 @@ describe('crucible edit', () => {
     entryLimit: 2,
     freeEntriesPerUser: 1,
     maxTotalEntries: 40,
+    entryWarningPercent: 30,
+    entryCutoffPercent: 5,
     minViewSeconds: 6,
     maxClipSeconds: null,
     seededPrizePool: 1000,
@@ -287,6 +317,31 @@ describe('crucible edit', () => {
         editableFields: allFields,
       })
     ).toEqual({ freeEntriesPerUser: 2 });
+  });
+
+  it('carries the late-entry shares into the form and sends them back only when changed', () => {
+    expect([initial.entryWarningPercent, initial.entryCutoffPercent]).toEqual([30, 5]);
+    expect(
+      getCrucibleUpdateChanges({
+        initial,
+        values: { ...initial, entryCutoffPercent: 0 },
+        editableFields: allFields,
+      })
+    ).toEqual({ entryCutoffPercent: 0 });
+  });
+
+  it('does not let the late-entry shares change once the crucible has started', () => {
+    const whileActive = getCrucibleEditableFields({
+      canEditAll: false,
+      canEditContentLevels: false,
+    });
+    expect(
+      getCrucibleUpdateChanges({
+        initial,
+        values: { ...initial, entryWarningPercent: 40, entryCutoffPercent: 20 },
+        editableFields: whileActive,
+      })
+    ).toEqual({});
   });
 
   it('sends cleared base models as an empty list, which the server reads as no restriction', () => {
@@ -347,7 +402,7 @@ describe('crucible edit', () => {
       values: { ...initial, description: '', entryFee: 500, nsfwLevel: NsfwLevel.PG13 },
       editableFields,
     });
-    expect(changes).toEqual({ description: 'No description provided' });
+    expect(changes).toEqual({ description: null });
   });
 
   it("sends content levels only when they're editable", () => {

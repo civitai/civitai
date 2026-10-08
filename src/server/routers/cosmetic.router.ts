@@ -4,10 +4,10 @@ import {
   getStickerCosmeticsSchema,
   getPaginatedCosmeticsSchema,
   purchaseStickerUsesSchema,
-  setCosmeticFlagSchema,
+  setStickerPlacementRatingSchema,
 } from '~/server/schema/cosmetic.schema';
 import {
-  setCosmeticFlag,
+  setStickerPlacementRating,
   getCosmeticDetail,
   getStickerCosmetics,
   getStickerAttribution,
@@ -87,9 +87,9 @@ export const cosmeticRouter = router({
   getPaged: moderatorProcedure.input(getPaginatedCosmeticsSchema).query(({ input }) => {
     return getPaginatedCosmetics(input);
   }),
-  setFlag: moderatorProcedure
-    .input(setCosmeticFlagSchema)
-    .mutation(({ input }) => setCosmeticFlag(input)),
+  setStickerPlacementRating: moderatorProcedure
+    .input(setStickerPlacementRatingSchema)
+    .mutation(({ input }) => setStickerPlacementRating(input)),
   equipContentDecoration: protectedProcedure
     .meta({ requiredScope: TokenScope.CollectionsWrite })
     .input(equipCosmeticSchema)

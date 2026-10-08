@@ -41,6 +41,8 @@ import {
   isFreeCrucibleEntry,
   parsePrizePositions,
   CRUCIBLE_PRIZE_BUZZ_TYPE,
+  areCrucibleEntriesClosed,
+  getCrucibleEntriesCloseAt,
 } from '~/utils/crucible-helpers';
 import { Flags } from '~/shared/utils/flags';
 import type { CrucibleBuzzType } from '~/components/Crucible/crucible-create-form';
@@ -49,6 +51,7 @@ import { trpc } from '~/utils/trpc';
 import { env } from '~/env/client';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CrucibleHeader } from '~/components/Crucible/CrucibleHeader';
 import { PrizeClaimBanner } from '~/components/Prize/PrizeClaimBanner';
@@ -56,10 +59,16 @@ import { CrucibleLeaderboard } from '~/components/Crucible/CrucibleLeaderboard';
 import { CrucibleRulesPanel } from '~/components/Crucible/CrucibleRulesPanel';
 import { CrucibleEntryGrid, type CrucibleEntryData } from '~/components/Crucible/CrucibleEntryGrid';
 import { CruciblePodium } from '~/components/Crucible/CruciblePodium';
-import { CrucibleStartJudgingButton } from '~/components/Crucible/CrucibleStartJudgingButton';
+import {
+  CrucibleCaughtUpNotice,
+  CrucibleStartJudgingButton,
+} from '~/components/Crucible/CrucibleStartJudgingButton';
 import { CruciblePrizeBreakdown } from '~/components/Crucible/CruciblePrizeBreakdown';
 import { EligibleModelsList } from '~/components/EligibleModels/EligibleModelsList';
-import { crucibleRankingsAreFinal } from '~/shared/constants/crucible.constants';
+import {
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
+  crucibleRankingsAreFinal,
+} from '~/shared/constants/crucible.constants';
 import {
   CrucibleIngestionStatus,
   CrucibleStatus,
@@ -127,6 +136,21 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     { crucibleId: id },
     { enabled: !!id }
   );
+  // The global staleTime is Infinity; judging on the judge page changes this.
+  const { data: judgingProgress } = trpc.crucible.getJudgingProgress.useQuery(
+    { crucibleId: id, browsingLevel },
+    {
+      // Guarded procedure: a muted or unverified viewer gets FORBIDDEN.
+      enabled:
+        !!currentUser &&
+        !currentUser.muted &&
+        !requiresEmailVerification(currentUser) &&
+        crucible?.status === CrucibleStatus.Active &&
+        (!crucible.endAt || new Date(crucible.endAt) > new Date()),
+      staleTime: 0,
+      refetchOnMount: 'always',
+    }
+  );
 
   // `?submit=1` (from the featured hero's "Enter Competition") opens the submit modal once, and is
   // stripped first so a refresh or back-nav doesn't reopen it. Keyed by id because Next reuses this
@@ -144,6 +168,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       crucible.status === CrucibleStatus.Active &&
       !!currentUser &&
       currentUser.id !== crucible.userId &&
+      !areCrucibleEntriesClosed(crucible) &&
       crucible.viewerEntryCount < getMaxUserEntries(crucible);
     if (canSubmit) openCrucibleSubmitEntryModal(getSubmitEntryProps(crucible, entryBuzzType));
   }, [crucible, router, currentUser, entryBuzzType]);
@@ -204,6 +229,20 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     },
   });
 
+  const withdrawEntryMutation = trpc.crucible.withdrawEntry.useMutation({
+    onSuccess: () => {
+      showSuccessNotification({
+        title: 'Entry removed',
+        message: 'Your entry slot is open again.',
+      });
+      queryUtils.crucible.getById.invalidate({ id });
+      queryUtils.crucible.getEntries.invalidate({ crucibleId: id });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Could not remove entry', error: new Error(error.message) });
+    },
+  });
+
   if (isLoading) return <PageLoader />;
   if (!crucible) return <NotFound />;
 
@@ -223,6 +262,8 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
   const isCreator = !!currentUser && currentUser.id === crucible.userId;
   const isOpen = isActive && (!crucible.endAt || new Date(crucible.endAt) > new Date());
   const canSubmitEntries = isOpen;
+  const entriesClosed = areCrucibleEntriesClosed(crucible);
+  const entriesCloseAt = crucible.entryCutoffPercent ? getCrucibleEntriesCloseAt(crucible) : null;
   const canJudge = isOpen;
   const rankingsVisible = crucibleRankingsAreFinal(crucible.status);
 
@@ -262,7 +303,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
     entryLimit: maxUserEntries,
   });
   const nextEntryFree = isFreeCrucibleEntry({
-    entriesSoFar: userEntryCount,
+    entriesSoFar: crucible.viewerEntriesSoFar,
     freeEntriesPerUser: crucible.freeEntriesPerUser,
   });
 
@@ -293,6 +334,28 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
       labels: { cancel: 'Keep it', confirm: 'Remove entry' },
       confirmProps: { color: 'red' },
       onConfirm: () => removeEntryMutation.mutate({ entryId: entry.id }),
+    });
+  };
+
+  const handleWithdrawEntry = (entry: CrucibleEntryData) => {
+    openConfirmModal({
+      title: 'Remove your entry',
+      children: (
+        <Stack gap="sm">
+          <Text size="sm">
+            Remove this entry from the crucible? It leaves judging and its slot opens up again.
+          </Text>
+          <Text size="sm" fw={600}>
+            {crucible.entryFee > 0
+              ? `There are no refunds, and entering again in this slot costs the full ${crucible.entryFee.toLocaleString()} Buzz fee.`
+              : "This can't be undone."}
+          </Text>
+        </Stack>
+      ),
+      centered: true,
+      labels: { cancel: 'Keep it', confirm: 'Remove entry' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => withdrawEntryMutation.mutate({ entryId: entry.id }),
     });
   };
 
@@ -393,11 +456,14 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
               </div>
 
               {/* CTA Button - Start Judging */}
-              {canJudge && (
-                <CrucibleStartJudgingButton
-                  onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
-                />
-              )}
+              {canJudge &&
+                (judgingProgress?.votesUsedUp ? (
+                  <CrucibleCaughtUpNotice />
+                ) : (
+                  <CrucibleStartJudgingButton
+                    onClick={() => router.push(`/crucibles/${crucible.id}/judge`)}
+                  />
+                ))}
 
               {/* Entry Grid with User Entries section */}
               <CrucibleEntryGrid
@@ -410,6 +476,7 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                 onEntryClick={openEntry}
                 status={crucible.status}
                 onRemoveEntry={canRemoveEntries ? handleRemoveEntry : undefined}
+                onWithdrawEntry={isOpen ? handleWithdrawEntry : undefined}
                 title="All Entries"
                 showRanks={rankingsVisible}
                 completed={crucible.status === CrucibleStatus.Completed}
@@ -436,6 +503,10 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     <Text size="sm" c="dimmed" className="mb-4">
                       You created this crucible, so you can&apos;t enter it. You can still judge it.
                     </Text>
+                  ) : entriesClosed ? (
+                    <Alert color="gray" radius="md" className="mb-4">
+                      {CRUCIBLE_ENTRIES_CLOSED_MESSAGE}
+                    </Alert>
                   ) : allEntriesUsed ? (
                     <Alert color="green" radius="md" className="mb-4">
                       You&apos;ve submitted all your entries. Good luck!
@@ -521,7 +592,11 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                   crucibleId={crucible.id}
                   versionIds={allowedResources}
                   onGenerate={
-                    canSubmitEntries && !isCreator && !allEntriesUsed && !currentUser?.muted
+                    canSubmitEntries &&
+                    !entriesClosed &&
+                    !isCreator &&
+                    !allEntriesUsed &&
+                    !currentUser?.muted
                       ? (versionId) => openCrucibleGenerator(crucible.contentType, [versionId])
                       : undefined
                   }
@@ -574,6 +649,15 @@ function CrucibleDetailPage({ id }: InferGetServerSidePropsType<typeof getServer
                     label: 'Total Entry Cap',
                     value: `${numberWithCommas(crucible.maxTotalEntries ?? 0)} entries`,
                     visible: !!crucible.maxTotalEntries,
+                  },
+                  {
+                    label: 'Entries Close',
+                    value: entriesCloseAt
+                      ? `${formatDate(entriesCloseAt, 'MMM D [at] h:mm A')}, in the last ${
+                          crucible.entryCutoffPercent
+                        }% of the run`
+                      : '',
+                    visible: !!entriesCloseAt,
                   },
                   {
                     label: 'Max Clip Length',
@@ -661,12 +745,15 @@ const getSubmitEntryProps = (crucible: CrucibleDetail, entryBuzzType: CrucibleBu
   nsfwLevel: crucible.nsfwLevel,
   contentType: crucible.contentType,
   currentEntryCount: crucible.viewerEntryCount,
+  entriesSoFar: crucible.viewerEntriesSoFar,
   maxClipSeconds: crucible.maxClipSeconds,
   requiresResources:
     Array.isArray(crucible.allowedResources) && crucible.allowedResources.length > 0,
   allowedBaseModels: crucible.allowedBaseModels,
   startAt: crucible.startAt,
   endAt: crucible.endAt,
+  entryWarningPercent: crucible.entryWarningPercent,
+  entryCutoffPercent: crucible.entryCutoffPercent,
 });
 
 // Required resources are alternatives ("at least one of"), so only the first is preselected.

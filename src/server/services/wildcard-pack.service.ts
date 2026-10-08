@@ -6,6 +6,7 @@ import { allowMatureContentForCeiling } from '~/shared/constants/browsingLevel.c
 import { Flags } from '~/shared/utils/flags';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from '~/types/session';
+import { resolveActorFor } from '~/utils/resolve-attribution';
 
 /**
  * Session-authed resolve step for the App Blocks wildcard-pack import bridge
@@ -120,7 +121,11 @@ export async function resolveWildcardPackForUser({
   //    protectedProcedure always has a user id. This is still the authoritative
   //    download-gate: a maturity-OK-but-download-hidden pack collapses to
   //    NOT_FOUND here, unchanged.
-  const resolved = await getFileForModelVersion({ modelVersionId, user });
+  const resolved = await getFileForModelVersion({
+    modelVersionId,
+    user,
+    attribution: { caller: 'wildcard', actor: resolveActorFor(user) },
+  });
   if (resolved.status !== 'success') {
     throw new TRPCError({ code: 'NOT_FOUND', message: 'Wildcard pack not found' });
   }

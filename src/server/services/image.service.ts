@@ -14,6 +14,10 @@ import {
   filterViewableModelVersions,
   modelVersionVisibilitySelect,
 } from '~/server/services/model-version-visibility.service';
+import {
+  clearReviewFlagsOnBlock,
+  keepPendingAppealFlags,
+} from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
@@ -830,7 +834,13 @@ export async function queueReplacedImageDeletion(ids: number[]) {
 export async function deleteImages(
   ids: number[],
   updatePosts = true,
-  { retractPublicBlobs = false }: PurgeResizeCacheRetraction = {}
+  {
+    retractPublicBlobs = false,
+    onlyWhere,
+  }: PurgeResizeCacheRetraction & {
+    /** Extra condition on the DELETE itself; ids it excludes are skipped and not returned. */
+    onlyWhere?: Prisma.Sql;
+  } = {}
 ) {
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
@@ -853,6 +863,7 @@ export async function deleteImages(
     >`
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(ids)})
+        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
@@ -1054,16 +1065,18 @@ export async function handleBlockImages({
     const invalidateExistence = invalidateManyImageExistence(ids);
 
     await Promise.all([
-      dbWrite.image.updateMany({
-        where: { id: { in: ids } },
-        data: {
-          needsReview: null,
-          ingestion: 'Blocked',
-          nsfwLevel: NsfwLevel.Blocked,
-          blockedFor: BlockedReason.Moderated,
-          updatedAt: new Date(),
-        },
-      }),
+      dbWrite.image
+        .updateMany({
+          where: { id: { in: ids } },
+          data: {
+            ingestion: 'Blocked',
+            nsfwLevel: NsfwLevel.Blocked,
+            blockedFor: BlockedReason.Moderated,
+            updatedAt: new Date(),
+          },
+        })
+        .then(() => clearReviewFlagsOnBlock(ids))
+        .then(() => keepPendingAppealFlags(ids)),
 
       queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete }),
       invalidateExistence,
@@ -1570,6 +1583,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   user?: SessionUser;
   // Request color, used to pick which "new & upcoming" board backs `newCreators`.
   domain?: DomainColor;
+  // Server-only: not in the tRPC schema, so a client cannot set or lift it.
+  newCreatorsMaxFollowers?: number;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -1757,6 +1772,7 @@ const getAllImagesUncaptured = async (
     generation,
     reviewId,
     newCreators,
+    newCreatorsMaxFollowers,
     domain,
     prioritizedUserIds,
     include,
@@ -1869,7 +1885,9 @@ const getAllImagesUncaptured = async (
         })
       : false,
     userId && followed ? getUserFollows(userId) : undefined,
-    newCreators ? getNewCreatorUserIds({ entity: 'images', domain }) : undefined,
+    newCreators
+      ? getNewCreatorUserIds({ entity: 'images', domain, maxFollowers: newCreatorsMaxFollowers })
+      : undefined,
     collectionId
       ? getUserCollectionPermissionsById({ userId, isModerator, id: collectionId })
       : undefined,
@@ -2830,21 +2848,26 @@ async function prepareImageFeedRequest(
  * image query the rows are loaded with; the feed's paging and period are dropped from it.
  */
 async function serveImagesFromFeedService(
-  searchInput: CapturableSearchInput & { domain?: DomainColor },
+  searchInput: CapturableSearchInput & { domain?: DomainColor; newCreatorsMaxFollowers?: number },
   hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
   route: FeedPrimaryRoute
 ) {
   const started = Date.now();
   const { currentUserId } = searchInput;
-  const [followedUserIds, newCreatorUserIds] = await Promise.all([
+  const [followedUserIds, newCreatorUserIds, hub] = await Promise.all([
     searchInput.followed && currentUserId ? getUserFollows(currentUserId) : undefined,
     searchInput.newCreators
-      ? getNewCreatorUserIds({ entity: 'images', domain: searchInput.domain })
+      ? getNewCreatorUserIds({
+          entity: 'images',
+          domain: searchInput.domain,
+          maxFollowers: searchInput.newCreatorsMaxFollowers,
+        })
       : undefined,
+    searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId) : undefined,
   ]);
   const served = await withSpan('image:feedPrimary', () =>
     serveFromFeed(
-      { ...searchInput, followedUserIds, newCreatorUserIds },
+      { ...searchInput, followedUserIds, newCreatorUserIds, ...hub },
       {
         fetchFeed: fetchFeedPrimary,
         hydrate: async (ids) =>
@@ -3316,6 +3339,7 @@ export const makeMeiliImageSearchSort = (
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
   domain?: DomainColor;
+  newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
   offset?: number;
@@ -3685,6 +3709,28 @@ async function resolvedHubSources(input: ImageSearchInput) {
   });
 }
 
+/**
+ * A hub as the feed service is asked for it: its sources, and the browsing level under the hub's
+ * own cap. `hubSources: null` wherever the index path would return an empty page (no such hub
+ * for this viewer, no source left, a cap that leaves the viewer nothing), so the same requests
+ * are empty on both paths. Undefined while hubs are not switched over: the hub is then not
+ * servable by the feed and the request takes the index path.
+ */
+async function resolveHubForFeed(searchInput: CapturableSearchInput, viewerId: number | undefined) {
+  const enabled = await getFliptBoolean(
+    FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
+    viewerId?.toString() || 'anonymous',
+    feedFliptContext(searchInput)
+  );
+  if (!enabled) return undefined;
+  const input = searchInput as ImageSearchInput;
+  const sources = await resolvedHubSources(input);
+  if (!sources || !hubFilterArms(sources, input)) return { hubSources: null };
+  const browsingLevel = hubBrowsingLevel(input.browsingLevel, sources);
+  if (browsingLevel !== undefined && !browsingLevel) return { hubSources: null };
+  return { hubSources: sources, browsingLevel };
+}
+
 type HubFilterClause = { field: MetricsImageFilterableAttribute; ids: number[] };
 /**
  * One arm of the OR a hub's sources become. Its clauses are ANDed, which only a tag
@@ -3848,6 +3894,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
     minorOnly,
     blockedFor,
     newCreators,
+    newCreatorsMaxFollowers,
     hubId,
     domain,
     // TODO check the unused stuff in here
@@ -3943,7 +3990,11 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
   // set is global per domain rather than per viewer. An unpopulated board returns
   // nothing rather than degrading to the unfiltered feed.
   if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    const newCreatorIds = await getNewCreatorUserIds({
+      entity: 'images',
+      domain,
+      maxFollowers: newCreatorsMaxFollowers,
+    });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
@@ -4480,6 +4531,7 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
     blockedFor,
     // TODO check the unused stuff in here
     newCreators,
+    newCreatorsMaxFollowers,
     hubId,
     domain,
   } = input;
@@ -4560,7 +4612,11 @@ export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
   }
 
   if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({ entity: 'images', domain });
+    const newCreatorIds = await getNewCreatorUserIds({
+      entity: 'images',
+      domain,
+      maxFollowers: newCreatorsMaxFollowers,
+    });
     if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
     filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
   }
@@ -7178,9 +7234,29 @@ export async function reportCsamImages({
   ip?: string;
 }) {
   if (!user.isModerator) throw throwAuthorizationError();
-  await dbWrite.image.updateMany({
-    where: { id: { in: imageIds } },
-    data: { needsReview: 'csam' },
+  // Flag first: an appeal that starts after this is refused by createEntityAppeal, and one that
+  // committed before it is closed below. One transaction, so a failed close cannot leave the flag
+  // beside a still-pending appeal.
+  await dbWrite.$transaction(async (tx) => {
+    await tx.image.updateMany({
+      where: { id: { in: imageIds } },
+      data: { needsReview: 'csam' },
+    });
+    // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
+    // the uploader is not told.
+    await tx.appeal.updateMany({
+      where: {
+        entityType: EntityType.Image,
+        entityId: { in: imageIds },
+        status: AppealStatus.Pending,
+      },
+      data: {
+        status: AppealStatus.Rejected,
+        resolvedBy: user.id,
+        resolvedAt: new Date(),
+        internalNotes: 'Closed by CSAM report',
+      },
+    });
   });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },

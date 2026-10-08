@@ -22,6 +22,7 @@ import {
 import { IconAlertCircle, IconCheck, IconTrash, IconX } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
@@ -330,6 +331,11 @@ export function PostDetailContent({ postId }: Props) {
                 </div>
               </div>
             </div>
+            <OwnerRatingControls
+              entityType="Post"
+              entityId={post.id}
+              isOwner={currentUser?.id === post.user.id}
+            />
             <div className="mt-4 flex flex-wrap items-center gap-2">
               <div className="flex flex-wrap items-center gap-2">
                 <UserAvatar

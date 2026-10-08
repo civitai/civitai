@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { countRemainingPairs } from '~/server/services/crucible.service';
+import { countJudgedPairs, countRemainingPairs } from '~/server/services/crucible.service';
 
 const CAP = 5;
 const count = (
@@ -115,5 +115,19 @@ describe('countRemainingPairs', () => {
   it('is zero with fewer than two entries to judge', () => {
     expect(count([])).toBe(0);
     expect(count([1])).toBe(0);
+  });
+});
+
+describe('countJudgedPairs', () => {
+  it('counts voted pairs whose entries are both visible', () => {
+    expect(countJudgedPairs({ entryIds: [1, 2, 3], votedPairKeys: ['1:2', '2:3'] })).toBe(2);
+  });
+
+  it('skips pairs touching a hidden or removed entry', () => {
+    expect(countJudgedPairs({ entryIds: [1, 2], votedPairKeys: ['1:2', '2:9', '8:9'] })).toBe(1);
+  });
+
+  it('is zero when nothing was voted', () => {
+    expect(countJudgedPairs({ entryIds: [1, 2], votedPairKeys: [] })).toBe(0);
   });
 });

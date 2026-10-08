@@ -1,7 +1,7 @@
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { TransactionType } from '~/shared/constants/buzz.constants';
+import { APP_AUTHOR_FEE_DESCRIPTION, TransactionType } from '~/shared/constants/buzz.constants';
 import type { BuzzAccountType } from '~/shared/constants/buzz.constants';
 import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import {
@@ -276,7 +276,7 @@ export async function settleBlockAuthorFees(args: {
             fromAccountType: bucket.buzzType as BuzzAccountType,
             toAccountType: bucket.buzzType as BuzzAccountType,
             amount: bucket.totalBuzz,
-            description: `App author fee (${bucket.accrualDay})`,
+            description: `${APP_AUTHOR_FEE_DESCRIPTION} (${bucket.accrualDay})`,
             type: TransactionType.AppAuthorFee,
             externalTransactionId: key,
           },

@@ -63,7 +63,7 @@ import {
 import type { Report } from '~/shared/utils/prisma/models';
 import { withRetries } from '~/utils/errorHandling';
 import { isSafeToRetry } from '@civitai/buzz';
-import { APPEAL_ALREADY_PENDING } from '~/shared/utils/appeal';
+import { APPEAL_ALREADY_PENDING, IMAGE_NOT_APPEALABLE } from '~/shared/utils/appeal';
 import { getModeratedTags } from '~/server/services/system-cache';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -606,9 +606,11 @@ export function getLatestAppeal({
   });
 }
 
-export function reopenModelAppeal({ id, message }: { id: number; message: string }) {
+export function reopenAppeal({ id, message }: { id: number; message: string }) {
   return dbWrite.appeal.update({
-    where: { id },
+    // Image appeals go through `createEntityAppeal`, whose row lock refuses an image carrying the
+    // moderator-only review flag. A reopen has no such check, so it must never reach an image.
+    where: { id, entityType: { not: EntityType.Image } },
     data: {
       status: AppealStatus.Pending,
       appealMessage: message,
@@ -619,6 +621,9 @@ export function reopenModelAppeal({ id, message }: { id: number; message: string
       resolvedAt: null,
       resolvedBy: null,
       resolvedMessage: null,
+      // This row is returned to the appellant, so the previous ruling's moderator-only fields go.
+      resolvedReason: null,
+      internalNotes: null,
     },
   });
 }
@@ -682,6 +687,12 @@ export async function getAppealDetails({
         select: { id: true, name: true, userId: true },
       });
       break;
+    case EntityType.Bounty:
+      entityDetails = await dbRead.bounty.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, name: true, userId: true },
+      });
+      break;
     default:
       // Do nothing
       break;
@@ -738,13 +749,16 @@ export async function createEntityAppeal({
   try {
     const appeal = await dbWrite.$transaction(async (tx) => {
       switch (entityType) {
-        case EntityType.Image:
-          // Update entity with needsReview = appeal
-          await tx.image.update({
-            where: { id: entityId },
-            data: { needsReview: 'appeal' },
-          });
+        case EntityType.Image: {
+          // The handler refuses any flagged image off a replica read. This re-checks only the
+          // moderator-only flag, under the row lock, so one set in between is never overwritten.
+          const updated = await tx.$executeRaw`
+            UPDATE "Image" SET "needsReview" = 'appeal', "updatedAt" = now()
+            WHERE id = ${entityId} AND "needsReview" IS DISTINCT FROM 'csam'
+          `;
+          if (!updated) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
           break;
+        }
         default:
           // Do nothing
           break;
@@ -792,7 +806,7 @@ export async function createEntityAppeal({
 // Display label + (when the entity is publicly reachable) a link for an
 // appealed item, surfaced in the resolution email. Entity types with no public
 // URL fall back to a label-only reference.
-function appealEntityLink(
+export function appealEntityLink(
   entityType: EntityType,
   entityId: number
 ): { url?: string; label: string } {
@@ -801,6 +815,8 @@ function appealEntityLink(
       return { url: `${getBaseUrl()}/images/${entityId}`, label: `Image #${entityId}` };
     case EntityType.Model:
       return { url: `${getBaseUrl()}/models/${entityId}`, label: `Model #${entityId}` };
+    case EntityType.Bounty:
+      return { url: `${getBaseUrl()}/bounties/${entityId}`, label: `Bounty #${entityId}` };
     default:
       return { label: `${entityType} #${entityId}` };
   }
@@ -908,6 +924,7 @@ export async function resolveEntityAppeal({
       buzzTransactionId: true,
       status: true,
       userId: true,
+      createdAt: true,
     },
   });
   if (appeals.length === 0) return [];
@@ -926,6 +943,9 @@ export async function resolveEntityAppeal({
     switch (appeal.entityType) {
       case EntityType.Image:
         try {
+          // No moderator-only review-flag guard, unlike the moderator app's twin: a Pending image
+          // appeal cannot sit beside that flag (`createEntityAppeal` refuses, `reportCsamImages`
+          // closes it), so there is nothing here for one to protect.
           const updated = await dbWrite.image.update({
             where: { id: appeal.entityId },
             data: approved
@@ -989,9 +1009,11 @@ export async function resolveEntityAppeal({
       userId: appeal.userId,
       type: 'entity-appeal-resolved',
       category: NotificationCategory.Other,
-      // Per appeal, not per entity: an entity can be appealed again after a re-block, and the
-      // notification service reuses the row for a repeated key, so the second decision would vanish.
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${appeal.id}`,
+      // Per appeal and per filing: an entity can be appealed again after a re-block (new row), and a
+      // reopened appeal reuses its row; the notification service reuses the row for a repeated key.
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}:${
+        appeal.id
+      }:${appeal.createdAt.getTime()}`,
       details: {
         entityType: appeal.entityType,
         entityId: appeal.entityId,

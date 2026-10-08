@@ -23,6 +23,7 @@ import type * as PostService from '~/server/services/post.service';
 import type * as Caches from '~/server/redis/caches';
 import {
   CRUCIBLE_DESCRIPTION_MAX_LENGTH,
+  CRUCIBLE_ENTRIES_CLOSED_MESSAGE,
   CRUCIBLE_DURATION_COSTS,
   CRUCIBLE_MAX_CLIP_SECONDS_OPTIONS,
   CRUCIBLE_MAX_ENTRIES,
@@ -132,10 +133,25 @@ describe('createCrucibleInputSchema', () => {
     expect(createCrucibleInputSchema.safeParse(validCreateInput).success).toBe(true);
   });
 
-  it.each([0, -1, 1.5])('rejects content level %s', (nsfwLevel) => {
+  it.each([0, -1, 1.5, 32, 33, 64])('rejects content level %s', (nsfwLevel) => {
     expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
       false
     );
+  });
+
+  it.each([1, 7, 31])('accepts content mask %s', (nsfwLevel) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, nsfwLevel }).success).toBe(
+      true
+    );
+  });
+
+  it.each([
+    [7, true],
+    [31, true],
+    [32, false],
+    [39, false],
+  ])('bounds an update mask of %s (valid: %s)', (nsfwLevel, valid) => {
+    expect(updateCrucibleSchema.safeParse({ id: 1, nsfwLevel }).success).toBe(valid);
   });
 
   it('rejects an empty name', () => {
@@ -144,10 +160,29 @@ describe('createCrucibleInputSchema', () => {
     );
   });
 
-  it('rejects a missing description', () => {
+  it.each([
+    ['omitted', undefined],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['null', null],
+  ])('stores no description when it is %s', (_, description) => {
+    const result = createCrucibleInputSchema.safeParse({ ...validCreateInput, description });
+    expect(result.success).toBe(true);
+    expect(result.data?.description ?? null).toBeNull();
+  });
+
+  it('trims the description', () => {
     expect(
-      createCrucibleInputSchema.safeParse({ ...validCreateInput, description: '' }).success
-    ).toBe(false);
+      createCrucibleInputSchema.parse({ ...validCreateInput, description: '  A theme  ' })
+        .description
+    ).toBe('A theme');
+  });
+
+  it('clears a blank description on update and leaves an absent one unchanged', () => {
+    expect(updateCrucibleSchema.parse({ id: 1, description: '  ' }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: null }).description).toBeNull();
+    expect(updateCrucibleSchema.parse({ id: 1, description: ' New ' }).description).toBe('New');
+    expect(updateCrucibleSchema.parse({ id: 1 })).not.toHaveProperty('description');
   });
 
   it('rejects a negative entry fee', () => {
@@ -1132,7 +1167,7 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
     await submit();
 
     expect(lockedCheck().sql).toContain(
-      'UPDATE "Crucible" SET "prizePool" = "prizePool" + ? WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp())'
+      'UPDATE "Crucible" SET "prizePool" = "prizePool" + ? WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp()) AND ( "startAt" IS NULL OR "endAt" IS NULL OR statement_timestamp() < "endAt" - ("endAt" - "startAt") * ("entryCutoffPercent" / 100.0) )'
     );
     expect(dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
       dbMock.dbWrite.crucibleEntry.create.mock.invocationCallOrder[0]
@@ -1206,6 +1241,36 @@ describe('submitEntry — a cancel or the end landing mid-submit', () => {
         externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
       })
     );
+  });
+
+  it('says entries closed, and refunds the fee, when the cutoff passes during the charge', async () => {
+    const HOUR = 60 * 60_000;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      // A 10h run with 1h left and a 5% cutoff: entries close in 30 minutes.
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+        ...crucibleRow(MediaType.image),
+        entryFee: 50,
+        startAt: new Date(Date.now() - 9 * HOUR),
+        endAt: new Date(Date.now() + HOUR),
+        entryCutoffPercent: 5,
+      });
+      createMultiAccountBuzzTransaction.mockImplementationOnce(async () => {
+        vi.setSystemTime(Date.now() + 31 * 60_000);
+      });
+      dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
+
+      await expect(submit()).rejects.toThrow(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
+
+      expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+      expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          externalTransactionIdPrefix: expect.stringMatching(/^crucible-entry-1-42-/),
+        })
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('refuses the entry and refunds its fee when the crucible closed after the checks', async () => {
@@ -1320,6 +1385,79 @@ describe('submitEntry — free entries', () => {
     expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
       where: { crucibleId: 1, userId: 42 },
     });
+  });
+
+  // Entries whose image is gone (deleted or withdrawn), counted per the where clause.
+  const withGoneEntries = ({ all, live }: { all: number; live: number }) =>
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { imageId?: unknown };
+    }) => ('imageId' in args.where ? live : all)) as never);
+
+  it('reopens the slot of an entry whose image is gone, and charges the entry made in it', async () => {
+    withGoneEntries({ all: 3, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('still charges a re-entry when the gone entry was the free one', async () => {
+    withGoneEntries({ all: 1, live: 0 });
+
+    await submit();
+
+    expect(createMultiAccountBuzzTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ amount: 50 })
+    );
+  });
+
+  it('accepts while live entries are under the limit, however many entries were made', async () => {
+    withGoneEntries({ all: 5, live: 2 });
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+  });
+
+  it('refuses once the live entries reach the limit', async () => {
+    withGoneEntries({ all: 4, live: 3 });
+
+    await expect(submit()).rejects.toThrow(/maximum of 3 entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  it("doesn't count entries whose image is gone toward the crucible's total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryFee: 50,
+      entryLimit: 3,
+      freeEntriesPerUser: 1,
+      maxTotalEntries: 10,
+      _count: { entries: 10 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 9)) as never);
+
+    await expect(submit()).resolves.toMatchObject({ id: 5 });
+    expect(dbMock.dbWrite.crucibleEntry.count).toHaveBeenCalledWith({
+      where: { crucibleId: 1, imageId: { not: null } },
+    });
+  });
+
+  it("refuses once the crucible's live entries reach its total cap", async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({
+      ...crucibleRow(MediaType.image),
+      entryLimit: 3,
+      maxTotalEntries: 10,
+      _count: { entries: 12 },
+    });
+    dbMock.dbWrite.crucibleEntry.count.mockImplementation((async (args: {
+      where: { userId?: number };
+    }) => (args.where.userId ? 0 : 10)) as never);
+
+    await expect(submit()).rejects.toThrow(/reached its maximum number of entries/);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
   });
 });
 
@@ -1719,5 +1857,137 @@ describe('createCrucibleInputSchema — base models', () => {
       .map((m) => m.name);
     expect(parse(names.slice(0, CRUCIBLE_MAX_ALLOWED_BASE_MODELS)).success).toBe(true);
     expect(parse(names).success).toBe(false);
+  });
+});
+
+describe('createCrucibleInputSchema — late entries', () => {
+  it('defaults to warning in the last 20% and closing entries in the last 10%', () => {
+    const result = createCrucibleInputSchema.parse(validCreateInput);
+    expect([result.entryWarningPercent, result.entryCutoffPercent]).toEqual([20, 10]);
+  });
+
+  it('accepts entries open to the very end', () => {
+    expect(
+      createCrucibleInputSchema.safeParse({ ...validCreateInput, entryCutoffPercent: 0 }).success
+    ).toBe(true);
+  });
+
+  it.each([
+    [20, 20],
+    [15, 30],
+  ])(
+    'refuses a %s%% warning with entries closing at %s%%',
+    (entryWarningPercent, entryCutoffPercent) => {
+      const result = createCrucibleInputSchema.safeParse({
+        ...validCreateInput,
+        entryWarningPercent,
+        entryCutoffPercent,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.path).toEqual(['entryCutoffPercent']);
+    }
+  );
+
+  // Each pairs the value under test with a partner that satisfies cutoff < warning, so only the
+  // range can refuse it.
+  it.each([
+    [
+      'warning below its minimum',
+      { entryWarningPercent: 9, entryCutoffPercent: 0 },
+      'entryWarningPercent',
+    ],
+    [
+      'warning above its maximum',
+      { entryWarningPercent: 51, entryCutoffPercent: 10 },
+      'entryWarningPercent',
+    ],
+    [
+      'cutoff above its maximum',
+      { entryWarningPercent: 50, entryCutoffPercent: 41 },
+      'entryCutoffPercent',
+    ],
+    ['negative cutoff', { entryWarningPercent: 20, entryCutoffPercent: -1 }, 'entryCutoffPercent'],
+  ])('refuses a %s', (_, overrides, field) => {
+    const result = createCrucibleInputSchema.safeParse({ ...validCreateInput, ...overrides });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues.map((issue) => issue.path)).toEqual([[field]]);
+  });
+
+  it.each([
+    { entryWarningPercent: 10, entryCutoffPercent: 0 },
+    { entryWarningPercent: 50, entryCutoffPercent: 40 },
+  ])('accepts the edges of both ranges: %o', (overrides) => {
+    expect(createCrucibleInputSchema.safeParse({ ...validCreateInput, ...overrides }).success).toBe(
+      true
+    );
+  });
+});
+
+describe('submitEntry — entries close before the end', () => {
+  const HOUR = 60 * 60_000;
+  // A 10h run with 1h left: the last 10% of it.
+  const lastTenth = (entryCutoffPercent: number) => ({
+    ...crucibleRow(MediaType.image),
+    startAt: new Date(Date.now() - 9 * HOUR),
+    endAt: new Date(Date.now() + HOUR),
+    entryCutoffPercent,
+  });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createNotification.mockResolvedValue(undefined);
+    dbMock.dbWrite.crucibleEntry.count.mockResolvedValue(0);
+    dbMock.dbRead.crucibleEntry.findFirst.mockResolvedValue(null);
+    dbMock.dbRead.image.findUnique.mockResolvedValue(imageRow(MediaType.image));
+    dbMock.dbRead.image.count.mockResolvedValue(1);
+    dbMock.dbWrite.crucibleEntry.create.mockResolvedValue({ id: 5, user: { username: 'tester' } });
+  });
+
+  it('refuses an entry once the crucible is inside its closing share', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(lastTenth(20));
+
+    await expect(submit()).rejects.toThrow(CRUCIBLE_ENTRIES_CLOSED_MESSAGE);
+    expect(dbMock.dbWrite.crucibleEntry.create).not.toHaveBeenCalled();
+  });
+
+  // The mocks hand back whatever the fixture holds, so only this sees a select that stopped asking
+  // for the window: entries would then stay open to the end.
+  it('reads the window it gates on', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(lastTenth(0));
+    await submit();
+    expect(dbMock.dbRead.crucible.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, endAt: true, entryCutoffPercent: true }),
+      })
+    );
+
+    vi.mocked(dbMock.dbRead.crucible.findUnique).mockClear();
+    createPost.mockResolvedValue({ id: 900 });
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({ ...lastTenth(0), name: 'Open Arena' });
+    await createCrucibleEntryPost({ crucibleId: 1, userId: 42 });
+    expect(dbMock.dbRead.crucible.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ startAt: true, endAt: true, entryCutoffPercent: true }),
+      })
+    );
+  });
+
+  it.each([0, 5])(
+    'accepts an entry with a %s%% cutoff and 10%% of the run left',
+    async (cutoff) => {
+      dbMock.dbRead.crucible.findUnique.mockResolvedValue(lastTenth(cutoff));
+
+      await expect(submit()).resolves.toMatchObject({ id: 5 });
+    }
+  );
+
+  it('refuses to start an entry upload once entries are closed', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue({ ...lastTenth(20), name: 'Open Arena' });
+    createPost.mockResolvedValue({ id: 900 });
+
+    await expect(createCrucibleEntryPost({ crucibleId: 1, userId: 42 })).rejects.toThrow(
+      CRUCIBLE_ENTRIES_CLOSED_MESSAGE
+    );
+    expect(createPost).not.toHaveBeenCalled();
   });
 });

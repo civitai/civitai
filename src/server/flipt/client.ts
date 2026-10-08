@@ -7,6 +7,8 @@ export enum FLIPT_FEATURE_FLAGS {
   // background paths (no request context) can gate on the same Flipt flag the
   // tRPC `isFlagProtected('articleRatingDispute')` endpoints use.
   ARTICLE_RATING_DISPUTE = 'article-rating-dispute',
+  // Mirrors `ratingDispute`, for the scan-completion auto-approve of every other entity.
+  RATING_DISPUTE = 'rating-dispute',
   FEED_IMAGE_EXISTENCE = 'feed-image-existence',
   FEED_POST_FILTER = 'feed-fetch-filter-in-post',
   // Serves the image feed from the PostgreSQL feed service (page from the feed, rows from
@@ -14,6 +16,9 @@ export enum FLIPT_FEATURE_FLAGS {
   FEED_SERVICE_PRIMARY = 'feed-service-primary',
   // The same for the public REST images endpoint, apart so either can be rolled back alone.
   FEED_SERVICE_REST_IMAGES = 'feed-service-rest-images',
+  // Under FEED_SERVICE_PRIMARY, also serves hub feeds from the feed service. Off or
+  // missing, a hub stays on Meilisearch while every other shape follows the flag above.
+  FEED_SERVICE_HUBS = 'feed-service-hubs',
   REDIS_CLUSTER_ENHANCED_FAILOVER = 'redis-cluster-enhanced-failover',
 
   GIFT_CARD_VENDOR_WAIFU_WAY = 'gift-card-vendor-waifu-way',
@@ -97,6 +102,9 @@ export enum FLIPT_FEATURE_FLAGS {
   // the profanity filter stays solely in charge of the column. For a path that
   // auto-restricts other people's models, not flagging is the safe failure.
   MODEL_TEXT_MODERATION_XGUARD_APPLY = 'model-text-moderation-xguard-apply',
+  // Text scan's kill switch. Off (or Flipt unreachable) puts every entity type back on XGuard,
+  // Clavata and the profanity filter, whatever the per-entity rollout in sysRedis says.
+  TEXT_SCAN = 'text-scan',
   // Arms the reaction reconciliation audit's repair path to WRITE compensating
   // events to ClickHouse. Default-off — isFlipt returns false for an unknown flag
   // or an unreachable Flipt, and for a path that mutates production metrics that
@@ -313,6 +321,10 @@ export const ensureFliptInitialized = flipt.ensureInitialized;
 // Eval-cache counters for ~/server/metrics/flipt-eval-cache.metrics. Closes over the
 // caches (no `this`), so unbinding here is safe — same as the accessors above.
 export const getFliptCacheStats = flipt.getCacheStats;
+// The underlying SDK client (or `null` before init), for a short-lived process that must
+// `close()` it on the way out — its config poller is a timer that otherwise keeps the
+// process alive. `getClientSync` closes over the instance (no `this`), like the above.
+export const getFliptClientSync = flipt.getClientSync;
 
 // Build the inner `(entityId, metricType, day, total)` subquery the direct CH
 // read sites (search-index / comic populate / metric-helpers) sum over. `where`

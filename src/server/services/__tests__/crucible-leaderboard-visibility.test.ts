@@ -541,7 +541,11 @@ describe('crucible.getRequiredModels', () => {
 
 describe('crucible.getJudgingProgress', () => {
   it("counts the caller's pairs left among the entries they can judge", async () => {
-    queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }, { id: 3 }]);
+    queryRaw.mockResolvedValue([
+      { crucibleId: CRUCIBLE_ID, id: 1 },
+      { crucibleId: CRUCIBLE_ID, id: 2 },
+      { crucibleId: CRUCIBLE_ID, id: 3 },
+    ]);
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
 
@@ -549,7 +553,7 @@ describe('crucible.getJudgingProgress', () => {
       crucibleId: CRUCIBLE_ID,
     });
 
-    expect(progress).toEqual({ remainingPairs: 2, votesUsedUp: false });
+    expect(progress).toEqual({ remainingPairs: 2, judgedPairs: 1, votesUsedUp: false });
     expect(lastRenderedSql()).toContain('ce."userId" !=');
   });
 
@@ -574,7 +578,7 @@ describe('crucible.getJudgingProgress', () => {
 
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, votesUsedUp: false });
   });
 
   // The judge page shows "you've used all your votes" only on votesUsedUp. Zero pairs from too few
@@ -583,15 +587,18 @@ describe('crucible.getJudgingProgress', () => {
     redisMock.sysRedis.hGetAll.mockResolvedValue({});
     redisMock.sysRedis.sMembers.mockResolvedValue(['1:2']);
 
-    queryRaw.mockResolvedValue([{ id: 1 }, { id: 2 }]);
+    queryRaw.mockResolvedValue([
+      { crucibleId: CRUCIBLE_ID, id: 1 },
+      { crucibleId: CRUCIBLE_ID, id: 2 },
+    ]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, votesUsedUp: true });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 1, votesUsedUp: true });
 
-    queryRaw.mockResolvedValue([{ id: 1 }]);
+    queryRaw.mockResolvedValue([{ crucibleId: CRUCIBLE_ID, id: 1 }]);
     expect(
       await caller(signedIn(STRANGER_ID)).getJudgingProgress({ crucibleId: CRUCIBLE_ID })
-    ).toEqual({ remainingPairs: 0, votesUsedUp: false });
+    ).toEqual({ remainingPairs: 0, judgedPairs: 0, votesUsedUp: false });
   });
 });
 
@@ -693,14 +700,15 @@ describe('crucible.getById', () => {
     );
   });
 
-  it('leaves out an own entry whose image was deleted, but still counts it as used', async () => {
+  it('frees the slot of an own entry whose image is gone, but counts it for the free-entry math', async () => {
     const imageGone = { ...latestAndSecond, userId: OWNER_ID, imageId: null, image: null };
     findEntries.mockResolvedValue([ownedAndFirst, imageGone]);
 
     const crucible = await caller(signedIn(OWNER_ID)).getById({ id: CRUCIBLE_ID });
 
     expect(crucible!.viewerEntries).toEqual([ownedAndFirst]);
-    expect(crucible!.viewerEntryCount).toBe(2);
+    expect(crucible!.viewerEntryCount).toBe(1);
+    expect(crucible!.viewerEntriesSoFar).toBe(2);
   });
 
   it('gives an anonymous caller no entries without querying for any', async () => {

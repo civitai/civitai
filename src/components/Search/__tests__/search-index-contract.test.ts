@@ -136,12 +136,8 @@ describe('the models index sort contract', () => {
   // `search-index-sync-models-reset` has run in one, its index has never heard of the attribute,
   // and any client that sorts on it gets `Attribute ... is not sortable` and the query 400s.
   //
-  // Today exactly one client sorts on it — `searchShortlistModels` in
-  // ~/server/services/resource-intent-matcher.service.ts, whose role filter also needs
-  // `insight.role` in the index's filterable list — and it is unreachable while the
-  // resource-intent Flipt flag is off. 🔴 So: check both settings on the target environment's
-  // index before enabling that flag there. Enabling it on an unprovisioned index turns every
-  // shortlist query into a 400.
+  // Today no client sorts on it. 🔴 The first client that does must check the target
+  // environment's index has it before shipping.
   //
   // ⚠ `sortMetrics` is a separate attribute still waiting on a reset, for a different
   // reason, recorded at src/components/Search/parsers/model.parser.ts:21-24 (declared

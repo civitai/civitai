@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { clearedMuteFields } from '~/server/services/mute-provenance';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -13,7 +12,6 @@ import { moderationActionEmail } from '~/server/email/templates';
 import {
   BanReasonCode,
   BlockedReason,
-  BlocklistType,
   NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
@@ -120,8 +118,7 @@ import {
   ModelStatus,
   UserEngagementType,
 } from '~/shared/utils/prisma/enums';
-import blockedUsernames from '~/utils/blocklist-username.json';
-import { assertEmailAllowed, getBlocklistData } from '~/server/services/blocklist.service';
+import { assertEmailAllowed } from '~/server/services/blocklist.service';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
@@ -137,6 +134,13 @@ import {
   clearBlockInstancesForPublisher,
   revokeBlockInstancesForPublisher,
 } from '~/server/services/blocks/publisher-ban-revocation.service';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+import { releaseUserMute, type MuteReleaseActivity } from '~/server/services/mute-release.service';
+import {
+  closeGenerationRestrictionsOfDeletedAccount,
+  reopenGenerationRestrictionsOfRestoredAccount,
+} from '~/server/services/user-restriction.service';
+
 export const getUsersByIds = async (userIds: number[]) => {
   const users = await dbRead.user.findMany({
     where: { id: { in: userIds } },
@@ -432,23 +436,7 @@ export const getUserByUsername = <TSelect extends Prisma.UserSelect = Prisma.Use
   });
 };
 
-export const isUsernamePermitted = async (username: string): Promise<boolean> => {
-  const lower = username.toLowerCase();
-
-  // Static JSON baseline (always enforced, can't be removed via UI)
-  const staticBlocked =
-    blockedUsernames.partial.some((x) => lower.includes(x)) ||
-    blockedUsernames.exact.some((x) => lower === x);
-  if (staticBlocked) return false;
-
-  // Dynamic blocklist from DB/Redis/in-memory cache
-  const [dynamicExact, dynamicPartial] = await Promise.all([
-    getBlocklistData(BlocklistType.UsernameExact),
-    getBlocklistData(BlocklistType.UsernamePartial),
-  ]);
-
-  return !(dynamicExact.some((x) => lower === x) || dynamicPartial.some((x) => lower.includes(x)));
-};
+export { isUsernamePermitted } from '~/server/services/username-permitted';
 
 /**
  * Mod-driven: clear public profile fields (location/bio/message) on UserProfile.
@@ -481,9 +469,6 @@ export async function clearUserProfileFields({
 }
 
 /**
- * Mod-driven: explicit mute/unmute (vs. legacy toggle).
- */
-/**
  * A moderator's mute, timed or not.
  *
  * `mutedAt` is what marks it as a person's decision: every automatic path (strike escalation, prompt
@@ -491,45 +476,35 @@ export async function clearUserProfileFields({
  * a mute that has it. `processTimedUnmutes` still lifts an expiry on time — that is the point of a timed
  * mute — and clears `mutedAt` with it.
  *
- * This used to need a `meta.manualMute` flag. It did not: `mutedAt` already carried exactly this
- * meaning for `confirm-mutes`, `entity-moderation` and `prepare-leaderboard`, and the flag was written
- * by two apps and read by none.
+ * The unmute half is `releaseUserMute`, which needs the acting moderator.
  */
-export async function setUserMuted({
-  userId,
-  muted,
-  expiresAt,
-}: {
-  userId: number;
-  muted: boolean;
-  expiresAt?: Date | null;
-}) {
-  const date = new Date();
-
-  // The unmute half clears the provenance too; the mute half only sets an expiry when the caller asked
-  // for one, so an ordinary mute keeps today's indefinite behaviour.
-  let data: Prisma.UserUpdateInput;
-  if (muted) {
-    data = {
-      muted: true,
-      mutedAt: date,
-      ...(expiresAt !== undefined ? { muteExpiresAt: expiresAt } : {}),
-    };
-  } else {
-    const existing = await dbRead.user.findUnique({
-      where: { id: userId },
-      select: { meta: true },
+export async function setUserMuted(
+  args:
+    | { userId: number; muted: true; expiresAt?: Date | null }
+    | { userId: number; muted: false; actorId: number; activity?: MuteReleaseActivity }
+) {
+  if (!args.muted) {
+    const result = await releaseUserMute({
+      userId: args.userId,
+      actorId: args.actorId,
+      activity: args.activity,
+      updateSource: 'retool:unmute',
     });
-    data = clearedMuteFields(existing?.meta as UserMeta | null);
+    if (!result.released) throw new Error(`No user with id ${args.userId}`);
+    return result.user;
   }
 
   const user = await updateUserById({
-    id: userId,
-    data,
-    updateSource: muted ? 'retool:mute' : 'retool:unmute',
+    id: args.userId,
+    data: {
+      muted: true,
+      mutedAt: new Date(),
+      ...(args.expiresAt !== undefined ? { muteExpiresAt: args.expiresAt } : {}),
+    },
+    updateSource: 'retool:mute',
   });
   const { invalidateSession } = await import('~/server/auth/session-invalidation');
-  await invalidateSession(userId, 'moderation');
+  await invalidateSession(args.userId, 'moderation');
   return user;
 }
 
@@ -663,12 +638,20 @@ export const updateUserById = async ({
     data.browsingLevel = Flags.removeFlag(data.browsingLevel, NsfwLevel.Blocked);
   }
 
+  // The account form sends the username on every save; only a real rename is worth a scan.
+  const previousUsername =
+    typeof data.username === 'string'
+      ? (await dbWrite.user.findUnique({ where: { id }, select: { username: true } }))?.username
+      : undefined;
+
   const user = await dbWrite.user.update({ where: { id }, data });
 
   // Track user update with optional source context
   let location = 'user.service:updateUserById';
   if (updateSource) location += `:${updateSource}`;
   userUpdateCounter?.inc({ location });
+  if (typeof data.username === 'string' && data.username !== previousUsername)
+    queueScamScan({ entityType: 'User', entityId: id });
 
   if (data.username !== undefined || data.deletedAt !== undefined || data.image !== undefined) {
     await deleteBasicDataForUser(id);
@@ -1200,6 +1183,9 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }])
   );
   await runStep('delete-basic-data', () => deleteBasicDataForUser(id));
+  await runStep('close-pending-restrictions', () =>
+    closeGenerationRestrictionsOfDeletedAccount(user.id)
+  );
 
   // Last: when a Paddle subscription row exists this calls Paddle, whose client has no timeout.
   await runStep('cancel-paddle-subscription', () => cancelSubscriptionPlan({ userId: user.id }));
@@ -1326,6 +1312,17 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }),
     disarmAccountDeletionImagePurge(id),
   ]);
+
+  // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
+  await reopenGenerationRestrictionsOfRestoredAccount(id).catch((error) =>
+    logToAxiom({
+      name: 'reopen-pending-restrictions',
+      type: 'error',
+      source: 'restoreUser',
+      userId: id,
+      message: (error as Error)?.message,
+    }).catch(() => null)
+  );
 
   // Queued after the clear: `restore-user-images` acts only on an account whose `deletedAt`
   // already reads NULL, and the drain job's gates can no longer re-hide what it unblocks.
@@ -1459,7 +1456,30 @@ export const removeAllContent = async ({
   await dbWrite.bountyEntry.deleteMany({
     where: { userId: id, benefactors: { none: {} } },
   });
-  await dbWrite.bounty.deleteMany({ where: { userId: id } });
+  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
+  const unsettled = await dbWrite.bounty.findMany({
+    // `isPayoutPending` as a query; keep the two in step.
+    where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
+    select: { id: true },
+  });
+  const keptBountyIds: number[] = [];
+  if (unsettled.length) {
+    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
+      '~/server/services/bounty.service'
+    );
+    for (const { id: bountyId } of unsettled)
+      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
+        keptBountyIds.push(bountyId);
+    if (keptBountyIds.length)
+      logToAxiom({
+        name: 'remove-all-content',
+        type: 'error',
+        message: 'Kept bounties whose payout is not settled',
+        userId: id,
+        bountyIds: keptBountyIds,
+      }).catch(() => undefined);
+  }
+  await dbWrite.bounty.deleteMany({ where: { userId: id, id: { notIn: keptBountyIds } } });
   await dbWrite.answer.deleteMany({ where: { userId: id } });
   await dbWrite.question.deleteMany({ where: { userId: id } });
   await dbWrite.userLink.deleteMany({ where: { userId: id } });
@@ -2835,29 +2855,50 @@ export const createUserReferral = async ({
   }
 };
 
+const cosmeticGrantSelect = {
+  id: true,
+  availableStart: true,
+  availableEnd: true,
+  source: true,
+} satisfies Prisma.CosmeticSelect;
+
 export const claimCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
   const cosmetic = await dbRead.cosmetic.findUnique({
-    where: { id, source: { in: [CosmeticSource.Claim, CosmeticSource.Trophy] } },
-    select: { id: true, availableStart: true, availableEnd: true, source: true },
+    where: { id, source: CosmeticSource.Claim },
+    select: cosmeticGrantSelect,
   });
   if (!cosmetic) return null;
-  if (cosmetic.source === CosmeticSource.Claim && !(await isCosmeticAvailable(cosmetic.id, userId)))
-    return null;
+  if (!(await isCosmeticAvailable(cosmetic.id, userId))) return null;
 
+  await grantCosmetic({ cosmeticId: cosmetic.id, userId });
+  return cosmetic;
+};
+
+// Server-side award paths only; never expose through a router.
+export const awardTrophyCosmetic = async ({ id, userId }: { id: number; userId: number }) => {
+  const cosmetic = await dbRead.cosmetic.findUnique({
+    where: { id, source: CosmeticSource.Trophy },
+    select: cosmeticGrantSelect,
+  });
+  if (!cosmetic) return null;
+
+  await grantCosmetic({ cosmeticId: cosmetic.id, userId });
+  return cosmetic;
+};
+
+async function grantCosmetic({ cosmeticId, userId }: { cosmeticId: number; userId: number }) {
   const userCosmetic = await dbRead.userCosmetic.findFirst({
-    where: { userId, cosmeticId: cosmetic.id },
+    where: { userId, cosmeticId },
   });
   if (userCosmetic) throw throwConflictError('You already have this cosmetic');
 
   await dbWrite.userCosmetic.create({
-    data: { userId, cosmeticId: cosmetic.id },
+    data: { userId, cosmeticId },
   });
   await refreshOwnedStickerCache([userId]);
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
-
-  return cosmetic;
-};
+}
 
 export async function cosmeticStatus({ id, userId }: { id: number; userId: number }) {
   let available = true;

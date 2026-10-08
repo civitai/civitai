@@ -132,7 +132,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
       ...[
         {
           key: 'hide-model',
-          component: <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
+          component: <HideModelButton key="hide-model" as="menu-item" model={data} />,
         },
         {
           key: 'hide-button',

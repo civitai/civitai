@@ -11,9 +11,10 @@ import {
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconTrophy, IconPlus, IconSearch } from '@tabler/icons-react';
+import { keepPreviousData } from '@tanstack/react-query';
 import { isEqual } from 'lodash-es';
 import Link from 'next/link';
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { removeEmpty } from '~/utils/object-helpers';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
@@ -22,6 +23,9 @@ import { useCrucibleFilters, useQueryCrucibles } from './crucible.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { CrucibleStatus } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 
 export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: Props) {
   const cruciblesFilters = useCrucibleFilters();
@@ -33,6 +37,33 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
 
   const { crucibles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
     useQueryCrucibles(debouncedFilters, { keepPreviousData: true });
+
+  const browsingLevel = useBrowsingLevelDebounced();
+  const openIds = useMemo(
+    () =>
+      crucibles
+        .filter(
+          (c) => c.status === CrucibleStatus.Active && (!c.endAt || new Date(c.endAt) > new Date())
+        )
+        .map((c) => c.id)
+        .slice(0, 100),
+    [crucibles]
+  );
+  // The global staleTime is Infinity; judging elsewhere changes these, so refetch on every visit.
+  const { data: judging } = trpc.crucible.getJudgingStatuses.useQuery(
+    { crucibleIds: openIds, browsingLevel },
+    {
+      enabled: !!currentUser && openIds.length > 0,
+      placeholderData: keepPreviousData,
+      staleTime: 0,
+      refetchOnMount: 'always',
+    }
+  );
+  const items = useMemo(() => {
+    if (!judging) return crucibles;
+    const byId = new Map(judging.map((status) => [status.crucibleId, status]));
+    return crucibles.map((c) => ({ ...c, judging: byId.get(c.id) }));
+  }, [crucibles, judging]);
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -48,7 +79,7 @@ export function CruciblesInfinite({ filters: filterOverrides, showEof = true }: 
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <MasonryGrid
-            data={crucibles}
+            data={items}
             render={CrucibleCard}
             itemId={(x) => x.id}
             empty={<CruciblesEmptyState hasFilters={hasFilters} isLoggedIn={!!currentUser} />}

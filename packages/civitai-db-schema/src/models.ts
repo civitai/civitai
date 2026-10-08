@@ -232,9 +232,9 @@ export type ComicEngagementType = "None" | "Notify" | "Hide";
 
 export type ComicGenre = "Action" | "Adventure" | "Comedy" | "Drama" | "Fantasy" | "Horror" | "Mystery" | "Romance" | "SciFi" | "SliceOfLife" | "Thriller" | "Other";
 
-export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned";
+export type UserRestrictionStatus = "Pending" | "Upheld" | "Overturned" | "AccountDeleted";
 
-export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction";
+export type StrikeReason = "BlockedContent" | "RealisticMinorContent" | "CSAMContent" | "TOSViolation" | "HarassmentContent" | "ProhibitedContent" | "ManualModAction" | "Scam";
 
 export type StrikeStatus = "Active" | "Expired" | "Voided";
 
@@ -581,6 +581,8 @@ export interface User {
   articleEngagements?: ArticleEngagement[];
   articleRatingReviewsSubmitted?: ArticleRatingReview[];
   articleRatingReviewsResolved?: ArticleRatingReview[];
+  ratingReviewsSubmitted?: RatingReview[];
+  ratingReviewsResolved?: RatingReview[];
   leaderboardResults?: LeaderboardResult[];
   receivedReports?: UserReport[];
   engagedImages?: ImageEngagement[];
@@ -695,6 +697,8 @@ export interface User {
   appListingReportsReported?: AppListingReport[];
   appListingReportsResolved?: AppListingReport[];
   appListingModerationEvents?: AppListingModerationEvent[];
+  appSubListingsAuthored?: AppSubListing[];
+  appSubListingsModerated?: AppSubListing[];
   appCollaboratorSeats?: AppCollaborator[];
   appCollaboratorInvitesSent?: AppCollaborator[];
   appOwnershipEventsActed?: AppOwnershipEvent[];
@@ -1475,6 +1479,8 @@ export interface Post {
   unlisted: boolean;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   images?: Image[];
   tags?: TagsOnPost[];
   reactions?: PostReaction[];
@@ -1587,6 +1593,8 @@ export interface Image {
   appListingIcons?: AppListing[];
   appListingCovers?: AppListing[];
   appListingScreenshots?: AppListingScreenshot[];
+  appSubListingImages?: AppSubListing[];
+  appSubListingPendingImages?: AppSubListing[];
   crucibles?: Crucible[];
   crucibleHeroes?: Crucible[];
   crucibleEntries?: CrucibleEntry[];
@@ -1635,8 +1643,18 @@ export interface EntityModeration {
   triggeredLabels: string[];
   result: JsonValue | null;
   contentHash: string | null;
+  nsfwLevel: number | null;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface TextScanPrompt {
+  id: number;
+  key: string;
+  content: string;
+  note: string | null;
+  createdById: number | null;
+  createdAt: Date;
 }
 
 export interface ImageEngagement {
@@ -1703,6 +1721,25 @@ export interface ArticleRatingReview {
   userComment: string | null;
   modComment: string | null;
   status: ReportStatus;
+}
+
+export interface RatingReview {
+  id: number;
+  entityType: string;
+  entityId: number;
+  userId: number;
+  user?: User;
+  currentLevel: number;
+  suggestedLevel: number;
+  appliedLevel: number | null;
+  userComment: string | null;
+  modComment: string | null;
+  status: ReportStatus;
+  resolvedBy: number | null;
+  resolver?: User | null;
+  resolvedAt: Date | null;
+  resolvedTextHash: string | null;
+  createdAt: Date;
 }
 
 export interface CollectionMetric {
@@ -2165,6 +2202,8 @@ export interface AppListing {
   collaborators?: AppCollaborator[];
   ownershipEvents?: AppOwnershipEvent[];
   ownershipTransfers?: AppOwnershipTransfer[];
+  subListings?: AppSubListing[];
+  subListingParent?: AppSubListingParent | null;
 }
 
 export interface AppListingScreenshot {
@@ -2260,6 +2299,46 @@ export interface AppListingModerationEvent {
   before: JsonValue | null;
   after: JsonValue | null;
   createdAt: Date;
+}
+
+export interface AppSubListingParent {
+  parentListingId: string;
+  parentListing?: AppListing;
+  enabled: boolean;
+  maxPerAuthor: number;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface AppSubListing {
+  id: string;
+  parentListingId: string;
+  parentListing?: AppListing;
+  itemKey: string;
+  authorUserId: number;
+  author?: User;
+  title: string;
+  tagline: string | null;
+  imageId: number | null;
+  image?: Image | null;
+  subPath: string;
+  contentRating: string | null;
+  pendingTitle: string | null;
+  pendingTagline: string | null;
+  pendingImageId: number | null;
+  pendingImage?: Image | null;
+  pendingSubPath: string | null;
+  pendingContentRating: string | null;
+  pendingSubmittedAt: Date | null;
+  editRejectionReason: string | null;
+  status: string;
+  statusReason: string | null;
+  moderatedById: number | null;
+  moderatedBy?: User | null;
+  moderatedAt: Date | null;
+  approvedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface AppReviewAgentReport {
@@ -2974,6 +3053,7 @@ export interface Cosmetic {
   cosmeticShopItems?: CosmeticShopItem[];
   packMemberships?: CosmeticShopItemCosmetic[];
   creatorMilestones?: CreatorMilestone[];
+  milestoneExtras?: CreatorMilestoneCosmetic[];
 }
 
 export interface UserCosmetic {
@@ -3004,6 +3084,14 @@ export interface CreatorMilestone {
   cosmetic?: Cosmetic | null;
   sortOrder: number;
   achievements?: UserCreatorMilestone[];
+  extraCosmetics?: CreatorMilestoneCosmetic[];
+}
+
+export interface CreatorMilestoneCosmetic {
+  milestoneKey: string;
+  milestone?: CreatorMilestone;
+  cosmeticId: number;
+  cosmetic?: Cosmetic;
 }
 
 export interface UserCreatorMilestone {
@@ -3264,6 +3352,8 @@ export interface Collection {
   metadata: JsonValue;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   collaborationDisabledAt: Date | null;
   items?: CollectionItem[];
   contributors?: CollectionContributor[];
@@ -3395,9 +3485,15 @@ export interface Bounty {
   poi: boolean;
   complete: boolean;
   refunded: boolean;
+  payoutRecordedAt: Date | null;
+  payoutSettledAt: Date | null;
+  payoutWinnerUserId: number | null;
   availability: Availability;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   lockedProperties: string[];
+  meta: JsonValue | null;
   tags?: TagsOnBounty[];
   entries?: BountyEntry[];
   benefactors?: BountyBenefactor[];
@@ -3420,6 +3516,8 @@ export interface BountyEntry {
   locked: boolean;
   description: string | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   benefactors?: BountyBenefactor[];
   thread?: Thread | null;
   reactions?: BountyEntryReaction[];
@@ -4005,6 +4103,7 @@ export interface Appeal {
   resolvedBy: number | null;
   resolvedByUser?: User | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
 }
@@ -4195,6 +4294,8 @@ export interface Challenge {
   coverImageId: number | null;
   coverImage?: Image | null;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   modelVersionIds: number[];
   allowedNsfwLevel: number;
   judgingPrompt: string | null;
@@ -5323,6 +5424,8 @@ export interface UserRestriction {
   resolvedAt: Date | null;
   resolvedBy: number | null;
   resolvedMessage: string | null;
+  resolvedReason: string | null;
+  internalNotes: string | null;
   userMessage: string | null;
   userMessageAt: Date | null;
 }
@@ -5757,6 +5860,8 @@ export interface Crucible {
   heroImage?: Image | null;
   buzzType: string;
   nsfwLevel: number;
+  moderatorNsfwLevel: number | null;
+  moderatorNsfwLevelBasis: number | null;
   contentType: MediaType;
   entryFee: number;
   seededPrizePool: number;
@@ -5764,6 +5869,8 @@ export interface Crucible {
   entryLimit: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
+  entryWarningPercent: number;
+  entryCutoffPercent: number;
   minViewSeconds: number | null;
   maxClipSeconds: number | null;
   prizePositions: JsonValue;

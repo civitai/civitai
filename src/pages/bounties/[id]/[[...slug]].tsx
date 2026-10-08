@@ -25,6 +25,7 @@ import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import * as z from 'zod';
 
+import { OwnerRatingControls } from '~/components/RatingReview/OwnerRatingControls';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Gated } from '~/components/Gated/Gated';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -38,7 +39,9 @@ import { trpc } from '~/utils/trpc';
 import { ImageCarousel } from '~/components/Bounty/ImageCarousel';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { BountyEngagementType } from '~/shared/utils/prisma/enums';
-import { Availability, BountyMode } from '~/shared/utils/prisma/enums';
+import { Availability, BountyMode, EntityType } from '~/shared/utils/prisma/enums';
+import { FlagAppealAlert } from '~/components/Moderation/FlagAppealAlert';
+import { FLAG_ALERT_MESSAGES } from '~/components/Model/minor-flag-alert-state';
 import type { BountyGetById } from '~/types/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import {
@@ -225,6 +228,16 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
     >
       <TrackView entityId={bounty.id} entityType="Bounty" type="BountyView" />
       <Container size="xl" mb={32}>
+        {currentUser?.id === bounty.user?.id && bounty.poiFlagged && (
+          <FlagAppealAlert
+            entityType={EntityType.Bounty}
+            entityId={bounty.id}
+            message={FLAG_ALERT_MESSAGES.bountyPoi}
+            scanReasons={bounty.flagScanReasons}
+            appeal={bounty.poiAppeal}
+            onRequested={() => queryUtils.bounty.getById.invalidate({ id: bounty.id })}
+          />
+        )}
         <Stack gap="xs" mb="xl">
           <Group justify="space-between" className={classes.titleWrapper} wrap="nowrap">
             <Group gap="xs">
@@ -339,6 +352,11 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
               </>
             )}
           </Group>
+          <OwnerRatingControls
+            entityType="Bounty"
+            entityId={bounty.id}
+            isOwner={currentUser?.id === bounty.user?.id}
+          />
         </Stack>
         <ContainerGrid2 gutter={{ md: 32, lg: 64 }}>
           <ContainerGrid2.Col span={{ base: 12, md: 4 }} order={{ md: 2 }}>

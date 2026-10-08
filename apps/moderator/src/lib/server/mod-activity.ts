@@ -103,19 +103,15 @@ export async function getModActivityFor(
     .limit(limit + 1)
     .execute();
 
-  const truncated = rows.length > limit;
-  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
+  return { rows: await withModerators(rows.slice(0, limit)), truncated: rows.length > limit };
+}
 
-  return {
-    rows: rows.slice(0, limit).map((r) => ({
-      id: r.id,
-      activity: r.activity,
-      entityType: r.entityType,
-      entityId: r.entityId,
-      createdAt: r.createdAt,
-      moderatorId: r.userId,
-      moderatorUsername: r.userId ? byId.get(r.userId)?.username ?? null : null,
-    })),
-    truncated,
-  };
+/** Swaps a raw row's `userId` for who acted, with one user read for the whole batch. */
+export async function withModerators<R extends { userId: number | null }>(rows: R[]) {
+  const byId = await usersByIds(rows.map((r) => r.userId ?? 0));
+  return rows.map(({ userId, ...row }) => ({
+    ...row,
+    moderatorId: userId,
+    moderatorUsername: userId ? byId.get(userId)?.username ?? null : null,
+  }));
 }

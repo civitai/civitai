@@ -43,6 +43,7 @@ import {
   useUserCash,
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { BankableBuzzMeter } from '~/components/Buzz/CreatorProgramV2/BankableBuzzMeter';
 import {
   CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
@@ -61,6 +62,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { BankingChangeNoticeAlert } from '~/components/Buzz/CreatorProgramV2/BankingChangeNoticeAlert';
 import { CreatorScoreGateMessage } from '~/components/CreatorJourney/CreatorScoreGateMessage';
 import { creatorScoreFromSession } from '~/shared/utils/creator-score';
 import { useServerDomains } from '~/providers/AppProvider';
@@ -78,6 +80,7 @@ import {
   getExtractionFee,
   getForecastedValue,
 } from '~/server/utils/creator-program.utils';
+import { getBankCardLimits } from '~/shared/utils/creator-program.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
 import {
   MIN_CREATOR_SCORE,
@@ -151,6 +154,8 @@ export const CreatorProgramV2 = () => {
           <Anchor href="/creator-program">Learn more</Anchor>
         </div>
       </div>
+
+      {hasOnboardedInProgram && <BankingChangeNoticeAlert />}
 
       {!hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">
@@ -510,8 +515,14 @@ const BankBuzzCard = () => {
     }
   };
 
-  const remainingCap = banked?.cap?.cap ? banked.cap.cap - banked.total : 0;
-  const maxBankable = Math.min(remainingCap, buzzAccount.balance ?? 0);
+  const { maxBankable, meterBalance, meterCapRemaining } = getBankCardLimits({
+    accountBalances: accounts.map((account) => account.balance ?? 0),
+    selectedBalance: buzzAccount.balance ?? 0,
+    cap: banked?.cap?.cap,
+    bankedThisMonth: banked?.total ?? 0,
+    bankableRemaining: banked?.bankable?.remaining,
+    hasActiveMembership: !!hasActiveMembership,
+  });
 
   if (isLoading) {
     return (
@@ -620,6 +631,14 @@ const BankBuzzCard = () => {
         >
           Max
         </Button>
+        {banked?.bankable && (
+          <BankableBuzzMeter
+            balance={meterBalance}
+            bankableRemaining={banked.bankable.remaining}
+            capRemaining={meterCapRemaining}
+            onOpenInfo={() => dialogStore.trigger({ component: CreatorProgramCapsInfoModal })}
+          />
+        )}
 
         <div className="mb-2 flex items-center gap-2">
           <p className="text-sm">

@@ -23,6 +23,7 @@ export const nanoBananaVersionIds = {
   pro: 2436219,
   v2: 2725610,
   v2lite: 3086021,
+  v21: 3390330,
 } as const;
 
 export const minimaxVersionIds = {
@@ -30,6 +31,10 @@ export const minimaxVersionIds = {
   'v1.0': 3183239,
   /** Our own weights. The `MiniMaxH3` ecosystem default, and the only one taking LoRAs. */
   comfy: 3216500,
+  /** H3 Max and Max Turbo, through FAL. */
+  max: 3388469,
+  /** HeyGen Video 1 (built on H3). First frame only, no last frame. */
+  heygen: 3388470,
 } as const;
 
 export const qwenVersionIds = {
@@ -39,6 +44,7 @@ export const qwenVersionIds = {
 export const viduVersionIds = {
   q1: 2623839,
   q3: 2741273,
+  q4: 3392572,
 } as const;
 
 export const happyHorseVersionIds = {

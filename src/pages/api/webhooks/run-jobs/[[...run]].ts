@@ -116,10 +116,13 @@ import { notificationCursorMonitor } from '~/server/jobs/notification-cursor-mon
 import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { retryFailedTextModeration } from '~/server/jobs/text-moderation-retry';
+import { textScanRetention } from '~/server/jobs/text-scan-retention';
+import { textScanChatWindowsJob, textScanNewUsersJob } from '~/server/jobs/text-scan-sweeps';
 import { articleIngestionReconcile } from '~/server/jobs/article-ingestion-reconcile';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateModelVersionNsfwLevelsJob } from '~/server/jobs/update-model-version-nsfw-levels';
 import { updateUserScore } from '~/server/jobs/update-user-score';
+import { grantCreatorMilestones } from '~/server/jobs/grant-creator-milestones';
 import { userScoreHealthCheckJob } from '~/server/jobs/user-score-health-check';
 import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { removeDeletedUserImages } from '~/server/jobs/remove-deleted-user-images';
@@ -206,6 +209,7 @@ export const jobs: Job[] = [
   processingEngingEarlyAccess,
   syncGeneratorLoadedResources,
   updateUserScore,
+  grantCreatorMilestones,
   userScoreHealthCheckJob,
   tempSetMissingNsfwLevel,
   imagesCreatedEvents,
@@ -250,6 +254,9 @@ export const jobs: Job[] = [
   ...entityModerationJobs,
   ...placementJobs,
   retryFailedTextModeration,
+  textScanRetention,
+  textScanChatWindowsJob,
+  textScanNewUsersJob,
   articleIngestionReconcile,
   expireStrikesJob,
   processTimedUnmutesJob,

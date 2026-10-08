@@ -52,7 +52,12 @@ describe('the moderator appeal resolve paths', () => {
     rows.length = 0;
     expectPendingOnly(
       await appealStatementsOf(() =>
-        resolveImageAppeal({ imageId: 41, status: 'Rejected', userId: 2 })
+        resolveImageAppeal({
+          imageId: 41,
+          status: 'Rejected',
+          resolvedReason: 'violation-confirmed',
+          userId: 2,
+        })
       )
     );
   });

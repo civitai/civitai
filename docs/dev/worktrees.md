@@ -6,7 +6,7 @@
 node .claude/skills/dev-server/cli.mjs wt new <name> <branch> [--no-install] [--base origin/<b>]
 ```
 
-`wt new` fetches, runs `git worktree add -b <branch> --no-track <base>`, initialises the `event-engine-common` submodule, writes `.envrc` (`use flake`) when the primary checkout has one, copies the skills' credentials from the primary, runs `pnpm install` (unless `--no-install`), and checks that `git status -sb` prints `## <branch>` alone. Don't hand-roll it, and don't create worktrees with the `EnterWorktree` tool: it puts the tree in `.claude/worktrees/` (outside the Defender-excluded repos root, so it runs slow) and branches the shorthand way, so the branch tracks `origin/main`. Entering an existing worktree with `EnterWorktree` `path:` is fine.
+`wt new` fetches, runs `git worktree add -b <branch> --no-track <base>`, initialises the `event-engine-common` submodule, writes `.envrc` (`use flake`) when the primary checkout has one, copies every `.env` file from the primary (root, per-app, and the skills' credentials), runs `pnpm install` (unless `--no-install`; on Windows it launches the pnpm shim through a shell), and checks that `git status -sb` prints `## <branch>` alone. Don't hand-roll it, and don't create worktrees with the `EnterWorktree` tool: it puts the tree in `.claude/worktrees/` (outside the Defender-excluded repos root, so it runs slow) and branches the shorthand way, so the branch tracks `origin/main`. Entering an existing worktree with `EnterWorktree` `path:` is fine.
 
 Worktrees live in `<repos-root>/worktrees/<name>`, with no prefix on the directory name. Keep them under the repos root: `.claude/skills/dev-server/scripts/defender-exclusions.ps1` excludes that path from Defender scanning, and a tree outside it runs slow. Run the script once with `-ReposRoot <repos-root>` to cover the parent (its default covers only the checkout it lives in).
 
@@ -33,14 +33,14 @@ node .claude/skills/dev-server/cli.mjs wt rm <path>    # stops the server, unlin
 ```
 
 - `wt rm` refuses the primary worktree, a tree with uncommitted changes (`--force`), a tree with a running dev server (`--stop-server`), and a tree the dev-server daemon itself runs from.
-- It deletes the branch only when `gh` reports a merged PR, keeps it when commits exist on no remote, and prints the SHA when it deletes.
+- It deletes the branch only when `gh` reports a merged PR from this repo whose head contains the branch's local tip, keeps it when commits exist on no remote, and prints the SHA when it deletes.
 - `wt stale` applies the same daemon check. A running daemon that won't say where it runs from (one predating PR #4641) blocks both: `wt stale` clears no tree and `wt rm` refuses (`--force` overrides that, but never a named holder). A daemon that is not running blocks nothing; a live daemon that errors on `/` still blocks.
 
 ## Checking merge state
 
 Two obvious checks return success-shaped output while telling you nothing:
 
-- **Don't use `git merge-base --is-ancestor <branch> origin/main`.** Squash-merging means a merged branch's tip is never an ancestor. Use `gh pr list --state all --head <branch>`.
+- **Don't use `git merge-base --is-ancestor <branch> origin/main`.** Squash-merging means a merged branch's tip is never an ancestor. Use `gh pr list --state all --head <branch> --json number,state,isCrossRepository,headRefOid`, and trust a MERGED row only when `isCrossRepository` is false and its `headRefOid` is your branch tip or contains it (`git merge-base --is-ancestor <branch> <headRefOid>`). `--head` matches the name alone, so a fork's PR or an old PR on a reused name comes back too. `wt stale` does this check for you.
 - **Don't use `git log --not --remotes` with no positive rev.** It prints nothing, reading as "no unpushed commits". Use `git rev-list --count <branch> --not --remotes`.
 
 ## Traps in a fresh worktree
@@ -53,8 +53,12 @@ Two obvious checks return success-shaped output while telling you nothing:
   2026-10-05, the primary had 7 and a worktree 0 of 47 skill directories. The symptoms name no
   cause: `FLIPT_URL and FLIPT_API_TOKEN must be set`, `credentials not configured`, a bare 401.
   `wt new` now copies them and warns about any skill whose credentials exist in no tree. To see the
-  state of a tree you already have, `wt env` lists presence per skill — never a value, because a
-  per-skill inventory annotated with what each unlocks is what must not exist in a public repo:
+  state of a tree you already have, `wt env` reports one of three states per skill — never a value,
+  because a per-skill inventory annotated with what each unlocks must not exist in a public repo:
+
+  `set` (its own file), `root` (no file, but the root `.env` supplies every key it declares — most
+  skills fall back to it) and `ABSENT`, which names the key that is blocking. An example carrying
+  `# skill-env: settings-only` is local wiring, not credentials, and is not counted.
 
   ```bash
   node .claude/skills/dev-server/cli.mjs wt env                 # what this tree has
@@ -70,6 +74,16 @@ Two obvious checks return success-shaped output while telling you nothing:
   went missing from the primary while their siblings sat untouched since May, and discord's had to
   be re-obtained through an interactive browser login. The store sits outside the repo on purpose;
   a backup inside it dies to the same clean.
+
+- **The app `.env` files are full copies, so they go stale.** `wt new` copies the root `.env`
+  and every per-app one (any untracked `.env` / `.env.*` git finds, minus examples and `.bak`
+  files) so a tree works outside the dev-server daemon too. The daemon still layers the primary's
+  `.env` under the tree's, but a full copy restates every key and so masks later edits to the
+  primary. After changing a primary `.env`, bring existing trees up to date with:
+
+  ```bash
+  node .claude/skills/dev-server/cli.mjs wt env <worktree> --refresh   # re-copies those the primary edited since
+  ```
 
 - **A fresh worktree has no `.envrc`** (gitignored; `wt new` writes `use flake` only when the primary checkout has one). Without it you silently get system Node instead of the flake's, and no `PRISMA_*_ENGINE_*` paths, so Prisma looks for a `linux-nixos` engine that was never published. Mismatched node produced spurious `window.localStorage is undefined` failures under happy-dom plus Prisma engine errors, all misattributed to the code under test. Fix: `cp .envrc.example <worktree>/.envrc && direnv allow`, or run commands through `nix develop`.
 - **Confirm your cwd is actually the worktree.** A run whose cwd was a different repo lost two suites to collection failures and 77 tests silently never ran, with otherwise normal output.

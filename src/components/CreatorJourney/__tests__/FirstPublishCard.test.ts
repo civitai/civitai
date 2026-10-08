@@ -7,6 +7,7 @@ import { MantineProvider } from '@mantine/core';
 import type * as Trpc from '~/utils/trpc';
 import type * as CurrentUser from '~/hooks/useCurrentUser';
 import type * as FeatureNotice from '~/components/Alerts/useFeatureNotice';
+import { creatorScoreSources } from '~/components/Account/creator-score-copy';
 import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
 import {
   FirstPublishCard,
@@ -97,7 +98,7 @@ describe('FirstPublishCardView', () => {
     );
 
     expect(paragraphs(el)).toBe(
-      'Your first model is live | Downloads, generations and reviews on it now count toward your ' +
+      'Your first model is live | Downloads, generations, and positive reviews on it now count toward your ' +
         'Creator Score. Your first goal is Spark at 500, which unlocks: judge crucibles. | ' +
         'See your journey · Close'
     );
@@ -115,7 +116,7 @@ describe('FirstPublishCardView', () => {
     );
 
     expect(paragraphs(el)).toMatch(
-      /^Your first article is live \| Reads, reactions and comments on it now count toward your Creator Score\. Your next goal is Flame at 5,000, which unlocks: /
+      /^Your first article is live \| Views, reactions, and comments on it now count toward your Creator Score\. Your next goal is Flame at 5,000, which unlocks: /
     );
   });
 
@@ -152,6 +153,27 @@ describe('FirstPublishCardView', () => {
     expect(text).toContain('Your next goal is Supernova at 1,000,000');
     expect(text).not.toContain('join the Creator Program');
   });
+
+  // The card and the score explainer must name the same activities; hand-written card copy drifted.
+  it.each([
+    ['model', creatorScoreSources.models.earnedBy],
+    ['article', creatorScoreSources.articles.earnedBy],
+  ] as const)(
+    'names a %s card’s activities in the score explainer’s words',
+    (entityType, earnedBy) => {
+      const el = mount(
+        React.createElement(FirstPublishCardView, {
+          entityType,
+          total: 0,
+          ladder,
+          onClose: () => undefined,
+        })
+      );
+      const counts = el.querySelectorAll('p')[1]?.textContent ?? '';
+      const activities = counts.slice(0, counts.indexOf(' on it now count'));
+      expect(activities).toBe(earnedBy.replace(/ (of|on) \w+$/, ''));
+    }
+  );
 
   it('closes through the handler it is given', () => {
     const onClose = vi.fn();

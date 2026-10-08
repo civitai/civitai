@@ -23,14 +23,17 @@ export const QUESTION_SPEC_VERSION = 1;
 // the ResourceInsight labels; a v1 shadow row was produced without that axis.
 export const RESOURCE_INTENT_CRITERIA_VERSION = 2;
 
-// The number of shortlist entries stage 3 can actually rank: the vendor's
-// option budget minus the `none` fallback. `RESOURCE_INTENT_MAX_SHORTLIST`
-// remains the response/limit cap — a 255-entry shortlist ships, its last
-// entry simply is not ranked by Jev (it sorts last by probability).
+// The shortlist entries stage 3 can rank: the vendor's option budget minus `none`.
 export const STAGE3_MAX_RANKED = JEV_MAX_CHOICE_OPTIONS - 1;
 // Stage 2 hard cap on shortlisted versions (brief §3); the endpoint default is 50.
 export const RESOURCE_INTENT_MAX_SHORTLIST = 255;
 export const RESOURCE_INTENT_DEFAULT_LIMIT = 50;
+
+// HYBRID_10, the shape the offline arm screen measured: stage 3's first 10 distinct
+// models, then the popularity pool (one version per model) fills to the cap.
+export const RESOURCE_INTENT_HYBRID_HEAD_MODELS = 10;
+// Page depth the screen built that popularity pool from.
+export const RESOURCE_INTENT_BASE_DEEP_PAGE_LIMIT = 500;
 
 export const RESOURCE_INTENT_MAX_PROMPT_LENGTH = 6000;
 
@@ -149,6 +152,12 @@ export const RESOURCE_INTENT_QUESTIONS = [
   },
 ] as const satisfies readonly JevQuestionSpec[];
 
+/** Stage 3's wording (R4c, as screened). Hashed by `RESOURCE_INTENT_STAGE3_SPEC_HASH`, not `RESOURCE_INTENT_SPEC_HASH`. */
+export const RESOURCE_INTENT_STAGE3_INSTRUCTIONS =
+  'The `prompt` is an image-generation prompt. `role` is the kind of add-on resource it needs and `styleFamily` is its visual style family. Which ONE of the listed community resources best fits this prompt for that role? Choose "none" if no listed resource fits.';
+export const RESOURCE_INTENT_STAGE3_NONE_DESCRIPTION =
+  'None of the listed resources fits: each is the wrong character, subject, style or purpose for this prompt.';
+
 export const RESOURCE_INTENT_SPEC_HASH = createHash('sha256')
   .update(JSON.stringify(RESOURCE_INTENT_QUESTIONS))
   .digest('hex');
@@ -243,8 +252,8 @@ export const resourceIntentResponseSchema = z.strictObject({
    * The `ResourceInsight` read failed while producing this response.
    *
    * 🔴 ONLY INTERPRETABLE WHEN `degraded === false`. On a `degraded: false`
-   * response it means the shortlist is in seed order (purpose page, then popularity
-   * fill) rather than label order. On a `degraded: true` one it means only that the label read had already
+   * response it means the shortlist is in seed (popularity) order rather than label
+   * order. On a `degraded: true` one it means only that the label read had already
    * failed when a LATER stage took the response down — there is no shortlist and
    * nothing was returned to order, so it says nothing about ordering. That pairing
    * is reachable: the label read fails, the matcher falls back, and then stage 3 or
@@ -280,13 +289,14 @@ export const resourceIntentResponseSchema = z.strictObject({
    * field is added: during a rolling deploy or a Flagger canary both builds share
    * one Redis key space, so old pods reject every new blob AND new pods reject
    * every old one, i.e. a 100% miss rate on both sides for the rollout window, at
-   * up to two vendor round trips per miss. Free for THIS field only because the
+   * up to three vendor calls per miss. Free for THIS field only because the
    * route is dark behind `resourceIntentJev`.
    */
   insightFallback: z.boolean(),
   intent: resourceIntentAnswerSchema.nullable(),
   criteria: resourceIntentCriteriaSchema.nullable(),
   suggestions: z.array(z.custom<ResourceIntentSuggestion>(() => true)),
+  /** Stage 3's averaged `none` mass when stage 3 ran, else stage 1's `role.none`. Never empties `suggestions`. */
   noneProbability: z.number().min(0).max(1).nullable(),
   model: z.string(),
   criteriaVersion: z.literal(RESOURCE_INTENT_CRITERIA_VERSION),

@@ -637,7 +637,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
           render={({ value, onChange }) => (
             <Checkbox
               label="Turbo"
-              description="Use the turbo LoRA — converges in fewer steps"
+              description="Faster generation, at some cost to quality"
               checked={value}
               onChange={(e) => onChange(e.currentTarget.checked)}
             />

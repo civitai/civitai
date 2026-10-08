@@ -5,9 +5,8 @@
  *
  * 1. A WORKTREE GETS NONE OF THEM. The daemon layers the APP's env chain (root `.env`, per-app
  *    `.env`) and nothing has ever touched `.claude/skills/*​/.env`, so a fresh worktree starts
- *    with zero of them. Measured: the primary had 7, the worktree 0 of 47 skill dirs. There is
- *    no `wt create` to hook — worktrees come from the `git worktree add` recipe in CLAUDE.md —
- *    so this is a verb that recipe calls, not an automatic step.
+ *    with zero of them. Measured: the primary had 7, the worktree 0 of 47 skill dirs. `wt new`
+ *    copies them on creation; `wt env <tree>` fills an existing tree.
  *
  * 2. THE GAP IS INVISIBLE. A missing credential surfaces as whatever that skill says when it
  *    cannot authenticate: "FLIPT_URL and FLIPT_API_TOKEN must be set", "credentials not
@@ -35,6 +34,7 @@ import {
 } from 'fs';
 import { homedir } from 'os';
 import { basename, join, resolve } from 'path';
+import { syncAppEnv } from './app-env.mjs';
 import { resolvePrimaryCheckout, samePath } from './paths.mjs';
 
 /**
@@ -68,6 +68,28 @@ function skillNames(root) {
 const envPath = (root, skill) => join(skillsDir(root), skill, '.env');
 
 /**
+ * Whether an example declares itself settings-only. Some skills keep local wiring in a
+ * `.env` — ports, timeouts, feature toggles — all defaulted and none secret. Listing those
+ * alongside real credentials buried the ones that matter: dev-server's twenty settings made
+ * the report unreadable, which is the failure it exists to prevent.
+ */
+function settingsOnly(file) {
+  if (!existsSync(file)) return false;
+  return /^#\s*skill-env:\s*settings-only\b/m.test(readFileSync(file, 'utf8'));
+}
+
+/** The KEY names a dotenv-style file declares, ignoring comments and blanks. */
+function declaredKeys(file) {
+  if (!existsSync(file)) return [];
+  return readFileSync(file, 'utf8')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('#') && line.includes('='))
+    .map((line) => line.slice(0, line.indexOf('=')).trim())
+    .filter(Boolean);
+}
+
+/**
  * What each skill's credential state is in `root`, plus whether a backup exists for it.
  *
  * `wants` is the signal that a skill takes credentials at all: a `.env.example` beside it. A
@@ -76,13 +98,24 @@ const envPath = (root, skill) => join(skillsDir(root), skill, '.env');
  */
 export function survey(root) {
   const backup = backupDir();
+  // Most skills fall back to the root .env, so one with no file of its own may still be
+  // fully configured. Reporting those as missing is how a report earns being ignored, and
+  // this one exists to be read.
+  const fromRoot = new Set(declaredKeys(join(root, '.env')));
   return skillNames(root).map((skill) => {
     const p = envPath(root, skill);
     const has = existsSync(p);
+    const example = join(skillsDir(root), skill, '.env.example');
+    const needs = declaredKeys(example);
+    const settings = settingsOnly(example);
+    const missingFromRoot = needs.filter((key) => !fromRoot.has(key));
     return {
       skill,
       has,
-      wants: existsSync(join(skillsDir(root), skill, '.env.example')),
+      wants: existsSync(example) && !settings,
+      needs,
+      viaRoot: !has && needs.length > 0 && missingFromRoot.length === 0,
+      missingFromRoot,
       backedUp: existsSync(join(backup, `${skill}.env`)),
       mtime: has ? statSync(p).mtime : undefined,
     };
@@ -91,23 +124,33 @@ export function survey(root) {
 
 function report(root, rows) {
   const relevant = rows.filter((r) => r.has || r.wants);
-  const missing = relevant.filter((r) => !r.has);
   const present = relevant.filter((r) => r.has);
+  const viaRoot = relevant.filter((r) => r.viaRoot);
+  const missing = relevant.filter((r) => !r.has && !r.viaRoot);
 
   console.log(`\nSkill credentials in ${root}\n`);
   for (const r of present) {
     const age = r.mtime ? r.mtime.toISOString().slice(0, 10) : '';
     console.log(`  set      ${r.skill.padEnd(20)} ${age}${r.backedUp ? '' : '   (no backup)'}`);
   }
+  for (const r of viaRoot) {
+    console.log(`  root     ${r.skill.padEnd(20)} ${r.needs.length} key(s) from the root .env`);
+  }
   for (const r of missing) {
-    console.log(`  ABSENT   ${r.skill.padEnd(20)} ${r.backedUp ? 'restorable from backup' : ''}`);
+    const why = r.missingFromRoot.length
+      ? `needs ${r.missingFromRoot.slice(0, 3).join(', ')}${
+          r.missingFromRoot.length > 3 ? ` +${r.missingFromRoot.length - 3} more` : ''
+        }`
+      : 'no .env.example to read';
+    const hint = r.backedUp ? '  (restorable from backup)' : '';
+    console.log(`  ABSENT   ${r.skill.padEnd(20)} ${why}${hint}`);
   }
   if (!relevant.length) console.log('  (no skill in this tree takes credentials)');
 
   const restorable = missing.filter((r) => r.backedUp).length;
   const unbacked = present.filter((r) => !r.backedUp).length;
   console.log(
-    `\n  ${present.length} set, ${missing.length} absent${
+    `\n  ${present.length} set, ${viaRoot.length} from the root .env, ${missing.length} absent${
       restorable ? ` (${restorable} restorable)` : ''
     }`
   );
@@ -192,7 +235,9 @@ export function syncSkillEnv(primary, target) {
   }
 
   const absent = survey(target)
-    .filter((r) => r.wants && !r.has)
+    // Not `!has`: a skill served by the root .env is configured, and warning about it on
+    // every worktree creation is what trains people to skip the warning.
+    .filter((r) => r.wants && !r.has && !r.viaRoot)
     .map((r) => r.skill);
   return { copied: names.length, kept, names, absent };
 }
@@ -218,6 +263,27 @@ Copied ${r.copied} credential file(s) into ${target}.${
   return r.copied;
 }
 
+/** The app env files alongside: the root `.env` and every per-app one. */
+function syncApp(primary, target, refresh) {
+  let r;
+  try {
+    r = syncAppEnv(primary, target, { refresh });
+  } catch (error) {
+    console.warn(`Could not copy env files -- ${error.message.split('\n')[0]}`);
+    return;
+  }
+  if (r.skipped) return;
+  for (const p of r.copied) console.log(`  copied    ${p}`);
+  for (const p of r.refreshed) console.log(`  refreshed ${p}`);
+  for (const p of r.noDir) console.log(`  skipped   ${p} (its app is not on this branch)`);
+  const stale = refresh ? '' : ' Pass --refresh to re-copy any the primary has edited since.';
+  console.log(
+    `\nEnv files: ${r.copied.length} copied, ${r.refreshed.length} refreshed, ${r.kept.length} left as they were.${
+      r.kept.length ? stale : ''
+    }\n`
+  );
+}
+
 export function cmdSkillEnv(projectRoot, argv) {
   const rows = survey(projectRoot);
 
@@ -235,7 +301,9 @@ export function cmdSkillEnv(projectRoot, argv) {
         primary.error ? ` (${primary.error.split('\n')[0]})` : ''
       }.\n  Copying from ${primary.path} instead.`);
     }
-    return sync(primary.path, resolve(target));
+    const copied = sync(primary.path, resolve(target));
+    syncApp(primary.path, resolve(target), argv.includes('--refresh'));
+    return copied;
   }
 
   return report(projectRoot, rows);

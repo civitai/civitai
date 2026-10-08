@@ -72,6 +72,12 @@ import { bustOrchestratorModelCache } from '~/server/services/orchestrator/model
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
+import { enqueueJobs } from '~/server/services/job-queue.service';
+import {
+  collectionBecameVisible,
+  shouldScanCollection,
+} from '~/server/services/text-scan/actions/collection';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import {
   throwAuthorizationError,
@@ -94,8 +100,10 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
+  EntityType,
   HomeBlockType,
   ImageIngestionStatus,
+  JobQueueType,
   MetricTimeframe,
   ModelStatus,
   TagTarget,
@@ -1242,6 +1250,18 @@ export const saveItemInCollections = async ({
   return data.length > 0 ? 'added' : removedCount > 0 ? 'removed' : null;
 };
 
+function withStoredModeratorMetadata(
+  sent: CollectionMetadataSchema | undefined,
+  stored: CollectionMetadataSchema | null | undefined
+): CollectionMetadataSchema {
+  const next = { ...sent };
+  if (stored?.autoTagId === undefined) delete next.autoTagId;
+  else next.autoTagId = stored.autoTagId;
+  if (stored?.forcedBrowsingLevel === undefined) delete next.forcedBrowsingLevel;
+  else next.forcedBrowsingLevel = stored.forcedBrowsingLevel;
+  return next;
+}
+
 export const upsertCollection = async ({
   input,
 }: {
@@ -1285,21 +1305,11 @@ export const upsertCollection = async ({
   // metadata blob — so rejecting on PRESENCE would 403 a co-manager who opened Edit and
   // hit Save without touching (or knowing about) the field. Pin it to the stored value
   // instead: their save becomes a no-op on this field rather than a wall.
-  if (!isModerator && metadata) {
-    const storedAutoTagId = id
-      ? (
-          (
-            await dbRead.collection.findUnique({
-              where: { id },
-              select: { metadata: true },
-            })
-          )?.metadata as CollectionMetadataSchema | null
-        )?.autoTagId
-      : undefined;
-
-    if (storedAutoTagId === undefined) delete metadata.autoTagId;
-    else metadata.autoTagId = storedAutoTagId;
-  }
+  // `forcedBrowsingLevel` is pinned the same way: it decides the collection's rating ahead of its
+  // items and any moderator rating, so only moderators (or system writers) set it. Both are carried
+  // over even when `metadata` is not sent, since the write replaces the whole blob.
+  const pinnedMetadata = (stored: CollectionMetadataSchema | null | undefined) =>
+    isModerator ? metadata ?? {} : withStoredModeratorMetadata(metadata, stored);
 
   if (id) {
     const permission = await getUserCollectionPermissionsById({
@@ -1316,10 +1326,14 @@ export const upsertCollection = async ({
       where: { id },
       select: {
         id: true,
+        name: true,
+        description: true,
         read: true,
         write: true,
+        availability: true,
         mode: true,
         createdAt: true,
+        metadata: true,
         image: { select: { id: true } },
       },
     });
@@ -1370,8 +1384,11 @@ export const upsertCollection = async ({
           id: true,
           mode: true,
           image: { select: { id: true, url: true, ingestion: true, type: true } },
+          name: true,
+          description: true,
           read: true,
           write: true,
+          availability: true,
           userId: true,
         },
         where: { id },
@@ -1382,7 +1399,9 @@ export const upsertCollection = async ({
           read: nextRead,
           write: nextWrite,
           mode: nextMode,
-          metadata: (metadata ?? {}) as Prisma.JsonObject,
+          metadata: pinnedMetadata(
+            currentCollection.metadata as CollectionMetadataSchema | null
+          ) as Prisma.JsonObject,
           image: imageId
             ? { connect: { id: imageId } }
             : image !== undefined
@@ -1503,6 +1522,28 @@ export const upsertCollection = async ({
 
     await collectionsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
+    // Recomputes skip hidden collections, so anything that changed while it was hidden (a verdict
+    // landing, a moderator rating, an item) only reaches nsfwLevel here; the scan may skip as
+    // unchanged. Queued rather than inline: the recompute can time out on a huge collection.
+    if (collectionBecameVisible(currentCollection, updated))
+      await enqueueJobs([
+        {
+          entityType: EntityType.Collection,
+          entityId: updated.id,
+          type: JobQueueType.UpdateNsfwLevel,
+        },
+      ]).catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'collection-nsfw-recompute-enqueue-failed',
+          message: error instanceof Error ? error.message : String(error),
+          collectionId: updated.id,
+        }).catch(() => null)
+      );
+
+    if (shouldScanCollection(currentCollection, updated))
+      scanEntityInBackground({ entityType: 'Collection', entityId: updated.id });
+
     // nb: doing this will delete a user's own image
     // if (currentCollection.image && !input.image) {
     //   const isOwner = await isImageOwner({
@@ -1534,8 +1575,11 @@ export const upsertCollection = async ({
     select: {
       id: true,
       image: { select: { id: true, url: true } },
+      name: true,
+      description: true,
       read: true,
       write: true,
+      availability: true,
       userId: true,
       mode: true,
     },
@@ -1548,7 +1592,7 @@ export const upsertCollection = async ({
       userId,
       type,
       mode,
-      metadata: (metadata ?? {}) as Prisma.JsonObject,
+      metadata: pinnedMetadata(undefined) as Prisma.JsonObject,
       contributors: {
         create: {
           userId,
@@ -1579,6 +1623,9 @@ export const upsertCollection = async ({
   });
 
   await userCollectionCountCache.refresh(userId);
+
+  if (shouldScanCollection(null, collection))
+    scanEntityInBackground({ entityType: 'Collection', entityId: collection.id });
 
   // Route subsequent reads to primary while the replica catches up so the
   // post-create redirect to /collections/[id] doesn't 404 on a fresh row.

@@ -5,6 +5,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type * as SessionInvalidation from '~/server/auth/session-invalidation';
 import type * as PaddleService from '~/server/services/paddle.service';
 import type * as StripeService from '~/server/services/stripe.service';
+import type * as UserRestrictionService from '~/server/services/user-restriction.service';
 import { userBasicCache, userFollowsCache } from '~/server/redis/caches';
 import { usersSearchIndex } from '~/server/search-index';
 
@@ -15,11 +16,13 @@ import { usersSearchIndex } from '~/server/search-index';
  * with a live subscription and a live cached session that its owner could not sign in to end.
  */
 
-const { cancelSubscription, cancelSubscriptionPlan, invalidateSession } = vi.hoisted(() => ({
-  cancelSubscription: vi.fn(),
-  cancelSubscriptionPlan: vi.fn(),
-  invalidateSession: vi.fn(),
-}));
+const { cancelSubscription, cancelSubscriptionPlan, invalidateSession, closeRestrictions } =
+  vi.hoisted(() => ({
+    cancelSubscription: vi.fn(),
+    cancelSubscriptionPlan: vi.fn(),
+    invalidateSession: vi.fn(),
+    closeRestrictions: vi.fn(),
+  }));
 
 vi.mock('~/server/services/stripe.service', async (importOriginal) => ({
   ...(await importOriginal<typeof StripeService>()),
@@ -28,6 +31,10 @@ vi.mock('~/server/services/stripe.service', async (importOriginal) => ({
 vi.mock('~/server/services/paddle.service', async (importOriginal) => ({
   ...(await importOriginal<typeof PaddleService>()),
   cancelSubscriptionPlan,
+}));
+vi.mock('~/server/services/user-restriction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof UserRestrictionService>()),
+  closeGenerationRestrictionsOfDeletedAccount: closeRestrictions,
 }));
 vi.mock('~/server/auth/session-invalidation', async (importOriginal) => ({
   ...(await importOriginal<typeof SessionInvalidation>()),
@@ -47,7 +54,7 @@ const deleteUser = () =>
 let ran: string[] = [];
 const record = (step: string) => async () => void ran.push(step);
 
-const ALL_STEPS = ['session', 'stripe', 'follows', 'search', 'basicData', 'paddle'];
+const ALL_STEPS = ['session', 'stripe', 'follows', 'search', 'basicData', 'restrictions', 'paddle'];
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -64,6 +71,7 @@ beforeEach(() => {
   invalidateSession.mockImplementation(record('session'));
   cancelSubscription.mockImplementation(record('stripe'));
   cancelSubscriptionPlan.mockImplementation(record('paddle'));
+  closeRestrictions.mockImplementation(record('restrictions'));
   vi.spyOn(userFollowsCache, 'bust').mockImplementation(record('follows'));
   vi.spyOn(usersSearchIndex, 'queueUpdate').mockImplementation(record('search') as never);
   vi.spyOn(userBasicCache, 'refresh').mockImplementation(record('basicData') as never);
@@ -96,6 +104,28 @@ describe('deleteUser — the post-commit tail is unskippable', () => {
     await expect(deleteUser()).resolves.toBeDefined();
 
     expect(ran).toEqual(ALL_STEPS);
+  });
+
+  // The review queue hides deleted accounts, so a case left Pending is never ruled on.
+  it("closes the account's pending restrictions", async () => {
+    await deleteUser();
+
+    expect(closeRestrictions).toHaveBeenCalledWith(USER_ID);
+  });
+
+  // Before the status migration is applied the write fails; a deletion must not fail with it.
+  it('a failing restriction close still runs every other step and reports success', async () => {
+    closeRestrictions.mockImplementation(async () => {
+      ran.push('restrictions');
+      throw new Error('invalid input value for enum "UserRestrictionStatus"');
+    });
+
+    await expect(deleteUser()).resolves.toBeDefined();
+
+    expect(ran).toEqual(ALL_STEPS);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'close-pending-restrictions', userId: USER_ID })
+    );
   });
 
   it('a failing Stripe cancel still runs every other step', async () => {
