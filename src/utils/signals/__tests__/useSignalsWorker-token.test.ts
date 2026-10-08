@@ -370,6 +370,7 @@ describe('useSignalsWorker: signals token re-mint', () => {
 
     // A different user in the same mounted tab, whose first token came back degraded.
     currentUser.id = 2;
+    state.nextToken = {};
     setToken({ data: {}, dataUpdatedAt: Date.now() });
     await render();
     await fromWorker({ type: 'connection:state', state: 'closed' });
