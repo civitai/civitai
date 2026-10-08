@@ -37,14 +37,17 @@ CREATE TABLE IF NOT EXISTS default.appBlocksSharedDataHits
   surface LowCardinality(String),
   -- shadow | enforce
   mode LowCardinality(String),
-  -- 1 when this hit rejected the write (enforce mode only)
+  -- 1 when the write this hit came from was rejected (enforce mode only). A pattern-list hit can
+  -- be 0 in enforce mode: it rejects only while `user-content-pattern-enforce` is on.
   blocked UInt8,
-  -- JSON-pointer-style path inside `data`; empty for a counter key or an overflow
+  -- JSON-pointer-style path inside `data` (cut to 512 bytes: it is built from user-authored keys);
+  -- empty for a counter key or a blob-level overflow
   leafPath String,
-  -- value | key; empty for an overflow
+  -- value | key; empty for a blob-level overflow (depth | leaves | chars)
   leafKind LowCardinality(String),
   -- minor | poi | link | pattern | audit_regex | overflow
   category LowCardinality(String),
+  -- the matched term; for an overflow, which cap: depth | leaves | chars | audit_budget | leaf_length
   matched String,
   leafLength UInt32,
   leafSha256 String,

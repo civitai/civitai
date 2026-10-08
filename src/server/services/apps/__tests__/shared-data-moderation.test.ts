@@ -43,13 +43,13 @@ vi.mock('~/server/clickhouse/client', () => ({
 import {
   blockingHit,
   classifySharedTexts,
-  clickhouseDateTime64,
   recordSharedDataScan,
   resolveSharedDataModerationMode,
   scanCounterKey,
   scanSharedData,
   scheduleSharedDataShadow,
   SHARED_DATA_FULL_AUDIT_BUDGET,
+  SHARED_DATA_HIT_PATH_MAX_BYTES,
   SHARED_DATA_HIT_TEXT_MAX_BYTES,
   SHARED_DATA_HITS_TABLE,
   sharedDataHitRows,
@@ -126,13 +126,26 @@ describe('classifySharedTexts — the local checks, one leaf at a time', () => {
     expect(loli.map((h) => h.category)).toContain('audit_regex');
     const profane = await classifySharedTexts([leaf('fu\u200Bck')]);
     expect(profane.map((h) => h.category)).toEqual(['audit_regex']);
+    // ...and the invisibles that are not \p{Cf} (here a Hangul filler).
+    const filler = await classifySharedTexts([leaf('fu\u3164ck')]);
+    expect(filler.map((h) => h.category)).toEqual(['audit_regex']);
     // The record keeps the raw leaf, not the stripped copy.
     expect(profane[0].leaf?.raw).toBe('fu\u200Bck');
   });
 
-  it('🔴 a single leaf over the audit length ceiling is a hit, whatever the triggers say', async () => {
+  it('🔴 a single leaf over the audit length ceiling is an OVERFLOW hit — unreviewable, not a content signal', async () => {
     const hits = await classifySharedTexts([leaf('a'.repeat(20_001))]);
-    expect(hits.map((h) => h.category)).toEqual(['audit_regex']);
+    expect(hits).toEqual([
+      { category: 'overflow', matched: 'leaf_length', leaf: leaf('a'.repeat(20_001)) },
+    ]);
+    // ...and exactly AT the ceiling it is audited normally (a clean leaf passes).
+    await expect(classifySharedTexts([leaf('a '.repeat(10_000))])).resolves.toEqual([]);
+  });
+
+  it('a scan carrying a too-long leaf reports the overflow kind', async () => {
+    const scan = await scanSharedData({ big: 'a'.repeat(20_001) });
+    expect(scan.overflow).toBe('leaf_length');
+    expect(blockingHit(scan)?.category).toBe('overflow');
   });
 
   it('INVARIANT GUARD: the blocklist gets ONE call with the leaves as separate entries (never joined)', async () => {
@@ -229,6 +242,23 @@ describe('full-audit budget', () => {
     const texts = Array.from({ length: 500 }, (_, i) => `clean label ${word(i)}`);
     const scan = await scanSharedData(texts);
     expect(scan).toEqual({ leafCount: 500, overflow: null, hits: [] });
+  });
+});
+
+describe('full-audit budget — only profane-looking leaves spend it', () => {
+  it('a profane leaf AFTER many clean ones is still fully audited (clean leaves did not drain the budget)', async () => {
+    const DIGITS = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine'];
+    const word = (i: number) => [...String(i)].map((d) => DIGITS[Number(d)]).join(' ');
+    const texts = [...Array.from({ length: 500 }, (_, i) => `clean label ${word(i)}`), 'fuck'];
+    const scan = await scanSharedData(texts);
+    expect(scan.overflow).toBeNull();
+    expect(scan.hits).toEqual([
+      {
+        category: 'audit_regex',
+        matched: 'fuck',
+        leaf: { raw: 'fuck', path: '500', kind: 'value' },
+      },
+    ]);
   });
 });
 
@@ -368,6 +398,16 @@ describe('recording', () => {
     expect(JSON.stringify(mockLog.mock.calls)).not.toContain(MINOR);
   });
 
+  it('the leaf path is cut too — it is built from user-authored keys', async () => {
+    const key = 'k'.repeat(4000);
+    const scan = await scanSharedData({ [key]: MINOR });
+    const [row] = sharedDataHitRows(scan, ctx).filter((r) => r.leafKind === 'value');
+    expect(Buffer.byteLength(row.leafPath, 'utf8')).toBeLessThanOrEqual(
+      SHARED_DATA_HIT_PATH_MAX_BYTES
+    );
+    expect(key.startsWith(row.leafPath)).toBe(true);
+  });
+
   it('an overflow row carries no leaf', () => {
     const [row] = sharedDataHitRows(
       {
@@ -390,9 +430,6 @@ describe('recording', () => {
     expect(truncateUtf8('aé', 2)).toBe('a');
     expect(truncateUtf8('🙂🙂', 5)).toBe('🙂');
     expect(truncateUtf8('short', 1024)).toBe('short');
-    expect(clickhouseDateTime64(new Date('2026-01-02T03:04:05.006Z'))).toBe(
-      '2026-01-02 03:04:05.006'
-    );
   });
 });
 

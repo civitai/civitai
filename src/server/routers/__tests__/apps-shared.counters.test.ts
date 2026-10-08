@@ -28,13 +28,19 @@ const {
   mockChInsert,
   mockLog,
 } = vi.hoisted(() => {
+  // `pg`'s `query(sql, params)`, declared on the mock so an implementation can read its SQL (the
+  // same source-level typing as apps-shared.router.test.ts).
+  type QueryFn = (
+    sql: string,
+    params?: unknown[]
+  ) => Promise<{ rows: unknown[]; rowCount: number }>;
   const mockClient = {
-    query: vi.fn(async () => ({ rows: [{ count: '3' }], rowCount: 1 })),
+    query: vi.fn<QueryFn>(async () => ({ rows: [{ count: '3' }], rowCount: 1 })),
     release: vi.fn(),
   };
   const mockPool = {
     connect: vi.fn(async () => mockClient),
-    query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+    query: vi.fn<QueryFn>(async () => ({ rows: [], rowCount: 0 })),
   };
   return {
     mockVerifyBlockToken: vi.fn(),
@@ -283,7 +289,7 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     );
   }
   function reportReasons(): string[] {
-    return (mockPool.query.mock.calls as unknown as Array<[string, unknown[]?]>)
+    return mockPool.query.mock.calls
       .filter((c) => String(c[0]).includes('shared_kv_reports'))
       .map((c) => String((c[1] as unknown[])[3]));
   }
@@ -293,6 +299,9 @@ describe('incrementSharedCounter — counter-key moderation', () => {
 
   beforeEach(() => {
     mockVerifyBlockToken.mockResolvedValue(claims('app-voting', [READ, WRITE]));
+    // `clearAllMocks` keeps implementations, so cases below that override these must not leak.
+    mockPool.query.mockImplementation(async () => ({ rows: [], rowCount: 0 }));
+    mockClient.query.mockImplementation(async () => ({ rows: [{ count: '3' }], rowCount: 1 }));
   });
 
   it('INVARIANT GUARD: both flags OFF → a flagged key increments exactly as before, nothing scanned', async () => {
@@ -333,6 +342,77 @@ describe('incrementSharedCounter — counter-key moderation', () => {
     });
     expect(mockFindBlocked).toHaveBeenCalledTimes(1);
     expect(mockFindBlocked.mock.calls[0][0]).toEqual(['playcount:7']);
+  });
+
+  it('enforce: a blocklist outage is a clean 4xx with no counter write', async () => {
+    setFlags({ enforce: true });
+    mockFindBlocked.mockRejectedValue(new Error('redis down'));
+    await expect(incrementSharedCounter('tok', 'playcount:7')).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+      message: 'Content could not be reviewed right now. Please try again.',
+    });
+    expect(mockClient.query).not.toHaveBeenCalled();
+  });
+
+  it('enforce: a key that ALREADY exists is not re-scanned — its text was fixed at creation', async () => {
+    setFlags({ enforce: true });
+    mockPool.query.mockImplementation(async (sql: string) =>
+      String(sql).includes('SELECT 1 FROM')
+        ? { rows: [{}], rowCount: 1 }
+        : { rows: [], rowCount: 0 }
+    );
+    await expect(incrementSharedCounter('tok', BAD_KEY)).resolves.toEqual({
+      key: BAD_KEY,
+      count: 3,
+    });
+    expect(mockFindBlocked).not.toHaveBeenCalled();
+  });
+
+  it('SEAM: the subject’s moderator bit reaches the blocklist for a counter key', async () => {
+    setFlags({ enforce: true });
+    mockGetSessionUser.mockResolvedValue(trustedUser({ isModerator: true }));
+    await incrementSharedCounter('tok', 'playcount:7');
+    expect(mockFindBlocked.mock.calls[0][1]).toEqual({ exemptFromPatterns: true });
+  });
+
+  it('shadow: an increment of an EXISTING key (anchor INSERT inserted nothing) is not scanned', async () => {
+    setFlags({ shadow: true });
+    mockClient.query.mockImplementation(async (sql: string) =>
+      String(sql).includes('INTO "app_app_voting".shared_kv')
+        ? { rows: [], rowCount: 0 }
+        : { rows: [{ count: '3' }], rowCount: 1 }
+    );
+    await expect(incrementSharedCounter('tok', BAD_KEY)).resolves.toEqual({
+      key: BAD_KEY,
+      count: 3,
+    });
+    await flushImmediates();
+    expect(mockFindBlocked).not.toHaveBeenCalled();
+  });
+
+  it('INVARIANT GUARD (shadow): the increment returns while the key scan is still pending', async () => {
+    setFlags({ shadow: true });
+    mockFindBlocked.mockImplementation(() => new Promise(() => undefined));
+    let scanCallsWhenSettled = -1;
+    const out = await incrementSharedCounter('tok', 'playcount:7').then((r) => {
+      scanCallsWhenSettled = mockFindBlocked.mock.calls.length;
+      return r;
+    });
+    expect(out).toEqual({ key: 'playcount:7', count: 3 });
+    expect(scanCallsWhenSettled).toBe(0);
+    await flushImmediates();
+    expect(mockFindBlocked).toHaveBeenCalledTimes(1);
+  });
+
+  it('shadow: a failed COMMIT is never scanned', async () => {
+    setFlags({ shadow: true });
+    mockClient.query.mockImplementation(async (sql: string) => {
+      if (String(sql) === 'COMMIT') throw new Error('serialization failure');
+      return { rows: [{ count: '3' }], rowCount: 1 };
+    });
+    await expect(incrementSharedCounter('tok', BAD_KEY)).rejects.toThrow('serialization failure');
+    await flushImmediates();
+    expect(mockFindBlocked).not.toHaveBeenCalled();
   });
 
   it('🔴 REGRESSION (shadow): a flagged key increments AND is recorded against the key, no Report', async () => {

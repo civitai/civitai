@@ -98,6 +98,12 @@ describe('collectSharedDataLeaves — format characters', () => {
     expect(leaf.text).toBe('loli words soft');
   });
 
+  it('also strips the invisibles that are NOT \\p{Cf}: Hangul filler, grapheme joiner, variation selectors', () => {
+    const raw = 'lo\u3164li lo\u034Fli lo\uFE0Fli lo\u{E0100}li';
+    const [leaf] = leavesOf({ x: raw }).filter((l) => l.kind === 'value');
+    expect(leaf.text).toBe('loli loli loli loli');
+  });
+
   it('strips format characters from keys too', () => {
     const [key] = leavesOf({ 'hid​den': 1 });
     expect(key).toMatchObject({ raw: 'hid​den', text: 'hidden', kind: 'key' });

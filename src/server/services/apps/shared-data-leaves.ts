@@ -20,6 +20,8 @@
  * in shadow mode.
  */
 
+import { stripInvisible } from '~/server/utils/confusable-fold';
+
 /** Maximum nesting of containers. The root object is depth 1. */
 export const SHARED_DATA_MAX_DEPTH = 32;
 /** Maximum number of DISTINCT leaf strings (values and keys together, after dedupe). */
@@ -32,7 +34,7 @@ export type SharedDataLeafKind = 'value' | 'key';
 export interface SharedDataLeaf {
   /** The leaf exactly as stored. */
   raw: string;
-  /** What the checks read: `raw` with every Unicode format character (`\p{Cf}`) removed. */
+  /** What the checks read: `raw` through `stripFormatChars` (every invisible character removed). */
   text: string;
   /**
    * JSON-pointer-style path of the FIRST occurrence, e.g. `x/tags/0`. A `key` leaf's path is the
@@ -50,13 +52,15 @@ export type CollectSharedDataLeavesResult =
   | { leaves: SharedDataLeaf[] }
   | { overflow: SharedDataOverflow };
 
-// Format characters render as nothing, so a word split by one reads as the word to a viewer while
-// a regex sees two tokens. Stripping the whole category, not a hand-picked list of zero-width
-// characters, is what keeps the next one from working.
-const FORMAT_CHARS = /\p{Cf}/gu;
-
+/**
+ * What the checks read: the leaf with every invisible character removed — all of `\p{Cf}` plus the
+ * invisibles that are not `Cf` (Hangul fillers, the combining grapheme joiner, variation
+ * selectors). Such a character renders as nothing, so a word split by one reads as the word to a
+ * viewer while a regex sees two tokens. The class is the platform's one definition, shared with
+ * the blocklist's confusable fold, so the two cannot disagree about what is invisible.
+ */
 export function stripFormatChars(text: string): string {
-  return text.replace(FORMAT_CHARS, '');
+  return stripInvisible(text);
 }
 
 /** Escape a path segment so `/` inside a key cannot forge a path. */

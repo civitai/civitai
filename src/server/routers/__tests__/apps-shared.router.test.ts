@@ -30,6 +30,7 @@ const {
   mockLogToAxiom,
   mockSyncSubListing,
   mockIsFlipt,
+  mockGetFliptBoolean,
   mockFindBlocked,
   mockChInsert,
 } = vi.hoisted(() => {
@@ -110,6 +111,8 @@ const {
     mockIsFlipt: vi.fn<(flag: string, entityId?: string, context?: unknown) => Promise<boolean>>(
       async () => false
     ),
+    // `user-content-pattern-enforce`, which also governs whether a `data` pattern hit rejects.
+    mockGetFliptBoolean: vi.fn<(flag: string) => Promise<boolean>>(async () => false),
     mockFindBlocked: vi.fn<(values: unknown, opts?: unknown) => Promise<unknown[]>>(async () => []),
     mockChInsert: vi.fn<(args: { table: string; values: unknown[] }) => Promise<void>>(
       async () => undefined
@@ -155,6 +158,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClientModule>()),
   isFlipt: (flag: string, entityId?: string, context?: unknown) =>
     mockIsFlipt(flag, entityId, context),
+  getFliptBoolean: (flag: string) => mockGetFliptBoolean(flag),
 }));
 vi.mock('~/server/clickhouse/client', () => ({
   clickhouse: { insert: (args: { table: string; values: unknown[] }) => mockChInsert(args) },
@@ -266,6 +270,7 @@ beforeEach(() => {
   mockAuditPromptServer.mockResolvedValue(undefined);
   mockLogToAxiom.mockResolvedValue(undefined);
   mockIsFlipt.mockResolvedValue(false);
+  mockGetFliptBoolean.mockResolvedValue(false);
   mockFindBlocked.mockResolvedValue([]);
   mockChInsert.mockResolvedValue(undefined);
 });
@@ -2504,7 +2509,8 @@ describe('shared `data` local moderation', () => {
     });
 
     it('a blocked link in a leaf → the link message, no Report row', async () => {
-      mockFindBlocked.mockResolvedValue([{ kind: 'link', index: 0, matched: ['bad.example'] }]);
+      // Leaves are [key `url`, value `see bad.example`]; the hit is on the VALUE.
+      mockFindBlocked.mockResolvedValue([{ kind: 'link', index: 1, matched: ['bad.example'] }]);
       await expect(appendData({ url: 'see bad.example' })).rejects.toMatchObject({
         code: 'BAD_REQUEST',
         message: 'Content contains a blocked link',
@@ -2574,6 +2580,88 @@ describe('shared `data` local moderation', () => {
       );
     });
 
+    it.each([
+      ['poi', 'emma watson', ['auto:data:poi'], 'app-blocks-shared-storage-legal-block'],
+      ['audit_regex', 'fuck', ['auto:data:audit_regex'], 'app-blocks-shared-storage-content-block'],
+    ])(
+      'a %s hit → BAD_REQUEST with its Report row and alert',
+      async (_category, text, reasons, alertName) => {
+        await expect(appendData({ x: text })).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(reportReasons()).toEqual(reasons);
+        expect(eventNames()).toContain(alertName);
+      }
+    );
+
+    it('a PATTERN hit follows user-content-pattern-enforce, as title/body does: recorded, not rejected, while it is off', async () => {
+      mockFindBlocked.mockResolvedValue([{ kind: 'pattern', index: 1, matched: 'scam phrase' }]);
+      await expect(appendData({ note: 'a scam phrase here' })).resolves.toMatchObject({
+        key: expect.any(String),
+      });
+      expect(mockGetFliptBoolean).toHaveBeenCalledWith('user-content-pattern-enforce');
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      expect(mockChInsert.mock.calls[0][0].values).toEqual([
+        expect.objectContaining({ category: 'pattern', blocked: 0, mode: 'enforce' }),
+      ]);
+      expect(reportReasons()).toEqual([]);
+    });
+
+    it('…and rejected, without a Report row, once user-content-pattern-enforce is on', async () => {
+      mockGetFliptBoolean.mockResolvedValue(true);
+      mockFindBlocked.mockResolvedValue([{ kind: 'pattern', index: 1, matched: 'scam phrase' }]);
+      await expect(appendData({ note: 'a scam phrase here' })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content flagged for review',
+      });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(reportReasons()).toEqual([]);
+    });
+
+    it('reads user-content-pattern-enforce only when a pattern hit exists', async () => {
+      await appendData({ x: 'a calm lake' });
+      expect(mockGetFliptBoolean).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['leaves', Array.from({ length: 1001 }, (_, i) => `leaf ${'abcdefghij'[i % 10]}${i}`)],
+      ['chars', ['a'.repeat(32_001), 'b'.repeat(32_000)]],
+    ])('🔴 REGRESSION: a blob over the %s cap is rejected', async (_cap, data) => {
+      await expect(appendData(data)).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Data is too large or too deeply nested to review',
+      });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+    });
+
+    it('SEAM: the subject’s moderator bit reaches the blocklist (patterns exempt for mods only)', async () => {
+      await appendData({ x: 'a calm lake' });
+      expect(mockFindBlocked.mock.calls[0][1]).toEqual({ exemptFromPatterns: false });
+      mockGetSessionUser.mockResolvedValue(trustedUser({ isModerator: true }));
+      await appendData({ x: 'a calm lake' });
+      expect(mockFindBlocked.mock.calls[1][1]).toEqual({ exemptFromPatterns: true });
+    });
+
+    it('a blocklist outage during the scan is a clean 4xx, not a 500 — and nothing is written', async () => {
+      mockFindBlocked.mockRejectedValue(new Error('redis down'));
+      const error = await appendData({ x: 'a calm lake' }).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(TRPCError);
+      expect(error).toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Content could not be reviewed right now. Please try again.',
+      });
+      expect(mockPool.connect).not.toHaveBeenCalled();
+      expect(eventNames()).toContain('app-blocks-shared-data-moderation-scan-failed');
+      expect(JSON.stringify(mockLogToAxiom.mock.calls)).not.toContain('redis down');
+    });
+
+    it('a single leaf too long to audit is rejected as unreviewable — WITHOUT a Report row', async () => {
+      await expect(appendData({ big: 'a '.repeat(10_001) })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'Data is too large or too deeply nested to review',
+      });
+      expect(reportReasons()).toEqual([]);
+      expect(eventNames()).not.toContain('app-blocks-shared-storage-content-block');
+    });
+
     it('enforce ON with shadow ALSO on scans once, inline — no second post-commit scan', async () => {
       setFlags({ shadow: true, enforce: true });
       await appendData({ label: 'a calm lake' });
@@ -2635,6 +2723,58 @@ describe('shared `data` local moderation', () => {
       await flushImmediates();
       expect(mockFindBlocked).toHaveBeenCalledTimes(1);
       expect(mockChInsert).not.toHaveBeenCalled();
+    });
+
+    function mockUpdatePathFor(updatedRows: number) {
+      mockPool.query.mockImplementation(async (sql: string, params?: unknown[]) => {
+        if (sql.includes('author_user_id, size_bytes'))
+          return { rows: [{ author_user_id: 42, size_bytes: 100 }], rowCount: 1 };
+        if (sql.includes('.quota'))
+          return {
+            rows: [{ used_bytes: '0', stored_size_bytes: fixtureStoredSize(params) }],
+            rowCount: 1,
+          };
+        return { rows: [], rowCount: 0 };
+      });
+      mockClient.query.mockImplementation(async (sql: string) =>
+        sql.trim().startsWith('UPDATE')
+          ? { rows: [], rowCount: updatedRows }
+          : { rows: [], rowCount: 0 }
+      );
+    }
+
+    it('🔴 REGRESSION (update): an edited flagged leaf is recorded against the edited row', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockUpdatePathFor(1);
+      await expect(
+        updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { x: MINOR } })
+      ).resolves.toEqual({ ok: true });
+      await vi.waitFor(() => expect(mockChInsert).toHaveBeenCalled());
+      expect(mockChInsert.mock.calls[0][0].values).toContainEqual(
+        expect.objectContaining({
+          rowKey: 'ROW-KEY-1',
+          surface: 'update',
+          mode: 'shadow',
+          category: 'minor',
+        })
+      );
+    });
+
+    it('an edit that lost its race (0 rows updated) is never shadow-scanned', async () => {
+      mockVerifyBlockToken.mockResolvedValueOnce(validClaims());
+      mockUpdatePathFor(0);
+      await expect(
+        updateSharedRow('tok', 'ROW-KEY-1', { title: 'clean', data: { x: MINOR } })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      await flushImmediates();
+      expect(mockFindBlocked).not.toHaveBeenCalled();
+    });
+
+    it('SEAM: shadow passes the subject’s moderator bit to the blocklist too', async () => {
+      mockGetSessionUser.mockResolvedValue(trustedUser({ isModerator: true }));
+      await appendData({ x: 'a calm lake' });
+      await vi.waitFor(() => expect(mockFindBlocked).toHaveBeenCalled());
+      expect(mockFindBlocked.mock.calls[0][1]).toEqual({ exemptFromPatterns: true });
     });
 
     it('an over-cap blob is recorded as an overflow, not rejected', async () => {

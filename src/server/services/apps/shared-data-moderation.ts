@@ -2,11 +2,17 @@ import { createHash } from 'node:crypto';
 
 import { getProfanityFilter } from '~/libs/profanity-simple';
 import { clickhouse } from '~/server/clickhouse/client';
+import { formatClickhouseDateTime64 } from '~/server/clickhouse/datetime';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom } from '~/server/logging/client';
 import { findBlockedUserContent, stripBenignPhrases } from '~/server/services/blocklist.service';
 import { BlocklistType } from '~/server/common/enums';
-import { auditPromptEnriched, includesMinor, includesPoi } from '~/utils/metadata/audit';
+import {
+  auditPromptEnriched,
+  includesMinor,
+  includesPoi,
+  MAX_AUDIT_PROMPT_LENGTH,
+} from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 import {
   collectSharedDataLeaves,
@@ -95,10 +101,16 @@ export interface SharedTextHit {
   leaf: SharedTextInput | null;
 }
 
+/** Overflows found while classifying leaves, as opposed to while walking the blob. */
+type LeafOverflow = 'audit_budget' | 'leaf_length';
+
 export interface SharedTextScan {
   leafCount: number;
-  /** A walk cap (`depth`/`leaves`/`chars`) or the full-audit budget (`audit_budget`). */
-  overflow: SharedDataOverflow | 'audit_budget' | null;
+  /**
+   * A walk cap (`depth`/`leaves`/`chars`), the full-audit budget (`audit_budget`), or one leaf
+   * past the audit's length ceiling (`leaf_length`).
+   */
+  overflow: SharedDataOverflow | LeafOverflow | null;
   hits: SharedTextHit[];
 }
 
@@ -112,24 +124,32 @@ export const SHARED_DATA_FULL_AUDIT_BUDGET = 32;
 
 /** `auditLeaf`'s answer for a leaf the prefilter flagged after the budget ran out. */
 const AUDIT_BUDGET_EXCEEDED = Symbol('audit-budget-exceeded');
+/** `auditLeaf`'s answer for a leaf longer than the audit will read at all. */
+const LEAF_TOO_LONG = Symbol('leaf-too-long');
+type AuditLeafResult = string | null | typeof AUDIT_BUDGET_EXCEEDED | typeof LEAF_TOO_LONG;
 
 /**
  * The green-domain regex audit over ONE leaf, the way `assertSharedTextSafe` audits title/body:
  * normalised, moderator-declared benign phrases blanked, profanity on (`isGreen: true`).
  *
- * Returns the matched term, `null` for a pass, or `AUDIT_BUDGET_EXCEEDED`.
+ * Returns the matched term, `null` for a pass, `AUDIT_BUDGET_EXCEEDED`, or `LEAF_TOO_LONG`.
  *
- * Any `success: false` is a hit, whatever the triggers say. An over-length leaf comes back
- * `success: false` with no trigger at all on the audit's current contract, and a check that only
- * looked at triggers would pass exactly the input the length rule exists to refuse.
+ * A leaf longer than `MAX_AUDIT_PROMPT_LENGTH` is not audited at all — the audit refuses such
+ * input outright rather than read part of it — and is answered `LEAF_TOO_LONG`, which the caller
+ * reports as an OVERFLOW: unreviewable, so rejected in enforce, but not a content signal, so it
+ * files no Report. (Title/body cannot reach this; their caps are far below the ceiling. A `data`
+ * leaf can, up to the 64 KB value cap — and a benign app storing one long string must not feed the
+ * moderation queue on every retry.) This is decided HERE, from the length, so it does not depend on
+ * how the audit happens to report the case.
+ *
+ * Any other `success: false` is a hit whatever the triggers say — a check that only looked at
+ * triggers would pass any refusal the audit reports without one.
  */
-async function auditLeaf(
-  text: string,
-  budget: { remaining: number }
-): Promise<string | null | typeof AUDIT_BUDGET_EXCEEDED> {
+async function auditLeaf(text: string, budget: { remaining: number }): Promise<AuditLeafResult> {
   if (!text.trim()) return null;
   const stripped = await stripBenignPhrases(normalizeText(text), BlocklistType.PromptBenignPhrase);
   const input = stripped || text;
+  if (input.length > MAX_AUDIT_PROMPT_LENGTH) return LEAF_TOO_LONG;
   // 🔴 COST, measured: `auditPromptEnriched(_, _, true)` builds a fresh profanity matcher on every
   // call, ~2.2 ms each — 1,000 leaves took 2.2 s against 12 ms with profanity off. So the profanity
   // step is asked for only when the CACHED matcher (same config: no moderator whitelist) already
@@ -165,7 +185,7 @@ export async function classifySharedTexts(
 
   const blocklistHits = await findBlockedUserContent(texts, { exemptFromPatterns: isModerator });
   const budget = { remaining: SHARED_DATA_FULL_AUDIT_BUDGET };
-  const audits: Array<string | null | typeof AUDIT_BUDGET_EXCEEDED> = [];
+  const audits: AuditLeafResult[] = [];
   // Sequential, so the budget is spent in leaf order and the outcome is deterministic.
   for (const text of texts) audits.push(await auditLeaf(text, budget));
 
@@ -185,6 +205,8 @@ export async function classifySharedTexts(
     const audit = audits[index];
     if (audit === AUDIT_BUDGET_EXCEEDED) {
       hits.push({ category: 'overflow', matched: 'audit_budget', leaf });
+    } else if (audit === LEAF_TOO_LONG) {
+      hits.push({ category: 'overflow', matched: 'leaf_length', leaf });
     } else if (audit != null) {
       hits.push({ category: 'audit_regex', matched: audit, leaf });
     }
@@ -193,7 +215,8 @@ export async function classifySharedTexts(
 }
 
 function scanOf(leafCount: number, hits: SharedTextHit[]): SharedTextScan {
-  const overflow = hits.some((h) => h.category === 'overflow') ? 'audit_budget' : null;
+  const first = hits.find((h) => h.category === 'overflow');
+  const overflow = first ? (first.matched as LeafOverflow) : null;
   return { leafCount, overflow, hits };
 }
 
@@ -226,9 +249,16 @@ export async function scanCounterKey(
   return scanOf(1, hits);
 }
 
-/** The hit a rejection is attributed to: the highest-priority category present. */
-export function blockingHit(scan: SharedTextScan): SharedTextHit | null {
+/**
+ * The hit a rejection is attributed to: the highest-priority category present. A `pattern` hit
+ * counts only when `enforcePatterns` — see `rejectSharedTextHit` in the router for why.
+ */
+export function blockingHit(
+  scan: SharedTextScan,
+  { enforcePatterns = true }: { enforcePatterns?: boolean } = {}
+): SharedTextHit | null {
   for (const category of CATEGORY_PRIORITY) {
+    if (category === 'pattern' && !enforcePatterns) continue;
     const hit = scan.hits.find((h) => h.category === category);
     if (hit) return hit;
   }
@@ -241,6 +271,8 @@ export function blockingHit(scan: SharedTextScan): SharedTextHit | null {
 export const SHARED_DATA_HITS_TABLE = 'appBlocksSharedDataHits';
 /** Leaf text is kept for review, cut to this many UTF-8 bytes. */
 export const SHARED_DATA_HIT_TEXT_MAX_BYTES = 1024;
+/** The leaf path is cut too, because it is made of user-authored keys. */
+export const SHARED_DATA_HIT_PATH_MAX_BYTES = 512;
 const MATCHED_MAX_CHARS = 200;
 
 export type SharedDataSurface = 'append' | 'update' | 'counter';
@@ -269,22 +301,12 @@ export function truncateUtf8(text: string, maxBytes: number): string {
   return out;
 }
 
-/**
- * `YYYY-MM-DD HH:MM:SS.mmm` (UTC) — the DateTime64(3) input form. A raw `toISOString()` is rejected
- * at parse time, and because the shared client inserts with `wait_for_async_insert: 0` that
- * rejection never reaches this process: the table would just stay empty. Same shape as the repo's
- * other DateTime64(3) writers.
- */
-export function clickhouseDateTime64(d: Date): string {
-  return d.toISOString().slice(0, 23).replace('T', ' ');
-}
-
 export function sharedDataHitRows(
   scan: SharedTextScan,
   ctx: SharedDataScanContext,
   now: Date = new Date()
 ) {
-  const time = clickhouseDateTime64(now);
+  const time = formatClickhouseDateTime64(now);
   return scan.hits.map((hit) => ({
     time,
     appBlockId: ctx.appBlockId,
@@ -292,7 +314,8 @@ export function sharedDataHitRows(
     surface: ctx.surface,
     mode: ctx.mode,
     blocked: ctx.blocked ? 1 : 0,
-    leafPath: hit.leaf?.path ?? '',
+    // Truncated too: a path is built from object KEYS, which are user text of any length.
+    leafPath: truncateUtf8(hit.leaf?.path ?? '', SHARED_DATA_HIT_PATH_MAX_BYTES),
     leafKind: hit.leaf?.kind ?? '',
     category: hit.category,
     matched: hit.matched.slice(0, MATCHED_MAX_CHARS),
@@ -363,7 +386,9 @@ export async function recordSharedDataScan(
         type: 'error',
         appBlockId: ctx.appBlockId,
         hitCount: scan.hits.length,
-        error: error instanceof Error ? error.message : String(error),
+        // The error NAME only: a ClickHouse parse error can quote the row it rejected, and the
+        // row carries the leaf text this function promises never to log.
+        error: error instanceof Error ? error.name : typeof error,
       },
       'block-audit'
     ).catch(() => undefined);
