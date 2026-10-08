@@ -228,10 +228,22 @@ export function packCaptionsForAudit(
 }
 
 /**
+ * A SOFT prompt-moderation refusal: `auditPromptServer` marks one structurally, with
+ * `cause.softBlock === true` on the thrown TRPCError (the same field trpc's
+ * errorFormatter lifts onto `data.softBlock`). Anything else thrown — a hard refusal, or
+ * an infrastructure failure — is not soft.
+ */
+function isSoftPromptRefusal(error: unknown): boolean {
+  if (!(error instanceof TRPCError)) return false;
+  return (error.cause as { softBlock?: unknown } | undefined)?.softBlock === true;
+}
+
+/**
  * Prepare a training dataset from the viewer's own images.
  *
  * `auditCaptions` is the caller's prompt-moderation pass over newline-joined batches
- * of captions (see `packCaptionsForAudit`); it throws on a refusal, and every batch
+ * of captions (see `packCaptionsForAudit`); it throws on a refusal (a hard refusal in
+ * any batch wins over a soft one — see the loop below), and every batch
  * runs BEFORE any orchestrator import, so a refused
  * caption set costs no upload. It is injected because the moderation call needs
  * request context (the viewer's domain strictness and moderator flag) that only the
@@ -294,9 +306,23 @@ export async function prepareBlockTrainingDataset(input: {
 
   // Captions are app-supplied text that becomes training data — moderated like a
   // prompt, over the whole set in batches under the audit's length cap, before
-  // anything is uploaded. Any refused batch stops the request.
+  // anything is uploaded. Any refused batch refuses the request, and a HARD refusal in
+  // any batch takes precedence over a soft one in another: within one audit a hard term
+  // outranks a soft one (`isSoftBlock`), and batching must not let batch order decide
+  // which the request gets. So a hard refusal is rethrown at once; a soft one is held
+  // while the remaining batches are audited, and thrown (the first) only if none of them
+  // is hard.
   const batches = packCaptionsForAudit(admitted.map((a) => a.caption));
-  for (const batch of batches) await input.auditCaptions(batch);
+  let heldSoftRefusal: unknown = null;
+  for (const batch of batches) {
+    try {
+      await input.auditCaptions(batch);
+    } catch (e) {
+      if (!isSoftPromptRefusal(e)) throw e;
+      heldSoftRefusal ??= e;
+    }
+  }
+  if (heldSoftRefusal) throw heldSoftRefusal;
 
   const limit = pLimit(BLOCK_TRAINING_IMPORT_CONCURRENCY);
   const deadline = Date.now() + BLOCK_TRAINING_IMPORT_BUDGET_MS;
